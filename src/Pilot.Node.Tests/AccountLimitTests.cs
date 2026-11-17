@@ -514,7 +514,7 @@ public sealed class AccountLimitTests
     // A limit seen at Start, ending at Start+90m, on the 5-hour window the held figures show full with that reset.
     private async Task<DateTimeOffset> OpenFiveHourLimitAsync(UsageRow? held = null)
     {
-        var until = Start.AddMinutes(90);
+        var until = Start.AddHours(1.5);
         _state.PutUsage(held ?? Figures(Start.AddMinutes(-1), 100, until));
         _state.PutSession(LimitRow(Mail, until));
         await _watch.LookAsync(Ct);
@@ -547,7 +547,7 @@ public sealed class AccountLimitTests
     [Fact]
     public async Task FiguresReadBeforeTheLimitWasSeenEndNothing()
     {
-        var until = Start.AddMinutes(90);
+        var until = Start.AddHours(1.5);
         _state.PutUsage(Figures(Start.AddMinutes(-10), 100, until));
         _time.Advance(TimeSpan.FromMinutes(5));
         _state.PutSession(LimitRow(Mail, until));
@@ -576,7 +576,7 @@ public sealed class AccountLimitTests
     public async Task ALimitMatchingNeitherWindowIsNeverEndedByFigures()
     {
         // A spend limit: its end is no window's reset.
-        var until = Start.AddMinutes(90);
+        var until = Start.AddHours(1.5);
         _state.PutUsage(Figures(Start.AddMinutes(-1), 100, Start.AddHours(4), sevenDay: 50, sevenReset: Start.AddDays(3)));
         _state.PutSession(LimitRow(Mail, until));
         await _watch.LookAsync(Ct);
@@ -597,7 +597,7 @@ public sealed class AccountLimitTests
         _state.PutUsage(Figures(_time.GetUtcNow(), 1, Start.AddHours(5), "other@example.org"));
         await _watch.LookAsync(Ct);
 
-        _outage.LimitUntil.ShouldBe(Start.AddMinutes(90));
+        _outage.LimitUntil.ShouldBe(Start.AddHours(1.5));
     }
 
     [Fact]
