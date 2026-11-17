@@ -17,6 +17,8 @@ public static partial class ReviewPoints
     /// The prefix a reviewer puts on a new finding in text the fix round did not touch when it must still block; the kind follows,
     /// e.g. <c>must-block: build or test break</c>.
     /// </summary>
+    private const string PassedTail = " (passed by ";
+
     public const string MustBlockMarker = "must-block:";
 
     public static readonly IReadOnlyList<string> MustBlockKinds = ["build or test break", "data loss", "security hole", "false claim the change makes"];
@@ -42,14 +44,22 @@ public static partial class ReviewPoints
         var points = new List<Point>();
         foreach (var round in rounds.OrderBy(r => r.Round))
         {
-            var read = ReviewFindings.Read(round.Findings);
+            // A controller's pass anyway keeps the reviewer's report whole and appends "(passed by X over: ...)", which repeats the
+            // reviewer's own list: only the structured report before that tail is numbered, so no finding is a point twice.
+            var report = round.Findings;
+            var tail = report.IndexOf(PassedTail, StringComparison.Ordinal);
+            if (tail > 0)
+            {
+                report = report[..tail];
+            }
+            var read = ReviewFindings.Read(report);
             var index = 0;
             if (!read.Structured)
             {
                 // A plain report has no headings, and all of it is blocking: it is one point, kept whole, when the round asked for changes.
-                if (round.Verdict == ReviewState.Changes && round.Findings.Trim().Length > 0)
+                if (round.Verdict == ReviewState.Changes && report.Trim().Length > 0)
                 {
-                    points.Add(new Point($"R{round.Round}.1", round.Round, 1, true, round.Findings.Trim()));
+                    points.Add(new Point($"R{round.Round}.1", round.Round, 1, true, report.Trim()));
                 }
                 continue;
             }

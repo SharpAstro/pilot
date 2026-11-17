@@ -27,8 +27,6 @@ public sealed partial class LegCommander
         // The merge is an entry in its repo's queue (MergeRow), never done on the spot: the node takes the repo's entries in order, one
         // at a time, and the entry says where it stands. Only a flight that may merge at all (every leg done, review passed) gets one.
         var (asked, askedHead, askedMethod) = Mergeable(command);
-        // Nothing lands open (pilot #1107): the points its reviews left are filed as the flight's one follow-up issue before any merge, a hand's, the autopilot's, an armed one's or the queue's.
-        await EnsureFollowUpAsync(asked, null, cancellationToken);
         var by = command.Who != "node" ? MergeBy.Hand : asked.MergeWhenGreen is null ? MergeBy.Autopilot
             : asked.MergeWhenGreen[^1] == ArmedByAutopilot ? MergeBy.Autopilot : MergeBy.Armed;
         // A flight's entry is its one merge command's: a second ask while one is under way is refused and leaves the entry as it is.
@@ -57,6 +55,10 @@ public sealed partial class LegCommander
         Enqueue(asked, askedHead, askedMethod, by);
         try
         {
+            // Nothing lands open (pilot #1107): the points its reviews left are filed as the flight's one follow-up issue before any merge, a hand's,
+            // the autopilot's, an armed one's or the queue's. Done once the flight is under way (Enqueue put it in _active), so two asks for one
+            // flight cannot both see no issue and file two: the second is refused above until this one ends.
+            await EnsureFollowUpAsync(Mergeable(command).Item1, null, cancellationToken);
             await OffLockAsync(null, () => WaitTurnAsync(asked.Code, asked.Repo, cancellationToken));
             if (Models.MergeBatch)
             {
