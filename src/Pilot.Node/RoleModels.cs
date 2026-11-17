@@ -14,9 +14,10 @@ public sealed partial class RoleModels
     public const string Worker = "worker";
     public const string Planner = "planner";
     public const string Reviewer = "reviewer";
+    public const string Designer = "designer";
     public const string NoneValue = "none";
 
-    public static IReadOnlyList<string> Roles { get; } = [Watchtower, Worker, Planner, Reviewer];
+    public static IReadOnlyList<string> Roles { get; } = [Watchtower, Worker, Planner, Reviewer, Designer];
 
     public static IReadOnlyList<string> Efforts { get; } = ["low", "medium", "high", "xhigh", "max"];
 
@@ -50,6 +51,7 @@ public sealed partial class RoleModels
         Worker => "sonnet by default as most legs are routine; a redone leg climbs to opus at xhigh",
         Watchtower => "sonnet by default as it is the longest-lived session and the costliest per turn; it has no ladder",
         Planner => "opus by default as it decides everything after it; effort is left to Claude Code",
+        Designer => "opus by default as a design is judgement made in conversation, one short turn per brief piece; effort is left to Claude Code",
         _ => "opus by default as review is judgement; a deep review runs on the max, opus at high",
     };
 

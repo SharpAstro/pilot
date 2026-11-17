@@ -479,6 +479,7 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         RoleModels.Watchtower => "The watchtower (the brain) reads cards and runs pilot for hours: the longest-lived session, so the costliest per turn. Its model and effort are passed on every start, crash restart and compaction, never the person's default; a change restarts it on the new ones, in the same conversation, at its next idle",
         RoleModels.Worker => "A leg's worker, unless its plan names a model (leg plan --model), which wins",
         RoleModels.Planner => "Plans a flight's legs from its issue: short-lived, and decides everything after it",
+        RoleModels.Designer => "Makes a design in its draft folder from the brief and publishes a version once the check is clean: one session per design, started again with its context on each brief piece",
         _ => "Reviews a flight's PR before its merge card",
     };
 

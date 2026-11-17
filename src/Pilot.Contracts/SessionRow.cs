@@ -256,6 +256,10 @@ public enum SessionRole
     /// <summary>The session the node starts to make a PR review's changes: <c>&lt;machine&gt;-fix-&lt;repo&gt;-&lt;n&gt;</c>.</summary>
     [JsonStringEnumMemberName("fixer")]
     Fixer,
+
+    /// <summary>The session the node starts for a design (PIL1151): <c>&lt;machine&gt;-dsn&lt;n&gt;-designer</c>.</summary>
+    [JsonStringEnumMemberName("designer")]
+    Designer,
 }
 
 /// <summary>A subagent a session started (Claude Code's <c>Agent</c> tool): its own transcript beside the session's.</summary>
