@@ -45,8 +45,8 @@ public static partial class ReviewFollowUp
         var items = new List<Item>();
         var notAddressed = new List<string>();
         // A controller's pass over changes: the reviewer's last word was changes (or none), so every point not settled is open, with that word as the reason.
-        var passedAnyway = last.Verdict == ReviewState.Passed && ReviewPoints.PassedTailStart(last.Findings) >= 0;
-        var by = passedAnyway ? PassedBy(last.Findings) : null;
+        var passedAnyway = last.Verdict == ReviewState.Passed && last.PassedBy is { Length: > 0 };
+        var by = passedAnyway ? $" by {last.PassedBy}" : null;
         foreach (var point in points.Values.OrderBy(p => p.Round).ThenBy(p => p.Index))
         {
             if (latest.TryGetValue(point.Id, out var answer))
@@ -91,18 +91,6 @@ public static partial class ReviewFollowUp
         var n = 0;
         return [.. notes.Select(t => t.Trim().TrimStart('-', '*', ' ').ReplaceLineEndings(" ")).Where(t => t.Length > 0)
             .Select(t => new Item($"N{round}.{++n}", t, "a not-blocking note that came after a review-notes round had made the first ones; one round of notes holds a merge", "making the note, or a decision to leave it"))];
-    }
-
-    private static string PassedBy(string findings)
-    {
-        var start = findings.LastIndexOf("(passed by ", StringComparison.Ordinal);
-        if (start < 0)
-        {
-            return "";
-        }
-        var rest = findings[(start + "(passed by ".Length)..];
-        var end = rest.IndexOf(' ', StringComparison.Ordinal);
-        return end > 0 ? $" by {rest[..end]}" : "";
     }
 
     /// <summary>The title of the flight's one follow-up issue.</summary>

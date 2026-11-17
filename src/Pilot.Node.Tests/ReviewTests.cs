@@ -1855,6 +1855,10 @@ public sealed class ReviewTests5 : ReviewTestsBase
         var kept = F("TIA2").Review!.Report.ShouldNotBeNull();
         kept.ShouldStartWith("ready anyway (passed by controller over: ");
         kept.ShouldContain("naming");
+        // The round stores who passed it, so the tail is read from that, never from prose that quotes one (#1140).
+        var rounds = F("TIA2").ReviewRounds.ShouldNotBeNull();
+        rounds[^1].PassedBy.ShouldBe("controller");
+        rounds[^2].PassedBy.ShouldBeNull();
         Open().ShouldHaveSingleItem().Kind.ShouldBe(LegCommander.PrReady);
     }
 
