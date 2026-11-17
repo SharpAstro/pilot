@@ -7,7 +7,7 @@ namespace Pilot.Node.Designs;
 /// <c>design-show</c> and <c>designs</c>. They go through <see cref="DesignStore"/>, the node its one writer; only <c>design-publish</c> writes under a
 /// design's <c>versions/</c>, and only to a version folder that is not there yet.
 /// </summary>
-public sealed class DesignCommands(NodeState state, DesignStore store)
+public sealed class DesignCommands(NodeState state, DesignStore store, Designers? designers = null)
 {
     /// <summary>Whether <paramref name="verb"/> is one of these.</summary>
     public static bool Handles(string verb) => verb is Verbs.DesignNew or Verbs.DesignBrief or Verbs.DesignDraft or Verbs.DesignShow or Verbs.Designs
@@ -24,12 +24,17 @@ public sealed class DesignCommands(NodeState state, DesignStore store)
                     // args: repo, title (either may be empty), brief.
                     // args: repo, title (either may be empty), brief, then any terminal sizes.
                     var row = store.New(args.Length > 0 ? args[0] : null, args.Length > 1 ? args[1] : null, args.Length > 2 ? args[2] : "", args.Length > 3 ? args[3..] : []);
+                    // The design's first brief wakes its designer (PIL1151); the asks run in the background, after each other.
+                    designers?.Ask(row.Id, null);
                     return state.Complete(command, null, made: row.Id);
                 case Verbs.DesignTerminals:
                     var sized = store.SetTerminals(IdOf(command), args);
                     return state.Complete(command, null, made: sized.Terminals.Length == 0 ? $"{sized.Id} terminals: none" : $"{sized.Id} terminals: {string.Join(' ', sized.Terminals)}");
                 case Verbs.DesignBrief:
-                    var briefed = store.Brief(IdOf(command), string.Join(' ', args));
+                    var words = string.Join(' ', args);
+                    var briefed = store.Brief(IdOf(command), words);
+                    // A new piece of the brief resumes the designer with it (or starts it, when there is none).
+                    designers?.Ask(briefed.Id, words);
                     return state.Complete(command, null, made: briefed.Id);
                 case Verbs.DesignDraft:
                     var id = DesignStore.Normalise(IdOf(command));

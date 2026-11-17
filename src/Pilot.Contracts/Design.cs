@@ -38,6 +38,36 @@ public sealed record DesignRow
     /// and <c>pilot design render</c> writes each screen at each as text and as a grid. Empty for a design with no terminal target, and in a record an older release wrote.
     /// </summary>
     public string[] Terminals { get; init => field = value ?? []; } = [];
+
+    /// <summary>The design's designer session (PIL1151), as <see cref="DesignerState"/> and the members after it say; null for a design that never had one, and in a record an older release wrote.</summary>
+    public string? DesignerName { get; init; }
+
+    /// <summary>The designer's job id (the first eight of its session id), kept so a restart finds the session and resumes it, never starts a second.</summary>
+    public string? DesignerJob { get; init; }
+
+    /// <summary>What the designer is doing: <see cref="DesignerStates.Idle"/>, <see cref="DesignerStates.Working"/>, <see cref="DesignerStates.Held"/> or <see cref="DesignerStates.Failed"/>; null while there is none.</summary>
+    public string? DesignerState { get; init; }
+
+    /// <summary>While <see cref="DesignerState"/> is held: when the hold ends (the usage limit's reset).</summary>
+    public DateTimeOffset? DesignerHeldUntil { get; init; }
+
+    /// <summary>Why the designer is held or failed, in words the design's page shows ("held until 22:00: the 5-hour window is 93 % spent ...").</summary>
+    public string? DesignerWhy { get; init; }
+
+    /// <summary>When the designer was started; a start the session tracker has not listed yet is not started again within a few minutes of it.</summary>
+    public DateTimeOffset? DesignerStartedAt { get; init; }
+
+    /// <summary>Pieces of the brief the designer has not been sent yet (it is held, or being started), oldest first; BRIEF.md has them all as well.</summary>
+    public string[] DesignerPending { get; init => field = value ?? []; } = [];
+}
+
+/// <summary>The values of <see cref="DesignRow.DesignerState"/>.</summary>
+public static class DesignerStates
+{
+    public const string Idle = "idle";
+    public const string Working = "working";
+    public const string Held = "held";
+    public const string Failed = "failed";
 }
 
 /// <summary>

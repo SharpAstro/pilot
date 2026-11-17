@@ -8,6 +8,8 @@ public static class SessionStartReasons
     /// <summary>A short session the node starts in a plane whose worker committed and ended with nothing ticked, to tick what the commits cover.</summary>
     public const string LegTicker = "leg ticker";
     public const string Planner = "planner";
+    /// <summary>The designer of a design (PIL1151), started on its first brief.</summary>
+    public const string Designer = "designer";
     public const string FlightReview = "flight review";
     public const string PrReview = "PR review";
     public const string PrFix = "PR fix";

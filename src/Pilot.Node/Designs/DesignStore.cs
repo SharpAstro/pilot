@@ -179,6 +179,18 @@ public sealed class DesignStore(string dataFolder, TimeProvider? time = null)
         }
     }
 
+    /// <summary>Rewrites the record of <paramref name="id"/> as <paramref name="change"/> makes it, under the store's lock, so a designer's state is never written over a publish. Returns the new record.</summary>
+    public DesignRow Update(string id, Func<DesignRow, DesignRow> change)
+    {
+        lock (_lock)
+        {
+            var row = Find(id) ?? throw new DesignException($"There is no design {id}");
+            var updated = change(row);
+            WriteRecord(updated);
+            return updated;
+        }
+    }
+
     /// <summary>The record of <paramref name="id"/> (any case), or null when there is none or it cannot be read.</summary>
     public DesignRow? Find(string id)
     {
