@@ -19,6 +19,9 @@ public static class TestFilters
         "--filter-trait", "--filter-not-trait", "--filter-query",
     ];
 
+    /// <summary>The Microsoft.Testing.Platform switches that are no filter: they name what <c>dotnet test</c> runs, and VSTest has no such switch.</summary>
+    public static readonly IReadOnlyList<string> PlatformTargets = ["--project", "--solution"];
+
     /// <summary>The Platform options the node reads or writes by name.</summary>
     public const string Class = "--filter-class";
     public const string NotClass = "--filter-not-class";
@@ -103,6 +106,28 @@ public static class TestFilters
             i += take;
         }
         return found;
+    }
+
+    /// <summary>Whether <paramref name="option"/> belongs to Microsoft.Testing.Platform only: a Platform filter, <c>--project</c> or <c>--solution</c>.</summary>
+    public static bool IsPlatformOnly(string option) =>
+        Platform.Contains(option, StringComparer.OrdinalIgnoreCase) || PlatformTargets.Contains(option, StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// The first switch among <paramref name="words"/> (the words after <c>dotnet test</c>) that the other runner owns, stopping at a
+    /// bare <c>--</c>: with <paramref name="platform"/> the runner is Microsoft.Testing.Platform and <c>--filter</c> is the wrong one;
+    /// otherwise it is VSTest and a Platform switch is. The name only (<c>--project</c>), in lower case; null when none.
+    /// </summary>
+    public static string? WrongRunnerSwitch(IEnumerable<string> words, bool platform)
+    {
+        foreach (var word in words.TakeWhile(w => w != "--"))
+        {
+            var name = NameOf(word);
+            if (platform ? name.Equals(VsTest, StringComparison.OrdinalIgnoreCase) : IsPlatformOnly(name))
+            {
+                return name.ToLowerInvariant();
+            }
+        }
+        return null;
     }
 
     /// <summary>Whether <paramref name="option"/> is a Platform option, not VSTest's.</summary>

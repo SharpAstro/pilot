@@ -103,6 +103,13 @@ public sealed partial class LegCommander
             }
         }
 
+        // A check's test switches belong to the runner its folder selects: --project and --filter-class fail on VSTest, --filter on
+        // Microsoft.Testing.Platform, at the recheck otherwise (pilot #1132).
+        if (check is not null && TestRunner.Refusal(check, flight.Worktree) is { } runner)
+        {
+            throw new FlightException(runner);
+        }
+
         // A check fits its change: a dotnet test with no filter runs the whole suite, which is CI's on the PR. The refusal suggests
         // the filter from what the flight has changed so far.
         if (check is not null && CheckScope.WholeSuite(check) is { } whole)
