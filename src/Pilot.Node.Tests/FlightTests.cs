@@ -121,6 +121,9 @@ public sealed class FlightCommanderTests : IDisposable
     private Task<CommandResult> Run(string verb, string target, params string[] args) =>
         _commander.RunAsync(new CommandRequest { Verb = verb, Target = target, Args = args, Who = "tests" }, Ct);
 
+    private Task<CommandResult> RunWhy(string why, string verb, string target, params string[] args) =>
+        _commander.RunAsync(new CommandRequest { Verb = verb, Target = target, Args = args, Who = "tests", Why = why }, Ct);
+
     private FlightRow Flight(string code) => _state.Flights().Single(f => f.Code == code);
 
     [Fact]
@@ -304,7 +307,7 @@ public sealed class FlightCommanderTests : IDisposable
     {
         var (github, _) = Trackered();
         await Run(Verbs.CreateFlight, Verbs.RepoTarget(Repo), "81");
-        await Run(Verbs.CreateFlight, Verbs.RepoTarget(Repo), "81");
+        await RunWhy("a second flight on the item, to test the label", Verbs.CreateFlight, Verbs.RepoTarget(Repo), "81", Verbs.AnywayFlag);
         Flight("TIA81a").State.ShouldNotBe(FlightState.Landed);
 
         (await Run(Verbs.Land, Verbs.FlightTarget("TIA81"))).Ok.ShouldBeTrue();
@@ -352,7 +355,7 @@ public sealed class FlightCommanderTests : IDisposable
         await Run(Verbs.CreateFlight, Verbs.RepoTarget(Repo), "1611");
 
         // Named from inside the first plane: the flight is still the repo's, made from its main checkout.
-        var result = await Run(Verbs.CreateFlight, Verbs.RepoTarget(Flight("TIA1611").Worktree), "#1611");
+        var result = await RunWhy("a second flight on the issue, to test the suffix", Verbs.CreateFlight, Verbs.RepoTarget(Flight("TIA1611").Worktree), "#1611", Verbs.AnywayFlag);
 
         result.Ok.ShouldBeTrue(result.Error);
         var second = Flight("TIA1611a");
