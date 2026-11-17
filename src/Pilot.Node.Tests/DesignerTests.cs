@@ -287,6 +287,53 @@ public sealed class DesignerTests : IDisposable
         Decide(ShellHook("job00001-0000-4000-8000-000000000000", tool, _store.FolderOf(id), command), cli: "C:\\Users\\JohnSmith\\pilot2\\pilot.exe").ShouldBeNull();
     }
 
+    [Fact]
+    public void TheBriefNamesEveryNodeKindTheLoaderAcceptsWithItsPropertiesAndChildCounts()
+    {
+        var detail = new DesignDetail { Row = new DesignRow { Id = "DSN-1" }, Folder = "f", DraftFolder = "f/draft" };
+        var brief = Briefs.Designer(detail, "{}", null, "pilot");
+        foreach (var (name, kind) in DIR.Lib.Prototyping.PrototypeVocabulary.Kinds)
+        {
+            var line = brief.Split('
+').FirstOrDefault(l => l.StartsWith($"- `{name}`:", StringComparison.Ordinal)).ShouldNotBeNull(name);
+            foreach (var property in kind.Properties)
+            {
+                line.ShouldContain($"`{property.Name}`", customMessage: name);
+                if (property.Required)
+                {
+                    line.ShouldContain($"`{property.Name}` (", customMessage: name);
+                }
+                foreach (var value in property.Values)
+                {
+                    line.ShouldContain($"\"{value}\"", customMessage: name);
+                }
+            }
+            line.ShouldContain(kind.MaxChildren == 0 ? "no children" : kind.MaxChildren < 0 ? "children" : kind.MaxChildren + " children", customMessage: name);
+            (kind.SupportsBind == line.Contains("takes `bind`")).ShouldBeTrue(name);
+        }
+        foreach (var property in DIR.Lib.Prototyping.PrototypeVocabulary.Common)
+        {
+            brief.ShouldContain($"`{property.Name}`");
+        }
+        foreach (var role in DIR.Lib.Prototyping.PrototypeVocabulary.ColorRoles)
+        {
+            brief.ShouldContain($"`{role}`");
+        }
+    }
+
+    [Fact]
+    public void TheBriefAsksForAShortWhyAndSaysPublishTakesOnlyThePrototypeNotesAndRenders()
+    {
+        var detail = new DesignDetail { Row = new DesignRow { Id = "DSN-1" }, Folder = "f", DraftFolder = "f/draft" };
+        var brief = Briefs.Designer(detail, "{}", null, "pilot");
+        brief.ShouldContain("--why \"<what changed>\"");
+        brief.ShouldContain($"at most {DesignWhys.MaxLength} characters");
+        brief.ShouldContain("only `prototype.json`, `NOTES.md` and `renders/`");
+        brief.ShouldContain("nothing needs deleting");
+        brief.ShouldNotContain("brief|message|fix");
+        Briefs.DesignerPiece("DSN-1", "words").ShouldContain("--why");
+    }
+
     [Theory]
     [InlineData("Bash", "pilot design check DSN-1")]
     [InlineData("Bash", "\"/opt/pilot dir/pilot\" --node-socket \"/tmp/n.sock\" design publish DSN-1 --why message")]

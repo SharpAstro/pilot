@@ -135,8 +135,8 @@ public static partial class PilotCommand
                 (p, client, ct) => Send(client, Verbs.DesignRender, Verbs.DesignTarget(p.GetValue(renderId)!), [], who, ct));
 
             var publishId = Arg("design", "The design's id, DSN-<n>");
-            var publishWhy = new Option<string>("--why") { Description = "Why: brief, message or fix", Required = true };
-            var designPublish = Action(new Command("publish", "Make the next read-only version from the draft, when the check is clean and the renders are of the draft as it stands; prints the version") { Arguments = { publishId }, Options = { publishWhy } },
+            var publishWhy = new Option<string>("--why") { Description = "Why this version was made: a short reason, one line, at most 120 characters, saying what changed (the chat shows it as \"published v<n>: <why>\")", Required = true };
+            var designPublish = Action(new Command("publish", "Make the next read-only version from the draft, when the check is clean and the renders are of the draft as it stands; prints the version. Only prototype.json, NOTES.md and renders/ are copied; other files in draft/ are ignored") { Arguments = { publishId }, Options = { publishWhy } },
                 (p, client, ct) => Send(client, Verbs.DesignPublish, Verbs.DesignTarget(p.GetValue(publishId)!), [p.GetValue(publishWhy)!], who, ct));
 
             var showId = Arg("design", "The design's id, DSN-<n>");

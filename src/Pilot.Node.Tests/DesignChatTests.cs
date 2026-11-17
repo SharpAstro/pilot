@@ -131,6 +131,14 @@ public sealed class DesignChatTests : IDisposable
     }
 
     [Fact]
+    public async Task AFreeTextWhyReadsOnTheVersionLineAsPublishedVWhy()
+    {
+        var id = await DesignWithDesignerAsync();
+        _store.Update(id, r => r with { Current = 1, Versions = 1, History = [new DesignVersionRow { Number = 1, At = Start, Why = "added the bind rows to the settings screen" }] });
+        Run(Verbs.DesignChat, id).DesignChat.ShouldNotBeNull().Entries.Select(e => e.Text).ShouldBe(["published v1: added the bind rows to the settings screen"]);
+    }
+
+    [Fact]
     public async Task TheStatusReadsDraftingCheckingRenderingPublishedAndHeldUntil()
     {
         var id = await DesignWithDesignerAsync();

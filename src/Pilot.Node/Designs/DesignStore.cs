@@ -383,14 +383,15 @@ public sealed class DesignStore(string dataFolder, TimeProvider? time = null)
     /// <summary>
     /// Makes version k+1 (k the current, 0 for none) from the draft of <paramref name="id"/>: <c>prototype.json</c>, <c>NOTES.md</c> and <c>renders/</c>, every file
     /// read-only, and adds it to the record. Refused when the draft or its <c>NOTES.md</c> is missing or empty, when the check finds anything, when the renders are
-    /// not of the prototype as it stands, or when <paramref name="why"/> is not one of <see cref="DesignWhys"/>. A version folder that exists is never written again.
+    /// not of the prototype as it stands, or when <paramref name="why"/> is not a short one-line reason (<see cref="DesignWhys.Problem"/>). A version folder that exists is never written again.
     /// </summary>
     public DesignRow Publish(string id, string why)
     {
-        if (!DesignWhys.All.Contains(why, StringComparer.Ordinal))
+        if (DesignWhys.Problem(why) is { } badWhy)
         {
-            throw new DesignException($"publish takes --why {string.Join("|", DesignWhys.All)}, not '{why}'");
+            throw new DesignException(badWhy);
         }
+        why = why.Trim();
         lock (_lock)
         {
             var prototype = DraftPrototypeOf(id, out var row);

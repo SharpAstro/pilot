@@ -1,5 +1,6 @@
 #nullable enable
 using System.Text;
+using DIR.Lib.Prototyping;
 using Pilot.Contracts;
 
 namespace Pilot.Node.Flights;
@@ -31,7 +32,7 @@ public static partial class Briefs
         text.AppendLine("2. Edit `draft/prototype.json` and `draft/NOTES.md` (what the screens are for and what you chose, in plain words).");
         text.AppendLine($"3. `{run} design check {id}`: it prints `clean` or one finding per line. Fix every finding and check again.");
         text.AppendLine($"4. `{run} design render {id}`: it draws each screen into `draft/renders/`; look at the pictures.");
-        text.AppendLine($"5. `{run} design publish {id} --why <brief|message|fix>`: it makes the next version from the draft. The same verbs are MCP tools: design_draft, design_check, design_render, design_publish, design_show.");
+        text.AppendLine($"5. `{run} design publish {id} --why \"<what changed>\"`: it makes the next version from the draft. The why is a short free-text reason, one line of at most {DesignWhys.MaxLength} characters, saying what changed (the chat shows it as `published v<n>: <why>`). Publish copies only `prototype.json`, `NOTES.md` and `renders/` from `draft/`; any other file there is ignored, so nothing needs deleting. The same verbs are MCP tools: design_draft, design_check, design_render, design_publish, design_show.");
         text.AppendLine();
         text.AppendLine("**Publish only when `design check` says clean**, and only after a render of the draft as it stands. If you cannot get the check clean, publish nothing: say in your reply what is in the way (the findings you could not fix, and why).");
         text.AppendLine();
@@ -42,12 +43,14 @@ public static partial class Briefs
         text.AppendLine();
         text.AppendLine("## The prototype format");
         text.AppendLine();
-        text.AppendLine("`prototype.json` is DIR.Lib's prototype: a `width` and `height`, the `entry` screen's id, and `screens`, each with an `id`, a `title` and a `root` node tree (`kind` and its members, such as `text`). The check lays every screen out at the sizes of the GUI's own sweep");
+        text.AppendLine("`prototype.json` is DIR.Lib's prototype: a `width` and `height`, the `entry` screen's id, and `screens`, each with an `id`, a `title` and a `root` node tree (`kind`, the kind's properties, and `children`). The kinds and properties listed below are everything the loader accepts; any other is a finding. The check lays every screen out at the sizes of the GUI's own sweep");
         text.AppendLine($"{(detail.Row.Terminals.Length > 0 ? $"and in cells at {string.Join(", ", detail.Row.Terminals)}" : "")}, so a screen that overflows, cuts text or overlaps is a finding. The current prototype is the best example of the format:");
         text.AppendLine();
         text.AppendLine("```json");
         text.AppendLine(prototype.Trim());
         text.AppendLine("```");
+        text.AppendLine();
+        text.Append(NodeKinds());
         if (notes is { Length: > 0 })
         {
             text.AppendLine();
@@ -64,7 +67,50 @@ public static partial class Briefs
         return text.ToString();
     }
 
+    /// <summary>
+    /// The node kinds section of the designer's brief (PIL1159), written from DIR.Lib's <see cref="PrototypeVocabulary"/> so a kind the loader gains
+    /// reaches the designer with no edit here: every kind with its properties (type, required, enum words), child counts and bind, then the
+    /// properties every kind shares and the colour roles.
+    /// </summary>
+    public static string NodeKinds()
+    {
+        static string TypeName(PrototypeProperty p) => p.Type switch
+        {
+            PrototypePropertyType.Enum => "one of " + string.Join(" | ", p.Values.Select(v => $"\"{v}\"")),
+            PrototypePropertyType.StringList => "array of strings",
+            PrototypePropertyType.Color => "colour",
+            PrototypePropertyType.Size => "size: number, \"auto\", \"star\" or \"star:weight\"",
+            PrototypePropertyType.Integer => "whole number",
+            _ => p.Type.ToString().ToLowerInvariant(),
+        };
+        static string Describe(PrototypeProperty p) => $"`{p.Name}` ({TypeName(p)}{(p.Required ? ", required" : "")})";
+
+        var text = new StringBuilder();
+        text.AppendLine("### Node kinds");
+        text.AppendLine();
+        text.AppendLine("A node is an object with a `kind` from this list, the kind's own properties, the common properties below, and `children` (an array of nodes) where the kind takes any. A kind that takes `bind` reads and writes a named state through `\"bind\": \"<name>\"`. A node may also carry `action` and `when`.");
+        text.AppendLine();
+        foreach (var kind in PrototypeVocabulary.Kinds.Values.OrderBy(k => k.Name, StringComparer.Ordinal))
+        {
+            var children = kind.MaxChildren switch
+            {
+                0 => "no children",
+                < 0 => kind.MinChildren == 0 ? "any number of children" : $"at least {kind.MinChildren} children",
+                var max when max == kind.MinChildren => $"exactly {max} children",
+                var max => $"{kind.MinChildren} to {max} children",
+            };
+            var props = kind.Properties.Length == 0 ? "no properties of its own" : string.Join(", ", kind.Properties.Select(Describe));
+            text.AppendLine($"- `{kind.Name}`: {children}{(kind.SupportsBind ? ", takes `bind`" : "")}; {props}");
+        }
+        text.AppendLine();
+        text.AppendLine("Common properties, on every kind: " + string.Join(", ", PrototypeVocabulary.Common.Select(Describe)) + ".");
+        text.AppendLine();
+        text.AppendLine("Colour roles (a colour is one of these names or `#rgb`, `#rrggbb`, `#rrggbbaa`): " + string.Join(", ", PrototypeVocabulary.ColorRoles.Select(r => $"`{r}`")) + ".");
+        text.AppendLine();
+        return text.ToString();
+    }
+
     /// <summary>What the node says to a resumed designer when the owner adds to the brief: the words as they were written, and where the rest is.</summary>
     public static string DesignerPiece(string id, string words) =>
-        $"The owner added to the brief of {id}:\n\n{words.Trim()}\n\nBRIEF.md holds the whole brief. Run the loop (draft, edit, check, render) and publish only on a clean check; start your reply with what you changed or ask.";
+        $"The owner added to the brief of {id}:\n\n{words.Trim()}\n\nBRIEF.md holds the whole brief. Run the loop (draft, edit, check, render) and publish only on a clean check, with `--why` a short one-line reason saying what changed; start your reply with what you changed or ask.";
 }

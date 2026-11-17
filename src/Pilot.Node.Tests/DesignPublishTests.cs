@@ -110,6 +110,36 @@ public sealed class DesignPublishTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task AFreeTextWhyIsStoredAndReadOnTheVersionLine()
+    {
+        await DraftOf("sample.prototype.json");
+        (await Pilot("design", "render", "DSN-1")).Exit.ShouldBe(0);
+        const string why = "added the bind rows to the settings screen";
+        var (exit, said) = await Pilot("design", "publish", "DSN-1", "--why", why);
+        exit.ShouldBe(0, said);
+
+        var record = JsonSerializer.Deserialize(File.ReadAllText(Path.Combine(DesignFolder(), "design.json")), PilotJsonContext.Default.DesignRow)!;
+        record.Why.ShouldBe(why);
+        record.History.Select(v => v.Why).ShouldBe([why]);
+    }
+
+    [Fact]
+    public async Task AStrayFileInTheDraftIsNotPublished()
+    {
+        await DraftOf("sample.prototype.json");
+        File.WriteAllText(Draft("scratch.txt"), "notes to self");
+        Directory.CreateDirectory(Draft("junk"));
+        File.WriteAllText(Path.Combine(Draft("junk"), "a.txt"), "x");
+        (await Pilot("design", "render", "DSN-1")).Exit.ShouldBe(0);
+        var (exit, said) = await Pilot("design", "publish", "DSN-1", "--why", "first");
+        exit.ShouldBe(0, said);
+
+        var v1 = Path.Combine(DesignFolder(), "versions", "v1");
+        Directory.EnumerateFileSystemEntries(v1).Select(Path.GetFileName).Order().ShouldBe(["NOTES.md", "prototype.json", "renders"]);
+        Directory.EnumerateFiles(Path.Combine(v1, "renders")).Select(Path.GetFileName).ShouldNotContain("render.json");
+    }
+
+    [Fact]
     public async Task ASecondPublishMakesV2AndLeavesV1AsItWas()
     {
         var v1 = await PublishedV1();
@@ -233,9 +263,13 @@ public sealed class DesignPublishTests : IAsyncLifetime
         (await Pilot("design", "publish", "DSN-1", "--why", "brief")).Output.ShouldContain("NOTES.md");
 
         File.WriteAllText(Draft("NOTES.md"), "What this is.");
-        var (badWhy, badWhySaid) = await Pilot("design", "publish", "DSN-1", "--why", "because");
-        badWhy.ShouldBe(1);
-        badWhySaid.ShouldContain("brief|message|fix");
+        foreach (var (bad, reason) in new[] { ("", "not empty"), ("  ", "not empty"), ("two
+lines", "one line"), (new string('x', DesignWhys.MaxLength + 1), "at most 120") })
+        {
+            var (badWhy, badWhySaid) = await Pilot("design", "publish", "DSN-1", "--why", bad);
+            badWhy.ShouldBe(1);
+            badWhySaid.ShouldContain(reason);
+        }
 
         (await Pilot("design", "publish", "DSN-5", "--why", "brief")).Output.ShouldContain("There is no design DSN-5");
         Directory.Exists(Path.Combine(DesignFolder(), "versions", "v1")).ShouldBeFalse();
