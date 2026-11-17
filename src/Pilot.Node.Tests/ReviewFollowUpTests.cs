@@ -160,7 +160,9 @@ public sealed class ReviewFollowUpTests : ReviewTestsBase
         release.SetResult();
         var results = await Task.WhenAll(first, second).WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
 
-        results.ShouldAllBe(r => r.Error == null);
+        // One ask files and merges; the other, in together with it, is either the same merge or told the flight is landed. Never a second issue or merge.
+        results.ShouldContain(r => r.Error == null);
+        results.Where(r => r.Error != null).ShouldAllBe(r => r.Error!.Contains("landed"));
         _github.IssuesCreated.ShouldHaveSingleItem();
         _github.Merged.ShouldHaveSingleItem();
     }

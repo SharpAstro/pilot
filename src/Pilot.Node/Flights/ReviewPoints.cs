@@ -48,8 +48,10 @@ public static partial class ReviewPoints
         for (var at = report.IndexOf(PassedTail, StringComparison.Ordinal); at >= 0; at = report.IndexOf(PassedTail, at + 1, StringComparison.Ordinal))
         {
             var lineEnd = report.IndexOf((char)10, at);
-            var line = lineEnd < 0 ? report[at..] : report[at..lineEnd];
-            if (line.Contains(" over: ", StringComparison.Ordinal))
+            var line = lineEnd < 0 ? report[(at + PassedTail.Length)..] : report[(at + PassedTail.Length)..lineEnd];
+            // The name is one word, straight after "(passed by ": prose "(passed by hand) ..." never reaches " over: " as the next words.
+            var nameEnd = line.IndexOf(' ');
+            if (nameEnd > 0 && line[nameEnd..].StartsWith(" over: ", StringComparison.Ordinal) && !line[..nameEnd].Contains(')'))
             {
                 return at;
             }
