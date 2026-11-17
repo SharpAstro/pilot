@@ -274,6 +274,10 @@ chrome.Spend.OnWindow = window => spendReads.Ask(window, feed.Screen(DateTimeOff
 var designReads = new DesignReads(client, Who, Redraw);
 chrome.Designs.OnOpen = id => designReads.AskDesign(id, null, force: true);
 chrome.Designs.OnVersion = (id, number) => designReads.AskDesign(id, number, force: true);
+// The chat with the designer under the cell view: the open design's chat feed followed while the page is open, what is typed sent as design-say. A terminal has no picture to paste.
+designReads.Follow(chrome.Designs, (run, what) => tracker.Run(run, what), Redraw);
+chrome.Designs.Chat.Cells = true;
+chrome.Designs.Chat.OpenLink = url => DashboardCommands.Open(url);
 chrome.Designs.OnStart = (brief, node) => _ = Task.Run(async () =>
 {
     // What pilot design new does on the node the page reads; the made design's page opens.
@@ -566,7 +570,7 @@ while (!stop.IsCancellationRequested)
         arranged = TerminalFrame.Build(railTree, pageTree, cardsBeside ? cards.Tree(cardsScreen) : null, columns, rows, CellMeasureContext.PixelAuthored, input.Router.Tooltip);
         TerminalFrame.Paint(terminal.HideCaret, () => CellLayout.Paint(terminal, arranged, surface));
         input.Painted();
-        if (chat.ParkedCaret(page, focus, arranged) is var (caretColumn, caretRow))
+        if ((chat.ParkedCaret(page, focus, arranged) ?? (page == PilotPage.Designs ? chrome.Designs.Chat.ParkedCaretEmbedded(focus, arranged) : null)) is var (caretColumn, caretRow))
         {
             // The composer is drawn from the editor's lines (CellLayout paints no text editor), so its caret is placed here.
             terminal.SetCaret(caretColumn, caretRow, CaretStyle.BlinkingBar);

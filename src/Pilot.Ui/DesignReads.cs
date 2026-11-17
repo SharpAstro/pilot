@@ -79,6 +79,59 @@ internal sealed class DesignReads(NodeClient client, string who, Action redraw)
         }
     }
 
+    /// <summary>
+    /// Reads design <paramref name="id"/>'s chat after entry <paramref name="after"/> (all of it for a negative one): the node's <c>design-chat</c>, which the chat
+    /// on the design's page follows at the Chat page's pace, asking only for what came after its last index. A refusal or a silent node throws, which the chat
+    /// shows as its problem and tries again at its next look.
+    /// </summary>
+    public async Task<ChatPage> ChatAsync(string id, int after, CancellationToken cancellationToken)
+    {
+        var answer = await client.SendAsync(new CommandRequest
+        {
+            Verb = Verbs.DesignChat,
+            Target = Verbs.DesignTarget(id),
+            Args = after >= 0 ? [after.ToString(System.Globalization.CultureInfo.InvariantCulture)] : [],
+            Who = who,
+        }, cancellationToken).ConfigureAwait(false);
+        if (answer is { Success: true, Response: { Ok: true, DesignChat: { } page } })
+        {
+            return page;
+        }
+        throw new InvalidOperationException(answer.Response?.Error ?? answer.Error ?? "the node did not send the design's chat");
+    }
+
+    /// <summary>
+    /// Hands the page's chat what it reads and sends (PIL1151): the open design's feed through <see cref="ChatAsync"/>, and what is typed (with a pasted picture)
+    /// through <see cref="SayAsync"/>. One wiring for the window and the terminal.
+    /// </summary>
+    internal void Follow<TSurface>(DesignsView<TSurface> designs, Action<Func<Task>, string>? track, Action redraw)
+    {
+        var chat = designs.Chat;
+        chat.Load = (after, ct) => designs.OpenId is { } id ? ChatAsync(id, after, ct) : throw new InvalidOperationException("no design is open");
+        chat.OnSend = text => designs.OpenId is { } id ? SayAsync(id, text, null, CancellationToken.None) : Task.FromResult<string?>("no design is open");
+        chat.OnSendWithPicture = (text, picture) => designs.OpenId is { } id ? SayAsync(id, text, picture, CancellationToken.None) : Task.FromResult<string?>("no design is open");
+        chat.Track = track;
+        chat.Changed = redraw;
+    }
+
+    /// <summary>
+    /// Says <paramref name="text"/> in design <paramref name="id"/>'s chat (what <c>pilot design say</c> does), with a picture when there is one: null when the node took
+    /// it, else what it said in refusing it.
+    /// </summary>
+    public async Task<string?> SayAsync(string id, string text, (string Name, byte[] Bytes)? picture, CancellationToken cancellationToken)
+    {
+        try
+        {
+            string[] args = picture is { } p ? [text, p.Name, Convert.ToBase64String(p.Bytes)] : [text];
+            var answer = await client.SendAsync(new CommandRequest { Verb = Verbs.DesignSay, Target = Verbs.DesignTarget(id), Args = args, Who = who }, cancellationToken).ConfigureAwait(false);
+            return answer.Response is { Ok: true } ? null : answer.Response?.Error ?? answer.Error ?? "the node did not answer";
+        }
+        catch (Exception e) when (e is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+        {
+            return e.Message;
+        }
+    }
+
     /// <summary>Reads design <paramref name="id"/> and its version <paramref name="version"/> (null: the current one), unless that was done less than <see cref="Every"/> ago.</summary>
     public void AskDesign(string id, int? version, bool force = false)
     {

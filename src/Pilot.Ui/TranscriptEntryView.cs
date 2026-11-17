@@ -105,6 +105,12 @@ internal sealed class TranscriptEntryView
     /// <summary>What the assistant's words are labelled.</summary>
     public string AssistantLabel { get; set; } = "claude";
 
+    /// <summary>
+    /// What a click on a divider does, given its entry: the action to run, or null for a divider that is only a rule (PIL1151: the design chat's
+    /// "published v2" line opens that version). Set before the first <see cref="Rows"/>; a kept row is not rebuilt when it changes.
+    /// </summary>
+    public Func<TranscriptEntry, Action?>? OpenDivider { get; set; }
+
     /// <summary>How many source lines of the assistant's reply show before a "+N lines" fold; the chat shows a reply whole.</summary>
     public int AssistantLines { get; set; } = 40;
 
@@ -322,7 +328,7 @@ internal sealed class TranscriptEntryView
                 continue;
             }
             // Stretched here, inside the kept node: the owners add no wrapper of their own, whose reference would change every frame.
-            var node = (entry.Kind == TranscriptKind.ToolUse ? Call(entry, result, live) : entry.Kind == TranscriptKind.Divider ? Divider(entry) : Row(entry)).WStar();
+            var node = (entry.Kind == TranscriptKind.ToolUse ? Call(entry, result, live) : entry.Kind == TranscriptKind.Divider ? Divider(entry, OpenDivider?.Invoke(entry)) : Row(entry)).WStar();
             _rows[entry.Index] = new KeptRow { Entry = entry, Answer = result, Run = RunOf(entry), Open = open, Live = isLive, Link = link, LinkLabel = linkLabel, Node = node, Pass = pass };
             nodes.Add(node);
             seen++;
@@ -358,16 +364,18 @@ internal sealed class TranscriptEntryView
     }
 
     // Where a fresh watchtower began in the chat: a rule with what the node said of it (and when) in the middle.
-    private static Layout.Node Divider(TranscriptEntry entry)
+    private static Layout.Node Divider(TranscriptEntry entry, Action? open)
     {
         var rule = Layout.Builder.Spacer().WStar().HFixed(1f).Bg(Faint);
         var said = entry.At is { } at ? $"{entry.Text} · {at.ToLocalTime().ToString("d MMM HH:mm", CultureInfo.InvariantCulture)}" : entry.Text;
-        return Layout.Builder.HStack(
+        var line = Layout.Builder.HStack(
                 Layout.Builder.VStack(Layout.Builder.Spacer().HStar(), rule, Layout.Builder.Spacer().HStar()).WStar(),
-                Layout.Builder.Text(said, 12f, Dim, TextAlign.Center).Selectable().WStarUpToContent(BodyWeight).WithTooltip(said),
+                Layout.Builder.Text(said, 12f, open is null ? Dim : Bright, TextAlign.Center).Selectable().WStarUpToContent(BodyWeight).WithTooltip(open is null ? said : said + " (click to show it)"),
                 Layout.Builder.VStack(Layout.Builder.Spacer().HStar(), rule, Layout.Builder.Spacer().HStar()).WStar())
             .WithGap(10f)
             .Pad(0f, ProseSpace);
+        // A divider that opens something is a button: lit under the pointer, one hit of its own.
+        return open is null ? line : line.BgHover(Palette.Current.RowHoverBg).Follows(new HitResult.ButtonHit($"chat:divider:{entry.Id}"), _ => open());
     }
 
     // A tool call as one line: a caret, its state (a check, a cross, or a dot while running or cut off where the session
