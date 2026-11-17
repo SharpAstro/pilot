@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Pilot.Contracts;
+using Pilot.Node.Flights;
 using Pilot.Node.Updates;
 
 namespace Pilot.Node;
