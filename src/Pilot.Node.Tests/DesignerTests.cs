@@ -202,6 +202,19 @@ public sealed class DesignerTests : IDisposable
     }
 
     [Fact]
+    public async Task AnIdleDesignerWhoseSessionRowIsGoneIsNotEndedAgain()
+    {
+        // A row marked Gone is already closed by the ledger: the idle sweep must not stop it a second time.
+        IdleDesigner();
+        _state.PutSession(_state.Sessions().Single(s => s.Id == "job00001") with { Gone = true });
+        _time.Advance(TimeSpan.FromMinutes(31));
+        _designers.Sweep();
+        await _designers.Settled;
+
+        _workers.StopReasons.ShouldBeEmpty();
+    }
+
+    [Fact]
     public async Task TheKeepSettingSetsHowLongAndZeroEndsItAtOnce()
     {
         var short_ = new Designers(_state, _store, _workers, new StartGate(_state, _time), new RoleModels(null), "DE1", _time) { Run = "pilot", Keep = () => TimeSpan.Zero };
