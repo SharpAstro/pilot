@@ -162,7 +162,7 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
 
     // The target session's context size at each job's last tell or retell, in memory like _busyTurnEnd: a node restart forgets it, and
     // the sweep then takes the size it sees as the baseline, which errs towards a retell, never away from one (#1137).
-    private readonly ConcurrentDictionary<string, int> _contextAtTell = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, long> _contextAtTell = new(StringComparer.Ordinal);
 
     /// <summary>
     /// When a session (by name) last sent the node a command of any verb, as the node sees it; null in a bare runner. A session that sent
@@ -170,7 +170,7 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
     /// </summary>
     public Func<string, DateTimeOffset?>? LastCommandAt { get; set; }
 
-    private void MarkTold(JobRow job, string way, bool whileWorking = false, int? contextTokens = null)
+    private void MarkTold(JobRow job, string way, bool whileWorking = false, long? contextTokens = null)
     {
         if (contextTokens is { } tokens)
         {
