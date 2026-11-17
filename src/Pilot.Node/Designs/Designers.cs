@@ -96,12 +96,12 @@ public sealed class Designers(NodeState state, DesignStore store, IWorkerLaunche
             {
                 // The session id is kept as soon as the tracker lists it, so the design's chat finds the transcript after a restart.
                 var done = row.DesignerState is DesignerStates.Working && listed.State is SessionState.Idle or SessionState.Ended;
-                if (row.DesignerState is DesignerStates.Idle && listed.State is SessionState.Idle && row.DesignerIdleSince is { } since && time.GetUtcNow() - since >= Keep())
+                if (row.DesignerState is DesignerStates.Idle && listed.State is SessionState.Idle && !listed.Gone && row.DesignerIdleSince is { } since && time.GetUtcNow() - since >= Keep())
                 {
                     await EndIdleAsync(row.Id, listed).ConfigureAwait(false);
                     continue;
                 }
-                if (row.DesignerState is DesignerStates.Idle && row.DesignerIdleSince is null && listed.State is SessionState.Idle)
+                if (row.DesignerState is DesignerStates.Idle && row.DesignerIdleSince is null && listed.State is SessionState.Idle && !listed.Gone)
                 {
                     // Idle with no mark (a record an older release wrote, or a restart): the keep time counts from now.
                     store.Update(row.Id, r => r with { DesignerIdleSince = time.GetUtcNow() });

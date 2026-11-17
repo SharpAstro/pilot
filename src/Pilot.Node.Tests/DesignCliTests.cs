@@ -84,7 +84,7 @@ public sealed class DesignCliTests : IAsyncLifetime
         chat.ShouldContain("you: wider please");
         chat.ShouldContain("[picture: pictures/1-sketch.png]");
         chat.ShouldContain("designer: ");
-        (await Pilot("design", "chat", "DSN-1", "--after", "0")).Output.ShouldNotContain("you: wider please");
+        (await Pilot("design", "chat", "DSN-1", "--after", "1")).Output.ShouldNotContain("you: wider please");
     }
 
     [Fact]
