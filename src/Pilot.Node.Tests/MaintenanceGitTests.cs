@@ -294,21 +294,27 @@ public sealed class MaintenanceGitTests : IDisposable
     public async Task TheGitStepPrunesUnreachableObjectsOlderThanThePruneDaysKeepsYoungOnesSetsGcAutoZeroAndAFetchWarnsOfNothing()
     {
         var work = Clone();
-        Git(work, "checkout", "-b", "side");
-        for (var i = 0; i < 4; i++)
+        // Two independent chains off main: git keeps whatever a young unreachable object reaches, so old and young must not share objects.
+        List<string> Chain(string branch)
         {
-            File.WriteAllText(Path.Combine(work, $"s{i}.txt"), "side " + i);
-            Git(work, "add", ".");
-            Git(work, "commit", "-m", "side " + i);
+            Git(work, "checkout", "-b", branch, "main");
+            for (var i = 0; i < 2; i++)
+            {
+                File.WriteAllText(Path.Combine(work, $"{branch}{i}.txt"), branch + " " + i);
+                Git(work, "add", ".");
+                Git(work, "commit", "-m", branch + " " + i);
+            }
+            var objects = Git(work, "rev-list", "--objects", "main.." + branch).Split('
+', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Select(l => l.Split(' ')[0]).ToList();
+            Git(work, "checkout", "main");
+            Git(work, "branch", "-D", branch);
+            return objects;
         }
-        Git(work, "checkout", "main");
-        Git(work, "branch", "-D", "side");
+        var old = Chain("oldside");
+        var young = Chain("youngside");
         Git(work, "reflog", "expire", "--expire=now", "--all");
-        var unreachable = Git(work, "fsck", "--unreachable", "--no-reflogs").Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Where(l => l.StartsWith("unreachable ", StringComparison.Ordinal)).Select(l => l[(l.LastIndexOf(' ') + 1)..]).Order(StringComparer.Ordinal).ToList();
-        unreachable.Count.ShouldBeGreaterThanOrEqualTo(8);
-        var old = unreachable.Where((_, i) => i % 2 == 0).ToList();
-        var young = unreachable.Where((_, i) => i % 2 == 1).ToList();
+        old.Count.ShouldBeGreaterThanOrEqualTo(6);
         foreach (var sha in old)
         {
             File.SetLastWriteTimeUtc(Path.Combine(work, ".git", "objects", sha[..2], sha[2..]), DateTime.UtcNow.AddDays(-3));
