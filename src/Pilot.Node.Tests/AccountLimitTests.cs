@@ -565,7 +565,7 @@ public sealed class AccountLimitTests
     public async Task ALimitSeenWhileItsWindowAlreadyReadUnderNinetyIsEndedByTheNextRewriteOfThoseFigures()
     {
         var until = Start.AddHours(1.5);
-        _state.PutUsage(Figures(Start.AddMinutes(-1), 1, Start.AddHours(5)));
+        _state.PutUsage(Figures(Start.AddMinutes(-1), 1, until));
         _state.PutSession(LimitRow(Mail, until));
         await _watch.LookAsync(Ct);
         _outage.LimitUntil.ShouldBe(until);
@@ -573,7 +573,7 @@ public sealed class AccountLimitTests
         // The same figures written again 3 minutes later (inside the journal's 10 minutes): nothing changed, but they were rewritten.
         _time.Advance(TimeSpan.FromMinutes(3));
         var rewrite = _time.GetUtcNow();
-        _state.PutUsage(Figures(rewrite, 1, Start.AddHours(5)));
+        _state.PutUsage(Figures(rewrite, 1, until));
         await _watch.LookAsync(Ct);
 
         _outage.LimitUntil.ShouldBeNull();
