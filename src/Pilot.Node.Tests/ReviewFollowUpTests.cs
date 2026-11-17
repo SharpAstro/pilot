@@ -167,12 +167,12 @@ public sealed class ReviewFollowUpTests : ReviewTestsBase
         var code = await SecondRound(FirstReport);
         (await Run(Verbs.Review, Verbs.FlightTarget(code), Reviewer(code), "pass", Answers)).Error.ShouldBeNull();
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        _github.CreateIssueHold = release.Task;
+        _github.MergeHold = release.Task;
 
         var first = Merge(code);
         var second = Merge(code);
-        // The first ask is parked at the hold before either is released, so the two asks really overlap.
-        await _github.CreateIssueHoldReached.Task.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
+        // The first ask is parked at the forge's merge before either is released, so the two asks really overlap.
+        await _github.MergeHoldReached.Task.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
         release.SetResult();
         var results = await Task.WhenAll(first, second).WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
 
