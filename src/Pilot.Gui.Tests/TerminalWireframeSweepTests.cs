@@ -159,10 +159,11 @@ public static class TerminalWireframeSweepTests
     }
 
     /// <summary>
-    /// A failing case's cells as text, one line a row, written beside the test's output (and to <c>PILOT_JOB_ARTIFACTS</c> when a pilot job runs it):
-    /// what the terminal shows, to start the fix from, as the GUI sweep writes a PNG.
+    /// A case's cells as text, one line a row, written beside the test's output (<c>terminal-wireframe/</c>) for every case, so a page can be looked
+    /// at in cells as the GUI sweep's PNG shows it in pixels; a <paramref name="failed"/> case's also goes to <c>PILOT_JOB_ARTIFACTS</c> when a
+    /// pilot job runs it, to start the fix from.
     /// </summary>
-    internal static string CaptureOf(CellBuffer buffer, int columns, int rows, string key)
+    internal static string CaptureOf(CellBuffer buffer, int columns, int rows, string key, bool failed)
     {
         var text = string.Join(Environment.NewLine, Enumerable.Range(0, rows).Select(y => string.Concat(Enumerable.Range(0, columns).Select(x => buffer.BackAt(x, y).Glyph)).TrimEnd()));
         var name = string.Concat(key.Select(c => char.IsLetterOrDigit(c) || c is '.' or '-' ? c : '_')) + ".txt";
@@ -170,7 +171,7 @@ public static class TerminalWireframeSweepTests
         Directory.CreateDirectory(folder);
         var path = Path.Combine(folder, name);
         File.WriteAllText(path, text);
-        if (Environment.GetEnvironmentVariable("PILOT_JOB_ARTIFACTS") is { Length: > 0 } artifacts && Directory.Exists(artifacts))
+        if (failed && Environment.GetEnvironmentVariable("PILOT_JOB_ARTIFACTS") is { Length: > 0 } artifacts && Directory.Exists(artifacts))
         {
             File.WriteAllText(Path.Combine(artifacts, "terminal-wireframe-" + name), text);
         }
@@ -205,12 +206,13 @@ public static class TerminalWireframeSweepTests
             }
         }
         var message = new System.Text.StringBuilder();
+        var capture = CaptureOf(buffer, columns, rows, key, failed: unknown.Count > 0);
         if (unknown.Count > 0)
         {
             message.AppendLine($"{key}: {unknown.Count} finding(s) not in the baseline:");
             foreach (var u in unknown) { message.AppendLine($"  [{u.Rule}] {u.What}"); }
             message.AppendLine(CellWireframe.Describe(result));
-            message.AppendLine($"  capture: {CaptureOf(buffer, columns, rows, key)}");
+            message.AppendLine($"  capture: {capture}");
         }
         if (expected.Count > 0)
         {
