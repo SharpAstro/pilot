@@ -191,12 +191,12 @@ public sealed class TurnOutage(NodeState state)
     }
 
     /// <summary>One look at the sessions: a turn later than the outage's start (a response, or more context than at the first look) ends it, closes its card and keeps its window.</summary>
-    public void Look(SessionRow[] sessions, DateTimeOffset now)
+    public void Look(SessionRow[] sessions, DateTimeOffset now, UsageRow? usage = null)
     {
         var limitEnded = false;
         lock (_gate)
         {
-            limitEnded = LookLocked(sessions, now);
+            limitEnded = LookLocked(sessions, now, usage);
         }
         if (limitEnded)
         {
@@ -208,7 +208,7 @@ public sealed class TurnOutage(NodeState state)
     /// <summary>Raised once when an open account limit ends (the first look at or after its reset), after the outage is closed.</summary>
     public event Action? LimitEnded;
 
-    private bool LookLocked(SessionRow[] sessions, DateTimeOffset now)
+    private bool LookLocked(SessionRow[] sessions, DateTimeOffset now, UsageRow? usage)
     {
         {
             if (_since is not { } since)
@@ -221,6 +221,17 @@ public sealed class TurnOutage(NodeState state)
                 if (now >= until)
                 {
                     Close(since, now, $"the usage limit ended at {until.ToLocalTime():HH:mm}");
+                    return true;
+                }
+                // The account's own figures end it (#1141): fresh figures for the window the limit belongs to, of the account it was seen
+                // under, read after it was seen, that show the window was reset (a later reset) or read under 90%.
+                if (FiguresEnd(usage, until) is { } figures)
+                {
+                    var age = Math.Max(0, (int)(now - figures.ReadAt).TotalMinutes);
+                    _loginChangedAt = now;
+                    _evidenceEndedAt = now;
+                    Close(since, now, $"the account's usage reads {figures.UsedPercent:0}% since {figures.ReadAt.ToLocalTime():HH:mm} (figures {age} min old), so the usage limit no longer holds");
+                    state.PutLoginChanged(now);
                     return true;
                 }
                 // Evidence ends it (#1123): a session that began after the limit was seen, on the family of the one that reported it, and
@@ -251,6 +262,53 @@ public sealed class TurnOutage(NodeState state)
         }
     }
 
+    /// <summary>How far a session error's reset and the status line's resets_at may differ and still be the same window's (they are written separately).</summary>
+    public static readonly TimeSpan WindowTolerance = TimeSpan.FromMinutes(10);
+
+    /// <summary>The usage share under which a window no longer holds a limit.</summary>
+    public const double LimitEndsBelow = 90;
+
+    private static bool? FiveHourWindowOf(UsageRow? usage, DateTimeOffset until)
+    {
+        if (usage?.FiveHour is { ResetsAt: { } five } && (five - until).Duration() <= WindowTolerance)
+        {
+            return true;
+        }
+        if (usage?.SevenDay is { ResetsAt: { } seven } && (seven - until).Duration() <= WindowTolerance)
+        {
+            return false;
+        }
+        return null;
+    }
+
+    private (double UsedPercent, DateTimeOffset ReadAt)? FiguresEnd(UsageRow? usage, DateTimeOffset until)
+    {
+        if (_limitWindowFiveHour is not { } fiveHour || _limitSeenAt is not { } seen || _limitAccount is not { } account
+            || usage is not { HasFigures: true, Account: { } who }
+            || !string.Equals(who.Email, account, StringComparison.OrdinalIgnoreCase) || usage.ReadAt <= seen)
+        {
+            return null;
+        }
+        var window = fiveHour ? usage.FiveHour : usage.SevenDay;
+        if (window is null || !(window.UsedPercent < LimitEndsBelow || window.ResetsAt > until + WindowTolerance))
+        {
+            return null;
+        }
+        return (window.UsedPercent, usage.ReadAt);
+    }
+
+    private void NoteWindow(DateTimeOffset until)
+    {
+        var usage = state.Usage();
+        _limitWindowFiveHour = FiveHourWindowOf(usage, until);
+        _limitAccount = usage?.Account?.Email;
+    }
+
+    // The window the open limit belongs to (true the 5-hour, false the 7-day, null none: a spend or individual limit the figures never
+    // end), and the account it was seen under (#1141). Memory only, like the limit itself.
+    private bool? _limitWindowFiveHour;
+    private string? _limitAccount;
+
     private void Close(DateTimeOffset since, DateTimeOffset now, string why)
     {
         _last = (since, now);
@@ -259,6 +317,8 @@ public sealed class TurnOutage(NodeState state)
         _limitUntil = null;
         _limitFamily = null;
         _limitSeenAt = null;
+        _limitWindowFiveHour = null;
+        _limitAccount = null;
         _stalled.Clear();
         _waiting.Clear();
         _probeKey = null;
@@ -332,6 +392,7 @@ public sealed class TurnOutage(NodeState state)
                 {
                     _limitUntil = until;
                     _limitFamily ??= family;
+                    NoteWindow(until);
                     RaiseLimitCard(at, until, why);
                 }
                 return;
@@ -346,6 +407,7 @@ public sealed class TurnOutage(NodeState state)
             _limitUntil = until;
             _limitFamily = family;
             _limitSeenAt = at;
+            NoteWindow(until);
             _baseline = null;
             _stalled.Clear();
             _waiting.Clear();
@@ -366,7 +428,7 @@ public sealed class TurnOutage(NodeState state)
                 new CardChoice { Label = "Mark it read", Verb = Verbs.Dismiss, Target = "" },
                 new CardChoice { Label = "Lift the limit", Verb = Verbs.LiftLimit, Target = Verbs.NodeTarget },
             ],
-            summary: $"The account is on its usage limit until {until.ToLocalTime():HH:mm} ({why}). The node starts nothing and rings nothing for a session that took no turn; what waited starts then, and this card closes by itself. Marking it read leaves the hold. If the limit is another login's (you logged in again and sessions take turns), lift it.");
+            summary: $"The account is on its usage limit until {until.ToLocalTime():HH:mm} ({why}). The node starts nothing and rings nothing for a session that took no turn; what waited starts then (or sooner, when the account's figures show the window was reset), and this card closes by itself. Marking it read leaves the hold. If the limit is another login's (you logged in again and sessions take turns), lift it.");
         _cardId = card.Id;
     }
 

@@ -500,6 +500,165 @@ public sealed class AccountLimitTests
         _gate.Hold("w", 95, 100, "worker-start", "flight/TIA1", "TIA1 waits").ShouldBeTrue();
     }
 
+    // #1141: the account's own figures end a limit whose window they show reset.
+    private const string Mail = "b@example.org";
+
+    private static UsageRow Figures(DateTimeOffset readAt, double fiveHour, DateTimeOffset fiveReset, string? mail = Mail, double? sevenDay = null, DateTimeOffset? sevenReset = null) => new()
+    {
+        Account = new AccountRow { Email = mail! },
+        FiveHour = new UsageWindow { UsedPercent = fiveHour, ResetsAt = fiveReset },
+        SevenDay = sevenDay is { } d ? new UsageWindow { UsedPercent = d, ResetsAt = sevenReset } : null,
+        ReadAt = readAt,
+    };
+
+    // A limit seen at Start, ending at Start+90m, on the 5-hour window the held figures show full with that reset.
+    private async Task<DateTimeOffset> OpenFiveHourLimitAsync(UsageRow? held = null)
+    {
+        var until = Start.AddMinutes(90);
+        _state.PutUsage(held ?? Figures(Start.AddMinutes(-1), 100, until));
+        _state.PutSession(LimitRow(Mail, until));
+        await _watch.LookAsync(Ct);
+        _outage.LimitUntil.ShouldBe(until);
+        return until;
+    }
+
+    [Fact]
+    public async Task AFreshFiveHourReadingWithALaterResetAndOnePercentEndsTheLimitAndTheHeldStartsGo()
+    {
+        await OpenFiveHourLimitAsync();
+        var ended = 0;
+        _outage.LimitEnded += () => ended++;
+        _gate.Hold("w", 95, 100, "worker-start", "flight/TIA1", "TIA1 waits").ShouldBeTrue();
+
+        _time.Advance(TimeSpan.FromMinutes(8));
+        _state.PutUsage(Figures(_time.GetUtcNow(), 1, Start.AddHours(5)));
+        _time.Advance(TimeSpan.FromMinutes(2));
+        await _watch.LookAsync(Ct);
+
+        _outage.LimitUntil.ShouldBeNull();
+        _outage.IsOpen.ShouldBeFalse();
+        ended.ShouldBe(1);
+        _gate.Hold("w", 95, 100, "worker-start", "flight/TIA1", "TIA1 waits").ShouldBeFalse();
+        var read = Start.AddMinutes(8);
+        _state.Cards().Single(c => c.Kind == TurnOutage.LimitCardKind).Outcome.ShouldBe(
+            $"the account's usage reads 1% since {read.ToLocalTime():HH:mm} (figures 2 min old), so the usage limit no longer holds");
+    }
+
+    [Fact]
+    public async Task FiguresReadBeforeTheLimitWasSeenEndNothing()
+    {
+        var until = Start.AddMinutes(90);
+        _state.PutUsage(Figures(Start.AddMinutes(-10), 100, until));
+        _time.Advance(TimeSpan.FromMinutes(5));
+        _state.PutSession(LimitRow(Mail, until));
+        await _watch.LookAsync(Ct);
+        _outage.LimitUntil.ShouldBe(until);
+
+        _state.PutUsage(Figures(Start.AddMinutes(-2), 1, Start.AddHours(5)));
+        _time.Advance(TimeSpan.FromMinutes(1));
+        await _watch.LookAsync(Ct);
+
+        _outage.LimitUntil.ShouldBe(until);
+    }
+
+    [Fact]
+    public async Task AHundredPercentWithTheSameResetEndsNothing()
+    {
+        var until = await OpenFiveHourLimitAsync();
+        _time.Advance(TimeSpan.FromMinutes(8));
+        _state.PutUsage(Figures(_time.GetUtcNow(), 100, until.AddMinutes(2)));
+        await _watch.LookAsync(Ct);
+
+        _outage.LimitUntil.ShouldBe(until);
+    }
+
+    [Fact]
+    public async Task ALimitMatchingNeitherWindowIsNeverEndedByFigures()
+    {
+        // A spend limit: its end is no window's reset.
+        var until = Start.AddMinutes(90);
+        _state.PutUsage(Figures(Start.AddMinutes(-1), 100, Start.AddHours(4), sevenDay: 50, sevenReset: Start.AddDays(3)));
+        _state.PutSession(LimitRow(Mail, until));
+        await _watch.LookAsync(Ct);
+        _outage.LimitUntil.ShouldBe(until);
+
+        _time.Advance(TimeSpan.FromMinutes(8));
+        _state.PutUsage(Figures(_time.GetUtcNow(), 1, Start.AddHours(9), sevenDay: 1, sevenReset: Start.AddDays(7)));
+        await _watch.LookAsync(Ct);
+
+        _outage.LimitUntil.ShouldBe(until);
+    }
+
+    [Fact]
+    public async Task AnotherAccountsReadingEndsNothing()
+    {
+        await OpenFiveHourLimitAsync();
+        _time.Advance(TimeSpan.FromMinutes(8));
+        _state.PutUsage(Figures(_time.GetUtcNow(), 1, Start.AddHours(5), "other@example.org"));
+        await _watch.LookAsync(Ct);
+
+        _outage.LimitUntil.ShouldBe(Start.AddMinutes(90));
+    }
+
+    [Fact]
+    public async Task ASessionThatBeganAfterAFiguresEndAndReportsTheLimitAgainReopensItAndTheSameReadingDoesNotEndItAgain()
+    {
+        await OpenFiveHourLimitAsync();
+        _time.Advance(TimeSpan.FromMinutes(8));
+        var reading = Figures(_time.GetUtcNow(), 1, Start.AddHours(5));
+        _state.PutUsage(reading);
+        await _watch.LookAsync(Ct);
+        _outage.LimitUntil.ShouldBeNull();
+
+        // The old row does not reopen it; a session that began after the end and reports the limit again does.
+        _time.Advance(TimeSpan.FromMinutes(1));
+        await _watch.LookAsync(Ct);
+        _outage.LimitUntil.ShouldBeNull();
+        var again = Start.AddHours(5);
+        _state.PutSession(LimitRow(Mail, again) with { Id = "yy000000", SessionId = "yy000000-0000-4000-8000-000000000000", StartedAt = _time.GetUtcNow() });
+        _time.Advance(TimeSpan.FromMinutes(1));
+        await _watch.LookAsync(Ct);
+        _outage.LimitUntil.ShouldBe(again);
+
+        // The same reading was read before the limit was seen again: it ends nothing.
+        _time.Advance(TimeSpan.FromMinutes(1));
+        await _watch.LookAsync(Ct);
+        _outage.LimitUntil.ShouldBe(again);
+        _state.Usage()!.ReadAt.ShouldBe(reading.ReadAt);
+    }
+
+    [Fact]
+    public async Task ASevenDayLimitIsJudgedByTheSevenDayFigures()
+    {
+        var until = Start.AddDays(2);
+        _state.PutUsage(Figures(Start.AddMinutes(-1), 100, Start.AddHours(3), sevenDay: 100, sevenReset: until));
+        _state.PutSession(LimitRow(Mail, until));
+        await _watch.LookAsync(Ct);
+        _outage.LimitUntil.ShouldBe(until);
+
+        // The 5-hour window reading low does not end a 7-day limit.
+        _time.Advance(TimeSpan.FromMinutes(8));
+        _state.PutUsage(Figures(_time.GetUtcNow(), 1, Start.AddHours(8), sevenDay: 100, sevenReset: until));
+        await _watch.LookAsync(Ct);
+        _outage.LimitUntil.ShouldBe(until);
+
+        _time.Advance(TimeSpan.FromMinutes(8));
+        _state.PutUsage(Figures(_time.GetUtcNow(), 1, Start.AddHours(8), sevenDay: 2, sevenReset: Start.AddDays(9)));
+        await _watch.LookAsync(Ct);
+        _outage.LimitUntil.ShouldBeNull();
+    }
+
+    [Fact]
+    public void TheLimitCardAndItsSummaryNameTheFiguresEndWordForWord()
+    {
+        var until = Start.AddHours(1);
+        _outage.OpenLimit(until, "one", Start);
+
+        var card = Open().ShouldHaveSingleItem();
+        card.Summary.ShouldBe($"The account is on its usage limit until {until.ToLocalTime():HH:mm} (one). The node starts nothing and rings nothing for a session that took no turn; what waited starts then (or sooner, when the account's figures show the window was reset), and this card closes by itself. Marking it read leaves the hold. If the limit is another login's (you logged in again and sessions take turns), lift it.");
+        CardSummaries.For(TurnOutage.LimitCardKind, "node", card.Title, card.Choices).ShouldBe("The account is on a usage or spend limit, so the node starts no session of its own and rings nothing for a session that took no turn. Nothing to do; what waited starts at the reset, when the account's figures show the window was reset, or when a person lifts the hold, and this card closes by itself.");
+    }
+
     [Fact]
     public void TheModelFamilyIsNamedOnceAndAnUnknownModelHasNone()
     {
