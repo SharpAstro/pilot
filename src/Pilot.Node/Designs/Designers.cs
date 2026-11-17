@@ -29,7 +29,7 @@ public sealed class Designers(NodeState state, DesignStore store, IWorkerLaunche
     /// <summary>How the CLI is run in the designer's brief (<see cref="Briefs.Run"/>).</summary>
     public string Run { get; init; } = Briefs.Run(null, null);
 
-    /// <summary>Says <paramref name="command"/> to a session through the node's messenger, which resumes an ended session with its context; null where none is wired (a design store without sessions).</summary>
+    /// <summary>Says a command to a session through the node's messenger, which resumes an ended session with its context; null where none is wired (a design store without sessions).</summary>
     public Func<CommandRequest, CancellationToken, Task<CommandResult>>? Say { get; set; }
 
     /// <summary>The end of the asks made so far, for a test to await.</summary>
