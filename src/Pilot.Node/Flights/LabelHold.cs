@@ -101,7 +101,7 @@ internal static class LabelHold
             why = said;
             by = CommentBy(newest[..colon]) ?? by;
         }
-        var hold = new FlightOnHold { Reason = why, Since = time.GetUtcNow(), By = by, Labelled = true };
+        var hold = new FlightOnHold { Reason = why, Since = time.GetUtcNow(), By = by, Labelled = true, FromLabel = true };
         var held = state.UpdateFlight(code, f => f.State != FlightState.Landed && f.OnHold is null ? f with { OnHold = hold } : null);
         if (held is null)
         {
@@ -114,7 +114,7 @@ internal static class LabelHold
         state.CloseCardsAbout(target, $"{code} is on hold by {by}", LegCommander.PrReady, LegCommander.MergeFailed, PrChecks.AutopilotMergeRefused, LegCommander.NextStepKind);
         state.CloseCardsAbout(target, "on hold", LegCommander.OnHoldKind);
         state.RaiseCard(CardBin.Handled, LegCommander.OnHoldKind, target, $"{code} is on hold by {by}: {why}",
-            $"{PilotMarks.Hold} was put on {held.Item.Noun} {held.Item.Display} on GitHub. The node starts nothing for {code} and takes no outward step until the label is taken off (or `pilot flight unground {code}`). "
+            $"{PilotMarks.Hold} was put on {held.Item.Noun} on GitHub. The node starts nothing for {code} and takes no outward step until the label is taken off (or `pilot flight unground {code}`). "
             + RunningNote
             + (took.Count > 0 ? $" {string.Join(", ", took)}." : "")
             + (problem is not null ? $" {problem}." : ""));

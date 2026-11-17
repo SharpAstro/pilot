@@ -211,7 +211,7 @@ public sealed partial class FlightCommander
         {
             // A line, as every refused node label is (#797): the flight flies on, and the detail says what GitHub answered.
             state.RaiseCard(CardBin.Handled, "node-label-refused", Verbs.FlightTarget(flight.Code),
-                $"{PilotMarks.NodeLabel(from)} is still on {flight.Item.Noun} {flight.Item.Display}", ex.Message);
+                $"{PilotMarks.NodeLabel(from)} is still on {flight.Item.Noun}", ex.Message);
         }
     }
 

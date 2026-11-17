@@ -25,6 +25,8 @@ public static class SessionEndReasons
     public const string Finished = "finished";
     public const string Landed = "stopped on land";
     public const string Merged = "stopped on merge";
+    /// <summary>A flight withdrawn as a mistake (PIL1111): its sessions end with it, its plane and branch go.</summary>
+    public const string Withdrawn = "stopped on withdraw";
     public const string Watchtower = "stopped by the watchtower";
     public const string Person = "stopped by a person";
     public const string Crashed = "crashed";

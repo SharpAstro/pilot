@@ -132,6 +132,10 @@ public static class StoreFixtureWriter
         state.RaiseCard(CardBin.Handled, "plane-left", "flight/PIL4", "PIL4 landed", "left the plane");
         state.ArchiveFlight("PIL4");
 
+        // A flight made by mistake and withdrawn: the flightWithdrawn event leaves nothing of it (contract 5).
+        state.PutFlight(Flight("PIL5", FlightState.Flying, 5));
+        state.WithdrawFlight("PIL5");
+
         // Cards: one raised, one changed.
         var raised = state.RaiseCard(CardBin.Ring, "worker", "flight/PIL3/only", "a worker stopped", "in the journal");
         state.AddAsker(raised.Id, "fixture");

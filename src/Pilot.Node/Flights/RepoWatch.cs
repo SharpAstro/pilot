@@ -334,6 +334,15 @@ public sealed partial class RepoWatch(NodeState state, RepoCatalog repos, Planes
                 var comments = await read($"comments of #{issue.Number}", async () => await LabelHold.CommentsAsync(github, repo.Path, issue.Number, cancellationToken));
                 await LabelHold.ApplyAsync(state, github, time, current.Code, comments, cancellationToken);
             }
+            else if (!labelled && current.OnHold is { Labelled: true, Own: true } ownToo)
+            {
+                // The label's part ends; the flight's own ground stands (#1111).
+                if (state.UpdateFlight(current.Code, f => f.OnHold is { Labelled: true, Own: true } h ? f with { OnHold = h with { Labelled = null, FromLabel = null } } : null) is not null)
+                {
+                    state.RaiseCard(CardBin.Handled, LegCommander.OnHoldKind, target, $"{current.Code} is held by its own ground only",
+                        $"{PilotMarks.Hold} was taken off {current.Item.Noun} on GitHub, but {ownToo.By} grounded {current.Code} itself ({ownToo.Reason}), so it stays on hold until `pilot flight unground {current.Code}`.");
+                }
+            }
             else if (!labelled && current.OnHold is { Labelled: true } held)
             {
                 if (state.UpdateFlight(current.Code, f => f.OnHold is { Labelled: true } ? f with { OnHold = null } : null) is not null)
@@ -341,7 +350,7 @@ public sealed partial class RepoWatch(NodeState state, RepoCatalog repos, Planes
                     state.CloseCardsAbout(target, $"{PilotMarks.Hold} was taken off {current.Item.Display}", LegCommander.OnHoldKind);
                     state.LiftHoldFromCards(current.Code);
                     state.RaiseCard(CardBin.Handled, LegCommander.OnHoldKind, target, $"{current.Code} is off hold",
-                        $"{PilotMarks.Hold} was taken off {current.Item.Noun} {current.Item.Display} on GitHub, so the hold by {held.By} ({held.Reason}) ends. The node takes its next due step.");
+                        $"{PilotMarks.Hold} was taken off {current.Item.Noun} on GitHub, so the hold by {held.By} ({held.Reason}) ends. The node takes its next due step.");
                 }
             }
             else if (!labelled && current.OnHold is { Labelled: false } retry)
@@ -361,7 +370,8 @@ public sealed partial class RepoWatch(NodeState state, RepoCatalog repos, Planes
             }
             else if (labelled && current.OnHold is { Labelled: not true } known)
             {
-                state.UpdateFlight(local.Code, f => f.OnHold == known ? f with { OnHold = known with { Labelled = true } } : null);
+                // A flight's own ground that the label now holds too: it says so, and the label's removal then releases the label's part only.
+                state.UpdateFlight(local.Code, f => f.OnHold == known ? f with { OnHold = known with { Labelled = true, FromLabel = known.Own == true ? true : known.FromLabel } } : null);
             }
         }
     }

@@ -62,6 +62,16 @@ public static class Archiving
     public static bool IsHandledAbout(CardRow card, string code) => card.Bin == CardBin.Handled && FlightMove.IsAbout(card, code);
 }
 
+/// <summary>
+/// A flight was withdrawn as a mistake (PIL1111): its row, its legs and every card about it go from every snapshot after it, and its code is free
+/// again. Nothing of it is archived: it never did any work.
+/// </summary>
+public sealed record FlightWithdrawnEvent : NodeEvent
+{
+    /// <summary>The flight's code.</summary>
+    public required string Code { get; init; }
+}
+
 /// <summary>A landed flight left the node's live state for its archive: its row, its legs and its Handled cards about it go from every snapshot after it.</summary>
 public sealed record FlightArchivedEvent : NodeEvent
 {

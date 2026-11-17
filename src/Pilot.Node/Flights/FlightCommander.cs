@@ -94,6 +94,9 @@ public sealed partial class FlightCommander(NodeState state, Planes planes, Time
     /// <summary>The Handled card that says a flight went to another node, as this one is in maintenance.</summary>
     public const string RoutedKind = "routed";
 
+    /// <summary>The For-you card that offers to withdraw the newer of two live flights on one issue (PIL1111).</summary>
+    public const string DuplicateFlightsKind = "duplicate-flights";
+
     /// <summary>The Handled card that says who undid a flight's connection.</summary>
     public const string DisconnectedKind = "disconnected";
 
@@ -101,7 +104,7 @@ public sealed partial class FlightCommander(NodeState state, Planes planes, Time
     public const string ReceivedKind = "received";
 
     /// <summary>Whether <paramref name="verb"/> is one of these.</summary>
-    public static bool Handles(string verb) => verb is Verbs.CreateFlight or Verbs.ReceiveFlight or Verbs.Connect or Verbs.Disconnect or Verbs.Land or Verbs.FlyAnyway or Verbs.FlightPriority or Verbs.AdoptFlight;
+    public static bool Handles(string verb) => verb is Verbs.CreateFlight or Verbs.ReceiveFlight or Verbs.Connect or Verbs.Disconnect or Verbs.Land or Verbs.FlyAnyway or Verbs.FlightPriority or Verbs.AdoptFlight or Verbs.WithdrawFlight;
 
     /// <summary>Runs <paramref name="command"/>; one that waits for the lock past <see cref="LockWait.Patience"/> is answered as queued, saying what holds it, and runs once it frees.</summary>
     public Task<CommandResult> RunAsync(CommandRequest command, CancellationToken cancellationToken) =>
@@ -134,6 +137,9 @@ public sealed partial class FlightCommander(NodeState state, Planes planes, Time
                         break;
                     case Verbs.FlyAnyway:
                         FlyAnyway(command);
+                        break;
+                    case Verbs.WithdrawFlight:
+                        made = await WithdrawAsync(command, cancellationToken);
                         break;
                     case Verbs.FlightPriority:
                         made = await SetPriorityAsync(command, cancellationToken);

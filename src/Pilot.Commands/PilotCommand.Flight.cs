@@ -29,7 +29,7 @@ public static partial class PilotCommand
             var issue = Arg("issue", "The issue the flight flies");
             var title = Words("title", "What it is for, in a line", required: false);
             var repo = new Option<string?>("--repo") { Description = RepoOptionDescription };
-            var anyway = new Option<bool>(Verbs.AnywayFlag) { Description = "Create it although the issue carries another node's pilot node: label; says so on the issue" };
+            var anyway = new Option<bool>(Verbs.AnywayFlag) { Description = "Create it although the issue carries another node's pilot node: label (says so on the issue), or although it already has a live flight (needs --why)" };
             // --why: --anyway overrides a gate, and the node refuses an override with no why naming the evidence (#926: the gate asked for
             // a --why the command did not take, and a --why typed anyway became title words).
             var create = Action(new Command("create", "A flight on an issue of this repo, and its plane") { Arguments = { issue, title }, Options = { repo, anyway, actingOn } },
@@ -82,6 +82,10 @@ public static partial class PilotCommand
 
             var land = Action(new Command("land", "The flight's work is in: its plane goes, its branch and code stay") { Arguments = { code }, Options = { actingOn } },
                 (p, client, ct) => Send(client, Verbs.Land, Verbs.FlightTarget(p.GetValue(code)!), [], who, ct, p.GetValue(actingOn)));
+
+            var withdrawWhy = Words("why", "Why the flight is a mistake (required: it goes on the Handled card)");
+            var withdraw = Action(new Command("withdraw", "End a mistaken flight that never did any work: its sessions, plane and branch go and its code is free; refused with a PR or commits past its base") { Arguments = { code, withdrawWhy }, Options = { actingOn } },
+                (p, client, ct) => Send(client, Verbs.WithdrawFlight, Verbs.FlightTarget(p.GetValue(code)!), p.GetValue(withdrawWhy) ?? [], who, ct, p.GetValue(actingOn)));
 
             var reviewStart = Action(new Command("review", "Start a fresh reviewer on the flight's branch (flight pr starts one by itself)") { Arguments = { code } },
                 (p, client, ct) => Send(client, Verbs.StartReview, Verbs.FlightTarget(p.GetValue(code)!), [], who, ct));
@@ -171,7 +175,7 @@ public static partial class PilotCommand
                         : throw new UsageException("archive takes a flight's code, or --landed");
                 });
             var flight = new Command("flight", "Flights: create, plan, check what they touch, overlap, connect, disconnect, fly past a package wait, open a PR, review, merge, land")
-                { Subcommands = { create, planFlight, planned, touches, overlap, separate, connectOverlap, connect, disconnect, fly, priority, move, adopt, pr, reviewStart, allowRound, ciBudget, hold, clear, ground, unground, merge, land, archive } };
+                { Subcommands = { create, planFlight, planned, touches, overlap, separate, connectOverlap, connect, disconnect, fly, priority, move, adopt, pr, reviewStart, allowRound, ciBudget, hold, clear, ground, unground, merge, land, withdraw, archive } };
 
             return flight;
         }

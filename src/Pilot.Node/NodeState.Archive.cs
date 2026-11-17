@@ -94,6 +94,33 @@ public sealed partial class NodeState
         }
     }
 
+    /// <summary>
+    /// Drops the withdrawn flight <paramref name="code"/> from the live state through a journaled event (PIL1111): its row, its legs and every
+    /// card about it. Nothing is archived. Throws <see cref="FlightException"/> when there is no such flight. The caller raises its own card after.
+    /// </summary>
+    public void WithdrawFlight(string code)
+    {
+        lock (_gate)
+        {
+            var flight = _flights.Values.FirstOrDefault(f => string.Equals(f.Code, code, StringComparison.OrdinalIgnoreCase))
+                ?? throw new FlightException($"There is no flight {code}");
+            Publish(new FlightWithdrawnEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Code = flight.Code });
+        }
+    }
+
+    private void RemoveWithdrawn(string code)
+    {
+        _flights.Remove(code);
+        foreach (var key in _legs.Keys.Where(k => string.Equals(k.Flight, code, StringComparison.Ordinal)).ToList())
+        {
+            _legs.Remove(key);
+        }
+        foreach (var id in _cards.Values.Where(c => FlightMove.IsAbout(c, code)).Select(c => c.Id).ToList())
+        {
+            _cards.Remove(id);
+        }
+    }
+
     // What a flight's archiving takes out of the state, as the event applies it (and NodeMirror, for every client and the journal's compaction).
     private void RemoveArchived(string code)
     {

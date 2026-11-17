@@ -459,6 +459,18 @@ public sealed record FlightOnHold
     /// </summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public bool? Labelled { get; init; }
+
+    /// <summary>
+    /// True when the owner grounded this flight on its own, with no label put for it because a sibling flight of this node shares the
+    /// issue (a label would hold the sibling too, #1111). Such a hold survives the label's removal. Null (an older store) reads as today:
+    /// a hold is tied to its label.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? Own { get; init; }
+
+    /// <summary>True when the <c>pilot: hold</c> label on the issue holds this flight (read by the repo sweep), alone or beside <see cref="Own"/>. Null reads as not from the label.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? FromLabel { get; init; }
 }
 
 /// <summary>A move whose outcome is not known yet (<see cref="FlightRow.MoveUnknown"/>).</summary>
@@ -633,7 +645,11 @@ public static class FlightWaiting
     public static string? HoldingText(FlightRow flight) => flight.Holding is { } holding ? $"holding: {holding.Reason}" : null;
 
     /// <summary>What a flight on the owner's hold says in a status line (<c>on hold by seb: waiting for the release</c>); null when it is not on hold.</summary>
-    public static string? OnHoldText(FlightRow flight) => flight.OnHold is { } hold ? $"on hold by {hold.By}: {hold.Reason}" : null;
+    public static string? OnHoldText(FlightRow flight) => flight.OnHold is not { } hold ? null
+        : hold is { FromLabel: true, Own: true } ? $"on hold by the label pilot: hold on {flight.Item.Display} and by {hold.By}: {hold.Reason}"
+        : hold.FromLabel == true ? $"on hold by the label pilot: hold on {flight.Item.Display}"
+        : hold.Own == true ? $"on hold by {hold.By} (this flight only): {hold.Reason}"
+        : $"on hold by {hold.By}: {hold.Reason}";
 
     /// <summary>A wait as a status line says it: <c>Drawboard.Core 1.2 on nuget.org</c>.</summary>
     public static string Text(PackageWait wait) => $"{wait.Id} {wait.Line} on nuget.org";
