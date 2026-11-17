@@ -14,7 +14,7 @@ public static partial class ReviewPoints
     public const string AnswerHeading = "Earlier points";
 
     /// <summary>The words that open a controller's pass-anyway tail; the passer's name follows.</summary>
-    public const string PassedTail =" (passed by ";
+    public const string PassedTail = " (passed by ";
 
     /// <summary>
     /// The prefix a reviewer puts on a new finding in text the fix round did not touch when it must still block; the kind follows,
@@ -49,7 +49,7 @@ public static partial class ReviewPoints
         {
             var lineEnd = report.IndexOf((char)10, at);
             var line = lineEnd < 0 ? report[(at + PassedTail.Length)..] : report[(at + PassedTail.Length)..lineEnd];
-            // The name is one word, straight after "(passed by ": prose "(passed by hand) ..." never reaches " over: " as the next words.
+            // The name is one word (the node's Who values never hold a space; one that did would leave the tail unrecognised), straight after "(passed by ": prose "(passed by hand) ..." never reaches " over: " as the next words.
             var nameEnd = line.IndexOf(' ');
             if (nameEnd > 0 && line[nameEnd..].StartsWith(" over: ", StringComparison.Ordinal) && !line[..nameEnd].Contains(')'))
             {

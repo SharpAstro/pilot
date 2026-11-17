@@ -148,6 +148,22 @@ public sealed class ReviewFollowUpTests : ReviewTestsBase
     }
 
     [Fact]
+    public void ProseSayingPassedByAfterTheControllerTailStillNamesTheController()
+    {
+        ReviewRound[] rounds =
+        [
+            new() { Round = 1, Verdict = ReviewState.Changes, Findings = "## Blocking
+- A is wrong in Parser.cs:10
+" },
+            new() { Round = 2, Verdict = ReviewState.Passed, Findings = "ready anyway (passed by controller over: the note said (passed by hand) here)" },
+        ];
+
+        var item = ReviewFollowUp.Read(rounds).Items.ShouldHaveSingleItem();
+        item.Why.ShouldContain("pass anyway by controller");
+        item.Why.ShouldNotContain("by hand");
+    }
+
+    [Fact]
     public async Task TwoMergeAsksTogetherFileOneIssueAndMergeOnce()
     {
         var code = await SecondRound(FirstReport);
@@ -157,6 +173,8 @@ public sealed class ReviewFollowUpTests : ReviewTestsBase
 
         var first = Merge(code);
         var second = Merge(code);
+        // The first ask is parked at the hold before either is released, so the two asks really overlap.
+        await _github.CreateIssueHoldReached.Task.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
         release.SetResult();
         var results = await Task.WhenAll(first, second).WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
 
