@@ -262,10 +262,14 @@ internal sealed class FakeGitHub : IGitHub
     /// <summary>When set, CreateIssueAsync waits for it before it does anything: a command handler held, as a node busy with a session start holds one.</summary>
     public Task? CreateIssueHold { get; set; }
 
+    /// <summary>Completed when CreateIssueAsync first reaches CreateIssueHold.</summary>
+    public TaskCompletionSource CreateIssueHoldReached { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
     public async Task<IssueInfo> CreateIssueAsync(string repoPath, string title, string? body, CancellationToken cancellationToken)
     {
         if (CreateIssueHold is { } hold)
         {
+            CreateIssueHoldReached.TrySetResult();
             await hold;
         }
         if (CreateIssueFails is { } why)

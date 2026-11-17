@@ -165,21 +165,46 @@ public sealed class ReviewFollowUpTests : ReviewTestsBase
     public async Task TwoMergeAsksTogetherFileOneIssueAndMergeOnce()
     {
         var code = await SecondRound(FirstReport);
+        // The pass-time filing fails, so the issue is filed by the merge path, where the two asks can race.
+        _github.CreateIssueFails = "gh could not reach GitHub";
+        (await Run(Verbs.Review, Verbs.FlightTarget(code), Reviewer(code), "pass", Answers)).Error.ShouldBeNull();
+        _github.CreateIssueFails = null;
+        _github.IssuesCreated.ShouldBeEmpty();
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _github.CreateIssueHold = release.Task;
+
+        var first = Merge(code);
+        await _github.CreateIssueHoldReached.Task.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
+        // The first ask is parked filing the issue; the second, asked now, is answered while it is held, so the two really overlap.
+        var second = await Merge(code).WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
+        first.IsCompleted.ShouldBeFalse();
+        release.SetResult();
+        var firstResult = await first.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
+
+        firstResult.Error.ShouldBeNull();
+        second.Error.ShouldBeNull();
+        _github.IssuesCreated.ShouldHaveSingleItem();
+        _github.Merged.ShouldHaveSingleItem();
+    }
+
+    [Fact]
+    public async Task TwoOverlappingMergeAsksMergeOnce()
+    {
+        var code = await SecondRound(FirstReport);
         (await Run(Verbs.Review, Verbs.FlightTarget(code), Reviewer(code), "pass", Answers)).Error.ShouldBeNull();
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         _github.MergeHold = release.Task;
 
         var first = Merge(code);
-        var second = Merge(code);
-        // The first ask is parked at the forge's merge before either is released, so the two asks really overlap.
         await _github.MergeHoldReached.Task.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
+        var second = Merge(code);
+        // One of the two is answered while the other is held at the forge's merge: the overlap, shown from the second ask's side.
+        (await Task.WhenAny(first, second).WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken)).ShouldBe(second);
         release.SetResult();
         var results = await Task.WhenAll(first, second).WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
 
-        // One ask files and merges; the other, in together with it, is either the same merge or told the flight is landed. Never a second issue or merge.
         results.ShouldContain(r => r.Error == null);
         results.Where(r => r.Error != null).ShouldAllBe(r => r.Error!.Contains("landed"));
-        _github.IssuesCreated.ShouldHaveSingleItem();
         _github.Merged.ShouldHaveSingleItem();
     }
 
