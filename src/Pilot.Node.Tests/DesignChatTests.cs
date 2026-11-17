@@ -95,10 +95,11 @@ public sealed class DesignChatTests : IDisposable
         _store.Detail(id).Brief.ShouldNotBeNull().ShouldContain("## 2026-11-17T09:00:00Z\n\nmake the night list wider,\n  and *darker*\n");
 
         var page = Run(Verbs.DesignChat, id).DesignChat.ShouldNotBeNull();
-        var entry = page.Entries.ShouldHaveSingleItem();
+        var entry = page.Entries.Skip(1).ShouldHaveSingleItem();
+        page.Entries[0].Text.ShouldBe("a night list");
         entry.Kind.ShouldBe(TranscriptKind.User);
         entry.Text.ShouldBe("make the night list wider,\n  and *darker*");
-        entry.Index.ShouldBe(0);
+        entry.Index.ShouldBe(1);
     }
 
     [Fact]
@@ -109,7 +110,7 @@ public sealed class DesignChatTests : IDisposable
         Run(Verbs.DesignSay, id, "first change").Ok.ShouldBeTrue();
         await _designers.Settled;
         var first = Run(Verbs.DesignChat, id).DesignChat.ShouldNotBeNull();
-        first.Total.ShouldBe(2);
+        first.Total.ShouldBe(3);
 
         _time.Advance(TimeSpan.FromMinutes(5));
         DesignerReplies("2026-11-17T09:05:00Z", "Widened the list.");
@@ -122,12 +123,12 @@ public sealed class DesignChatTests : IDisposable
 
         var later = Run(Verbs.DesignChat, id, (first.Total - 1).ToString()).DesignChat.ShouldNotBeNull();
         later.Entries.Select(e => e.Text).ShouldBe(["Widened the list.", "published v2: message"]);
-        later.Entries.Select(e => e.Index).ShouldBe([2, 3]);
-        later.Total.ShouldBe(4);
+        later.Entries.Select(e => e.Index).ShouldBe([3, 4]);
+        later.Total.ShouldBe(5);
 
         var whole = Run(Verbs.DesignChat, id).DesignChat.ShouldNotBeNull();
-        whole.Entries.Select(e => e.Text).ShouldBe(["published v1: brief", "first change", "Widened the list.", "published v2: message"]);
-        whole.Entries[3].Kind.ShouldBe(TranscriptKind.Divider);
+        whole.Entries.Select(e => e.Text).ShouldBe(["published v1: brief", "a night list", "first change", "Widened the list.", "published v2: message"]);
+        whole.Entries[4].Kind.ShouldBe(TranscriptKind.Divider);
     }
 
     [Fact]
@@ -135,7 +136,7 @@ public sealed class DesignChatTests : IDisposable
     {
         var id = await DesignWithDesignerAsync();
         _store.Update(id, r => r with { Current = 1, Versions = 1, History = [new DesignVersionRow { Number = 1, At = Start, Why = "added the bind rows to the settings screen" }] });
-        Run(Verbs.DesignChat, id).DesignChat.ShouldNotBeNull().Entries.Select(e => e.Text).ShouldBe(["published v1: added the bind rows to the settings screen"]);
+        Run(Verbs.DesignChat, id).DesignChat.ShouldNotBeNull().Entries.Select(e => e.Text).ShouldBe(["a night list", "published v1: added the bind rows to the settings screen"]);
     }
 
     [Fact]
@@ -147,9 +148,9 @@ public sealed class DesignChatTests : IDisposable
         // A real design-check on the starter draft is a clean check, and says so with its count.
         Run(Verbs.DesignDraft, id).Ok.ShouldBeTrue();
         Run(Verbs.DesignCheck, id);
-        Status(id).ShouldBe("checking: 0 findings from the last design-check");
+        Status(id).ShouldBe("checking: 0 findings");
         _store.Update(id, r => r with { CheckFindings = 3 });
-        Status(id).ShouldBe("checking: 3 findings from the last design-check");
+        Status(id).ShouldBe("checking: 3 findings");
 
         _store.Update(id, r => r with { DesignerPhase = DesignerPhases.Rendering });
         Status(id).ShouldBe("rendering");
@@ -179,7 +180,7 @@ public sealed class DesignChatTests : IDisposable
         _said.ShouldBeEmpty();
         Status(id).ShouldStartWith("held until 11:00");
         _store.Find(id)!.DesignerPending.ShouldBe(["while held"]);
-        Run(Verbs.DesignChat, id).DesignChat!.Entries.ShouldHaveSingleItem().Text.ShouldBe("while held");
+        Run(Verbs.DesignChat, id).DesignChat!.Entries.Skip(1).ShouldHaveSingleItem().Text.ShouldBe("while held");
 
         _time.Advance(TimeSpan.FromHours(3));
         _state.PutUsage(new UsageRow { ReadAt = _time.GetUtcNow(), FiveHour = new UsageWindow { UsedPercent = 5, ResetsAt = _time.GetUtcNow().AddHours(5) } });
@@ -203,7 +204,7 @@ public sealed class DesignChatTests : IDisposable
         Path.GetFileName(kept).ShouldBe("1-sketch_one.png");
         File.ReadAllBytes(kept).ShouldBe(png);
         _said.ShouldHaveSingleItem().Args[0].ShouldContain(kept);
-        Run(Verbs.DesignChat, id).DesignChat!.Entries.ShouldHaveSingleItem().Text.ShouldBe("like this\n[picture: pictures/1-sketch_one.png]");
+        Run(Verbs.DesignChat, id).DesignChat!.Entries.Skip(1).ShouldHaveSingleItem().Text.ShouldBe("like this\n[picture: pictures/1-sketch_one.png]");
     }
 
     [Fact]
@@ -220,7 +221,7 @@ public sealed class DesignChatTests : IDisposable
         var again = new DesignChat(new DesignStore(_data, _time), new TranscriptBook(_profile.Profile)).Page(id, -1);
 
         again.Entries.Select(e => (e.Index, e.Kind, e.Text, e.At)).ShouldBe(before.Entries.Select(e => (e.Index, e.Kind, e.Text, e.At)));
-        again.Entries.Select(e => e.Text).ShouldBe(["kept words", "Done.", "published v1: brief"]);
+        again.Entries.Select(e => e.Text).ShouldBe(["a night list", "kept words", "Done.", "published v1: brief"]);
         again.Status.ShouldBe(before.Status);
     }
 
@@ -233,7 +234,69 @@ public sealed class DesignChatTests : IDisposable
             """{"type":"assistant","timestamp":"2026-11-17T09:00:40Z","message":{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"pilot design check DSN-1"}}]}}""");
         DesignerReplies("2026-11-17T09:00:50Z", "Looking.");
 
-        Run(Verbs.DesignChat, id).DesignChat!.Entries.Select(e => e.Text).ShouldBe(["Looking."]);
+        Run(Verbs.DesignChat, id).DesignChat!.Entries.Select(e => e.Text).ShouldBe(["a night list", "Looking."]);
+    }
+
+    [Fact]
+    public async Task TheFirstBriefIsEntryZeroOfKindUser()
+    {
+        var id = await DesignWithDesignerAsync();
+
+        var entry = Run(Verbs.DesignChat, id).DesignChat!.Entries.ShouldHaveSingleItem();
+        entry.Index.ShouldBe(0);
+        entry.Kind.ShouldBe(TranscriptKind.User);
+        entry.Text.ShouldBe("a night list");
+    }
+
+    [Fact]
+    public async Task ToolErrorsHookErrorsAndARefusedCheckAreNotChatEntriesButTheDesignersWordsAre()
+    {
+        var id = await DesignWithDesignerAsync();
+        _profile.Append(_profile.TranscriptPath(Session),
+            """{"type":"assistant","timestamp":"2026-11-17T09:00:10Z","message":{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"Edit","input":{"file_path":"x"}}]}}""",
+            """{"type":"user","timestamp":"2026-11-17T09:00:11Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","is_error":true,"content":"<tool_use_error>File has not been read yet.</tool_use_error>"}]}}""",
+            """{"type":"user","timestamp":"2026-11-17T09:00:12Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t2","is_error":true,"content":"PreToolUse:Bash hook error: [pilot hook] a designer writes only under draft/"}]}}""",
+            """{"type":"user","timestamp":"2026-11-17T09:00:13Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t3","is_error":true,"content":"Exit code 1\nrefused: design-check DSN-1: 2 findings\nhome | 80x24 | overlap: a on b"}]}}""",
+            """{"type":"user","timestamp":"2026-11-17T09:00:14Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t4","content":"ok"}]}}""");
+        DesignerReplies("2026-11-17T09:00:20Z", "Fixing the overlap.");
+        _store.Update(id, r => r with { DesignerPhase = DesignerPhases.Checking, CheckFindings = 2 });
+
+        var page = Run(Verbs.DesignChat, id).DesignChat!;
+
+        page.Entries.Select(e => e.Text).ShouldBe(["a night list", "Fixing the overlap."]);
+        page.Status.ShouldBe("checking: 2 findings");
+    }
+
+    [Fact]
+    public async Task AfterATurnThatPublishedNothingTheStatusSaysIdleAndNamesTheCurrentVersionAsCurrent()
+    {
+        var id = await DesignWithDesignerAsync();
+        _store.Update(id, r => r with { Current = 2, Versions = 2, DesignerPhase = DesignerPhases.Published, History = [new DesignVersionRow { Number = 2, At = Start.AddMinutes(-5), Why = "before" }] });
+        Run(Verbs.DesignSay, id, "try a wider list").Ok.ShouldBeTrue();
+        await _designers.Settled;
+        Status(id).ShouldBe("drafting");
+
+        _time.Advance(TimeSpan.FromMinutes(2));
+        Listed(SessionState.Idle);
+        _designers.Sweep();
+        await _designers.Settled;
+
+        Status(id).ShouldBe("idle: the last turn published nothing, v2 is current");
+    }
+
+    [Fact]
+    public async Task AfterATurnThatPublishedTheStatusStillNamesTheVersion()
+    {
+        var id = await DesignWithDesignerAsync();
+        _time.Advance(TimeSpan.FromMinutes(2));
+        _store.Update(id, r => r with { Current = 1, Versions = 1, DesignerPhase = DesignerPhases.Published, History = [new DesignVersionRow { Number = 1, At = _time.GetUtcNow(), Why = "first" }] });
+
+        Listed(SessionState.Idle);
+        _designers.Sweep();
+        await _designers.Settled;
+
+        Status(id).ShouldBe("published v1");
+        _store.Find(id)!.DesignerTurnPublished.ShouldBe(true);
     }
 
     [Fact]

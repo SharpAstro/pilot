@@ -93,7 +93,12 @@ public sealed class Designers(NodeState state, DesignStore store, IWorkerLaunche
                 if (done || listed.SessionId is { Length: > 0 } known && !row.DesignerSessions.Contains(known))
                 {
                     // Its turn is done: the design says idle, and the next brief piece resumes it.
-                    store.Update(row.Id, r => r with { DesignerState = done ? DesignerStates.Idle : r.DesignerState, DesignerSessions = WithSession(r.DesignerSessions, listed.SessionId) });
+                    store.Update(row.Id, r => r with
+                    {
+                        DesignerState = done ? DesignerStates.Idle : r.DesignerState,
+                        DesignerTurnPublished = done ? r.DesignerTurnStartedAt is { } began && r.History.Any(v => v.At >= began) : r.DesignerTurnPublished,
+                        DesignerSessions = WithSession(r.DesignerSessions, listed.SessionId),
+                    });
                 }
             }
         }
@@ -149,7 +154,8 @@ public sealed class Designers(NodeState state, DesignStore store, IWorkerLaunche
                     return;
                 }
             }
-            store.Update(row.Id, r => r with { DesignerJob = live.Id, DesignerState = DesignerStates.Working, DesignerHeldUntil = null, DesignerWhy = null, DesignerPending = [], DesignerSessions = WithSession(r.DesignerSessions, live.SessionId), DesignerPhase = pending.Length > 0 ? DesignerPhases.Drafting : r.DesignerPhase });
+            store.Update(row.Id, r => r with { DesignerJob = live.Id, DesignerState = DesignerStates.Working, DesignerHeldUntil = null, DesignerWhy = null, DesignerPending = [], DesignerSessions = WithSession(r.DesignerSessions, live.SessionId), DesignerPhase = pending.Length > 0 ? DesignerPhases.Drafting : r.DesignerPhase,
+                DesignerTurnStartedAt = pending.Length > 0 ? time.GetUtcNow() : r.DesignerTurnStartedAt, DesignerTurnPublished = pending.Length > 0 ? null : r.DesignerTurnPublished });
             return;
         }
 
@@ -163,7 +169,7 @@ public sealed class Designers(NodeState state, DesignStore store, IWorkerLaunche
             : null;
         var brief = Briefs.Designer(detail, prototype, notes, Run);
         var job = await workers.StartAsync(new WorkerStart(name, store.FolderOf(row.Id), null, brief, models.Model(RoleModels.Designer), models.Effort(RoleModels.Designer), Reason: SessionStartReasons.Designer, Settings: GuardSettings), CancellationToken.None).ConfigureAwait(false);
-        store.Update(row.Id, r => r with { DesignerName = name, DesignerJob = job, DesignerState = DesignerStates.Working, DesignerHeldUntil = null, DesignerWhy = null, DesignerPending = [], DesignerStartedAt = time.GetUtcNow(), DesignerPhase = DesignerPhases.Drafting });
+        store.Update(row.Id, r => r with { DesignerName = name, DesignerJob = job, DesignerState = DesignerStates.Working, DesignerHeldUntil = null, DesignerWhy = null, DesignerPending = [], DesignerStartedAt = time.GetUtcNow(), DesignerTurnStartedAt = time.GetUtcNow(), DesignerTurnPublished = null, DesignerPhase = DesignerPhases.Drafting });
     }
 
     private static string[] WithSession(string[] have, string? session) =>

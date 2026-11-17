@@ -66,6 +66,12 @@ public sealed record DesignRow
     /// <summary>What the designer last did to the draft, for the chat's status: <see cref="DesignerPhases"/>; null while there is none.</summary>
     public string? DesignerPhase { get; init; }
 
+    /// <summary>When the designer's current or last turn began (a start, or a say delivered to it); null before any and in a record an older release wrote.</summary>
+    public DateTimeOffset? DesignerTurnStartedAt { get; init; }
+
+    /// <summary>Whether the last finished turn published a version; null while a turn runs, before any, and in a record an older release wrote.</summary>
+    public bool? DesignerTurnPublished { get; init; }
+
     /// <summary>How many findings the last <c>design-check</c> had; null before any.</summary>
     public int? CheckFindings { get; init; }
 }
