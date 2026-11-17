@@ -259,9 +259,13 @@ public sealed class HoldingPatternTests : ReviewTestsBase
         F(flight.Code).Holding.ShouldBeNull("the flight merges with the notes filed");
 
         // Not filed twice (#918, pilot #1148): the merge finds the notes already captured and files no second issue.
+        // A duplicate would not make a second issue (the flight has one), it would comment "More points" and grow FollowUpPoints.
+        var pointsBefore = F(flight.Code).FollowUpPoints.ShouldNotBeNull().ToArray();
         _github.Checks = ChoiceStatus.Passing;
         (await Run(Verbs.Merge, Verbs.FlightTarget(flight.Code), "controller", _github.Pr!.Head[..8])).Error.ShouldBeNull();
         _github.IssuesCreated.ShouldHaveSingleItem();
+        _github.IssueComments.ShouldNotContain(c => c.Body.Contains("More points"));
+        F(flight.Code).FollowUpPoints.ShouldBe(pointsBefore);
     }
 
     [Fact]
