@@ -262,4 +262,38 @@ public sealed class ReviewFollowUpTests : ReviewTestsBase
         // The reviewer passed, so nothing is filed as a controller's pass anyway.
         ReviewFollowUp.Read(rounds).Items.ShouldAllBe(i => !i.Why.Contains("pass anyway"));
     }
+
+    private static ReviewFollowUp.Standing TwoLeft(string found1, string why1, string found2, string why2) => ReviewFollowUp.Read(
+    [
+        new ReviewRound { Round = 1, Verdict = ReviewState.Changes, Findings = $"## Blocking
+- {found1}
+- {found2}
+" },
+        new ReviewRound { Round = 2, Verdict = ReviewState.Passed, Answers = [new("R1.1", "left", why1), new("R1.2", "left", why2)] },
+    ]);
+
+    [Fact]
+    public void APointWhoseFindingNamesNoFileIsHeadedWithTheFileItsReasonNames()
+    {
+        var standing = TwoLeft("The loop never ends", "src/X.cs:12 needs a wider change", "Other thing", "out of scope");
+
+        var points = ReviewFollowUp.Points(standing.Items);
+
+        points.ShouldContain("### R1.1: src/X.cs:12");
+        points.ShouldContain("### R1.2: no file named");
+    }
+
+    [Fact]
+    public void TwoLeftPointsGetTheirOwnWhatWouldSettleItLines()
+    {
+        var standing = TwoLeft("Parser.cs:20 renames a type", "wider", "The guard in Lexer.cs:3 is missing", "later");
+
+        var settle = standing.Items.Select(i => i.Settle).ToList();
+
+        settle[0].ShouldNotBe(settle[1]);
+        settle[0].ShouldContain("Parser.cs:20");
+        settle[1].ShouldContain("Lexer.cs:3");
+        settle.ShouldAllBe(l => !l.Contains('
+') && !l.Contains('—'));
+    }
 }
