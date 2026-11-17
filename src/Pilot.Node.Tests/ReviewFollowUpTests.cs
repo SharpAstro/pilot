@@ -152,9 +152,7 @@ public sealed class ReviewFollowUpTests : ReviewTestsBase
     {
         ReviewRound[] rounds =
         [
-            new() { Round = 1, Verdict = ReviewState.Changes, Findings = "## Blocking
-- A is wrong in Parser.cs:10
-" },
+            new() { Round = 1, Verdict = ReviewState.Changes, Findings = "## Blocking\n- A is wrong in Parser.cs:10\n" },
             new() { Round = 2, Verdict = ReviewState.Passed, Findings = "ready anyway (passed by controller over: the note said (passed by hand) here)" },
         ];
 
