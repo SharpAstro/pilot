@@ -475,6 +475,8 @@ public sealed class MaintenanceGitTests : IDisposable
         hashed.Exit.ShouldBe(0, hashed.Error);
         Git(work, "config", "--local", "gc.auto", "1");
         Git(work, "config", "--local", "gc.autoDetach", "false");
+        // Newer git (2.56 on CI's runners) starts its auto maintenance after a fetch only when the fetch updated a ref, so each fetch has a new branch to take.
+        Git(Path.Combine(_root, "origin.git"), "branch", "fresh1", "main");
         var before = RunGitWithRepoConfig(work, "fetch", "origin");
         before.Exit.ShouldBe(0, before.Error);
         // The precondition: without the step's gc.auto=0 the fetch warns. When it does not, the message says what git printed and did instead.
@@ -491,8 +493,10 @@ public sealed class MaintenanceGitTests : IDisposable
         old.ShouldAllBe(sha => !Has(work, sha));
         young.ShouldAllBe(sha => Has(work, sha));
         Git(work, "config", "--local", "gc.auto").Trim().ShouldBe("0");
+        Git(Path.Combine(_root, "origin.git"), "branch", "fresh2", "main");
         var (exit, fetched, error) = RunGitWithRepoConfig(work, "fetch", "origin");
         exit.ShouldBe(0, error);
+        (fetched + error).ShouldContain("fresh2"); // the fetch really took a ref, so it was one that could have started a gc
         (fetched + error).ShouldNotContain("unreachable loose objects");
     }
 }
