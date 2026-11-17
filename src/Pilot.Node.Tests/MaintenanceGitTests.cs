@@ -475,6 +475,10 @@ public sealed class MaintenanceGitTests : IDisposable
         hashed.Exit.ShouldBe(0, hashed.Error);
         Git(work, "config", "--local", "gc.auto", "1");
         Git(work, "config", "--local", "gc.autoDetach", "false");
+        // From git 2.54 the default maintenance strategy is geometric, whose auto run after a fetch has no gc task, so the fetch never warned on
+        // CI's 2.56 although a direct gc --auto did. maintenance.gc.enabled (known since 2.29) overrides the strategy's task set, so the gc task
+        // runs on every version and gc.auto still decides whether it collects.
+        Git(work, "config", "--local", "maintenance.gc.enabled", "true");
         // Newer git (2.56 on CI's runners) starts its auto maintenance after a fetch only when the fetch updated a ref, so each fetch has a new branch to take.
         Git(Path.Combine(_root, "origin.git"), "branch", "fresh1", "main");
         var before = RunGitWithRepoConfig(work, "fetch", "origin");
