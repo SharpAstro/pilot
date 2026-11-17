@@ -226,8 +226,8 @@ public sealed partial class FlightCommander
         });
         if (live is not null)
         {
-            state.RaiseCard(CardBin.Handled, "second-flight-anyway", $"flight/{code}", $"{code} was made on {item.Display} beside {live.Code}, over its flight: {LegCommander.OneLine(duplicateWhy)}",
-                $"{command.Who} gave --anyway: {live.Code} was not landed ({live.State}) when {code} was created.\n\nWhy: {duplicateWhy}");
+            state.RaiseCard(CardBin.Handled, "second-flight-made", $"flight/{code}", $"{code} was made on {item.Display} beside {live.Code}, with a reason: {LegCommander.OneLine(duplicateWhy)}",
+                $"{command.Who} overrode the one-flight rule: {live.Code} was not landed ({live.State}) when {code} was created.\n\nWhy: {duplicateWhy}");
         }
         await LabelAsync(repoPath, item, code, otherNode, cancellationToken);
         return (code, null);

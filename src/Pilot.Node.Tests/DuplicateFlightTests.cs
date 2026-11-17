@@ -71,7 +71,7 @@ public sealed class DuplicateFlightTests : LegCommanderTestsBase
 
         second.Ok.ShouldBeTrue(second.Error);
         _state.Flights().Length.ShouldBe(2);
-        var card = _state.Cards().Single(c => c.Kind == "second-flight-anyway");
+        var card = _state.Cards().Single(c => c.Kind == "second-flight-made");
         card.Bin.ShouldBe(CardBin.Handled);
         card.Subject.ShouldBe(Verbs.FlightTarget(second.Made!));
         card.Title.ShouldContain("TIA1");
