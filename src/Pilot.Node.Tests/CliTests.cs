@@ -429,6 +429,57 @@ public sealed class CliTests : IAsyncLifetime
         job.Command.ShouldBe("echo windowed");
     }
 
+    /// <summary>PIL1088 (#1088): --cwd is relative to the caller's folder, and the job's row and 'pilot job' show where it runs.</summary>
+    [Fact]
+    public async Task PilotRunCwdRunsTheJobInTheNamedSubfolderOfTheCallersFolder()
+    {
+        var runner = _node.App.Services.GetRequiredService<Pilot.Node.Flights.JobRunner>();
+        FakeJobs(runner);
+        await runner.Recovered.WaitAsync(TimeSpan.FromSeconds(10), Ct);
+        var chess = Path.Combine(_root, "chess");
+        Directory.CreateDirectory(chess);
+
+        await Ok(_root, "run", "--cwd", "chess", "--", "echo chess");
+
+        var job = await TheJobUntil(j => j.EndedAt is not null, "the job did not end");
+        job.Cwd.ShouldBe(chess);
+        (await Pilot(_root, "job", job.Id)).Output.ShouldContain($"in {chess}");
+    }
+
+    [Fact]
+    public async Task PilotRunCwdOfAMissingFolderIsRefusedNamingTheResolvedPathAndQueuesNothing()
+    {
+        var (exit, output, error) = await Pilot(_root, "run", "--cwd", "nowhere", "--", "echo x");
+
+        exit.ShouldNotBe(0);
+        $"{output}{error}".ShouldContain(Path.Combine(_root, "nowhere"));
+        _node.State.Jobs().ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task PilotRunCwdInsideAPlaneStaysInThePlane()
+    {
+        var runner = _node.App.Services.GetRequiredService<Pilot.Node.Flights.JobRunner>();
+        FakeJobs(runner);
+        await runner.Recovered.WaitAsync(TimeSpan.FromSeconds(10), Ct);
+        var plane = Path.Combine(_root, "plane", "deep");
+        var src = Path.Combine(plane, "src");
+        Directory.CreateDirectory(src);
+        _node.State.PutFlight(new FlightRow
+        {
+            Code = "PIL1088", Repo = "o/r", RepoPath = "r", Issue = 1, Branch = "flight/pil1088", Worktree = plane, Base = "main",
+            State = FlightState.Flying, CreatedAt = DateTimeOffset.UnixEpoch,
+        });
+
+        var (exit, output, error) = await Pilot(plane, "run", "--cwd", Path.Combine("..", ".."), "--", "echo x");
+        exit.ShouldNotBe(0);
+        $"{output}{error}".ShouldContain("the job runs in the plane of PIL1088");
+        _node.State.Jobs().ShouldBeEmpty();
+
+        await Ok(plane, "run", "--cwd", "src", "--", "echo x");
+        (await TheJobUntil(j => j.EndedAt is not null, "the job did not end")).Cwd.ShouldBe(src);
+    }
+
     [Fact]
     public async Task PilotRunGuiWithAloneIsAUsageErrorAndStartsNothing()
     {

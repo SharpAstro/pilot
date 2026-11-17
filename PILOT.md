@@ -28,7 +28,7 @@ is neither built nor tested by CI.
   The inspector is in Release builds but off: only `DIR_INSPECTOR=1` and `DIR_INSPECTOR_TOKEN` (set in this lane) start it. Prove what a test can headless first.
 - Never wait with a job that sleeps or polls: it holds a slot of the queue and blocks every job behind it. Use
   `pilot leg wait --for-file <path> [--until <time>]` and end the turn; the node wakes the leg once. Long builds and
-  test runs go through `pilot run -- <command>`.
+  test runs go through `pilot run -- <command>`, which runs in the folder it was called from or in `--cwd <folder>`.
 - The machine is shared with other flights, so a job may wait its turn first. That costs the leg nothing.
 - A worker runs `dotnet test` and the build of a solution or test project only through `pilot run -- <command>` or the
   leg's check; a hook refuses them run directly and names the way. The node also looks every few minutes for strays in

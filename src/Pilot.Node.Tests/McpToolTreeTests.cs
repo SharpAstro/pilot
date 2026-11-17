@@ -95,6 +95,21 @@ public sealed class McpToolTreeTests(ITestOutputHelper output)
         ex.Message.ShouldContain("name");
     }
 
+    /// <summary>PIL1088: the run tool takes a cwd key, and a call with it reaches the CLI as --cwd.</summary>
+    [Fact]
+    public void TheRunToolTakesACwdThatReachesTheCliAsCwd()
+    {
+        var root = Root();
+        var (path, chain) = McpServer.Tools(root)["run"];
+
+        McpServer.Describe("run", path, chain).InputSchema.Properties.ShouldContainKey("cwd");
+        var spelled = McpServer.Spell(path, chain, Arguments("""{"cwd":"chess","command":["echo","x"]}"""));
+        spelled.ShouldContain("--cwd=chess");
+        var parsed = root.Parse(spelled);
+        parsed.Errors.ShouldBeEmpty();
+        parsed.GetValue<string>("--cwd").ShouldBe("chess");
+    }
+
     [Fact]
     public void EveryToolCarriesTheArgumentsAndOptionsOfItsParents()
     {

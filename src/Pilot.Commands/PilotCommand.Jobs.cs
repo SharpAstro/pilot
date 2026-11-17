@@ -7,6 +7,32 @@ namespace Pilot.Commands;
 
 public static partial class PilotCommand
 {
+    /// <summary>The full path with every existing junction or symlink along it followed, so two names for one folder compare equal.</summary>
+    internal static string RealPath(string path)
+    {
+        var full = Path.GetFullPath(path);
+        var root = Path.GetPathRoot(full) ?? "";
+        var current = root;
+        foreach (var part in full[root.Length..].Split([Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar], StringSplitOptions.RemoveEmptyEntries))
+        {
+            current = Path.Combine(current, part);
+            try
+            {
+                if (new DirectoryInfo(current).ResolveLinkTarget(returnFinalTarget: true) is { } target)
+                {
+                    current = target.FullName;
+                }
+            }
+            catch (IOException)
+            {
+            }
+            catch (UnauthorizedAccessException)
+            {
+            }
+        }
+        return current;
+    }
+
     /// <summary>A job in a line: <c>j3  running  dotnet test  (se1-tia1-parser, 4m)  [pwsh]</c>, the shell that ran it, then its step or how it ended.</summary>
     internal static string JobLine(JobRow job)
     {
@@ -69,11 +95,12 @@ public static partial class PilotCommand
             var runFailFast = new Option<bool>("--fail-fast") { Description = "End the job at its first failed test, so a run whose first failure is all you need frees the queue (a check does this by itself)" };
             var runWholeSuite = new Option<string?>("--whole-suite") { Description = "Why this run is a dotnet test over a whole project or solution with no filter, neither --filter nor --filter-class and its siblings (refused otherwise: the whole suite is CI's, on the PR)" };
             var runGui = new Option<bool>("--gui") { Description = "The job opens a window: it waits for the machine's one GUI slot (across repos) as well as an ordinary slot; refused on a node with no interactive desktop or with gui-slots 0. Not with --alone" };
+            var runCwd = new Option<string?>("--cwd") { Description = "The folder the job runs in, relative to this one; inside a flight's plane it must stay in the plane" };
             var runWords = new Argument<string[]>("command") { Description = "The command, after --: pilot run -- dotnet test", Arity = ArgumentArity.OneOrMore };
             var runCommand = Action(new Command("run", "Hand a long run to the node as a job, then end your turn: the node wakes this session with how it ended")
                 {
                     Arguments = { runWords },
-                    Options = { runTimeout, runAlone, runLocal, runFailFast, runWholeSuite, runGui },
+                    Options = { runTimeout, runAlone, runLocal, runFailFast, runWholeSuite, runGui, runCwd },
                 },
                 async (p, client, ct) =>
                 {
@@ -93,11 +120,30 @@ public static partial class PilotCommand
                         ? (await SnapshotAsync(client, ct)).Sessions.FirstOrDefault(s => string.Equals(s.SessionId, sessionId, StringComparison.OrdinalIgnoreCase))
                         : null;
                     var target = owner is null ? Verbs.NodeTarget : Verbs.SessionTarget(owner.Id);
+                    var runIn = cwd;
+                    if (p.GetValue(runCwd) is { Length: > 0 } givenCwd)
+                    {
+                        runIn = Path.GetFullPath(givenCwd, cwd);
+                        var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+                        // Real paths, so a junction or symlink into or out of a plane is judged by where it lands, not by its name.
+                        static string Slashed(string path) => Path.TrimEndingDirectorySeparator(RealPath(path)) + Path.DirectorySeparatorChar;
+                        var here = Slashed(cwd);
+                        // The rule keys on the caller's folder, as #1088 says: a caller standing in a plane stays in it,
+                        // whatever session owns the job. Each worktree is resolved once, and only those that exist.
+                        var plane = (await SnapshotAsync(client, ct)).Flights
+                            .Where(f => f.State != FlightState.Landed && Directory.Exists(f.Worktree))
+                            .Select(f => (Flight: f, Root: Slashed(f.Worktree)))
+                            .FirstOrDefault(x => here.StartsWith(x.Root, comparison));
+                        if (plane.Flight is not null && !Slashed(runIn).StartsWith(plane.Root, comparison))
+                        {
+                            throw new UsageException($"the job runs in the plane of {plane.Flight.Code} ({plane.Flight.Worktree}): {runIn} is outside it");
+                        }
+                    }
                     var sent = await SendCommandAsync(client, new CommandRequest
                     {
                         Verb = Verbs.Run,
                         Target = target,
-                        Args = [.. p.GetValue(runFailFast) ? new[] { Verbs.FailFastArg } : [], .. p.GetValue(runWholeSuite) is { Length: > 0 } suiteWhy ? new[] { Verbs.WholeSuiteArg, suiteWhy } : [], .. p.GetValue(runGui) ? new[] { Verbs.GuiArg } : [], .. p.GetValue(runAlone) ? new[] { Verbs.AloneArg } : [], .. p.GetValue(runLocal) ? new[] { Verbs.LocalArg } : [], cwd, seconds.ToString(CultureInfo.InvariantCulture), .. p.GetValue(runWords) ?? []],
+                        Args = [.. p.GetValue(runFailFast) ? new[] { Verbs.FailFastArg } : [], .. p.GetValue(runWholeSuite) is { Length: > 0 } suiteWhy ? new[] { Verbs.WholeSuiteArg, suiteWhy } : [], .. p.GetValue(runGui) ? new[] { Verbs.GuiArg } : [], .. p.GetValue(runAlone) ? new[] { Verbs.AloneArg } : [], .. p.GetValue(runLocal) ? new[] { Verbs.LocalArg } : [], runIn, seconds.ToString(CultureInfo.InvariantCulture), .. p.GetValue(runWords) ?? []],
                         Who = owner?.Name ?? who,
                         Agent = byAgent,
                         RequestId = requestId,

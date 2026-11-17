@@ -846,7 +846,7 @@ pilot review-cost [--since <date>] [--until <date>] [--repo <repo>]   # per land
 pilot update [--check] [--adopt]               # the latest release, installed where the node runs from (see Install and update)
 pilot node restart [why…]                      # the node restarts in place: its successor starts, jobs carry on and are counted in the answer
 pilot archive <session> | --ended [--undo]      # put ended sessions away, out of the lists (or back)
-pilot run [--timeout 90m] -- <command…>        # a long run handed to the node as a job (see Jobs)
+pilot run [--timeout 90m] [--cwd <folder>] -- <command…>  # a long run handed to the node as a job (see Jobs)
 pilot jobs                                     # the node's jobs, running first
 pilot job <id>                                 # one job: its output's path, and while it runs its pid and process tree
 pilot job <id> cancel [--force]                # stops it, running or waiting; its owner is told. --force kills the whole tree at once (see Jobs)
