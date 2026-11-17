@@ -108,8 +108,10 @@ public sealed class WithdrawFlightTests : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")] // real git: the modelled git has no plane folder to read commits from
     public async Task AFlightWithCommitsPastItsBaseIsRefusedNamingThemAndKeepsItsPlane()
     {
+        RealGit();
         var flight = await Fresh();
         Commit(flight.Worktree, "did some work");
 
