@@ -266,7 +266,7 @@ public sealed class ReviewFollowUpTests : ReviewTestsBase
     private static ReviewFollowUp.Standing TwoLeft(string found1, string why1, string found2, string why2) => ReviewFollowUp.Read(
     [
         new ReviewRound { Round = 1, Verdict = ReviewState.Changes, Findings = $"## Blocking\n- {found1}\n- {found2}\n" },
-        new ReviewRound { Round = 2, Verdict = ReviewState.Passed, Answers = [new("R1.1", "left", why1), new("R1.2", "left", why2)] },
+        new ReviewRound { Round = 2, Verdict = ReviewState.Passed, Findings = "", Answers = [new("R1.1", "left", why1), new("R1.2", "left", why2)] },
     ]);
 
     [Fact]
