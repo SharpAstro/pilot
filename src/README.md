@@ -756,9 +756,21 @@ the node's own sweep never presses either choice, and an assistant's press is as
 
 The steps:
 
-- **git** and **lfs**: for each tracked repo, `git worktree prune`, `git fetch --prune`, `git gc --prune=<age>` (never `--aggressive`,
-  nothing that rewrites refs) and, where the repo uses LFS, `git lfs prune`. A repo is skipped while a flight of it has a plane with a
+- **git** and **lfs**: for each tracked repo, `git config --local gc.auto 0`, `git worktree prune`, `git fetch --prune`,
+  `git gc --prune=<N>.days.ago` (never `--aggressive`, nothing that rewrites refs; N is the `git-prune-days` setting, 1 by default, at
+  least 1) and, where the repo uses LFS, `git lfs prune`. A squash-merged landed branch leaves every one of its commits unreachable, so
+  git's own two-week keep piled up thousands of loose objects and every fetch warned "too many unreachable loose objects"; gc.auto is
+  set to 0 so a fetch starts no auto gc, because the node collects the repo itself on this schedule. That setting is permanent (it also
+  covers the pack-count limit): if `maintenance` is turned off, or a repo is skipped for good as busy, nothing collects that repo until
+  the sweep runs there again, and `gc.auto` is not restored. A repo is skipped while a flight of it has a plane with a
   live session or a running or queued job. Freed bytes are the `.git` folder's size before and after.
+  The short age runs in a repo only while none of three conditions holds; otherwise that repo's gc runs at git's safe
+  `--prune=2.weeks.ago`, and the run's note and the dry run's kept reasons say `short prune skipped: <why>`: (1) a flight of the
+  repo that is not landed has a leg flying, or a running or queued job sits in the repo or its planes; (2) a live session of any
+  role (a hand-started one included) has its cwd inside the repo, planes under `.claude/worktrees` being inside it; (3) the local
+  time is outside `maintenance-prune-hours` (like `22-06` or `22:30-06:00`, may wrap midnight, `off` clears; unset by default).
+  The window is off by default because (1) and (2) already protect a running plane and the one-day age already keeps every
+  object younger than a day, so a window only adds a rule for the person who wants the short prune at night alone.
 - **packages**: NuGet package versions in the global packages folder (`NUGET_PACKAGES`, else `~/.nuget/packages`) that nothing in use
   restores and that have not been read for `package-age-days` (default 14). In use is read from files: every package and version in each
   `project.assets.json` under the tracked repos, their sibling clones (one level under the same parent folders) and the planes of flights not landed, plus the pins read with git from the head of each

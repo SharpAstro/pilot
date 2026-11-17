@@ -565,6 +565,30 @@ public sealed partial class RoleModels
         }
     }
 
+    /// <summary>Days an unreachable git object may sit before the sweep's git gc prunes it (<see cref="NodeSettings.GitPruneDaysKey"/>); 1 by default.</summary>
+    public int GitPruneDays
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _settings.GitPruneDays ?? NodeSettings.DefaultGitPruneDays;
+            }
+        }
+    }
+
+    /// <summary>The window the short-age prune is limited to (<see cref="NodeSettings.MaintenancePruneHoursKey"/>); null is always.</summary>
+    public string? MaintenancePruneHours
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _settings.MaintenancePruneHours;
+            }
+        }
+    }
+
     /// <summary>Days a job's scratch may sit before the disk sweep deletes it (<see cref="NodeSettings.ScratchDaysKey"/>); 2 by default.</summary>
     public int ScratchDays
     {
