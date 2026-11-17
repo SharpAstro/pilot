@@ -425,6 +425,58 @@ public sealed class AccountLimitTests
         Open().ShouldBeEmpty();
     }
 
+    private LegWatch RestartedWatch(out TurnOutage outage)
+    {
+        var restarted = new TurnOutage(_state);
+        outage = restarted;
+        return new LegWatch(_state, (c, _) => Task.FromResult(_state.Complete(c, null)), _time)
+        {
+            Pilot = "pilot", Outage = restarted, StopSession = (_, _) => Task.CompletedTask,
+            RestartWorker = (_, _, _) => Task.CompletedTask, RestartPlanner = (_, _) => Task.CompletedTask,
+        };
+    }
+
+    [Fact]
+    public async Task ALimitFromARowUnderTheCurrentAccountStaysLiftedAfterALiftAndAfterARestart()
+    {
+        const string email = "b@example.org";
+        _state.PutUsage(new UsageRow { Account = new AccountRow { Email = email }, ReadAt = Start });
+        var until = Start.AddDays(3);
+        _state.PutSession(LimitRow(email, until) with { Id = "ab000000", SessionId = "ab000000-0000-4000-8000-000000000000" });
+        await _watch.LookAsync(Ct);
+        _outage.LimitUntil.ShouldBe(until);
+
+        _time.Advance(TimeSpan.FromMinutes(10));
+        _outage.Lift(_time.GetUtcNow(), "you", "a spend limit raised").ShouldBeTrue();
+        await _watch.LookAsync(Ct);
+        _outage.LimitUntil.ShouldBeNull();
+
+        var watch = RestartedWatch(out var outage);
+        _time.Advance(TimeSpan.FromMinutes(1));
+        await watch.LookAsync(Ct);
+        outage.LimitUntil.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task AnEvidenceEndOfALimitFromARowUnderTheCurrentAccountSurvivesARestart()
+    {
+        const string email = "b@example.org";
+        _state.PutUsage(new UsageRow { Account = new AccountRow { Email = email }, ReadAt = Start });
+        var until = Start.AddHours(3);
+        _state.PutSession(Session("rep00000", "claude-opus-5-5", Start.AddHours(-1)) with { Gone = true, Account = email, ApiError = "usage_limit_reached", ApiErrorResetsAt = until });
+        await _watch.LookAsync(Ct);
+        _outage.LimitUntil.ShouldBe(until);
+        _time.Advance(TimeSpan.FromMinutes(10));
+        _state.PutSession(Session("new00000", "claude-opus-5-5", Start.AddMinutes(5)) with { Account = email, LastResponseAt = Start.AddMinutes(6) });
+        await _watch.LookAsync(Ct);
+        _outage.LimitUntil.ShouldBeNull();
+
+        var watch = RestartedWatch(out var outage);
+        _time.Advance(TimeSpan.FromMinutes(1));
+        await watch.LookAsync(Ct);
+        outage.LimitUntil.ShouldBeNull();
+    }
+
     [Fact]
     public async Task OnlyARowOfTheSameFamilyStartedAfterTheLimitWithATurnAndNoLimitErrorEndsIt()
     {

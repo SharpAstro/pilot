@@ -22,17 +22,16 @@ public static partial class AccountLimit
                 // A later session answered a turn on the family that reported the limit: what began before that is stale, whoever's it was.
                 continue;
             }
-            if (row.Account is { } rowAccount && currentAccount is { } current)
+            if (row.Account is { } rowAccount && currentAccount is { } current
+                && !string.Equals(rowAccount, current, StringComparison.OrdinalIgnoreCase))
             {
-                // The row says whose login it ran under: it counts only for that login, whenever the login changed.
-                if (!string.Equals(rowAccount, current, StringComparison.OrdinalIgnoreCase))
-                {
-                    continue;
-                }
+                // The row says whose login it ran under: another login's limit is not this one's.
+                continue;
             }
-            else if (loginChangedAt is { } changed && row.StartedAt < changed)
+            if (loginChangedAt is { } changed && row.StartedAt < changed)
             {
-                // No account to compare: the row belongs to the login that was switched away from.
+                // The cut applies to every row: a login change, a lift and an evidence end all move it, and a row under the
+                // current account that began before it is stale too (so a lift or an end survives a restart).
                 continue;
             }
             if (row.ApiError is { } error && error.Contains("limit", StringComparison.OrdinalIgnoreCase)
