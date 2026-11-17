@@ -17,12 +17,18 @@ public static partial class TestRunner
     /// <summary>Whether <paramref name="folder"/> runs Microsoft.Testing.Platform (nearest selecting file wins; VSTest otherwise).</summary>
     public static bool IsPlatform(string folder)
     {
+        // The SDK reads only the nearest global.json: one without test.runner means VSTest, not "ask the next one up".
+        var globalSeen = false;
         for (var dir = new DirectoryInfo(Path.GetFullPath(folder)); dir is not null; dir = dir.Parent)
         {
             var global = Path.Combine(dir.FullName, "global.json");
-            if (File.Exists(global) && FromGlobalJson(global) is { } byGlobal)
+            if (!globalSeen && File.Exists(global))
             {
-                return byGlobal;
+                globalSeen = true;
+                if (FromGlobalJson(global) is { } byGlobal)
+                {
+                    return byGlobal;
+                }
             }
             var config = Path.Combine(dir.FullName, "dotnet.config");
             if (File.Exists(config) && FromDotnetConfig(config) is { } byConfig)
@@ -103,16 +109,9 @@ public static partial class TestRunner
             {
                 continue;
             }
-            if (tokens[0].Value.ToLowerInvariant() is "cd" or "chdir" or "pushd" or "set-location" or "sl")
+            if (CheckPaths.IsCd(tokens))
             {
-                var target = tokens.Skip(1).FirstOrDefault(t => !(t.Value.StartsWith('-') && t.Value.Length > 1) && !t.Value.Equals("/d", StringComparison.OrdinalIgnoreCase));
-                if (target.Value is null)
-                {
-                    continue;
-                }
-                here = target.Value.IndexOfAny(['$', '*', '?', '%', '`', '{', '~', '<', '>', '@']) >= 0 || target.Value == "-"
-                    ? null
-                    : Path.GetFullPath(target.Value, here);
+                here = CheckPaths.CdTarget(tokens) is { } target ? CheckPaths.Follow(here, target) : here;
                 continue;
             }
             var start = tokens[0].Value == "&" ? 1 : 0;

@@ -161,7 +161,7 @@ public sealed partial class LegCommander
                         state.PutLeg(leg with
                         {
                             Report = $"{head}check `{check}` failed ({run.ExitCode}):\n{run.Tail}{pushNote}",
-                            Recheck = late ? leg.Recheck! with { Outcome = LegRecheck.FailedOutcome(check, run.ExitCode, run.Tail) } : null,
+                            Recheck = late ? leg.Recheck! with { Outcome = head + LegRecheck.FailedOutcome(check, run.ExitCode, run.Tail) } : null,
                         });
                         throw new FlightException($"{head}{flight.Code}/{leg.Name}'s check `{check}` failed ({run.ExitCode}); it stays flying. Last of its output:\n{run.Tail}");
                     }

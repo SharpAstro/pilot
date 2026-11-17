@@ -97,6 +97,24 @@ public sealed class SiblingRestoreFailureTests
 
     [Fact]
     [Trait("Category", "Slow")]
+    public async Task AFailedCheckWithAnUnknownSwitchSaysItIsAWrongCommandInTheMessageAndTheReport()
+    {
+        using var t = new Flown();
+        await t.Fly(check: "dotnet build");
+        await t.Tick();
+        t.Fail("MSBUILD : error MSB1001: Unknown switch.   Switch: --project");
+
+        var result = await t.Finish("done", "all good");
+
+        result.Ok.ShouldBeFalse();
+        result.Error.ShouldNotBeNull().ShouldStartWith("This is a wrong command for this repo's test runner");
+        result.Error.ShouldContain("--project");
+        t.Parser.State.ShouldBe(LegState.Flying);
+        t.Parser.Report.ShouldNotBeNull().ShouldStartWith("This is a wrong command");
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
     public async Task TheFirstFailedReportNamingOneIsRefusedWithTheRemedyAndNoCardAndASecondRings()
     {
         using var t = new Flown();

@@ -837,7 +837,7 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
         // A dotnet test whose switches belong to the other runner than its folder selects fails MSB1001 at once: refused before a job is made.
         if (TestRunner.Refusal(line, cwd) is { } mismatch)
         {
-            return state.Complete(command, $"{mismatch}. Rerun pilot run -- with the switches of the folder's runner");
+            return state.Complete(command, $"{mismatch}. Run it again with the switches of that folder's runner.");
         }
         // A dotnet test over a whole project or solution is CI's, on the PR (as for a leg's check, CheckScope): refused unless the run says why.
         if (wholeSuiteWhy is null && CheckScope.WholeSuite(line) is { } whole)

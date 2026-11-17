@@ -59,6 +59,15 @@ public sealed class TestRunnerTests : IDisposable
     }
 
     [Fact]
+    public void TheNearestGlobalJsonDecidesEvenWithoutARunner()
+    {
+        File.WriteAllText(Path.Combine(_root, "global.json"), """{ "test": { "runner": "Microsoft.Testing.Platform" } }""");
+        File.WriteAllText(Path.Combine(Child, "global.json"), """{ "sdk": { "version": "10.0.100" } }""");
+
+        TestRunner.IsPlatform(Child).ShouldBeFalse();
+    }
+
+    [Fact]
     public void MalformedJsonReadsAsNoSelection()
     {
         File.WriteAllText(Path.Combine(_root, "global.json"), "{ not json");
