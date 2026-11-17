@@ -697,7 +697,9 @@ internal sealed class DesignsView<TSurface> : PilotWidgetBase<TSurface>
         {
             // The chat under the cell view, in the same column: its rows are the terminal's, and its box is drawn in cells.
             Chat.Cells = true;
-            Chat.CellColumns = LeftColumns(cells) + 12;
+            // CellColumns counts a page's columns, the Chat page's gutters included; this chat has none of its own, so they are added to its column's.
+            // (The 12 added before made the box's rule as wide as the column inside a box narrower than it, and it ended in an ellipsis.)
+            Chat.CellColumns = LeftColumns(cells) + ChatView<TSurface>.PagePadColumns;
             left.Add(ChatPane(page).HFixed(CellChatHeight));
         }
         // The target switcher sits above the versions, in the column that has the width for it: in the player's column it was squeezed at a narrow window and drew over the version line beside it.
@@ -713,13 +715,9 @@ internal sealed class DesignsView<TSurface> : PilotWidgetBase<TSurface>
         // In pixels the chat is a column of its own between the player and the versions: beside the prototype, where what the designer changes is in view.
         // Where the window has no width for three columns (their least widths and the gaps), the chat goes under the other two instead of past the page.
         var wide = _width >= WideColumns;
-        // In cells the left column is the whole cells LeftColumns gives it, which the chat's box and the prototype are sized by too: a share of the
-        // width ended inside a cell (79.75 at 160 columns with the cards panel beside), and a right-aligned time in the chat lost its last cell there.
-        var leftColumn = Layout.Builder.VStack([.. left]).WithGap(8f);
-        var rightColumn = Layout.Builder.VStack([.. right]).WithGap(6f).WithScroll(_sideScroll);
-        var two = Terminal is { } room
-            ? Layout.Builder.HStack(leftColumn.WFixed(LeftColumns(room) * 8f).HStar(), rightColumn.WStar().HStar()).WithGap(Gutter).WStar().HStar()
-            : Layout.Builder.HStack(leftColumn.WStar(2.2f).HStar(), rightColumn.WStar(1f, 260f, 520f).HStar()).WithGap(Gutter).WStar().HStar();
+        var two = Layout.Builder.HStack(
+            Layout.Builder.VStack([.. left]).WithGap(8f).WStar(2.2f).HStar(),
+            Layout.Builder.VStack([.. right]).WithGap(6f).WithScroll(_sideScroll).WStar(1f, 260f, 520f).HStar()).WithGap(Gutter).WStar().HStar();
         var columns = Terminal is not null
             ? two
             : wide
@@ -754,8 +752,8 @@ internal sealed class DesignsView<TSurface> : PilotWidgetBase<TSurface>
             .Follows(new HitResult.ButtonHit("designs:point"), _ => Point(!Pointing))
             .RowH(26f);
 
-    // The whole cells the page's left column has in a terminal: its 2.2 share beside the versions' 1, with the versions kept between 260 and 520
-    // where the room allows, as the pixel layout keeps them. The column, the chat's box and the prototype's width are all this one number.
+    // The cells the page's left column has in a terminal, as the tree shares them: its 2.2 share beside the versions' 1, with the versions kept
+    // between 260 and 520 where the room allows. The chat's box and the prototype's width are told this one number.
     private static int LeftColumns((int Columns, int Rows) terminal)
     {
         var width = terminal.Columns * 8f - 2f * Gutter - Gutter;

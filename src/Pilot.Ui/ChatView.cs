@@ -1428,6 +1428,12 @@ internal sealed partial class ChatView<TSurface>(Renderer<TSurface> renderer) : 
     /// <summary>The columns the cell page has, so a long line is windowed to the caret rather than wrapped past its row.</summary>
     public int CellColumns { get; set; } = 80;
 
+    /// <summary>
+    /// The cells the Chat page's own body takes in padding (its gutter each side), which <see cref="CellColumns"/> counts with the page. An
+    /// <see cref="Embedded"/> chat has no such padding, so its host adds these to the columns the chat itself has.
+    /// </summary>
+    internal const int PagePadColumns = (int)(2 * Gutter / 8f);
+
     private const string ComposerPrompt = "❯ ";
     private Layout.Node? _composerNode;
     private int _composerFirst, _composerStart;
