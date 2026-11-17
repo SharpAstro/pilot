@@ -160,8 +160,24 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
         }
     }
 
-    private void MarkTold(JobRow job, string way, bool whileWorking = false) =>
+    // The target session's context size at each job's last tell or retell, in memory like _busyTurnEnd: a node restart forgets it, and
+    // the sweep then takes the size it sees as the baseline, which errs towards a retell, never away from one (#1137).
+    private readonly ConcurrentDictionary<string, int> _contextAtTell = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// When a session (by name) last sent the node a command of any verb, as the node sees it; null in a bare runner. A session that sent
+    /// one after a job's tell has plainly carried on, whether or not it named the job (#1137). Set by the node.
+    /// </summary>
+    public Func<string, DateTimeOffset?>? LastCommandAt { get; set; }
+
+    private void MarkTold(JobRow job, string way, bool whileWorking = false, int? contextTokens = null)
+    {
+        if (contextTokens is { } tokens)
+        {
+            _contextAtTell[job.Id] = tokens;
+        }
         state.PutJob(job with { Told = true, ToldAt = time.GetUtcNow(), ToldWay = way, ToldWhileWorking = whileWorking ? true : null });
+    }
 
     /// <summary>How often a running job's step (its last line) is put on the stream, so a long run shows it is alive without a delta per line.</summary>
     public TimeSpan StepEvery { get; init; } = TimeSpan.FromSeconds(10);
@@ -434,9 +450,21 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
                 {
                     continue;
                 }
-                silentSince = _busyTurnEnd.GetOrAdd(row.Id, responded);
+                if (_busyTurnEnd.TryAdd(row.Id, responded))
+                {
+                    // The busy turn's own growth is not an act on the tell: the baseline is the context as that turn ended.
+                    _contextAtTell[row.Id] = target.ContextTokens;
+                }
+                silentSince = _busyTurnEnd[row.Id];
             }
             if (target.LastResponseAt is { } last && last > silentSince)
+            {
+                continue;
+            }
+            // A session that took turns without a response the node saw (an interactive or ad hoc one) shows it by a context that grew
+            // since the tell, or by any command it sent since (#1137).
+            if (target.ContextTokens > _contextAtTell.GetOrAdd(row.Id, target.ContextTokens)
+                || LastCommandAt?.Invoke(target.Name) is { } commanded && commanded > silentSince)
             {
                 continue;
             }
@@ -477,6 +505,7 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
             }
             LogTell(row, target.Id, target, $"retell {way}");
             // Marked either way, once per row: a refused retell does not go round again, and its silence still rings above.
+            _contextAtTell[row.Id] = target.ContextTokens;
             state.PutJob(row with { RetoldAt = now, RetoldWay = way });
             retold = true;
         }
@@ -586,6 +615,7 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
             LogTell(row, target.Id, target, $"redo {way}");
             // Marked either way, once per outage: a refused redo does not go round again, and the retell ladder takes the row from here.
             _busyTurnEnd.TryRemove(row.Id, out _);
+            _contextAtTell[row.Id] = target.ContextTokens;
             state.PutJob(row with
             {
                 ToldAt = time.GetUtcNow(), ToldWay = way, ToldWhileWorking = target.State == SessionState.Working ? true : null,
@@ -3043,7 +3073,7 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
         }
         if (ok)
         {
-            MarkTold(job, replacedTo is not null ? $"replaced-to {replacedTo}" : way ?? SayWays.Relayed, targetRow?.State == SessionState.Working);
+            MarkTold(job, replacedTo is not null ? $"replaced-to {replacedTo}" : way ?? SayWays.Relayed, targetRow?.State == SessionState.Working, targetRow?.ContextTokens);
             // A card an earlier try rang ("could not be told") is out of date now it has been told.
             state.CloseCardsAbout(Verbs.JobTarget(job.Id), "told on a later try", UntoldKind);
         }

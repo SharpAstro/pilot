@@ -38,6 +38,7 @@ public sealed class JobRetellTests : IDisposable
                 return Task.FromResult(_state.Complete(command, null, way: SayWays.Relayed));
             },
             EndedForGood = _ => _endedForGood,
+            LastCommandAt = name => name == "de1-retell-w1" ? _commandAt : null,
         };
         _state.PutFlight(new FlightRow
         {
@@ -63,12 +64,14 @@ public sealed class JobRetellTests : IDisposable
     }
 
     private bool _adHoc;
+    private int _context;
+    private DateTimeOffset? _commandAt;
 
     private void Session(SessionState sessionState, DateTimeOffset? lastResponse) =>
         _state.PutSession(new SessionRow
         {
             Id = "w0000001", SessionId = "w0000001-0000-4000-8000-000000000000", Name = "de1-retell-w1", Kind = SessionKind.Background, Cwd = _root,
-            Role = _adHoc ? SessionRole.AdHoc : SessionRole.Worker, Flight = _adHoc ? null : "RTL1", Leg = _adHoc ? null : "one", ContextTokens = 0, ContextWindow = 200_000, SpendWeighted = 0, State = sessionState,
+            Role = _adHoc ? SessionRole.AdHoc : SessionRole.Worker, Flight = _adHoc ? null : "RTL1", Leg = _adHoc ? null : "one", ContextTokens = _context, ContextWindow = 200_000, SpendWeighted = 0, State = sessionState,
             LastResponseAt = lastResponse, StartedAt = _clock.GetUtcNow().AddHours(-2),
         });
 
@@ -194,6 +197,67 @@ public sealed class JobRetellTests : IDisposable
         (await Sweep()).ShouldBeFalse();
         _said.ShouldBeEmpty();
         _state.Cards().ShouldBeEmpty();
+    }
+
+    // #1137: a session that took turns shows it by a context that grew or a command it sent, not only by LastResponseAt.
+
+    [Fact]
+    public async Task AWorkerWhoseContextGrewAfterTheTellIsNotRetoldNorRungFor()
+    {
+        _context = 50_000;
+        Session(SessionState.Idle, _clock.GetUtcNow().AddHours(-1));
+        await TellNowAsync();
+
+        _clock.Advance(TimeSpan.FromMinutes(1));
+        _context = 80_000;
+        Session(SessionState.Idle, _clock.GetUtcNow().AddHours(-1));
+        _clock.Advance(After * 3);
+        (await Sweep()).ShouldBeFalse();
+        _said.ShouldBeEmpty();
+        _state.Cards().ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task AWorkerThatSentAnyCommandAfterTheTellIsNotRetoldNorRungFor()
+    {
+        await TellNowAsync();
+
+        _clock.Advance(TimeSpan.FromMinutes(1));
+        _commandAt = _clock.GetUtcNow();
+        _clock.Advance(After * 3);
+        (await Sweep()).ShouldBeFalse();
+        _said.ShouldBeEmpty();
+        _state.Cards().ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task ACommandBeforeTheTellDoesNotCountAndAnIdleWorkerIsRetoldThenRings()
+    {
+        _commandAt = _clock.GetUtcNow().AddMinutes(-5);
+        await TellNowAsync();
+
+        _clock.Advance(After);
+        (await Sweep()).ShouldBeTrue();
+        _said.ShouldHaveSingleItem().ShouldStartWith("Repeat:");
+        _clock.Advance(After);
+        await Sweep();
+        _state.Cards().ShouldHaveSingleItem().Kind.ShouldBe(JobRunner.UnansweredKind);
+    }
+
+    [Fact]
+    public async Task AContextThatGrewDuringTheBusyTurnTheTellFellInDoesNotCount()
+    {
+        _context = 10_000;
+        await TellNowAsync(whileWorking: true);
+
+        // The busy turn grows the context and ends; the session then idles without acting.
+        _clock.Advance(TimeSpan.FromMinutes(1));
+        _context = 40_000;
+        Session(SessionState.Idle, _clock.GetUtcNow());
+        (await Sweep()).ShouldBeFalse();
+        _clock.Advance(After);
+        (await Sweep()).ShouldBeTrue();
+        _said.ShouldHaveSingleItem().ShouldStartWith("Repeat:");
     }
 
     [Fact]
