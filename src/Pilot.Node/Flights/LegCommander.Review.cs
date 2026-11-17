@@ -195,7 +195,7 @@ public sealed partial class LegCommander
         }
         var commits = await git.RunAsync(["log", "--oneline", $"{head}..HEAD"], flight.Worktree, cancellationToken);
         var stat = await git.RunAsync(["diff", "--stat", $"{head}..HEAD"], flight.Worktree, cancellationToken);
-        return commits.Ok && stat.Ok ? new Briefs.ReReview(last, new Briefs.PlaneState(commits.Output, stat.Output)) : null;
+        return commits.Ok && stat.Ok ? new Briefs.ReReview(last, new Briefs.PlaneState(commits.Output, stat.Output)) { Rounds = flight.ReviewRounds ?? [last] } : null;
     }
 
     /// <summary>

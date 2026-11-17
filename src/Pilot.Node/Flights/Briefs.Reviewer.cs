@@ -22,8 +22,9 @@ public static partial class Briefs
         else
         {
             text.AppendLine($"This is round {again.Last.Round + 1}: round {again.Last.Round} read {(again.Last.Head is { Length: > 0 } h ? $"`{h}`" : "an earlier head")} and said {again.Last.Verdict.ToString().ToLowerInvariant()}.");
-            text.AppendLine($"Read only what changed since: `git diff {again.Last.Head}..HEAD`, not the whole PR. First check that each finding of round {again.Last.Round}");
-            text.AppendLine("below was dealt with, then read the new code for bugs it brings, and rerun what proves each leg's Done-when. Do not edit,");
+            text.AppendLine($"Read only what changed since: `git diff {again.Last.Head}..HEAD`, not the whole PR. The first review was the thorough one; this round");
+            text.AppendLine("answers its list. First settle every earlier point below (see \"Earlier points\"), then read the changed lines for bugs they bring,");
+            text.AppendLine("and rerun what proves each leg's Done-when. Do not edit,");
         }
         text.AppendLine("commit, push or merge anything: you judge the work as it stands, and a redo of the leg (a go-around) makes any change.");
         text.Append(BranchHistoryRule);
@@ -69,8 +70,21 @@ public static partial class Briefs
         if (again is not null)
         {
             text.AppendLine();
-            text.AppendLine($"Findings of round {again.Last.Round} ({again.Last.Verdict.ToString().ToLowerInvariant()}):");
-            text.AppendLine(again.Last.Findings.Trim());
+            var points = ReviewPoints.Number(again.Rounds);
+            text.AppendLine($"Earlier points, every one of every round ({again.Rounds.Count}), blocking and not blocking:");
+            foreach (var round in again.Rounds.OrderBy(r => r.Round))
+            {
+                var mine = points.Where(p => p.Round == round.Round).ToList();
+                text.AppendLine($"Round {round.Round} ({round.Verdict.ToString().ToLowerInvariant()}){(mine.Count == 0 ? ", no points:" : ":")}");
+                if (mine.Count == 0)
+                {
+                    text.AppendLine(round.Findings.Trim());
+                }
+                foreach (var p in mine)
+                {
+                    text.AppendLine($"- {p.Id} ({(p.Blocking ? "blocking" : "not blocking")}): {p.Text}");
+                }
+            }
             if (again.Range.Commits.Trim().Length > 0)
             {
                 text.AppendLine();
@@ -117,6 +131,16 @@ public static partial class Briefs
         text.AppendLine("not hold, a bug, a regression, a test that proves nothing, something the issue asked for that is missing). `## Not blocking`:");
         text.AppendLine("nits and suggestions (naming, style, a comment, a small tidy-up, an idea for later). Findings that are all not blocking are a");
         text.AppendLine("pass with notes: the flight holds its merge while the watchtower makes the small ones in the plane; no leg goes round.");
+        if (again is null)
+        {
+            text.AppendLine();
+            text.AppendLine("This is the first review, and the thorough one: read the whole diff and raise everything you find now. Later rounds only answer");
+            text.AppendLine("your list point by point and read the lines the fix round changed, so what you leave out here is not looked for again.");
+        }
+        else
+        {
+            AppendAnswerTable(text, again);
+        }
         text.AppendLine(SelfTriggeringCiRule);
         if (flight.HumanVerification)
         {
@@ -148,5 +172,22 @@ public static partial class Briefs
         text.AppendLine("their own around the report. Never put it between plain double quotes, where a backtick runs or escapes.");
         text.AppendLine("Then end your turn with the same verdict.");
         return text.ToString();
+    }
+
+    private static void AppendAnswerTable(StringBuilder text, ReReview again)
+    {
+        var first = ReviewPoints.Number(again.Rounds).FirstOrDefault()?.Id ?? "R1.1";
+        text.AppendLine();
+        text.AppendLine($"This is a re-review, and its one job is the list above. The report opens with `## {ReviewPoints.AnswerHeading}`: a table with one row for every");
+        text.AppendLine("point, none left out, columns `Point | Answer | Where or reason`, e.g. `| " + first + " | addressed | src/Foo.cs:42 |`. Each answer is one of:");
+        text.AppendLine("- `addressed`: fixed, with where (`file:line`, or the commit). Check it by reading the code or running it; the fixer's word is not a check.");
+        text.AppendLine("- `left`: left on purpose, with the reason (out of this flight's scope, needs a decision the flight cannot make, safe as it is and why).");
+        text.AppendLine("  Every left point goes into one follow-up issue for the flight, which the node files from your table.");
+        text.AppendLine("- `not addressed`: no fix and no reason. This blocks the merge.");
+        text.AppendLine("\"Still open\", \"unchanged\", \"for later\" and \"to do\" with no reason are refused: a point is settled or it blocks. A point you do not");
+        text.AppendLine("mention is refused too, by name.");
+        text.AppendLine($"Then the new findings, under `## Blocking` and `## Not blocking`. A fault in the lines changed since `{again.Last.Head}` blocks as always. A new finding");
+        text.AppendLine($"in text the fix round did not touch blocks only when it must: start it with `{ReviewPoints.MustBlockMarker} <kind>`, the kind being one of");
+        text.AppendLine($"{string.Join(", ", ReviewPoints.MustBlockKinds)}. Any other finding in untouched text goes under `## Not blocking`, and is left for the follow-up issue.");
     }
 }

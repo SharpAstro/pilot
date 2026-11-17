@@ -27,7 +27,11 @@ public static partial class Briefs
     public sealed record PlaneState(string Commits, string DiffStat);
 
     /// <summary>A re-review's brief: the last round, and the commits and stat of its head to the plane's HEAD.</summary>
-    public sealed record ReReview(ReviewRound Last, PlaneState Range);
+    public sealed record ReReview(ReviewRound Last, PlaneState Range)
+    {
+        /// <summary>Every earlier round, oldest first (pilot #1107); the last alone when the caller gave no more.</summary>
+        public IReadOnlyList<ReviewRound> Rounds { get; init; } = [Last];
+    }
 
     /// <summary>
     /// The <c>pilot</c> CLI a worker runs, by its full path: beside the node (a publish puts them together), else the source
