@@ -67,8 +67,7 @@ public sealed class HeldStartAnswerTests : ReviewTestsBase
         var flight = await NewFlight("3", "parser");
         (await Run(Verbs.PlanLeg, Verbs.FlightTarget(flight.Code), "controller", "name=render", "goal=Draw it", "done-when=It shows", "item=The step")).Ok.ShouldBeTrue();
         await Fly(flight, "parser");
-        // The second leg has an earlier one: its start is a validator's, which the gate does not hold (a person's start).
-        (await Run(Verbs.StartLeg, Verbs.LegTarget(flight.Code, "render"), "controller")).Error.ShouldBeNull();
+        // The parser's finish started render's validator by itself (the leg has an earlier one); wait for its launch.
         await Started(_legs, flight.Code);
         var validator = _state.Legs(flight.Code).Single(l => l.Name == "render").Validator.ShouldNotBeNull();
         var started = _workers.Started.Count;
