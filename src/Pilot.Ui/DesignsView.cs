@@ -85,8 +85,9 @@ internal sealed class DesignsView<TSurface> : PilotWidgetBase<TSurface>
 
     private readonly ListScrollController _listScroll = new() { Mode = ScrollBarMode.Interactive };
     private readonly ListScrollController _sideScroll = new() { Mode = ScrollBarMode.Interactive };
+    private readonly ListScrollController _cellScroll = new() { Mode = ScrollBarMode.Interactive };
 
-    protected override IEnumerable<ListScrollController> PageScrolls => [_listScroll, _sideScroll, .. Chat.Scrolls];
+    protected override IEnumerable<ListScrollController> PageScrolls => [_listScroll, _sideScroll, _cellScroll, .. Chat.Scrolls];
 
     /// <summary>The design whose page is open; null shows the list.</summary>
     public string? OpenId { get; private set; }
@@ -212,7 +213,8 @@ internal sealed class DesignsView<TSurface> : PilotWidgetBase<TSurface>
     public PrototypeCellGrid<TSurface>? CellGrid { get; private set; }
 
     /// <summary>
-    /// The terminal's size in cells when the page is drawn by pilot-tui (PIL1098), else null. There the prototype is not a player or a grid painted into a
+    /// The room the page has in cells when it is drawn by pilot-tui (PIL1098), else null: the terminal's rows, and its columns less the cards panel's
+    /// when that stands beside the page (<c>TerminalFrame.PageColumns</c>), so the chat and the cell view fit the page. There the prototype is not a player or a grid painted into a
     /// rectangle: its tree is a node of the page's own tree, arranged, painted and hit-tested with the page by CellLayout, so its goto, set, toggle and
     /// text inputs go through the terminal's ordinary click and key routing. The Pixels or Cells bar and the strip of renders have no place there.
     /// </summary>
@@ -682,7 +684,9 @@ internal sealed class DesignsView<TSurface> : PilotWidgetBase<TSurface>
         else if (Terminal is { } terminal)
         {
             left.Add(ScreenButtons(page));
-            left.Add(Layout.Builder.VStack(EmbeddedTree(terminal)).Bg(Well).Stretch());
+            // In a scroll of its own: the rows left to it are what the terminal has less the header (which wraps at a narrow width) and the chat,
+            // and a screen taller than them is cut at its foot and scrolled, never painted on over the chat under it.
+            left.Add(Layout.Builder.VStack(EmbeddedTree(terminal)).WithScroll(_cellScroll).Bg(Well).WStar().HStar());
         }
         else
         {
@@ -709,9 +713,13 @@ internal sealed class DesignsView<TSurface> : PilotWidgetBase<TSurface>
         // In pixels the chat is a column of its own between the player and the versions: beside the prototype, where what the designer changes is in view.
         // Where the window has no width for three columns (their least widths and the gaps), the chat goes under the other two instead of past the page.
         var wide = _width >= WideColumns;
-        var two = Layout.Builder.HStack(
-            Layout.Builder.VStack([.. left]).WithGap(8f).WStar(2.2f).HStar(),
-            Layout.Builder.VStack([.. right]).WithGap(6f).WithScroll(_sideScroll).WStar(1f, 260f, 520f).HStar()).WithGap(Gutter).WStar().HStar();
+        // In cells the left column is the whole cells LeftColumns gives it, which the chat's box and the prototype are sized by too: a share of the
+        // width ended inside a cell (79.75 at 160 columns with the cards panel beside), and a right-aligned time in the chat lost its last cell there.
+        var leftColumn = Layout.Builder.VStack([.. left]).WithGap(8f);
+        var rightColumn = Layout.Builder.VStack([.. right]).WithGap(6f).WithScroll(_sideScroll);
+        var two = Terminal is { } room
+            ? Layout.Builder.HStack(leftColumn.WFixed(LeftColumns(room) * 8f).HStar(), rightColumn.WStar().HStar()).WithGap(Gutter).WStar().HStar()
+            : Layout.Builder.HStack(leftColumn.WStar(2.2f).HStar(), rightColumn.WStar(1f, 260f, 520f).HStar()).WithGap(Gutter).WStar().HStar();
         var columns = Terminal is not null
             ? two
             : wide
@@ -746,11 +754,12 @@ internal sealed class DesignsView<TSurface> : PilotWidgetBase<TSurface>
             .Follows(new HitResult.ButtonHit("designs:point"), _ => Point(!Pointing))
             .RowH(26f);
 
-    // The columns the page's left column has in a terminal.
+    // The whole cells the page's left column has in a terminal: its 2.2 share beside the versions' 1, with the versions kept between 260 and 520
+    // where the room allows, as the pixel layout keeps them. The column, the chat's box and the prototype's width are all this one number.
     private static int LeftColumns((int Columns, int Rows) terminal)
     {
-        var width = terminal.Columns * 8f - 2f * Gutter;
-        return (int)(Math.Clamp((width - Gutter) * 2.2f / 3.2f, 160f, Math.Max(160f, width - Gutter - 260f)) / 8f);
+        var width = terminal.Columns * 8f - 2f * Gutter - Gutter;
+        return (int)(Math.Clamp(width * 2.2f / 3.2f, Math.Max(160f, width - 520f), Math.Max(160f, width - 260f)) / 8f);
     }
 
     // The rows the chat takes under the cell view, whatever the terminal's height: what the box, its hint, the status and a few lines of the feed need.
@@ -764,9 +773,7 @@ internal sealed class DesignsView<TSurface> : PilotWidgetBase<TSurface>
     {
         var builder = Player!.TreeBuilder;
         var size = builder.DesignSize;
-        var width = terminal.Columns * 8f - 2f * Gutter;
-        var left = Math.Clamp((width - Gutter) * 2.2f / 3.2f, 160f, Math.Max(160f, width - Gutter - 260f));
-        builder.DesignSize = ((int)left, Math.Max(4, terminal.Rows - 8 - CellChatRows) * 16);
+        builder.DesignSize = (LeftColumns(terminal) * 8, Math.Max(4, terminal.Rows - 8 - CellChatRows) * 16);
         try
         {
             return Player.BuildTree().Stretch();
@@ -925,7 +932,8 @@ internal sealed class DesignsView<TSurface> : PilotWidgetBase<TSurface>
         return Layout.Builder.HStack([.. tiles]).WithGap(8f).HFixed(StripH).WStar();
     }
 
-    private static Layout.Node Heading(string text) => WrappedProse.OneLine(text, 14f, Bright).RowH(26f);
+    // Whole on hover: a heading beside a button (the chat's, at 80 columns) is cut with an ellipsis.
+    private static Layout.Node Heading(string text) => WrappedProse.OneLine(text, 14f, Bright).RowH(26f).Whole(text);
 
     // The Markdown of a text, parsed once: the page's tree is built every frame and a node is immutable.
     private readonly Dictionary<(string Text, bool Night), Layout.Node> _markdown = [];

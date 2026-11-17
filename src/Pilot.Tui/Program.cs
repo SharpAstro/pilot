@@ -514,7 +514,6 @@ while (!stop.IsCancellationRequested)
             {
                 designReads.AskDesign(openDesign, designReads.Page?.Detail.Row.Id == openDesign ? designReads.Page.Version : null);
             }
-            chrome.Designs.Terminal = (columns, rows);
         }
         if (page == PilotPage.Flights && chrome.Flights.OpenCode is { } openCode)
         {
@@ -539,6 +538,11 @@ while (!stop.IsCancellationRequested)
         cards.OnChatPage = page == PilotPage.Chat;
         var cardsBeside = columns >= TerminalFrame.CardsPanelColumns && (pages.Cards.HasAny || cards.CanTell && !cards.OnChatPage);
         chat.CellColumns = TerminalFrame.PageColumns(columns, cardsBeside);
+        if (page == PilotPage.Designs)
+        {
+            // The page's own room, as the Chat page's: the cards panel beside it takes its columns, and the design's chat and cell view are sized to what is left.
+            chrome.Designs.Terminal = (TerminalFrame.PageColumns(columns, cardsBeside), rows);
+        }
         var pageTree = page switch
         {
             PilotPage.Chat => chat.Tree(),
