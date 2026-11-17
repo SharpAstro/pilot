@@ -152,7 +152,7 @@ public abstract class PrFixTestsBase : IDisposable
         await _reviews.SweepAsync(Ct);
         Row.Head.ShouldBe(head);
         Row.State.ShouldBe(PrReviewState.Reviewing);
-        (await Run(Verbs.PrVerdict, "acme/widget#7", Row.Reviewer, [verdict, "Round report.", .. findings])).Error.ShouldBeNull();
+        (await Run(Verbs.PrVerdict, "acme/widget#7", Row.Reviewer, [verdict, AnswersOf(Row) + "Round report.", .. findings])).Error.ShouldBeNull();
     }
 
     private protected static SessionRow Session(string name, SessionState state) => new()
