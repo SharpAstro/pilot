@@ -263,8 +263,7 @@ public sealed class DesignPublishTests : IAsyncLifetime
         (await Pilot("design", "publish", "DSN-1", "--why", "brief")).Output.ShouldContain("NOTES.md");
 
         File.WriteAllText(Draft("NOTES.md"), "What this is.");
-        foreach (var (bad, reason) in new[] { ("", "not empty"), ("  ", "not empty"), ("two
-lines", "one line"), (new string('x', DesignWhys.MaxLength + 1), "at most 120") })
+        foreach (var (bad, reason) in new[] { ("", "not empty"), ("  ", "not empty"), ("two\nlines", "one line"), (new string('x', DesignWhys.MaxLength + 1), "at most 120") })
         {
             var (badWhy, badWhySaid) = await Pilot("design", "publish", "DSN-1", "--why", bad);
             badWhy.ShouldBe(1);

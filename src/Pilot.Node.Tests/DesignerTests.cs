@@ -294,8 +294,7 @@ public sealed class DesignerTests : IDisposable
         var brief = Briefs.Designer(detail, "{}", null, "pilot");
         foreach (var (name, kind) in DIR.Lib.Prototyping.PrototypeVocabulary.Kinds)
         {
-            var line = brief.Split('
-').FirstOrDefault(l => l.StartsWith($"- `{name}`:", StringComparison.Ordinal)).ShouldNotBeNull(name);
+            var line = brief.Split('\n').FirstOrDefault(l => l.StartsWith($"- `{name}`:", StringComparison.Ordinal)).ShouldNotBeNull(name);
             foreach (var property in kind.Properties)
             {
                 line.ShouldContain($"`{property.Name}`", customMessage: name);
