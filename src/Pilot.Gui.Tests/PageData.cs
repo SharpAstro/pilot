@@ -1,5 +1,6 @@
 using Pilot.Contracts;
 using Shouldly;
+using Xunit;
 
 namespace Pilot.Gui.Tests;
 
