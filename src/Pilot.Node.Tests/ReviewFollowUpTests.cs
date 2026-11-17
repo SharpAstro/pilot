@@ -158,7 +158,7 @@ public sealed class ReviewFollowUpTests : ReviewTestsBase
         var first = Merge(code);
         var second = Merge(code);
         release.SetResult();
-        var results = await Task.WhenAll(first, second).WaitAsync(TimeSpan.FromSeconds(30));
+        var results = await Task.WhenAll(first, second).WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
 
         results.ShouldAllBe(r => r.Error == null);
         _github.IssuesCreated.ShouldHaveSingleItem();
