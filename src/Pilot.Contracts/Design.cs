@@ -59,6 +59,24 @@ public sealed record DesignRow
 
     /// <summary>Pieces of the brief the designer has not been sent yet (it is held, or being started), oldest first; BRIEF.md has them all as well.</summary>
     public string[] DesignerPending { get; init => field = value ?? []; } = [];
+
+    /// <summary>The session ids of every designer this design has had (PIL1151), oldest first: the design chat reads their transcripts, as the watchtower's reads its generations. Empty while there is none, and in a record an older release wrote.</summary>
+    public string[] DesignerSessions { get; init => field = value ?? []; } = [];
+
+    /// <summary>What the designer last did to the draft, for the chat's status: <see cref="DesignerPhases"/>; null while there is none.</summary>
+    public string? DesignerPhase { get; init; }
+
+    /// <summary>How many findings the last <c>design-check</c> had; null before any.</summary>
+    public int? CheckFindings { get; init; }
+}
+
+/// <summary>The values of <see cref="DesignRow.DesignerPhase"/>: the last step taken on the draft.</summary>
+public static class DesignerPhases
+{
+    public const string Drafting = "drafting";
+    public const string Checking = "checking";
+    public const string Rendering = "rendering";
+    public const string Published = "published";
 }
 
 /// <summary>The values of <see cref="DesignRow.DesignerState"/>.</summary>
@@ -143,6 +161,17 @@ public static class DesignWhys
 public sealed record DesignRenderStamp
 {
     public string? PrototypeSha256 { get; init; }
+}
+
+/// <summary>One line of a design's chat file, <c>chat.jsonl</c> (PIL1151): something the owner said. Nullable or defaulted past the first two members, as a stored record's must be.</summary>
+public sealed record DesignChatLine
+{
+    public required DateTimeOffset At { get; init; }
+
+    public required string Text { get; init; }
+
+    /// <summary>The picture sent with it, as a path relative to the design's folder (<c>pictures/...</c>); null with none.</summary>
+    public string? Picture { get; init; }
 }
 
 /// <summary>One version of a design, <c>versions/v&lt;k&gt;/</c>: its number, when it was made, and the hash of its prototype.</summary>

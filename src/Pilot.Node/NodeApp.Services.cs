@@ -120,7 +120,8 @@ public static partial class NodeApp
         });
         builder.Services.AddHostedService(services => new Pilot.Node.Designs.DesignerSweep(services.GetRequiredService<Pilot.Node.Designs.Designers>()));
         builder.Services.AddSingleton(services => new Pilot.Node.Designs.DesignerGuard(services.GetRequiredService<NodeState>(), services.GetRequiredService<Pilot.Node.Designs.DesignStore>()));
-        builder.Services.AddSingleton(services => new Pilot.Node.Designs.DesignCommands(services.GetRequiredService<NodeState>(), services.GetRequiredService<Pilot.Node.Designs.DesignStore>(), services.GetRequiredService<Pilot.Node.Designs.Designers>()));
+        builder.Services.AddSingleton(services => new Pilot.Node.Designs.DesignChat(services.GetRequiredService<Pilot.Node.Designs.DesignStore>(), services.GetRequiredService<TranscriptBook>()));
+        builder.Services.AddSingleton(services => new Pilot.Node.Designs.DesignCommands(services.GetRequiredService<NodeState>(), services.GetRequiredService<Pilot.Node.Designs.DesignStore>(), services.GetRequiredService<Pilot.Node.Designs.Designers>(), services.GetRequiredService<Pilot.Node.Designs.DesignChat>()));
         builder.Services.AddSingleton(services => new RemovalQueue(RemovalQueue.FileIn(options.DataFolder), services.GetRequiredService<TimeProvider>()) { Error = logWriter });
         // First: tried once at the start, before any service touches the paths it holds.
         builder.Services.AddHostedService(services => new RemovalQueueStart(services.GetRequiredService<RemovalQueue>(), services.GetRequiredService<NodeState>(), services.GetRequiredService<TimeProvider>()));

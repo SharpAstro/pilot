@@ -71,6 +71,12 @@ public sealed record ChatPage
     /// and from an older node.
     /// </summary>
     public ChatAsk[]? Asks { get; init; }
+
+    /// <summary>
+    /// What the session behind the chat is doing, in plain words, for a design's chat (PIL1151): <c>drafting</c>, <c>checking: 2 findings</c>,
+    /// <c>rendering</c>, <c>published v2</c>, <c>held until 22:00</c> or <c>idle</c>. Null for the watchtower's chat and from an older node.
+    /// </summary>
+    public string? Status { get; init; }
 }
 
 /// <summary>A permission prompt or a question the watchtower waits on the person for.</summary>

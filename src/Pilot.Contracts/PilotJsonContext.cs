@@ -37,6 +37,7 @@ namespace Pilot.Contracts;
 [JsonSerializable(typeof(ArchivedFlightRow))]
 [JsonSerializable(typeof(ArchivedFlightsPage))]
 [JsonSerializable(typeof(DesignRow))]
+[JsonSerializable(typeof(DesignChatLine))]
 [JsonSerializable(typeof(DesignVersionRow))]
 [JsonSerializable(typeof(DesignDetail))]
 [JsonSerializable(typeof(DesignList))]

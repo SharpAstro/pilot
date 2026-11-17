@@ -76,11 +76,15 @@ public sealed class Designers(NodeState state, DesignStore store, IWorkerLaunche
             {
                 await AskAsync(row.Id, null).ConfigureAwait(false);
             }
-            else if (row.DesignerState is DesignerStates.Working && row.DesignerName is { Length: > 0 } name
-                && state.Sessions().FirstOrDefault(s => string.Equals(s.Name, name, StringComparison.OrdinalIgnoreCase)) is { State: SessionState.Idle or SessionState.Ended })
+            else if (row.DesignerName is { Length: > 0 } name && state.Sessions().FirstOrDefault(s => string.Equals(s.Name, name, StringComparison.OrdinalIgnoreCase)) is { } listed)
             {
-                // Its turn is done: the design says idle, and the next brief piece resumes it.
-                store.Update(row.Id, r => r with { DesignerState = DesignerStates.Idle });
+                // The session id is kept as soon as the tracker lists it, so the design's chat finds the transcript after a restart.
+                var done = row.DesignerState is DesignerStates.Working && listed.State is SessionState.Idle or SessionState.Ended;
+                if (done || listed.SessionId is { Length: > 0 } known && !row.DesignerSessions.Contains(known))
+                {
+                    // Its turn is done: the design says idle, and the next brief piece resumes it.
+                    store.Update(row.Id, r => r with { DesignerState = done ? DesignerStates.Idle : r.DesignerState, DesignerSessions = WithSession(r.DesignerSessions, listed.SessionId) });
+                }
             }
         }
     }
@@ -135,7 +139,7 @@ public sealed class Designers(NodeState state, DesignStore store, IWorkerLaunche
                     return;
                 }
             }
-            store.Update(row.Id, r => r with { DesignerJob = live.Id, DesignerState = DesignerStates.Working, DesignerHeldUntil = null, DesignerWhy = null, DesignerPending = [] });
+            store.Update(row.Id, r => r with { DesignerJob = live.Id, DesignerState = DesignerStates.Working, DesignerHeldUntil = null, DesignerWhy = null, DesignerPending = [], DesignerSessions = WithSession(r.DesignerSessions, live.SessionId), DesignerPhase = pending.Length > 0 ? DesignerPhases.Drafting : r.DesignerPhase });
             return;
         }
 
@@ -149,8 +153,11 @@ public sealed class Designers(NodeState state, DesignStore store, IWorkerLaunche
             : null;
         var brief = Briefs.Designer(detail, prototype, notes, Run);
         var job = await workers.StartAsync(new WorkerStart(name, store.FolderOf(row.Id), null, brief, models.Model(RoleModels.Designer), models.Effort(RoleModels.Designer), Reason: SessionStartReasons.Designer), CancellationToken.None).ConfigureAwait(false);
-        store.Update(row.Id, r => r with { DesignerName = name, DesignerJob = job, DesignerState = DesignerStates.Working, DesignerHeldUntil = null, DesignerWhy = null, DesignerPending = [], DesignerStartedAt = time.GetUtcNow() });
+        store.Update(row.Id, r => r with { DesignerName = name, DesignerJob = job, DesignerState = DesignerStates.Working, DesignerHeldUntil = null, DesignerWhy = null, DesignerPending = [], DesignerStartedAt = time.GetUtcNow(), DesignerPhase = DesignerPhases.Drafting });
     }
+
+    private static string[] WithSession(string[] have, string? session) =>
+        session is { Length: > 0 } && !have.Contains(session, StringComparer.Ordinal) ? [.. have, session] : have;
 
     private bool StartedRecently(DesignRow row) => row.DesignerStartedAt is { } at && time.GetUtcNow() - at < ListedWithin;
 }

@@ -7,10 +7,10 @@ namespace Pilot.Node.Designs;
 /// <c>design-show</c> and <c>designs</c>. They go through <see cref="DesignStore"/>, the node its one writer; only <c>design-publish</c> writes under a
 /// design's <c>versions/</c>, and only to a version folder that is not there yet.
 /// </summary>
-public sealed class DesignCommands(NodeState state, DesignStore store, Designers? designers = null)
+public sealed class DesignCommands(NodeState state, DesignStore store, Designers? designers = null, DesignChat? chat = null)
 {
     /// <summary>Whether <paramref name="verb"/> is one of these.</summary>
-    public static bool Handles(string verb) => verb is Verbs.DesignNew or Verbs.DesignBrief or Verbs.DesignDraft or Verbs.DesignShow or Verbs.Designs
+    public static bool Handles(string verb) => verb is Verbs.DesignNew or Verbs.DesignBrief or Verbs.DesignSay or Verbs.DesignChat or Verbs.DesignDraft or Verbs.DesignShow or Verbs.Designs
         or Verbs.DesignTerminals or Verbs.DesignCheck or Verbs.DesignRender or Verbs.DesignPublish;
 
     public CommandResult Run(CommandRequest command)
@@ -36,6 +36,18 @@ public sealed class DesignCommands(NodeState state, DesignStore store, Designers
                     // A new piece of the brief resumes the designer with it (or starts it, when there is none).
                     designers?.Ask(briefed.Id, words);
                     return state.Complete(command, null, made: briefed.Id);
+                case Verbs.DesignSay:
+                    // args: the words, then (optionally) a picture's name and its bytes in base64.
+                    var said = args.Length > 0 ? args[0] : "";
+                    var pictureBytes = args.Length > 2 && args[2].Length > 0 ? Convert.FromBase64String(args[2]) : null;
+                    var sayId = DesignStore.Normalise(IdOf(command));
+                    var picturePath = store.Say(sayId, said, args.Length > 1 ? args[1] : null, pictureBytes);
+                    // The designer is sent the words, with the picture's path when there is one, and resumes with them (or holds them while the limit lasts).
+                    designers?.Ask(sayId, picturePath is null ? said : $"{said}\n\nA picture came with this message: {picturePath}");
+                    return state.Complete(command, null, made: sayId);
+                case Verbs.DesignChat:
+                    var feed = chat ?? throw new DesignException("this node keeps no design chat");
+                    return state.Complete(command, null) with { DesignChat = feed.Page(IdOf(command), args.Length > 0 && int.TryParse(args[0], out var after) ? after : -1) };
                 case Verbs.DesignDraft:
                     var id = DesignStore.Normalise(IdOf(command));
                     var folder = store.Draft(id, args.Contains("replace", StringComparer.Ordinal));
@@ -58,7 +70,7 @@ public sealed class DesignCommands(NodeState state, DesignStore store, Designers
                     return state.Complete(command, null) with { Designs = new DesignList { Rows = store.List() } };
             }
         }
-        catch (DesignException ex)
+        catch (Exception ex) when (ex is DesignException or FormatException)
         {
             return state.Complete(command, ex.Message);
         }

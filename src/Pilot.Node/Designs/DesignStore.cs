@@ -25,6 +25,8 @@ public sealed class DesignStore(string dataFolder, TimeProvider? time = null)
     public const string PrototypeFile = "prototype.json";
     public const string NotesFile = "NOTES.md";
     public const string DraftFolderName = "draft";
+    public const string ChatFile = "chat.jsonl";
+    public const string PicturesFolderName = "pictures";
     public const string VersionsFolderName = "versions";
 
     /// <summary>What a design with no version starts its draft from: one screen, entry set, a single text node (DIR.Lib's prototype format).</summary>
@@ -130,6 +132,63 @@ public sealed class DesignStore(string dataFolder, TimeProvider? time = null)
             var row = Find(id) ?? throw new DesignException($"There is no design {id}");
             File.AppendAllText(Path.Combine(FolderOf(row.Id), BriefFile), "\n" + Piece(text, _time.GetUtcNow()));
             return row;
+        }
+    }
+
+    /// <summary>
+    /// The owner's words in the design's chat (PIL1151): appended to the brief verbatim under their time (<see cref="Brief"/>), and to <c>chat.jsonl</c> with the picture
+    /// kept under <c>pictures/</c> when there is one. Returns the picture's full path, or null with none.
+    /// </summary>
+    public string? Say(string id, string text, string? pictureName, byte[]? picture)
+    {
+        lock (_lock)
+        {
+            var row = Brief(id, text);
+            var folder = FolderOf(row.Id);
+            string? relative = null;
+            string? full = null;
+            if (picture is { Length: > 0 })
+            {
+                var pictures = Path.Combine(folder, PicturesFolderName);
+                Directory.CreateDirectory(pictures);
+                var clean = new string([.. Path.GetFileName(pictureName ?? "picture").Select(c => char.IsAsciiLetterOrDigit(c) || c is '.' or '-' or '_' ? c : '_')]).TrimStart('.');
+                var n = Directory.EnumerateFiles(pictures).Count() + 1;
+                relative = $"{PicturesFolderName}/{n.ToString(CultureInfo.InvariantCulture)}-{(clean.Length > 0 ? clean : "picture")}";
+                full = Path.Combine(folder, relative.Replace('/', Path.DirectorySeparatorChar));
+                File.WriteAllBytes(full, picture);
+            }
+            var line = new DesignChatLine { At = _time.GetUtcNow(), Text = text, Picture = relative };
+            File.AppendAllText(Path.Combine(folder, ChatFile), JsonSerializer.Serialize(line, PilotJsonContext.Default.DesignChatLine) + "
+");
+            return full;
+        }
+    }
+
+    /// <summary>What the owner has said in the chat of <paramref name="id"/>, oldest first; lines that cannot be read are left out.</summary>
+    public DesignChatLine[] Says(string id)
+    {
+        lock (_lock)
+        {
+            var file = Path.Combine(FolderOf(id), ChatFile);
+            if (!File.Exists(file))
+            {
+                return [];
+            }
+            var lines = new List<DesignChatLine>();
+            foreach (var text in File.ReadAllLines(file))
+            {
+                try
+                {
+                    if (text.Length > 0 && JsonSerializer.Deserialize(text, PilotJsonContext.Default.DesignChatLine) is { } line)
+                    {
+                        lines.Add(line);
+                    }
+                }
+                catch (JsonException)
+                {
+                }
+            }
+            return [.. lines];
         }
     }
 
@@ -302,7 +361,9 @@ public sealed class DesignStore(string dataFolder, TimeProvider? time = null)
         lock (_lock)
         {
             var file = DraftPrototypeOf(id, out var row);
-            return DesignChecker.Problems(file, terminals: row.Terminals);
+            var problems = DesignChecker.Problems(file, terminals: row.Terminals);
+            Update(row.Id, r => r with { DesignerPhase = DesignerPhases.Checking, CheckFindings = problems.Length });
+            return problems;
         }
     }
 
@@ -314,7 +375,9 @@ public sealed class DesignStore(string dataFolder, TimeProvider? time = null)
             var file = DraftPrototypeOf(id, out var row);
             var document = DesignChecker.Load(file, out var problems)
                 ?? throw new DesignException($"{row.Id} draft does not load, so there is nothing to render:\n{string.Join('\n', problems)}");
-            return DesignChecker.Render(document, Path.Combine(FolderOf(row.Id), DraftFolderName, DesignChecker.RendersFolderName), Sha256Of(file), terminals: row.Terminals);
+            var screens = DesignChecker.Render(document, Path.Combine(FolderOf(row.Id), DraftFolderName, DesignChecker.RendersFolderName), Sha256Of(file), terminals: row.Terminals);
+            Update(row.Id, r => r with { DesignerPhase = DesignerPhases.Rendering });
+            return screens;
         }
     }
 
@@ -401,6 +464,7 @@ public sealed class DesignStore(string dataFolder, TimeProvider? time = null)
                 Versions = number,
                 Why = why,
                 PrototypeSha256 = hash,
+                DesignerPhase = DesignerPhases.Published,
                 History = [.. row.History, new DesignVersionRow { Number = number, At = at, Why = why, PrototypeSha256 = hash }],
             };
             WriteRecord(made);

@@ -151,6 +151,10 @@ public sealed record CommandResult
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public DesignDetail? Design { get; init; }
 
+    /// <summary>A <c>design-chat</c>'s feed (PIL1151); null for any other command.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public ChatPage? DesignChat { get; init; }
+
     /// <summary>An <c>archived-flight</c>'s flight, whole; null for any other command.</summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public ArchivedFlight? ArchivedFlight { get; init; }
@@ -942,6 +946,16 @@ public static class Verbs
 
     /// <summary><c>design-brief design/DSN-&lt;n&gt; text</c>: appends the owner's words to the design's brief, verbatim, under their time.</summary>
     public const string DesignBrief = "design-brief";
+
+    /// <summary>
+    /// <c>design-say design/DSN-&lt;n&gt; text [picture name] [picture base64]</c> (PIL1151): the owner's words in the design's chat. Appended to the brief verbatim
+    /// under their time, kept in the chat, and sent to the designer (resumed, or held while the usage limit lasts); a picture is kept in the design's folder
+    /// and named to the designer.
+    /// </summary>
+    public const string DesignSay = "design-say";
+
+    /// <summary><c>design-chat design/DSN-&lt;n&gt; [after]</c>: reads the design's chat as <see cref="CommandResult.DesignChat"/>, the entries after the index asked for (all by default). Changes nothing.</summary>
+    public const string DesignChat = "design-chat";
 
     /// <summary>
     /// <c>design-draft design/DSN-&lt;n&gt; [replace]</c>: makes the design's <c>draft/</c> from its current version, or a starter prototype when there is

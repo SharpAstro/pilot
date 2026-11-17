@@ -26,6 +26,20 @@ public static partial class PilotCommand
         return text.ToString();
     }
 
+    /// <summary>A design's chat: each entry as <c>[index] time who: text</c>, then the designer's status.</summary>
+    internal static string DesignChatText(ChatPage page)
+    {
+        var text = new StringBuilder();
+        foreach (var entry in page.Entries)
+        {
+            var who = entry.Kind switch { TranscriptKind.User => "you", TranscriptKind.Divider => "version", _ => "designer" };
+            var at = entry.At is { } t ? t.UtcDateTime.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture) : "-";
+            text.AppendLine($"[{entry.Index}] {at} {who}: {entry.Text}");
+        }
+        text.AppendLine($"{page.Total} entries; designer: {page.Status ?? "idle"}");
+        return text.ToString();
+    }
+
     /// <summary>One design whole: its record, its brief as written and where its folders are.</summary>
     internal static string DesignShown(DesignDetail design)
     {
@@ -81,6 +95,32 @@ public static partial class PilotCommand
             var designBrief = Action(new Command("brief", "Append the owner's words to a design's brief, verbatim, under their time") { Arguments = { briefId, briefText } },
                 (p, client, ct) => Send(client, Verbs.DesignBrief, Verbs.DesignTarget(p.GetValue(briefId)!), [Join(p, briefText)], who, ct));
 
+            var sayId = Arg("design", "The design's id, DSN-<n>");
+            var sayText = Words("text", "The owner's words, verbatim (after --)");
+            var sayPicture = new Option<string?>("--picture") { Description = "A picture to send with the words: a file, kept in the design's folder and named to the designer" };
+            var designSay = Action(new Command("say", "Say something in a design's chat: the words are appended to its brief under their time and sent to the designer") { Arguments = { sayId, sayText }, Options = { sayPicture } },
+                (p, client, ct) =>
+                {
+                    var file = p.GetValue(sayPicture);
+                    string[] args = file is null ? [Join(p, sayText)] : [Join(p, sayText), Path.GetFileName(file), Convert.ToBase64String(File.ReadAllBytes(file))];
+                    return Send(client, Verbs.DesignSay, Verbs.DesignTarget(p.GetValue(sayId)!), args, who, ct);
+                });
+
+            var chatId = Arg("design", "The design's id, DSN-<n>");
+            var chatAfter = new Option<int?>("--after") { Description = "Only the entries after this index" };
+            var designChat = Action(new Command("chat", "Read a design's chat: the owner's messages, the designer's replies, a line per published version, and what the designer is doing") { Arguments = { chatId }, Options = { chatAfter } },
+                async (p, client, ct) =>
+                {
+                    var answer = await client.SendAsync(new CommandRequest { Verb = Verbs.DesignChat, Target = Verbs.DesignTarget(p.GetValue(chatId)!), Args = p.GetValue(chatAfter) is { } a ? [a.ToString(CultureInfo.InvariantCulture)] : [], Who = who, Agent = byAgent }, ct);
+                    if (answer is { Success: true, Response: { Ok: true, DesignChat: { } page } })
+                    {
+                        await output.WriteAsync(DesignChatText(page));
+                        return 0;
+                    }
+                    await output.WriteLineAsync($"refused: design chat {p.GetValue(chatId)}: {answer.Response?.Error ?? answer.Error}");
+                    return 1;
+                });
+
             var draftId = Arg("design", "The design's id, DSN-<n>");
             var draftReplace = new Option<bool>("--replace") { Description = "Make the draft again over an existing one" };
             var designDraft = Action(new Command("draft", "Make the design's draft/ folder: the current version's prototype.json and NOTES.md, or a starter prototype when there is no version; refused over an existing draft unless --replace") { Arguments = { draftId }, Options = { draftReplace } },
@@ -113,7 +153,7 @@ public static partial class PilotCommand
                     return 1;
                 });
 
-            var design = new Command("design", "Designs: a prototype of DIR.Lib screens, briefed by the owner and kept in versions on the node. new, brief, draft, check, render, publish, show, terminals") { Subcommands = { designNew, designTerminals, designBrief, designDraft, designCheck, designRender, designPublish, designShow } };
+            var design = new Command("design", "Designs: a prototype of DIR.Lib screens, briefed by the owner and kept in versions on the node. new, brief, say, chat, draft, check, render, publish, show, terminals") { Subcommands = { designNew, designTerminals, designBrief, designSay, designChat, designDraft, designCheck, designRender, designPublish, designShow } };
 
             var designs = Action(new Command("designs", "Every design, newest first"),
                 async (p, client, ct) =>
