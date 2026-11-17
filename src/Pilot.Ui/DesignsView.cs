@@ -34,6 +34,12 @@ internal sealed class DesignsView<TSurface> : PilotWidgetBase<TSurface>
     private float _width = 10_000f;
     private const float WideColumns = 1000f;
     private const float NarrowChatHeight = 300f;
+    private const float NarrowTwoHeight = 440f;
+
+    // The page's height from which the narrow layout shares it between the two rows; shorter, the rows keep their heights and the body scrolls.
+    private const float TallEnough = NarrowTwoHeight + NarrowChatHeight + 160f;
+
+    private readonly ListScrollController _narrowScroll = new() { Mode = ScrollBarMode.Interactive };
 
     // The design's version a chat line says was published: its number, or 0 for any other entry.
     private static int VersionOf(TranscriptEntry entry) =>
@@ -81,7 +87,7 @@ internal sealed class DesignsView<TSurface> : PilotWidgetBase<TSurface>
     private readonly ListScrollController _listScroll = new() { Mode = ScrollBarMode.Interactive };
     private readonly ListScrollController _sideScroll = new() { Mode = ScrollBarMode.Interactive };
 
-    protected override IEnumerable<ListScrollController> PageScrolls => [_listScroll, _sideScroll, .. Chat.Scrolls];
+    protected override IEnumerable<ListScrollController> PageScrolls => [_listScroll, _sideScroll, _narrowScroll, .. Chat.Scrolls];
 
     /// <summary>The design whose page is open; null shows the list.</summary>
     public string? OpenId { get; private set; }
@@ -684,7 +690,10 @@ internal sealed class DesignsView<TSurface> : PilotWidgetBase<TSurface>
                     Layout.Builder.VStack([.. left]).WithGap(8f).WStar(1.6f).HStar(),
                     ChatPane(page).WStar(1.3f, 260f, 640f).HStar(),
                     Layout.Builder.VStack([.. right]).WithGap(6f).WithScroll(_sideScroll).WStar(1f, 220f, 420f).HStar()).WithGap(Gutter).WStar().HStar()
-                : Layout.Builder.VStack(two.HStar(), ChatPane(page).HFixed(NarrowChatHeight)).WithGap(8f).WStar().HStar();
+                : PageHeight is >= TallEnough
+                    ? Layout.Builder.VStack(two.HStar(), ChatPane(page).HFixed(NarrowChatHeight)).WithGap(8f).WStar().HStar()
+                    // A window with no height for both scrolls them together: each keeps the height it needs, so nothing is drawn over the other.
+                    : Layout.Builder.VStack(two.HFixed(NarrowTwoHeight), ChatPane(page).HFixed(NarrowChatHeight)).WithGap(8f).WithScroll(_narrowScroll).WStar().HStar();
         // The Pixels or Cells bar spans the page above both columns, so a narrow window cannot squeeze it into the player's column.
         return page.Version is not null && Player is not null && Terminal is null
             ? Layout.Builder.VStack(PlayerBar(page), columns).WithGap(8f).Pad(Gutter, 8f)
