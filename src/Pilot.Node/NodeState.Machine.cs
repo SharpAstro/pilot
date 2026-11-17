@@ -36,7 +36,6 @@ public sealed partial class NodeState
         lock (_gate)
         {
             var usage = UsageRow.Newest(_usage, read);
-            _usageWrittenAt = null;
             if (_usage is { } held && held.Account == usage.Account && held.FiveHour == usage.FiveHour && held.SevenDay == usage.SevenDay
                 && held.LoginChangedAt == usage.LoginChangedAt && usage.ReadAt - held.ReadAt < TimeSpan.FromMinutes(10))
             {
@@ -47,6 +46,7 @@ public sealed partial class NodeState
                 }
                 return;
             }
+            _usageWrittenAt = null;
             Publish(new UsageChangedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Usage = usage });
         }
     }
