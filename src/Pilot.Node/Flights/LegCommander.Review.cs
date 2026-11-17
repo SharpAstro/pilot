@@ -256,6 +256,27 @@ public sealed partial class LegCommander
         RaiseReviewChanges(FlightOf(Verbs.FlightTarget(code)), why, SendBackReason.ReviewNotStarted);
     }
 
+    /// <summary>
+    /// The new Blocking findings (unmarked by must-block) whose named files and lines all lie outside the diff since the last round's head:
+    /// what the fix round did not touch. Empty when the diff cannot be read, so nothing is moved and the finding blocks.
+    /// </summary>
+    private async Task<IReadOnlyCollection<string>> UntouchedNewFindingsAsync(FlightRow flight, ReviewRow review, IReadOnlyList<string> candidates, CancellationToken cancellationToken)
+    {
+        var open = candidates.Where(c => !ReviewPoints.IsMustBlock(c)).ToList();
+        if (open.Count == 0 || flight.ReviewRounds?.LastOrDefault() is not { Head: { Length: > 0 } since })
+        {
+            return [];
+        }
+        var to = review.ReviewedHead is { Length: > 0 } reviewed ? reviewed : "HEAD";
+        var diff = await git.RunAsync(["diff", "--no-color", "--no-ext-diff", $"{since}..{to}"], flight.Worktree, cancellationToken);
+        if (!diff.Ok)
+        {
+            return [];
+        }
+        var lines = ReviewDiffLines.Parse(diff.Output);
+        return [.. open.Where(lines.IsOutside)];
+    }
+
     private async Task ReviewAsync(CommandRequest command, CancellationToken cancellationToken)
     {
         var flight = FlightOf(command.Target);
@@ -290,8 +311,38 @@ public sealed partial class LegCommander
         {
             throw new FlightException("a verdict needs its report: what was checked, or the changes asked for");
         }
+        var blocksOnAnswers = false;
         var findings = ReviewFindings.Read(report);
-        if (verdict == "changes" && !findings.HasBlocking)
+        // A re-review answers the list first (pilot #1107): refused before anything is recorded or sent to GitHub, so the reviewer is asked again.
+        var earlier = fromReviewer ? ReviewPoints.Number(flight.ReviewRounds ?? []) : [];
+        ReviewPointAnswer[]? answers = null;
+        string[]? left = null;
+        if (earlier.Count > 0)
+        {
+            if (ReviewPoints.Refusal(earlier, report) is { } unsettled)
+            {
+                throw new FlightException(unsettled);
+            }
+            var blockedBy = ReviewPoints.AnyNotAddressed(earlier, report);
+            if (verdict == "pass" && blockedBy)
+            {
+                throw new FlightException("a pass cannot leave an earlier point not addressed: give changes, with it under `## Blocking`, or answer it addressed (with where) or left (with a reason)");
+            }
+            answers = [.. ReviewPoints.ParseAnswers(report).Select(r => new ReviewPointAnswer(r.Id, r.Answer switch { ReviewPoints.Answer.Addressed => "addressed", ReviewPoints.Answer.Left => "left", _ => "not addressed" }, r.Detail))];
+            // A new blocking finding in text the fix did not touch, and not marked must-block, is left for the follow-up and blocks nothing.
+            if (verdict == "changes" && await UntouchedNewFindingsAsync(flight, review, ReviewPoints.NewBlocking(findings), cancellationToken) is { Count: > 0 } outside)
+            {
+                left = [.. outside];
+                report = ReviewPoints.MoveLeft(report, outside);
+                findings = ReviewFindings.Read(report);
+                if (!findings.HasBlocking && !blockedBy)
+                {
+                    verdict = "pass";
+                }
+            }
+            blocksOnAnswers = blockedBy;
+        }
+        if (verdict == "changes" && !findings.HasBlocking && !blocksOnAnswers)
         {
             throw new FlightException("changes needs at least one finding under `## Blocking`; with only not blocking findings (nits, suggestions) give `review pass` with them under `## Not blocking`: a pass with notes");
         }
@@ -320,7 +371,7 @@ public sealed partial class LegCommander
                 ? [.. f.ReviewRounds ?? [], new ReviewRound
                 {
                     Round = (f.ReviewRounds?.Length ?? 0) + 1, Head = judged.ReviewedHead, Verdict = verdict == "pass" ? ReviewState.Passed : ReviewState.Changes,
-                    Findings = kept, Depth = judged.Depth, Model = judged.Model ?? Models.ReviewerModel(judged.Depth ?? ReviewDepth.Standard),
+                    Findings = kept, Answers = answers, LeftPoints = left, Depth = judged.Depth, Model = judged.Model ?? Models.ReviewerModel(judged.Depth ?? ReviewDepth.Standard),
                 }]
                 : f.ReviewRounds,
         });

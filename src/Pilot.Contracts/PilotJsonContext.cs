@@ -67,6 +67,7 @@ namespace Pilot.Contracts;
 [JsonSerializable(typeof(JobArtifact))]
 [JsonSerializable(typeof(BenchVm))]
 [JsonSerializable(typeof(ReviewRound))]
+[JsonSerializable(typeof(ReviewPointAnswer))]
 [JsonSerializable(typeof(HumanCheck))]
 [JsonSerializable(typeof(MergeRow))]
 [JsonSerializable(typeof(PrReviewRow))]

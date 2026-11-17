@@ -184,5 +184,44 @@ public static partial class ReviewPoints
         return points.Any(p => replies.TryGetValue(p.Id, out var r) && r.Answer == Answer.NotAddressed);
     }
 
+    /// <summary>Whether a finding carries the must-block marker, which keeps it blocking wherever it lies.</summary>
+    public static bool IsMustBlock(string finding) => finding.Contains(MustBlockMarker, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>The Blocking items of a re-review report that are new: those that do not name an earlier point (a restated one is the table's).</summary>
+    public static IReadOnlyList<string> NewBlocking(ReviewFindings findings) =>
+        [.. findings.Blocking.Where(b => !IdToken().IsMatch(b)).Select(Clean)];
+
+    /// <summary>The heading the findings left for the follow-up are kept under, outside Blocking.</summary>
+    public const string LeftHeading = "Left for the follow-up";
+
+    /// <summary>
+    /// The report with the given Blocking items (and their indented detail lines) taken out of Blocking and put under
+    /// <see cref="LeftHeading"/>, so they are no point of the next round and block nothing.
+    /// </summary>
+    public static string MoveLeft(string report, IReadOnlyCollection<string> items)
+    {
+        var kept = new List<string>();
+        var moved = new List<string>();
+        var inBlocking = false;
+        var skipping = false;
+        foreach (var raw in report.Split('\n'))
+        {
+            var line = raw.TrimEnd('\r');
+            var text = line.Trim();
+            if (text.StartsWith('#') || (text.Length > 4 && text.StartsWith("**", StringComparison.Ordinal) && text.EndsWith("**", StringComparison.Ordinal)))
+            {
+                var name = text.TrimStart('#').Trim().Trim('*', ':', ' ');
+                inBlocking = name.StartsWith("blocking", StringComparison.OrdinalIgnoreCase);
+                skipping = false;
+            }
+            else if (inBlocking && text.Length > 0 && !char.IsWhiteSpace(line[0]))
+            {
+                skipping = items.Contains(Clean(text));
+            }
+            (skipping && inBlocking ? moved : kept).Add(line);
+        }
+        return moved.Count == 0 ? report : string.Join("\n", kept).TrimEnd() + $"\n\n## {LeftHeading}\n" + string.Join("\n", moved) + "\n";
+    }
+
     private static string Short(string text) => text.Length <= 80 ? text : text[..77] + "...";
 }

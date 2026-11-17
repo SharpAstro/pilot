@@ -21,4 +21,19 @@ public sealed record ReviewRound
 
     /// <summary>The model the reviewer ran on; null when the node did not say.</summary>
     public string? Model { get; init; }
+
+    /// <summary>
+    /// The reviewer's answer to each earlier point of a re-review (pilot #1107), as it gave them; null for a first round and for a round
+    /// kept from before answers were stored.
+    /// </summary>
+    public ReviewPointAnswer[]? Answers { get; init; }
+
+    /// <summary>
+    /// The new findings of this round that were left for the follow-up issue instead of blocking: in text this round's fix did not touch,
+    /// and not marked must-block. Null when none.
+    /// </summary>
+    public string[]? LeftPoints { get; init; }
 }
+
+/// <summary>One row of a re-review's table: the point's id, its answer (addressed, left, not addressed) and the where or the reason.</summary>
+public sealed record ReviewPointAnswer(string Id, string Answer, string Detail);
