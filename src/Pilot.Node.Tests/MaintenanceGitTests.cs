@@ -304,8 +304,7 @@ public sealed class MaintenanceGitTests : IDisposable
                 Git(work, "add", ".");
                 Git(work, "commit", "-m", branch + " " + i);
             }
-            var objects = Git(work, "rev-list", "--objects", "main.." + branch).Split('
-', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            var objects = Git(work, "rev-list", "--objects", "main.." + branch).Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
                 .Select(l => l.Split(' ')[0]).ToList();
             Git(work, "checkout", "main");
             Git(work, "branch", "-D", branch);
