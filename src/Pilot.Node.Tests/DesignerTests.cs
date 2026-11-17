@@ -213,7 +213,7 @@ public sealed class DesignerTests : IDisposable
     [InlineData("Bash", "cat a.txt | tee ../design.json")]
     [InlineData("Bash", "pilot design check DSN-1; rm -rf .")]
     [InlineData("Bash", "git commit -am x")]
-    [InlineData("PowerShell", "Set-Content -Path ..\BRIEF.md -Value x")]
+    [InlineData("PowerShell", "Set-Content -Path ..\\BRIEF.md -Value x")]
     [InlineData("PowerShell", "Get-Content a.txt > b.txt")]
     [InlineData("Bash", "cat $(echo x)")]
     public void ADesignersShellWriteIsDenied(string tool, string command)
