@@ -304,8 +304,7 @@ public sealed class MaintenanceGitTests : IDisposable
         Git(work, "checkout", "main");
         Git(work, "branch", "-D", "side");
         Git(work, "reflog", "expire", "--expire=now", "--all");
-        var unreachable = Git(work, "fsck", "--unreachable", "--no-reflogs").Split('
-', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+        var unreachable = Git(work, "fsck", "--unreachable", "--no-reflogs").Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Where(l => l.StartsWith("unreachable ", StringComparison.Ordinal)).Select(l => l[(l.LastIndexOf(' ') + 1)..]).Order(StringComparer.Ordinal).ToList();
         unreachable.Count.ShouldBeGreaterThanOrEqualTo(8);
         var old = unreachable.Where((_, i) => i % 2 == 0).ToList();
