@@ -81,11 +81,7 @@ public sealed class PrDraftRuleOutsideTests : PrReviewTestsBase
         (await Run(Verbs.ReviewPr, "pr/acme/widget#7", "controller")).Error.ShouldBeNull();
         Agree(draft: false, "pilot: changes", "pending");
 
-        (await Run(Verbs.PrVerdict, "pr/acme/widget#7", Row("acme/widget", 7).Reviewer, "approve", "## Earlier points
-" + string.Join("
-", ReviewPoints.Number(Row("acme/widget", 7).Rounds ?? []).Select(p => $"| {p.Id} | addressed | README.md:1 |")) + "
-
-fixed")).Error.ShouldBeNull();
+        (await Run(Verbs.PrVerdict, "pr/acme/widget#7", Row("acme/widget", 7).Reviewer, "approve", "## Earlier points\n" + string.Join("\n", ReviewPoints.Number(Row("acme/widget", 7).Rounds ?? []).Select(p => $"| {p.Id} | addressed | README.md:1 |")) + "\n\nfixed")).Error.ShouldBeNull();
         Agree(draft: false, "pilot: passed", "success");
     }
 }
