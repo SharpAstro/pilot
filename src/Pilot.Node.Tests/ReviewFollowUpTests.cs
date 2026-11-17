@@ -69,8 +69,9 @@ public sealed class ReviewFollowUpTests : ReviewTestsBase
         (await Merge(code)).Error.ShouldBeNull();
 
         var issue = _github.IssuesCreated.ShouldHaveSingleItem();
-        var body =issue.Body.ShouldNotBeNull();
-        body.ShouldContain("R1.4");
+        // The PR-ready card filed the left point first; the merge adds the unmade notes to that same issue as a comment.
+        issue.Body.ShouldNotBeNull().ShouldContain("R1.4");
+        var body = string.Join("\n", _github.IssueComments.Where(c => c.Number == F(code).FollowUpIssue).Select(c => c.Body));
         body.ShouldContain("E could be tidier");
         body.ShouldContain("F deserves a comment");
         body.ShouldContain("merged without being made");
