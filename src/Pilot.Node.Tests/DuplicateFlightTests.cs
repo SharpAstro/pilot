@@ -27,7 +27,7 @@ public sealed class DuplicateFlightTests : LegCommanderTestsBase
 
         second.Ok.ShouldBeFalse();
         second.Error.ShouldNotBeNull().ShouldContain("issue #1 already has TIA1, flying: steer that one");
-        _state.Flights().Count.ShouldBe(1);
+        _state.Flights().Length.ShouldBe(1);
     }
 
     [Fact]
@@ -59,7 +59,7 @@ public sealed class DuplicateFlightTests : LegCommanderTestsBase
         var second = await Create(1);
 
         second.Ok.ShouldBeTrue(second.Error);
-        _state.Flights().Count.ShouldBe(2);
+        _state.Flights().Length.ShouldBe(2);
     }
 
     [Fact]
@@ -70,12 +70,12 @@ public sealed class DuplicateFlightTests : LegCommanderTestsBase
         var second = await Create(1, anyway: true, why: "the first took the wrong approach, j962");
 
         second.Ok.ShouldBeTrue(second.Error);
-        _state.Flights().Count.ShouldBe(2);
+        _state.Flights().Length.ShouldBe(2);
         var card = _state.Cards().Single(c => c.Kind == "second-flight-anyway");
         card.Bin.ShouldBe(CardBin.Handled);
         card.Subject.ShouldBe(Verbs.FlightTarget(second.Made!));
         card.Title.ShouldContain("TIA1");
-        card.Body.ShouldContain("the first took the wrong approach, j962");
+        card.Detail.ShouldNotBeNull().ShouldContain("the first took the wrong approach, j962");
     }
 
     [Fact]
@@ -87,6 +87,6 @@ public sealed class DuplicateFlightTests : LegCommanderTestsBase
 
         second.Ok.ShouldBeFalse();
         second.Error.ShouldNotBeNull().ShouldContain("needs --why");
-        _state.Flights().Count.ShouldBe(1);
+        _state.Flights().Length.ShouldBe(1);
     }
 }
