@@ -181,6 +181,13 @@ public sealed record SessionRow
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? StartReason { get; init; }
 
+    /// <summary>
+    /// The login (email) the node held when it started the session (#1123), from its ledger: a usage limit read from this row is that login's.
+    /// Null for a session the node did not start, an adopted one, or one recorded before #1123.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Account { get; init; }
+
     /// <summary>Why it ended, from the node's ledger (<see cref="SessionEndReasons"/>); null while it runs, and for a session the node did not launch.</summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? EndReason { get; init; }

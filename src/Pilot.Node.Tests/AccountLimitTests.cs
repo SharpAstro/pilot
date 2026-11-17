@@ -73,6 +73,35 @@ public sealed class AccountLimitTests
         AccountLimit.ParseText(null, now).ShouldBeNull();
     }
 
+    private static SessionRow LimitRow(string? account, DateTimeOffset until) => new()
+    {
+        Id = "zz000000", SessionId = "zz000000-0000-4000-8000-000000000000", Name = "du1-zz9-planner", Kind = SessionKind.Background, Cwd = "/work/zz",
+        Role = SessionRole.Planner, Flight = "ZZ9", ContextTokens = 1_000, ContextWindow = 200_000, State = SessionState.Idle, Gone = true,
+        SpendWeighted = 0, StartedAt = Start, ApiError = "usage_limit_reached", ApiErrorResetsAt = until, Account = account,
+    };
+
+    [Fact]
+    public void ARowRecordedUnderAnotherAccountOpensNoLimitWithNoLoginChangeTimeKnown()
+    {
+        var until = Start.AddHours(2);
+        var rows = new[] { LimitRow("a@example.org", until) };
+
+        AccountLimit.FromRows(rows, Start, null, "b@example.org").ShouldBeNull();
+        AccountLimit.FromRows(rows, Start, null, "A@Example.org")!.Value.Until.ShouldBe(until);
+    }
+
+    [Fact]
+    public void ARowWithNoAccountFallsBackToTheLoginChangeTime()
+    {
+        var until = Start.AddHours(2);
+        var rows = new[] { LimitRow(null, until) };
+
+        AccountLimit.FromRows(rows, Start, Start.AddMinutes(5), "b@example.org").ShouldBeNull();
+        AccountLimit.FromRows(rows, Start, Start.AddMinutes(-5), "b@example.org")!.Value.Until.ShouldBe(until);
+        // No current account known: a row with an account falls back too.
+        AccountLimit.FromRows([LimitRow("a@example.org", until)], Start, Start.AddMinutes(5), null).ShouldBeNull();
+    }
+
     [Fact]
     public async Task ASessionRowWithAUsageLimitErrorOpensTheLimitUntilItsReset()
     {

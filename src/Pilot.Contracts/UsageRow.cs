@@ -18,6 +18,13 @@ public sealed record UsageRow
     /// <summary>Whether there are figures at all: a row may carry the account alone, when no status line writes them.</summary>
     public bool HasFigures => FiveHour is not null || SevenDay is not null;
 
+    /// <summary>
+    /// No account and no figures: a row that only carries <see cref="LoginChangedAt"/> (a node that never read an account). Clients show
+    /// no usage for it, as for none at all.
+    /// </summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool IsEmpty => Account is null && !HasFigures;
+
     public UsageWindow? FiveHour { get; init; }
 
     public UsageWindow? SevenDay { get; init; }
@@ -86,6 +93,10 @@ public sealed record UsageRow
     /// </summary>
     public string Line(DateTimeOffset now, TimeZoneInfo zone)
     {
+        if (IsEmpty)
+        {
+            return "";
+        }
         string Part(string name, UsageWindow? window, string format) => window is null
             ? ""
             : $"{name} {window.UsedPercent:0}%{(window.ResetsAt is { } at ? $" (resets {TimeZoneInfo.ConvertTime(at, zone).ToString(format, System.Globalization.CultureInfo.InvariantCulture)})" : "")}";

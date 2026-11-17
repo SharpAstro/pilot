@@ -29,6 +29,9 @@ public sealed record SessionLedgerEntry
 
     public string? Model { get; init; }
 
+    /// <summary>The login (email) the node held when it started the session (#1123); null for an adopted session or one recorded before that.</summary>
+    public string? Account { get; init; }
+
     public DateTimeOffset StartedAt { get; init; }
 
     public DateTimeOffset? EndedAt { get; init; }
@@ -69,6 +72,12 @@ public sealed class SessionLedger(string? file = null, TimeProvider? time = null
 
     public TextWriter Error { get; set; } = TextWriter.Null;
 
+    /// <summary>
+    /// The email of the login the node holds now, read when a session starts (#1123). A provider set once where the ledger is built, not a
+    /// parameter of <see cref="Started"/>, so the call sites (workers, watchtower, many tests) stay as they are.
+    /// </summary>
+    public Func<string?>? Account { get; set; }
+
     public static string FileIn(string dataFolder) => Path.Combine(dataFolder, "session-ledger.json");
 
     /// <summary>Records a session the node started, under <paramref name="jobId"/>; one of the same job id is replaced.</summary>
@@ -81,7 +90,7 @@ public sealed class SessionLedger(string? file = null, TimeProvider? time = null
             entries.Add(new SessionLedgerEntry
             {
                 JobId = jobId, SessionIds = [jobId], Name = name, Role = role.Role, Flight = role.Flight, Leg = role.Leg, Pr = pr,
-                StartReason = reason, Model = model, StartedAt = _time.GetUtcNow(),
+                StartReason = reason, Model = model, Account = Account?.Invoke(), StartedAt = _time.GetUtcNow(),
             });
             if (entries.Count > Capacity)
             {
@@ -238,6 +247,7 @@ public sealed class SessionLedger(string? file = null, TimeProvider? time = null
         return row with
         {
             StartReason = entry.StartReason,
+            Account = entry.Account,
             Pr = entry.Pr ?? row.Pr,
             EndReason = entry.EndReason,
             EndedAt = ended ? entry.EndedAt : null,
@@ -333,6 +343,10 @@ public sealed class SessionLedger(string? file = null, TimeProvider? time = null
             }
             json.WriteString("startReason", e.StartReason);
             json.WriteString("model", e.Model);
+            if (e.Account is { } account)
+            {
+                json.WriteString("account", account);
+            }
             json.WriteString("startedAt", e.StartedAt);
             if (e.EndedAt is { } endedAt)
             {
@@ -381,6 +395,7 @@ public sealed class SessionLedger(string? file = null, TimeProvider? time = null
                 Pr = item.TryGetProperty("pr", out var pr) && pr.ValueKind == JsonValueKind.Number ? pr.GetInt32() : null,
                 StartReason = Text("startReason") ?? SessionStartReasons.Other,
                 Model = Text("model"),
+                Account = Text("account"),
                 StartedAt = DateTimeOffset.TryParse(Text("startedAt"), System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out var started) ? started : default,
                 EndedAt = DateTimeOffset.TryParse(Text("endedAt"), System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out var ended) ? ended : null,
                 EndReason = Text("endReason"),
