@@ -73,6 +73,9 @@ public sealed partial class FlightCommander
             {
                 // The plane could not be read (folder gone, git failed): the local branch ref is the only record of its commits, and it is
                 // force-deleted below, so it is read itself here, and one that exists but cannot be read refuses.
+                // Deliberately no content-in-main allowance here (the plane path has git cherry plus ContentInMainAsync): a branch whose
+                // commits were rebased or squashed into main under other ids is refused rather than withdrawn. That is the safe direction,
+                // since withdraw is only for a flight that did no work and a force-deleted branch cannot be got back.
                 var exists = await git.RunAsync(["rev-parse", "--verify", "--quiet", $"refs/heads/{flight.Branch}"], flight.RepoPath, cancellationToken);
                 if (exists.Ok && exists.Output.Trim().Length > 0)
                 {
@@ -187,7 +190,20 @@ public sealed partial class FlightCommander
                 labelNote = $"{PilotMarks.NodeLabel(Machine)} is still on {flight.Item.Noun} {flight.Item.Display}: {ex.Message}";
             }
         }
-        state.RaiseCard(CardBin.Handled, WithdrawnKind, Verbs.FlightTarget(flight.Code), $"{flight.Code} withdrawn by {who}: {LegCommander.OneLine(why)}",
+        // A hold the withdrawn flight put on the issue goes with it when no other flight of the issue is left to be held by it.
+        if (!itemStillFlies && flight.OnHold?.Labelled == true && Trackers?.Of(flight.Tracker) is { } holdTracker)
+        {
+            try
+            {
+                await holdTracker.RemoveLabelAsync(flight.RepoPath, flight.Issue, PilotMarks.Hold, cancellationToken);
+            }
+            catch (FlightException ex)
+            {
+                labelNote = $"{labelNote}{(labelNote is null ? "" : "; ")}{PilotMarks.Hold} is still on {flight.Item.Noun} {flight.Item.Display}: {ex.Message}";
+            }
+        }
+        // The card's subject is the issue, not flight/<code>: the code is free again and a later flight may take it.
+        state.RaiseCard(CardBin.Handled, WithdrawnKind, $"{flight.Item.Noun} {flight.Item.Display}", $"{flight.Code} withdrawn by {who}: {LegCommander.OneLine(why)}",
             $"{flight.Title ?? flight.Item.Noun} ({flight.Item.Display}): {who} withdrew {flight.Code} as a mistake that did no work. Why: {why}{originNote}{(labelNote is null ? "" : $"; {labelNote}")}");
         return flight.Code;
     }
