@@ -68,7 +68,7 @@ public sealed class TerminalDesignsViewTests
         button.Bounds.Height.ShouldBe(input.Bounds.Height, "one height");
         button.Bounds.Y.ShouldBe(input.Bounds.Y, "one middle");
 
-        chrome.Designs.BriefInput.InsertText("a terminal brief");
+        chrome.Designs.BriefInput.Text = "a terminal brief";
         CellLayout.HitTest(arranged, button.Bounds.X + 1, button.Bounds.Y).ShouldNotBeNull();
         chrome.Designs.Start().ShouldBeTrue();
         asked.ShouldNotBeNull().Brief.ShouldBe("a terminal brief");

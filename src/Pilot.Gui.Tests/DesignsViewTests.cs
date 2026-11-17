@@ -121,7 +121,7 @@ public sealed class DesignsViewTests
         rig.Paint();
         TextsOf(rig).ShouldContain("Starts on DE1", "All nodes names the node it will use");
 
-        rig.View.BriefInput.InsertText("A settings page for the dome");
+        rig.View.BriefInput.Text = "A settings page for the dome";
         rig.Click(rig.Region(Painted(rig.View), h => h is HitResult.ButtonHit { Action: "designs:start" }));
 
         asked.ShouldBe(("A settings page for the dome", "DE1"));
@@ -140,7 +140,7 @@ public sealed class DesignsViewTests
         asked.ShouldBe(0);
         rig.View.StartNote.ShouldBe("Type a brief first.");
 
-        rig.View.BriefInput.InsertText("brief");
+        rig.View.BriefInput.Text = "brief";
         rig.View.Start().ShouldBeTrue();
         rig.View.StartFailed("no repo");
         rig.View.BriefInput.Text.ShouldBe("brief");
