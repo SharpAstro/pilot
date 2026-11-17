@@ -8,19 +8,21 @@ namespace Pilot.Node.Tests;
 /// <summary>A verb that starts a session answers "held until &lt;time&gt;: &lt;why&gt;" while the start gate holds the start, not a bare ok (#1123, point 5).</summary>
 public sealed class HeldStartAnswerTests : ReviewTestsBase
 {
+    // A fixed clock: the gate and the limit read the same instant, so no test waits on or depends on real time.
+    private static readonly DateTimeOffset Now = new(2026, 11, 17, 10, 0, 0, TimeSpan.Zero);
     private readonly TurnOutage _outage;
 
     public HeldStartAnswerTests()
     {
         _outage = new TurnOutage(_state);
-        _legs.Gate = new StartGate(_state, TimeProvider.System) { Outage = _outage };
+        _legs.Gate = new StartGate(_state, new ManualTime(Now)) { Outage = _outage };
         _legs.Models = new RoleModels(null);
     }
 
     private DateTimeOffset OpenLimit()
     {
-        var until = DateTimeOffset.UtcNow.AddHours(2);
-        _outage.OpenLimit(until, "the account's usage limit", DateTimeOffset.UtcNow);
+        var until = Now.AddHours(2);
+        _outage.OpenLimit(until, "the account's usage limit", Now);
         return until;
     }
 
@@ -33,7 +35,6 @@ public sealed class HeldStartAnswerTests : ReviewTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task StartReviewAnswersHeldUntilTheResetAndStartsNoReviewer()
     {
         var flight = await NewFlight("1", "parser");
@@ -48,7 +49,6 @@ public sealed class HeldStartAnswerTests : ReviewTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task PlanFlightAnswersHeldUntilTheResetAndStartsNoPlanner()
     {
         var flight = await NewFlight("2", "parser");
@@ -61,7 +61,6 @@ public sealed class HeldStartAnswerTests : ReviewTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AValidatorsGoAnswersHeldUntilTheResetAndStartsNoWorker()
     {
         var flight = await NewFlight("3", "parser");
@@ -81,7 +80,6 @@ public sealed class HeldStartAnswerTests : ReviewTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task WithNothingHeldAPlanFlightAnswersAsBefore()
     {
         var flight = await NewFlight("4", "parser");

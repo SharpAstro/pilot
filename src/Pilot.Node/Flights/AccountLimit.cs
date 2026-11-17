@@ -31,7 +31,9 @@ public static partial class AccountLimit
             if (loginChangedAt is { } changed && row.StartedAt < changed)
             {
                 // The cut applies to every row: a login change, a lift and an evidence end all move it, and a row under the
-                // current account that began before it is stale too (so a lift or an end survives a restart).
+                // current account that began before it is stale too (so a lift or an end survives a restart). Known edge: a row has no
+                // error time, so a long-lived session that began before the cut and reports a real new limit afterwards is ignored until a
+                // newer session reports it too; telling it apart needs a stored ApiErrorAt, which costs a contract bump for a rare case.
                 continue;
             }
             if (row.ApiError is { } error && error.Contains("limit", StringComparison.OrdinalIgnoreCase)
