@@ -33,6 +33,10 @@ public static partial class LegFailure
         {
             var code = check.Groups["code"].Value;
             var tail = recorded[(check.Index + check.Length)..];
+            if (UnknownSwitch.In(tail) is { } unknown)
+            {
+                return new Reading($"its check runs a wrong command: unknown switch {unknown.Switch}", [], [], true);
+            }
             var files = new List<string>();
             var projects = new List<string>();
             foreach (Match m in ErrorFile().Matches(tail))

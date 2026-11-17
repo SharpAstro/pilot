@@ -66,6 +66,8 @@ public sealed class WholeSuiteJobTests : IDisposable
     [Fact]
     public void APlatformFilteredTestRunIsNotRefused()
     {
+        // --filter-class is Microsoft.Testing.Platform's: the run's folder selects that runner (pilot #1132).
+        File.WriteAllText(Path.Combine(_root, "global.json"), """{ "test": { "runner": "Microsoft.Testing.Platform" } }""");
         Run("dotnet test Pilot.Node.Tests -c Release --filter-class A.B").Ok.ShouldBeTrue();
         Run("dotnet test Pilot.Node.Tests -c Release --filter-not-trait Category=Slow").Ok.ShouldBeTrue();
     }
