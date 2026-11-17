@@ -161,6 +161,26 @@ public sealed partial class FlightCommander
         var code = FlightCodes.Next(prefix, item.Id, flights, archived)
             ?? throw new FlightException($"{prefix}{item.Id} and its suffixes {FlightCodes.Suffixes} are all taken");
 
+        // One flight per issue: a flight of this repo on this item that has not landed answers for it, so a second is refused naming
+        // that one (the caller steers it). --anyway with a why of the caller's own makes one more, and the why is kept on a Handled card.
+        var live = flights.FirstOrDefault(f => f.State != FlightState.Landed && f.Issue == item.Id && f.Tracker == item.Tracker
+            && string.Equals(f.Repo, repo, StringComparison.OrdinalIgnoreCase));
+        var duplicateWhy = command.Why?.Trim() ?? "";
+        if (live is not null)
+        {
+            var liveState = FlightWaiting.OnHoldText(live) is { } onHold ? $"on hold by {live.OnHold!.By}"
+                : live.State == FlightState.Held ? "held" : "flying";
+            var said = $"{item.Noun} already has {live.Code}, {liveState}: steer that one";
+            if (!anyway)
+            {
+                throw new FlightException($"{said}, or give --anyway with --why to make a second");
+            }
+            if (duplicateWhy.Length == 0)
+            {
+                throw new FlightException($"{said}; a second flight on it needs --why, naming the reason it is not that one");
+            }
+        }
+
         // A flight is flown by one node: a peer that flies this item, or the branch this flight would get, answers for it, and
         // --anyway does not override a flight that is live there (it only overrides a label, which can be stale).
         if (await FlownByPeerAsync(repoPath, item, Planes.BranchOf(code, item), cancellationToken) is { } peerFlight)
@@ -204,6 +224,11 @@ public sealed partial class FlightCommander
             State = FlightState.Flying,
             CreatedAt = time.GetUtcNow(),
         });
+        if (live is not null)
+        {
+            state.RaiseCard(CardBin.Handled, "second-flight-anyway", $"flight/{code}", $"{code} was made on {item.Display} beside {live.Code}, over its flight: {LegCommander.OneLine(duplicateWhy)}",
+                $"{command.Who} gave --anyway: {live.Code} was not landed ({live.State}) when {code} was created.\n\nWhy: {duplicateWhy}");
+        }
         await LabelAsync(repoPath, item, code, otherNode, cancellationToken);
         return (code, null);
     }
