@@ -119,7 +119,7 @@ public sealed class DesignerTests : IDisposable
         _said[0].Args[0].ShouldContain("make the night list wider");
         _said[1].Args[0].ShouldContain("and darker");
         // The brief stays the one record, verbatim.
-        _store.Detail(id).Brief.ShouldContain("make the night list wider");
+        _store.Detail(id).Brief.ShouldNotBeNull().ShouldContain("make the night list wider");
     }
 
     [Fact]
@@ -197,7 +197,7 @@ public sealed class DesignerTests : IDisposable
             var output = answer.RootElement.GetProperty("hookSpecificOutput");
             output.GetProperty("hookEventName").GetString().ShouldBe("PreToolUse");
             output.GetProperty("permissionDecision").GetString().ShouldBe("deny");
-            output.GetProperty("permissionDecisionReason").GetString().ShouldContain("draft/");
+            output.GetProperty("permissionDecisionReason").GetString().ShouldNotBeNull().ShouldContain("draft/");
         }
     }
 
