@@ -78,7 +78,7 @@ public sealed class DesignChatTests : IDisposable
 
     private void DesignerReplies(string when, string text) =>
         _profile.Append(_profile.TranscriptPath(Session),
-            $$"""{"type":"assistant","timestamp":"{{when}}","message":{"role":"assistant","content":[{"type":"text","text":"{{text}}"}]}}""");
+            $$$"""{"type":"assistant","timestamp":"{{{when}}}","message":{"role":"assistant","content":[{"type":"text","text":"{{{text}}}"}]}}""");
 
     [Fact]
     public async Task ASayIsAppendedToTheBriefVerbatimAndReachesTheOneDesignerResumed()
