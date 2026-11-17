@@ -127,6 +127,25 @@ public sealed class WithdrawFlightTests : LegCommanderTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")] // real git: the plane is removed by git's own worktree command
+    public async Task AFlightWhosePlaneIsGoneButWhoseBranchHoldsACommitIsRefusedAndKeepsTheBranch()
+    {
+        RealGit();
+        var flight = await Fresh();
+        File.WriteAllText(Path.Combine(flight.Worktree, "work.txt"), "work\n");
+        Git(flight.Worktree, "add", "work.txt");
+        Commit(flight.Worktree, "unpushed work");
+        Git(Repo, "worktree", "remove", "--force", flight.Worktree);
+        Directory.Exists(flight.Worktree).ShouldBeFalse();
+
+        var result = await Withdraw("TIA1", "mistake");
+
+        result.Error.ShouldNotBeNull().ShouldContain("unpushed work");
+        Git(Repo, "branch", "--list", flight.Branch).ShouldNotBeEmpty();
+        _state.Flights().Length.ShouldBe(1);
+    }
+
+    [Fact]
     public async Task ADuplicateMadeAnywayRaisesOneCardOfferingToWithdrawTheNewer()
     {
         await Fresh();

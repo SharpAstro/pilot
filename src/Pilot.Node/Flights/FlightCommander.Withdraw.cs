@@ -69,6 +69,30 @@ public sealed partial class FlightCommander
             {
                 throw new FlightException($"{flight.Code}'s branch has {commits.Count} commit{(commits.Count == 1 ? "" : "s")} past {mainRef}: {string.Join("; ", commits)}. It has work, so it is not withdrawn");
             }
+            if (head is null)
+            {
+                // The plane could not be read (folder gone, git failed): the local branch ref is the only record of its commits, and it is
+                // force-deleted below, so it is read itself here, and one that exists but cannot be read refuses.
+                var exists = await git.RunAsync(["rev-parse", "--verify", "--quiet", $"refs/heads/{flight.Branch}"], flight.RepoPath, cancellationToken);
+                if (exists.Ok && exists.Output.Trim().Length > 0)
+                {
+                    var local = await git.RunAsync(["rev-list", "--reverse", "--no-merges", $"refs/heads/{flight.Branch}", $"^{mainRef}"], flight.RepoPath, cancellationToken);
+                    if (!local.Ok)
+                    {
+                        throw new FlightException($"{flight.Code}'s branch {flight.Branch} could not be compared with {mainRef}: {local.Why}. Withdraw again once it can be read");
+                    }
+                    var localAhead = new List<string>();
+                    foreach (var sha in local.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                    {
+                        var subject = await git.RunAsync(["log", "-1", "--format=%h %s", sha], flight.RepoPath, cancellationToken);
+                        localAhead.Add(subject.Ok ? subject.Output.Trim() : CommitRefs.Short(sha));
+                    }
+                    if (localAhead.Count > 0)
+                    {
+                        throw new FlightException($"{flight.Code}'s branch {flight.Branch} has {localAhead.Count} commit{(localAhead.Count == 1 ? "" : "s")} past {mainRef}: {string.Join("; ", localAhead)}. It has work, so it is not withdrawn");
+                    }
+                }
+            }
             // Origin's copy of the branch: a push of the plane may hold commits the plane's own head no longer shows.
             var listed = await git.RunAsync(["ls-remote", "--heads", "origin", $"refs/heads/{flight.Branch}"], flight.RepoPath, cancellationToken);
             var tip = listed.Ok
