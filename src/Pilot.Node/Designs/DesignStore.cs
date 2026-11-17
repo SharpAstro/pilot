@@ -158,8 +158,7 @@ public sealed class DesignStore(string dataFolder, TimeProvider? time = null)
                 File.WriteAllBytes(full, picture);
             }
             var line = new DesignChatLine { At = _time.GetUtcNow(), Text = text, Picture = relative };
-            File.AppendAllText(Path.Combine(folder, ChatFile), JsonSerializer.Serialize(line, PilotJsonContext.Default.DesignChatLine) + "
-");
+            File.AppendAllText(Path.Combine(folder, ChatFile), JsonSerializer.Serialize(line, PilotJsonContext.Default.DesignChatLine) + "\n");
             return full;
         }
     }
