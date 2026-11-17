@@ -265,10 +265,7 @@ public sealed class ReviewFollowUpTests : ReviewTestsBase
 
     private static ReviewFollowUp.Standing TwoLeft(string found1, string why1, string found2, string why2) => ReviewFollowUp.Read(
     [
-        new ReviewRound { Round = 1, Verdict = ReviewState.Changes, Findings = $"## Blocking
-- {found1}
-- {found2}
-" },
+        new ReviewRound { Round = 1, Verdict = ReviewState.Changes, Findings = $"## Blocking\n- {found1}\n- {found2}\n" },
         new ReviewRound { Round = 2, Verdict = ReviewState.Passed, Answers = [new("R1.1", "left", why1), new("R1.2", "left", why2)] },
     ]);
 
@@ -293,7 +290,6 @@ public sealed class ReviewFollowUpTests : ReviewTestsBase
         settle[0].ShouldNotBe(settle[1]);
         settle[0].ShouldContain("Parser.cs:20");
         settle[1].ShouldContain("Lexer.cs:3");
-        settle.ShouldAllBe(l => !l.Contains('
-') && !l.Contains('\u2014'));
+        settle.ShouldAllBe(l => !l.Contains('\n') && !l.Contains('\u2014'));
     }
 }
