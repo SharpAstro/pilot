@@ -195,6 +195,6 @@ public static partial class Briefs
         text.AppendLine($"Then the new findings, under `## Blocking` and `## Not blocking`. A fault in the lines changed since `{again.Last.Head}` blocks as always. A new finding");
         text.AppendLine($"in text the fix round did not touch blocks only when it must: start it with `{ReviewPoints.MustBlockMarker} <kind>`, the kind being one of");
         text.AppendLine($"{string.Join(", ", ReviewPoints.MustBlockKinds)}. Any other finding in untouched text is left for the follow-up issue: the node files only what is under `## Blocking`, so");
-        text.AppendLine("put it there, with no `must-block:` prefix. Under `## Not blocking` it is a note, made by a review-notes round, not a follow-up item.");
+        text.AppendLine("put it there, with no `must-block:` prefix, and give `changes`: the node takes the round as a pass and files it. Under `## Not blocking` it is a note, made by a review-notes round, not a follow-up item.");
     }
 }

@@ -23,8 +23,6 @@ public static partial class ReviewFollowUp
     [GeneratedRegex(@"[\w.\-/\\]+\.[A-Za-z]{1,6}:\d+|[\w.\-/\\]+\.(?:cs|md|csproj|slnx|props|yaml|yml|json|ps1|sh|py|js|ts|txt|xml|html|css)\b")]
     private static partial Regex Location();
 
-    private const string Marker = "(passed by ";
-
     /// <summary>Reads the rounds of a flight: what is left, and what is still not addressed.</summary>
     public static Standing Read(IReadOnlyList<ReviewRound>? rounds)
     {
@@ -47,7 +45,7 @@ public static partial class ReviewFollowUp
         var items = new List<Item>();
         var notAddressed = new List<string>();
         // A controller's pass over changes: the reviewer's last word was changes (or none), so every point not settled is open, with that word as the reason.
-        var passedAnyway = last.Verdict == ReviewState.Passed && last.Findings.Contains(Marker, StringComparison.Ordinal);
+        var passedAnyway = last.Verdict == ReviewState.Passed && ReviewPoints.PassedTailStart(last.Findings) >= 0;
         var by = passedAnyway ? PassedBy(last.Findings) : null;
         foreach (var point in points.Values.OrderBy(p => p.Round).ThenBy(p => p.Index))
         {
@@ -97,12 +95,12 @@ public static partial class ReviewFollowUp
 
     private static string PassedBy(string findings)
     {
-        var start = findings.LastIndexOf(Marker, StringComparison.Ordinal);
+        var start = findings.LastIndexOf("(passed by ", StringComparison.Ordinal);
         if (start < 0)
         {
             return "";
         }
-        var rest = findings[(start + Marker.Length)..];
+        var rest = findings[(start + "(passed by ".Length)..];
         var end = rest.IndexOf(' ', StringComparison.Ordinal);
         return end > 0 ? $" by {rest[..end]}" : "";
     }

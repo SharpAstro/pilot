@@ -120,4 +120,30 @@ public sealed class ReviewFollowUpTests : ReviewTestsBase
         ReviewFollowUp.Read(rounds).NotAddressed.ShouldBe(["R1.1"]);
         ReviewFollowUp.Read([rounds[0]]).Items.ShouldBeEmpty();
     }
+
+    [Fact]
+    public void APassAnywayReportIsNumberedOnceNotAgainFromItsTail()
+    {
+        ReviewRound[] rounds =
+        [
+            new() { Round = 1, Verdict = ReviewState.Changes, Findings = "## Blocking
+- A is wrong
+" },
+            new() { Round = 2, Verdict = ReviewState.Passed, Findings = "ready anyway (passed by controller over: ## Blocking
+- A is wrong
+)" },
+        ];
+
+        ReviewPoints.Number(rounds).Select(p => p.Id).ShouldBe(["R1.1"]);
+    }
+
+    [Fact]
+    public void ProseSayingPassedByIsNotThePassAnywayTail()
+    {
+        ReviewPoints.PassedTailStart("## Blocking
+- a note (passed by hand) here
+- B
+").ShouldBe(-1);
+        ReviewPoints.PassedTailStart("x (passed by controller over: y)").ShouldBe(1);
+    }
 }
