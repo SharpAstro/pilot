@@ -130,5 +130,10 @@ public sealed class ReviewPointsGateTests : ReviewTestsBase
         lines.IsOutside("A.cs is wrong").ShouldBeFalse();
         lines.IsOutside("B.cs:10 is wrong").ShouldBeTrue();
         lines.IsOutside("nothing names a file").ShouldBeFalse();
+        // A partial or absolute path names the same file as the diff's repo-relative one.
+        lines.IsOutside("Pilot/src/A.cs:10 is wrong").ShouldBeFalse();
+        lines.IsOutside("src/A.cs:10 is wrong").ShouldBeFalse();
+        lines.IsOutside(@"C:\work\plane\src\A.cs:10 is wrong").ShouldBeFalse();
+        lines.IsOutside("rc/A.cs:10 is wrong").ShouldBeTrue();
     }
 }

@@ -86,14 +86,18 @@ public sealed partial class ReviewDiffLines
         }
         foreach (var file in _ranges.Keys)
         {
-            if (string.Equals(file, path, StringComparison.OrdinalIgnoreCase)
-                || (!path.Contains('/') && string.Equals(file[(file.LastIndexOf('/') + 1)..], path, StringComparison.OrdinalIgnoreCase)))
+            if (EndsAtBoundary(file, path) || EndsAtBoundary(path, file))
             {
                 return file;
             }
         }
         return null;
     }
+
+    /// <summary>Whether <paramref name="whole"/> is <paramref name="tail"/>, or ends with it after a '/': a partial path or an absolute one still names the same file.</summary>
+    private static bool EndsAtBoundary(string whole, string tail) =>
+        whole.EndsWith(tail, StringComparison.OrdinalIgnoreCase)
+        && (whole.Length == tail.Length || whole[whole.Length - tail.Length - 1] == '/');
 
     /// <summary>
     /// Whether a finding lies wholly outside the patch: it names at least one file, and every file it names is unchanged, or changed only

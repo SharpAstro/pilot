@@ -43,7 +43,7 @@ public sealed class PrDraftRuleTests : ReviewTestsBase
         }
         Agree(draft: false, "pilot: reviewing", "pending");
 
-        (await Run(Verbs.Review, target, Reviewer(flight.Code), "pass", "fixed")).Error.ShouldBeNull();
+        (await Run(Verbs.Review, target, Reviewer(flight.Code), "pass", Answered(flight.Code) + "fixed")).Error.ShouldBeNull();
         Agree(draft: false, "pilot: passed", "success");
 
         (await _legs.ChecksFailedAsync(flight.Code, _github.Pr!.Head, Ct)).ShouldBeNull();

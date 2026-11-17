@@ -117,7 +117,17 @@ public abstract class PrMarksTestsBase : IDisposable
     }
 
     private protected Task<CommandResult> Verdict(string code, string verdict, string report) =>
-        Run(Verbs.Review, Verbs.FlightTarget(code), Reviewer(code), verdict, report);
+        Run(Verbs.Review, Verbs.FlightTarget(code), Reviewer(code), verdict, Answered(code) + report);
+
+    /// <summary>The table a re-review opens with, answering every earlier point addressed (pilot #1107); empty before any round.</summary>
+    private protected string Answered(string code) =>
+        ReviewPoints.Number(F(code).ReviewRounds ?? []) is { Count: > 0 } points
+            ? "## Earlier points
+" + string.Join("
+", points.Select(p => $"| {p.Id} | addressed | fix.txt:1 |")) + "
+
+"
+            : "";
 
     private protected static string[] Pilot(ConcurrentDictionary<string, byte>? labels) => [.. (labels?.Keys ?? []).Where(l => l.StartsWith("pilot: ", StringComparison.Ordinal))];
 }

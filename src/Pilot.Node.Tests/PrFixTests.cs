@@ -380,7 +380,7 @@ public sealed class PrFixTests3 : PrFixTestsBase
         var ring = _state.Cards(openOnly: true).Where(c => c.Kind == PrReviews.FixCappedKind).ShouldHaveSingleItem();
         ring.Bin.ShouldBe(CardBin.Ring);
         ring.Title.ShouldContain("acme/widget#7");
-        ring.Title.ShouldContain("3 rounds");
+        ring.Title.ShouldContain("4 rounds");
         ring.Detail.ShouldNotBeNull().ShouldContain("never right");
         ring.Link.ShouldNotBeNull().ShouldContain("/pull/7");
         // Nor does the watchtower on autopilot start a fourth (the review of #470): that is the person's.
