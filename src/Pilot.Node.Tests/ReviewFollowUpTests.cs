@@ -292,4 +292,12 @@ public sealed class ReviewFollowUpTests : ReviewTestsBase
         settle[1].ShouldContain("Lexer.cs:3");
         settle.ShouldAllBe(l => !l.Contains('\n') && !l.Contains('\u2014'));
     }
+
+    [Fact]
+    public void AFindingThatOpensWithAFileKeepsItsWordsInTheSettleLine()
+    {
+        var standing = TwoLeft("Parser.cs: the guard is missing", "wider", "Other thing", "later");
+
+        standing.Items[0].Settle.ShouldContain("the guard is missing");
+    }
 }

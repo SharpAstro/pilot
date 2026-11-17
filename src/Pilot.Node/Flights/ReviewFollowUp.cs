@@ -35,12 +35,25 @@ public static partial class ReviewFollowUp
     {
         var loc = FirstLocation(found, why);
         var basis = string.IsNullOrWhiteSpace(found) ? why : found;
-        var gist = Regex.Split(basis.ReplaceLineEndings(" ").Trim(), @"(?<=[.;:])\s")[0].TrimEnd('.', ';', ':');
+        var gist = FirstClause(basis.ReplaceLineEndings(" ").Trim());
         if (gist.Length > 80)
         {
             gist = gist[..77].TrimEnd() + "...";
         }
         return loc is null || gist.Contains(loc, StringComparison.Ordinal) ? $"{action}: {gist}" : $"{action} for {loc}: {gist}";
+    }
+
+    /// <summary>The text up to the first <c>. ; :</c> followed by whitespace, but never a cut shorter than 20 characters, so <c>Parser.cs: the guard is missing</c> keeps its words.</summary>
+    private static string FirstClause(string text)
+    {
+        foreach (var m in Regex.Matches(text, @"(?<=[.;:])\s").Cast<Match>())
+        {
+            if (m.Index >= 20)
+            {
+                return text[..m.Index].TrimEnd('.', ';', ':');
+            }
+        }
+        return text.TrimEnd('.', ';', ':');
     }
 
     /// <summary>What a flight stands at before its merge: the points to capture, and the earlier points still answered not addressed.</summary>

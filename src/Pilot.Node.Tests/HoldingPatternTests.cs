@@ -257,6 +257,11 @@ public sealed class HoldingPatternTests : ReviewTestsBase
         issue.Title.ShouldStartWith($"Follow-up of {flight.Code}");
         issue.Body.ShouldNotBeNull().ShouldContain("a log line could name the job");
         F(flight.Code).Holding.ShouldBeNull("the flight merges with the notes filed");
+
+        // Not filed twice (#918, pilot #1148): the merge finds the notes already captured and files no second issue.
+        _github.Checks = ChoiceStatus.Passing;
+        (await Run(Verbs.Merge, Verbs.FlightTarget(flight.Code), "controller", _github.Pr!.Head[..8])).Error.ShouldBeNull();
+        _github.IssuesCreated.ShouldHaveSingleItem();
     }
 
     [Fact]
@@ -745,6 +750,7 @@ public sealed class HoldingPatternTests : ReviewTestsBase
 
         F(flight.Code).Holding.ShouldBeNull();
         // The merge files the unmade notes as the follow-up issue (pilot #1148) and the PR gets its link beside the notes comment.
+        _github.IssuesCreated.ShouldHaveSingleItem().Body.ShouldNotBeNull().ShouldContain("rename `x` to `count`");
         var comment = _github.IssueComments.Where(c => c.Body.Contains("merges with them")).ShouldHaveSingleItem();
         comment.Number.ShouldBe(F(flight.Code).PullRequest!.Value);
         comment.Body.ShouldContain(F(flight.Code).Review!.ReviewedHead![..8]);
