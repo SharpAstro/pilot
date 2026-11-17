@@ -74,7 +74,7 @@ public sealed partial class ReviewDiffLines
     [GeneratedRegex(@"^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@")]
     private static partial Regex HunkHeader();
 
-    [GeneratedRegex(@"(?<file>[\w.\-/\]+\.(?:csproj|slnx|targets|props|yaml|json|ps1|yml|sln|txt|xml|toml|html|css|cs|md|sh|py|js|ts))(?!\w)(?::(?<from>\d+)(?:[-:](?<to>\d+))?)?")]
+    [GeneratedRegex(@"(?<file>[\w.\-/\\]+\.(?:csproj|slnx|targets|props|yaml|json|ps1|yml|sln|txt|xml|toml|html|css|cs|md|sh|py|js|ts))(?!\w)(?::(?<from>\d+)(?:[-:](?<to>\d+))?)?")]
     private static partial Regex Token();
 
     private string? Changed(string named)
