@@ -158,7 +158,7 @@ public sealed class ReviewFollowUpTests : ReviewTestsBase
         var first = Merge(code);
         var second = Merge(code);
         release.SetResult();
-        var results = await Task.WhenAll(first, second).WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
+        var results = await Task.WhenAll(first, second).WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
 
         // One ask files and merges; the other, in together with it, is either the same merge or told the flight is landed. Never a second issue or merge.
         results.ShouldContain(r => r.Error == null);
