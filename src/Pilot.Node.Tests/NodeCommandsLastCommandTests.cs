@@ -16,9 +16,22 @@ public sealed class NodeCommandsLastCommandTests
         var commands = new NodeCommands(new ServiceCollection().AddSingleton<TimeProvider>(TimeProvider.System).BuildServiceProvider(), state);
         var ct = TestContext.Current.CancellationToken;
 
+        // The command is stamped before its handler runs; this bare node has no watchtower registered, so the handler throws, which is
+        // beside the point here.
+        async Task Send(string who)
+        {
+            try
+            {
+                await commands.RunAsync(new CommandRequest { Verb = Verbs.Note, Target = Verbs.NodeTarget, Args = ["hi"], Who = who }, ct);
+            }
+            catch (InvalidOperationException)
+            {
+            }
+        }
+
         commands.LastCommandAt("de1-x-w1").ShouldBeNull();
-        await commands.RunAsync(new CommandRequest { Verb = Verbs.Note, Target = Verbs.NodeTarget, Args = ["hi"], Who = "de1-x-w1" }, ct);
-        await commands.RunAsync(new CommandRequest { Verb = Verbs.Note, Target = Verbs.NodeTarget, Args = ["hi"], Who = LegWatch.Who }, ct);
+        await Send("de1-x-w1");
+        await Send(LegWatch.Who);
 
         commands.LastCommandAt("de1-x-w1").ShouldNotBeNull();
         commands.LastCommandAt(LegWatch.Who).ShouldBeNull();
