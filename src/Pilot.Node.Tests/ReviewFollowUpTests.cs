@@ -126,12 +126,8 @@ public sealed class ReviewFollowUpTests : ReviewTestsBase
     {
         ReviewRound[] rounds =
         [
-            new() { Round = 1, Verdict = ReviewState.Changes, Findings = "## Blocking
-- A is wrong
-" },
-            new() { Round = 2, Verdict = ReviewState.Passed, Findings = "ready anyway (passed by controller over: ## Blocking
-- A is wrong
-)" },
+            new() { Round = 1, Verdict = ReviewState.Changes, Findings = "## Blocking\n- A is wrong\n" },
+            new() { Round = 2, Verdict = ReviewState.Passed, Findings = "ready anyway (passed by controller over: ## Blocking\n- A is wrong\n)" },
         ];
 
         ReviewPoints.Number(rounds).Select(p => p.Id).ShouldBe(["R1.1"]);
@@ -140,10 +136,7 @@ public sealed class ReviewFollowUpTests : ReviewTestsBase
     [Fact]
     public void ProseSayingPassedByIsNotThePassAnywayTail()
     {
-        ReviewPoints.PassedTailStart("## Blocking
-- a note (passed by hand) here
-- B
-").ShouldBe(-1);
+        ReviewPoints.PassedTailStart("## Blocking\n- a note (passed by hand) here\n- B\n").ShouldBe(-1);
         ReviewPoints.PassedTailStart("x (passed by controller over: y)").ShouldBe(1);
     }
 }

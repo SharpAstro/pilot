@@ -46,8 +46,7 @@ public static partial class ReviewPoints
     {
         for (var at = report.IndexOf(PassedTail, StringComparison.Ordinal); at >= 0; at = report.IndexOf(PassedTail, at + 1, StringComparison.Ordinal))
         {
-            var lineEnd = report.IndexOf('
-', at);
+            var lineEnd = report.IndexOf((char)10, at);
             var line = lineEnd < 0 ? report[at..] : report[at..lineEnd];
             if (line.Contains(" over: ", StringComparison.Ordinal))
             {
