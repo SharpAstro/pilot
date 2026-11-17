@@ -137,6 +137,8 @@ JobsScreen? capturedJobs = null;
 ReposScreen? capturedRepos = null;
 MachineRow? capturedMachine = null;
 PullRequestsScreen? capturedPullRequests = null;
+DesignsScreen? capturedDesigns = null;
+ChatPage? capturedDesignChat = null;
 if (options.Snapshot is { } snapshotFile)
 {
     var snapshotPath = Path.GetFullPath(snapshotFile);
@@ -180,6 +182,20 @@ else if (options.Capture is not null)
                 }
             }
         }
+        if (options.Page == PilotPage.Designs)
+        {
+            // The designs and an open design's show and chat, read once as the window reads them.
+            var designReader = new DesignReads(oneShot, "gui", () => { });
+            if (await designReader.ListAsync(CancellationToken.None) is { } designRows)
+            {
+                var openPage = options.Design is { } openId ? await designReader.PageAsync(openId, null, CancellationToken.None) : null;
+                capturedDesigns = new DesignsScreen(designRows, screen.Source, now, openPage);
+                if (options.Design is { } chatOf && openPage is not null)
+                {
+                    capturedDesignChat = await designReader.ChatAsync(chatOf, -1, CancellationToken.None);
+                }
+            }
+        }
     }
     catch (Exception ex) when (ex is HttpRequestException or System.Net.Sockets.SocketException or IOException)
     {
@@ -209,7 +225,8 @@ if (options.Capture is { } capturePath)
     }
     var rowsPath = SessionsCapture.Write(screen, capturePath, options.Width, options.Height, canSay: snapshot is null, flights: capturedFlights, page: options.Page, cards: capturedCards,
         jobs: capturedJobs, openFlight: options.Flight, repos: capturedRepos, machines: capturedMachine is null ? null : [new MachineLine(null, capturedMachine)],
-        hover: options.Hover, flightsView: options.View, select: options.Select, pullRequests: capturedPullRequests, layers: options.Layers, night: options.Night, fold: options.Fold, spend: snapshot?.Spend, summaries: snapshot?.Summaries, accent: options.Accent);
+        hover: options.Hover, flightsView: options.View, select: options.Select, pullRequests: capturedPullRequests, layers: options.Layers, night: options.Night, fold: options.Fold, spend: snapshot?.Spend, summaries: snapshot?.Summaries, accent: options.Accent,
+        designs: capturedDesigns ?? (options.Page == PilotPage.Designs ? DesignsScreen.Empty(screen.Source, screen.AsOf) : null), openDesign: options.Design, designChat: capturedDesignChat);
     System.Console.WriteLine($"pilot-gui: rendered {screen.Summary} at {options.Width}x{options.Height} ({screen.Source})");
     System.Console.WriteLine($"pilot-gui: wrote {Path.GetFullPath(capturePath)} and {Path.GetFullPath(rowsPath)}");
     return 0;

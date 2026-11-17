@@ -528,6 +528,16 @@ internal sealed partial class ChatView<TSurface>(Renderer<TSurface> renderer) : 
         Changed?.Invoke();
     }
 
+    /// <summary>
+    /// Holds <paramref name="page"/> as the feed's first read without following it: a capture's chat, which is a moment and reads nothing on the pool. What
+    /// was held is replaced.
+    /// </summary>
+    public void Hold(ChatPage page)
+    {
+        Volatile.Write(ref _held, Merge(Held.Fresh(), page, true));
+        Changed?.Invoke();
+    }
+
     /// <summary>Starts following the feed (after what it already holds) until <see cref="Close"/>; does nothing while it already is.</summary>
     public void Open()
     {

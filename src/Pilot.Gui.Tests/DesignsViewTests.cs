@@ -100,6 +100,21 @@ public sealed class DesignsViewTests
     }
 
     [Fact]
+    public void TheStartButtonIsAsWideAsItsLabelPlusPaddingAndTheInputTakesTheRestOfTheRow()
+    {
+        using var rig = new Rig(DesignsScreen.Empty("sample", Now));
+        var all = ArrangeAt(rig, 1600, 900);
+        var (input, button) = StartRow(all);
+        var label = all.Single(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text t } && t.Text == "Start a design");
+        button.Bounds.Width.ShouldBeLessThan(label.Bounds.Width + 40f, "the button is its label plus padding, not half the row");
+        button.Bounds.Width.ShouldBeLessThan(250f);
+        button.Bounds.Height.ShouldBe(input.Bounds.Height, "one height");
+        (button.Bounds.Y + button.Bounds.Height / 2f).ShouldBe(input.Bounds.Y + input.Bounds.Height / 2f, 0.5f, "one middle");
+        (input.Bounds.X + input.Bounds.Width + 6f).ShouldBe(button.Bounds.X, 1f, "the input fills the row up to the button");
+        (button.Bounds.X + button.Bounds.Width).ShouldBeGreaterThan(1500f);
+    }
+
+    [Fact]
     public void TheStartBoxHoldsAtANarrowWidthWithoutCuttingTheButton()
     {
         using var rig = new Rig(DesignsScreen.Empty("sample", Now));
