@@ -69,11 +69,12 @@ public static partial class PilotCommand
             var runFailFast = new Option<bool>("--fail-fast") { Description = "End the job at its first failed test, so a run whose first failure is all you need frees the queue (a check does this by itself)" };
             var runWholeSuite = new Option<string?>("--whole-suite") { Description = "Why this run is a dotnet test over a whole project or solution with no filter, neither --filter nor --filter-class and its siblings (refused otherwise: the whole suite is CI's, on the PR)" };
             var runGui = new Option<bool>("--gui") { Description = "The job opens a window: it waits for the machine's one GUI slot (across repos) as well as an ordinary slot; refused on a node with no interactive desktop or with gui-slots 0. Not with --alone" };
+            var runCwd = new Option<string?>("--cwd") { Description = "The folder the job runs in, relative to this one; inside a flight's plane it must stay in the plane" };
             var runWords = new Argument<string[]>("command") { Description = "The command, after --: pilot run -- dotnet test", Arity = ArgumentArity.OneOrMore };
             var runCommand = Action(new Command("run", "Hand a long run to the node as a job, then end your turn: the node wakes this session with how it ended")
                 {
                     Arguments = { runWords },
-                    Options = { runTimeout, runAlone, runLocal, runFailFast, runWholeSuite, runGui },
+                    Options = { runTimeout, runAlone, runLocal, runFailFast, runWholeSuite, runGui, runCwd },
                 },
                 async (p, client, ct) =>
                 {
@@ -93,11 +94,25 @@ public static partial class PilotCommand
                         ? (await SnapshotAsync(client, ct)).Sessions.FirstOrDefault(s => string.Equals(s.SessionId, sessionId, StringComparison.OrdinalIgnoreCase))
                         : null;
                     var target = owner is null ? Verbs.NodeTarget : Verbs.SessionTarget(owner.Id);
+                    var runIn = cwd;
+                    if (p.GetValue(runCwd) is { Length: > 0 } givenCwd)
+                    {
+                        runIn = Path.GetFullPath(givenCwd, cwd);
+                        var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+                        static string Slashed(string path) => Path.TrimEndingDirectorySeparator(Path.GetFullPath(path)) + Path.DirectorySeparatorChar;
+                        var here = Slashed(cwd);
+                        var plane = (await SnapshotAsync(client, ct)).Flights.FirstOrDefault(f => f.State != FlightState.Landed
+                            && here.StartsWith(Slashed(f.Worktree), comparison));
+                        if (plane is not null && !Slashed(runIn).StartsWith(Slashed(plane.Worktree), comparison))
+                        {
+                            throw new UsageException($"the job runs in the plane of {plane.Code} ({plane.Worktree}): {runIn} is outside it");
+                        }
+                    }
                     var sent = await SendCommandAsync(client, new CommandRequest
                     {
                         Verb = Verbs.Run,
                         Target = target,
-                        Args = [.. p.GetValue(runFailFast) ? new[] { Verbs.FailFastArg } : [], .. p.GetValue(runWholeSuite) is { Length: > 0 } suiteWhy ? new[] { Verbs.WholeSuiteArg, suiteWhy } : [], .. p.GetValue(runGui) ? new[] { Verbs.GuiArg } : [], .. p.GetValue(runAlone) ? new[] { Verbs.AloneArg } : [], .. p.GetValue(runLocal) ? new[] { Verbs.LocalArg } : [], cwd, seconds.ToString(CultureInfo.InvariantCulture), .. p.GetValue(runWords) ?? []],
+                        Args = [.. p.GetValue(runFailFast) ? new[] { Verbs.FailFastArg } : [], .. p.GetValue(runWholeSuite) is { Length: > 0 } suiteWhy ? new[] { Verbs.WholeSuiteArg, suiteWhy } : [], .. p.GetValue(runGui) ? new[] { Verbs.GuiArg } : [], .. p.GetValue(runAlone) ? new[] { Verbs.AloneArg } : [], .. p.GetValue(runLocal) ? new[] { Verbs.LocalArg } : [], runIn, seconds.ToString(CultureInfo.InvariantCulture), .. p.GetValue(runWords) ?? []],
                         Who = owner?.Name ?? who,
                         Agent = byAgent,
                         RequestId = requestId,
