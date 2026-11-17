@@ -420,6 +420,12 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
             {
                 continue;
             }
+            var waits = WhatWaits(row, ownerRow);
+            if (waits is null && row.RetoldAt is null)
+            {
+                // Nothing the node knows waits on this job (an ad hoc session's, or a leg that ended): the first tell stands, no repeat.
+                continue;
+            }
             var lastTold = row.RetoldAt ?? row.ToldAt!.Value;
             var silentSince = lastTold;
             if (row.RetoldAt is null && row.ToldWhileWorking == true)
@@ -441,6 +447,11 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
             if (row.RetoldAt is not null)
             {
                 state.PutJob(row with { RetellRung = true });
+                if (row.State == JobState.Succeeded && WhatWaits(row, ownerRow) is null)
+                {
+                    // A succeeded job whose leg has finished waits on nothing: no card, and the row is not looked at again.
+                    continue;
+                }
                 state.RaiseCard(CardBin.Ring, UnansweredKind, Verbs.JobTarget(row.Id),
                     $"{row.Id} ended and {row.OwnerName ?? row.Owner} was told twice but has not acted",
                     $"told {row.ToldAt:HH:mm:ss} ({row.ToldWay}) and again {row.RetoldAt:HH:mm:ss} ({row.RetoldWay}); its session ({target.Id}) is idle and has not answered either");
@@ -448,7 +459,8 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
             }
             var took = row.EndedAt!.Value - row.StartedAt;
             var how = row.State switch { JobState.Succeeded => "succeeded", JobState.Cancelled => row.Error ?? "was cancelled", _ => $"failed: {row.Error}" };
-            var text = $"Repeat: you were told this {Took(now - row.ToldAt!.Value)} ago and have not acted on it. Your job {row.Id} (`{row.Command}`, in {row.Cwd}) {how}, after {Took(took)}. The whole output is in {row.LogPath}. Carry on from here.";
+            var lead = waits is null ? "" : $" and {waits}";
+            var text = $"Repeat: you were told this {Took(now - row.ToldAt!.Value)} ago and have not acted on it{lead}. Your job {row.Id} (`{row.Command}`, in {row.Cwd}) {how}, after {Took(took)}. The whole output is in {row.LogPath}. Carry on from here.";
             string way;
             try
             {
@@ -469,6 +481,36 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
             retold = true;
         }
         return retold;
+    }
+
+    /// <summary>
+    /// What still waits on a job's ending, as a short phrase for the retell, or null when nothing the node knows does: a worker's job
+    /// whose leg is still flying, a reviewer's job while its PR review is open, a fixer's while its fix round is open. An ad hoc,
+    /// planner or watchtower session, and a leg that is done, failed or gone, wait on nothing (#1137).
+    /// </summary>
+    private string? WhatWaits(JobRow row, SessionRow owner)
+    {
+        switch (owner.Role)
+        {
+            case SessionRole.Worker:
+                var flight = row.Flight ?? owner.Flight;
+                var leg = row.Leg ?? owner.Leg;
+                if (flight is null || leg is null || state.Flights().All(f => f.Code != flight))
+                {
+                    return null;
+                }
+                return state.Legs(flight).Any(l => l.Name == leg && l.State == LegState.Flying)
+                    ? $"leg {flight}/{leg} is still flying and this job was started by its worker"
+                    : null;
+            case SessionRole.Reviewer:
+                return state.PrReviews().FirstOrDefault(r => r.State == PrReviewState.Reviewing && string.Equals(r.Reviewer, owner.Name, StringComparison.Ordinal)) is { } open
+                    ? $"the review of {open.Repo}#{open.Number} is still open and this job was started by its reviewer"
+                    : null;
+            default:
+                return state.PrReviews().FirstOrDefault(r => r.State != PrReviewState.Closed && r.Fixer is not null && string.Equals(r.Fixer, owner.Name, StringComparison.Ordinal)) is { } fixing
+                    ? $"the fix round of {fixing.Repo}#{fixing.Number} is still open and this job was started by its fixer"
+                    : null;
+        }
     }
 
     /// <summary>

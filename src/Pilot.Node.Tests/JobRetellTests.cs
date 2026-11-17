@@ -39,8 +39,16 @@ public sealed class JobRetellTests : IDisposable
             },
             EndedForGood = _ => _endedForGood,
         };
+        _state.PutFlight(new FlightRow
+        {
+            Code = "RTL1", Repo = "r", RepoPath = "/r", Issue = 1, Branch = "flight/rtl1", Worktree = "/r/w", Base = "main", State = FlightState.Flying, CreatedAt = _clock.GetUtcNow(),
+        });
+        SetLeg(LegState.Flying);
         Session(SessionState.Idle, _clock.GetUtcNow().AddHours(-1));
     }
+
+    private void SetLeg(LegState legState) =>
+        _state.PutLeg(new LegRow { Flight = "RTL1", Name = "one", Order = 1, Goal = "g", DoneWhen = "d", State = legState });
 
     public void Dispose()
     {
@@ -54,11 +62,13 @@ public sealed class JobRetellTests : IDisposable
         }
     }
 
+    private bool _adHoc;
+
     private void Session(SessionState sessionState, DateTimeOffset? lastResponse) =>
         _state.PutSession(new SessionRow
         {
             Id = "w0000001", SessionId = "w0000001-0000-4000-8000-000000000000", Name = "de1-retell-w1", Kind = SessionKind.Background, Cwd = _root,
-            Role = SessionRole.Worker, Flight = "RTL1", Leg = "one", ContextTokens = 0, ContextWindow = 200_000, SpendWeighted = 0, State = sessionState,
+            Role = _adHoc ? SessionRole.AdHoc : SessionRole.Worker, Flight = _adHoc ? null : "RTL1", Leg = _adHoc ? null : "one", ContextTokens = 0, ContextWindow = 200_000, SpendWeighted = 0, State = sessionState,
             LastResponseAt = lastResponse, StartedAt = _clock.GetUtcNow().AddHours(-2),
         });
 
@@ -104,6 +114,73 @@ public sealed class JobRetellTests : IDisposable
         _said.Count.ShouldBe(1);
         var card = _state.Cards().ShouldHaveSingleItem();
         (card.Bin, card.Kind, card.Subject).ShouldBe((CardBin.Ring, JobRunner.UnansweredKind, Verbs.JobTarget("j1")));
+    }
+
+    [Fact]
+    public async Task AnAdHocSessionsJobIsToldOnceAndNeverRetoldOrRungFor()
+    {
+        _adHoc = true;
+        Session(SessionState.Idle, _clock.GetUtcNow().AddHours(-1));
+        await TellNowAsync();
+
+        _clock.Advance(After * 2);
+        (await Sweep()).ShouldBeFalse();
+        _clock.Advance(After * 2);
+        (await Sweep()).ShouldBeFalse();
+        _said.ShouldBeEmpty();
+        _state.Cards().ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task AWorkersJobWhoseLegStillFliesIsRetoldNamingWhatWaitsThenRings()
+    {
+        await TellNowAsync();
+        _clock.Advance(After);
+        (await Sweep()).ShouldBeTrue();
+        _said.ShouldHaveSingleItem().ShouldContain("and leg RTL1/one is still flying and this job was started by its worker.");
+
+        _clock.Advance(After);
+        await Sweep();
+        _state.Cards().ShouldHaveSingleItem().Kind.ShouldBe(JobRunner.UnansweredKind);
+    }
+
+    [Theory]
+    [InlineData(LegState.Done)]
+    [InlineData(LegState.Failed)]
+    public async Task ASucceededJobWhoseLegHasEndedIsNeitherRetoldNorRungFor(LegState ended)
+    {
+        await TellNowAsync();
+        SetLeg(ended);
+        _clock.Advance(After * 3);
+        (await Sweep()).ShouldBeFalse();
+        _said.ShouldBeEmpty();
+        _state.Cards().ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task ASucceededJobRetoldWhileTheLegFlewRaisesNoCardOnceTheLegEnded()
+    {
+        await TellNowAsync();
+        _clock.Advance(After);
+        (await Sweep()).ShouldBeTrue();
+        SetLeg(LegState.Done);
+        _clock.Advance(After);
+        await Sweep();
+        _state.Cards().ShouldBeEmpty();
+        _state.Jobs().Single().RetellRung.ShouldBe(true);
+    }
+
+    [Fact]
+    public async Task AFailedJobStillRingsAfterItsLegEnded()
+    {
+        await TellNowAsync();
+        _clock.Advance(After);
+        (await Sweep()).ShouldBeTrue();
+        _state.PutJob(_state.Jobs().Single() with { State = JobState.Failed, Error = "boom" });
+        SetLeg(LegState.Failed);
+        _clock.Advance(After);
+        await Sweep();
+        _state.Cards().ShouldHaveSingleItem().Kind.ShouldBe(JobRunner.UnansweredKind);
     }
 
     [Fact]
