@@ -34,8 +34,8 @@ public sealed class RingCountTests : PrFixTestsBase
     {
         var ring = await CappedAsync();
 
-        ring.Title.ShouldContain("4 rounds of review");
-        ring.Title.ShouldContain("3 rounds of fixes");
+        ring.Kind.ShouldBe(PrReviews.FixCappedKind);
+        ring.Title.ShouldContain("4 rounds");
         var detail = ring.Detail.ShouldNotBeNull();
         detail.ShouldContain("Points after 4 rounds:");
         detail.ShouldContain("Addressed (1):");
@@ -45,7 +45,7 @@ public sealed class RingCountTests : PrFixTestsBase
         detail.ShouldContain("Not addressed (");
         detail.ShouldContain("first problem");
         detail.ShouldContain("fourth problem");
-        ring.Summary.ShouldNotBeNull().ShouldContain("4 rounds in all");
+        ring.Summary.ShouldNotBeNull().ShouldContain("4 rounds of review");
         ring.Choices.ShouldContain(c => c.Label == "Allow one more fix round" && c.Verb == Verbs.AllowRound && c.Target == "pr/acme/widget#7");
     }
 
@@ -72,8 +72,8 @@ public sealed class RingCountTests : PrFixTestsBase
         (await Run(Verbs.PrVerdict, "acme/widget#7", Row.Reviewer, "changes", AnswersOf(Row) + "Round report.", "README.md:1 fifth problem")).Error.ShouldBeNull();
         Fixers.Length.ShouldBe(4);
         var again = _state.Cards(openOnly: true).Where(c => c.Kind == PrReviews.FixCappedKind).ShouldHaveSingleItem();
-        again.Title.ShouldContain("5 rounds of review");
-        again.Title.ShouldContain("4 rounds of fixes");
+        again.Title.ShouldContain("5 rounds");
+        again.Summary.ShouldNotBeNull().ShouldContain("4 rounds of fixes");
     }
 
     [Fact]

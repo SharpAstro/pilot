@@ -823,6 +823,6 @@ public sealed partial class LegCommander
                 new CardChoice { Label = "Pass with notes", Verb = Verbs.Review, Target = target, Args = ["pass", "passed with the findings noted: repeated or not blocking"] },
                 new CardChoice { Label = "Allow one more round", Verb = Verbs.AllowRound, Target = target, Args = ["the watchtower allowed it"] },
             ], link: flight.PullRequestUrl,
-            summary: $"The review of {flight.Code} (PR {flight.PullRequestUrl}) has had {ReviewRing.Rounds(rounds)} in all, {rounds.Count(r => r.Verdict == ReviewState.Changes)} of them asking for changes; its points: {ReviewRing.Counts(rounds)} (the detail lists each). The node sends no leg round and starts no reviewer: the watchtower passes it with the findings noted, settles the disagreement in the plane ({flight.Worktree}), rings the person for what it cannot settle, or allows one more round.");
+            summary: $"The review of {flight.Code} (PR {flight.PullRequestUrl}) has had {ReviewRing.Rounds(rounds)} in all. Points: {ReviewRing.Counts(rounds)}. No round starts until it is passed with notes or one more is allowed.");
     }
 }

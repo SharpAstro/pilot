@@ -121,9 +121,9 @@ public sealed partial class PrReviews
         var detail = $"{rounds} fixers have pushed and the review still asks for changes, so no more start: this is yours.\n"
             + (said is null ? "" : $"{said}\n")
             + $"Points after {all}:\n{ReviewRing.Points(review.Rounds)}\n\nThe last review:\n{(review.Report ?? "").Trim()}\n{string.Join('\n', review.Findings.Select(f => f.ToString()))}";
-        RaiseOnce(pr, review, CardBin.Ring, FixCappedKind, subject, $"{pr}: still asking for changes after {all} of review, {rounds} rounds of fixes",
+        RaiseOnce(pr, review, CardBin.Ring, FixCappedKind, subject, $"{pr}: changes still asked after {all}",
             detail.TrimEnd(), [new CardChoice { Label = "Allow one more fix round", Verb = Verbs.AllowRound, Target = subject, Args = ["the person allowed one more fix round"] }],
-            $"The review of {pr} has had {all} in all and still asks for changes after {rounds} rounds of fixes, so no fixer starts. Its points: {ReviewRing.Counts(review.Rounds)} (the detail lists each). Allow one more fix round starts exactly one more fixer.");
+            $"{pr} has had {all} of review and {rounds} of fixes, and still asks for changes. Points: {ReviewRing.Counts(review.Rounds)}.");
     }
 
     /// <summary>

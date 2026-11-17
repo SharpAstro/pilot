@@ -439,6 +439,7 @@
       "fixWorktreeBorrowed": null,
       "fixDetached": null,
       "fixRound": null,
+      "fixRoundsAllowed": null,
       "designAnswer": null,
       "rounds": null,
       "followUpIssue": null,
