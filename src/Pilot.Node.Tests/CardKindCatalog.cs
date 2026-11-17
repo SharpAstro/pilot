@@ -156,6 +156,7 @@ internal static class CardKindCatalog
         new("autopilot-merge-refused", "Ring|ForYou", [Checks], "AutopilotMergeRefusalTests.AFailedRequiredCheckRingsWithReRunTheFailedCheckAndNoMergeAgain", "the PR's state on GitHub is still open (not merged) and the refusal's class is a person's (or a passing one that failed its third try), with the one action to take", [nameof(Verbs.RerunChecks), nameof(Verbs.OpenPr), nameof(Verbs.Dismiss), nameof(Verbs.Merge)]),
         new("pr-marks-refused", "Handled", [LegPlanners, "Flights/PrMarks.cs", PrReviewsStatus, PrReviewsSweep], "PrMarksTests.AWriteGitHubRefusesIsACardAndNeverFailsTheReviewOrLosesTheVerdict"),
         new("node-label-refused", "Handled", [Move, LegOpenPr, "Flights/RepoSetup.cs", FlightCommanderCreate, FlightCommanderAdopt], "PrMarksTests.ANodeLabelGitHubRefusesOnTheNewPrIsACardNotAFailedPr"),
+        new("second-flight-anyway", "Handled", [FlightCommanderCreate], "DuplicateFlightTests.AnywayWithAWhyMakesTheSecondAndKeepsTheWhyOnAHandledCard"),
         new("design-mirror-failed", "Handled", ["Flights/DesignDecisionMirror.cs"], "DesignDecisionMirrorTests.DesignDecisionMirrorNotesAFailedCommentOnARingCardNamingThePrAndKeepsTheDecision"),
         new("repo-setup", "Handled", ["Flights/RepoSetup.cs"], "RepoSetupTests.SetupAgainstAnOrgWithNoFieldAndNoLabelsMakesTheFieldAndTheReadLabelsOnceAndASecondRunMakesNothing"),
         new("landed", "Handled", [FlightCommanderLand], "CliTests.ADirectFlightIsFlownFromTheCliAloneUpToItsLanding"),
