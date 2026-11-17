@@ -11,7 +11,7 @@ public sealed partial class LegCommander
     /// landing's Handled line names it. No points left means no issue (null).
     /// </summary>
     /// <exception cref="MergeBlockedException">An earlier point stands not addressed, or the issue could not be filed: the points are never dropped, the merge holds with this said.</exception>
-    private async Task<int?> EnsureFollowUpAsync(FlightRow flight, IReadOnlyList<ReviewFollowUp.Item>? extra, CancellationToken cancellationToken)
+    private async Task<int?> EnsureFollowUpAsync(FlightRow flight, IReadOnlyList<ReviewFollowUp.Item>? extra, CancellationToken cancellationToken, bool lastRoundNotes = false)
     {
         var standing = ReviewFollowUp.Read(flight.ReviewRounds);
         if (standing.NotAddressed.Count > 0)
@@ -20,7 +20,7 @@ public sealed partial class LegCommander
                 $"{flight.Code} has earlier review points still not addressed ({string.Join(", ", standing.NotAddressed)}): they are fixed or left with a reason before it merges");
         }
         var captured = flight.FollowUpPoints ?? [];
-        var wanted = standing.Items.Concat(extra ?? []).GroupBy(i => i.Key, StringComparer.OrdinalIgnoreCase).Select(g => g.Last()).ToList();
+        var wanted = standing.Items.Concat(extra ?? []).Concat(lastRoundNotes ? ReviewFollowUp.LastRoundNotes(flight.ReviewRounds) : []).GroupBy(i => i.Key, StringComparer.OrdinalIgnoreCase).Select(g => g.Last()).ToList();
         var fresh = wanted.Where(i => !captured.Contains(i.Key, StringComparer.OrdinalIgnoreCase)).ToList();
         if (fresh.Count == 0)
         {

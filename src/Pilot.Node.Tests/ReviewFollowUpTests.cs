@@ -64,10 +64,12 @@ public sealed class ReviewFollowUpTests : ReviewTestsBase
 
         (await Run(Verbs.Review, Verbs.FlightTarget(code), Reviewer(code), "pass",
             Answers + "\n## Not blocking\n- E could be tidier in Lexer.cs:8\n- F deserves a comment in Parser.cs:40\n")).Error.ShouldBeNull();
+        // A pass with notes holds the flight; a person clears the hold untaken, so the notes were never made.
+        (await Run(Verbs.Clear, Verbs.FlightTarget(code), "me")).Error.ShouldBeNull();
         (await Merge(code)).Error.ShouldBeNull();
 
         var issue = _github.IssuesCreated.ShouldHaveSingleItem();
-        var body = issue.Body.ShouldNotBeNull();
+        var body =issue.Body.ShouldNotBeNull();
         body.ShouldContain("R1.4");
         body.ShouldContain("E could be tidier");
         body.ShouldContain("F deserves a comment");

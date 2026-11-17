@@ -744,7 +744,8 @@ public sealed class HoldingPatternTests : ReviewTestsBase
         await checks.LookAsync(Ct);
 
         F(flight.Code).Holding.ShouldBeNull();
-        var comment = _github.IssueComments.ShouldHaveSingleItem();
+        // The merge files the unmade notes as the follow-up issue (pilot #1148) and the PR gets its link beside the notes comment.
+        var comment = _github.IssueComments.Where(c => c.Body.Contains("merges with them")).ShouldHaveSingleItem();
         comment.Number.ShouldBe(F(flight.Code).PullRequest!.Value);
         comment.Body.ShouldContain(F(flight.Code).Review!.ReviewedHead![..8]);
         comment.Body.ShouldContain("rename `x` to `count`");
