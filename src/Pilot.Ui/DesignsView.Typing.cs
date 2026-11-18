@@ -65,7 +65,7 @@ internal sealed partial class DesignsView<TSurface>
     internal const string EditHint = "Typing changes the words only. A screen's frame is changed through the designer.";
 
     /// <summary>What the hint under notes in edit says: the box holds Markdown source, which the page draws rendered once it is closed.</summary>
-    internal const string NotesHint = "Markdown. " + EditHint;
+    internal const string NotesHint = "Markdown. Typing changes the words only, not a screen's frame.";
 
     private const string PublishKey = "designs:typed-publish";
     private const string DiscardKey = "designs:typed-discard";

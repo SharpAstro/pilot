@@ -214,8 +214,9 @@ public sealed class DesignTypingViewTestsNotes
         TerminalFrame.Build(rail, chrome.Designs.Tree(screen), null, columns, rows, CellMeasureContext.PixelAuthored);
         chrome.Designs.BeginEdit(0, "notes").ShouldBeTrue();
         chrome.Designs.Editor.Text = LongNotes;
-        var arranged = TerminalFrame.Build(rail, chrome.Designs.Tree(screen), null, columns, rows, CellMeasureContext.PixelAuthored);
-        var editor = arranged.Single(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.TextEditor });
+        // The frame at 160 x 44 shows the top of the page (the editor is below the frame's well, past the viewport), so the same tree is arranged in a window as wide and tall enough for the whole page.
+        var arranged = Layout.Engine.Arrange(TerminalFrame.Tree(rail, chrome.Designs.Tree(screen), null), new Rect<int>(0, 0, columns, 400), CellMeasureContext.PixelAuthored);
+        var editor =arranged.Single(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.TextEditor });
         var why = arranged.Single(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.TextInput });
         (editor.Bounds.X + editor.Bounds.Width).ShouldBe(why.Bounds.X + why.Bounds.Width);
         editor.Bounds.Width.ShouldBeGreaterThan(60);
