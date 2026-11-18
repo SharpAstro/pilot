@@ -144,34 +144,6 @@ public sealed class DesignsCaptureTests
         }
     }
 
-    [Theory]
-    [InlineData(1600, 900)]
-    [InlineData(2880, 1620)]
-    public void TheChatHeadingRowHoldsPointAtThisLabelWideOnTheHeadingsMiddleAndIsCaptured(int width, int height)
-    {
-        var chat = PageData.DesignChatPage();
-        var folder = Capture($"design-chat-row-{width}", width, height, "DSN-1", chat, out _);
-        try
-        {
-            using var renderer = new RgbaImageRenderer((uint)width, (uint)height);
-            var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
-            chrome.Autopilot.OnToggle = _ => Task.FromResult<string?>(null);
-            chrome.Show(PilotPage.Designs);
-            var screen = PageData.DesignsFor("sample", Now);
-            chrome.Designs.Open("DSN-1");
-            var data = PageData.For("sample");
-            chrome.Render(data.Sessions, data.Flights, data.Cards, data.Jobs, data.Fleet, data.Repos, data.PullRequests, new RectF32(0, 0, width, height), data.Machines, null, data.Spend, screen);
-            var arranged = Layout.Engine.Arrange(chrome.Designs.Tree(screen), new Rect<float>(0, 0, width, height), new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, 1f)).ToList();
-            var button = arranged.Single(a => a.Node.Hit is HitResult.ButtonHit { Action: "designs:point" });
-            var (measured, _) = renderer.MeasureText("Point at this", SessionsCapture.FontPath, 12f);
-            button.Bounds.Width.ShouldBe(measured + 20f, 2f);
-        }
-        finally
-        {
-            Directory.Delete(folder, recursive: true);
-        }
-    }
-
     /// <summary>
     /// PIL1166: the 1920 x 1080 fixture design at Phone and Tablet on the owner's two window sizes. Each frame is written as a PNG (to PILOT_JOB_ARTIFACTS when a job gives
     /// one, else a temp folder that is deleted), the player paints no pixel outside its frame, and the page holds pilot's own size readout once.

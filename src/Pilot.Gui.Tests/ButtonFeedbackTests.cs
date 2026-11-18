@@ -198,9 +198,9 @@ public sealed class ButtonFeedbackTests
         (@"^designs:(list|open:.+|screen:.+|version:\d+)$", "the Designs page's way to and from a design, and its pick of the screen or version the player shows: navigation, no command on the node"),
         (@"^designs:(swap|target:.+|target-own)$", "the Designs page's target switcher, its Design chip (the size the design gives itself) and Rotate: the window's own pick of the size the prototype is laid out at, kept in the GUI's settings, no command on the node"),
         (@"^designs:from-idea$", "a design's link to the idea it was made from opens the Ideas page on it: navigation, no command on the node (the Start its design button of a waiting idea, designs:idea-start:, goes through the Designs page's Presses)"),
-        (@"^designs:point$", "a design's Point at this switch: whether the next click on the prototype puts its node's key in the message box, local state, no command on the node (the message's send goes through the chat's own queue)"),
+        (@"^designs:frame-(size|rotate|terminal|point):", "a frame's toolbar: its size, Rotate, Terminal and Point at this (whether the next click on the prototype puts its node's key in the message box and ties the chat to the screen), local state kept in the GUI's settings, no command on the node (the message's send goes through the chat's own queue)"),
         (@"^chat:divider:version:\d+$", "a published version's line in a design's chat shows that version in the player, the same pick as designs:version: navigation, no command on the node"),
-        (@"^chat:(end|back|restart|restart-no|drop-card)$", "the chat's jump to end, way back, the Restart ask and its Keep it, and Drop of a quote: no command on the node; its choices and Stop it and start fresh go through its Presses"),
+        (@"^chat:(end|back|restart|restart-no|drop-card|drop-screen)$", "the chat's jump to end, way back, the Restart ask and its Keep it, and Drop of a quote: no command on the node; its choices and Stop it and start fresh go through its Presses"),
     ];
 
     [Fact]

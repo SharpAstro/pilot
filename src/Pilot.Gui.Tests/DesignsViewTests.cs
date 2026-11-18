@@ -292,27 +292,6 @@ public sealed class DesignsViewTests
         }
     }
 
-    [Fact]
-    public void PointAtThisIsAsWideAsItsLabelPlusPaddingAndSharesOneHeightAndMiddleWithTheHeading()
-    {
-        using var rig = new Rig(Sample());
-        rig.View.Open("DSN-1");
-        rig.Paint();
-        foreach (var width in new[] { 1000f, 1600f })
-        {
-            var all = ArrangedAt(rig, width, 900).ToList();
-            var button = all.Single(a => a.Node.Hit is HitResult.ButtonHit { Action: "designs:point" });
-            var label = all.Single(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text t } && t.Value == "Point at this");
-            var heading = all.First(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text t } && t.Value == "Chat with the designer");
-            // The label's width as the renderer measures it, not the leaf's bounds, which stretch with the button.
-            var (measured, _) = rig.Renderer.MeasureText("Point at this", SessionsCapture.FontPath, 12f);
-            button.Bounds.Width.ShouldBe(measured + 20f, 2f, "the measured label plus 10 either side, not a star share of the column");
-            button.Bounds.Height.ShouldBe(heading.Bounds.Height, 0.5f, "one height");
-            (button.Bounds.Y + button.Bounds.Height / 2f).ShouldBe(heading.Bounds.Y + heading.Bounds.Height / 2f, 0.5f, "one middle");
-            (label.Bounds.Y + label.Bounds.Height / 2f).ShouldBe(heading.Bounds.Y + heading.Bounds.Height / 2f, 1f, "the label's middle is the heading text's middle");
-        }
-    }
-
     private static DesignsScreen WithCells(DesignsScreen screen, params DesignCell[] cells) =>
         screen with { Open = screen.Open! with { Doc = screen.Open.Doc! with { Cells = cells } } };
 
