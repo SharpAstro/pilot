@@ -1120,6 +1120,12 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
             {
                 wells.Add(FrameWell(page, index, j, cell.Frames[j]));
             }
+            // Side by side the wells are one width each (a star share would follow what each holds, and a toolbar wider than its share would run into the next well).
+            if (wells.Count > 1)
+            {
+                var each = WellInnerWidth() + 2f * WellPadX;
+                wells = [.. wells.Select(w => w.WFixed(each))];
+            }
             _across = 1;
             if (wells.Count == 1)
             {
