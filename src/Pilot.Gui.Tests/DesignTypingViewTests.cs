@@ -184,6 +184,30 @@ public sealed class DesignTypingViewTests
     }
 
     [Fact]
+    public void ACellsNumberTagCaptionAndNotesLabelSelectAndThePlaceholdersDoNotOnPurpose()
+    {
+        // The labels the owner copies ("cell 2, published in v2") select like the prose; the offers to type a missing part are the control that opens the editor, so they stay unselectable and read alike.
+        var sample = PageData.DesignsFor("sample", Now);
+        var doc = sample.Open!.Doc!;
+        var bare = doc with { Objective = null, Cells = [doc.Cells[0] with { Notes = "Some notes." }, doc.Cells[1] with { Objective = null, Notes = "" }] };
+        using var rig = new Rig(sample with { Open = sample.Open with { Doc = bare } });
+        var texts = rig.Arranged().Select(a => a.Node).OfType<Layout.Node.Leaf>().Select(l => l.Content).OfType<Layout.Content.Text>().ToList();
+        foreach (var label in new[] { "1", "2", "published in v2", "Notes" })
+        {
+            texts.Where(t => t.Value == label).ShouldNotBeEmpty(label);
+            texts.Where(t => t.Value == label).ShouldAllBe(t => t.Selectable, label);
+        }
+        texts.Where(t => t.Value.StartsWith("Proposed design", StringComparison.Ordinal)).ShouldAllBe(t => t.Selectable, "frame captions");
+        foreach (var offer in new[] { DesignsView<RgbaImage>.AddObjective, DesignsView<RgbaImage>.AddNotes })
+        {
+            var found = texts.Where(t => t.Value == offer).ToList();
+            found.ShouldNotBeEmpty(offer);
+            found.ShouldAllBe(t => !t.Selectable, offer);
+            found.Select(t => t.Size).Distinct().ShouldBe([11f], offer);
+        }
+    }
+
+    [Fact]
     public void AMissingObjectiveIsOfferedForTyping()
     {
         // R1.6 of the review: the check asks for an objective on the design and on every cell, so a missing one has an 'Add objective' like 'Add notes'.

@@ -1098,7 +1098,7 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
         else if (OnEdit is not null && !ReadOnly(row) && OnCurrent(page))
         {
             // The check asks every design for an objective, so a missing one is offered for typing like a cell's.
-            items.Add(Typable(-1, "objective", "", WrappedProse.OneLine(AddObjective, 11f, Dim, selectable: false).RowH(18f)));
+            items.Add(Typable(-1, "objective", "", Placeholder(AddObjective)));
         }
         if (notebook?.Notes is { Length: > 0 } || _edit == (-1, "notes"))
         {
@@ -1208,7 +1208,7 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
         else if (OnEdit is not null && !ReadOnly(page.Detail.Row) && OnCurrent(page))
         {
             // The check refuses a screen with no objective, so a missing one is offered for typing like the notes.
-            items.Add(Typable(index, "objective", "", WrappedProse.OneLine(AddObjective, 11f, Dim, selectable: false).RowH(18f)));
+            items.Add(Typable(index, "objective", "", Placeholder(AddObjective)));
         }
         if (page.Document is not null)
         {
@@ -1241,7 +1241,7 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
         }
         else if (OnEdit is not null && !ReadOnly(page.Detail.Row) && OnCurrent(page))
         {
-            items.Add(Typable(index, "notes", "", WrappedProse.OneLine("Add notes", 11f, Dim, selectable: false).RowH(18f)));
+            items.Add(Typable(index, "notes", "", Placeholder(AddNotes)));
         }
         if (_edit is { } editing && editing.Cell == index)
         {

@@ -47,6 +47,11 @@ internal sealed partial class DesignsView<TSurface>
 
     /// <summary>What a missing objective offers: a click opens it for typing (the check asks for one).</summary>
     internal const string AddObjective = "Add objective";
+    internal const string AddNotes = "Add notes";
+
+    // The offer to type a missing part. It is unselectable on purpose: it is not content the owner copies, it is the control that opens the editor
+    // (the press is on the Typable round it), so it reads the same everywhere: 11 pt, dim, one 18 px row, its words as the tooltip's label.
+    private static Layout.Node Placeholder(string words) => WrappedProse.OneLine(words, 11f, Dim, selectable: false).RowH(18f).Whole(words);
 
     /// <summary>The label of the discard button.</summary>
     internal const string DiscardLabel = "Discard draft";
