@@ -586,6 +586,7 @@ internal sealed class DesignsView<TSurface> : PilotWidgetBase<TSurface>
         {
             Counts = OpenId is { } openId ? $"{openId}{(open?.Detail.Row.Title is { Length: > 0 } t ? " · " + t : "")}" : $"{screen.Rows.Length} {(screen.Rows.Length == 1 ? "design" : "designs")}",
             CountsFit = true,
+            CountsCut = OpenId is { },
             Buttons = buttons,
             Source = PageHeader.SourceLine(screen.Source, screen.AsOf),
         }, new TopBarParts(Nodes, null, Autopilot, About, Night));
@@ -783,7 +784,8 @@ internal sealed class DesignsView<TSurface> : PilotWidgetBase<TSurface>
             .BgHover(ButtonHover)
             .WithTooltip(Pointing ? "Pointing: a click on the prototype puts that node's key in your message. Click again to play it." : "Click a part of the prototype to put its key in your message instead of playing the click")
             .Follows(new HitResult.ButtonHit("designs:point"), _ => Point(!Pointing))
-            .RowH(26f);
+            // RowH gives a star share of the row (the button was a third of the chat column); the start button's WAuto and fixed height hold it label-wide.
+            .WAuto().HFixed(26f);
 
     // The cells the page's left column has in a terminal, as the tree shares them: its 2.2 share beside the versions' 1, with the versions kept
     // between 260 and 520 where the room allows. The chat's box and the prototype's width are told this one number.

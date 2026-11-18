@@ -114,6 +114,22 @@ internal sealed class PageData
         return new DesignsScreen(rows, "test", now, page);
     }
 
+    /// <summary>The issue's design (#1160): a title that runs on past the column, a long brief and no version, so its page shows the no-version text.</summary>
+    internal static DesignsScreen NoVersionDesigns(DateTimeOffset now)
+    {
+        var full = DesignsFor("sample", now);
+        var title = "A card for one job: its id j6917 and the command on the first line, a line saying what it is doing and the whole of its output";
+        var detail = full.Open!.Detail with
+        {
+            Row = full.Open.Detail.Row with { Title = title, Current = null, Versions = 0 },
+            Versions = [],
+            Brief = "## 2026-11-16T09:00:00Z
+
+" + string.Join(' ', Enumerable.Repeat("A long brief sentence about one job's card.", 30)),
+        };
+        return full with { Rows = [full.Rows[0] with { Title = title, Current = null, Versions = 0 }, .. full.Rows.Skip(1)], Open = DesignPages.Load(detail) };
+    }
+
     internal static string TargetsPrototypePath => Path.Combine(AppContext.BaseDirectory, "Fixtures", "Designs", "targets.prototype.json");
 
     /// <summary>One design whose prototype names Desktop and Phone and has a rail for a regular target and a bottom bar for a compact one.</summary>

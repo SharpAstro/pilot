@@ -233,6 +233,28 @@ public sealed class DesignsViewTests
         arranged.Any(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text t } && t.Value.StartsWith("This design has no version yet. The brief", StringComparison.Ordinal)).ShouldBeFalse("the no-version text is words that wrap, not one line");
     }
 
+    [Theory]
+    [InlineData(2880, 1814, 1.5f)]
+    [InlineData(2880, 1814, 1f)]
+    [InlineData(1920, 1080, 1f)]
+    public void TheIssuesTitleLineIsWholeOrEndsInAnEllipsisAtTheIssuesWindow(int width, int height, float dpi)
+    {
+        var title = "A card for one job: its id j6917 and the command on the first line, a line saying what it is doing and the whole of its output";
+        var full = Sample();
+        var detail = full.Open!.Detail with { Row = full.Open.Detail.Row with { Title = title } };
+        using var rig = new Rig(full with { Open = DesignPages.Load(detail) });
+        rig.View.Open("DSN-1");
+        rig.Paint();
+        var counts = $"DSN-1 · {title}";
+        var arranged = ArrangedAt(rig, width, height, dpi).ToList();
+        var line = arranged.Single(a => a.Node.Tooltip == counts);
+        var words = arranged.Where(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text } && a.Bounds.Y >= line.Bounds.Y - 0.5f && a.Bounds.Y + a.Bounds.Height <= line.Bounds.Y + line.Bounds.Height + 0.5f
+            && a.Bounds.X >= line.Bounds.X - 0.5f && a.Bounds.X <= line.Bounds.X + line.Bounds.Width + 0.5f).Select(a => (Layout.Content.Text)((Layout.Node.Leaf)a.Node).Content).Select(t => t.Value).ToList();
+        var drawn = string.Concat(words).Replace(" ", "");
+        Console.Error.WriteLine($"LINE w={line.Bounds.Width} drawn=[{string.Join("|", words)}]");
+        (drawn.EndsWith("…", StringComparison.Ordinal) || drawn == counts.Replace(" ", "")).ShouldBeTrue($"the title line is whole or ends in an ellipsis, drew: {string.Join("|", words)}");
+    }
+
     [Fact]
     public void EveryTimeOnADesignsPageIsLocalWithUtcOnHover()
     {
@@ -277,9 +299,12 @@ public sealed class DesignsViewTests
             var button = all.Single(a => a.Node.Hit is HitResult.ButtonHit { Action: "designs:point" });
             var label = all.Single(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text t } && t.Value == "Point at this");
             var heading = all.First(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text t } && t.Value == "Chat with the designer");
-            button.Bounds.Width.ShouldBeLessThan(label.Bounds.Width + 40f, "label plus padding, not a star share");
+            // The label's width as the renderer measures it, not the leaf's bounds, which stretch with the button.
+            var (measured, _) = rig.Renderer.MeasureText("Point at this", SessionsCapture.FontPath, 12f);
+            button.Bounds.Width.ShouldBe(measured + 20f, 2f, "the measured label plus 10 either side, not a star share of the column");
             button.Bounds.Height.ShouldBe(heading.Bounds.Height, 0.5f, "one height");
             (button.Bounds.Y + button.Bounds.Height / 2f).ShouldBe(heading.Bounds.Y + heading.Bounds.Height / 2f, 0.5f, "one middle");
+            (label.Bounds.Y + label.Bounds.Height / 2f).ShouldBe(heading.Bounds.Y + heading.Bounds.Height / 2f, 1f, "the label's middle is the heading text's middle");
         }
     }
 
