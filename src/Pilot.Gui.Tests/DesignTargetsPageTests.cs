@@ -44,8 +44,8 @@ public sealed class DesignTargetsPageTests
         /// <summary>The texts of the prototype the player is playing, as laid out at its design size.</summary>
         public List<string> Played()
         {
-            var size = View.Player!.DesignSize;
-            return SentenceRuns.Texts(Layout.Engine.Arrange(View.Player.BuildTree(), new Rect<float>(0, 0, size.Width, size.Height), new PixelMeasureContext<RgbaImage>(_renderer, SessionsCapture.FontPath, 1f)).Select(a => a.Node));
+            var size = View.PlayerOf()!.DesignSize;
+            return SentenceRuns.Texts(Layout.Engine.Arrange(View.PlayerOf()!.BuildTree(), new Rect<float>(0, 0, size.Width, size.Height), new PixelMeasureContext<RgbaImage>(_renderer, SessionsCapture.FontPath, 1f)).Select(a => a.Node));
         }
 
         public void Dispose() => _renderer.Dispose();
@@ -127,7 +127,7 @@ public sealed class DesignTargetsPageTests
 
         rig.View.Surface.Width.ShouldBe(844);
         rig.View.Surface.Height.ShouldBe(390);
-        rig.View.Player!.DesignSize.ShouldBe((844f, 390f));
+        rig.View.PlayerOf()!.DesignSize.ShouldBe((844f, 390f));
         rig.Played().ShouldContain(Rail);
     }
 

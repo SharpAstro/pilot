@@ -29,7 +29,7 @@ public sealed class DesignPlayerClipTests
         }
         var data = PageData.For("sample");
         chrome.Render(data.Sessions, data.Flights, data.Cards, data.Jobs, data.Fleet, data.Repos, data.PullRequests, new RectF32(0, 0, W, H), data.Machines, null, data.Spend, screen);
-        return ([.. renderer.Surface.Pixels], chrome.Designs.FrameClip ?? throw new InvalidOperationException("no frame was painted"));
+        return ([.. renderer.Surface.Pixels], chrome.Designs.FrameClipOf() ?? throw new InvalidOperationException("no frame was painted"));
     }
 
     [Theory]
@@ -47,7 +47,7 @@ public sealed class DesignPlayerClipTests
     }
 
     /// <summary>
-    /// How many pixels outside <paramref name="frame"/> (the view's own <see cref="DesignsView{TSurface}.FrameClip"/>, the one place the frame is worked out) differ between
+    /// How many pixels outside <paramref name="frame"/> (the view's own <see cref="DesignsView{TSurface}.FrameClipOf"/>, the one place the frame is worked out) differ between
     /// a page with the player's design and the same page with a blank screen of the same size, and the first of them.
     /// </summary>
     internal static (int Count, (int X, int Y)? First) PixelsDifferingOutside(byte[] with, byte[] without, int width, int height, RectInt frame)

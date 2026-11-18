@@ -72,7 +72,7 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
     private const string FramePrefix = "design-frame:";
 
     // The tallest a frame is drawn, and the room a frame's well keeps round it: its caption row above, and under it the place of the frame's own toolbar (a later leg's).
-    private const float MaxFrameH = 360f;
+    private const float MaxFrameH = 480f;
     private const float WellPadX = 16f;
     private const float WellPadY = 12f;
     private const float CaptionH = 20f;

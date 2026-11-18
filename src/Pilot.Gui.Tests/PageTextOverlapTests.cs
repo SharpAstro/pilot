@@ -27,7 +27,7 @@ public sealed class PageTextOverlapTests
 
     internal static readonly string[] Pages =
     [
-        "home", "sessions", "flights table", "flights canvas", "flight page", "jobs", "fleet", "settings", "repos", "pull requests", "chat", "spend", "designs", "design page", "design cells",
+        "home", "sessions", "flights table", "flights canvas", "flight page", "jobs", "fleet", "settings", "repos", "pull requests", "chat", "spend", "designs", "design page",
         "cards panel", "transcript", "wizard repos", "wizard issues",
     ];
 
@@ -209,7 +209,7 @@ public sealed class PageTextOverlapTests
         "chat" => PilotPage.Chat,
         "ideas" => PilotPage.Ideas,
         "spend" => PilotPage.Spend,
-        "designs" or "design page" or "design cells" or DesignPagePhone or DesignPageDesktop or DesignPageNoVersion => PilotPage.Designs,
+        "designs" or "design page" or DesignPagePhone or DesignPageDesktop or DesignPageNoVersion => PilotPage.Designs,
         _ => PilotPage.Home,
     };
 
@@ -270,7 +270,7 @@ public sealed class PageTextOverlapTests
             chrome.Settings.LoadRepos ??= _ => Task.FromResult<RepoInfo[]>(data.WizardRepos.Length > 0 ? data.WizardRepos : [new RepoInfo { Name = "pilot", Path = @"C:\work\pilot" }]);
         }
         chrome.Show(PageOf(page));
-        if (page is "design page" or "design cells" or DesignPagePhone or DesignPageDesktop or DesignPageNoVersion)
+        if (page is "design page" or DesignPagePhone or DesignPageDesktop or DesignPageNoVersion)
         {
             // The chat beside the prototype has something said: three turns and two versions, the designer checking.
             await PageData.OpenDesignChat(chrome.Designs, DesignsOf(data, page).Open!.Detail.Row.Id, PageData.DesignChatPage(lengthen: state is "long" or "many"));
@@ -278,7 +278,6 @@ public sealed class PageTextOverlapTests
             {
                 chrome.Designs.PickTarget(page == DesignPagePhone ? "Phone" : "Desktop");
             }
-            chrome.Designs.ShowCells(page == "design cells");
         }
 
         // The room the chrome gives the page is the chrome's own: one frame arranges the window (rail, page and the cards panel, which
@@ -358,7 +357,6 @@ public sealed class PageTextOverlapTests
                 break;
             case "designs":
             case "design page":
-            case "design cells":
             case DesignPagePhone:
             case DesignPageDesktop:
             case DesignPageNoVersion:

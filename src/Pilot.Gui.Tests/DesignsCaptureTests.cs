@@ -96,7 +96,7 @@ public sealed class DesignsCaptureTests
     [Theory]
     [InlineData(1920, 1080)]
     [InlineData(2880, 1620)]
-    public void AWideDesignIsPlayedScaledUpToFillTheLeftColumnOnABigWindow(int width, int height)
+    public void AFrameIsFittedInsideItsWellAndTheWholePageIsCapturedOnABigWindow(int width, int height)
     {
         var screen = PageData.TargetsDesigns(Now, doc =>
         {
@@ -115,12 +115,15 @@ public sealed class DesignsCaptureTests
 
         chrome.Designs.Surface.Width.ShouldBe(720);
         var arranged = Layout.Engine.Arrange(chrome.Designs.Tree(screen), new Rect<float>(0, 0, width, height), new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, 1f));
-        var rect = arranged.Single(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Fill { Key: "design-player" } }).Bounds;
-        var size = chrome.Designs.Player!.DesignSize;
+        var rect = arranged.Single(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Fill { Key: "design-frame:0:0" } }).Bounds;
+        var size = chrome.Designs.PlayerOf()!.DesignSize;
         size.Width.ShouldBe(720f);
-        var scale = Math.Min(rect.Width / size.Width, rect.Height / size.Height);
-        scale.ShouldBeGreaterThan(1f, "the played frame is scaled up so its text is readable");
-        (size.Width * scale).ShouldBeGreaterThan(720f);
+        // The frame is the design's size scaled to its well, never wider than the well's rectangle and never taller.
+        var frame = chrome.Designs.FrameRectOf().ShouldNotBeNull();
+        frame.Width.ShouldBeLessThanOrEqualTo(rect.Width);
+        frame.Height.ShouldBeLessThanOrEqualTo(rect.Height);
+        (frame.Width / frame.Height).ShouldBe(720f / 480f, 0.02f);
+        TextOverlap.Faults(arranged).Select(f => f.Line).ShouldBeEmpty();
 
         var folder = Path.Combine(Path.GetTempPath(), $"pilot-design-own-{Guid.NewGuid():N}");
         // Captures read the same on DE1 and CI: times in UTC, as Capture draws them.
@@ -205,7 +208,7 @@ public sealed class DesignsCaptureTests
         var with = Paint(false, out var chrome, out var leaves, out var renderer);
         using (renderer)
         {
-            var frame = chrome.Designs.FrameClip ?? throw new InvalidOperationException("no frame was painted");
+            var frame = chrome.Designs.FrameClipOf() ?? throw new InvalidOperationException("no frame was painted");
             var surface = chrome.Designs.Surface;
 
             // The capture, kept for the PR.
@@ -224,9 +227,8 @@ public sealed class DesignsCaptureTests
                 }
             }
 
-            // One readout: pilot's own '<name>: W x H at Sx' line is in the page's tree once.
-            var readout = $"{surface.Name}: {surface.Width} x {surface.Height} at ";
-            leaves.Select(l => l.Content).OfType<Layout.Content.Text>().Count(t => t.Value.StartsWith(readout, StringComparison.Ordinal)).ShouldBe(1);
+            // The well's caption names the screen and the size it is played at, once.
+            leaves.Select(l => l.Content).OfType<Layout.Content.Text>().Count(t => t.Value == $"Proposed design · Home · {surface.Name} {surface.Width} x {surface.Height}").ShouldBe(1);
 
             // The fixture's own label ('640 x 240 at 2x') is the player's: no pixel it paints lies outside the frame, so it is inside the frame or clipped away.
             var without = Paint(true, out _, out _, out var otherRenderer);
@@ -318,5 +320,54 @@ public sealed class DesignsCaptureTests
         var text = string.Join('\n', lines);
         text.ShouldContain(state == "built" ? "PIL1153" : "Which ");
         Keep($"after-design-build-{state}-pilot-tui-{columns}x{rows}.png", DesignsWaitingIdeasTests.Png(lines));
+    }
+
+    // ---- The design as a document (PIL1171) ----
+
+    /// <summary>The design opened as a document in pilot-gui at the owner's two window sizes, with short and with long content: PNGs for the PR, the text overlap check passing, and every frame playing inside its own frame.</summary>
+    [Theory]
+    [InlineData("sample", 1920, 1080)]
+    [InlineData("sample", 2880, 1620)]
+    [InlineData("long", 1920, 1080)]
+    [InlineData("long", 2880, 1620)]
+    public async Task TheDesignDocumentIsCapturedInPilotGuiWithNoTextOverlap(string state, int width, int height)
+    {
+        PageTime.Zone = TimeZoneInfo.Utc;
+        var screen = PageData.DesignsFor(state, Now);
+        using var renderer = new RgbaImageRenderer((uint)width, (uint)height);
+        using var accent = Pilot.Ui.Palette.StandardForCapture(null);
+        var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
+        chrome.Autopilot.OnToggle = _ => Task.FromResult<string?>(null);
+        chrome.Show(PilotPage.Designs);
+        await PageData.OpenDesignChat(chrome.Designs, "DSN-1", PageData.DesignChatPage(lengthen: state == "long"));
+        var data = PageData.For("sample");
+        chrome.Render(data.Sessions, data.Flights, data.Cards, data.Jobs, data.Fleet, data.Repos, data.PullRequests, new RectF32(0, 0, width, height), data.Machines, null, data.Spend, screen);
+
+        chrome.Designs.Players.Count.ShouldBe(2);
+        var frame = chrome.Designs.FrameRectOf(0, 0).ShouldNotBeNull();
+        frame.Width.ShouldBeGreaterThan(0f);
+        var arranged = Layout.Engine.Arrange(chrome.Designs.Tree(screen), new Rect<float>(0, 0, width, height), new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, 1f));
+        TextOverlap.Faults(arranged).Select(f => f.Line).ShouldBeEmpty($"{state} at {width}");
+        Keep($"after-design-document-pilot-gui-{state}-{width}.png", SharpAstro.Png.PngWriter.Encode([.. renderer.Surface.Pixels], width, height));
+    }
+
+    /// <summary>The same document in pilot-tui at 100 x 30 and 160 x 44: the document scrolls in cells, each frame is the screen's own cells under its caption, and the sweep's checks pass.</summary>
+    [Theory]
+    [InlineData("sample", 100, 30)]
+    [InlineData("sample", 160, 44)]
+    [InlineData("long", 100, 30)]
+    [InlineData("long", 160, 44)]
+    public async Task TheDesignDocumentIsCapturedInPilotTuiAndPassesTheCellChecks(string state, int columns, int rows)
+    {
+        PageTime.Zone = TimeZoneInfo.Utc;
+        var buffer = new CellBuffer { ColorMode = ColorMode.TrueColor };
+        var frame = await TerminalWireframeSweepTests.RecordCase("design page", state, columns, rows, buffer);
+        var lines = Enumerable.Range(0, rows).Select(y => string.Concat(Enumerable.Range(0, columns).Select(x => buffer.BackAt(x, y).Glyph))).ToArray();
+        var text = string.Join('
+', lines);
+        text.ShouldContain("Design 0");
+        TerminalWireframeSweepTests.Findings(TerminalWireframeSweepTests.Check(frame)).ShouldBeEmpty($"{state} {columns}x{rows}:
+{text}");
+        Keep($"after-design-document-pilot-tui-{state}-{columns}x{rows}.png", DesignsWaitingIdeasTests.Png(lines));
     }
 }

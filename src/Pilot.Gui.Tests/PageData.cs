@@ -112,7 +112,13 @@ internal sealed partial class PageData
             Versions = [new DesignVersionRow { Number = 1, At = now.AddDays(-1), Why = "brief" }, new DesignVersionRow { Number = 2, At = now, Why = lengthen ? LongTitle : "fix" }],
         };
         var notes = lengthen ? "# Notes\n\n" + LongReport + "\n\n" + LongPath : "# Notes\n\n- the home screen has two tabs\n- Settings is one goto away";
-        var page = new DesignPage(detail, 2, document, notes, [.. document.Screens.Select(s => new DesignRender(s.Id, s.Title ?? s.Id, null))]);
+        // The version's DESIGN.md (PIL1171): the design's objective and two cells, each playing one screen of the prototype, the first at Phone and the second with no size.
+        var doc = new DesignDocument("Design 0", lengthen ? LongReport : "Let the owner see the home screen and change a setting.",
+        [
+            new DesignCell("Home", lengthen ? LongReport : "Shows the home screen with its two tabs.", [new DesignFrame("home", "Phone")], lengthen ? LongPath : "The tabs sit at the top."),
+            new DesignCell("Settings", "Shows the settings, one goto away.", [new DesignFrame("settings")], ""),
+        ]);
+        var page = new DesignPage(detail, 2, document, notes, [.. document.Screens.Select(s => new DesignRender(s.Id, s.Title ?? s.Id, null))]) { Doc = doc };
         // The sample's ideas (PIL1152): I381 and I384 are marked and have a design, I382 is marked and waits for one, I383 is not marked. The long state adds a waiting idea with a long title.
         IdeaRow[] ideas = [.. DesignIdeas().Ideas, .. lengthen ? [new IdeaRow { Id = "I390", Repo = "pilot", Title = LongTitle, State = IdeaState.Noted, NeedsDesign = true, UpdatedAt = now }] : Array.Empty<IdeaRow>()];
         return new DesignsScreen(rows, "test", now, page) { Ideas = ideas };

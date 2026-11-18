@@ -29,21 +29,23 @@ public sealed class TerminalDesignsViewTests
         using var vessel = new RgbaImageRenderer(1, 1);
         var chrome = new PilotChrome<RgbaImage>(vessel, new SessionsView<RgbaImage>(vessel)) { FontPath = SessionsCapture.FontPath };
         chrome.WithoutScrollBars();
-        var screen = PageData.DesignsFor("sample", PageData.Now);
+        var sample = PageData.DesignsFor("sample", PageData.Now);
+        // One cell whose frame is a terminal of 80 x 8, so the goto is within the rows the page has above the chat.
+        var screen = sample with { Open = sample.Open! with { Doc = sample.Open.Doc! with { Cells = [new DesignCell("Home", "Shows the home.", [new DesignFrame("home", "80x8")], "")] } } };
         chrome.Show(PilotPage.Designs);
         chrome.Designs.Terminal = (Columns, Rows);
         chrome.Designs.Open(screen.Open!.Detail.Row.Id);
 
         var arranged = Frame(chrome, screen);
-        chrome.Designs.Player!.CurrentScreen.Id.ShouldBe("home");
+        chrome.Designs.PlayerOf()!.CurrentScreen.Id.ShouldBe("home");
         var link = arranged.First(a => IsText(a, "Open settings"));
         CellLayout.HitTest(arranged, link.Bounds.X + 1, link.Bounds.Y).ShouldNotBeNull();
 
-        chrome.Designs.Player.CurrentScreen.Id.ShouldBe("settings");
-        // The next frame shows the new screen's own text; the screens are named buttons, not a strip of renders.
+        chrome.Designs.PlayerOf()!.CurrentScreen.Id.ShouldBe("settings");
+        // The next frame shows the new screen's own text, under the caption.
         var next = Frame(chrome, screen);
         next.ShouldContain(a => IsText(a, "Delete this node"));
-        next.ShouldContain(a => a.Node.Hit is HitResult.ButtonHit && ((HitResult.ButtonHit)a.Node.Hit).Action == "designs:screen:confirm");
+        next.ShouldContain(a => IsText(a, "Proposed design · Home · Terminal 80 x 8"));
     }
 
     [Theory]
