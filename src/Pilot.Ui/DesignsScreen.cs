@@ -9,13 +9,25 @@ internal sealed record DesignRender(string Screen, string Title, string? File, I
 
 /// <summary>
 /// A design's page as the host read it: the design whole, the version shown (the current one unless a version was picked), and that version's files,
-/// read from the paths <c>design show</c> returned: its <c>prototype.json</c> loaded by DIR.Lib's Prototype, its <c>NOTES.md</c> and its renders.
+/// read from the paths <c>design show</c> returned: its <c>DESIGN.md</c>, its <c>prototype.json</c> (with its <c>screens/</c>) loaded by DIR.Lib's Prototype, its <c>NOTES.md</c> and its renders.
 /// </summary>
 /// <param name="Detail">What <c>design show</c> said.</param>
 /// <param name="Version">The version on show; null while the design has none.</param>
 /// <param name="Document">The version's prototype; null while there is no version, or when its file did not load (<see cref="Problem"/> says why).</param>
 internal sealed record DesignPage(DesignDetail Detail, int? Version, PrototypeDocument? Document, string? Notes, IReadOnlyList<DesignRender> Renders, string? Problem = null)
 {
+    /// <summary>The version's DESIGN.md as read (PIL1171): the title, the design's objective and one cell per screen. Null for a version with none, which <see cref="Notebook"/> then makes up.</summary>
+    public DesignDocument? Doc { get; init; }
+
+    /// <summary>
+    /// The document the page shows: <see cref="Doc"/>, else for an older version (one with no DESIGN.md) one cell per screen of its prototype, headed by the screen's title,
+    /// whose notes are the version's NOTES.md. Null while there is no version or its prototype did not load and it has no document.
+    /// </summary>
+    public DesignDocument? Notebook => Doc ?? (Document is { } prototype
+        ? new DesignDocument(Detail.Row.Title ?? Detail.Row.Id, null,
+            [.. prototype.Screens.Select(s => new DesignCell(string.IsNullOrEmpty(s.Title) ? s.Id : s.Title, null, [new DesignFrame(s.Id)], Notes ?? ""))])
+        : null);
+
     /// <summary>The page as a dump writes it, a line a part.</summary>
     public string ToDump() => string.Join('\n',
         [$"{Detail.Row.Id} {Detail.Row.Title}", $"version {(Version is { } v ? "v" + v.ToString(CultureInfo.InvariantCulture) : "none")}",
@@ -55,18 +67,19 @@ internal static class DesignPages
         {
             return new DesignPage(detail, null, null, null, []);
         }
-        // The designer's notes where the version has them, else the document (PIL1171: the page as a document is a later leg).
-        var notes = Read(Path.Combine(folder, "NOTES.md")) ?? Read(Path.Combine(folder, DesignDocument.FileName));
+        // The document of the version (PIL1171) and, beside it, the notes an older version has instead of one.
+        var notes = Read(Path.Combine(folder, "NOTES.md"));
+        var doc = Read(Path.Combine(folder, DesignDocument.FileName)) is { } text ? DesignDocument.Parse(text) : null;
         var prototypeFile = Path.Combine(folder, "prototype.json");
         var json = File.Exists(prototypeFile) ? DesignFiles.AssembledJson(prototypeFile, out _) : null;
         if (json is null)
         {
-            return new DesignPage(detail, n, null, notes, [], $"v{n} has no readable prototype.json");
+            return new DesignPage(detail, n, null, notes, [], $"v{n} has no readable prototype.json") { Doc = doc };
         }
         var loaded = Prototype.Load(json);
         if (loaded.Document is not { } document)
         {
-            return new DesignPage(detail, n, null, notes, [], string.Join("; ", loaded.Problems.Select(p => $"{p.Path}: {p.Message}")));
+            return new DesignPage(detail, n, null, notes, [], string.Join("; ", loaded.Problems.Select(p => $"{p.Path}: {p.Message}"))) { Doc = doc };
         }
         var renders = document.Screens.Select(s =>
         {
@@ -83,7 +96,7 @@ internal static class DesignPages
                 .ToDictionary(t => t.Name, t => t.File, StringComparer.OrdinalIgnoreCase);
             return new DesignRender(s.Id, string.IsNullOrEmpty(s.Title) ? s.Id : s.Title, File.Exists(file) ? file : null, byTarget.Count > 0 ? byTarget : null);
         }).ToList();
-        return new DesignPage(detail, n, document, notes, renders);
+        return new DesignPage(detail, n, document, notes, renders) { Doc = doc };
     }
 
     private static string? Read(string file)

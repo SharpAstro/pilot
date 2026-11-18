@@ -833,8 +833,6 @@ if (feed is not null && client is not null && clients is not null)
     chrome.Flights.OnSpend = code => spendReads.AskFlight(code, force: true);
     // The Designs page: the list and an open design read through the node's designs and design-show commands, a version's files from the paths it gives.
     designReads = new DesignReads(client, "gui", loop.RequestRedraw);
-    var designPictures = new DesignPictures(loop.RequestRedraw);
-    chrome.Designs.PictureOf = designPictures.Lookup;
     chrome.Designs.OnOpen = id => designReads.AskDesign(id, null, force: true);
     chrome.Designs.OnVersion = (id, number) => designReads.AskDesign(id, number, force: true);
     // The chat with the designer beside the prototype: the open design's chat feed followed while the page is open, what is typed (and a pasted picture) sent as design-say.
