@@ -345,7 +345,8 @@ public sealed class DesignsCaptureTests
         chrome.Designs.Players.Count.ShouldBe(2);
         chrome.Designs.FrameCellsOf(0, 1).ShouldBe((80, 24));
         arranged.Count(a => a.Node.Hit is HitResult.ButtonHit { Action: { } act } && act.StartsWith("designs:frame-point:", StringComparison.Ordinal)).ShouldBe(2, "a toolbar for each frame");
-        TextOverlap.Faults(arranged).Select(f => f.Line).ShouldBeEmpty();
+        var buttons = string.Join("; ", arranged.Where(a => a.Node.Hit is HitResult.ButtonHit { Action: { } act } && act.StartsWith("designs:frame-", StringComparison.Ordinal)).Select(a => $"{((HitResult.ButtonHit)a.Node.Hit!).Action}@{a.Bounds.X},{a.Bounds.Y} {a.Bounds.Width}x{a.Bounds.Height}"));
+        TextOverlap.Faults(arranged).Select(f => f.Line).ShouldBeEmpty(buttons);
         var buffer = new CellBuffer { ColorMode = ColorMode.TrueColor };
         TerminalWireframeSweepTests.Record(arranged, columns, rows, buffer);
         var lines = Enumerable.Range(0, rows).Select(y => string.Concat(Enumerable.Range(0, columns).Select(x => buffer.BackAt(x, y).Glyph))).ToArray();
