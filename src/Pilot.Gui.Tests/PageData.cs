@@ -164,38 +164,44 @@ internal sealed partial class PageData
     }
 
     /// <summary>
-    /// A design made at 1920 x 1080 whose screen holds a row of fixed-width children far wider than a phone and a label of its own near the right edge (DSN-3's toolbar
-    /// and its '640 x 240 at 2x' label, PIL1166): at a smaller target the player lays it out wider than the frame.
+    /// A design made at 1920 x 1080 in the shape of DSN-3's first screen (PIL1166): a dock whose top is a 52 high header hstack of texts and star spacers, and under it an
+    /// hstack holding a padded vstack with a 48 high toolbar hstack of fixed-width size buttons, then a row ending in a label of the design's own ('640 x 240 at 2x').
+    /// At a smaller target the player lays it out wider than the frame. <paramref name="blank"/> keeps the same design size and an empty screen, to tell what the player painted.
     /// </summary>
-    internal static DesignsScreen WideDesigns(DateTimeOffset now) => TargetsDesigns(now, doc =>
+    internal static DesignsScreen WideDesigns(DateTimeOffset now, bool blank = false) => TargetsDesigns(now, doc =>
     {
+        static System.Text.Json.Nodes.JsonObject Text(string text, string color = "BodyText") => new() { ["kind"] = "text", ["text"] = text, ["fontSize"] = 16, ["color"] = color, ["padding"] = 6 };
+        static System.Text.Json.Nodes.JsonObject Spacer() => new() { ["kind"] = "spacer", ["width"] = "star" };
+        static System.Text.Json.Nodes.JsonObject Button(string key, string label) => new()
+        {
+            ["kind"] = "hstack", ["key"] = key, ["width"] = 150, ["height"] = 32, ["padding"] = 6, ["gap"] = 6, ["borderRadius"] = 4, ["border"] = "SeparatorStrong",
+            ["children"] = new System.Text.Json.Nodes.JsonArray(Text(label)),
+        };
         doc["width"] = 1920;
         doc["height"] = 1080;
-        var row = new System.Text.Json.Nodes.JsonArray();
-        for (var i = 0; i < 6; i++)
+        var header = new System.Text.Json.Nodes.JsonObject
         {
-            row.Add(new System.Text.Json.Nodes.JsonObject { ["kind"] = "box", ["width"] = 320, ["height"] = 120, ["color"] = "Accent" });
-        }
-        var screen = new System.Text.Json.Nodes.JsonObject
-        {
-            ["id"] = "home",
-            ["title"] = "Home",
-            ["root"] = new System.Text.Json.Nodes.JsonObject
-            {
-                ["kind"] = "vstack", ["gap"] = 12, ["padding"] = 16,
-                ["children"] = new System.Text.Json.Nodes.JsonArray(
-                    new System.Text.Json.Nodes.JsonObject { ["kind"] = "text", ["text"] = "Toolbar", ["fontSize"] = 20, ["color"] = "HeaderText" },
-                    new System.Text.Json.Nodes.JsonObject { ["kind"] = "hstack", ["gap"] = 8, ["children"] = row },
-                    new System.Text.Json.Nodes.JsonObject
-                    {
-                        ["kind"] = "hstack",
-                        ["children"] = new System.Text.Json.Nodes.JsonArray(
-                            new System.Text.Json.Nodes.JsonObject { ["kind"] = "box", ["width"] = 1700, ["height"] = 24 },
-                            new System.Text.Json.Nodes.JsonObject { ["kind"] = "text", ["text"] = "640 x 240 at 2x", ["fontSize"] = 20, ["color"] = "HeaderText" }),
-                    }),
-            },
+            ["kind"] = "hstack", ["side"] = "top", ["size"] = 52, ["padding"] = 10, ["gap"] = 12, ["background"] = "HeaderBg", ["border"] = "Separator",
+            ["children"] = new System.Text.Json.Nodes.JsonArray(Text("Back to designs"), Text("DSN-1", "DimText"), Text("Disk alert", "HeaderText"), Text("published 09:36, check clean", "DimText"), Spacer(), Text("DE1"), Text("LP1", "DimText")),
         };
-        doc["screens"] = new System.Text.Json.Nodes.JsonArray(screen);
+        var toolbar = new System.Text.Json.Nodes.JsonObject
+        {
+            ["kind"] = "hstack", ["key"] = "toolbar", ["width"] = "star", ["height"] = 48, ["padding"] = 8, ["gap"] = 8, ["background"] = "PanelBg", ["border"] = "Separator", ["borderRadius"] = 6,
+            ["children"] = new System.Text.Json.Nodes.JsonArray(Button("size-desktop", "Desktop"), Button("size-laptop", "Laptop"), Button("size-tablet", "Tablet"), Button("size-phone", "Phone"), Button("rotate", "Rotate"), Button("pixels", "Pixels"), Button("cells", "Cells"), Spacer(), Text("640 x 240 at 2x", "HeaderText")),
+        };
+        var body = new System.Text.Json.Nodes.JsonObject
+        {
+            ["kind"] = "hstack",
+            ["children"] = new System.Text.Json.Nodes.JsonArray(new System.Text.Json.Nodes.JsonObject
+            {
+                ["kind"] = "vstack", ["width"] = "star", ["height"] = "star", ["padding"] = 16, ["gap"] = 12,
+                ["children"] = new System.Text.Json.Nodes.JsonArray(toolbar),
+            }),
+        };
+        var root = blank
+            ? new System.Text.Json.Nodes.JsonObject { ["kind"] = "dock", ["background"] = "ContentBg" }
+            : new System.Text.Json.Nodes.JsonObject { ["kind"] = "dock", ["background"] = "ContentBg", ["children"] = new System.Text.Json.Nodes.JsonArray(header, body) };
+        doc["screens"] = new System.Text.Json.Nodes.JsonArray(new System.Text.Json.Nodes.JsonObject { ["id"] = "home", ["title"] = "Home", ["root"] = root });
     });
 
     private static readonly NodeMark Here = new("node.sock", "node.sock", "SE1", true);

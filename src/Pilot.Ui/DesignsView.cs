@@ -569,6 +569,7 @@ internal sealed class DesignsView<TSurface> : PilotWidgetBase<TSurface>
     {
         Palette.Use(Night);
         BeginFrame();
+        FrameRect = null;
         NoteHeight(bounds);
         _width = Scale.ToDesignX(bounds.Width);
         var tree = Tree(screen);
@@ -586,16 +587,18 @@ internal sealed class DesignsView<TSurface> : PilotWidgetBase<TSurface>
             // Painted where the page arranged its leaf, so what the page lays over it (the ? card) is over it.
             if (Player is { } player)
             {
-                var frame = FittedFrame(rect, player.DesignSize);
-                FrameRect = frame;
-                if (!SkipPlayer && frame is { } fitted)
+                FrameRect = FittedFrame(rect, player.DesignSize);
+                if (FrameClip is { } clip)
                 {
                     // The prototype is drawn only inside its frame: a screen made wider than the target (a fixed-width row, a label near the right edge) is cut, not painted over the chat and notes.
-                    Renderer.PushClip(new RectInt(new PointInt((int)MathF.Ceiling(fitted.X + fitted.Width), (int)MathF.Ceiling(fitted.Y + fitted.Height)), new PointInt((int)MathF.Floor(fitted.X), (int)MathF.Floor(fitted.Y))));
+                    Renderer.PushClip(clip);
                     player.Render(rect);
                     Renderer.PopClip();
                 }
-                DrawFrame(rect, player.DesignSize);
+                if (FrameRect is { } framed)
+                {
+                    DrawFrame(framed);
+                }
             }
         }
         else if (key == CellsKey)
@@ -616,8 +619,10 @@ internal sealed class DesignsView<TSurface> : PilotWidgetBase<TSurface>
     /// <summary>The frame rect the player's last paint was fitted to, or null where nothing was painted. Set by the one helper the drawing uses (<see cref="FittedFrame"/>).</summary>
     internal RectF32? FrameRect { get; private set; }
 
-    /// <summary>Test switch: paint the frame but leave the player's own painting out, to tell what the player painted.</summary>
-    internal bool SkipPlayer { get; set; }
+    /// <summary>The whole pixels of <see cref="FrameRect"/> (rounded outwards): the clip the player is painted under, and the rect a test treats as inside. Null where there is no frame.</summary>
+    internal RectInt? FrameClip => FrameRect is { } f
+        ? new RectInt(new PointInt((int)MathF.Ceiling(f.X + f.Width), (int)MathF.Ceiling(f.Y + f.Height)), new PointInt((int)MathF.Floor(f.X), (int)MathF.Floor(f.Y)))
+        : null;
 
     // The design size scaled to fit and centred in rect: where the player draws and where the frame goes. Null for a size with no area.
     private static RectF32? FittedFrame(RectF32 rect, (float Width, float Height) size)
@@ -632,12 +637,8 @@ internal sealed class DesignsView<TSurface> : PilotWidgetBase<TSurface>
         return new RectF32(rect.X + (rect.Width - w) / 2f, rect.Y + (rect.Height - h) / 2f, w, h);
     }
 
-    private void DrawFrame(RectF32 rect, (float Width, float Height) size)
+    private void DrawFrame(RectF32 frame)
     {
-        if (FittedFrame(rect, size) is not { } frame)
-        {
-            return;
-        }
         float x = frame.X, y = frame.Y, w = frame.Width, h = frame.Height;
         const float t = 2f;
         foreach (var edge in new[] { new RectF32(x - t, y - t, w + 2 * t, t), new RectF32(x - t, y + h, w + 2 * t, t), new RectF32(x - t, y, t, h), new RectF32(x + w, y, t, h) })

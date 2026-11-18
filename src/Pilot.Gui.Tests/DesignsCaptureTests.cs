@@ -181,9 +181,10 @@ public sealed class DesignsCaptureTests
     {
         PageTime.Zone = TimeZoneInfo.Utc;
         var screen = PageData.WideDesigns(Now);
+        var blankScreen = PageData.WideDesigns(Now, blank: true);
         var data = PageData.For("sample");
 
-        byte[] Paint(bool skipPlayer, out PilotChrome<RgbaImage> chromeOut, out Layout.Node.Leaf[] leaves, out RgbaImageRenderer rendererOut)
+        byte[] Paint(bool blank, out PilotChrome<RgbaImage> chromeOut, out Layout.Node.Leaf[] leaves, out RgbaImageRenderer rendererOut)
         {
             var renderer = new RgbaImageRenderer((uint)width, (uint)height);
             using var accent = Pilot.Ui.Palette.StandardForCapture(null);
@@ -192,8 +193,7 @@ public sealed class DesignsCaptureTests
             chrome.Show(PilotPage.Designs);
             chrome.Designs.Open("DSN-7");
             chrome.Designs.PickTarget(target).ShouldBeTrue();
-            chrome.Designs.SkipPlayer = skipPlayer;
-            chrome.Render(data.Sessions, data.Flights, data.Cards, data.Jobs, data.Fleet, data.Repos, data.PullRequests, new RectF32(0, 0, width, height), data.Machines, null, data.Spend, screen);
+            chrome.Render(data.Sessions, data.Flights, data.Cards, data.Jobs, data.Fleet, data.Repos, data.PullRequests, new RectF32(0, 0, width, height), data.Machines, null, data.Spend, blank ? blankScreen : screen);
             var arranged = Layout.Engine.Arrange(chrome.Designs.Tree(screen), new Rect<float>(0, 0, width, height), new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, 1f));
             leaves = [.. arranged.Select(a => a.Node).OfType<Layout.Node.Leaf>()];
             chromeOut = chrome;
@@ -204,7 +204,7 @@ public sealed class DesignsCaptureTests
         var with = Paint(false, out var chrome, out var leaves, out var renderer);
         using (renderer)
         {
-            var frame = chrome.Designs.FrameRect ?? throw new InvalidOperationException("no frame was painted");
+            var frame = chrome.Designs.FrameClip ?? throw new InvalidOperationException("no frame was painted");
             var surface = chrome.Designs.Surface;
 
             // The capture, kept for the PR.
@@ -231,23 +231,7 @@ public sealed class DesignsCaptureTests
             var without = Paint(true, out _, out _, out var otherRenderer);
             using (otherRenderer)
             {
-                int x0 = (int)MathF.Floor(frame.X), y0 = (int)MathF.Floor(frame.Y), x1 = (int)MathF.Ceiling(frame.X + frame.Width), y1 = (int)MathF.Ceiling(frame.Y + frame.Height);
-                var escaped = 0;
-                for (var y = 0; y < height; y++)
-                {
-                    for (var x = 0; x < width; x++)
-                    {
-                        if (x >= x0 && x < x1 && y >= y0 && y < y1)
-                        {
-                            continue;
-                        }
-                        var i = (y * width + x) * 4;
-                        if (with[i] != without[i] || with[i + 1] != without[i + 1] || with[i + 2] != without[i + 2] || with[i + 3] != without[i + 3])
-                        {
-                            escaped++;
-                        }
-                    }
-                }
+                var (escaped, _) = DesignPlayerClipTests.PixelsDifferingOutside(with, without, width, height, frame);
                 escaped.ShouldBe(0, $"{target} at {width}: {escaped} pixels outside the frame {frame} are painted by the player");
             }
         }
