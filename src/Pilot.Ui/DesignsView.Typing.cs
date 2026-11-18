@@ -97,7 +97,7 @@ internal sealed partial class DesignsView<TSurface>
     private static string CellKey(int cell) => cell < 0 ? "" : (cell + 1).ToString(CultureInfo.InvariantCulture);
 
     private static string PartText(DesignDocument document, int cell, string part) => cell < 0
-        ? part == "objective" ? document.Objective ?? "" : document.Notes
+        ? part switch { "title" => document.Title, "objective" => document.Objective ?? "", _ => document.Notes }
         : part switch { "heading" => document.Cells[cell].Heading, "objective" => document.Cells[cell].Objective ?? "", _ => document.Cells[cell].Notes };
 
     /// <summary>Opens the part <paramref name="part"/> of cell <paramref name="cell"/> (-1: the design) in place. False with no document on show.</summary>
@@ -107,7 +107,7 @@ internal sealed partial class DesignsView<TSurface>
         {
             return false;
         }
-        var text = PartText(document, cell, part);
+        var text = part == "title" ? DesignTitle.Shown(_buildScreen.Open.Detail.Row.Title) ?? "" : PartText(document, cell, part);
         _edit = (cell, part);
         Editor.Text = text;
         Editor.CursorPos = text.Length;

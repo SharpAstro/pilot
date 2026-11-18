@@ -133,6 +133,31 @@ public sealed class DesignDocumentTests : IDisposable
         problems.ShouldHaveSingleItem().ShouldBe("DESIGN.md | Dismissed | objective: This screen has no objective. Say in one or two lines what it shows.");
     }
 
+    [Theory]
+    [InlineData("# Disk alert", "")]
+    [InlineData("# Disk alert", "# DSN-7")]
+    public void ADocumentWithNoTitleOrOnlyTheIdIsRefused(string was, string now)
+    {
+        CleanDraft();
+        Write("DESIGN.md", Text(Sample).Replace(was + "\n", now.Length == 0 ? "" : now + "\n"));
+
+        var problems = DesignChecker.Problems(Prototype, requireDocument: true);
+
+        problems.ShouldHaveSingleItem().ShouldStartWith("DESIGN.md | - | title: The design has no title.");
+    }
+
+    [Fact]
+    public void ATitleOfTheLimitPassesAndOneCharacterOverIsRefusedWithItsLengthAndTheLimit()
+    {
+        CleanDraft();
+        var exact = new string('T', DesignTitle.MaxLength);
+        Write("DESIGN.md", Text(Sample).Replace("# Disk alert", "# " + exact));
+        DesignChecker.Problems(Prototype, requireDocument: true).ShouldBeEmpty();
+
+        Write("DESIGN.md", Text(Sample).Replace("# Disk alert", "# " + exact + "T"));
+        DesignChecker.Problems(Prototype, requireDocument: true).ShouldHaveSingleItem().ShouldContain("title: the title is 41 characters, over the limit of 40");
+    }
+
     [Fact]
     public void TheDesignNeedsAnObjectiveToo()
     {

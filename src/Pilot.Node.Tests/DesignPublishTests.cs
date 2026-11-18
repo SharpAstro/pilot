@@ -132,12 +132,32 @@ public sealed class DesignPublishTests : IAsyncLifetime
         record.Current.ShouldBe(1);
         record.Versions.ShouldBe(1);
         record.Why.ShouldBe("brief");
+        record.Title.ShouldBe("A fleet screen", "publishing copies the document's heading to the row");
         record.PrototypeSha256.ShouldBe(Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(Draft("prototype.json")))));
         record.History.Select(v => (v.Number, v.Why)).ShouldBe([(1, "brief")]);
         record.History[0].At.ShouldNotBeNull();
         record.History[0].PrototypeSha256.ShouldBe(record.PrototypeSha256);
 
         (await Pilot("design", "show", "DSN-1")).Output.ShouldContain("current version: v1 of 1");
+    }
+
+    [Fact]
+    public async Task AVersionTakesTheTitleOfItsDocumentAndADraftWithNoneOrOverFortyIsNotPublished()
+    {
+        await DraftOf("sample.prototype.json");
+        (await Pilot("design", "render", "DSN-1")).Exit.ShouldBe(0);
+        File.WriteAllText(Draft("DESIGN.md"), File.ReadAllText(Draft("DESIGN.md")).Replace("# A fleet screen", "# " + new string('t', 41)));
+        var (overExit, over) = await Pilot("design", "publish", "DSN-1", "--why", "brief");
+        overExit.ShouldNotBe(0);
+        over.ShouldContain("41 characters, over the limit of 40");
+        File.WriteAllText(Draft("DESIGN.md"), File.ReadAllText(Draft("DESIGN.md")).Replace("# " + new string('t', 41), "# DSN-1"));
+        var (noneExit, none) = await Pilot("design", "publish", "DSN-1", "--why", "brief");
+        noneExit.ShouldNotBe(0);
+        none.ShouldContain("The design has no title");
+
+        File.WriteAllText(Draft("DESIGN.md"), File.ReadAllText(Draft("DESIGN.md")).Replace("# DSN-1", "# Fleet"));
+        (await Pilot("design", "publish", "DSN-1", "--why", "brief")).Exit.ShouldBe(0);
+        (await Pilot("design", "show", "DSN-1")).Output.ShouldContain("DSN-1  Fleet");
     }
 
     [Fact]

@@ -104,7 +104,7 @@ public sealed class BackRowTests
         SentenceRuns.Texts(shortTitle.Select(a => a.Node)).Count(t => t.Contains("Design 0", StringComparison.Ordinal)).ShouldBe(1, "the title is drawn once, on the back row");
         shortTitle.Single(a => a.Node.Tooltip == "DSN-1 · Design 0");
 
-        var title = PageData.LongTitle;
+        var title = PageData.MaxTitle;
         var longPage = sample.Open! with { Detail = sample.Open.Detail with { Row = sample.Open.Detail.Row with { Title = title } }, Doc = sample.Open.Doc! with { Title = title } };
         var narrow = Arrange(chrome.Designs.Tree(sample with { Open = longPage }), renderer, 900f, 900f);
         var line = narrow.Single(a => a.Node.Tooltip == $"DSN-1 · {title}");
@@ -114,7 +114,7 @@ public sealed class BackRowTests
         var whole = $"DSN-1 · {title}".Split(' ', StringSplitOptions.RemoveEmptyEntries);
         words.ShouldBe(whole.Take(words.Count), "the line is a run of whole words, never cut mid-word");
         (words.Count == whole.Length || drawn.Any(w => w.EndsWith('…'))).ShouldBeTrue("a title that does not fit ends in an ellipsis");
-        SentenceRuns.Texts(narrow.Select(a => a.Node)).Count(t => t.Contains("Every page is checked", StringComparison.Ordinal)).ShouldBeLessThanOrEqualTo(1, "the document does not repeat the title");
+        SentenceRuns.Texts(narrow.Select(a => a.Node)).Count(t => t.Contains(title, StringComparison.Ordinal)).ShouldBeLessThanOrEqualTo(1, "the document does not repeat the title");
     }
 
     [Fact]

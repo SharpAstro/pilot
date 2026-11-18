@@ -94,6 +94,35 @@ public sealed class DesignTypingViewTests
     }
 
     [Fact]
+    public void TypingTheTitleOnTheBackRowSendsADesignEditOfTheTitlePart()
+    {
+        using var rig = new Rig();
+        Has(rig.Arranged(), "designs:edit:-1:title").ShouldBeTrue("the title is typable like the other parts");
+        rig.View.BeginEdit(-1, "title").ShouldBeTrue();
+        rig.View.Editor.Text.ShouldBe("Design 0");
+        rig.Paint();
+        TextOverlap.Faults([.. rig.Arranged()]).Select(f => f.Line).ShouldBeEmpty();
+
+        rig.View.Editor.Text = "Settings";
+        rig.View.SaveEdit().ShouldBeTrue();
+        rig.Edits.ShouldHaveSingleItem().ShouldBe(("DSN-1", "title", "", "Settings"));
+    }
+
+    [Fact]
+    public void ADesignWithNoTitleOrAStoredOneOverTheLimitShowsItsIdAlone()
+    {
+        var sample = PageData.DesignsFor("sample", Now);
+        foreach (var stored in new string?[] { null, "", new string('x', DesignTitle.MaxLength + 1) })
+        {
+            using var rig = new Rig(sample with { Open = DesignPages.Load(sample.Open!.Detail with { Row = sample.Open.Detail.Row with { Title = stored } }) });
+            var all = rig.Arranged();
+            all.ShouldContain(a => a.Node.Tooltip is { } t && t.StartsWith("DSN-1", StringComparison.Ordinal) && !t.Contains('·'), $"the id alone for {stored?.Length.ToString() ?? "null"}");
+            SentenceRuns.Texts(all.Select(a => a.Node)).ShouldNotContain(t => t.Contains(new string('x', 10), StringComparison.Ordinal));
+        }
+        DesignTitle.Shown(new string('x', DesignTitle.MaxLength)).ShouldNotBeNull();
+    }
+
+    [Fact]
     public void PublishIsOfferedOnceTheWhyIsUsableAndSendsTheWhyAndTheUnsavedPart()
     {
         using var rig = new Rig();

@@ -19,6 +19,9 @@ internal sealed partial class PageData
 
     public static readonly DateTimeOffset Now = new(2026, 10, 28, 3, 0, 0, TimeSpan.Zero);
 
+    /// <summary>A design title of the longest length a design can have (#1183), made of wide letters so a narrow column cuts it.</summary>
+    internal static readonly string MaxTitle = string.Concat(Enumerable.Repeat("Mw Wm ", 7))[..Pilot.Contracts.DesignTitle.MaxLength].TrimEnd();
+
     internal const string LongTitle = "Every page is checked for text drawn over text, in tests and live, at every width and DPI, with a title that runs on and on past any column it is given";
     internal const string LongPath = @"C:\Users\ada\src\example-org\orbit\.claude\worktrees\ORB204\src\Orbit.Lib.Tests\Fixtures\a-very-long-folder-name-that-has-no-break";
     internal const string LongWord = "Pilot.Ui.PageTextOverlapTests.EveryPageIsHeldApartAtEveryWidthAndDpiWithSampleDataThatIsVeryLong";
@@ -91,7 +94,7 @@ internal sealed partial class PageData
         DesignRow Row(int i) => new()
         {
             Id = $"DSN-{i + 1}",
-            Title = lengthen ? $"Design {i}: {LongTitle}" : $"Design {i}",
+            Title = lengthen ? MaxTitle : $"Design {i}",
             Repo = lengthen ? $"SharpAstro/{LongWord}" : "SharpAstro/pilot",
             Current = 2,
             Versions = 2,
@@ -128,10 +131,11 @@ internal sealed partial class PageData
     internal static DesignsScreen NoVersionDesigns(DateTimeOffset now)
     {
         var full = DesignsFor("sample", now);
-        // The title is made from the brief by the store's own rule (DesignTitle.Of, as DesignStore.New makes it), not written in by hand.
+        // A design from before #1183: its stored title is the old cut of the brief's first line, far over the limit, so the page shows its id alone.
         var brief = "A card for one job: its id j6917 and the command on the first line, a line saying what it is doing and the whole of its output\n\n"
             + "## 2026-11-16T09:00:00Z\n\n" + string.Join(' ', Enumerable.Repeat("A long brief sentence about one job's card.", 30));
-        var title = DesignTitle.Of(brief);
+        var title = brief.Split('
+')[0];
         var detail = full.Open!.Detail with
         {
             Row = full.Open.Detail.Row with { Title = title, Current = null, Versions = 0 },

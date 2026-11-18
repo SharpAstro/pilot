@@ -483,7 +483,7 @@ public sealed class DesignStore(string dataFolder, TimeProvider? time = null)
     }
 
     /// <summary>The prose parts the owner can type (<see cref="Edit"/>): a design's <c>objective</c> or <c>notes</c>, a cell's <c>heading</c>, <c>objective</c> or <c>notes</c>.</summary>
-    public static readonly string[] EditParts = ["objective", "heading", "notes"];
+    public static readonly string[] EditParts = ["title", "objective", "heading", "notes"];
 
     /// <summary>
     /// The owner typed a prose part of DESIGN.md (PIL1171): <paramref name="part"/> is <c>objective</c>, <c>heading</c> or <c>notes</c>, <paramref name="cell"/> names the cell
@@ -499,6 +499,11 @@ public sealed class DesignStore(string dataFolder, TimeProvider? time = null)
             throw new DesignException($"'{part}' is not a part the owner can type: {string.Join(", ", EditParts)}");
         }
         text = (text ?? "").Replace("\r\n", "\n").Replace('\r', '\n').Trim();
+        if (part == "title")
+        {
+            // The design's title typed on the page (#1183): the same as 'design title', so the row and the draft's heading agree.
+            return SetTitle(id, cell.Trim().Length == 0 ? text : throw new DesignException("the title belongs to the design: leave the cell out")).Title!;
+        }
         if (part != "notes" && text.Length == 0)
         {
             throw new DesignException($"the {part} cannot be empty: a screen needs a heading and an objective, and so does the design");

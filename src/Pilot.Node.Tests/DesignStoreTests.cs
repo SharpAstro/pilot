@@ -56,22 +56,16 @@ public sealed class DesignStoreTests : IDisposable
     }
 
     [Fact]
-    public void TheTitleIsTheBriefsFirstLineWholeOrCutAtAWordWithAnEllipsisUnlessGiven()
+    public void ADesignHasNoTitleUnlessGivenAndItIsNeverMadeFromTheBrief()
     {
         var store = Store();
-        store.New(null, null, "\n  A login screen\nwith more below").Title.ShouldBe("A login screen");
-        store.New(null, null, new string('x', 300)).Title.ShouldBe(new string('x', DesignStore.TitleLength - 1) + "…");
-        // #1160: the issue's brief, whose first line was cut at 80 characters mid-word ("a line sayin"), is kept whole now.
-        const string issues = "A card for one job: its id j6917 and the command on the first line, a line saying what it waits on, and a Cancel button";
-        store.New(null, null, issues + "\nmore").Title.ShouldBe(issues);
-        var cut = store.New(null, null, string.Join(' ', Enumerable.Repeat("word", 60))).Title.ShouldNotBeNull();
-        cut.Length.ShouldBeLessThanOrEqualTo(DesignStore.TitleLength);
-        cut.ShouldEndWith("word…");
-        // A cut that lands after a comma drops it, so the ellipsis follows the word ("word…", never "word,…").
-        var listed = store.New(null, null, string.Join(' ', Enumerable.Repeat("word,", 60))).Title.ShouldNotBeNull();
-        listed.Length.ShouldBeLessThanOrEqualTo(DesignStore.TitleLength);
-        listed.ShouldEndWith("word…");
+        store.New(null, null, "
+  A login screen
+with more below").Title.ShouldBeNull();
+        store.New(null, "  ", new string('x', 300)).Title.ShouldBeNull();
         store.New("pilot", "  My title ", "brief").Title.ShouldBe("My title");
+        store.New(null, new string('t', DesignTitle.MaxLength), "brief").Title.ShouldBe(new string('t', DesignTitle.MaxLength));
+        Should.Throw<DesignException>(() => store.New(null, new string('t', DesignTitle.MaxLength + 1), "brief")).Message.ShouldContain("41 characters, over the limit of 40");
         store.New("pilot", null, "brief").Repo.ShouldBe("pilot");
         store.New("  ", null, "brief").Repo.ShouldBeNull();
         Should.Throw<DesignException>(() => store.New(null, null, "   "));

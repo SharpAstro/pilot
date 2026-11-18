@@ -915,7 +915,22 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
         {
             var title = TitleOf(page);
             var line = title.Length > 0 ? $"{id} · {title}" : id;
-            parts.Add(BackRow.Middle(WrappedProse.OneLine(line, 14f, Bright, vAlign: TextAlign.Center, cut: true).Whole(line), BackRowH));
+            if (_edit == (-1, "title"))
+            {
+                // The title typed in place (#1183): the id stays, the box holds the title, the border is the accent like any part in edit.
+                parts.Add(Layout.Builder.HStack(
+                    Layout.Builder.Text(id, 14f, Bright, TextAlign.Near, TextAlign.Center).WAuto().HFixed(BackRowH),
+                    Layout.Builder.TextEditor(Editor, 14f, colors: Palette.Input, focusOnOpen: true).WStar().HFixed(BackRowH).Border(Palette.Current.RailAccent, 2f, 0f)).WithGap(8f).WStar().HFixed(BackRowH));
+            }
+            else
+            {
+                var shown = BackRow.Middle(WrappedProse.OneLine(line, 14f, Bright, vAlign: TextAlign.Center, cut: true).Whole(line), BackRowH);
+                // A click types the title like any part of the document; a design read from elsewhere or an old version is read only.
+                parts.Add(OnEdit is null || ReadOnly(page.Detail.Row) || !OnCurrent(page)
+                    ? shown
+                    : shown.BgHover(RowHoverBg).WithTooltip(title.Length > 0 ? $"{line}\nClick to edit the title" : "Click to give the design a title (at most " + DesignTitle.MaxLength.ToString(CultureInfo.InvariantCulture) + " characters)")
+                        .Follows(new HitResult.ButtonHit("designs:edit:-1:title"), _ => BeginEdit(-1, "title")));
+            }
             parts.AddRange(VersionChip(page).Select(c => c.HFixed(BackRowH)));
             if (page.DesignIsDraft)
             {
@@ -936,8 +951,8 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
     private const float BackRowH = 26f;
 
     // The design's title as the page shows it: the notebook's, else the row's; empty when it has none (the id then stands alone).
-    private static string TitleOf(DesignPage page) =>
-        page.Notebook is { Title.Length: > 0 } notebook ? notebook.Title : page.Detail.Row.Title is { Length: > 0 } t ? t : "";
+    // A stored title over the limit (an old cut of the brief) or none shows the id alone (#1183), and nothing ending mid-word is drawn.
+    private static string TitleOf(DesignPage page) => DesignTitle.Shown(page.Detail.Row.Title) ?? "";
 
     // The version chip (PIL1171): 'v3 of 3', which opens the list of versions and the brief at the top of the document.
     private IEnumerable<Layout.Node> VersionChip(DesignPage? page)
@@ -1025,7 +1040,7 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
 
     private Layout.Node ListRow(DesignRow row, int index)
     {
-        var title = row.Title is { Length: > 0 } t ? t : row.Id;
+        var title = DesignTitle.Shown(row.Title) ?? row.Id;
         var version = row.Current is { } v ? "v" + v.ToString(CultureInfo.InvariantCulture) : "no version";
         var when = row.At is { } at ? PageTime.Text(at) : "";
         var repo = row.Repo ?? "";
