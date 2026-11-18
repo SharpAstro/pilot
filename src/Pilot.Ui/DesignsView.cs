@@ -709,7 +709,7 @@ internal sealed class DesignsView<TSurface> : PilotWidgetBase<TSurface>
         List<Layout.Node> left = [];
         if (page.Version is null)
         {
-            left.Add(WrappedProse.Of("This design has no version yet. The brief is on the right; a version is made once a draft is checked, rendered and published.", 14f, Dim).Pad(Gutter, Gutter).Stretch());
+            // Said at the top of the right column, whose least width holds it: in a column of its own it was squeezed under its words at a narrow window (#1160).
         }
         else if (Player is null)
         {
@@ -738,6 +738,10 @@ internal sealed class DesignsView<TSurface> : PilotWidgetBase<TSurface>
         }
         // The target switcher sits above the versions, in the column that has the width for it: in the player's column it was squeezed at a narrow window and drew over the version line beside it.
         List<Layout.Node> right = page.Version is not null && Player is not null ? [TargetBar(page), Heading("Versions")] : [Heading("Versions")];
+        if (page.Version is null)
+        {
+            right.Insert(0, WrappedProse.Of("This design has no version yet. The brief is below; a version is made once a draft is checked, rendered and published.", 14f, Dim));
+        }
         right.AddRange(Versions(page));
         if (page.Notes is { Length: > 0 } notes)
         {
@@ -749,16 +753,18 @@ internal sealed class DesignsView<TSurface> : PilotWidgetBase<TSurface>
         // In pixels the chat is a column of its own between the player and the versions: beside the prototype, where what the designer changes is in view.
         // Where the window has no width for three columns (their least widths and the gaps), the chat goes under the other two instead of past the page.
         var wide = _width >= WideColumns;
-        var two = Layout.Builder.HStack(
-            Layout.Builder.VStack([.. left]).WithGap(8f).WStar(2.2f).HStar(),
-            Layout.Builder.VStack([.. right]).WithGap(6f).WithScroll(_sideScroll).WStar(1f, 260f, 520f).HStar()).WithGap(Gutter).WStar().HStar();
+        var two = left.Count == 0
+            ? Layout.Builder.VStack([.. right]).WithGap(6f).WithScroll(_sideScroll).WStar().HStar()
+            : Layout.Builder.HStack(
+                Layout.Builder.VStack([.. left]).WithGap(8f).WStar(2.2f).HStar(),
+                Layout.Builder.VStack([.. right]).WithGap(6f).WithScroll(_sideScroll).WStar(1f, 260f, 520f).HStar()).WithGap(Gutter).WStar().HStar();
         var columns = Terminal is not null
             ? two
             : wide
-                ? Layout.Builder.HStack(
-                    Layout.Builder.VStack([.. left]).WithGap(8f).WStar(1.6f).HStar(),
+                ? Layout.Builder.HStack([
+                    .. left.Count == 0 ? [] : (Layout.Node[])[Layout.Builder.VStack([.. left]).WithGap(8f).WStar(1.6f).HStar()],
                     ChatPane(page).WStar(1.3f, 260f, 640f).HStar(),
-                    Layout.Builder.VStack([.. right]).WithGap(6f).WithScroll(_sideScroll).WStar(1f, 220f, 420f).HStar()).WithGap(Gutter).WStar().HStar()
+                    Layout.Builder.VStack([.. right]).WithGap(6f).WithScroll(_sideScroll).WStar(1f, 220f, 420f).HStar()]).WithGap(Gutter).WStar().HStar()
                 : Layout.Builder.VStack(two.HStar(), ChatPane(page).HStar(NarrowChatShare, NarrowChatFloor, NarrowChatHeight)).WithGap(8f).WStar().HStar();
         // The Pixels or Cells bar spans the page above both columns, so a narrow window cannot squeeze it into the player's column.
         return page.Version is not null && Player is not null && Terminal is null
