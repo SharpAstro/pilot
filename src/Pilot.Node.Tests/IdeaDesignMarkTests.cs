@@ -83,8 +83,8 @@ public sealed class IdeaDesignMarkTests : IssueBoardFixture
     {
         var rows = new[]
         {
-            new IdeaRow { Id = "I2", Repo = "pilot", Title = "Plain", Age = "1d", NeedsDesign = false },
-            new IdeaRow { Id = "I1", Repo = "pilot", Title = "Rings", Age = "2d", NeedsDesign = true },
+            new IdeaRow { Id = "I2", Repo = "pilot", Title = "Plain", State = IdeaState.Noted, Age = "1d", NeedsDesign = false },
+            new IdeaRow { Id = "I1", Repo = "pilot", Title = "Rings", State = IdeaState.Noted, Age = "2d", NeedsDesign = true },
         };
 
         var text = PilotCommand.Ideas(rows, all: false, repo: null);
@@ -114,6 +114,6 @@ public sealed class IdeaDesignMarkTests : IssueBoardFixture
         var row = JsonSerializer.Deserialize("""{"Id":"I1","Repo":"pilot"}""", PilotJsonContext.Default.IdeaRow);
 
         row.ShouldNotBeNull().NeedsDesign.ShouldBeFalse();
-        JsonSerializer.Serialize(new IdeaRow { Id = "I1" }, PilotJsonContext.Default.IdeaRow).ShouldNotContain("eedsDesign");
+        JsonSerializer.Serialize(new IdeaRow { Id = "I1", Repo = "pilot", Title = "t", State = IdeaState.Noted }, PilotJsonContext.Default.IdeaRow).ShouldNotContain("eedsDesign");
     }
 }
