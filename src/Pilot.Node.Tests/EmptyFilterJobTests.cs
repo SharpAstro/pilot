@@ -104,7 +104,7 @@ public sealed class EmptyFilterJobTests : JobTestsBase
         Project();
         var log = Path.Combine(_root, "old.log");
         File.WriteAllText(log, NoMatch + "\n");
-        var job = new JobRow { Id = "j1", Command = "dotnet test T --filter FullyQualifiedName~ATests", Cwd = _root, LogPath = log };
+        var job = new JobRow { Id = "j1", Command = "dotnet test T --filter FullyQualifiedName~ATests", Cwd = _root, LogPath = log, State = JobState.Running, Timeout = TimeSpan.Zero, StartedAt = DateTimeOffset.UtcNow };
 
         EmptyFilter.ErrorFromLog(job).ShouldNotBeNull().ShouldContain("No test matches");
     }
