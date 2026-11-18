@@ -63,6 +63,12 @@ public sealed record DesignRow
     /// <summary>Pieces of the brief the designer has not been sent yet (it is held, or being started), oldest first; BRIEF.md has them all as well.</summary>
     public string[] DesignerPending { get; init => field = value ?? []; } = [];
 
+    /// <summary>
+    /// What the owner typed into DESIGN.md that the designer has not been told yet (PIL1171), oldest first, each in the words it gets. Unlike <see cref="DesignerPending"/>
+    /// it never wakes the designer: it goes with the next say, resume or start.
+    /// </summary>
+    public string[] DesignerTyped { get; init => field = value ?? []; } = [];
+
     /// <summary>The session ids of every designer this design has had (PIL1151), oldest first: the design chat reads their transcripts, as the watchtower's reads its generations. Empty while there is none, and in a record an older release wrote.</summary>
     public string[] DesignerSessions { get; init => field = value ?? []; } = [];
 
@@ -187,6 +193,9 @@ public static class DesignWhys
 {
     /// <summary>The longest a why may be, in characters.</summary>
     public const int MaxLength = 120;
+
+    /// <summary>What a version the owner made by typing starts its why with (PIL1171): <c>owner: &lt;what changed&gt;</c>.</summary>
+    public const string OwnerPrefix = "owner: ";
 
     /// <summary>Null when <paramref name="why"/> is a usable why, else what is wrong with it.</summary>
     public static string? Problem(string? why)

@@ -34,6 +34,8 @@ public static partial class Briefs
         text.AppendLine($"4. `{run} design render {id}`: it draws each screen into `draft/renders/`; look at the pictures.");
         text.AppendLine($"5. `{run} design publish {id} --why \"<what changed>\"`: it makes the next version from the draft. The why is a short free-text reason, one line of at most {DesignWhys.MaxLength} characters, saying what changed (the chat shows it as `published v<n>: <why>`). Publish needs `DESIGN.md` and copies only `DESIGN.md`, `prototype.json`, `screens/`, `NOTES.md` (when there is one) and `renders/` from `draft/`; any other file there is ignored, so nothing needs deleting. The same verbs are MCP tools: design_draft, design_check, design_render, design_publish, design_show.");
         text.AppendLine();
+        text.AppendLine("**The owner types into the same draft.** They edit prose in `draft/DESIGN.md` (the design's objective, a cell's heading, objective and notes) and the node tells you at your next turn as `The owner typed into DESIGN.md: <part> of <cell> now reads: <text>`. The draft is shared: re-read `draft/DESIGN.md` before you edit it, keep what the owner typed, and never run `design draft --replace` over a draft they have typed into. They publish their own typed versions (`owner: <why>`); a frame's source is yours to change.");
+        text.AppendLine();
         text.AppendLine("**Publish only when `design check` says clean**, and only after a render of the draft as it stands. If you cannot get the check clean, publish nothing: say in your reply what is in the way (the findings you could not fix, and why).");
         text.AppendLine();
         text.AppendLine("## Your replies");

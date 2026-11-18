@@ -443,18 +443,165 @@ public sealed class DesignStore(string dataFolder, TimeProvider? time = null)
         }
     }
 
+    /// <summary>The prose parts the owner can type (<see cref="Edit"/>): a design's <c>objective</c> or <c>notes</c>, a cell's <c>heading</c>, <c>objective</c> or <c>notes</c>.</summary>
+    public static readonly string[] EditParts = ["objective", "heading", "notes"];
+
+    /// <summary>
+    /// The owner typed a prose part of DESIGN.md (PIL1171): <paramref name="part"/> is <c>objective</c>, <c>heading</c> or <c>notes</c>, <paramref name="cell"/> names the cell
+    /// (its heading in any case, the id of a screen it shows, or its 1-based number) or is empty for the design itself (objective and notes only). The change goes into the
+    /// draft's DESIGN.md through <see cref="DesignDocument"/>, so the rest of the document is as <see cref="DesignDocument.Format"/> writes it; a frame's source is not
+    /// reachable from here. With no draft, the draft is made from the current version first. Returns the text the part now reads.
+    /// </summary>
+    public string Edit(string id, string part, string cell, string text)
+    {
+        part = part.Trim().ToLowerInvariant();
+        if (!EditParts.Contains(part, StringComparer.Ordinal))
+        {
+            throw new DesignException($"'{part}' is not a part the owner can type: {string.Join(", ", EditParts)}");
+        }
+        text = (text ?? "").Replace("\r\n", "\n").Replace('\r', '\n').Trim();
+        if (part != "notes" && text.Length == 0)
+        {
+            throw new DesignException($"the {part} cannot be empty: a screen needs a heading and an objective, and so does the design");
+        }
+        if (part is "heading" && text.Contains('\n'))
+        {
+            throw new DesignException("a heading is one line");
+        }
+        if (part is "objective" && text.Contains("\n\n", StringComparison.Ordinal))
+        {
+            throw new DesignException("an objective is one paragraph: one or two lines, with no blank line in it");
+        }
+        if (text.Split('\n').Any(l => l.StartsWith("```", StringComparison.Ordinal) || part != "notes" && l.StartsWith('#')))
+        {
+            throw new DesignException("typed prose cannot hold a code fence, or a line starting with # in a heading or objective: a frame's source is changed through the designer");
+        }
+        lock (_lock)
+        {
+            var row = Find(id) ?? throw new DesignException($"There is no design {id}");
+            var draft = Path.Combine(FolderOf(row.Id), DraftFolderName);
+            var file = Path.Combine(draft, DocumentFile);
+            if (!File.Exists(file))
+            {
+                Draft(row.Id, replace: true);
+            }
+            var document = DesignDocument.Parse(File.ReadAllText(file));
+            if (cell.Trim().Length == 0)
+            {
+                if (part == "heading")
+                {
+                    throw new DesignException("a heading belongs to a cell: name the cell");
+                }
+                document = part == "objective" ? document with { Objective = text } : document with { Notes = text };
+            }
+            else
+            {
+                var index = CellIndex(document, cell.Trim());
+                var cells = document.Cells.ToList();
+                cells[index] = part switch
+                {
+                    "heading" => cells[index] with { Heading = text },
+                    "objective" => cells[index] with { Objective = text },
+                    _ => cells[index] with { Notes = text },
+                };
+                document = document with { Cells = cells };
+            }
+            File.WriteAllText(file, document.Format());
+            return text;
+        }
+    }
+
+    private static int CellIndex(DesignDocument document, string cell)
+    {
+        for (var i = 0; i < document.Cells.Count; i++)
+        {
+            if (string.Equals(document.Cells[i].Heading, cell, StringComparison.OrdinalIgnoreCase))
+            {
+                return i;
+            }
+        }
+        for (var i = 0; i < document.Cells.Count; i++)
+        {
+            if (document.Cells[i].Frames.Any(f => string.Equals(f.Id, cell, StringComparison.Ordinal)))
+            {
+                return i;
+            }
+        }
+        if (int.TryParse(cell, NumberStyles.None, CultureInfo.InvariantCulture, out var number) && number >= 1 && number <= document.Cells.Count)
+        {
+            return number - 1;
+        }
+        throw new DesignException($"there is no cell '{cell}' in the document: name its heading, a screen it shows, or its number (1 to {document.Cells.Count})");
+    }
+
+    /// <summary>Removes the draft of <paramref name="id"/> (PIL1171): what was typed or designed there and not published is gone. Refused when there is none.</summary>
+    public void Discard(string id)
+    {
+        lock (_lock)
+        {
+            var row = Find(id) ?? throw new DesignException($"There is no design {id}");
+            var draft = Path.Combine(FolderOf(row.Id), DraftFolderName);
+            if (!Directory.Exists(draft))
+            {
+                throw new DesignException($"{row.Id} has no draft to discard");
+            }
+            foreach (var file in Directory.EnumerateFiles(draft, "*", SearchOption.AllDirectories))
+            {
+                File.SetAttributes(file, FileAttributes.Normal);
+            }
+            Directory.Delete(draft, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// When the draft's prototype and screens hash as the current version's, the version's renders become the draft's, with the stamp (the renders are then of the
+    /// draft as it stands, as nothing they draw changed). Returns whether it did.
+    /// </summary>
+    private bool TakeCurrentRenders(DesignRow row, string draft, string hash)
+    {
+        if (row.Current is not { } current)
+        {
+            return false;
+        }
+        var from = Path.Combine(FolderOf(row.Id), VersionsFolderName, "v" + current.ToString(CultureInfo.InvariantCulture));
+        var prototype = Path.Combine(from, PrototypeFile);
+        var renders = Path.Combine(from, DesignChecker.RendersFolderName);
+        if (!File.Exists(prototype) || !Directory.Exists(renders) || Sha256Of(prototype) != hash)
+        {
+            return false;
+        }
+        var into = Path.Combine(draft, DesignChecker.RendersFolderName);
+        if (Directory.Exists(into))
+        {
+            Directory.Delete(into, recursive: true);
+        }
+        Directory.CreateDirectory(into);
+        foreach (var file in Directory.EnumerateFiles(renders))
+        {
+            CopyWritable(file, Path.Combine(into, Path.GetFileName(file)));
+        }
+        File.WriteAllText(Path.Combine(into, DesignChecker.StampFile), JsonSerializer.Serialize(new DesignRenderStamp { PrototypeSha256 = hash }, PilotJsonContext.Default.DesignRenderStamp));
+        return true;
+    }
+
     /// <summary>
     /// Makes version k+1 (k the current, 0 for none) from the draft of <paramref name="id"/>: <c>prototype.json</c>, <c>NOTES.md</c> and <c>renders/</c>, every file
     /// read-only, and adds it to the record. Refused when the draft or its <c>NOTES.md</c> is missing or empty, when the check finds anything, when the renders are
     /// not of the prototype as it stands, or when <paramref name="why"/> is not a short one-line reason (<see cref="DesignWhys.Problem"/>). A version folder that exists is never written again.
     /// </summary>
-    public DesignRow Publish(string id, string why)
+    public DesignRow Publish(string id, string why, bool owner = false)
     {
-        if (DesignWhys.Problem(why) is { } badWhy)
+        // A typed draft (PIL1171) is published by the owner: the version's why reads 'owner: <why>', and the whole line is held to the same rules.
+        var badWhy = DesignWhys.Problem(why);
+        if (badWhy is null && owner)
+        {
+            badWhy = DesignWhys.Problem(DesignWhys.OwnerPrefix + why.Trim());
+        }
+        if (badWhy is not null)
         {
             throw new DesignException(badWhy);
         }
-        why = why.Trim();
+        why = (owner ? DesignWhys.OwnerPrefix : "") + why.Trim();
         lock (_lock)
         {
             var prototype = DraftPrototypeOf(id, out var row);
@@ -473,7 +620,7 @@ public sealed class DesignStore(string dataFolder, TimeProvider? time = null)
             }
             var hash = Sha256Of(prototype);
             var renders = Path.Combine(draft, DesignChecker.RendersFolderName);
-            if (DesignChecker.StampOf(renders) != hash)
+            if (DesignChecker.StampOf(renders) != hash && !TakeCurrentRenders(row, draft, hash))
             {
                 throw new DesignException($"{row.Id} renders are not of the draft as it stands (prototype.json changed or was never rendered); pilot design render {row.Id} draws them again");
             }

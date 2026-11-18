@@ -75,6 +75,17 @@ public sealed class Designers(NodeState state, DesignStore store, IWorkerLaunche
         await next().ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// Tells the designer of <paramref name="id"/> what the owner typed into DESIGN.md (PIL1171) without waking it: the words wait on the record and go with its next say,
+    /// resume or start (<see cref="Ask"/>); a designer working now is told at its next turn, never interrupted.
+    /// </summary>
+    public void Queue(string id, string part, string cell, string text)
+    {
+        var where = cell.Trim().Length == 0 ? part + " of the design" : $"{part} of {cell.Trim()}";
+        var line = $"The owner typed into DESIGN.md: {where} now reads: {text.Trim()}";
+        store.Update(id, r => r with { DesignerTyped = [.. r.DesignerTyped, line] });
+    }
+
     /// <summary>Takes up what waits: a held ask whose hold has ended, and pieces for a designer that is up now. Called on a timer by the node, and by a test.</summary>
     public void Sweep()
     {
@@ -152,12 +163,12 @@ public sealed class Designers(NodeState state, DesignStore store, IWorkerLaunche
     {
         var row = store.Find(id) ?? throw new DesignException($"There is no design {id}");
         var name = NameOf(row.Id);
-        string[] pending = piece is { Length: > 0 } ? [.. row.DesignerPending, piece] : row.DesignerPending;
+        string[] pending = piece is { Length: > 0 } ? [.. row.DesignerTyped, .. row.DesignerPending, piece] : [.. row.DesignerTyped, .. row.DesignerPending];
 
         if (gate.HoldBecause($"design-ask {row.Id}", models.StartLimitFor(row.Repo ?? ""), models.WeekLimit, HeldKind, Verbs.DesignTarget(row.Id),
                 $"{row.Id} waits to start its designer", models.WeekPaceFor(row.Repo ?? "")) is { } held)
         {
-            store.Update(row.Id, r => r with { DesignerName = name, DesignerState = DesignerStates.Held, DesignerHeldUntil = held.Resets, DesignerWhy = gate.HeldAnswer(held), DesignerPending = pending });
+            store.Update(row.Id, r => r with { DesignerName = name, DesignerState = DesignerStates.Held, DesignerHeldUntil = held.Resets, DesignerWhy = gate.HeldAnswer(held), DesignerPending = pending, DesignerTyped = [] });
             return;
         }
 
@@ -167,25 +178,25 @@ public sealed class Designers(NodeState state, DesignStore store, IWorkerLaunche
             if (live is null)
             {
                 // Started, and not listed yet: the pieces wait for it, and a sweep delivers them.
-                store.Update(row.Id, r => r with { DesignerState = DesignerStates.Working, DesignerIdleSince = null, DesignerHeldUntil = null, DesignerWhy = null, DesignerPending = pending });
+                store.Update(row.Id, r => r with { DesignerState = DesignerStates.Working, DesignerIdleSince = null, DesignerHeldUntil = null, DesignerWhy = null, DesignerPending = pending, DesignerTyped = [] });
                 return;
             }
             if (pending.Length > 0)
             {
                 if (Say is null)
                 {
-                    store.Update(row.Id, r => r with { DesignerPending = pending });
+                    store.Update(row.Id, r => r with { DesignerPending = pending, DesignerTyped = [] });
                     return;
                 }
                 var said = await Say(new CommandRequest { Verb = Verbs.Say, Target = Verbs.SessionTarget(live.Id), Args = [Briefs.DesignerPiece(row.Id, string.Join("\n\n", pending))], Who = "node" }, CancellationToken.None).ConfigureAwait(false);
                 if (!said.Ok)
                 {
                     // Kept for the next sweep, with the reason on the design.
-                    store.Update(row.Id, r => r with { DesignerState = DesignerStates.Failed, DesignerWhy = said.Error ?? "the say was refused", DesignerPending = pending });
+                    store.Update(row.Id, r => r with { DesignerState = DesignerStates.Failed, DesignerWhy = said.Error ?? "the say was refused", DesignerPending = pending, DesignerTyped = [] });
                     return;
                 }
             }
-            store.Update(row.Id, r => r with { DesignerJob = live.Id, DesignerState = DesignerStates.Working, DesignerIdleSince = null, DesignerHeldUntil = null, DesignerWhy = null, DesignerPending = [], DesignerSessions = WithSession(r.DesignerSessions, live.SessionId), DesignerPhase = pending.Length > 0 ? DesignerPhases.Drafting : r.DesignerPhase,
+            store.Update(row.Id, r => r with { DesignerJob = live.Id, DesignerState = DesignerStates.Working, DesignerIdleSince = null, DesignerHeldUntil = null, DesignerWhy = null, DesignerPending = [], DesignerTyped = [], DesignerSessions = WithSession(r.DesignerSessions, live.SessionId), DesignerPhase = pending.Length > 0 ? DesignerPhases.Drafting : r.DesignerPhase,
                 DesignerTurnStartedAt = pending.Length > 0 ? time.GetUtcNow() : r.DesignerTurnStartedAt, DesignerTurnPublished = pending.Length > 0 ? null : r.DesignerTurnPublished });
             return;
         }
@@ -199,8 +210,12 @@ public sealed class Designers(NodeState state, DesignStore store, IWorkerLaunche
             ? File.ReadAllText(Path.Combine(folder, DesignStore.DocumentFile))
             : null;
         var brief = Briefs.Designer(detail, prototype, notes, Run);
+        if (row.DesignerTyped.Length > 0)
+        {
+            brief += "\n" + string.Join("\n\n", row.DesignerTyped) + "\n";
+        }
         var job = await workers.StartAsync(new WorkerStart(name, store.FolderOf(row.Id), null, brief, models.Model(RoleModels.Designer), models.Effort(RoleModels.Designer), Reason: SessionStartReasons.Designer, Settings: GuardSettings), CancellationToken.None).ConfigureAwait(false);
-        store.Update(row.Id, r => r with { DesignerName = name, DesignerJob = job, DesignerState = DesignerStates.Working, DesignerIdleSince = null, DesignerHeldUntil = null, DesignerWhy = null, DesignerPending = [], DesignerStartedAt = time.GetUtcNow(), DesignerTurnStartedAt = time.GetUtcNow(), DesignerTurnPublished = null, DesignerPhase = DesignerPhases.Drafting });
+        store.Update(row.Id, r => r with { DesignerName = name, DesignerJob = job, DesignerState = DesignerStates.Working, DesignerIdleSince = null, DesignerHeldUntil = null, DesignerWhy = null, DesignerPending = [], DesignerTyped = [], DesignerStartedAt = time.GetUtcNow(), DesignerTurnStartedAt = time.GetUtcNow(), DesignerTurnPublished = null, DesignerPhase = DesignerPhases.Drafting });
     }
 
     private static string[] WithSession(string[] have, string? session) =>

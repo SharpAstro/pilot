@@ -11,7 +11,7 @@ public sealed class DesignCommands(NodeState state, DesignStore store, Designers
 {
     /// <summary>Whether <paramref name="verb"/> is one of these.</summary>
     public static bool Handles(string verb) => verb is Verbs.DesignNew or Verbs.DesignBrief or Verbs.DesignSay or Verbs.DesignChat or Verbs.DesignDraft or Verbs.DesignShow or Verbs.Designs
-        or Verbs.DesignTerminals or Verbs.DesignCheck or Verbs.DesignRender or Verbs.DesignPublish;
+        or Verbs.DesignTerminals or Verbs.DesignCheck or Verbs.DesignRender or Verbs.DesignPublish or Verbs.DesignEdit or Verbs.DesignDiscard;
 
     public CommandResult Run(CommandRequest command)
     {
@@ -65,10 +65,23 @@ public sealed class DesignCommands(NodeState state, DesignStore store, Designers
                     var rendered = store.Render(IdOf(command));
                     return state.Complete(command, null, made: $"{rendered.Length} render{(rendered.Length == 1 ? "" : "s")}: {string.Join(", ", rendered)}");
                 case Verbs.DesignPublish:
-                    // args: the why.
-                    var published = store.Publish(IdOf(command), args.Length > 0 ? args[0] : "");
+                    // args: the why, then optionally "owner" for a version the owner typed.
+                    var published = store.Publish(IdOf(command), args.Length > 0 ? args[0] : "", owner: args.Length > 1 && string.Equals(args[1], "owner", StringComparison.Ordinal));
                     state.RefreshIdeaDesigns();
                     return state.Complete(command, null, made: $"{published.Id} v{published.Current}");
+                case Verbs.DesignEdit:
+                    // args: part, cell (empty for the design), text.
+                    var editId = DesignStore.Normalise(IdOf(command));
+                    var editPart = args.Length > 0 ? args[0] : "";
+                    var editCell = args.Length > 1 ? args[1] : "";
+                    var typed = store.Edit(editId, editPart, editCell, args.Length > 2 ? args[2] : "");
+                    // The designer is told at its next turn, never woken for it.
+                    designers?.Queue(editId, editPart.Trim().ToLowerInvariant(), editCell, typed);
+                    return state.Complete(command, null, made: $"{editId} draft: {editPart.Trim().ToLowerInvariant()} typed");
+                case Verbs.DesignDiscard:
+                    var discarded = DesignStore.Normalise(IdOf(command));
+                    store.Discard(discarded);
+                    return state.Complete(command, null, made: $"{discarded} draft discarded");
                 case Verbs.DesignShow:
                     return state.Complete(command, null) with { Design = store.Detail(IdOf(command)) };
                 default:

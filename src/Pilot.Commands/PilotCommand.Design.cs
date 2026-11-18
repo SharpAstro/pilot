@@ -136,8 +136,20 @@ public static partial class PilotCommand
 
             var publishId = Arg("design", "The design's id, DSN-<n>");
             var publishWhy = new Option<string>("--why") { Description = "Why this version was made: a short reason, one line, at most 120 characters, saying what changed (the chat shows it as \"published v<n>: <why>\")", Required = true };
-            var designPublish = Action(new Command("publish", "Make the next read-only version from the draft, when the check is clean and the renders are of the draft as it stands; prints the version. Only DESIGN.md, prototype.json, screens/, NOTES.md (optional) and renders/ are copied; other files in draft/ are ignored") { Arguments = { publishId }, Options = { publishWhy } },
-                (p, client, ct) => Send(client, Verbs.DesignPublish, Verbs.DesignTarget(p.GetValue(publishId)!), [p.GetValue(publishWhy)!], who, ct));
+            var publishOwner = new Option<bool>("--owner") { Description = "The owner's own typed version: the why is stored as 'owner: <why>'" };
+            var designPublish = Action(new Command("publish", "Make the next read-only version from the draft, when the check is clean and the renders are of the draft as it stands (a draft whose prototype and screens are the current version's takes its renders); prints the version. Only DESIGN.md, prototype.json, screens/, NOTES.md (optional) and renders/ are copied; other files in draft/ are ignored") { Arguments = { publishId }, Options = { publishWhy, publishOwner } },
+                (p, client, ct) => Send(client, Verbs.DesignPublish, Verbs.DesignTarget(p.GetValue(publishId)!), p.GetValue(publishOwner) ? [p.GetValue(publishWhy)!, "owner"] : [p.GetValue(publishWhy)!], who, ct));
+
+            var editId = Arg("design", "The design's id, DSN-<n>");
+            var editPart = Arg("part", "objective, heading or notes");
+            var editCell = new Option<string>("--cell") { Description = "The cell: its heading, the id of a screen it shows, or its number; left out for the design itself (objective and notes)", DefaultValueFactory = _ => "" };
+            var editText = Words("text", "The new text of the part (after --)");
+            var designEdit = Action(new Command("edit", "Type into the draft's DESIGN.md as the owner does: the design's objective or notes, or a cell's heading, objective or notes. Makes the draft from the current version when there is none; the designer is told at its next turn, not woken") { Arguments = { editId, editPart, editText }, Options = { editCell } },
+                (p, client, ct) => Send(client, Verbs.DesignEdit, Verbs.DesignTarget(p.GetValue(editId)!), [p.GetValue(editPart)!, p.GetValue(editCell) ?? "", Join(p, editText)], who, ct));
+
+            var discardId = Arg("design", "The design's id, DSN-<n>");
+            var designDiscard = Action(new Command("discard", "Remove the design's draft: what was typed or designed there and not published is gone") { Arguments = { discardId } },
+                (p, client, ct) => Send(client, Verbs.DesignDiscard, Verbs.DesignTarget(p.GetValue(discardId)!), [], who, ct));
 
             var buildId = Arg("design", "The design's id, DSN-<n>");
             var buildVersion = new Option<int?>("--version") { Description = "The version to build; the current one when left out" };
@@ -161,7 +173,7 @@ public static partial class PilotCommand
                     return 1;
                 });
 
-            var design = new Command("design", "Designs: a prototype of DIR.Lib screens, briefed by the owner and kept in versions on the node. new, brief, say, chat, draft, check, render, publish, build, show, terminals") { Subcommands = { designNew, designTerminals, designBrief, designSay, designChat, designDraft, designCheck, designRender, designPublish, designBuild, designShow } };
+            var design = new Command("design", "Designs: a prototype of DIR.Lib screens, briefed by the owner and kept in versions on the node. new, brief, say, chat, draft, check, render, edit, discard, publish, build, show, terminals") { Subcommands = { designNew, designTerminals, designBrief, designSay, designChat, designDraft, designEdit, designDiscard, designCheck, designRender, designPublish, designBuild, designShow } };
 
             var designs = Action(new Command("designs", "Every design, newest first"),
                 async (p, client, ct) =>
