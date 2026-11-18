@@ -24,6 +24,8 @@ public sealed class DesignsViewTests
 
         public Rig(DesignsScreen screen)
         {
+            // The page shows local time: the tests that read a time off it run in UTC unless one sets a zone after its rig.
+            PageTime.Zone = TimeZoneInfo.Utc;
             Screen = screen;
             Chrome = new PilotChrome<RgbaImage>(_renderer, new SessionsView<RgbaImage>(_renderer)) { FontPath = SessionsCapture.FontPath };
             Chrome.Autopilot.OnToggle = _ => Task.FromResult<string?>(null);
@@ -234,13 +236,13 @@ public sealed class DesignsViewTests
     [Fact]
     public void EveryTimeOnADesignsPageIsLocalWithUtcOnHover()
     {
-        PageTime.Zone = TimeZoneInfo.CreateCustomTimeZone("test+5:30", TimeSpan.FromHours(5.5), "test", "test");
         try
         {
             var full = Sample();
             var brief = $"## 2026-11-16T09:00:00Z{Environment.NewLine}{Environment.NewLine}A piece.";
             var detail = full.Open!.Detail with { Brief = brief };
             using var rig = new Rig(full with { Open = DesignPages.Load(detail) });
+            PageTime.Zone = TimeZoneInfo.CreateCustomTimeZone("test+5:30", TimeSpan.FromHours(5.5), "test", "test");
             rig.Paint();
             var list = ArrangedAt(rig, 1400, 900).ToList();
             SentenceRuns.Texts(list.Select(a => a.Node)).ShouldContain("v2 · SharpAstro/pilot · 2026-11-16 14:30");
