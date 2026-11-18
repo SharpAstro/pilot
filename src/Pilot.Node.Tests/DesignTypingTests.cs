@@ -93,7 +93,15 @@ public sealed class DesignTypingTests : IDisposable
         _store.New(null, null, "A fleet screen").Id.ShouldBe("DSN-1");
         _store.Draft("DSN-1", replace: false);
         File.Copy(Fixture("sample.prototype.json"), Draft("prototype.json"), overwrite: true);
+        // A version the designer makes keeps each screen in screens/ (the fixture's inline screens are split into files), so a later draft of it hashes as the version does.
         Directory.Delete(Draft("screens"), recursive: true);
+        Directory.CreateDirectory(Draft("screens"));
+        var split = DesignFiles.Split(File.ReadAllText(Draft("prototype.json")))!.Value;
+        File.WriteAllText(Draft("prototype.json"), split.Header);
+        foreach (var (screenId, screenJson) in split.Screens)
+        {
+            File.WriteAllText(Draft("screens/" + screenId + ".json"), screenJson);
+        }
         File.WriteAllText(Draft("DESIGN.md"), SampleDocument);
         _store.Render("DSN-1");
         _store.Publish("DSN-1", "brief").Current.ShouldBe(1);
