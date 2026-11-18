@@ -549,6 +549,12 @@ public static class PilotMarks
     /// </summary>
     public const string Hold = LabelPrefix + "hold";
 
+    /// <summary>
+    /// Put on a design's issue by the node that has the design open for editing (PIL1171), with that node's <see cref="NodeLabel"/>: another node shows the design read only,
+    /// 'being edited on &lt;node&gt;'. A new label, because <see cref="Reviewing"/> says a PR is being read and one label must not mean two things.
+    /// </summary>
+    public const string Editing = DesignLockText.EditingLabel;
+
     /// <summary>What the comment that says a flight was put on hold starts with, so a sweep finds the newest one pilot wrote.</summary>
     public const string HoldCommentStart = "pilot: on hold";
 
@@ -609,6 +615,7 @@ public static class PilotMarks
         Pinned => ("fbca04", "pinned to the top of its section in pilot's Ideas pane"),
         NeedsDesign => ("c2e0c6", "an idea that needs a design before it flies; pilot starts the design from it"),
         Priority => ("e99695", "pilot: its starts bypass the Opus cap and the repo hold"),
+        Editing => ("fbca04", "a pilot node has this design open for editing"),
         Hold => ("b60205", "the owner holds this flight: no pilot node acts on it"),
         HumanVerification => ("c5def5", "a person must check this flight's live behaviour; pilot files those checks as issues"),
         SiblingSource => ("bfd4f2", "this flight builds on the sibling clones' source, not the published packages"),

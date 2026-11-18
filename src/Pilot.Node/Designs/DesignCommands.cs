@@ -7,11 +7,11 @@ namespace Pilot.Node.Designs;
 /// <c>design-show</c> and <c>designs</c>. They go through <see cref="DesignStore"/>, the node its one writer; only <c>design-publish</c> writes under a
 /// design's <c>versions/</c>, and only to a version folder that is not there yet.
 /// </summary>
-public sealed class DesignCommands(NodeState state, DesignStore store, Designers? designers = null, DesignChat? chat = null, DesignSync? sync = null)
+public sealed class DesignCommands(NodeState state, DesignStore store, Designers? designers = null, DesignChat? chat = null, DesignSync? sync = null, DesignLock? locks = null)
 {
     /// <summary>Whether <paramref name="verb"/> is one of these.</summary>
     public static bool Handles(string verb) => verb is Verbs.DesignNew or Verbs.DesignBrief or Verbs.DesignSay or Verbs.DesignChat or Verbs.DesignDraft or Verbs.DesignShow or Verbs.Designs
-        or Verbs.DesignTerminals or Verbs.DesignCheck or Verbs.DesignRender or Verbs.DesignPublish or Verbs.DesignEdit or Verbs.DesignDiscard or Verbs.DesignIssue;
+        or Verbs.DesignTerminals or Verbs.DesignCheck or Verbs.DesignRender or Verbs.DesignPublish or Verbs.DesignEdit or Verbs.DesignDiscard or Verbs.DesignIssue or Verbs.DesignGitHub;
 
     public CommandResult Run(CommandRequest command)
     {
@@ -68,6 +68,8 @@ public sealed class DesignCommands(NodeState state, DesignStore store, Designers
                     // args: the why, then optionally "owner" for a version the owner typed.
                     var published = store.Publish(IdOf(command), args.Length > 0 ? args[0] : "", owner: args.Length > 1 && string.Equals(args[1], "owner", StringComparison.Ordinal));
                     state.RefreshIdeaDesigns();
+                    // The labels come off once the version is on the issue (the sync settles them at its end); with no sync here they come off now.
+                    locks?.Release(published.Id, kick: sync is null);
                     // The version is on the node whatever GitHub does: it is written to the design's issue in the background, and a failure is on the record.
                     sync?.Kick(published.Id);
                     return state.Complete(command, null, made: $"{published.Id} v{published.Current}");
@@ -79,11 +81,26 @@ public sealed class DesignCommands(NodeState state, DesignStore store, Designers
                     var typed = store.Edit(editId, editPart, editCell, args.Length > 2 ? args[2] : "");
                     // The designer is told at its next turn, never woken for it.
                     designers?.Queue(editId, editPart.Trim().ToLowerInvariant(), editCell, typed);
+                    // The owner typing has the design open for editing: the issue is labelled, in the background, and a failure never blocks the edit.
+                    locks?.Want(editId);
                     return state.Complete(command, null, made: $"{editId} draft: {editPart.Trim().ToLowerInvariant()} typed");
                 case Verbs.DesignDiscard:
                     var discarded = DesignStore.Normalise(IdOf(command));
                     store.Discard(discarded);
+                    locks?.Release(discarded);
                     return state.Complete(command, null, made: $"{discarded} draft discarded");
+                case Verbs.DesignGitHub:
+                    var github = locks ?? throw new DesignException("this node does not read designs back from GitHub");
+                    var ghId = DesignStore.Normalise(IdOf(command));
+                    var ghAction = args.Length > 0 ? args[0] : "";
+                    var ghKey = args.Length > 1 ? args[1] : "";
+                    var ghWhere = ghAction switch
+                    {
+                        "apply" => github.Apply(ghId, ghKey),
+                        "dismiss" => github.Dismiss(ghId, ghKey),
+                        _ => throw new DesignException($"design-github takes apply or dismiss, not '{ghAction}'"),
+                    };
+                    return state.Complete(command, null, made: $"{ghId} GitHub edit of the {ghWhere}: {ghAction}");
                 case Verbs.DesignShow:
                     return state.Complete(command, null) with { Design = store.Detail(IdOf(command)) };
                 default:

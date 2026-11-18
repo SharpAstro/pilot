@@ -108,8 +108,50 @@ public sealed record DesignRow
     /// </summary>
     public string? MadeOn { get; init; }
 
+    /// <summary>Whether this node wants the design's issue locked (PIL1171): its designer drafts or the owner typed, and the draft is not published or discarded. The sync service puts the labels on and keeps trying; null and false mean no.</summary>
+    public bool? LockWanted { get; init; }
+
+    /// <summary>Whether this node put <see cref="DesignLockText.EditingLabel"/> and its node label on the issue and has not taken them off.</summary>
+    public bool? LockHeld { get; init; }
+
+    /// <summary>The node whose label lock is on the issue (read at the last sweep); the design is read only here while it is set and is not this node's.</summary>
+    public string? LockedBy { get; init; }
+
+    /// <summary>Why the last try to put on or take off the labels failed, in words; null once it went through. A local edit is never blocked by it, and the sync service tries again.</summary>
+    public string? LockError { get; init; }
+
+    /// <summary>Edits of the issue's prose made on GitHub while the design was locked here (PIL1171): kept beside the design, oldest first, shown to the editor with Apply and Dismiss.</summary>
+    public DesignGitHubEdit[] GitHubEdits { get; init => field = value ?? []; } = [];
+
+    /// <summary>What the last read of the issue found in the design's block that is not applied (a frame's link or a block changed on GitHub, a cell added or removed), as one line each; the page says so.</summary>
+    public string[] GitHubIgnored { get; init => field = value ?? []; } = [];
+
+    /// <summary>The SHA-256 of the issue's design block at the last read that handled it, so one edit on GitHub is handled once.</summary>
+    public string? GitHubBlockSha256 { get; init; }
+
+    /// <summary>The why a typed change read from the issue gives the draft (<c>owner on GitHub: edited objective</c>); the page offers it to the owner who publishes. Cleared at a publish.</summary>
+    public string? DraftWhy { get; init; }
+
     /// <summary>Every build of a version of this design (<c>design-build</c>, PIL1153), oldest first. Empty while there is none, and in a record an older release wrote.</summary>
     public DesignBuildRow[] Builds { get; init => field = value ?? []; } = [];
+}
+
+/// <summary>A prose part the issue's text says differently from the published version (PIL1171): <see cref="Part"/> is objective, heading or notes, <see cref="Cell"/> the cell's number (empty for the design itself).</summary>
+public sealed record DesignGitHubEdit
+{
+    public required string Part { get; init; }
+
+    public string Cell { get; init; } = "";
+
+    public required string Text { get; init; }
+
+    public DateTimeOffset? At { get; init; }
+
+    /// <summary>What the part is called on the page and in a why: <c>objective</c>, or <c>heading of cell 2</c>.</summary>
+    public string Where => Cell.Length == 0 ? Part + " of the design" : $"{Part} of cell {Cell}";
+
+    /// <summary>The key a verb names it by: <c>part:cell</c>.</summary>
+    public string Key => Part + ":" + Cell;
 }
 
 /// <summary>One build of a design version (PIL1153): the flight <c>design-build</c> made, and the issue it flies on.</summary>
@@ -302,6 +344,25 @@ public static class DesignSyncText
         written ? $"Comment on the issue: v{N(version)}: {why}" : "Not on the issue yet";
 
     private static string N(int number) => number.ToString(System.Globalization.CultureInfo.InvariantCulture);
+}
+
+/// <summary>The words of a design's label lock (PIL1171), one source for the node's record and the page.</summary>
+public static class DesignLockText
+{
+    /// <summary>The state label a node puts on the design's issue while it has the design open for editing;.</summary>
+    public const string EditingLabel = "pilot: editing";
+
+    /// <summary>The line the page shows for a design locked by another node.</summary>
+    public static string BeingEdited(string node) => $"Being edited on {node}. Read only here until it is published or the lock is taken off.";
+
+    /// <summary>The line for a labelling that failed.</summary>
+    public static string LabelFailed(string reason) => $"The issue could not be labelled: {reason}. It is tried again; editing here goes on.";
+
+    /// <summary>The line above a cell for a GitHub edit that waits for the editor.</summary>
+    public static string Waiting(string where) => $"Edited on GitHub: the {where}. Apply it to the draft or dismiss it.";
+
+    /// <summary>The why a typed change read from the issue gets.</summary>
+    public static string OwnerOnGitHub(string part) => $"owner on GitHub: edited {part}";
 }
 
 /// <summary>A design read whole by <c>design show</c>: the record, the brief as written, its versions and where its folders are.</summary>

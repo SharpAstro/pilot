@@ -21,6 +21,18 @@ internal sealed partial class DesignsView<TSurface>
     /// <summary>Asked to discard the draft (the design's id). The host sends <c>design-discard</c> and answers with <see cref="Typed"/>.</summary>
     public Action<string>? OnDiscard { get; set; }
 
+    /// <summary>Asked to apply or dismiss an edit made on GitHub that waits for the editor: the design's id, <c>apply</c> or <c>dismiss</c>, and the edit's key. The host sends <c>design-github</c> and answers with <see cref="Typed"/>.</summary>
+    public Action<string, string, string>? OnGitHub { get; set; }
+
+    /// <summary>Whether the design cannot be typed into here: read from another node's issue, or locked on another node (PIL1171).</summary>
+    internal static bool ReadOnly(DesignRow row) => row.MadeOn is not null || row.LockedBy is { Length: > 0 } && row.LockHeld != true;
+
+    /// <summary>The label of the button that types a waiting GitHub edit into the draft.</summary>
+    internal const string ApplyLabel = "Apply";
+
+    /// <summary>The label of the button that drops a waiting GitHub edit.</summary>
+    internal const string DismissLabel = "Dismiss";
+
     /// <summary>The box the part in edit is typed in.</summary>
     public TextEditorState Editor { get; } = new() { MinLines = 1, MaxLines = 8 };
 
@@ -80,7 +92,7 @@ internal sealed partial class DesignsView<TSurface>
     /// <summary>Opens the part <paramref name="part"/> of cell <paramref name="cell"/> (-1: the design) in place. False with no document on show.</summary>
     public bool BeginEdit(int cell, string part)
     {
-        if (_buildScreen?.Open?.Notebook is not { } document || cell >= document.Cells.Count || OnEdit is null || _buildScreen.Open.Detail.Row.MadeOn is not null)
+        if (_buildScreen?.Open?.Notebook is not { } document || cell >= document.Cells.Count || OnEdit is null || ReadOnly(_buildScreen.Open.Detail.Row))
         {
             return false;
         }
@@ -174,13 +186,33 @@ internal sealed partial class DesignsView<TSurface>
                 WrappedProse.OneLine(label, 11f, Dim, selectable: false).RowH(18f).Whole(label),
                 Layout.Builder.TextEditor(Editor, 13f, colors: Palette.Input, focusOnOpen: true).WStar().Border(Palette.Current.RailAccent, 2f, 0f)).WithGap(2f);
         }
-        if (OnEdit is null || _buildScreen?.Open?.Detail.Row.MadeOn is not null)
+        if (OnEdit is null || _buildScreen?.Open?.Detail.Row is { } row && ReadOnly(row))
         {
             // A design read from another node's issue is read only (PIL1171): its prose is not opened for typing.
             return shown;
         }
         var id = $"designs:edit:{cell.ToString(CultureInfo.InvariantCulture)}:{part}";
         return shown.BgHover(RowHoverBg).WithTooltip($"Click to edit the {part}").Follows(new HitResult.ButtonHit(id), _ => BeginEdit(cell, part));
+    }
+
+    // The edits made on GitHub that wait for the editor, shown above the cell they touch (cell is its number, "" for the design): what was changed, the new words, Apply and Dismiss.
+    private IEnumerable<Layout.Node> GitHubEditsAbove(DesignRow row, string cell)
+    {
+        foreach (var edit in row.GitHubEdits.Where(e => e.Cell == cell))
+        {
+            var key = edit.Key;
+            yield return WrappedProse.Of(DesignLockText.Waiting(edit.Where), 12f, Bright);
+            yield return WrappedProse.Of(edit.Text.Length == 0 ? "(empty)" : edit.Text, 12f, Body);
+            Layout.Node Label(string text, string id, string tip, string action) =>
+                Layout.Builder.Text(text, 12f, Bright, TextAlign.Center, TextAlign.Center).Pad(10f, 0f).WAuto().HFixed(26f).Bg(Button).BgHover(ButtonHover)
+                    .WithTooltip(tip).Follows(new HitResult.ButtonHit(id), _ => { OnGitHub?.Invoke(row.Id, action, key); });
+            if (OnGitHub is not null)
+            {
+                yield return Layout.Builder.HStack(
+                    Label(ApplyLabel, "designs:gh-apply:" + key, $"Type the GitHub edit of the {edit.Where} into the draft", "apply"),
+                    Label(DismissLabel, "designs:gh-dismiss:" + key, "Drop the GitHub edit; the draft is not changed", "dismiss")).WithGap(6f).RowH(26f);
+            }
+        }
     }
 
     // The state tag of a cell: published in the version on show, or the filled accent 'draft' while its prose differs from that version's.

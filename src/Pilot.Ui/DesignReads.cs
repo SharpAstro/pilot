@@ -199,6 +199,11 @@ internal sealed class DesignReads(NodeClient client, string who, Action redraw)
             designs.Typed(error);
             redraw();
         });
+        designs.OnGitHub = (id, action, key) => _ = Task.Run(async () =>
+        {
+            designs.Typed(await TypeAsync(Verbs.DesignGitHub, id, [action, key], CancellationToken.None).ConfigureAwait(false));
+            redraw();
+        });
         designs.OnDiscard = id => _ = Task.Run(async () =>
         {
             designs.Typed(await TypeAsync(Verbs.DesignDiscard, id, [], CancellationToken.None).ConfigureAwait(false));

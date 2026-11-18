@@ -41,6 +41,9 @@ public sealed class Designers(NodeState state, DesignStore store, IWorkerLaunche
     /// </summary>
     public Func<TimeSpan> Keep { get; init; } = () => TimeSpan.FromMinutes(NodeSettings.DefaultDesignerKeep);
 
+    /// <summary>The label lock on the design's issue (PIL1171): taken when a turn that drafts starts, released when the designer's session ends. Null where none is wired.</summary>
+    public DesignLock? Locks { get; init; }
+
     /// <summary>The end of the asks made so far, for a test to await.</summary>
     public Task Settled
     {
@@ -119,7 +122,11 @@ public sealed class Designers(NodeState state, DesignStore store, IWorkerLaunche
                 }
                 if (done || listed.SessionId is { Length: > 0 } known && !row.DesignerSessions.Contains(known))
                 {
-                    // Its turn is done: the design says idle, and the next brief piece resumes it.
+                    // Its turn is done: the design says idle, and the next brief piece resumes it. A session that has ended no longer has the design open.
+                    if (listed.State is SessionState.Ended)
+                    {
+                        Locks?.Release(row.Id);
+                    }
                     store.Update(row.Id, r => r with
                     {
                         DesignerState = done ? DesignerStates.Idle : r.DesignerState,
@@ -144,6 +151,7 @@ public sealed class Designers(NodeState state, DesignStore store, IWorkerLaunche
             // Gone already: the ledger closes it, and the next piece resumes it either way.
         }
         store.Update(id, r => r with { DesignerIdleSince = null });
+        Locks?.Release(id);
     }
 
     private async Task AskAsync(string id, string? piece)
@@ -188,6 +196,7 @@ public sealed class Designers(NodeState state, DesignStore store, IWorkerLaunche
                     store.Update(row.Id, r => r with { DesignerPending = pending, DesignerTyped = [] });
                     return;
                 }
+                Locks?.Want(row.Id);
                 var said = await Say(new CommandRequest { Verb = Verbs.Say, Target = Verbs.SessionTarget(live.Id), Args = [Briefs.DesignerPiece(row.Id, string.Join("\n\n", pending))], Who = "node" }, CancellationToken.None).ConfigureAwait(false);
                 if (!said.Ok)
                 {
@@ -214,6 +223,7 @@ public sealed class Designers(NodeState state, DesignStore store, IWorkerLaunche
         {
             brief += "\n" + string.Join("\n\n", row.DesignerTyped) + "\n";
         }
+        Locks?.Want(row.Id);
         var job = await workers.StartAsync(new WorkerStart(name, store.FolderOf(row.Id), null, brief, models.Model(RoleModels.Designer), models.Effort(RoleModels.Designer), Reason: SessionStartReasons.Designer, Settings: GuardSettings), CancellationToken.None).ConfigureAwait(false);
         store.Update(row.Id, r => r with { DesignerName = name, DesignerJob = job, DesignerState = DesignerStates.Working, DesignerIdleSince = null, DesignerHeldUntil = null, DesignerWhy = null, DesignerPending = [], DesignerTyped = [], DesignerStartedAt = time.GetUtcNow(), DesignerTurnStartedAt = time.GetUtcNow(), DesignerTurnPublished = null, DesignerPhase = DesignerPhases.Drafting });
     }

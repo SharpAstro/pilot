@@ -83,7 +83,9 @@ public sealed class DesignStore(string dataFolder, TimeProvider? time = null)
     private static DesignRow Writable(DesignRow row) =>
         row.MadeOn is { Length: > 0 } node
             ? throw new DesignException($"{row.Id} is read from {row.IssueRepo}#{row.IssueNumber}, made on {node}: it is changed there, not here")
-            : row;
+            : row.LockedBy is { Length: > 0 } editor && row.LockHeld != true
+                ? throw new DesignException($"{row.Id}: {DesignLockText.BeingEdited(editor)}")
+                : row;
 
     /// <summary>The title a brief gets when none is given: <see cref="DesignTitle.Of"/>, its first line whole, or cut at a word, or at the limit when it has no space, with an ellipsis.</summary>
     public static string TitleOf(string brief) => DesignTitle.Of(brief);
@@ -568,6 +570,10 @@ public sealed class DesignStore(string dataFolder, TimeProvider? time = null)
                 File.SetAttributes(file, FileAttributes.Normal);
             }
             Directory.Delete(draft, recursive: true);
+            if (row.DraftWhy is not null)
+            {
+                WriteRecord(row with { DraftWhy = null });
+            }
         }
     }
 
@@ -706,6 +712,9 @@ public sealed class DesignStore(string dataFolder, TimeProvider? time = null)
                 Why = why,
                 PrototypeSha256 = hash,
                 DesignerPhase = DesignerPhases.Published,
+                // What waited on GitHub or was suggested for the why belongs to the draft this version was made from.
+                GitHubEdits = [],
+                DraftWhy = null,
                 History = [.. row.History, new DesignVersionRow { Number = number, At = at, Why = why, PrototypeSha256 = hash }],
             };
             WriteRecord(made);

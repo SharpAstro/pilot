@@ -24,6 +24,9 @@ public sealed class DesignSync(DesignStore store, RepoCatalog repos, IGitHub git
     /// <summary>Where what a failure was is told: the node's log; nothing for one built without.</summary>
     public TextWriter Error { get; set; } = TextWriter.Null;
 
+    /// <summary>The label lock and the read-back of the issue's text (PIL1171), settled after each design's versions are sent and at every sweep; null where none is wired.</summary>
+    public DesignLock? Lock { get; init; }
+
     private readonly SemaphoreSlim _one = new(1, 1);
     private readonly Lock _kicks = new();
     private readonly List<Task> _running = [];
@@ -61,6 +64,10 @@ public sealed class DesignSync(DesignStore store, RepoCatalog repos, IGitHub git
         foreach (var design in store.List().Where(d => d.MadeOn is null && Unsent(d)))
         {
             await SyncAsync(design.Id, cancellationToken).ConfigureAwait(false);
+        }
+        if (Lock is { } locks)
+        {
+            await locks.SweepAsync(cancellationToken).ConfigureAwait(false);
         }
         if (time.GetUtcNow() - _mirrored >= MirrorEvery)
         {
@@ -150,6 +157,11 @@ public sealed class DesignSync(DesignStore store, RepoCatalog repos, IGitHub git
         finally
         {
             _one.Release();
+        }
+        // The labels of a published design come off once its version is on the issue, so another node never sees an unlocked design with the old text.
+        if (Lock is { } locks)
+        {
+            await locks.SettleAsync(id, cancellationToken).ConfigureAwait(false);
         }
     }
 

@@ -998,6 +998,12 @@ public static class Verbs
     /// </summary>
     public const string DesignEdit = "design-edit";
 
+    /// <summary>
+    /// <c>design-github design/DSN-&lt;n&gt; apply|dismiss part:cell</c> (PIL1171): an edit made to the design's issue text on GitHub while the design was locked here is kept beside it;
+    /// <c>apply</c> types it into the draft, <c>dismiss</c> drops it.
+    /// </summary>
+    public const string DesignGitHub = "design-github";
+
     /// <summary><c>design-discard design/DSN-&lt;n&gt;</c> (PIL1171): removes the draft.</summary>
     public const string DesignDiscard = "design-discard";
 

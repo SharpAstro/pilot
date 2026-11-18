@@ -1026,7 +1026,7 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
     private Layout.Node DesignBody(DesignPage page)
     {
         var document = DocumentColumn(page).WithScroll(_docScroll).WStar().HStar();
-        if (page.Detail.Row.MadeOn is not null)
+        if (ReadOnly(page.Detail.Row))
         {
             // A design read from its GitHub issue (PIL1171) has no designer to talk to: the document has the whole page.
             return Layout.Builder.VStack(document).Pad(Gutter, 8f).WStar().HStar();
@@ -1071,6 +1071,8 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
         {
             items.Add(sync);
         }
+        items.AddRange(LockLines(row));
+        items.AddRange(GitHubEditsAbove(row, ""));
         if (notebook?.Objective is { Length: > 0 } objective || _edit == (-1, "objective"))
         {
             items.Add(Typable(-1, "objective", "Objective of the design", WrappedProse.Of(notebook?.Objective ?? "", 14f, Body)));
@@ -1117,6 +1119,24 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
         return WrappedProse.OneLine(line, 12f, synced < current ? Bright : Dim).RowH(22f).Whole(line);
     }
 
+    // The lock and the GitHub read-back (PIL1171): who has the design open, a labelling that failed, and the differences on GitHub that were not applied and why.
+    private IEnumerable<Layout.Node> LockLines(DesignRow row)
+    {
+        if (row.LockedBy is { Length: > 0 } by && row.LockHeld != true)
+        {
+            var line = DesignLockText.BeingEdited(by);
+            yield return WrappedProse.OneLine(line, 12f, Bright).RowH(22f).Whole(line);
+        }
+        if (row.LockError is { Length: > 0 } failed)
+        {
+            yield return WrappedProse.Of(failed, 12f, Palette.Current.Failed);
+        }
+        foreach (var ignored in row.GitHubIgnored)
+        {
+            yield return WrappedProse.Of(ignored, 12f, Dim);
+        }
+    }
+
     private IEnumerable<Layout.Node> FromIdeaPart(DesignRow row)
     {
         if (row.FromIdea is { Length: > 0 } fromIdea)
@@ -1145,6 +1165,7 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
         var heading = WrappedProse.OneLine(cell.Heading, 16f, Bright, vAlign: TextAlign.Center).WStar().HFixed(26f).Whole(cell.Heading);
         var tag = StateTag(page.CellIsDraft(index) ? "draft" : $"published in v{version}", page.CellIsDraft(index));
         List<Layout.Node> items = [];
+        items.AddRange(GitHubEditsAbove(page.Detail.Row, (index + 1).ToString(CultureInfo.InvariantCulture)));
         if (_edit == (index, "heading"))
         {
             items.Add(Typable(index, "heading", $"Heading of cell {index + 1}", heading));

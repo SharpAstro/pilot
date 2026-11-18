@@ -120,14 +120,21 @@ public static partial class NodeApp
             Keep = () => TimeSpan.FromMinutes(services.GetRequiredService<RoleModels>().DesignerKeep),
             GuardSettings = HookCommands.DesignerSettings(Environment.ProcessPath ?? "pilot-node", options.SocketPath),
             Say = (command, ct) => services.GetRequiredService<SessionMessenger>().SayAsync(command, ct),
+            Locks = services.GetRequiredService<Pilot.Node.Designs.DesignLock>(),
+        });
+        builder.Services.AddSingleton(services => new Pilot.Node.Designs.DesignLock(services.GetRequiredService<Pilot.Node.Designs.DesignStore>(), services.GetRequiredService<RepoCatalog>(), services.GetRequiredService<IGitHub>(), services.GetRequiredService<TimeProvider>(), options.Machine,
+            peer => services.GetRequiredService<FleetCopy>().Silence(peer))
+        {
+            Error = logWriter,
+            Typed = (id, part, cell, text) => services.GetRequiredService<Pilot.Node.Designs.Designers>().Queue(id, part, cell, text),
         });
         builder.Services.AddHostedService(services => new Pilot.Node.Designs.DesignerSweep(services.GetRequiredService<Pilot.Node.Designs.Designers>()));
         builder.Services.AddSingleton(services => new Pilot.Node.Designs.DesignerGuard(services.GetRequiredService<NodeState>(), services.GetRequiredService<Pilot.Node.Designs.DesignStore>()));
         builder.Services.AddSingleton(services => new Pilot.Node.Designs.DesignChat(services.GetRequiredService<Pilot.Node.Designs.DesignStore>(), services.GetRequiredService<TranscriptBook>(), () => services.GetRequiredService<NodeState>().Sessions()));
         builder.Services.AddSingleton(services => new Pilot.Node.Designs.DesignBuilds(services.GetRequiredService<NodeState>(), services.GetRequiredService<Pilot.Node.Designs.DesignStore>(), services.GetRequiredService<RepoCatalog>(), services.GetRequiredService<Planes>(), services.GetRequiredService<IGitHub>(), services.GetRequiredService<FlightCommander>(), services.GetRequiredService<IdeaCommander>(), services.GetRequiredService<TimeProvider>()) { Error = logWriter });
-        builder.Services.AddSingleton(services => new Pilot.Node.Designs.DesignSync(services.GetRequiredService<Pilot.Node.Designs.DesignStore>(), services.GetRequiredService<RepoCatalog>(), services.GetRequiredService<IGitHub>(), services.GetRequiredService<TimeProvider>(), options.Machine) { Error = logWriter });
+        builder.Services.AddSingleton(services => new Pilot.Node.Designs.DesignSync(services.GetRequiredService<Pilot.Node.Designs.DesignStore>(), services.GetRequiredService<RepoCatalog>(), services.GetRequiredService<IGitHub>(), services.GetRequiredService<TimeProvider>(), options.Machine) { Error = logWriter, Lock = services.GetRequiredService<Pilot.Node.Designs.DesignLock>() });
         builder.Services.AddHostedService(services => new Pilot.Node.Designs.DesignSyncSweep(services.GetRequiredService<Pilot.Node.Designs.DesignSync>()));
-        builder.Services.AddSingleton(services => new Pilot.Node.Designs.DesignCommands(services.GetRequiredService<NodeState>(), services.GetRequiredService<Pilot.Node.Designs.DesignStore>(), services.GetRequiredService<Pilot.Node.Designs.Designers>(), services.GetRequiredService<Pilot.Node.Designs.DesignChat>(), services.GetRequiredService<Pilot.Node.Designs.DesignSync>()));
+        builder.Services.AddSingleton(services => new Pilot.Node.Designs.DesignCommands(services.GetRequiredService<NodeState>(), services.GetRequiredService<Pilot.Node.Designs.DesignStore>(), services.GetRequiredService<Pilot.Node.Designs.Designers>(), services.GetRequiredService<Pilot.Node.Designs.DesignChat>(), services.GetRequiredService<Pilot.Node.Designs.DesignSync>(), services.GetRequiredService<Pilot.Node.Designs.DesignLock>()));
         builder.Services.AddSingleton(services => new RemovalQueue(RemovalQueue.FileIn(options.DataFolder), services.GetRequiredService<TimeProvider>()) { Error = logWriter });
         // First: tried once at the start, before any service touches the paths it holds.
         builder.Services.AddHostedService(services => new RemovalQueueStart(services.GetRequiredService<RemovalQueue>(), services.GetRequiredService<NodeState>(), services.GetRequiredService<TimeProvider>()));
