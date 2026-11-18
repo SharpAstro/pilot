@@ -1244,7 +1244,7 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
 
     // The sync state as one cell of the back row: one line, whole on hover where the row is too narrow for it.
     private static Layout.Node SyncText(string text, RGBAColor32 color) =>
-        WrappedProse.OneLine(text, 12f, color, vAlign: TextAlign.Center, cut: true).WStar().Whole(text);
+        WrappedProse.OneLine(text, 12f, color, vAlign: TextAlign.Center).WStar().RowH(22f).Whole(text);
 
     // The lock and the GitHub read-back (PIL1171): who has the design open, a labelling that failed, and the differences on GitHub that were not applied and why.
     private IEnumerable<Layout.Node> LockLines(DesignRow row)

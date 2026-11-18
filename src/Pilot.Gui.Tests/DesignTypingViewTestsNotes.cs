@@ -115,7 +115,8 @@ public sealed class DesignTypingViewTestsNotes
         var rendered = before.Arranged().Where(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text t } && t.Value.Contains("threshold", StringComparison.Ordinal)).Select(a => a.Bounds.X).Min();
         editor.Bounds.X.ShouldBeLessThanOrEqualTo(rendered + 1f);
         before.Dispose();
-        TextOverlap.Faults([.. all]).Select(f => f.Line).ShouldBeEmpty();
+        // What is in view: the page scrolls, and what is past the bottom is laid out against the viewport's end in this plain arrange.
+        TextOverlap.Faults([.. all.Where(a => a.Bounds.Y + a.Bounds.Height <= height)]).Select(f => f.Line).ShouldBeEmpty();
         Keep($"design-notes-edit-{width}.png", rig.Png());
     }
 
@@ -162,8 +163,8 @@ public sealed class DesignTypingViewTestsNotes
         using var rig = new Rig(WithNotes(r => r with { Repo = null, IssueRepo = null, IssueNumber = null, SyncError = null }));
 
         var all = rig.Arranged();
-        var line = all.Single(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text t } && t.Value.StartsWith("Kept on ", StringComparison.Ordinal) && t.Value.EndsWith(" only", StringComparison.Ordinal));
-        ((Layout.Content.Text)((Layout.Node.Leaf)line.Node).Content).Color.ShouldNotBe(Palette.Current.Failed);
+        var line = SentenceRuns.Of(all.Select(a => a.Node)).Single(r => r.Text.StartsWith("Kept on ", StringComparison.Ordinal) && r.Text.EndsWith(" only", StringComparison.Ordinal));
+        line.Color.ShouldNotBe(Palette.Current.Failed);
         var button = all.Single(a => a.Node.Hit is HitResult.ButtonHit { Action: "designs:link" });
         button.Node.Tooltip.ShouldBe("pilot design issue DSN-1 <repo>#<n>");
         Texts(all).ShouldContain("Link an issue");
@@ -192,8 +193,7 @@ public sealed class DesignTypingViewTestsNotes
         var failure = DesignSyncText.Failure(DesignSyncText.NoAnswer, 2, "DE1");
         using var rig = new Rig(WithNotes(r => r with { IssueRepo = "SharpAstro/pilot", IssueNumber = 1171, SyncedVersion = 1, SyncError = failure }));
 
-        var text = rig.Arranged().Select(a => a.Node).OfType<Layout.Node.Leaf>().Select(l => l.Content).OfType<Layout.Content.Text>().First(t => t.Value == failure);
-        text.Color.ShouldBe(Palette.Current.Failed);
+        SentenceRuns.Of(rig.Arranged().Select(a => a.Node)).Single(r => r.Text == failure).Color.ShouldBe(Palette.Current.Failed);
     }
 
     [Fact]
@@ -210,10 +210,10 @@ public sealed class DesignTypingViewTestsNotes
         chrome.Designs.OnEdit = (_, _, _, _) => { };
         chrome.Designs.OnPublishTyped = (_, _, _) => { };
         chrome.Designs.Open(screen.Open!.Detail.Row.Id);
+        var rail = TerminalRail.Tree(PilotPage.Designs, GlyphMode.Emoji, null, null, PageData.Now, _ => { }, null, columns);
+        TerminalFrame.Build(rail, chrome.Designs.Tree(screen), null, columns, rows, CellMeasureContext.PixelAuthored);
         chrome.Designs.BeginEdit(0, "notes").ShouldBeTrue();
         chrome.Designs.Editor.Text = LongNotes;
-
-        var rail = TerminalRail.Tree(PilotPage.Designs, GlyphMode.Emoji, null, null, PageData.Now, _ => { }, null, columns);
         var arranged = TerminalFrame.Build(rail, chrome.Designs.Tree(screen), null, columns, rows, CellMeasureContext.PixelAuthored);
         var editor = arranged.Single(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.TextEditor });
         var why = arranged.Single(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.TextInput });
