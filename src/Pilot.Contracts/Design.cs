@@ -9,7 +9,7 @@ public sealed record DesignRow
     /// <summary>The design's id, <c>DSN-&lt;n&gt;</c>.</summary>
     public required string Id { get; init; }
 
-    /// <summary>Its title; the brief's first line (<see cref="DesignTitle.Of"/>: whole, or cut at a word, or at the limit when it has no space, with an ellipsis) when none was given.</summary>
+    /// <summary>Its title (<see cref="DesignTitle"/>): at most 40 characters, given by the designer in DESIGN.md's heading or by <c>design title</c>; null until one is given.</summary>
     public string? Title { get; init; }
 
     /// <summary>The repo the design is for, as the owner named it; null when none was.</summary>
