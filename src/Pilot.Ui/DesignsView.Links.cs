@@ -1,4 +1,5 @@
 using DIR.Lib;
+using Pilot.Cells;
 using Pilot.Contracts;
 
 namespace Pilot.Ui;
