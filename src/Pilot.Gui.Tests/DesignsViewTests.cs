@@ -242,8 +242,7 @@ public sealed class DesignsViewTests
         // The title is made from the brief by the store's own rule, as DesignStore.New makes it: the issue's first line ran past 80
         // characters and the store cut it mid-word ("a line sayin") before the page ever drew it.
         var firstLine = "A card for one job: its id j6917 and the command on the first line, a line saying what it is doing and the whole of its output";
-        var brief = firstLine + "
-The card sits on the job's page.";
+        var brief = firstLine + "\nThe card sits on the job's page.";
         var title = DesignTitle.Of(brief);
         title.ShouldBe(firstLine, "a first line this long is kept whole, so the page's one-line cut and its hover have all of it");
         var full = Sample();
