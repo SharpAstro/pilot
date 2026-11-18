@@ -63,7 +63,15 @@ public sealed class DesignSync(DesignStore store, RepoCatalog repos, IGitHub git
     {
         foreach (var design in store.List().Where(d => d.MadeOn is null && Unsent(d)))
         {
-            await SyncAsync(design.Id, cancellationToken).ConfigureAwait(false);
+            // One design's failure (a store file that cannot be written, say) must not skip the designs after it.
+            try
+            {
+                await SyncAsync(design.Id, cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                await Error.WriteLineAsync($"design: {design.Id} could not be sent: {ex.Message}").ConfigureAwait(false);
+            }
         }
         if (Lock is { } locks)
         {
@@ -72,7 +80,14 @@ public sealed class DesignSync(DesignStore store, RepoCatalog repos, IGitHub git
         if (time.GetUtcNow() - _mirrored >= MirrorEvery)
         {
             _mirrored = time.GetUtcNow();
-            await MirrorAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                await MirrorAsync(cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                await Error.WriteLineAsync($"design: the designs on GitHub could not be read: {ex.Message}").ConfigureAwait(false);
+            }
         }
     }
 
@@ -186,6 +201,11 @@ public sealed class DesignSync(DesignStore store, RepoCatalog repos, IGitHub git
         {
             using var deadline = Deadlined(cancellationToken);
             var token = deadline.Token;
+            if (design.IssueNumber is { } held && (await github.IssueLabelsOrThrowAsync(info.Path, held, token).ConfigureAwait(false)).Contains(PilotMarks.Hold, StringComparer.OrdinalIgnoreCase))
+            {
+                // 'pilot: hold' keeps its meaning: no node acts on the issue. Not an error; the timer sends the version once the hold is off.
+                return false;
+            }
             var files = store.ReadVersion(design.Id, version);
             var row = design;
             var why = row.History.FirstOrDefault(v => v.Number == version)?.Why ?? (version == row.Current ? row.Why : null) ?? $"v{version.ToString(CultureInfo.InvariantCulture)}";
@@ -247,14 +267,14 @@ public sealed class DesignSync(DesignStore store, RepoCatalog repos, IGitHub git
                 try
                 {
                     using var deadline = Deadlined(cancellationToken);
-            var token = deadline.Token;
+                    var token = deadline.Token;
                     var issues = await github.LabelledIssuesAsync(info.Path, DesignSyncText.Label, token).ConfigureAwait(false);
                     foreach (var issue in issues)
                     {
                         await MirrorOneAsync(info, issue, token).ConfigureAwait(false);
                     }
                 }
-                catch (Exception ex) when (ex is FlightException or DesignException or IOException or OperationCanceledException && !cancellationToken.IsCancellationRequested)
+                catch (Exception ex) when (ex is FlightException or DesignException or IOException or UnauthorizedAccessException or OperationCanceledException && !cancellationToken.IsCancellationRequested)
                 {
                     await Error.WriteLineAsync($"design: the designs of {info.GitHub} could not be read: {(ex is OperationCanceledException ? "it took longer than " + Deadline : ex.Message)}").ConfigureAwait(false);
                 }
@@ -312,7 +332,15 @@ public sealed class DesignSyncSweep(DesignSync sync) : Microsoft.Extensions.Host
         {
             do
             {
-                await sync.SweepAsync(stoppingToken).ConfigureAwait(false);
+                try
+                {
+                    await sync.SweepAsync(stoppingToken).ConfigureAwait(false);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    // An unexpected failure ends this round, not the node (the host stops on an exception out of a hosted service).
+                    await sync.Error.WriteLineAsync($"design: the sync round failed: {ex.Message}").ConfigureAwait(false);
+                }
             }
             while (await timer.WaitForNextTickAsync(stoppingToken).ConfigureAwait(false));
         }

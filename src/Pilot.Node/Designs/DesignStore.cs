@@ -492,9 +492,9 @@ public sealed class DesignStore(string dataFolder, TimeProvider? time = null)
         {
             throw new DesignException("an objective is one paragraph: one or two lines, with no blank line in it");
         }
-        if (text.Split('\n').Any(l => l.StartsWith("```", StringComparison.Ordinal) || part != "notes" && l.StartsWith('#')))
+        if (text.Split('\n').Any(l => l.StartsWith("```", StringComparison.Ordinal) || part != "notes" && l.StartsWith('#') || l.StartsWith("# ", StringComparison.Ordinal) || l.StartsWith("## ", StringComparison.Ordinal)))
         {
-            throw new DesignException("typed prose cannot hold a code fence, or a line starting with # in a heading or objective: a frame's source is changed through the designer");
+            throw new DesignException("typed prose cannot hold a code fence, or a line starting with # (a heading line would split the cell): a frame's source is changed through the designer");
         }
         lock (_lock)
         {

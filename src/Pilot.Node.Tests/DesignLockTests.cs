@@ -255,6 +255,108 @@ public sealed class DesignLockTests : IDisposable
     }
 
     [Fact]
+    public async Task AHalfFinishedLabellingLeavesTheNodeLabelAloneAndTheNextSweepFinishesIt()
+    {
+        var de1 = NodeOf("DE1");
+        var (design, issue) = await SyncedAsync(de1);
+        de1.Store.Edit(design.Id, "objective", "", "Lets the owner pick the threshold.");
+        _github.IssueLabelFailsOnCall = 2;
+
+        var row = await LockedAsync(de1, design.Id);
+
+        // The node label went on first, 'editing' did not: never 'editing' alone, which reads as a person's lock.
+        LabelsOf(issue).ShouldBe(["pilot node: DE1", "pilot: design"]);
+        row.LockError.ShouldNotBeNull();
+        await de1.Lock.SweepAsync(Ct);
+
+        LabelsOf(issue).ShouldBe(["pilot node: DE1", "pilot: design", Editing]);
+        var after = de1.Store.Find(design.Id)!;
+        after.LockHeld.ShouldBe(true);
+        after.LockedBy.ShouldBeNull();
+        de1.Store.Edit(design.Id, "objective", "", "Writable again.");
+    }
+
+    [Fact]
+    public async Task AHalfFinishedReleaseLeavesTheNodeLabelAloneAndTheNextSweepTakesItOff()
+    {
+        var de1 = NodeOf("DE1");
+        var (design, issue) = await SyncedAsync(de1);
+        await LockedAsync(de1, design.Id);
+        de1.Lock.Release(design.Id, kick: false);
+        _github.IssueLabelFailsOnCall = 2;
+
+        await de1.Lock.SettleAsync(design.Id, Ct);
+
+        LabelsOf(issue).ShouldBe(["pilot node: DE1", "pilot: design"]);
+        await de1.Lock.SweepAsync(Ct);
+
+        LabelsOf(issue).ShouldBe(["pilot: design"]);
+        var after = de1.Store.Find(design.Id)!;
+        after.LockHeld.ShouldBe(false);
+        after.LockedBy.ShouldBeNull();
+        de1.Store.Edit(design.Id, "objective", "", "Writable again.");
+    }
+
+    [Fact]
+    public async Task AnEditingLabelAloneThatThisNodeWantsIsItsOwnLeftoverNotAPersonsLock()
+    {
+        var de1 = NodeOf("DE1");
+        var (design, issue) = await SyncedAsync(de1);
+        _github.IssueLabels[issue].TryAdd(Editing, 0);
+        de1.Store.Edit(design.Id, "objective", "", "Lets the owner pick the threshold.");
+
+        var row = await LockedAsync(de1, design.Id);
+
+        row.LockedBy.ShouldBeNull();
+        row.LockHeld.ShouldBe(true);
+        LabelsOf(issue).ShouldBe(["pilot node: DE1", "pilot: design", Editing]);
+    }
+
+    [Fact]
+    public async Task APublishUnderAPilotHoldLeavesTheIssueAloneUntilTheHoldIsOff()
+    {
+        var de1 = NodeOf("DE1");
+        var (design, issue) = await SyncedAsync(de1);
+        _github.IssueLabels[issue].TryAdd("pilot: hold", 0);
+        var commits = _github.BranchCommits.Count;
+        var comments = _github.IssueComments.Count;
+        var body = (await _github.IssueNowAsync(_repo, issue, Ct))!.Body;
+
+        Published(de1.Store, design.Id, 2, "owner: wording");
+        await de1.Sync.SyncAsync(design.Id, Ct);
+
+        _github.BranchCommits.Count.ShouldBe(commits);
+        _github.IssueComments.Count.ShouldBe(comments);
+        (await _github.IssueNowAsync(_repo, issue, Ct))!.Body.ShouldBe(body);
+        var held = de1.Store.Find(design.Id)!;
+        held.SyncedVersion.ShouldBe(1);
+        held.SyncError.ShouldBeNull();
+
+        _github.IssueLabels[issue].TryRemove("pilot: hold", out _);
+        await de1.Sync.SweepAsync(Ct);
+
+        de1.Store.Find(design.Id)!.SyncedVersion.ShouldBe(2);
+        _github.IssueComments.Count.ShouldBe(comments + 1);
+    }
+
+    [Fact]
+    public async Task ASweepGoesOnWithTheNextDesignWhenOnesRecordCannotBeWritten()
+    {
+        var de1 = NodeOf("DE1");
+        var first = de1.Store.New("pilot", "First", "one");
+        var second = de1.Store.New("pilot", "Second", "two");
+        Published(de1.Store, first.Id, 1, "first screen");
+        Published(de1.Store, second.Id, 1, "first screen");
+        // A directory where the record's temporary file goes: writing design.json fails for the first design only.
+        Directory.CreateDirectory(Path.Combine(de1.Store.FolderOf(first.Id), "design.json.tmp"));
+
+        await de1.Sync.SweepAsync(Ct);
+
+        de1.Store.Find(second.Id)!.SyncedVersion.ShouldBe(1);
+        _github.BranchCommits.Count.ShouldBe(1);
+    }
+
+    [Fact]
     public async Task AnIssueBodyEditOfTheProseWhileUnlockedBecomesATypedChangeWithItsWhy()
     {
         var de1 = NodeOf("DE1");

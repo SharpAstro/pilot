@@ -27,6 +27,9 @@ internal sealed partial class DesignsView<TSurface>
     /// <summary>Whether the design cannot be typed into here: read from another node's issue, or locked on another node (PIL1171).</summary>
     internal static bool ReadOnly(DesignRow row) => row.MadeOn is not null || row.LockedBy is { Length: > 0 } && row.LockHeld != true;
 
+    /// <summary>Whether the page on show is the design's current version: only that one is typed into, since a typed edit lands in the current draft by cell number.</summary>
+    internal static bool OnCurrent(DesignPage page) => page.Version == page.Detail.Row.Current;
+
     /// <summary>The label of the button that types a waiting GitHub edit into the draft.</summary>
     internal const string ApplyLabel = "Apply";
 
@@ -92,7 +95,7 @@ internal sealed partial class DesignsView<TSurface>
     /// <summary>Opens the part <paramref name="part"/> of cell <paramref name="cell"/> (-1: the design) in place. False with no document on show.</summary>
     public bool BeginEdit(int cell, string part)
     {
-        if (_buildScreen?.Open?.Notebook is not { } document || cell >= document.Cells.Count || OnEdit is null || ReadOnly(_buildScreen.Open.Detail.Row))
+        if (_buildScreen?.Open?.Notebook is not { } document || cell >= document.Cells.Count || OnEdit is null || ReadOnly(_buildScreen.Open.Detail.Row) || !OnCurrent(_buildScreen.Open))
         {
             return false;
         }
@@ -186,7 +189,7 @@ internal sealed partial class DesignsView<TSurface>
                 WrappedProse.OneLine(label, 11f, Dim, selectable: false).RowH(18f).Whole(label),
                 Layout.Builder.TextEditor(Editor, 13f, colors: Palette.Input, focusOnOpen: true).WStar().Border(Palette.Current.RailAccent, 2f, 0f)).WithGap(2f);
         }
-        if (OnEdit is null || _buildScreen?.Open?.Detail.Row is { } row && ReadOnly(row))
+        if (OnEdit is null || _buildScreen?.Open is { } shownPage && (ReadOnly(shownPage.Detail.Row) || !OnCurrent(shownPage)))
         {
             // A design read from another node's issue is read only (PIL1171): its prose is not opened for typing.
             return shown;

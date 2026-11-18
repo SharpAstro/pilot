@@ -131,6 +131,22 @@ public sealed class DesignTypingViewTests
     }
 
     [Fact]
+    public void AnOlderVersionIsReadNotTypedInto()
+    {
+        // Typing lands in the current draft by cell number, so a page on v1 of a design whose current is v2 offers no edit and says where to type.
+        var sample = PageData.DesignsFor("sample", Now);
+        var older = sample with { Open = sample.Open! with { Version = 1 } };
+        using var rig = new Rig(older);
+        rig.View.BeginEdit(1, "objective").ShouldBeFalse();
+        rig.View.Editing.ShouldBeNull();
+        var all = rig.Arranged();
+        all.Any(a => a.Node.Hit is HitResult.ButtonHit { Action: { } act } && act.StartsWith("designs:edit:", StringComparison.Ordinal)).ShouldBeFalse("no part is clickable");
+        var texts = SentenceRuns.Texts(all.Select(a => a.Node));
+        texts.ShouldNotContain("Add notes");
+        texts.ShouldContain(t => t.StartsWith("This is v1. Open the current version, v2", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void DiscardAsksTheNodeAndClosesTheEditor()
     {
         using var rig = new Rig();

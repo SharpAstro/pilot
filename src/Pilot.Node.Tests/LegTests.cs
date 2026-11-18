@@ -1063,8 +1063,28 @@ internal sealed class FakeGitHub : IGitHub
     /// <summary>When set, adding or removing an issue label fails with it, as GitHub refusing it.</summary>
     public string? IssueLabelFails { get; set; }
 
+    private int _labelCalls;
+
+    /// <summary>When set to n, the n-th add or remove of an issue label from now fails once with GitHub refusing it (a call that drops between two label steps).</summary>
+    public int? IssueLabelFailsOnCall { get; set; }
+
+    private Task? OneOffLabelFailure()
+    {
+        if (IssueLabelFailsOnCall is { } n && Interlocked.Increment(ref _labelCalls) == n)
+        {
+            IssueLabelFailsOnCall = null;
+            _labelCalls = 0;
+            return Task.FromException(new FlightException("the connection dropped"));
+        }
+        return null;
+    }
+
     public Task AddIssueLabelAsync(string repoPath, int number, string label, CancellationToken cancellationToken)
     {
+        if (OneOffLabelFailure() is { } dropped)
+        {
+            return dropped;
+        }
         if (IssueLabelFails is { } why)
         {
             return Task.FromException(new FlightException(why));
@@ -1132,6 +1152,10 @@ internal sealed class FakeGitHub : IGitHub
 
     public Task RemoveIssueLabelAsync(string repoPath, int number, string label, CancellationToken cancellationToken)
     {
+        if (OneOffLabelFailure() is { } dropped)
+        {
+            return dropped;
+        }
         if (IssueLabelFails is { } why)
         {
             return Task.FromException(new FlightException(why));

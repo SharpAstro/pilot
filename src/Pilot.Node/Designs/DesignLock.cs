@@ -101,8 +101,16 @@ public sealed class DesignLock(DesignStore store, RepoCatalog repos, IGitHub git
     {
         foreach (var design in store.List().Where(d => d.IssueNumber is not null))
         {
-            await SettleAsync(design.Id, cancellationToken).ConfigureAwait(false);
-            await ReadBackAsync(design.Id, cancellationToken).ConfigureAwait(false);
+            try
+            {
+                await SettleAsync(design.Id, cancellationToken).ConfigureAwait(false);
+                await ReadBackAsync(design.Id, cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                // One design's failure (design.json that cannot be written) must not skip the designs after it.
+                await Error.WriteLineAsync($"design: {design.Id} could not be settled: {ex.Message}").ConfigureAwait(false);
+            }
         }
     }
 
@@ -185,7 +193,7 @@ public sealed class DesignLock(DesignStore store, RepoCatalog repos, IGitHub git
                 return;
             }
         }
-        if (editing && other is null && !holders.Any())
+        if (editing && other is null && !holders.Any() && !wanted && design.LockHeld != true)
         {
             // The label by hand with no node label: a person's lock, shown as a lock by whoever it is, and no node's to take off.
             store.Update(design.Id, r => r with { LockedBy = "GitHub", LockWanted = false, LockHeld = false, LockError = null });
@@ -197,8 +205,9 @@ public sealed class DesignLock(DesignStore store, RepoCatalog repos, IGitHub git
         {
             await github.EnsureLabelAsync(info.Path, PilotMarks.Editing, token).ConfigureAwait(false);
             await github.EnsureLabelAsync(info.Path, mine, token).ConfigureAwait(false);
-            await github.AddIssueLabelAsync(info.Path, issue, PilotMarks.Editing, token).ConfigureAwait(false);
+            // The node label first: a call that fails between the two leaves the node label alone, which is harmless; 'editing' alone would read as a person's lock.
             await github.AddIssueLabelAsync(info.Path, issue, mine, token).ConfigureAwait(false);
+            await github.AddIssueLabelAsync(info.Path, issue, PilotMarks.Editing, token).ConfigureAwait(false);
             // Two nodes may have taken it in the same moment: the node whose code sorts first keeps it, the other takes its label off again.
             var after = await github.IssueLabelsOrThrowAsync(info.Path, issue, token).ConfigureAwait(false);
             var rival = after.Select(PilotMarks.NodeOf).Where(n => n is { Length: > 0 } && !string.Equals(n, node, StringComparison.OrdinalIgnoreCase)).Select(n => n!).OrderBy(n => n, StringComparer.OrdinalIgnoreCase).FirstOrDefault();
@@ -216,16 +225,16 @@ public sealed class DesignLock(DesignStore store, RepoCatalog repos, IGitHub git
             store.Update(design.Id, r => r with { LockedBy = null, LockHeld = true, LockError = null });
             return;
         }
-        if (ours || design.LockHeld == true)
+        if (ours || design.LockHeld == true || holders.Contains(node, StringComparer.OrdinalIgnoreCase))
         {
-            // Not wanted any more (or a lock this node left behind before a restart): off, the node label first so another node never sees 'editing' with a stale owner.
-            if (holders.Contains(node, StringComparer.OrdinalIgnoreCase))
-            {
-                await github.RemoveIssueLabelAsync(info.Path, issue, mine, token).ConfigureAwait(false);
-            }
+            // Not wanted any more (or a lock this node left behind before a restart): 'editing' off first, so a call that fails between the two leaves the node label alone (harmless), never 'editing' alone.
             if (editing)
             {
                 await github.RemoveIssueLabelAsync(info.Path, issue, PilotMarks.Editing, token).ConfigureAwait(false);
+            }
+            if (holders.Contains(node, StringComparer.OrdinalIgnoreCase))
+            {
+                await github.RemoveIssueLabelAsync(info.Path, issue, mine, token).ConfigureAwait(false);
             }
         }
         if (design.LockHeld == true || design.LockedBy is not null || design.LockError is not null)

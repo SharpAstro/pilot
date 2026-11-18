@@ -1072,6 +1072,11 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
             items.Add(sync);
         }
         items.AddRange(LockLines(row));
+        if (OnEdit is not null && !ReadOnly(row) && !OnCurrent(page) && row.Current is { } now)
+        {
+            // Typing lands in the current draft by cell number, so an older version is read, not typed into.
+            items.Add(WrappedProse.Of($"This is v{page.Version?.ToString(CultureInfo.InvariantCulture)}. Open the current version, v{now.ToString(CultureInfo.InvariantCulture)}, to type a change.", 12f, Dim));
+        }
         items.AddRange(GitHubEditsAbove(row, ""));
         if (notebook?.Objective is { Length: > 0 } objective || _edit == (-1, "objective"))
         {
@@ -1208,7 +1213,7 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
             items.Add(WrappedProse.OneLine("Notes", 11f, Dim, selectable: false).RowH(18f));
             items.Add(Typable(index, "notes", $"Notes of {cell.Heading}", Markdown(cell.Notes)));
         }
-        else if (OnEdit is not null)
+        else if (OnEdit is not null && OnCurrent(page))
         {
             items.Add(Typable(index, "notes", "", WrappedProse.OneLine("Add notes", 11f, Dim, selectable: false).RowH(18f)));
         }
