@@ -353,8 +353,8 @@ public sealed class DesignsCaptureTests
 
     /// <summary>The same document in pilot-tui at 100 x 30 and 160 x 44: the document scrolls in cells, each frame is the screen's own cells under its caption, and the sweep's checks pass.</summary>
     [Theory]
-    [InlineData("sample", 100, 30)]
-    [InlineData("sample", 160, 44)]
+    [InlineData("many", 100, 30)]
+    [InlineData("many", 160, 44)]
     [InlineData("long", 100, 30)]
     [InlineData("long", 160, 44)]
     public async Task TheDesignDocumentIsCapturedInPilotTuiAndPassesTheCellChecks(string state, int columns, int rows)
