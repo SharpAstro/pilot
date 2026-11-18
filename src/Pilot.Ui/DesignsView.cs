@@ -290,9 +290,10 @@ internal sealed class DesignsView<TSurface> : PilotWidgetBase<TSurface>
             return null;
         }
         var surface = document.Targets.Length > 0
-            ? DesignTargets.Resolve(document.Targets[0].Name, document.Targets[0].Width, document.Targets[0].Height, document.Targets[0].Scale)
+            ? DesignTargets.Resolve(document.Targets[0].Name, (int)MathF.Round(document.Targets[0].Width), (int)MathF.Round(document.Targets[0].Height), document.Targets[0].Scale)
             : null;
-        surface ??= document.Width > 0 && document.Height > 0 ? new DesignSurface($"{document.Width}x{document.Height}", document.Width, document.Height, 1) : null;
+        var (w, h) = ((int)MathF.Round(document.Width), (int)MathF.Round(document.Height));
+        surface ??= w > 0 && h > 0 ? new DesignSurface($"{w}x{h}", w, h, 1) : null;
         if (surface is null)
         {
             return null;
