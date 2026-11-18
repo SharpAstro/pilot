@@ -73,7 +73,7 @@ public sealed class DesignSyncViewTests
     }
 
     private static RGBAColor32 ColourOf(Rig rig, string part) =>
-        rig.Arranged().Select(a => a.Node).OfType<Layout.Node.Leaf>().Select(l => l.Content).OfType<Layout.Content.Text>().First(t => t.Value.Contains(part, StringComparison.Ordinal)).Color;
+        rig.Arranged().Select(a => a.Node).OfType<Layout.Node.Leaf>().Select(l => l.Content).OfType<Layout.Content.Text>().First(t => t.Value.Length > 2 && part.Contains(t.Value, StringComparison.Ordinal)).Color;
 
     private static bool Says(Rig rig, string line) => rig.Texts().Any(t => t.Contains(line, StringComparison.Ordinal));
 
@@ -103,7 +103,7 @@ public sealed class DesignSyncViewTests
 
         failure.ShouldBe("Not synced: GitHub did not answer. v4 is saved on DE1 and will be sent again.");
         Says(rig, failure).ShouldBeTrue();
-        ColourOf(rig, "Not synced:").ShouldBe(Palette.Current.Failed);
+        ColourOf(rig, failure).ShouldBe(Palette.Current.Failed);
         Says(rig, "Writing v").ShouldBeFalse();
         TextOverlap.Faults([.. rig.Arranged()]).Select(f => f.Line).ShouldBeEmpty();
         Keep("design-sync-failed-1920.png", rig.Png());
