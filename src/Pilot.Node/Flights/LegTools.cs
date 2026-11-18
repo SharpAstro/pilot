@@ -495,6 +495,26 @@ public interface IGitHub
     /// <summary>The bytes of <c>ideas/&lt;id&gt;.&lt;ext&gt;</c> on the repo's <see cref="IdeaImages.Branch"/> branch; null when it is not there.</summary>
     /// <exception cref="FlightException">gh could not read it.</exception>
     Task<byte[]?> IdeaImageAsync(string repoPath, string id, string ext, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Writes <paramref name="files"/> (path in the repo, bytes) to <paramref name="branch"/> as one commit with <paramref name="message"/> through the git data API
+    /// (PIL1171): the commit's tree holds exactly these files, so a file the branch had and the set lacks is gone from it. The branch is made on first use as an orphan,
+    /// and each later commit has the branch's tip as its parent. Returns the commit's sha. Writing a set the branch holds already still makes a commit.
+    /// </summary>
+    /// <exception cref="FlightException">GitHub refused it.</exception>
+    Task<string> CommitFilesAsync(string repoPath, string branch, string message, IReadOnlyDictionary<string, byte[]> files, CancellationToken cancellationToken);
+
+    /// <summary>Every file of <paramref name="branch"/> (path, bytes), read at its tip; null when the repo has no such branch.</summary>
+    /// <exception cref="FlightException">gh could not read it.</exception>
+    Task<IReadOnlyDictionary<string, byte[]>?> BranchFilesAsync(string repoPath, string branch, CancellationToken cancellationToken);
+
+    /// <summary>The repo's open issues that carry <paramref name="label"/>, newest first, with their bodies (PIL1171).</summary>
+    /// <exception cref="FlightException">gh could not list them.</exception>
+    Task<MilestoneIssue[]> LabelledIssuesAsync(string repoPath, string label, CancellationToken cancellationToken);
+
+    /// <summary>Opens an issue carrying <paramref name="label"/> (made in the repo when it has none like it); returns it as GitHub has it.</summary>
+    /// <exception cref="FlightException">gh could not create it.</exception>
+    Task<MilestoneIssue> CreateLabelledIssueAsync(string repoPath, string title, string body, string label, CancellationToken cancellationToken);
 }
 
 /// <summary>What the node sets on a flight PR on GitHub: the <c>pilot/review</c> status and the <c>pilot:</c> labels.</summary>

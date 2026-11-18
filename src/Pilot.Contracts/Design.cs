@@ -87,6 +87,27 @@ public sealed record DesignRow
     /// <summary>How many findings the last <c>design-check</c> had; null before any.</summary>
     public int? CheckFindings { get; init; }
 
+    /// <summary>The GitHub repo (<c>owner/name</c>) of the issue the design is kept in (PIL1171); null until the design is linked to one or its first version is written.</summary>
+    public string? IssueRepo { get; init; }
+
+    /// <summary>The number of the issue the design is kept in; null until the design is linked to one or its first version is written.</summary>
+    public int? IssueNumber { get; init; }
+
+    /// <summary>The newest version written to the issue (<see cref="DesignSyncText"/>); null while none was.</summary>
+    public int? SyncedVersion { get; init; }
+
+    /// <summary>The line the page shows in the error colour while the last try to write a version failed (<see cref="DesignSyncText.Failure"/>); null once the version is written.</summary>
+    public string? SyncError { get; init; }
+
+    /// <summary>When the last try failed.</summary>
+    public DateTimeOffset? SyncErrorAt { get; init; }
+
+    /// <summary>
+    /// The node a design was made on, set only on a design this node read from its GitHub issue (PIL1171): such a design is read-only here, with no draft, no typing and no designer.
+    /// Null for a design made on this node, and in a record an older release wrote.
+    /// </summary>
+    public string? MadeOn { get; init; }
+
     /// <summary>Every build of a version of this design (<c>design-build</c>, PIL1153), oldest first. Empty while there is none, and in a record an older release wrote.</summary>
     public DesignBuildRow[] Builds { get; init => field = value ?? []; } = [];
 }
@@ -241,6 +262,46 @@ public sealed record DesignVersionRow
     public string? Why { get; init; }
 
     public string? PrototypeSha256 { get; init; }
+
+    /// <summary>When the version was written to the design's issue (PIL1171): its comment <c>v&lt;k&gt;: &lt;why&gt;</c> is on the issue from then; null while it is not.</summary>
+    public DateTimeOffset? SyncedAt { get; init; }
+}
+
+/// <summary>The words of a design's sync to its GitHub issue (PIL1171), one source for the node's record and the page.</summary>
+public static class DesignSyncText
+{
+    /// <summary>The label of a design's issue, which another node lists the designs by.</summary>
+    public const string Label = "pilot: design";
+
+    /// <summary>The marker lines the document sits between in the issue's body; the rest of the body is left as it was.</summary>
+    public const string Begin = "<!-- pilot:design -->";
+
+    public const string End = "<!-- /pilot:design -->";
+
+    /// <summary>The reason a failed write gives when GitHub did not take it or did not answer in time.</summary>
+    public const string NoAnswer = "GitHub did not answer";
+
+    /// <summary>The branch a design's files are written to: <c>design/&lt;issue number&gt;</c>.</summary>
+    public static string Branch(int issue) => "design/" + N(issue);
+
+    /// <summary>While version <paramref name="version"/> is being written.</summary>
+    public static string Writing(int version, string repo, int issue) => $"Writing v{N(version)} to {repo}#{N(issue)}...";
+
+    /// <summary>Once version <paramref name="version"/> is on the issue.</summary>
+    public static string Synced(int version, string repo, int issue) => $"v{N(version)} is on {repo}#{N(issue)}";
+
+    /// <summary>The failure line, in the error colour: why, which version is kept and where, and that it is sent again.</summary>
+    public static string Failure(string reason, int version, string node) => $"Not synced: {reason}. v{N(version)} is saved on {node} and will be sent again.";
+
+    /// <summary>The line for a design that names no repo, so a version has nowhere to be written: it is kept here only, and says how to link one.</summary>
+    public static string NoRepo(string design, int version, string node) =>
+        $"Not synced: {design} names no repo, so v{N(version)} is kept on {node} only. Link an issue with: pilot design issue {design} <repo>#<n>";
+
+    /// <summary>What the version list says of a version: its comment on the issue, or that it is not there yet.</summary>
+    public static string Comment(int version, string? why, bool written) =>
+        written ? $"Comment on the issue: v{N(version)}: {why}" : "Not on the issue yet";
+
+    private static string N(int number) => number.ToString(System.Globalization.CultureInfo.InvariantCulture);
 }
 
 /// <summary>A design read whole by <c>design show</c>: the record, the brief as written, its versions and where its folders are.</summary>

@@ -7,11 +7,11 @@ namespace Pilot.Node.Designs;
 /// <c>design-show</c> and <c>designs</c>. They go through <see cref="DesignStore"/>, the node its one writer; only <c>design-publish</c> writes under a
 /// design's <c>versions/</c>, and only to a version folder that is not there yet.
 /// </summary>
-public sealed class DesignCommands(NodeState state, DesignStore store, Designers? designers = null, DesignChat? chat = null)
+public sealed class DesignCommands(NodeState state, DesignStore store, Designers? designers = null, DesignChat? chat = null, DesignSync? sync = null)
 {
     /// <summary>Whether <paramref name="verb"/> is one of these.</summary>
     public static bool Handles(string verb) => verb is Verbs.DesignNew or Verbs.DesignBrief or Verbs.DesignSay or Verbs.DesignChat or Verbs.DesignDraft or Verbs.DesignShow or Verbs.Designs
-        or Verbs.DesignTerminals or Verbs.DesignCheck or Verbs.DesignRender or Verbs.DesignPublish or Verbs.DesignEdit or Verbs.DesignDiscard;
+        or Verbs.DesignTerminals or Verbs.DesignCheck or Verbs.DesignRender or Verbs.DesignPublish or Verbs.DesignEdit or Verbs.DesignDiscard or Verbs.DesignIssue;
 
     public CommandResult Run(CommandRequest command)
     {
@@ -68,6 +68,8 @@ public sealed class DesignCommands(NodeState state, DesignStore store, Designers
                     // args: the why, then optionally "owner" for a version the owner typed.
                     var published = store.Publish(IdOf(command), args.Length > 0 ? args[0] : "", owner: args.Length > 1 && string.Equals(args[1], "owner", StringComparison.Ordinal));
                     state.RefreshIdeaDesigns();
+                    // The version is on the node whatever GitHub does: it is written to the design's issue in the background, and a failure is on the record.
+                    sync?.Kick(published.Id);
                     return state.Complete(command, null, made: $"{published.Id} v{published.Current}");
                 case Verbs.DesignEdit:
                     // args: part, cell (empty for the design), text.
@@ -95,6 +97,28 @@ public sealed class DesignCommands(NodeState state, DesignStore store, Designers
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             return state.Complete(command, $"{command.Verb} failed: {ex.Message}");
+        }
+    }
+
+    /// <summary><c>design-issue</c> (PIL1171): links the design to an issue; the one verb here that asks GitHub, so it is async.</summary>
+    public async Task<CommandResult> IssueAsync(CommandRequest command, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var linker = sync ?? throw new DesignException("this node does not write designs to GitHub");
+            var args = command.Args ?? [];
+            var reference = args.Length > 0 ? args[0].Trim() : "";
+            var hash = reference.LastIndexOf('#');
+            if (hash <= 0 || !int.TryParse(reference.AsSpan(hash + 1), System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var number) || number < 1)
+            {
+                throw new DesignException($"design-issue takes <repo>#<n>, for example SharpAstro/pilot#1171, not '{reference}'");
+            }
+            var told = await linker.LinkAsync(DesignStore.Normalise(IdOf(command)), reference[..hash], number, cancellationToken);
+            return state.Complete(command, null, made: told);
+        }
+        catch (DesignException ex)
+        {
+            return state.Complete(command, ex.Message);
         }
     }
 

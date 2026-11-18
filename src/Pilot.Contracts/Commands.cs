@@ -1002,6 +1002,12 @@ public static class Verbs
     public const string DesignDiscard = "design-discard";
 
     /// <summary>
+    /// <c>design-issue design/DSN-&lt;n&gt; &lt;repo&gt; &lt;issue&gt;</c> (PIL1171): links the design to an existing issue of <c>repo</c> (a repo name the node lists, or <c>owner/name</c>), which gets the
+    /// <c>pilot: design</c> label; its published versions are then written there. A design with no link gets an issue of its own in its repo at its first publish.
+    /// </summary>
+    public const string DesignIssue = "design-issue";
+
+    /// <summary>
     /// <c>design-build design/DSN-&lt;n&gt; [version] [repo] [milestone]</c> (PIL1153): files one issue holding the design version's brief, notes, renders and prototype hash
     /// and makes one flight on it that remembers the design; a design that came from an idea plans that idea instead (milestone needed). Args are each empty for
     /// "not given"; the version is the current one then. Refused while a flight built from that version is in the air.

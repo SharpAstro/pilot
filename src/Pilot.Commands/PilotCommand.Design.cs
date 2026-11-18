@@ -151,6 +151,11 @@ public static partial class PilotCommand
             var designDiscard = Action(new Command("discard", "Remove the design's draft: what was typed or designed there and not published is gone") { Arguments = { discardId } },
                 (p, client, ct) => Send(client, Verbs.DesignDiscard, Verbs.DesignTarget(p.GetValue(discardId)!), [], who, ct));
 
+            var issueId = Arg("design", "The design's id, DSN-<n>");
+            var issueRef = Arg("issue", "The issue to keep the design in, <repo>#<n>: a repo name the node lists, or owner/name");
+            var designIssue = Action(new Command("issue", "Link the design to an existing GitHub issue (it gets the 'pilot: design' label): each published version is written there, its DESIGN.md, prototype and renders on the branch design/<n> and the document in the issue's body. A design with no link gets an issue of its own in its repo at its first publish") { Arguments = { issueId, issueRef } },
+                (p, client, ct) => Send(client, Verbs.DesignIssue, Verbs.DesignTarget(p.GetValue(issueId)!), [p.GetValue(issueRef)!], who, ct));
+
             var buildId = Arg("design", "The design's id, DSN-<n>");
             var buildVersion = new Option<int?>("--version") { Description = "The version to build; the current one when left out" };
             var buildRepo = new Option<string?>("--repo") { Description = "The repo to file the issue and fly the flight in; the design's own when left out" };
@@ -173,7 +178,7 @@ public static partial class PilotCommand
                     return 1;
                 });
 
-            var design = new Command("design", "Designs: a prototype of DIR.Lib screens, briefed by the owner and kept in versions on the node. new, brief, say, chat, draft, check, render, edit, discard, publish, build, show, terminals") { Subcommands = { designNew, designTerminals, designBrief, designSay, designChat, designDraft, designEdit, designDiscard, designCheck, designRender, designPublish, designBuild, designShow } };
+            var design = new Command("design", "Designs: a prototype of DIR.Lib screens, briefed by the owner and kept in versions on the node. new, brief, say, chat, draft, check, render, edit, discard, publish, issue, build, show, terminals") { Subcommands = { designNew, designTerminals, designBrief, designSay, designChat, designDraft, designEdit, designDiscard, designCheck, designRender, designPublish, designIssue, designBuild, designShow } };
 
             var designs = Action(new Command("designs", "Every design, newest first"),
                 async (p, client, ct) =>

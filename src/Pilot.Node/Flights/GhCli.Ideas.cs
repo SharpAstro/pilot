@@ -238,20 +238,7 @@ public sealed partial class GhCli
         if (!await FoundAsync($"git/ref/heads/{IdeaImages.Branch}", repoPath, cancellationToken))
         {
             // The branch is made on the first image: an orphan commit holding it, through the git data API.
-            var blob = await ApiShaAsync("git/blobs", repoPath, w => { w.WriteString("content", content); w.WriteString("encoding", "base64"); }, cancellationToken);
-            var tree = await ApiShaAsync("git/trees", repoPath, w =>
-            {
-                w.WriteStartArray("tree");
-                w.WriteStartObject();
-                w.WriteString("path", path);
-                w.WriteString("mode", "100644");
-                w.WriteString("type", "blob");
-                w.WriteString("sha", blob);
-                w.WriteEndObject();
-                w.WriteEndArray();
-            }, cancellationToken);
-            var commit = await ApiShaAsync("git/commits", repoPath, w => { w.WriteString("message", message); w.WriteString("tree", tree); w.WriteStartArray("parents"); w.WriteEndArray(); }, cancellationToken);
-            await ApiShaAsync("git/refs", repoPath, w => { w.WriteString("ref", $"refs/heads/{IdeaImages.Branch}"); w.WriteString("sha", commit); }, cancellationToken);
+            await CommitFilesAsync(repoPath, IdeaImages.Branch, message, new Dictionary<string, byte[]> { [path] = bytes }, cancellationToken);
             return url;
         }
         // The id is one upload's, so an image already at its path is this one, put there by an attempt that failed after it or a
@@ -298,9 +285,9 @@ public sealed partial class GhCli
         var (exit, output, error) = await RunBytesAsync(["api", "-X", "POST", $"repos/{{owner}}/{{repo}}/{endpoint}", "--input", "-"], repoPath, Json(body), cancellationToken);
         if (exit != 0)
         {
-            throw new FlightException($"gh could not make {endpoint} for the {IdeaImages.Branch} branch: {(error.Trim().Length > 0 ? error : Encoding.UTF8.GetString(output)).Trim()}");
+            throw new FlightException($"gh could not make {endpoint}: {(error.Trim().Length > 0 ? error : Encoding.UTF8.GetString(output)).Trim()}");
         }
-        return ParseGitSha(endpoint, Encoding.UTF8.GetString(output)) ?? throw new FlightException($"GitHub made {endpoint} for the {IdeaImages.Branch} branch but did not say its sha");
+        return ParseGitSha(endpoint, Encoding.UTF8.GetString(output)) ?? throw new FlightException($"GitHub made {endpoint} but did not say its sha");
     }
 
     /// <summary>

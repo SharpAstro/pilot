@@ -67,8 +67,23 @@ public sealed class DesignStore(string dataFolder, TimeProvider? time = null)
         {
             return "DSN-" + n.ToString(CultureInfo.InvariantCulture);
         }
+        // A design read from its GitHub issue (PIL1171) is GH-<owner>-<repo>-<n>, so it can never be a DSN id a design made here gets.
+        if (text.Length > 3 && text.StartsWith("GH-", StringComparison.OrdinalIgnoreCase) && text.All(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '.' or '_'))
+        {
+            return "GH-" + text[3..];
+        }
         throw new DesignException($"{id} is not a design id (DSN-<n>)");
     }
+
+    /// <summary>The id a design read from issue <paramref name="number"/> of <paramref name="repo"/> (<c>owner/name</c>) has here: <c>GH-&lt;owner&gt;-&lt;name&gt;-&lt;n&gt;</c>.</summary>
+    public static string MirrorId(string repo, int number) =>
+        "GH-" + new string([.. repo.Select(c => char.IsAsciiLetterOrDigit(c) || c is '.' or '_' ? c : '-')]) + "-" + number.ToString(CultureInfo.InvariantCulture);
+
+    /// <summary>Refuses a change to a design this node only reads from its GitHub issue (PIL1171).</summary>
+    private static DesignRow Writable(DesignRow row) =>
+        row.MadeOn is { Length: > 0 } node
+            ? throw new DesignException($"{row.Id} is read from {row.IssueRepo}#{row.IssueNumber}, made on {node}: it is changed there, not here")
+            : row;
 
     /// <summary>The title a brief gets when none is given: <see cref="DesignTitle.Of"/>, its first line whole, or cut at a word, or at the limit when it has no space, with an ellipsis.</summary>
     public static string TitleOf(string brief) => DesignTitle.Of(brief);
@@ -84,7 +99,7 @@ public sealed class DesignStore(string dataFolder, TimeProvider? time = null)
         var normalised = NormaliseTerminals(sizes);
         lock (_lock)
         {
-            var row = Find(id) ?? throw new DesignException($"There is no design {id}");
+            var row = Writable(Find(id) ?? throw new DesignException($"There is no design {id}"));
             var updated = row with { Terminals = normalised };
             WriteRecord(updated);
             return updated;
@@ -132,7 +147,7 @@ public sealed class DesignStore(string dataFolder, TimeProvider? time = null)
         }
         lock (_lock)
         {
-            var row = Find(id) ?? throw new DesignException($"There is no design {id}");
+            var row = Writable(Find(id) ?? throw new DesignException($"There is no design {id}"));
             File.AppendAllText(Path.Combine(FolderOf(row.Id), BriefFile), "\n" + Piece(text, _time.GetUtcNow()));
             return row;
         }
@@ -179,7 +194,7 @@ public sealed class DesignStore(string dataFolder, TimeProvider? time = null)
 
     /// <summary>The design started from the idea <paramref name="fromIdea"/> (qualified, <c>pilot I381</c>; any case), the oldest when there are several; null when there is none.</summary>
     public DesignRow? FindByIdea(string fromIdea) =>
-        List().Where(d => string.Equals(d.FromIdea, fromIdea, StringComparison.OrdinalIgnoreCase)).OrderBy(d => int.Parse(d.Id.AsSpan(4), NumberStyles.None, CultureInfo.InvariantCulture)).FirstOrDefault();
+        List().Where(d => d.MadeOn is null && string.Equals(d.FromIdea, fromIdea, StringComparison.OrdinalIgnoreCase)).OrderBy(d => int.Parse(d.Id.AsSpan(4), NumberStyles.None, CultureInfo.InvariantCulture)).FirstOrDefault();
 
     /// <summary>What the owner has said in the chat of <paramref name="id"/>, oldest first; lines that cannot be read are left out.</summary>
     public DesignChatLine[] Says(string id)
@@ -220,7 +235,7 @@ public sealed class DesignStore(string dataFolder, TimeProvider? time = null)
     {
         lock (_lock)
         {
-            var row = Find(id) ?? throw new DesignException($"There is no design {id}");
+            var row = Writable(Find(id) ?? throw new DesignException($"There is no design {id}"));
             var folder = FolderOf(row.Id);
             var draft = Path.Combine(folder, DraftFolderName);
             if (Directory.Exists(draft) && Directory.EnumerateFileSystemEntries(draft).Any())
@@ -332,10 +347,13 @@ public sealed class DesignStore(string dataFolder, TimeProvider? time = null)
             {
                 return [];
             }
-            return [.. Directory.EnumerateDirectories(Root, "DSN-*")
+            // The designs made here newest first (by id, which only grows), then the ones read from an issue, newest first.
+            return [.. Directory.EnumerateDirectories(Root, "DSN-*").Concat(Directory.EnumerateDirectories(Root, "GH-*"))
                 .Select(d => Find(Path.GetFileName(d)))
                 .OfType<DesignRow>()
-                .OrderByDescending(r => int.Parse(r.Id.AsSpan(4), NumberStyles.None, CultureInfo.InvariantCulture))];
+                .OrderBy(r => r.MadeOn is null ? 0 : 1)
+                .ThenByDescending(r => r.MadeOn is null && r.Id.StartsWith("DSN-", StringComparison.Ordinal) ? int.Parse(r.Id.AsSpan(4), NumberStyles.None, CultureInfo.InvariantCulture) : 0)
+                .ThenByDescending(r => r.At)];
         }
     }
 
@@ -409,7 +427,7 @@ public sealed class DesignStore(string dataFolder, TimeProvider? time = null)
     /// <summary>The prototype of <paramref name="id"/>'s draft, <c>draft/prototype.json</c>; throws when the design or the draft is not there.</summary>
     private string DraftPrototypeOf(string id, out DesignRow row)
     {
-        row = Find(id) ?? throw new DesignException($"There is no design {id}");
+        row = Writable(Find(id) ?? throw new DesignException($"There is no design {id}"));
         var file = Path.Combine(FolderOf(row.Id), DraftFolderName, PrototypeFile);
         return File.Exists(file) ? file : throw new DesignException($"{row.Id} has no draft prototype ({file}); pilot design draft {row.Id} makes one");
     }
@@ -478,7 +496,7 @@ public sealed class DesignStore(string dataFolder, TimeProvider? time = null)
         }
         lock (_lock)
         {
-            var row = Find(id) ?? throw new DesignException($"There is no design {id}");
+            var row = Writable(Find(id) ?? throw new DesignException($"There is no design {id}"));
             var draft = Path.Combine(FolderOf(row.Id), DraftFolderName);
             var file = Path.Combine(draft, DocumentFile);
             if (!File.Exists(file))
@@ -539,7 +557,7 @@ public sealed class DesignStore(string dataFolder, TimeProvider? time = null)
     {
         lock (_lock)
         {
-            var row = Find(id) ?? throw new DesignException($"There is no design {id}");
+            var row = Writable(Find(id) ?? throw new DesignException($"There is no design {id}"));
             var draft = Path.Combine(FolderOf(row.Id), DraftFolderName);
             if (!Directory.Exists(draft))
             {
@@ -690,6 +708,83 @@ public sealed class DesignStore(string dataFolder, TimeProvider? time = null)
                 DesignerPhase = DesignerPhases.Published,
                 History = [.. row.History, new DesignVersionRow { Number = number, At = at, Why = why, PrototypeSha256 = hash }],
             };
+            WriteRecord(made);
+            return made;
+        }
+    }
+
+    /// <summary>Every file of version <paramref name="version"/> of <paramref name="id"/> (path with <c>/</c>, bytes), for writing it to GitHub; throws when the version is not there.</summary>
+    public IReadOnlyDictionary<string, byte[]> ReadVersion(string id, int version)
+    {
+        var folder = Path.Combine(FolderOf(id), VersionsFolderName, "v" + version.ToString(CultureInfo.InvariantCulture));
+        if (!Directory.Exists(folder))
+        {
+            throw new DesignException($"{id} has no version {version}");
+        }
+        var files = new Dictionary<string, byte[]>(StringComparer.Ordinal);
+        foreach (var file in Directory.EnumerateFiles(folder, "*", SearchOption.AllDirectories))
+        {
+            files[Path.GetRelativePath(folder, file).Replace('\\', '/')] = File.ReadAllBytes(file);
+        }
+        return files;
+    }
+
+    /// <summary>The files a version holds, as a design read from GitHub keeps them: nothing else is taken from a branch, and no path leaves the version's folder.</summary>
+    public static bool IsVersionFile(string path) =>
+        !path.Contains("..", StringComparison.Ordinal) && !path.StartsWith('/') && !path.Contains('\\')
+        && (path is PrototypeFile or DocumentFile or NotesFile
+            || path.StartsWith(ScreensFolderName + "/", StringComparison.Ordinal) && path.EndsWith(".json", StringComparison.Ordinal) && path.IndexOf('/', ScreensFolderName.Length + 1) < 0
+            || path.StartsWith(DesignChecker.RendersFolderName + "/", StringComparison.Ordinal) && path.EndsWith(".png", StringComparison.Ordinal) && path.IndexOf('/', DesignChecker.RendersFolderName.Length + 1) < 0);
+
+    /// <summary>
+    /// Keeps version <paramref name="version"/> of a design read from its GitHub issue (PIL1171): <paramref name="files"/> (only <see cref="IsVersionFile"/> ones) under
+    /// <c>versions/v&lt;k&gt;/</c>, read-only, and <paramref name="row"/> as its record, with the version added to its history when the record has none of that number.
+    /// A version already kept is not written again. Returns the record.
+    /// </summary>
+    public DesignRow Mirror(DesignRow row, int version, string? why, IReadOnlyDictionary<string, byte[]> files)
+    {
+        lock (_lock)
+        {
+            var id = Normalise(row.Id);
+            var folder = FolderOf(id);
+            var versions = Path.Combine(folder, VersionsFolderName);
+            var target = Path.Combine(versions, "v" + version.ToString(CultureInfo.InvariantCulture));
+            var at = _time.GetUtcNow();
+            if (!Directory.Exists(target))
+            {
+                var building = Path.Combine(versions, ".mirroring-" + Guid.NewGuid().ToString("N")[..8]);
+                Directory.CreateDirectory(building);
+                try
+                {
+                    foreach (var (path, bytes) in files.Where(f => IsVersionFile(f.Key)))
+                    {
+                        var to = Path.Combine(building, path.Replace('/', Path.DirectorySeparatorChar));
+                        Directory.CreateDirectory(Path.GetDirectoryName(to)!);
+                        File.WriteAllBytes(to, bytes);
+                    }
+                    foreach (var file in Directory.EnumerateFiles(building, "*", SearchOption.AllDirectories))
+                    {
+                        File.SetAttributes(file, FileAttributes.ReadOnly);
+                    }
+                    Directory.Move(building, target);
+                }
+                catch
+                {
+                    if (Directory.Exists(building))
+                    {
+                        foreach (var file in Directory.EnumerateFiles(building, "*", SearchOption.AllDirectories))
+                        {
+                            File.SetAttributes(file, FileAttributes.Normal);
+                        }
+                        Directory.Delete(building, recursive: true);
+                    }
+                    throw;
+                }
+            }
+            var prototype = Path.Combine(target, PrototypeFile);
+            var hash = File.Exists(prototype) ? Sha256Of(prototype) : null;
+            var history = row.History.Any(v => v.Number == version) ? row.History : [.. row.History, new DesignVersionRow { Number = version, At = at, Why = why, PrototypeSha256 = hash, SyncedAt = at }];
+            var made = row with { Id = id, Current = version, Versions = version, Why = why, PrototypeSha256 = hash, History = history, SyncedVersion = version, At = row.At ?? at };
             WriteRecord(made);
             return made;
         }

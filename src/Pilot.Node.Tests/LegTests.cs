@@ -540,6 +540,61 @@ internal sealed class FakeGitHub : IGitHub
         return Task.FromResult<byte[]?>(ImageUploads.FirstOrDefault(u => u.Id == id && u.Ext == ext).Bytes);
     }
 
+    /// <summary>The files of each branch, by repo folder path and branch: what CommitFilesAsync last wrote there (PIL1171).</summary>
+    public ConcurrentDictionary<(string Repo, string Branch), Dictionary<string, byte[]>> Branches { get; } = [];
+
+    /// <summary>Every commit CommitFilesAsync made, as (repo folder path, branch, message, paths), in order.</summary>
+    public ConcurrentQueue<(string Repo, string Branch, string Message, string[] Paths)> BranchCommits { get; } = [];
+
+    /// <summary>When set, the design sync's calls (commit, branch read, labelled issues, creating one) fail with it, as a GitHub that did not answer.</summary>
+    public string? DesignCallsFail { get; set; }
+
+    /// <summary>Awaited by each of the design sync's calls as it begins, with the call's token: a GitHub that takes as long as the test says. Null answers at once.</summary>
+    public Func<CancellationToken, Task>? OnDesignCall { get; set; }
+
+    private async Task DesignCall(CancellationToken cancellationToken)
+    {
+        if (OnDesignCall is { } gate)
+        {
+            await gate(cancellationToken);
+        }
+        if (DesignCallsFail is { } why)
+        {
+            throw new FlightException(why);
+        }
+    }
+
+    public async Task<string> CommitFilesAsync(string repoPath, string branch, string message, IReadOnlyDictionary<string, byte[]> files, CancellationToken cancellationToken)
+    {
+        await DesignCall(cancellationToken);
+        Branches[(RepoKey(repoPath), branch)] = new Dictionary<string, byte[]>(files, StringComparer.Ordinal);
+        BranchCommits.Enqueue((RepoKey(repoPath), branch, message, [.. files.Keys.Order(StringComparer.Ordinal)]));
+        return $"commit{BranchCommits.Count}";
+    }
+
+    public async Task<IReadOnlyDictionary<string, byte[]>?> BranchFilesAsync(string repoPath, string branch, CancellationToken cancellationToken)
+    {
+        await DesignCall(cancellationToken);
+        return Branches.TryGetValue((RepoKey(repoPath), branch), out var files) ? new Dictionary<string, byte[]>(files, StringComparer.Ordinal) : null;
+    }
+
+    public async Task<MilestoneIssue[]> LabelledIssuesAsync(string repoPath, string label, CancellationToken cancellationToken)
+    {
+        await DesignCall(cancellationToken);
+        return MilestoneIssuesOf.TryGetValue(RepoKey(repoPath), out var list)
+            ? [.. list.Values.Where(i => i.Open).Select(Labelled).Where(i => i.Labels?.Contains(label, StringComparer.OrdinalIgnoreCase) == true).OrderByDescending(i => i.Number)]
+            : [];
+    }
+
+    public async Task<MilestoneIssue> CreateLabelledIssueAsync(string repoPath, string title, string body, string label, CancellationToken cancellationToken)
+    {
+        await DesignCall(cancellationToken);
+        IssuesCreated.Enqueue((repoPath, title, body));
+        var made = AddIssue(repoPath, title, null, body: body);
+        IssueLabels.GetOrAdd(made.Number, _ => []).TryAdd(label, 0);
+        return Labelled(made);
+    }
+
     public ConcurrentQueue<(int Number, string Head, string Method)> Merged { get; } = [];
 
     /// <summary>Issue numbers GitHub says are closed (#753).</summary>
