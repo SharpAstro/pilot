@@ -86,7 +86,7 @@ public sealed class DesignStore(string dataFolder, TimeProvider? time = null)
     }
 
     /// <summary>Makes a design from <paramref name="brief"/>; its id comes from the counter. <paramref name="terminals"/> are its terminal targets.</summary>
-    public DesignRow New(string? repo, string? title, string brief, string[]? terminals = null)
+    public DesignRow New(string? repo, string? title, string brief, string[]? terminals = null, string? fromIdea = null)
     {
         if (string.IsNullOrWhiteSpace(brief))
         {
@@ -108,6 +108,7 @@ public sealed class DesignStore(string dataFolder, TimeProvider? time = null)
                 At = _time.GetUtcNow(),
                 Versions = 0,
                 Terminals = sizes,
+                FromIdea = fromIdea,
             };
             Directory.CreateDirectory(Path.Combine(Root, id));
             File.WriteAllText(Path.Combine(Root, id, BriefFile), Piece(brief, row.At!.Value));
@@ -145,19 +146,34 @@ public sealed class DesignStore(string dataFolder, TimeProvider? time = null)
             string? full = null;
             if (picture is { Length: > 0 })
             {
-                var pictures = Path.Combine(folder, PicturesFolderName);
-                Directory.CreateDirectory(pictures);
-                var clean = new string([.. Path.GetFileName(pictureName ?? "picture").Select(c => char.IsAsciiLetterOrDigit(c) || c is '.' or '-' or '_' ? c : '_')]).TrimStart('.');
-                var n = Directory.EnumerateFiles(pictures).Count() + 1;
-                relative = $"{PicturesFolderName}/{n.ToString(CultureInfo.InvariantCulture)}-{(clean.Length > 0 ? clean : "picture")}";
-                full = Path.Combine(folder, relative.Replace('/', Path.DirectorySeparatorChar));
-                File.WriteAllBytes(full, picture);
+                (relative, full) = AddPicture(row.Id, pictureName, picture);
             }
             var line = new DesignChatLine { At = _time.GetUtcNow(), Text = text, Picture = relative };
             File.AppendAllText(Path.Combine(folder, ChatFile), JsonSerializer.Serialize(line, PilotJsonContext.Default.DesignChatLine) + "\n");
             return full;
         }
     }
+
+    /// <summary>Keeps <paramref name="picture"/> under <c>pictures/</c> of <paramref name="id"/> as <c>&lt;n&gt;-&lt;name&gt;</c>; returns its path relative to the design's folder (with <c>/</c>) and in full.</summary>
+    public (string Relative, string Full) AddPicture(string id, string? pictureName, byte[] picture)
+    {
+        lock (_lock)
+        {
+            var folder = FolderOf(id);
+            var pictures = Path.Combine(folder, PicturesFolderName);
+            Directory.CreateDirectory(pictures);
+            var clean = new string([.. Path.GetFileName(pictureName ?? "picture").Select(c => char.IsAsciiLetterOrDigit(c) || c is '.' or '-' or '_' ? c : '_')]).TrimStart('.');
+            var n = Directory.EnumerateFiles(pictures).Count() + 1;
+            var relative = $"{PicturesFolderName}/{n.ToString(CultureInfo.InvariantCulture)}-{(clean.Length > 0 ? clean : "picture")}";
+            var full = Path.Combine(folder, relative.Replace('/', Path.DirectorySeparatorChar));
+            File.WriteAllBytes(full, picture);
+            return (relative, full);
+        }
+    }
+
+    /// <summary>The design started from the idea <paramref name="fromIdea"/> (qualified, <c>pilot I381</c>; any case), the oldest when there are several; null when there is none.</summary>
+    public DesignRow? FindByIdea(string fromIdea) =>
+        List().Where(d => string.Equals(d.FromIdea, fromIdea, StringComparison.OrdinalIgnoreCase)).OrderBy(d => int.Parse(d.Id.AsSpan(4), NumberStyles.None, CultureInfo.InvariantCulture)).FirstOrDefault();
 
     /// <summary>What the owner has said in the chat of <paramref name="id"/>, oldest first; lines that cannot be read are left out.</summary>
     public DesignChatLine[] Says(string id)

@@ -1,5 +1,6 @@
 using System.Globalization;
 using Pilot.Contracts;
+using Pilot.Node.Designs;
 
 namespace Pilot.Node.Flights;
 
@@ -108,6 +109,12 @@ public sealed partial class IdeaCommander(NodeState state, Planes planes, RepoCa
     /// <summary>The copies of the images pasted into ideas, which are filed on GitHub with the idea; none for one built without.</summary>
     public Attachments? Attachments { get; set; }
 
+    /// <summary>The designs (PIL1152): an idea's design is started from it and planning waits for it; none for one built without.</summary>
+    public DesignStore? Designs { get; set; }
+
+    /// <summary>Wakes the designer of a design just started from an idea; none for one built without.</summary>
+    public Designers? Designer { get; set; }
+
     /// <summary>
     /// <paramref name="body"/> with each <see cref="IdeaImages.Marker"/> in it replaced, where it stood, by the image on GitHub. Each copy is
     /// uploaded once (<paramref name="filed"/> remembers the URL, for a save that is tried again); an image already a URL is left as it is.
@@ -139,7 +146,7 @@ public sealed partial class IdeaCommander(NodeState state, Planes planes, RepoCa
         return IdeaImages.ReplaceMarkers(body, (alt, id, _) => $"![{alt}]({filed[id]})");
     }
 
-    public static bool Handles(string verb) => verb is Verbs.NoteIdea or Verbs.PlanIdea or Verbs.DropIdea or Verbs.EditIdea or Verbs.TidyIdea or Verbs.SaveTidyIdea or Verbs.MoveIdea or Verbs.FoldIdea or Verbs.ProposeMilestone or Verbs.SetMilestone or Verbs.PinIssue or Verbs.MarkDesign or Verbs.SetPriority
+    public static bool Handles(string verb) => verb is Verbs.NoteIdea or Verbs.PlanIdea or Verbs.DropIdea or Verbs.EditIdea or Verbs.TidyIdea or Verbs.SaveTidyIdea or Verbs.MoveIdea or Verbs.FoldIdea or Verbs.ProposeMilestone or Verbs.SetMilestone or Verbs.PinIssue or Verbs.MarkDesign or Verbs.DesignFromIdea or Verbs.SetPriority
         or Verbs.CheckReady or Verbs.SuggestMilestones or Verbs.AcceptMilestones or Verbs.BreakUpIssue or Verbs.AcceptBreakUp;
 
     public async Task<CommandResult> RunAsync(CommandRequest command, CancellationToken cancellationToken)
@@ -176,6 +183,7 @@ public sealed partial class IdeaCommander(NodeState state, Planes planes, RepoCa
                 Verbs.SetMilestone => await SetMilestoneAsync(command, cancellationToken),
                 Verbs.PinIssue => await PinAsync(command, cancellationToken),
                 Verbs.MarkDesign => await MarkDesignAsync(command, cancellationToken),
+                Verbs.DesignFromIdea => await DesignFromIdeaAsync(command, cancellationToken),
                 Verbs.SetPriority => await SetPriorityAsync(command, cancellationToken),
                 Verbs.AcceptMilestones => await AcceptMilestonesAsync(command, cancellationToken),
                 Verbs.AcceptBreakUp => await AcceptBreakUpAsync(command, cancellationToken),
@@ -576,7 +584,9 @@ public sealed partial class IdeaCommander(NodeState state, Planes planes, RepoCa
     {
         var (name, path, issue) = await IdeaOfAsync(command, cancellationToken);
         var id = IdeaIds.Id(issue.Number);
-        var args = command.Args ?? [];
+        var allArgs = command.Args ?? [];
+        var anyway = allArgs.Contains(Verbs.PlanAnywayArg, StringComparer.Ordinal);
+        var args = anyway ? [.. allArgs.Where(a => a != Verbs.PlanAnywayArg)] : allArgs;
         var asksNew = args.Length > 0 && args[0] == Verbs.NewMilestoneArg;
         var wanted = asksNew ? (args.Length > 1 ? args[1] : "").Trim() : string.Join(' ', args).Trim();
         var newDescription = asksNew ? string.Join(' ', args.Skip(2)).Trim() : "";
@@ -599,6 +609,13 @@ public sealed partial class IdeaCommander(NodeState state, Planes planes, RepoCa
         }
         var makeNew = existing is null;
         var target = existing?.Title ?? wanted;
+
+        // An idea marked as needing a design waits for one (PIL1152): its design must have a published version, or the person plans anyway.
+        var design = Designs?.FindByIdea(NodeState.IdeaKey(name, id));
+        if (issue.NeedsDesign && !anyway && design?.Current is null)
+        {
+            throw new FlightException($"{id} needs a design and has none yet: start its design (pilot idea {id} design start), or plan anyway ({Verbs.PlanAnywayArg})");
+        }
 
         var made = await flights.RunAsync(command with
         {
@@ -630,6 +647,17 @@ public sealed partial class IdeaCommander(NodeState state, Planes planes, RepoCa
         {
             await RefreshAsync(name, path, cancellationToken);
             throw new FlightException($"flight {code} is made on {id}, but it stays in {IdeaIds.Milestone}: {ex.Message}");
+        }
+        if (design is { Current: { } version })
+        {
+            try
+            {
+                await github.CommentIssueAsync(path, issue.Number, $"Design: {design.Id} v{version.ToString(CultureInfo.InvariantCulture)} ({design.Title}). The flight's legs build to it: pilot design show {design.Id}.", cancellationToken);
+            }
+            catch (FlightException ex)
+            {
+                await Error.WriteLineAsync($"idea: {id} is planned as {code}, but its issue got no word of {design.Id}: {ex.Message}");
+            }
         }
         await RefreshAsync(name, path, cancellationToken);
         return state.Complete(command, null, way: made.Way, made: code);
@@ -784,6 +812,54 @@ public sealed partial class IdeaCommander(NodeState state, Planes planes, RepoCa
         }
         await RefreshBoardAsync(name, path, cancellationToken);
         return state.Complete(command, null, made: $"{name} #{number.ToString(CultureInfo.InvariantCulture)}");
+    }
+
+    /// <summary>
+    /// <c>design-from-idea idea/&lt;repo&gt;/I&lt;n&gt;</c>: a design for the idea's repo whose first brief is the idea's title and text; each picture the node holds a copy
+    /// of is kept in the design's pictures folder and named in a second piece of the brief (any other is named by its URL); the design remembers the idea
+    /// (<see cref="DesignRow.FromIdea"/>) and its designer is woken. An idea that has a design already answers that one: never a second.
+    /// </summary>
+    private async Task<CommandResult> DesignFromIdeaAsync(CommandRequest command, CancellationToken cancellationToken)
+    {
+        var store = Designs ?? throw new FlightException("this node keeps no designs");
+        var (name, _, issue) = await IdeaOfAsync(command, cancellationToken);
+        var id = IdeaIds.Id(issue.Number);
+        var key = NodeState.IdeaKey(name, id);
+        if (store.FindByIdea(key) is { } existing)
+        {
+            return state.Complete(command, null, made: existing.Id);
+        }
+        var brief = issue.Body.Length > 0 ? $"{issue.Title}\n\n{issue.Body}" : issue.Title;
+        DesignRow row;
+        try
+        {
+            row = store.New(name, issue.Title, brief, null, key);
+        }
+        catch (DesignException ex)
+        {
+            throw new FlightException(ex.Message);
+        }
+        var pictures = new List<string>();
+        foreach (var image in IdeaImages.In(issue.Body))
+        {
+            var held = image.Copy is { } copy ? Attachments?.FindIdeaImage(copy) : null;
+            if (held is { } file)
+            {
+                var (relative, _) = store.AddPicture(row.Id, image.Alt.Length > 0 ? image.Alt + "." + file.Ext : "picture." + file.Ext, await File.ReadAllBytesAsync(file.Path, cancellationToken));
+                pictures.Add($"- {relative}{(image.Alt.Length > 0 ? $" ({image.Alt})" : "")}");
+            }
+            else
+            {
+                pictures.Add($"- {image.Url}{(image.Alt.Length > 0 ? $" ({image.Alt})" : "")} (the node holds no copy: it is read from this address)");
+            }
+        }
+        if (pictures.Count > 0)
+        {
+            store.Brief(row.Id, $"The pictures of the idea {key}:\n{string.Join('\n', pictures)}");
+        }
+        Designer?.Ask(row.Id, null);
+        state.RefreshIdeaDesigns();
+        return state.Complete(command, null, made: row.Id);
     }
 
     /// <summary>

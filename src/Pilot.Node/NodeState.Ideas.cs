@@ -145,9 +145,45 @@ public sealed partial class NodeState
         }
     }
 
+    /// <summary>The designs the node keeps (PIL1152): an idea row names the design started from it and its current version, read from here, not from GitHub.</summary>
+    public Func<DesignRow[]>? Designs { get; set; }
+
+    /// <summary>The idea key a design remembers: the repo and the idea's id, e.g. <c>pilot I381</c>.</summary>
+    public static string IdeaKey(string repo, string id) => $"{repo} {id}";
+
+    /// <summary>Reads the ideas again with the designs as they are now (a design was started or published): a delta only when a row changes.</summary>
+    public void RefreshIdeaDesigns()
+    {
+        lock (_gate)
+        {
+            PutIdeasLocked([.. _ideas]);
+        }
+    }
+
+    private IdeaRow[] WithDesigns(IEnumerable<IdeaRow> all)
+    {
+        var rows = all.ToArray();
+        DesignRow[] designs;
+        try
+        {
+            designs = Designs?.Invoke() ?? [];
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            designs = [];
+        }
+        var byIdea = new Dictionary<string, DesignRow>(StringComparer.OrdinalIgnoreCase);
+        // List() is newest first, so the oldest design of an idea is written last and is the one an idea shows.
+        foreach (var d in designs.Where(d => d.FromIdea is { Length: > 0 }))
+        {
+            byIdea[d.FromIdea!] = d;
+        }
+        return [.. rows.Select(r => byIdea.TryGetValue(IdeaKey(r.Repo, r.Id), out var d) ? r with { Design = d.Id, DesignVersion = d.Current } : r with { Design = null, DesignVersion = null })];
+    }
+
     private void PutIdeasLocked(IEnumerable<IdeaRow> all)
     {
-        var next = IdeaIds.Order(all).ToArray();
+        var next = IdeaIds.Order(WithDesigns(all)).ToArray();
         // Age moves with the clock alone: a read that changes nothing else is no delta.
         if (next.Length != _ideas.Length || next.Zip(_ideas).Any(pair => pair.First with { Age = "", Images = [] } != pair.Second with { Age = "", Images = [] }))
         {

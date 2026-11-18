@@ -749,6 +749,15 @@ public static class Verbs
     /// </summary>
     public const string MarkDesign = "mark-design";
 
+    /// <summary>
+    /// <c>design-from-idea idea/&lt;repo&gt;/I&lt;n&gt;</c> (PIL1152): makes a design for the idea's repo whose first brief is the idea's title and text, its pictures kept in the
+    /// design's pictures folder, remembers the idea on the design (<see cref="DesignRow.FromIdea"/>), wakes the designer and says the design's id. A second call for the same idea says the existing one.
+    /// </summary>
+    public const string DesignFromIdea = "design-from-idea";
+
+    /// <summary>The last argument of <see cref="PlanIdea"/> that plans an idea marked as needing a design although its design has no published version.</summary>
+    public const string PlanAnywayArg = "--anyway";
+
     /// <summary>The argument of <see cref="PinIssue"/> that unpins.</summary>
     public const string PinOff = "off";
 
