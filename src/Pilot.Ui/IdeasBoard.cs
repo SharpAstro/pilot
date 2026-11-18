@@ -25,6 +25,9 @@ internal sealed record BoardItem(string Repo, int Number, string Title, string B
     /// <summary>What names the item in the view's own state: <c>pilot#381</c>.</summary>
     public string Key => KeyOf(Repo, Number);
 
+    /// <summary>Whether the item is an idea marked as needing a design (<see cref="IdeaRow.NeedsDesign"/>); an issue is never.</summary>
+    public bool NeedsDesign => Idea is { NeedsDesign: true };
+
     /// <summary>The item as the issue it is: the target of <see cref="Verbs.SetMilestone"/>, <see cref="Verbs.CheckReady"/> and the others.</summary>
     public string Target => IssueIds.Target(Repo, Number);
 
@@ -80,6 +83,10 @@ internal sealed record IdeasBoard(IReadOnlyList<BoardSection> Sections)
 
     /// <summary>The section that lists the item named <paramref name="itemKey"/>.</summary>
     public BoardSection? SectionOf(string itemKey) => Sections.FirstOrDefault(s => s.Items.Any(i => i.Key == itemKey));
+
+    /// <summary>The board with only the ideas that need a design: every section keeps its place and holds only those items.</summary>
+    public IdeasBoard OnlyNeedingDesign() =>
+        new([.. Sections.Select(s => s with { Items = [.. s.Items.Where(i => i.NeedsDesign)] })]);
 
     public static IdeasBoard Build(IdeasScreen screen)
     {

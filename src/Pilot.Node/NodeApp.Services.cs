@@ -75,6 +75,7 @@ public static partial class NodeApp
                     var state = new NodeState(journal, time, options.RetainedDeltas)
                     {
                         Error = logWriter,
+                        Designs = () => services.GetRequiredService<Pilot.Node.Designs.DesignStore>().List(),
                         TokensByFlight = () => services.GetRequiredService<SpendLedger>().TokensByFlight(),
                         Archive = new FlightArchive(options.DataFolder) { Error = logWriter },
                     };
@@ -313,6 +314,8 @@ public static partial class NodeApp
             var ideas = ActivatorUtilities.CreateInstance<IdeaCommander>(services);
             ideas.Error = logWriter;
             ideas.Attachments = services.GetRequiredService<Attachments>();
+            ideas.Designs = services.GetRequiredService<Pilot.Node.Designs.DesignStore>();
+            ideas.Designer = services.GetRequiredService<Pilot.Node.Designs.Designers>();
             return ideas;
         });
     }

@@ -56,6 +56,18 @@ public sealed record IdeaRow
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
     public bool Pinned { get; init; }
 
+    /// <summary>Whether the issue carries the needs-design label on GitHub: the idea wants a design before it flies.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public bool NeedsDesign { get; init; }
+
+    /// <summary>The id of the design started from this idea (<c>DSN-&lt;n&gt;</c>), read from the node's design store; null while it has none.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Design { get; init; }
+
+    /// <summary>The design's current version; null while it has none (or the idea no design).</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? DesignVersion { get; init; }
+
     /// <summary>The issue's GitHub Priority field; null when unset or when the repo has no such field.</summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public IssuePriority? Priority { get; init; }

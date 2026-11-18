@@ -319,6 +319,10 @@ internal sealed partial class IdeasView<TSurface>
         {
             parts.Add(Layout.Builder.Text(PriorityChip(level), 12f, PriorityColour(level)).Selectable().WAuto().WithTooltip("The issue's Priority field on GitHub"));
         }
+        if (item.Idea is { } marked && IdeaDesignMark<TSurface>.Chip(marked, "ideas:design", P, Link, Tint.Hover, OnDesign) is { } mark)
+        {
+            parts.Add(mark);
+        }
         if (!compact)
         {
             parts.Add(WrappedProse.Of(item.Title, 15f, P.Bright));
@@ -385,6 +389,10 @@ internal sealed partial class IdeasView<TSurface>
             yield return IsBusy("pin:" + item.Key)
                 ? CardsView<TSurface>.Dead(item.Pinned ? "Unpinning…" : "Pinning…")
                 : CardsView<TSurface>.Pill(item.Pinned ? UnpinLabel : PinLabel, $"ideas:pin:{item.Key}", () => Run(() => PinAsync(item), $"{(item.Pinned ? "unpin" : "pin")} {Label(item)}"), Tint, P.Bright);
+            if (idea is not null)
+            {
+                yield return IdeaDesignMark<TSurface>.Button(idea, $"ideas:design-mark:{item.Key}", IsBusy("design-mark:" + item.Key), () => Run(() => MarkDesignAsync(item, idea), $"{(idea.NeedsDesign ? "unmark" : "mark")} {Label(item)} for design"), Tint, P.Bright);
+            }
             if (IsBusy("priority:" + item.Key))
             {
                 yield return CardsView<TSurface>.Dead("Setting priority…");

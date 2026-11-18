@@ -213,10 +213,14 @@ public sealed class PageTextOverlapTests
         _ => PilotPage.Home,
     };
 
+    // Every third idea needs a design, and every other of those has one (the marks and the design link are in every swept state).
     private static IdeaRow Idea(int number, string title, string body, IdeaState state = IdeaState.Noted) => new()
     {
         Id = IdeaIds.Id(number), Repo = "pilot", Title = title, Body = body, State = state, UpdatedAt = PageData.Now.AddMinutes(number),
         Age = "3h", Origin = "ada", Url = $"https://github.com/SharpAstro/pilot/issues/{number}", Images = IdeaImages.In(body),
+        NeedsDesign = number % 3 == 0,
+        Design = number % 6 == 0 ? $"DSN-{number}" : null,
+        DesignVersion = number % 6 == 0 ? 3 : null,
     };
 
     private static IdeasScreen IdeasSample() => new(

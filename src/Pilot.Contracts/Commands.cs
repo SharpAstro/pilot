@@ -743,6 +743,18 @@ public static class Verbs
     /// </summary>
     public const string PinIssue = "pin-issue";
 
+    /// <summary>
+    /// <c>mark-design idea/&lt;repo&gt;/I&lt;n&gt; [off]</c> (an issue target works too): puts the needs-design label on the open issue (made in the repo when it has
+    /// none), or with <see cref="PinOff"/> takes it off. The mark lives on GitHub, so every node sees it (<see cref="IdeaRow.NeedsDesign"/>).
+    /// </summary>
+    public const string MarkDesign = "mark-design";
+
+    /// <summary>
+    /// <c>design-from-idea idea/&lt;repo&gt;/I&lt;n&gt;</c> (PIL1152): makes a design for the idea's repo whose first brief is the idea's title and text, its pictures kept in the
+    /// design's pictures folder, remembers the idea on the design (<see cref="DesignRow.FromIdea"/>), wakes the designer and says the design's id. A second call for the same idea says the existing one.
+    /// </summary>
+    public const string DesignFromIdea = "design-from-idea";
+
     /// <summary>The argument of <see cref="PinIssue"/> that unpins.</summary>
     public const string PinOff = "off";
 

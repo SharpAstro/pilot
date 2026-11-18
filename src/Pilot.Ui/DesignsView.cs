@@ -101,6 +101,15 @@ internal sealed class DesignsView<TSurface> : PilotWidgetBase<TSurface>
     /// </summary>
     public Action<string, string>? OnStart { get; set; }
 
+    /// <summary>
+    /// Asked to start a design from a waiting idea (PIL1152): the idea and the name of the node the page shows. The host sends <c>design-from-idea</c> for the idea
+    /// and answers with <see cref="StartedFromIdea"/> or <see cref="StartFailedFromIdea"/>.
+    /// </summary>
+    public Action<IdeaRow, string>? OnStartIdea { get; set; }
+
+    /// <summary>Asked for the Ideas page on an idea (its qualified id, e.g. <c>pilot I381</c>): the link on a design made from one.</summary>
+    public Action<string>? OnIdea { get; set; }
+
     /// <summary>The box the brief of a new design is typed in, on the empty page and above the list.</summary>
     public TextInputState BriefInput { get; } = new() { Placeholder = "Describe the design" };
 
@@ -156,9 +165,66 @@ internal sealed class DesignsView<TSurface> : PilotWidgetBase<TSurface>
         Volatile.Write(ref _startAnswer, new StartAnswer(null, why));
     }
 
+    // The answers to Start its design, one per idea, kept as an immutable list swapped whole (so neither side waits).
+    private System.Collections.Immutable.ImmutableList<(string Key, string? Made, string? Why)> _ideaAnswers = [];
+    private readonly Dictionary<string, string> _ideaNotes = new(StringComparer.Ordinal);
+
+    private const string IdeaStartPrefix = "designs:idea-start:";
+
+    internal static string IdeaStartKey(IdeaRow idea) => IdeaStartPrefix + idea.Qualified;
+
+    /// <summary>What the node answered to the last Start its design of <paramref name="idea"/> when it refused, or null.</summary>
+    internal string? IdeaNote(IdeaRow idea) => _ideaNotes.GetValueOrDefault(idea.Qualified);
+
+    /// <summary>The marked ideas with no design yet, the ones the page lists under its input.</summary>
+    internal static IdeaRow[] Waiting(DesignsScreen screen) =>
+        [.. (screen.Ideas ?? []).Where(i => i.NeedsDesign && i.Design is null && i.State == IdeaState.Noted)];
+
+    /// <summary>Presses Start its design of <paramref name="idea"/>: hands it and the node to <see cref="OnStartIdea"/>.</summary>
+    public bool StartIdea(IdeaRow idea)
+    {
+        var key = IdeaStartKey(idea);
+        if (OnStartIdea is null || StartPresses.PendingOf(key) is not null)
+        {
+            return false;
+        }
+        _ideaNotes.Remove(idea.Qualified);
+        StartPresses.NotePending(key, key);
+        OnStartIdea(idea, StartNode);
+        return true;
+    }
+
+    /// <summary>The host made the design of <paramref name="idea"/> (its qualified id): its page opens at the next frame. Safe from any thread.</summary>
+    public void StartedFromIdea(string idea, string id) =>
+        System.Collections.Immutable.ImmutableInterlocked.Update(ref _ideaAnswers, l => l.Add((IdeaStartPrefix + idea, id, null)));
+
+    /// <summary>The node refused the design of <paramref name="idea"/>, in <paramref name="why"/>'s words. Safe from any thread.</summary>
+    public void StartFailedFromIdea(string idea, string why) =>
+        System.Collections.Immutable.ImmutableInterlocked.Update(ref _ideaAnswers, l => l.Add((IdeaStartPrefix + idea, null, why)));
+
+    private void ApplyIdeaAnswers()
+    {
+        var answers = Interlocked.Exchange(ref _ideaAnswers, System.Collections.Immutable.ImmutableList<(string Key, string? Made, string? Why)>.Empty);
+        foreach (var (key, made, why) in answers)
+        {
+            StartPresses.NotePending(key, null);
+            var idea = key[IdeaStartPrefix.Length..];
+            if (made is not null)
+            {
+                _ideaNotes.Remove(idea);
+                Open(made);
+            }
+            else
+            {
+                _ideaNotes[idea] = why ?? "the node refused";
+            }
+        }
+    }
+
     /// <summary>Applies the host's answer to a start on the render thread: the first thing a frame builds.</summary>
     private void ApplyStartAnswer()
     {
+        ApplyIdeaAnswers();
         if (Interlocked.Exchange(ref _startAnswer, null) is not { } answer)
         {
             return;
@@ -654,14 +720,48 @@ internal sealed class DesignsView<TSurface> : PilotWidgetBase<TSurface>
 
     private Layout.Node List(DesignsScreen screen)
     {
-        if (screen.Rows.Length == 0)
+        var waiting = Waiting(screen);
+        if (screen.Rows.Length == 0 && waiting.Length == 0)
         {
             return Layout.Builder.VStack(
                 StartBox(),
                 Layout.Builder.Text("No designs yet. Type what the design is for and press Start a design.", 14f, Dim, TextAlign.Center).Selectable().Stretch()).WithGap(8f).Pad(Gutter, 8f).Stretch();
         }
-        var rows = screen.Rows.Select((row, i) => ListRow(row, i)).ToArray();
-        return Layout.Builder.VStack(StartBox(), Layout.Builder.VStack(rows).WithGap(2f).WithScroll(_listScroll).Stretch()).WithGap(8f).Pad(Gutter, 8f).Stretch();
+        List<Layout.Node> items = [];
+        if (waiting.Length > 0)
+        {
+            items.Add(Heading("Ideas waiting for a design"));
+            items.AddRange(waiting.Select(WaitingRow));
+            if (screen.Rows.Length > 0)
+            {
+                items.Add(Heading("Designs"));
+            }
+        }
+        if (screen.Rows.Length == 0)
+        {
+            items.Add(Layout.Builder.Text("No designs yet. Start one from an idea above, or type what it is for and press Start a design.", 13f, Dim).Selectable().RowH(24f));
+        }
+        items.AddRange(screen.Rows.Select((row, i) => ListRow(row, i)));
+        return Layout.Builder.VStack(StartBox(), Layout.Builder.VStack([.. items]).WithGap(2f).WithScroll(_listScroll).Stretch()).WithGap(8f).Pad(Gutter, 8f).Stretch();
+    }
+
+    // One waiting idea (PIL1152): its id and title cut with an ellipsis and whole on hover, and the Start its design button, on one row of one height. A refusal sits under it.
+    private Layout.Node WaitingRow(IdeaRow idea)
+    {
+        var key = IdeaStartKey(idea);
+        var text = $"{idea.Id}  {idea.Title}";
+        var button = StartPresses.Button(key, key,
+            () => Layout.Builder.Text(IdeaDesignMark<TSurface>.StartLabel, 12f, Bright, TextAlign.Center, TextAlign.Center).Pad(10f, 0f).WAuto().Bg(Button)
+                .BgHover(ButtonHover)
+                .WithTooltip($"Make a design from {idea.Qualified} on {StartNode}: its title and text with its pictures are the first brief")
+                .Follows(new HitResult.ButtonHit(key), _ => StartIdea(idea)),
+            _ => Layout.Builder.Text("Starting…", 12f, Dim, TextAlign.Center, TextAlign.Center).Pad(10f, 0f).WAuto().Bg(Button).WithTooltip($"Making the design of {idea.Qualified} on {StartNode}"));
+        var row = Layout.Builder.HStack(
+            WrappedProse.OneLine(text, 13f, Bright, vAlign: TextAlign.Center).WStar().HFixed(26f).Whole($"{idea.Qualified}  {idea.Title}"),
+            button.WAuto().HFixed(26f)).WithGap(6f).Pad(4f, 0f).RowH(34f);
+        return IdeaNote(idea) is { } note
+            ? Layout.Builder.VStack(row, WrappedProse.OneLine(note, 12f, Bright).RowH(22f).Whole(note)).WithGap(0f)
+            : row;
     }
 
     // One declaration for the pixel page and the terminal's: the brief box and the button on one row (one height, one middle), what it does under them.
@@ -743,6 +843,11 @@ internal sealed class DesignsView<TSurface> : PilotWidgetBase<TSurface>
             right.Insert(0, WrappedProse.Of("This design has no version yet. The brief is below; a version is made once a draft is checked, rendered and published.", 14f, Dim));
         }
         right.AddRange(Versions(page));
+        if (row.FromIdea is { Length: > 0 } fromIdea)
+        {
+            right.Add(Heading("Made from"));
+            right.Add(FromIdeaLink(fromIdea));
+        }
         if (page.Notes is { Length: > 0 } notes)
         {
             right.Add(Heading($"NOTES.md{(page.Version is { } v ? $" of v{v}" : "")}"));
@@ -770,6 +875,15 @@ internal sealed class DesignsView<TSurface> : PilotWidgetBase<TSurface>
         return page.Version is not null && Player is not null && Terminal is null
             ? Layout.Builder.VStack(PlayerBar(page), columns).WithGap(8f).Pad(Gutter, 8f)
             : Layout.Builder.VStack(columns).Pad(Gutter, 8f);
+    }
+
+    // The idea the design was started from, as a link to the Ideas page on it. DesignRow.FromIdea is kept when the idea is dropped or folded, so the id reads whatever the idea became.
+    private Layout.Node FromIdeaLink(string idea)
+    {
+        var text = WrappedProse.OneLine(idea, 13f, Bright, selectable: false, vAlign: TextAlign.Center).Pad(8f, 4f).RowH(26f).Whole($"Open the idea {idea} on the Ideas page");
+        return OnIdea is null
+            ? text
+            : text.Bg(Button).BgHover(ButtonHover).Follows(new HitResult.ButtonHit("designs:from-idea"), _ => OnIdea(idea));
     }
 
     // The chat column: its heading with the Point at this switch, and the chat's own feed, status and box under it.

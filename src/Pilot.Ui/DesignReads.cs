@@ -93,6 +93,28 @@ internal sealed class DesignReads(NodeClient client, string who, Action redraw)
     }
 
     /// <summary>
+    /// Sends <c>design-from-idea</c> for <paramref name="idea"/> to the node the page reads (what <c>pilot idea I&lt;n&gt; design start</c> does) and says the made design's
+    /// id, or the node's refusal. The list is read again at once so the design is on it.
+    /// </summary>
+    public async Task<(string? Id, string? Error)> StartFromIdeaAsync(IdeaRow idea, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var answer = await client.SendAsync(new CommandRequest { Verb = Verbs.DesignFromIdea, Target = IdeaIds.Target(idea.Repo, idea.Number), Who = who }, cancellationToken).ConfigureAwait(false);
+            if (answer.Response is { Ok: true, Made: { Length: > 0 } id })
+            {
+                AskList(force: true);
+                return (id, null);
+            }
+            return (null, answer.Response?.Error ?? answer.Error ?? "the node did not answer");
+        }
+        catch (Exception e) when (e is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+        {
+            return (null, e.Message);
+        }
+    }
+
+    /// <summary>
     /// Reads design <paramref name="id"/>'s chat after entry <paramref name="after"/> (all of it for a negative one): the node's <c>design-chat</c>, which the chat
     /// on the design's page follows at the Chat page's pace, asking only for what came after its last index. A refusal or a silent node throws, which the chat
     /// shows as its problem and tries again at its next look.
@@ -125,6 +147,20 @@ internal sealed class DesignReads(NodeClient client, string who, Action redraw)
         chat.OnSendWithPicture = (text, picture) => designs.OpenId is { } id ? SayAsync(id, text, picture, CancellationToken.None) : Task.FromResult<string?>("no design is open");
         chat.Track = track;
         chat.Changed = redraw;
+        // Start its design on a waiting idea (PIL1152): the same wiring in both hosts; the made design's page opens at the next frame.
+        designs.OnStartIdea = (idea, node) => _ = Task.Run(async () =>
+        {
+            var (id, error) = await StartFromIdeaAsync(idea, CancellationToken.None).ConfigureAwait(false);
+            if (id is not null)
+            {
+                designs.StartedFromIdea(idea.Qualified, id);
+            }
+            else
+            {
+                designs.StartFailedFromIdea(idea.Qualified, error ?? "the node refused");
+            }
+            redraw();
+        });
     }
 
     /// <summary>
