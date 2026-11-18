@@ -191,7 +191,9 @@ public sealed class DesignTypingViewTests
         var all = rig.Arranged();
         Has(all, "designs:edit:-1:objective").ShouldBeTrue("the design's objective");
         Has(all, "designs:edit:1:objective").ShouldBeTrue("cell 2's objective");
-        SentenceRuns.Texts(all.Select(a => a.Node)).Count(t => t == DesignsView<RgbaImage>.AddObjective).ShouldBe(2);
+        // Counted over the page's words end to end: a sentence run may join the label to a neighbour's words, so a run is not one label.
+        var words = string.Concat(all.Select(a => a.Node).OfType<Layout.Node.Leaf>().Select(l => l.Content).OfType<Layout.Content.Text>().Select(t => t.Value));
+        words.Split(DesignsView<RgbaImage>.AddObjective).Length.ShouldBe(3, "one 'Add objective' for the design and one for cell 2");
         rig.View.BeginEdit(1, "objective").ShouldBeTrue();
         rig.View.Editor.Text.ShouldBe("");
     }

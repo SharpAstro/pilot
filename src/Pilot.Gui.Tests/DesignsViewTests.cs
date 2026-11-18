@@ -452,11 +452,11 @@ public sealed class DesignsViewTests
             older.Renders.Select(r => r.Screen).ShouldBe(["home", "settings", "confirm"]);
             older.Renders.Single(r => r.Screen == "home").File.ShouldNotBeNull();
             older.Renders.Single(r => r.Screen == "settings").File.ShouldBeNull();
-            // A version with no DESIGN.md is one cell per screen, whose notes are its NOTES.md.
+            // A version with no DESIGN.md is one cell per screen; its NOTES.md is on the first cell only, as the draft made from it keeps them.
             older.Doc.ShouldBeNull();
             var cells = older.Notebook.ShouldNotBeNull().Cells;
             cells.Select(c => c.Frames.Single().Id).ShouldBe(["home", "settings", "confirm"]);
-            cells.ShouldAllBe(c => c.Notes == "# notes");
+            cells.Select(c => c.Notes).ShouldBe(["# notes", "", ""]);
 
             // With a DESIGN.md the document is the one written.
             File.WriteAllText(Path.Combine(version, DesignDocument.FileName),
@@ -473,7 +473,7 @@ public sealed class DesignsViewTests
     }
 
     [Fact]
-    public void AnOlderVersionWithNoDesignMdShowsOneCellPerScreenWithItsNotes()
+    public void AnOlderVersionWithNoDesignMdShowsOneCellPerScreenWithItsNotesOnTheFirst()
     {
         var full = Sample();
         var page = full.Open! with { Doc = null, Notes = "Older notes for the whole version." };
@@ -486,7 +486,7 @@ public sealed class DesignsViewTests
         {
             texts.ShouldContain(heading);
         }
-        texts.Count(t => t == "Older notes for the whole version.").ShouldBe(page.Document.Screens.Length, "each cell carries the notes");
+        texts.Count(t => t == "Older notes for the whole version.").ShouldBe(1, "the first cell carries the notes, as the draft made from the version does");
         rig.View.Players.Count.ShouldBe(page.Document.Screens.Length);
     }
 
