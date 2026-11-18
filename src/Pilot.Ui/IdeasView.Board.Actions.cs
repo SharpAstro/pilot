@@ -91,6 +91,34 @@ internal sealed partial class IdeasView<TSurface>
         }
     }
 
+    /// <summary>Marks the idea as needing a design (the node puts the label on its issue on GitHub), or unmarks it when it is marked; a press again while it runs sends nothing.</summary>
+    internal async Task MarkDesignAsync(BoardItem item, IdeaRow idea)
+    {
+        var busy = "design-mark:" + item.Key;
+        if (Send is null || !Begin(busy))
+        {
+            return;
+        }
+        Changed?.Invoke();
+        try
+        {
+            var word = idea.NeedsDesign ? "unmarked" : "marked";
+            var reply = await RunAsync("marking:" + item.Key, "ideas:board:" + Verbs.MarkDesign + ":" + item.Target, "marking", Verbs.MarkDesign, TargetOf(idea), idea.NeedsDesign ? [Verbs.PinOff] : []);
+            if (reply is null)
+            {
+                Say($"{Label(item)} not {word} for design: the node did not answer", refusal: true);
+            }
+            else if (reply is { Ok: false })
+            {
+                Say($"{Label(item)} not {word} for design: {reply.Error}", refusal: true);
+            }
+        }
+        finally
+        {
+            End(busy);
+        }
+    }
+
     private readonly HashSet<string> _priorityOpen = [];
 
     private void TogglePriority(string key)

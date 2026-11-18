@@ -25,6 +25,9 @@ internal sealed record DesignPage(DesignDetail Detail, int? Version, PrototypeDo
 /// <summary>The Designs page's data: the designs newest first and, when one is open, its page.</summary>
 internal sealed record DesignsScreen(DesignRow[] Rows, string Source, DateTimeOffset AsOf, DesignPage? Open = null)
 {
+    /// <summary>The snapshot's ideas (PIL1152): the marked ones with no design are listed under the brief input. Null where the host has none.</summary>
+    public IdeaRow[]? Ideas { get; init; }
+
     public static DesignsScreen Empty(string source, DateTimeOffset at) => new([], source, at);
 }
 

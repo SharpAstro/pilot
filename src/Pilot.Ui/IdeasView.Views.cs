@@ -66,6 +66,19 @@ internal sealed partial class IdeasView<TSurface>
         ListColumn.Fixed("Priority", 80f) with { Sortable = true },
     ];
 
+    private string? _showIdea;
+
+    /// <summary>The idea an open design was made from, shown (PIL1152): the page switches to the tree grid with that idea's row picked at the next frame.</summary>
+    internal string? ShowingIdea => _showIdea;
+
+    internal void ShowIdea(string qualified)
+    {
+        _showIdea = qualified;
+        ViewMode = IdeasViewMode.Tree;
+        OnlyNeedsDesign = false;
+        Changed?.Invoke();
+    }
+
     /// <summary>Picks the row whose detail the tree grid shows below it; null picks none.</summary>
     internal void Select(BoardItem? item)
     {
@@ -187,6 +200,10 @@ internal sealed partial class IdeasView<TSurface>
             title.Add(grip);
         }
         title.Add(Layout.Builder.Text(Marked(item), 12f, Link).Selectable().WAuto());
+        if (item.Idea is { } marked && IdeaDesignMark<TSurface>.Chip(marked, "ideas:tree-design", P, Link, Tint.Hover, OnDesign) is { } mark)
+        {
+            title.Add(mark);
+        }
         title.Add(Layout.Builder.Text(item.Title, 14f, P.Bright).Selectable().WStar().Whole(item.Title));
 
         var cells = new List<Layout.Node>

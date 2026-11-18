@@ -48,7 +48,7 @@ public static class TerminalWireframeSweepTests
     private static PageData Data(string state) => Datas.GetOrAdd(state, s => new Lazy<PageData>(() => PageData.For(s))).Value;
 
     /// <summary>The frame Program.cs would paint for the case, arranged, cropped and recorded.</summary>
-    internal static async Task<CellWireframeFrame> RecordCase(string name, string state, int columns, int rows, CellBuffer? into = null)
+    internal static async Task<CellWireframeFrame> RecordCase(string name, string state, int columns, int rows, CellBuffer? into = null, Action<PilotChrome<RgbaImage>>? setup = null, IdeasScreen? ideas = null)
     {
         using var vessel = new RgbaImageRenderer(1, 1);
         var data = Data(state);
@@ -74,6 +74,7 @@ public static class TerminalWireframeSweepTests
             chrome.Settings.LoadRepos ??= _ => Task.FromResult<RepoInfo[]>(data.WizardRepos.Length > 0 ? data.WizardRepos : [new RepoInfo { Name = "pilot", Path = @"C:\work\pilot" }]);
         }
         chrome.Show(page);
+        setup?.Invoke(chrome);
         var cards = name == "open card" ? data.CardsWithDetail : data.Cards;
         chrome.Cards.OnChatPage = page == PilotPage.Chat;
         var cardsBeside = columns >= TerminalFrame.CardsPanelColumns && (cards.HasAny || chrome.Cards.CanTell && !chrome.Cards.OnChatPage);
@@ -115,7 +116,7 @@ public static class TerminalWireframeSweepTests
             case PilotPage.PullRequests: tree = chrome.PullRequests.Tree(data.PullRequests, width); break;
             case PilotPage.Jobs: tree = chrome.Jobs.Tree(data.Jobs); break;
             case PilotPage.Fleet: tree = chrome.Fleet.Tree(data.Fleet); break;
-            case PilotPage.Ideas: tree = chrome.Ideas.Tree(PageTextOverlapTests.IdeasFor(state)); break;
+            case PilotPage.Ideas: tree = chrome.Ideas.Tree(ideas ?? PageTextOverlapTests.IdeasFor(state)); break;
             case PilotPage.Spend: tree = chrome.Spend.Tree(data.Spend); break;
             case PilotPage.Designs: tree = chrome.Designs.Tree(PageTextOverlapTests.DesignsOf(data, name)); break;
             case PilotPage.Settings:

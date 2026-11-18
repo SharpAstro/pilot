@@ -22,7 +22,7 @@ public static partial class PilotCommand
             {
                 continue;
             }
-            if (at + 1 < words.Length && words[at + 1] is "plan" or "drop" or "edit" or "tidy" or "move" or "fold")
+            if (at + 1 < words.Length && words[at + 1] is "plan" or "drop" or "edit" or "tidy" or "move" or "fold" or "design")
             {
                 var action = words[at + 1];
                 var rest = string.Join(' ', words.Skip(at + 2));
@@ -33,6 +33,10 @@ public static partial class PilotCommand
                 if (action == "fold" && (rest.Length == 0 || rest.Contains(' ', StringComparison.Ordinal)))
                 {
                     throw new UsageException($"idea {words[at]} fold takes the one flight to fold it into: pilot idea {words[at]} fold <flight code>");
+                }
+                if (action == "design" && rest.Length > 0 && rest != "start")
+                {
+                    throw new UsageException($"idea {words[at]} design takes no more words but start: pilot idea {words[at]} design marks it as needing a design, design --no takes the mark off, design start makes its design from it");
                 }
                 if (action == "tidy" && rest.Length > 0)
                 {
@@ -144,7 +148,7 @@ public static partial class PilotCommand
         var text = new System.Text.StringBuilder();
         foreach (var idea in shown)
         {
-            text.AppendLine($"{idea.Id}  {idea.Repo}  {idea.State.ToString().ToLowerInvariant()}  {idea.Age}  {idea.Title}");
+            text.AppendLine($"{idea.Id}  {idea.Repo}  {idea.State.ToString().ToLowerInvariant()}  {idea.Age}  {idea.Title}{(idea.NeedsDesign ? "  [needs design]" : "")}");
         }
         return text.ToString();
     }
@@ -288,11 +292,14 @@ public static partial class PilotCommand
             var ideaMilestoneDescription = new Option<string?>("--milestone-description") { Description = "plan: with --new-milestone, the new milestone's one-line description" };
             var ideaSave = new Option<bool>("--save") { Description = "tidy: save the proposal the last tidy showed (through the same up-to-date check as an edit)" };
             var ideaDiscard = new Option<bool>("--discard") { Description = "tidy: forget the proposal the last tidy showed; nothing is written" };
-            var idea = Action(new Command("idea", $"Note an idea in the repo's {IdeaIds.Milestone} milestone (prints I<n>), or edit one (I<n> edit <text>: kept up to date with GitHub), tidy one (I<n> tidy: Claude's proposal as a diff, saved only by tidy --save), plan one (I<n> plan --milestone <name> or --new-milestone <title>: moves it to that milestone and creates its flight; without either it prints the milestone the node proposes and plans nothing), drop one (I<n> drop <why>) or fold one into a flight (I<n> fold <code>: its text goes to the flight's issue as a comment, then it is dropped as folded)")
-                { Arguments = { ideaWords }, Options = { ideaRepo, ideaContext, ideaMilestone, ideaNewMilestone, ideaMilestoneDescription, ideaSave, ideaDiscard } },
+            var ideaAnyway = new Option<bool>("--anyway") { Description = "plan: plan an idea marked as needing a design although its design has no published version" };
+            var ideaNo = new Option<bool>("--no") { Description = "design: take the needs-design mark off instead of putting it on" };
+            var idea = Action(new Command("idea", $"Note an idea in the repo's {IdeaIds.Milestone} milestone (prints I<n>), or edit one (I<n> edit <text>: kept up to date with GitHub), tidy one (I<n> tidy: Claude's proposal as a diff, saved only by tidy --save), plan one (I<n> plan --milestone <name> or --new-milestone <title>: moves it to that milestone and creates its flight; without either it prints the milestone the node proposes and plans nothing), drop one (I<n> drop <why>), fold one into a flight (I<n> fold <code>: its text goes to the flight's issue as a comment, then it is dropped as folded) or mark one as needing a design (I<n> design, I<n> design --no to unmark: the GitHub label 'needs design'); I<n> design start makes the design from the idea (its title, text and pictures as the first brief, the design remembers the idea and the idea shows the design), and plan waits for a marked idea's design to have a published version unless --anyway")
+                { Arguments = { ideaWords }, Options = { ideaRepo, ideaContext, ideaMilestone, ideaNewMilestone, ideaMilestoneDescription, ideaSave, ideaDiscard, ideaNo, ideaAnyway, actingOn } },
                 async (p, client, ct) =>
                 {
                     var call = ReadIdea(p.GetValue(ideaWords) ?? []);
+                    string[] Anyway() => p.GetValue(ideaAnyway) ? [Verbs.AnywayFlag] : [];
                     var named = call.Repo ?? IdeaRepoOf(client, p.GetValue(ideaRepo), cwd, call.Action is null ? Verbs.AnyRepo : IdeaIds.DefaultRepo);
                     switch (call.Action)
                     {
@@ -332,16 +339,20 @@ public static partial class PilotCommand
                                 return saved;
                             }
                             return await Send(client, Verbs.TidyIdea, tidyTarget, [], who, ct);
+                        case "design":
+                            return call.Rest == "start"
+                                ? await Send(client, Verbs.DesignFromIdea, IdeaIds.Target(named, call.Number), [], who, ct)
+                                : await Send(client, Verbs.MarkDesign, IdeaIds.Target(named, call.Number), p.GetValue(ideaNo) ? [Verbs.PinOff] : [], who, ct);
                         case "fold":
                             return await Send(client, Verbs.FoldIdea, IdeaIds.Target(named, call.Number), [call.Rest], who, ct);
                         case "plan":
                             if (p.GetValue(ideaNewMilestone) is { Length: > 0 } newMilestone)
                             {
                                 return await Send(client, Verbs.PlanIdea, IdeaIds.Target(named, call.Number),
-                                    p.GetValue(ideaMilestoneDescription) is { Length: > 0 } description ? [Verbs.NewMilestoneArg, newMilestone, description] : [Verbs.NewMilestoneArg, newMilestone], who, ct);
+                                    [Verbs.NewMilestoneArg, newMilestone, .. p.GetValue(ideaMilestoneDescription) is { Length: > 0 } description ? new[] { description } : [], .. Anyway()], who, ct, p.GetValue(actingOn));
                             }
                             return p.GetValue(ideaMilestone) is { Length: > 0 } milestone
-                                ? await Send(client, Verbs.PlanIdea, IdeaIds.Target(named, call.Number), [milestone], who, ct)
+                                ? await Send(client, Verbs.PlanIdea, IdeaIds.Target(named, call.Number), [milestone, .. Anyway()], who, ct, p.GetValue(actingOn))
                                 : await Send(client, Verbs.ProposeMilestone, IdeaIds.Target(named, call.Number), [], who, ct);
                         default:
                             return await Send(client, Verbs.DropIdea, IdeaIds.Target(named, call.Number), [call.Rest], who, ct);

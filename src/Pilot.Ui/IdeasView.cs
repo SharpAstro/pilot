@@ -51,6 +51,9 @@ internal sealed partial class IdeasView<TSurface>(Renderer<TSurface> renderer) :
     private (string Key, BreakUpProposal Parts)? _breakUp;
     private Choices? _choices;
     private string? _picked;
+    // The idea Plan is asking about (it needs a design and has none yet), and the one whose plan goes anyway.
+    private string? _designAsk;
+    private string? _planAnyway;
     private string? _editFrom;
     private string _said = "";
     private bool _saidRefusal;
@@ -81,11 +84,17 @@ internal sealed partial class IdeasView<TSurface>(Renderer<TSurface> renderer) :
         return missing.Count == 0 ? screen : screen with { Ideas = [.. screen.Ideas, .. missing] };
     }
     
+    /// <summary>Whether only the ideas marked as needing a design are listed (the filter 'Needs a design').</summary>
+    public bool OnlyNeedsDesign { get; set; }
+
     /// <summary>Whether the planned and dropped ideas, folded below by default, are listed.</summary>
     public bool ShowFolded { get; set; }
 
     /// <summary>Opens a flight's page: a planned idea's row leads to the flight it became. Null leaves the flight's code as plain text.</summary>
     public Action<string>? OnFlight { get; set; }
+
+    /// <summary>Opens a design's page (by its id): a marked idea's design link, and Start its design once the node has made it. Null leaves the id as plain text.</summary>
+    public Action<string>? OnDesign { get; set; }
     private readonly Dictionary<(string Key, string Body, bool Night), Layout.Node> _markdown = [];
 
     /// <summary>

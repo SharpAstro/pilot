@@ -39,6 +39,9 @@ public sealed record DesignRow
     /// </summary>
     public string[] Terminals { get; init => field = value ?? []; } = [];
 
+    /// <summary>The idea this design was started from (PIL1152), qualified by its repo, e.g. <c>pilot I381</c>; null for a design not started from one. Kept when the idea is dropped or folded.</summary>
+    public string? FromIdea { get; init; }
+
     /// <summary>The design's designer session (PIL1151), as <see cref="DesignerState"/> and the members after it say; null for a design that never had one, and in a record an older release wrote.</summary>
     public string? DesignerName { get; init; }
 

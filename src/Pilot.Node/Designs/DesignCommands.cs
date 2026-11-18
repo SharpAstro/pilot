@@ -29,6 +29,7 @@ public sealed class DesignCommands(NodeState state, DesignStore store, Designers
                     {
                         designers?.Ask(row.Id, null);
                     }
+                    state.RefreshIdeaDesigns();
                     return state.Complete(command, null, made: row.Id);
                 case Verbs.DesignTerminals:
                     var sized = store.SetTerminals(IdOf(command), args);
@@ -66,6 +67,7 @@ public sealed class DesignCommands(NodeState state, DesignStore store, Designers
                 case Verbs.DesignPublish:
                     // args: the why.
                     var published = store.Publish(IdOf(command), args.Length > 0 ? args[0] : "");
+                    state.RefreshIdeaDesigns();
                     return state.Complete(command, null, made: $"{published.Id} v{published.Current}");
                 case Verbs.DesignShow:
                     return state.Complete(command, null) with { Design = store.Detail(IdOf(command)) };
