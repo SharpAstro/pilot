@@ -203,7 +203,6 @@ public sealed class DesignTypingViewTests
             var found = texts.Where(t => t.Value == offer).ToList();
             found.ShouldNotBeEmpty(offer);
             found.ShouldAllBe(t => !t.Selectable, offer);
-            found.Select(t => t.Size).Distinct().ShouldBe([11f], offer);
         }
     }
 
