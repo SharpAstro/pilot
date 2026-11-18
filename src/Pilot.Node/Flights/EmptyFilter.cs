@@ -49,16 +49,27 @@ internal sealed partial class EmptyFilter
         return _noMatch && !_ran ? $"no test ran: {NoMatchLine}" : null;
     }
 
-    /// <summary>The whole log of a job that ended while the node was down, read as the watch reads a live one.</summary>
+    /// <summary>
+    /// The log of a job that ended while the node was down, read line by line as the watch reads a live one; streamed, so a long
+    /// verbose log is never held whole.
+    /// </summary>
     public static string? ErrorFromLog(JobRow job)
     {
         var empty = new EmptyFilter();
-        if (IsTestCommand(job.Command))
+        if (IsTestCommand(job.Command) && File.Exists(job.LogPath))
         {
-            var follower = new LogFollower(job.LogPath, fromEnd: false);
-            foreach (var line in follower.Read(final: true))
+            try
             {
-                empty.Read(line);
+                using var stream = new FileStream(job.LogPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+                using var reader = new StreamReader(stream);
+                while (reader.ReadLine() is { } line)
+                {
+                    empty.Read(line);
+                }
+            }
+            catch (IOException)
+            {
+                // An unreadable log leaves the output flags unset; the term check below still runs.
             }
         }
         return empty.Error(job);

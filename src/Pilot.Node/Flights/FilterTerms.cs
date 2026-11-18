@@ -454,7 +454,9 @@ public static partial class FilterTerms
         {
             quotes++;
         }
-        if (quotes >= 3)
+        // A run of three or more quotes opens a raw string only outside a verbatim one: @""" is a verbatim string
+        // whose content starts with an escaped quote, and it ends at the first lone quote after the "" pairs.
+        if (quotes >= 3 && !start.Verbatim)
         {
             var close = s.IndexOf(new string('"', quotes), i + quotes, StringComparison.Ordinal);
             return close < 0 ? s.Length : close + quotes;

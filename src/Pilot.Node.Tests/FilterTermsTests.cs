@@ -139,6 +139,52 @@ public sealed class FilterTermsTests : IDisposable
     }
 
     [Fact]
+    public void AVerbatimStringOpeningWithEscapedQuotesIsNotARawString()
+    {
+        var p = Load("""""""
+            namespace N;
+            public class QuoteTests
+            {
+                [Theory]
+                [InlineData("", @"""""")]
+                public void Six(string a, string b) { }
+                private const string X = @"""x""";
+                private const string Y = $@"""{1}""";
+                private const string Z = @$"""z""";
+                [Fact] public void AfterSix() { }
+                [Fact] public void AfterAll() { }
+            }
+            """"""");
+
+        p.FullNames.ShouldBe(["N.QuoteTests.Six", "N.QuoteTests.AfterSix", "N.QuoteTests.AfterAll"]);
+    }
+
+    [Fact]
+    [Trait("Category", InvariantTraitTests.Invariant)]
+    public void TheReaderFindsEveryTestTheCompilerBuiltInPilotNodeTests()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "src", "Pilot.slnx")))
+        {
+            dir = dir.Parent;
+        }
+        dir.ShouldNotBeNull();
+        var p = FilterTerms.Load([Path.Combine(dir.FullName, "src", "Pilot.Node.Tests")], dir.FullName)!;
+        var listed = p.FullNames.ToHashSet(StringComparer.Ordinal);
+
+        var compiled = typeof(FilterTermsTests).Assembly.GetTypes()
+            .Where(t => t is { IsClass: true, IsAbstract: false, ContainsGenericParameters: false } && (t.IsPublic || t.IsNestedPublic))
+            .SelectMany(t => t.GetMethods(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Static)
+                .Where(m => m.GetCustomAttributes(inherit: true).Any(a => a.GetType().Name is var n && (n.EndsWith("FactAttribute", StringComparison.Ordinal) || n.EndsWith("TheoryAttribute", StringComparison.Ordinal))))
+                .Select(m => $"{t.FullName}.{m.Name}"))
+            .Distinct()
+            .ToList();
+
+        compiled.ShouldNotBeEmpty();
+        compiled.Where(n => !listed.Contains(n) && !listed.Contains(n.Replace('+', '.'))).ShouldBeEmpty();
+    }
+
+    [Fact]
     public void BinAndObjAreSkipped()
     {
         Write("T/T.csproj", "<Project />");

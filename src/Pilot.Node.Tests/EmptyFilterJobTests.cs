@@ -57,6 +57,8 @@ public sealed class EmptyFilterJobTests : JobTestsBase
         ended.State.ShouldBe(JobState.Failed);
         ended.ExitCode.ShouldBe(0);
         ended.Error.ShouldNotBeNull().ShouldContain("FullyQualifiedName~Ghost");
+        // The owner's tell says it failed and names the term.
+        _said.ShouldHaveSingleItem().Args[0].ShouldContain("failed: no test matched FullyQualifiedName~Ghost");
     }
 
     [Fact]
