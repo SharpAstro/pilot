@@ -12,14 +12,36 @@ namespace Pilot.Node.Tests;
 /// An idea and its design (PIL1152): the design is started from a marked idea and the two are linked both ways, and planning waits for it. Fakes only: a fake GitHub and
 /// a design store in a temporary folder; no designer session is started.
 /// </summary>
-public sealed class IdeaDesignLinkTests : IssueBoardFixture, IDisposable
+public sealed class IdeaDesignLinkTests : IDisposable
 {
-    private readonly string _data = Path.Combine(Path.GetTempPath(), "p2idl-" + Guid.NewGuid().ToString("N")[..8]);
+    private static CancellationToken Ct => TestContext.Current.CancellationToken;
+
+    private readonly string _root = Path.Combine(Path.GetTempPath(), "p2idl-" + Guid.NewGuid().ToString("N")[..8]);
+    private readonly string _data = Path.Combine(Path.GetTempPath(), "p2idd-" + Guid.NewGuid().ToString("N")[..8]);
+    private readonly SeededRepos _repos;
+    private readonly NodeState State = new(new InMemoryJournal(), TimeProvider.System);
+    private readonly FakeGitHub GitHub = new();
+    private readonly IdeaCommander Commander;
     private readonly DesignStore _store;
     private readonly Attachments _attachments;
 
     public IdeaDesignLinkTests()
     {
+        _repos = new SeededRepos(_root);
+        _repos.Seed("pilot");
+        var planes = _repos.Planes();
+        var flights = new FlightCommander(State, planes, TimeProvider.System, github: GitHub);
+        var catalog = new RepoCatalog(State, new NodeOptions("/tmp/n.sock", "/tmp/data", RepoRootsGiven: [_root]));
+        Commander = new IdeaCommander(State, planes, catalog, GitHub, new FakeIdeaMerger(), new FakeIdeaTidier(), new FakeIdeaRepoChooser(), flights, TimeProvider.System);
+        GitHub.AddMilestone(Repo, IdeaIds.Milestone, openIssues: 3);
+        GitHub.AddMilestone(Repo, "v1");
+        GitHub.AddIssue(Repo, "Ring shadows", IdeaIds.Milestone, body: "on the planet");
+        GitHub.AddIssue(Repo, "Fix the GPU crash", "v1");
+        GitHub.AddIssue(Repo, "Loose end", null);
+        GitHub.AddIssue(Repo, "Ring glow", IdeaIds.Milestone);
+        GitHub.AddIssue(Repo, "Cache sky maps", null);
+        GitHub.AddIssue(Repo, "Ring moons", IdeaIds.Milestone);
+        GitHub.AddIssue(Repo, "Shipped already", IdeaIds.Milestone, open: false);
         _store = new DesignStore(_data);
         _attachments = new Attachments(_data);
         Commander.Designs = _store;
@@ -27,13 +49,18 @@ public sealed class IdeaDesignLinkTests : IssueBoardFixture, IDisposable
         State.Designs = _store.List;
     }
 
-    void IDisposable.Dispose()
+    private string Repo => Path.Combine(_root, "pilot");
+
+    private Task<CommandResult> Run(string verb, string target, params string[] args) =>
+        Commander.RunAsync(new CommandRequest { Verb = verb, Target = target, Args = args, Who = "tests" }, Ct);
+
+    public void Dispose()
     {
         if (Directory.Exists(_data))
         {
             TestDirs.DeleteTree(_data);
         }
-        base.Dispose();
+        _repos.Dispose();
     }
 
     private static string Idea(int number) => IdeaIds.Target("pilot", number);
@@ -222,7 +249,8 @@ public sealed class IdeaDesignLinkTests : IssueBoardFixture, IDisposable
     /// <summary>Publishes a first version the way the designer does: a starter draft, then the store's own publish.</summary>
     private void PublishVersion(string id)
     {
-        _store.Draft(id, replace: false);
+        var draft = _store.Draft(id, replace: false);
+        File.WriteAllText(Path.Combine(draft, DesignStore.NotesFile), "A first look at the rings.");
         _store.Publish(id, "first look");
     }
 }
