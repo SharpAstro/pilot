@@ -755,7 +755,6 @@ public static class Verbs
     /// </summary>
     public const string DesignFromIdea = "design-from-idea";
 
-
     /// <summary>The argument of <see cref="PinIssue"/> that unpins.</summary>
     public const string PinOff = "off";
 
