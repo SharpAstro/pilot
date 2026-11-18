@@ -413,7 +413,6 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
 
     // The window's choice of target per design (PIL1097): kept in gui-settings.json by the host, never sent to the node.
     private readonly Dictionary<string, DesignTargetChoice> _choices = new(StringComparer.Ordinal);
-    private DesignSurface? _shownTarget;
     private string? _customProblem;
 
     /// <summary>The box a custom size is typed in (<c>1024x768@2</c>); Enter reads it.</summary>
@@ -810,7 +809,7 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
         {
             yield break;
         }
-        var total = Math.Max(page.Detail.Row.Versions, page.Detail.Versions.Select(v => v.Number).DefaultIfEmpty(0).Max());
+        var total = Math.Max(page.Detail.Row.Versions ?? 0, page.Detail.Versions.Select(v => (int)v.Number).DefaultIfEmpty(0).Max());
         yield return Layout.Builder.Text($"v{version} of {Math.Max(total, version)} ▾", 12f, Bright, TextAlign.Center)
             .Pad(10f, 4f)
             .WAuto()
