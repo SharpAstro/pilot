@@ -115,9 +115,9 @@ public sealed class DesignTypingViewTestsNotes
         var rendered = before.Arranged().Where(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text t } && t.Value.Contains("threshold", StringComparison.Ordinal)).Select(a => a.Bounds.X).Min();
         editor.Bounds.X.ShouldBeLessThanOrEqualTo(rendered + 1f);
         before.Dispose();
-        // What is in view: the page scrolls, and what is past the bottom is laid out against the viewport's end in this plain arrange.
-        TextOverlap.Faults([.. all.Where(a => a.Bounds.Y + a.Bounds.Height <= height)]).Select(f => f.Line).ShouldBeEmpty();
         Keep($"design-notes-edit-{width}.png", rig.Png());
+        // What is in view: the page scrolls, and what is past the bottom is laid out against the viewport's end in this plain arrange.
+        TextOverlap.Faults([.. all.Where(a => a.Bounds.Y + a.Bounds.Height <= height)]).Select(f => f.Line).ShouldBeEmpty($"editor at y={editor.Bounds.Y} h={editor.Bounds.Height} lines<={rig.View.Editor.MaxLines}");
     }
 
     [Fact]
@@ -217,7 +217,8 @@ public sealed class DesignTypingViewTestsNotes
         // The frame at 160 x 44 shows the top of the page (the editor is below the frame's well, past the viewport), so the same tree is arranged in a window as wide and tall enough for the whole page.
         var arranged = Layout.Engine.Arrange(TerminalFrame.Tree(rail, chrome.Designs.Tree(screen), null), new Rect<int>(0, 0, columns, 400), CellMeasureContext.PixelAuthored);
         var editor =arranged.Single(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.TextEditor });
-        var why = arranged.Single(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.TextInput });
+        // The Why field is the input under the editor (the page's other inputs stand above it or in the rail).
+        var why = arranged.Where(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.TextInput } && a.Bounds.Y > editor.Bounds.Y).OrderBy(a => a.Bounds.Y).First();
         (editor.Bounds.X + editor.Bounds.Width).ShouldBe(why.Bounds.X + why.Bounds.Width);
         editor.Bounds.Width.ShouldBeGreaterThan(60);
         Keep("design-notes-edit-160x44.txt", path => File.WriteAllLines(path, arranged
