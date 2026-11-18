@@ -123,9 +123,7 @@ internal sealed class PageData
         {
             Row = full.Open.Detail.Row with { Title = title, Current = null, Versions = 0 },
             Versions = [],
-            Brief = "## 2026-11-16T09:00:00Z
-
-" + string.Join(' ', Enumerable.Repeat("A long brief sentence about one job's card.", 30)),
+            Brief = "## 2026-11-16T09:00:00Z\n\n" + string.Join(' ', Enumerable.Repeat("A long brief sentence about one job's card.", 30)),
         };
         return full with { Rows = [full.Rows[0] with { Title = title, Current = null, Versions = 0 }, .. full.Rows.Skip(1)], Open = DesignPages.Load(detail) };
     }
