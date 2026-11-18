@@ -129,11 +129,10 @@ public sealed class DesignsCaptureTests
             var png = Path.Combine(folder, "own.png");
             SessionsCapture.Write(new SessionsScreen([], "test", Now), png, width, height, page: PilotPage.Designs, designs: screen, openDesign: "DSN-7");
             File.Exists(png).ShouldBeTrue();
-            if (Environment.GetEnvironmentVariable("PILOT_JOB_ARTIFACTS") is { Length: > 0 } artifacts)
-            {
-                Directory.CreateDirectory(artifacts);
-                File.Copy(png, Path.Combine(artifacts, $"{Environment.GetEnvironmentVariable("PILOT_CAPTURE_TAG") ?? "after"}-design-own-size-{width}.png"), overwrite: true);
-            }
+            // Kept for the PR: in the job's artifacts when a pilot run job gives a place for them, else beside the test build.
+            var artifacts = Environment.GetEnvironmentVariable("PILOT_JOB_ARTIFACTS") is { Length: > 0 } given ? given : Path.Combine(AppContext.BaseDirectory, "design-own-size");
+            Directory.CreateDirectory(artifacts);
+            File.Copy(png, Path.Combine(artifacts, $"{Environment.GetEnvironmentVariable("PILOT_CAPTURE_TAG") ?? "after"}-design-own-size-{width}.png"), overwrite: true);
         }
         finally
         {
