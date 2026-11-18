@@ -176,7 +176,7 @@ internal static class McpDesigns
             file = safe ? DesignPaths.TerminalRender(folder, screen, columns, rows) : "";
             if (!File.Exists(file))
             {
-                var sizes = names.Select(n => n.StartsWith(screen + ".", StringComparison.Ordinal) ? n[(screen.Length + 1)..^4] : null).Where(s => s is not null && DesignTerminals.TryParse(s, out _, out _)).ToArray();
+                var sizes = names.Select(n => n.StartsWith(screen + ".", StringComparison.Ordinal) && n.Length > screen.Length + 5 ? n[(screen.Length + 1)..^4] : null).Where(s => s is not null && DesignTerminals.TryParse(s, out _, out _)).ToArray();
                 throw NotFound(safe && names.Any(n => n.StartsWith(screen + ".", StringComparison.Ordinal) || n == screen + ".png")
                     ? $"{label} of {id} has no render of {screen} at {size}; its terminal sizes are {(sizes.Length == 0 ? "none" : string.Join(", ", sizes))}"
                     : $"{label} of {id} has no screen {screen}; it has renders of {Screens(names)}");
