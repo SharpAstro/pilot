@@ -251,6 +251,7 @@ public sealed class IdeaDesignLinkTests : IDisposable
     {
         var draft = _store.Draft(id, replace: false);
         File.WriteAllText(Path.Combine(draft, DesignStore.NotesFile), "A first look at the rings.");
+        _store.Render(id);
         _store.Publish(id, "first look");
     }
 }
