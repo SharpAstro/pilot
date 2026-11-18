@@ -115,8 +115,7 @@ public sealed class DesignChatTests
         using var rig = new Rig(PageData.DesignChatPage("published v2", working: working));
         await rig.OpenAsync(5);
 
-        string.Join("
-", rig.Texts()).Contains("working…", StringComparison.Ordinal).ShouldBe(working);
+        string.Join(Environment.NewLine, rig.Texts()).Contains("working…", StringComparison.Ordinal).ShouldBe(working);
     }
 
     [Fact]
