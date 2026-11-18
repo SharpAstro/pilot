@@ -157,7 +157,7 @@ internal sealed class PilotChrome<TSurface>
         Ideas = new IdeasView<TSurface>(renderer) { Gallery = sessions.Gallery };
         PullRequests = new PullRequestsView<TSurface>(renderer);
         Spend = new SpendView<TSurface>(renderer);
-        Designs = new DesignsView<TSurface>(renderer) { DrawPicture = (picture, rect) => Gallery.Draw?.Invoke(picture, rect) };
+        Designs = new DesignsView<TSurface>(renderer);
         Cards = new CardsView<TSurface>(renderer) { Gallery = sessions.Gallery };
         Chat = new ChatView<TSurface>(renderer);
         // A card's in-app link (the watchtower card's Fleet link) opens that page, in either host.
@@ -479,7 +479,7 @@ internal sealed class PilotChrome<TSurface>
         PilotPage.Ideas => [Nav, Rail, Ideas, Cards],
         PilotPage.Spend => [Nav, Rail, Spend, Cards],
         // The player is a widget of its own, over the page, so a click in it is the prototype's: the page's own controls lie outside its rectangle.
-        PilotPage.Designs => Designs.CellsShown && Designs.CellGrid is { } grid ? [Nav, Rail, Designs, grid, Cards] : Designs.Player is { } player ? [Nav, Rail, Designs, player, Cards] : [Nav, Rail, Designs, Cards],
+        PilotPage.Designs => [Nav, Rail, Designs, .. Designs.FrameWidgets(), Cards],
         PilotPage.Sessions => [Nav, Rail, Sessions, Cards],
         PilotPage.Flights => [Nav, Rail, Flights, Cards],
         PilotPage.Repos => [Nav, Rail, Repos, Cards],

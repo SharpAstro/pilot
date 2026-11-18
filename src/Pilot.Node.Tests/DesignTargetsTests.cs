@@ -43,7 +43,9 @@ public sealed class DesignTargetsTests : IAsyncLifetime
             json = json[..from] + (targets.Length == 0 ? "" : targets + ",\n  ") + json[to..];
         }
         File.WriteAllText(Draft("prototype.json"), json);
-        File.WriteAllText(Draft("NOTES.md"), "A home and a settings screen.");
+        // The fixture carries its screens (the older shape), so the starter's screens/ folder goes; the document names its two.
+        Directory.Delete(Draft("screens"), recursive: true);
+        File.WriteAllText(Draft("DESIGN.md"), "# Phone\n\n**Objective:** A home and a settings screen.\n\n## Home\n\n**Objective:** Shows home.\n\n```screen id=home\n```\n\n## Settings\n\n**Objective:** Shows settings.\n\n```screen id=settings\n```\n");
     }
 
     [Fact]

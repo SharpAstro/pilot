@@ -9,13 +9,54 @@ internal sealed record DesignRender(string Screen, string Title, string? File, I
 
 /// <summary>
 /// A design's page as the host read it: the design whole, the version shown (the current one unless a version was picked), and that version's files,
-/// read from the paths <c>design show</c> returned: its <c>prototype.json</c> loaded by DIR.Lib's Prototype, its <c>NOTES.md</c> and its renders.
+/// read from the paths <c>design show</c> returned: its <c>DESIGN.md</c>, its <c>prototype.json</c> (with its <c>screens/</c>) loaded by DIR.Lib's Prototype, its <c>NOTES.md</c> and its renders.
 /// </summary>
 /// <param name="Detail">What <c>design show</c> said.</param>
 /// <param name="Version">The version on show; null while the design has none.</param>
 /// <param name="Document">The version's prototype; null while there is no version, or when its file did not load (<see cref="Problem"/> says why).</param>
 internal sealed record DesignPage(DesignDetail Detail, int? Version, PrototypeDocument? Document, string? Notes, IReadOnlyList<DesignRender> Renders, string? Problem = null)
 {
+    /// <summary>The version's DESIGN.md as read (PIL1171): the title, the design's objective and one cell per screen. Null for a version with none, which <see cref="Notebook"/> then makes up.</summary>
+    public DesignDocument? Doc { get; init; }
+
+    /// <summary>
+    /// The document the page shows: <see cref="Doc"/>, else for an older version (one with no DESIGN.md) one cell per screen of its prototype, headed by the screen's title,
+    /// whose notes are the version's NOTES.md on the first cell only, as the draft the store makes from such a version keeps them (DesignStore). Null while there is no version or its prototype did not load and it has no document.
+    /// </summary>
+    public DesignDocument? Notebook => Merged(Baseline, Draft);
+
+    /// <summary>The draft's DESIGN.md (PIL1171), read when the version on show is the current one and the design has a draft: what the owner typed and the designer wrote and has not published. Null with none.</summary>
+    public DesignDocument? Draft { get; init; }
+
+    private DesignDocument? Baseline => Doc ?? (Document is { } prototype
+        ? new DesignDocument(Detail.Row.Title ?? Detail.Row.Id, null,
+            [.. prototype.Screens.Select((s, i) => new DesignCell(string.IsNullOrEmpty(s.Title) ? s.Id : s.Title, null, [new DesignFrame(s.Id)], i == 0 ? (Notes ?? "").Trim() : ""))])
+        : null);
+
+    // The version's document with the draft's prose laid over it, cell by cell where the draft's cell shows the same screens; the frames are always the version's.
+    private static DesignDocument? Merged(DesignDocument? version, DesignDocument? draft)
+    {
+        if (version is null || draft is null)
+        {
+            return version;
+        }
+        var cells = version.Cells.Select((c, i) => i < draft.Cells.Count && SameFrames(c, draft.Cells[i]) ? c with { Heading = draft.Cells[i].Heading, Objective = draft.Cells[i].Objective, Notes = draft.Cells[i].Notes } : c).ToList();
+        return version with { Objective = draft.Objective, Notes = draft.Notes, Cells = cells };
+    }
+
+    private static bool SameFrames(DesignCell a, DesignCell b) => a.Frames.Select(f => f.Id).SequenceEqual(b.Frames.Select(f => f.Id), StringComparer.Ordinal);
+
+    /// <summary>Whether cell <paramref name="index"/> reads differently in the draft than in the version on show: its heading, objective or notes were changed and not published.</summary>
+    public bool CellIsDraft(int index) =>
+        Draft is { } draft && Baseline is { } version && index < version.Cells.Count && index < draft.Cells.Count && SameFrames(version.Cells[index], draft.Cells[index])
+        && (version.Cells[index].Heading != draft.Cells[index].Heading || (version.Cells[index].Objective ?? "") != (draft.Cells[index].Objective ?? "") || version.Cells[index].Notes != draft.Cells[index].Notes);
+
+    /// <summary>Whether the design's own objective or notes read differently in the draft.</summary>
+    public bool DesignIsDraft => Draft is { } draft && Baseline is { } version && ((version.Objective ?? "") != (draft.Objective ?? "") || version.Notes != draft.Notes);
+
+    /// <summary>Whether the draft changes any prose of the version on show.</summary>
+    public bool HasDraftChange => DesignIsDraft || Enumerable.Range(0, Baseline?.Cells.Count ?? 0).Any(CellIsDraft);
+
     /// <summary>The page as a dump writes it, a line a part.</summary>
     public string ToDump() => string.Join('\n',
         [$"{Detail.Row.Id} {Detail.Row.Title}", $"version {(Version is { } v ? "v" + v.ToString(CultureInfo.InvariantCulture) : "none")}",
@@ -55,16 +96,19 @@ internal static class DesignPages
         {
             return new DesignPage(detail, null, null, null, []);
         }
+        // The document of the version (PIL1171) and, beside it, the notes an older version has instead of one.
         var notes = Read(Path.Combine(folder, "NOTES.md"));
-        var json = Read(Path.Combine(folder, "prototype.json"));
+        var doc = Read(Path.Combine(folder, DesignDocument.FileName)) is { } text ? DesignDocument.Parse(text) : null;
+        var prototypeFile = Path.Combine(folder, "prototype.json");
+        var json = File.Exists(prototypeFile) ? DesignFiles.AssembledJson(prototypeFile, out _) : null;
         if (json is null)
         {
-            return new DesignPage(detail, n, null, notes, [], $"v{n} has no readable prototype.json");
+            return new DesignPage(detail, n, null, notes, [], $"v{n} has no readable prototype.json") { Doc = doc };
         }
         var loaded = Prototype.Load(json);
         if (loaded.Document is not { } document)
         {
-            return new DesignPage(detail, n, null, notes, [], string.Join("; ", loaded.Problems.Select(p => $"{p.Path}: {p.Message}")));
+            return new DesignPage(detail, n, null, notes, [], string.Join("; ", loaded.Problems.Select(p => $"{p.Path}: {p.Message}"))) { Doc = doc };
         }
         var renders = document.Screens.Select(s =>
         {
@@ -81,8 +125,12 @@ internal static class DesignPages
                 .ToDictionary(t => t.Name, t => t.File, StringComparer.OrdinalIgnoreCase);
             return new DesignRender(s.Id, string.IsNullOrEmpty(s.Title) ? s.Id : s.Title, File.Exists(file) ? file : null, byTarget.Count > 0 ? byTarget : null);
         }).ToList();
-        return new DesignPage(detail, n, document, notes, renders);
+        return new DesignPage(detail, n, document, notes, renders) { Doc = doc, Draft = DraftOf(detail, n) };
     }
+
+    // The draft's document, for the version that is the current one only: a draft is the next version's, laid over the one before it.
+    private static DesignDocument? DraftOf(DesignDetail detail, int shown) =>
+        shown == detail.Row.Current && detail.DraftFolder is { Length: > 0 } draft && Read(Path.Combine(draft, DesignDocument.FileName)) is { } text ? DesignDocument.Parse(text) : null;
 
     private static string? Read(string file)
     {

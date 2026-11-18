@@ -63,6 +63,12 @@ public sealed record DesignRow
     /// <summary>Pieces of the brief the designer has not been sent yet (it is held, or being started), oldest first; BRIEF.md has them all as well.</summary>
     public string[] DesignerPending { get; init => field = value ?? []; } = [];
 
+    /// <summary>
+    /// What the owner typed into DESIGN.md that the designer has not been told yet (PIL1171), oldest first, each in the words it gets. Unlike <see cref="DesignerPending"/>
+    /// it never wakes the designer: it goes with the next say, resume or start.
+    /// </summary>
+    public string[] DesignerTyped { get; init => field = value ?? []; } = [];
+
     /// <summary>The session ids of every designer this design has had (PIL1151), oldest first: the design chat reads their transcripts, as the watchtower's reads its generations. Empty while there is none, and in a record an older release wrote.</summary>
     public string[] DesignerSessions { get; init => field = value ?? []; } = [];
 
@@ -81,8 +87,74 @@ public sealed record DesignRow
     /// <summary>How many findings the last <c>design-check</c> had; null before any.</summary>
     public int? CheckFindings { get; init; }
 
+    /// <summary>The GitHub repo (<c>owner/name</c>) of the issue the design is kept in (PIL1171); null until the design is linked to one or its first version is written.</summary>
+    public string? IssueRepo { get; init; }
+
+    /// <summary>The number of the issue the design is kept in; null until the design is linked to one or its first version is written.</summary>
+    public int? IssueNumber { get; init; }
+
+    /// <summary>The newest version written to the issue (<see cref="DesignSyncText"/>); null while none was.</summary>
+    public int? SyncedVersion { get; init; }
+
+    /// <summary>The line the page shows in the error colour while the last try to write a version failed (<see cref="DesignSyncText.Failure"/>); null once the version is written.</summary>
+    public string? SyncError { get; init; }
+
+    /// <summary>When the last try failed.</summary>
+    public DateTimeOffset? SyncErrorAt { get; init; }
+
+    /// <summary>Whether the last try found <c>pilot: hold</c> on the issue and wrote nothing (<see cref="DesignSyncText.Held"/>); null and false once a try was not held.</summary>
+    public bool? SyncHeld { get; init; }
+
+    /// <summary>
+    /// The node a design was made on, set only on a design this node read from its GitHub issue (PIL1171): such a design is read-only here, with no draft, no typing and no designer.
+    /// Null for a design made on this node, and in a record an older release wrote.
+    /// </summary>
+    public string? MadeOn { get; init; }
+
+    /// <summary>Whether this node wants the design's issue locked (PIL1171): its designer drafts or the owner typed, and the draft is not published or discarded. The sync service puts the labels on and keeps trying; null and false mean no.</summary>
+    public bool? LockWanted { get; init; }
+
+    /// <summary>Whether this node put <see cref="DesignLockText.EditingLabel"/> and its node label on the issue and has not taken them off.</summary>
+    public bool? LockHeld { get; init; }
+
+    /// <summary>The node whose label lock is on the issue (read at the last sweep); the design is read only here while it is set and is not this node's.</summary>
+    public string? LockedBy { get; init; }
+
+    /// <summary>Why the last try to put on or take off the labels failed, in words; null once it went through. A local edit is never blocked by it, and the sync service tries again.</summary>
+    public string? LockError { get; init; }
+
+    /// <summary>Edits of the issue's prose made on GitHub while the design was locked here (PIL1171): kept beside the design, oldest first, shown to the editor with Apply and Dismiss.</summary>
+    public DesignGitHubEdit[] GitHubEdits { get; init => field = value ?? []; } = [];
+
+    /// <summary>What the last read of the issue found in the design's block that is not applied (a frame's link or a block changed on GitHub, a cell added or removed), as one line each; the page says so.</summary>
+    public string[] GitHubIgnored { get; init => field = value ?? []; } = [];
+
+    /// <summary>The SHA-256 of the issue's design block at the last read that handled it, so one edit on GitHub is handled once.</summary>
+    public string? GitHubBlockSha256 { get; init; }
+
+    /// <summary>The why a typed change read from the issue gives the draft (<c>owner on GitHub: edited objective</c>); the page offers it to the owner who publishes. Cleared at a publish.</summary>
+    public string? DraftWhy { get; init; }
+
     /// <summary>Every build of a version of this design (<c>design-build</c>, PIL1153), oldest first. Empty while there is none, and in a record an older release wrote.</summary>
     public DesignBuildRow[] Builds { get; init => field = value ?? []; } = [];
+}
+
+/// <summary>A prose part the issue's text says differently from the published version (PIL1171): <see cref="Part"/> is objective, heading or notes, <see cref="Cell"/> the cell's number (empty for the design itself).</summary>
+public sealed record DesignGitHubEdit
+{
+    public required string Part { get; init; }
+
+    public string Cell { get; init; } = "";
+
+    public required string Text { get; init; }
+
+    public DateTimeOffset? At { get; init; }
+
+    /// <summary>What the part is called on the page and in a why: <c>objective</c>, or <c>heading of cell 2</c>.</summary>
+    public string Where => Cell.Length == 0 ? Part + " of the design" : $"{Part} of cell {Cell}";
+
+    /// <summary>The key a verb names it by: <c>part:cell</c>.</summary>
+    public string Key => Part + ":" + Cell;
 }
 
 /// <summary>One build of a design version (PIL1153): the flight <c>design-build</c> made, and the issue it flies on.</summary>
@@ -188,6 +260,9 @@ public static class DesignWhys
     /// <summary>The longest a why may be, in characters.</summary>
     public const int MaxLength = 120;
 
+    /// <summary>What a version the owner made by typing starts its why with (PIL1171): <c>owner: &lt;what changed&gt;</c>.</summary>
+    public const string OwnerPrefix = "owner: ";
+
     /// <summary>Null when <paramref name="why"/> is a usable why, else what is wrong with it.</summary>
     public static string? Problem(string? why)
     {
@@ -232,6 +307,68 @@ public sealed record DesignVersionRow
     public string? Why { get; init; }
 
     public string? PrototypeSha256 { get; init; }
+
+    /// <summary>When the version was written to the design's issue (PIL1171): its comment <c>v&lt;k&gt;: &lt;why&gt;</c> is on the issue from then; null while it is not.</summary>
+    public DateTimeOffset? SyncedAt { get; init; }
+}
+
+/// <summary>The words of a design's sync to its GitHub issue (PIL1171), one source for the node's record and the page.</summary>
+public static class DesignSyncText
+{
+    /// <summary>The label of a design's issue, which another node lists the designs by.</summary>
+    public const string Label = "pilot: design";
+
+    /// <summary>The marker lines the document sits between in the issue's body; the rest of the body is left as it was.</summary>
+    public const string Begin = "<!-- pilot:design -->";
+
+    public const string End = "<!-- /pilot:design -->";
+
+    /// <summary>The reason a failed write gives when GitHub did not answer in time; any other failure gives its own message.</summary>
+    public const string NoAnswer = "GitHub did not answer";
+
+    /// <summary>The branch a design's files are written to: <c>design/&lt;issue number&gt;</c>.</summary>
+    public static string Branch(int issue) => "design/" + N(issue);
+
+    /// <summary>While version <paramref name="version"/> is being written.</summary>
+    public static string Writing(int version, string repo, int issue) => $"Writing v{N(version)} to {repo}#{N(issue)}...";
+
+    /// <summary>Once version <paramref name="version"/> is on the issue.</summary>
+    public static string Synced(int version, string repo, int issue) => $"v{N(version)} is on {repo}#{N(issue)}";
+
+    /// <summary>While <c>pilot: hold</c> is on the issue: nothing is written, and the version waits for the hold to come off.</summary>
+    public static string Held(int version, string repo, int issue) => $"Held: pilot: hold is on {repo}#{N(issue)}; v{N(version)} will be sent when it is off.";
+
+    /// <summary>The failure line, in the error colour: why, which version is kept and where, and that it is sent again.</summary>
+    public static string Failure(string reason, int version, string node) => $"Not synced: {reason}. v{N(version)} is saved on {node} and will be sent again.";
+
+    /// <summary>The line for a design that names no repo, so a version has nowhere to be written: it is kept here only, and says how to link one.</summary>
+    public static string NoRepo(string design, int version, string node) =>
+        $"Not synced: {design} names no repo, so v{N(version)} is kept on {node} only. Link an issue with: pilot design issue {design} <repo>#<n>";
+
+    /// <summary>What the version list says of a version: its comment on the issue, or that it is not there yet.</summary>
+    public static string Comment(int version, string? why, bool written) =>
+        written ? $"Comment on the issue: v{N(version)}: {why}" : "Not on the issue yet";
+
+    private static string N(int number) => number.ToString(System.Globalization.CultureInfo.InvariantCulture);
+}
+
+/// <summary>The words of a design's label lock (PIL1171), one source for the node's record and the page.</summary>
+public static class DesignLockText
+{
+    /// <summary>The state label a node puts on the design's issue while it has the design open for editing;.</summary>
+    public const string EditingLabel = "pilot: editing";
+
+    /// <summary>The line the page shows for a design locked by another node.</summary>
+    public static string BeingEdited(string node) => $"Being edited on {node}. Read only here until it is published or the lock is taken off.";
+
+    /// <summary>The line for a labelling that failed.</summary>
+    public static string LabelFailed(string reason) => $"The issue could not be labelled: {reason}. It is tried again; editing here goes on.";
+
+    /// <summary>The line above a cell for a GitHub edit that waits for the editor.</summary>
+    public static string Waiting(string where) => $"Edited on GitHub: the {where}. Apply it to the draft or dismiss it.";
+
+    /// <summary>The why a typed change read from the issue gets.</summary>
+    public static string OwnerOnGitHub(string part) => $"owner on GitHub: edited {part}";
 }
 
 /// <summary>A design read whole by <c>design show</c>: the record, the brief as written, its versions and where its folders are.</summary>

@@ -71,7 +71,7 @@ public sealed partial class DesignerGuard(NodeState state, DesignStore store)
             {
                 return null;
             }
-            return Answer($"{id}'s designer writes only inside its draft/ folder ({draft}); {path ?? "that call"} is outside it. Edit draft/prototype.json and draft/NOTES.md, then check, render and publish.");
+            return Answer($"{id}'s designer writes only inside its draft/ folder ({draft}); {path ?? "that call"} is outside it. Edit draft/DESIGN.md, draft/prototype.json and draft/screens/, then check, render and publish.");
         }
         catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException or DesignException)
         {
@@ -119,7 +119,9 @@ public sealed partial class DesignerGuard(NodeState state, DesignStore store)
             {
                 i += 2;
             }
-            return i + 1 < words.Count && words[i] == "design" && DesignVerbs.Contains(words[i + 1], StringComparer.Ordinal);
+            // The owner's publish is the owner's: a designer cannot label its own version 'owner: ...'.
+            return i + 1 < words.Count && words[i] == "design" && DesignVerbs.Contains(words[i + 1], StringComparer.Ordinal)
+                && !words.Skip(i + 2).Any(w => string.Equals(w, "--owner", StringComparison.OrdinalIgnoreCase) || w.StartsWith("--owner=", StringComparison.OrdinalIgnoreCase) || w.StartsWith("--owner:", StringComparison.OrdinalIgnoreCase));
         }
         return bare && ReadOnly.Contains(program, StringComparer.OrdinalIgnoreCase);
     }

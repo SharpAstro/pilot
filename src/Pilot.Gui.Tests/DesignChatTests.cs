@@ -231,12 +231,12 @@ public sealed class DesignChatTests
     {
         using var rig = new Rig(PageData.DesignChatPage());
         await rig.OpenAsync(5);
-        var real = rig.View.Player!;
+        var real = rig.View.PlayerOf()!;
         real.CurrentScreen.Id.ShouldBe("home");
 
         rig.View.Point(true);
         rig.View.Pointing.ShouldBeTrue();
-        rig.View.Player.ShouldNotBeSameAs(real);
+        rig.View.PlayerOf().ShouldNotBeSameAs(real);
         rig.Paint();
 
         // Every node that can be clicked names itself; a goto button is among them and does not go.
@@ -247,12 +247,12 @@ public sealed class DesignChatTests
         rig.Click(target);
 
         rig.View.Chat.Input.Text.ShouldContain(key);
-        rig.View.Player!.CurrentScreen.Id.ShouldBe("home");
+        rig.View.PlayerOf()!.CurrentScreen.Id.ShouldBe("home");
         real.CurrentScreen.Id.ShouldBe("home");
 
         // Off, the prototype is the one the version made, and a click plays.
         rig.View.Point(false);
-        rig.View.Player.ShouldBeSameAs(real);
+        rig.View.PlayerOf().ShouldBeSameAs(real);
     }
 
     [Fact]

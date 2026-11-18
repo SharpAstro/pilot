@@ -39,6 +39,7 @@ namespace Pilot.Contracts;
 [JsonSerializable(typeof(DesignRow))]
 [JsonSerializable(typeof(DesignChatLine))]
 [JsonSerializable(typeof(DesignVersionRow))]
+[JsonSerializable(typeof(DesignGitHubEdit))]
 [JsonSerializable(typeof(DesignDetail))]
 [JsonSerializable(typeof(DesignList))]
 [JsonSerializable(typeof(DesignIds))]

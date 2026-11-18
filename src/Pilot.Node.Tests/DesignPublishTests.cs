@@ -41,8 +41,39 @@ public sealed class DesignPublishTests : IAsyncLifetime
         (await Pilot("design", "new", "--", "A fleet screen")).Exit.ShouldBe(0);
         (await Pilot("design", "draft", "DSN-1")).Exit.ShouldBe(0);
         File.Copy(Fixture(fixture), Draft("prototype.json"), overwrite: true);
+        // The fixture carries its screens (the older shape), so the starter's screens/ folder goes.
+        Directory.Delete(Draft("screens"), recursive: true);
+        File.WriteAllText(Draft("DESIGN.md"), SampleDocument);
         File.WriteAllText(Draft("NOTES.md"), notes);
     }
+
+    private const string SampleDocument = """
+        # A fleet screen
+
+        **Objective:** Shows the sample: a home screen, its settings and a confirm modal.
+
+        ## Home
+
+        **Objective:** Shows the fleet at a glance.
+
+        ```screen id=home
+        ```
+
+        ## Settings
+
+        **Objective:** Shows what can be changed.
+
+        ```screen id=settings size=Phone
+        ```
+
+        ## Confirm
+
+        **Objective:** Shows the question asked before a change.
+
+        ```screen id=confirm
+        ```
+
+        """;
 
     private async Task<string> PublishedV1()
     {
@@ -135,7 +166,7 @@ public sealed class DesignPublishTests : IAsyncLifetime
         exit.ShouldBe(0, said);
 
         var v1 = Path.Combine(DesignFolder(), "versions", "v1");
-        Directory.EnumerateFileSystemEntries(v1).Select(Path.GetFileName).Order().ShouldBe(["NOTES.md", "prototype.json", "renders"]);
+        Directory.EnumerateFileSystemEntries(v1).Select(Path.GetFileName).Order().ShouldBe(["DESIGN.md", "NOTES.md", "prototype.json", "renders"]);
         Directory.EnumerateFiles(Path.Combine(v1, "renders")).Select(Path.GetFileName).ShouldNotContain("render.json");
     }
 
@@ -148,13 +179,13 @@ public sealed class DesignPublishTests : IAsyncLifetime
         // The draft of a design with a version starts from it, writable.
         (await Pilot("design", "draft", "DSN-1", "--replace")).Exit.ShouldBe(0);
         new FileInfo(Draft("prototype.json")).IsReadOnly.ShouldBeFalse();
-        File.WriteAllText(Draft("prototype.json"), File.ReadAllText(Draft("prototype.json")).Replace("Fleet", "Fleets"));
+        File.WriteAllText(Draft(Path.Combine("screens", "home.json")), File.ReadAllText(Draft(Path.Combine("screens", "home.json"))).Replace("Fleet", "Fleets"));
         (await Pilot("design", "render", "DSN-1")).Exit.ShouldBe(0);
 
         var (exit, said) = await Pilot("design", "publish", "DSN-1", "--why", "message");
         exit.ShouldBe(0, said);
         said.ShouldContain("DSN-1 v2");
-        File.ReadAllText(Path.Combine(DesignFolder(), "versions", "v2", "prototype.json")).ShouldContain("Fleets");
+        File.ReadAllText(Path.Combine(DesignFolder(), "versions", "v2", "screens", "home.json")).ShouldContain("Fleets");
         HashOf(v1).ShouldBe(before);
         File.ReadAllText(Path.Combine(v1, "prototype.json")).ShouldNotContain("Fleets");
 
@@ -237,13 +268,21 @@ public sealed class DesignPublishTests : IAsyncLifetime
         (await Pilot("design", "new", "--", "brief")).Exit.ShouldBe(0);
         (await Pilot("design", "draft", "DSN-1")).Exit.ShouldBe(0);
 
+        // The starter loads; what it lacks is the two objectives (the design's and its one screen's), which the designer writes.
         var (exit, said) = await Pilot("design", "check", "DSN-1");
-        exit.ShouldBe(0, said);
-        said.Trim().ShouldEndWith("clean");
+        exit.ShouldBe(1, said);
+        said.ShouldContain("This design has no objective");
+        said.ShouldContain("DESIGN.md | Home | objective: This screen has no objective. Say in one or two lines what it shows.");
+        said.ShouldNotContain("$.");
+
+        File.WriteAllText(Draft("DESIGN.md"), "# T\n\n**Objective:** Whole.\n\n## Home\n\n**Objective:** Shows it.\n\n```screen id=home\n```\n");
+        var (clean, cleanSaid) = await Pilot("design", "check", "DSN-1");
+        clean.ShouldBe(0, cleanSaid);
+        cleanSaid.Trim().ShouldEndWith("clean");
     }
 
     [Fact]
-    public async Task PublishRefusesWithoutADraftWithoutNotesAndWithAnUnknownWhy()
+    public async Task PublishRefusesWithoutADraftWithoutADocumentAndWithAnUnknownWhy()
     {
         (await Pilot("design", "new", "--", "brief")).Exit.ShouldBe(0);
 
@@ -254,15 +293,20 @@ public sealed class DesignPublishTests : IAsyncLifetime
 
         (await Pilot("design", "draft", "DSN-1")).Exit.ShouldBe(0);
         (await Pilot("design", "render", "DSN-1")).Exit.ShouldBe(0);
-        // The starter's notes are empty.
-        var (noNotes, noNotesSaid) = await Pilot("design", "publish", "DSN-1", "--why", "brief");
-        noNotes.ShouldBe(1);
-        noNotesSaid.ShouldContain("NOTES.md");
+        // The starter's document has no objectives: the check refuses it.
+        var (noObjective, noObjectiveSaid) = await Pilot("design", "publish", "DSN-1", "--why", "brief");
+        noObjective.ShouldBe(1);
+        noObjectiveSaid.ShouldContain("This screen has no objective. Say in one or two lines what it shows.");
 
-        File.WriteAllText(Draft("NOTES.md"), "  \n");
-        (await Pilot("design", "publish", "DSN-1", "--why", "brief")).Output.ShouldContain("NOTES.md");
+        // A draft without DESIGN.md is refused, naming the file; NOTES.md is not required.
+        File.Delete(Draft("DESIGN.md"));
+        var (noDocument, noDocumentSaid) = await Pilot("design", "publish", "DSN-1", "--why", "brief");
+        noDocument.ShouldBe(1);
+        noDocumentSaid.ShouldContain("DESIGN.md");
+        File.WriteAllText(Draft("DESIGN.md"), "  \n");
+        (await Pilot("design", "publish", "DSN-1", "--why", "brief")).Output.ShouldContain("DESIGN.md");
 
-        File.WriteAllText(Draft("NOTES.md"), "What this is.");
+        File.WriteAllText(Draft("DESIGN.md"), "# T\n\n**Objective:** Whole.\n\n## Home\n\n**Objective:** Shows it.\n\n```screen id=home\n```\n");
         foreach (var (bad, reason) in new[] { ("", "not empty"), ("  ", "not empty"), ("two\nlines", "one line"), (new string('x', DesignWhys.MaxLength + 1), "at most 120") })
         {
             var (badWhy, badWhySaid) = await Pilot("design", "publish", "DSN-1", "--why", bad);

@@ -165,7 +165,8 @@ public sealed class DesignBuilds(NodeState state, DesignStore store, RepoCatalog
     {
         var id = design.Id;
         var brief = Path.Combine(store.FolderOf(id), DesignStore.BriefFile);
-        var notes = Path.Combine(folder, DesignStore.NotesFile);
+        // The document (DESIGN.md) where the version has one; an older version's NOTES.md otherwise.
+        var notes = File.Exists(Path.Combine(folder, DesignStore.DocumentFile)) ? Path.Combine(folder, DesignStore.DocumentFile) : Path.Combine(folder, DesignStore.NotesFile);
         var renders = Path.Combine(folder, DesignChecker.RendersFolderName);
         var text = new StringBuilder();
         text.AppendLine($"Build design {id} version {version.ToString(CultureInfo.InvariantCulture)}{(design.Title is { Length: > 0 } t ? $": {t}" : "")}.");
@@ -176,7 +177,7 @@ public sealed class DesignBuilds(NodeState state, DesignStore store, RepoCatalog
         text.AppendLine();
         text.AppendLine(File.Exists(brief) ? File.ReadAllText(brief).Trim() : "(none)");
         text.AppendLine();
-        text.AppendLine("## Notes");
+        text.AppendLine(Path.GetFileName(notes) == DesignStore.DocumentFile ? "## Design" : "## Notes");
         text.AppendLine();
         text.AppendLine(File.Exists(notes) && File.ReadAllText(notes).Trim() is { Length: > 0 } written ? written : "(none)");
         text.AppendLine();

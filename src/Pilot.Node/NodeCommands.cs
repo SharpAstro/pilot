@@ -593,6 +593,10 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
         {
             return await Get<Pilot.Node.Designs.DesignBuilds>().RunAsync(command, cancellationToken);
         }
+        if (command.Verb == Verbs.DesignIssue)
+        {
+            return await Get<Pilot.Node.Designs.DesignCommands>().IssueAsync(command, cancellationToken);
+        }
         if (Pilot.Node.Designs.DesignCommands.Handles(command.Verb))
         {
             return Get<Pilot.Node.Designs.DesignCommands>().Run(command);

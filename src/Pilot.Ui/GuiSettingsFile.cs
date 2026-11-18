@@ -25,6 +25,9 @@ internal sealed record GuiSettings
 
     /// <summary>The target each design is shown at on its page, by design id (PIL1097); nullable, so a file an older build wrote reads as before.</summary>
     public Dictionary<string, SavedDesignTarget>? DesignTargets { get; init; }
+
+    /// <summary>The size each frame of each design is shown at (PIL1171), by design id and then <c>cell.frame</c>; nullable, so a file an older build wrote reads as before.</summary>
+    public Dictionary<string, Dictionary<string, SavedFrameSize>>? FrameSizes { get; init; }
 }
 
 /// <summary>A page's saved sort: the column's title and whether it runs descending.</summary>
@@ -59,8 +62,12 @@ internal sealed class GuiSettingsFile : IDisposable
     private FlightMapLayerState? _layerState;
     private ImmutableDictionary<string, SavedDesignTarget> _designTargets = ImmutableDictionary<string, SavedDesignTarget>.Empty.WithComparers(StringComparer.Ordinal);
 
-    private GuiSettingsFile(string path, Dictionary<string, Dictionary<string, float>> tables, Dictionary<string, SavedSort> sorts, bool night, MapLayerSettings? layers, List<string> folds, Dictionary<string, SavedDesignTarget> designTargets)
+    private Dictionary<string, Dictionary<string, SavedFrameSize>> _frameSizes = [];
+
+    private GuiSettingsFile(string path, Dictionary<string, Dictionary<string, float>> tables, Dictionary<string, SavedSort> sorts, bool night, MapLayerSettings? layers, List<string> folds, Dictionary<string, SavedDesignTarget> designTargets,
+        Dictionary<string, Dictionary<string, SavedFrameSize>> frameSizes)
     {
+        _frameSizes = frameSizes;
         _designTargets = designTargets.ToImmutableDictionary(StringComparer.Ordinal);
         _folds = [.. folds];
         Path = path;
@@ -87,6 +94,7 @@ internal sealed class GuiSettingsFile : IDisposable
         var folds = new List<string>();
         MapLayerSettings? layers = null;
         var designTargets = new Dictionary<string, SavedDesignTarget>(StringComparer.Ordinal);
+        var frameSizes = new Dictionary<string, Dictionary<string, SavedFrameSize>>(StringComparer.Ordinal);
         try
         {
             if (File.Exists(path) && JsonSerializer.Deserialize(File.ReadAllText(path), GuiSettingsJsonContext.Default.GuiSettings) is { } settings)
@@ -99,6 +107,13 @@ internal sealed class GuiSettingsFile : IDisposable
                     if (saved?.ToChoice() is not null)
                     {
                         designTargets[id] = saved;
+                    }
+                }
+                foreach (var (design, frames) in settings.FrameSizes ?? [])
+                {
+                    if (frames is { Count: > 0 })
+                    {
+                        frameSizes[design] = new Dictionary<string, SavedFrameSize>(frames.Where(f => f.Value is not null && f.Value.IsValid), StringComparer.Ordinal);
                     }
                 }
                 foreach (var (page, sort) in settings.Sorts ?? [])
@@ -125,8 +140,9 @@ internal sealed class GuiSettingsFile : IDisposable
             folds.Clear();
             layers = null;
             designTargets.Clear();
+            frameSizes.Clear();
         }
-        return new GuiSettingsFile(path, tables, sorts, night, layers, folds, designTargets);
+        return new GuiSettingsFile(path, tables, sorts, night, layers, folds, designTargets, frameSizes);
     }
 
     /// <summary>Whether the file says Night is on.</summary>
@@ -185,10 +201,12 @@ internal sealed class GuiSettingsFile : IDisposable
     public void Attach<TSurface>(DesignsView<TSurface> page)
     {
         page.RestoreTargets(_designTargets);
+        page.RestoreFrameSizes(_frameSizes);
         // Read on the render thread, where the choice changes; the timer's write only reads the copy.
         page.TargetChanged += () =>
         {
             _designTargets = page.SnapshotTargets().ToImmutableDictionary(StringComparer.Ordinal);
+            _frameSizes = page.SnapshotFrameSizes();
             Touch();
         };
     }
@@ -225,6 +243,7 @@ internal sealed class GuiSettingsFile : IDisposable
                 Night = _night,
                 PullRequestFolds = [.. _folds],
                 DesignTargets = _designTargets.Count > 0 ? new Dictionary<string, SavedDesignTarget>(_designTargets, StringComparer.Ordinal) : null,
+                FrameSizes = _frameSizes.Count > 0 ? _frameSizes : null,
             },
             GuiSettingsJsonContext.Default.GuiSettings);
 

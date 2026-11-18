@@ -182,6 +182,33 @@ internal sealed class DesignReads(NodeClient client, string who, Action redraw)
             designs.Built(id, version, flight, error);
             redraw();
         });
+        // Typing into the design (PIL1171): design-edit, design-publish as the owner, design-discard; the page is read again at once so the draft shows.
+        designs.OnEdit = (id, part, cell, text) => _ = Task.Run(async () =>
+        {
+            designs.Typed(await TypeAsync(Verbs.DesignEdit, id, [part, cell, text], CancellationToken.None).ConfigureAwait(false));
+            redraw();
+        });
+        designs.OnPublishTyped = (id, why, pending) => _ = Task.Run(async () =>
+        {
+            string? error = null;
+            if (pending is { } p)
+            {
+                error = await TypeAsync(Verbs.DesignEdit, id, [p.Part, p.Cell, p.Text], CancellationToken.None).ConfigureAwait(false);
+            }
+            error ??= await TypeAsync(Verbs.DesignPublish, id, [why, "owner"], CancellationToken.None).ConfigureAwait(false);
+            designs.Typed(error);
+            redraw();
+        });
+        designs.OnGitHub = (id, action, key) => _ = Task.Run(async () =>
+        {
+            designs.Typed(await TypeAsync(Verbs.DesignGitHub, id, [action, key], CancellationToken.None).ConfigureAwait(false));
+            redraw();
+        });
+        designs.OnDiscard = id => _ = Task.Run(async () =>
+        {
+            designs.Typed(await TypeAsync(Verbs.DesignDiscard, id, [], CancellationToken.None).ConfigureAwait(false));
+            redraw();
+        });
         designs.OnStartIdea = (idea, node) => _ = Task.Run(async () =>
         {
             var (id, error) = await StartFromIdeaAsync(idea, CancellationToken.None).ConfigureAwait(false);
@@ -207,6 +234,21 @@ internal sealed class DesignReads(NodeClient client, string who, Action redraw)
         {
             string[] args = picture is { } p ? [text, p.Name, Convert.ToBase64String(p.Bytes)] : [text];
             var answer = await client.SendAsync(new CommandRequest { Verb = Verbs.DesignSay, Target = Verbs.DesignTarget(id), Args = args, Who = who }, cancellationToken).ConfigureAwait(false);
+            return answer.Response is { Ok: true } ? null : answer.Response?.Error ?? answer.Error ?? "the node did not answer";
+        }
+        catch (Exception e) when (e is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+        {
+            return e.Message;
+        }
+    }
+
+    /// <summary>Sends a typing verb (<c>design-edit</c>, <c>design-publish</c> as the owner, <c>design-discard</c>) for design <paramref name="id"/>: null when the node took it, else what it said in refusing it. The page is read again after.</summary>
+    public async Task<string?> TypeAsync(string verb, string id, string[] args, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var answer = await client.SendAsync(new CommandRequest { Verb = verb, Target = Verbs.DesignTarget(id), Args = args, Who = who }, cancellationToken).ConfigureAwait(false);
+            AskDesign(id, null, force: true);
             return answer.Response is { Ok: true } ? null : answer.Response?.Error ?? answer.Error ?? "the node did not answer";
         }
         catch (Exception e) when (e is not OperationCanceledException || !cancellationToken.IsCancellationRequested)

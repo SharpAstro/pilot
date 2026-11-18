@@ -986,9 +986,32 @@ public static class Verbs
 
     /// <summary>
     /// <c>design-publish design/DSN-&lt;n&gt; why</c>: makes the next read-only version from the draft, when the check is clean and the renders are of the draft as it
-    /// stands. The one arg is the why: a short one-line reason (<see cref="DesignWhys"/>).
+    /// stands (a draft whose prototype and screens are the current version's takes its renders). The first arg is the why: a short one-line reason (<see cref="DesignWhys"/>);
+    /// a second arg <c>owner</c> (PIL1171) makes it the owner's typed version, whose why is stored as <c>owner: &lt;why&gt;</c>.
     /// </summary>
     public const string DesignPublish = "design-publish";
+
+    /// <summary>
+    /// <c>design-edit design/DSN-&lt;n&gt; part cell text</c> (PIL1171): the owner typed a prose part of DESIGN.md: <c>part</c> is <c>objective</c>, <c>heading</c> or <c>notes</c>,
+    /// <c>cell</c> names the cell (heading, a screen id it shows, or its number; empty for the design itself). Written into the draft, made from the current version when there
+    /// is none; the designer is told at its next turn without being woken.
+    /// </summary>
+    public const string DesignEdit = "design-edit";
+
+    /// <summary>
+    /// <c>design-github design/DSN-&lt;n&gt; apply|dismiss part:cell</c> (PIL1171): an edit made to the design's issue text on GitHub while the design was locked here is kept beside it;
+    /// <c>apply</c> types it into the draft, <c>dismiss</c> drops it.
+    /// </summary>
+    public const string DesignGitHub = "design-github";
+
+    /// <summary><c>design-discard design/DSN-&lt;n&gt;</c> (PIL1171): removes the draft.</summary>
+    public const string DesignDiscard = "design-discard";
+
+    /// <summary>
+    /// <c>design-issue design/DSN-&lt;n&gt; &lt;repo&gt; &lt;issue&gt;</c> (PIL1171): links the design to an existing issue of <c>repo</c> (a repo name the node lists, or <c>owner/name</c>), which gets the
+    /// <c>pilot: design</c> label; its published versions are then written there. A design with no link gets an issue of its own in its repo at its first publish.
+    /// </summary>
+    public const string DesignIssue = "design-issue";
 
     /// <summary>
     /// <c>design-build design/DSN-&lt;n&gt; [version] [repo] [milestone]</c> (PIL1153): files one issue holding the design version's brief, notes, renders and prototype hash

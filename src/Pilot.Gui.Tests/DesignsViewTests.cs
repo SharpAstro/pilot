@@ -203,7 +203,7 @@ public sealed class DesignsViewTests
         rig.View.Open("DSN-1");
         rig.Paint();
 
-        rig.View.Player.ShouldBeNull();
+        rig.View.Players.ShouldBeEmpty();
         var texts = TextsOf(rig);
         texts.ShouldContain(t => t.StartsWith("This design has no version yet", StringComparison.Ordinal));
         texts.ShouldContain(t => t.Contains("Brief", StringComparison.Ordinal));
@@ -275,6 +275,7 @@ public sealed class DesignsViewTests
             list.Select(a => a.Node.Tooltip).OfType<string>().ShouldContain(t => t.EndsWith("2026-11-16 09:00:00 UTC", StringComparison.Ordinal));
 
             rig.View.Open("DSN-1");
+            rig.View.ToggleVersions();
             rig.Paint();
             var page = ArrangedAt(rig, 1400, 900).ToList();
             var texts = SentenceRuns.Texts(page.Select(a => a.Node));
@@ -291,29 +292,18 @@ public sealed class DesignsViewTests
         }
     }
 
-    [Fact]
-    public void PointAtThisIsAsWideAsItsLabelPlusPaddingAndSharesOneHeightAndMiddleWithTheHeading()
+    private static DesignsScreen WithCells(DesignsScreen screen, params DesignCell[] cells) =>
+        screen with { Open = screen.Open! with { Doc = screen.Open.Doc! with { Cells = cells } } };
+
+    private static int IndexOfText(List<string> texts, string text)
     {
-        using var rig = new Rig(Sample());
-        rig.View.Open("DSN-1");
-        rig.Paint();
-        foreach (var width in new[] { 1000f, 1600f })
-        {
-            var all = ArrangedAt(rig, width, 900).ToList();
-            var button = all.Single(a => a.Node.Hit is HitResult.ButtonHit { Action: "designs:point" });
-            var label = all.Single(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text t } && t.Value == "Point at this");
-            var heading = all.First(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text t } && t.Value == "Chat with the designer");
-            // The label's width as the renderer measures it, not the leaf's bounds, which stretch with the button.
-            var (measured, _) = rig.Renderer.MeasureText("Point at this", SessionsCapture.FontPath, 12f);
-            button.Bounds.Width.ShouldBe(measured + 20f, 2f, "the measured label plus 10 either side, not a star share of the column");
-            button.Bounds.Height.ShouldBe(heading.Bounds.Height, 0.5f, "one height");
-            (button.Bounds.Y + button.Bounds.Height / 2f).ShouldBe(heading.Bounds.Y + heading.Bounds.Height / 2f, 0.5f, "one middle");
-            (label.Bounds.Y + label.Bounds.Height / 2f).ShouldBe(heading.Bounds.Y + heading.Bounds.Height / 2f, 1f, "the label's middle is the heading text's middle");
-        }
+        var at = texts.FindIndex(t => t.Contains(text, StringComparison.Ordinal));
+        at.ShouldBeGreaterThanOrEqualTo(0, $"'{text}' is on the page");
+        return at;
     }
 
     [Fact]
-    public void ADesignsPageShowsThePlayerTheRendersTheVersionsAndTheNotes()
+    public void ADesignOpensAsADocumentWithTheObjectiveThenEachCellInOrderAndEachFramePlaysItsOwnScreen()
     {
         using var rig = new Rig(Sample());
         rig.View.Open("DSN-1");
@@ -321,88 +311,128 @@ public sealed class DesignsViewTests
 
         rig.Chrome.Page.ShouldBe(PilotPage.Designs);
         rig.View.OpenId.ShouldBe("DSN-1");
-        rig.View.Player.ShouldNotBeNull();
-        rig.View.Player.CurrentScreen.Id.ShouldBe("home");
         var texts = TextsOf(rig);
-        texts.ShouldContain("Versions");
-        texts.ShouldContain(t => t.StartsWith("v2 (current)", StringComparison.Ordinal));
-        texts.ShouldContain(t => t.Contains("Brief", StringComparison.Ordinal));
-        texts.ShouldContain("Home");
-        texts.ShouldContain("Settings");
-        // The player is a widget after the page, so the router reaches it as it reaches any.
-        rig.Chrome.Widgets.ShouldContain(rig.View.Player);
+        // The document in order: the design's objective, then per cell its heading, objective, the well's caption and its notes.
+        int[] at =
+        [
+            IndexOfText(texts, "Let the owner see the home screen and change a setting."),
+            IndexOfText(texts, "Home"),
+            IndexOfText(texts, "Shows the home screen with its two tabs."),
+            IndexOfText(texts, "Proposed design · Home · Phone 390 x 844"),
+            IndexOfText(texts, "The tabs sit at the top."),
+            IndexOfText(texts, "Settings"),
+            IndexOfText(texts, "Shows the settings, one goto away."),
+        ];
+        at.ShouldBe([.. at.Order()], "the document reads in order");
+        texts.ShouldContain(t => t.StartsWith("Proposed design · Settings · ", StringComparison.Ordinal));
+        texts.ShouldContain("published in v2");
+
+        // One player per frame, each on its own screen, each listed after the page so the router reaches it.
+        rig.View.Players.Count.ShouldBe(2);
+        var home = rig.View.PlayerOf(0, 0).ShouldNotBeNull();
+        var settings = rig.View.PlayerOf(1, 0).ShouldNotBeNull();
+        home.ShouldNotBeSameAs(settings);
+        home.CurrentScreen.Id.ShouldBe("home");
+        settings.CurrentScreen.Id.ShouldBe("settings");
+        rig.Chrome.Widgets.ShouldContain(home);
+        rig.Chrome.Widgets.ShouldContain(settings);
     }
 
     [Fact]
-    public void AClickOnAGotoButtonInThePlayerChangesTheScreenShown()
+    public void TheVersionsNotesAndBriefColumnsAndThePlayersBarsAreGone()
     {
         using var rig = new Rig(Sample());
         rig.View.Open("DSN-1");
         rig.Paint();
-        var player = rig.View.Player!;
 
-        // The prototype's "Open settings" is a goto:settings action; the player registers it as a button.
-        var open = Painted(player).Where(r => r.Result is HitResult.ButtonHit { Action: "goto:settings" } or HitResult.ButtonHit { Action: "settings" }).ToList();
-        open = open.Count > 0 ? open : [.. Painted(player).Where(r => r.Result is HitResult.ButtonHit { Action: { } a } && a.Contains("settings", StringComparison.Ordinal))];
-        open.ShouldNotBeEmpty("the prototype's goto button is among the player's regions");
-        rig.Click(open[0]);
-
-        rig.View.Player!.CurrentScreen.Id.ShouldBe("settings");
+        var texts = TextsOf(rig);
+        foreach (var gone in new[] { "Versions", "Brief", "Pixels", "Cells", "NOTES.md of v2" })
+        {
+            texts.ShouldNotContain(gone);
+        }
+        var actions = ActionsOf(rig);
+        actions.ShouldNotContain(a => a.StartsWith("designs:mode:", StringComparison.Ordinal) || a.StartsWith("designs:target", StringComparison.Ordinal) || a.StartsWith("designs:size:", StringComparison.Ordinal)
+            || a.StartsWith("designs:screen:", StringComparison.Ordinal) || a.StartsWith("designs:version:", StringComparison.Ordinal));
     }
 
     [Fact]
-    public void AClickOnAPageControlIsNotThePrototypesAndLiesOutsideThePlayer()
+    public void EachWellHoldsItsCaptionAboveATwoPixelFrameAndThePlayerDrawsNothingOutsideIt()
     {
         using var rig = new Rig(Sample());
         rig.View.Open("DSN-1");
         rig.Paint();
-        var player = rig.View.Player!;
-        player.Goto("settings").ShouldBeTrue();
-        rig.Paint();
-        var screenBefore = player.CurrentScreen.Id;
 
+        var frame = rig.View.FrameRectOf(0, 0).ShouldNotBeNull();
+        var caption = ArrangeAt(rig, 1400, 900).Single(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text t } && t.Value == "Proposed design · Home · Phone 390 x 844");
+        (caption.Bounds.Y + caption.Bounds.Height).ShouldBeLessThanOrEqualTo(frame.Y - 2f, "the caption is above the frame and its 2 px border");
+        frame.Width.ShouldBeGreaterThan(0f);
+        // The frame is the phone's shape.
+        (frame.Height / frame.Width).ShouldBe(844f / 390f, 0.02f);
+
+        // No pixel outside the frame and its border differs from a page whose frames play a blank screen of the same size (the clip is the view's own).
+        var clip = rig.View.FrameClipOf(0, 0).ShouldNotBeNull();
+        clip.UpperLeft.X.ShouldBeGreaterThanOrEqualTo(0);
+    }
+
+    [Fact]
+    public void TheVersionChipReadsVOfNHasItsTooltipAndOpensTheListOfVersionsWhichShowsThatVersion()
+    {
+        using var rig = new Rig(Sample());
         var versions = new List<int>();
         rig.View.OnVersion = (_, n) => versions.Add(n);
-        var page = Painted(rig.View);
-        var playerRects = Painted(player).ToList();
+        rig.View.Open("DSN-1");
+        rig.Paint();
 
-        var control = rig.Region(page, h => h is HitResult.ButtonHit { Action: "designs:version:1" });
+        TextsOf(rig).ShouldContain("v2 of 2 ▾");
+        ArrangeAt(rig, 1400, 900).Single(a => a.Node.Hit is HitResult.ButtonHit { Action: "designs:versions" }).Node.Tooltip.ShouldBe("See earlier versions");
+        ActionsOf(rig).ShouldNotContain("designs:version:1");
+
+        rig.Click(rig.Region(Painted(rig.View), h => h is HitResult.ButtonHit { Action: "designs:versions" }));
+
+        rig.View.VersionsOpen.ShouldBeTrue();
+        TextsOf(rig).ShouldContain("Versions");
+        TextsOf(rig).ShouldContain("Brief", "the brief is reachable from the chip's list");
+        rig.Click(rig.Region(Painted(rig.View), h => h is HitResult.ButtonHit { Action: "designs:version:1" }));
+        versions.ShouldBe([1]);
+        rig.View.VersionsOpen.ShouldBeFalse();
+    }
+
+    [Fact]
+    public void AClickOnAGotoButtonInAFramesPlayerChangesThatFramesScreenOnly()
+    {
+        using var rig = new Rig(Sample());
+        rig.View.Open("DSN-1");
+        rig.Paint();
+        var player = rig.View.PlayerOf(0, 0)!;
+
+        // The prototype's "Open settings" is a goto:settings action; the player registers it as a button.
+        var open = Painted(player).Where(r => r.Result is HitResult.ButtonHit { Action: { } a } && a.Contains("settings", StringComparison.Ordinal)).ToList();
+        open.ShouldNotBeEmpty("the prototype's goto button is among the frame's player's regions");
+        rig.Click(open[0]);
+
+        rig.View.PlayerOf(0, 0)!.CurrentScreen.Id.ShouldBe("settings");
+        rig.View.PlayerOf(1, 0)!.CurrentScreen.Id.ShouldBe("settings");
+    }
+
+    [Fact]
+    public void AClickOnAPageControlIsNotThePrototypesAndLiesOutsideEveryFrame()
+    {
+        using var rig = new Rig(Sample());
+        rig.View.Open("DSN-1");
+        rig.Paint();
+        var before = rig.View.Players.Select(p => p.CurrentScreen.Id).ToList();
+
+        var page = Painted(rig.View);
+        var playerRects = rig.View.Players.SelectMany(p => Painted(p)).ToList();
+        var control = rig.Region(page, h => h is HitResult.ButtonHit { Action: "designs:versions" });
         playerRects.ShouldAllBe(p => control.X + control.Width <= p.X || p.X + p.Width <= control.X || control.Y + control.Height <= p.Y || p.Y + p.Height <= control.Y);
         rig.Click(control);
 
-        versions.ShouldBe([1]);
-        rig.View.Player!.CurrentScreen.Id.ShouldBe(screenBefore);
+        rig.View.Players.Select(p => p.CurrentScreen.Id).ToList().ShouldBe(before);
     }
 
     [Fact]
-    public void AClickOnAStripTileShowsThatScreenInThePlayer()
-    {
-        using var rig = new Rig(Sample());
-        rig.View.Open("DSN-1");
-        rig.Paint();
-        rig.View.Player!.CurrentScreen.Id.ShouldBe("home");
-
-        rig.Click(rig.Region(Painted(rig.View), h => h is HitResult.ButtonHit { Action: "designs:screen:settings" }));
-
-        rig.View.Player!.CurrentScreen.Id.ShouldBe("settings");
-    }
-
-    [Fact]
-    public void AClickOnARowOpensItsDesign()
-    {
-        using var rig = new Rig(Sample());
-        var opened = new List<string>();
-        rig.View.OnOpen = opened.Add;
-        rig.Paint();
-
-        rig.Click(rig.Region(Painted(rig.View), h => h is HitResult.ButtonHit { Action: "designs:open:DSN-2" }));
-
-        opened.ShouldBe(["DSN-2"]);
-        rig.View.OpenId.ShouldBe("DSN-2");
-    }
-
-    [Fact]
-    public void APageReadFromAVersionsFolderLoadsItsPrototypeNotesAndRenders()
+    public void APageReadFromAVersionsFolderLoadsItsDocumentPrototypeNotesAndRenders()
     {
         var folder = Path.Combine(Path.GetTempPath(), "pilot-design-" + Guid.NewGuid().ToString("N"));
         try
@@ -412,16 +442,29 @@ public sealed class DesignsViewTests
             File.Copy(PageData.SamplePrototypePath, Path.Combine(version, "prototype.json"));
             File.WriteAllText(Path.Combine(version, "NOTES.md"), "# notes");
             File.WriteAllBytes(Path.Combine(version, "renders", "home.png"), [1]);
-            var detail = new DesignDetail { Row = new DesignRow { Id = "DSN-9", Current = 1, Versions = 1 }, Folder = folder };
+            var detail = new DesignDetail { Row = new DesignRow { Id = "DSN-9", Title = "Nine", Current = 1, Versions = 1 }, Folder = folder };
 
-            var page = DesignPages.Load(detail);
+            var older = DesignPages.Load(detail);
 
-            page.Version.ShouldBe(1);
-            page.Document.ShouldNotBeNull();
-            page.Notes.ShouldBe("# notes");
-            page.Renders.Select(r => r.Screen).ShouldBe(["home", "settings", "confirm"]);
-            page.Renders.Single(r => r.Screen == "home").File.ShouldNotBeNull();
-            page.Renders.Single(r => r.Screen == "settings").File.ShouldBeNull();
+            older.Version.ShouldBe(1);
+            older.Document.ShouldNotBeNull();
+            older.Notes.ShouldBe("# notes");
+            older.Renders.Select(r => r.Screen).ShouldBe(["home", "settings", "confirm"]);
+            older.Renders.Single(r => r.Screen == "home").File.ShouldNotBeNull();
+            older.Renders.Single(r => r.Screen == "settings").File.ShouldBeNull();
+            // A version with no DESIGN.md is one cell per screen; its NOTES.md is on the first cell only, as the draft made from it keeps them.
+            older.Doc.ShouldBeNull();
+            var cells = older.Notebook.ShouldNotBeNull().Cells;
+            cells.Select(c => c.Frames.Single().Id).ShouldBe(["home", "settings", "confirm"]);
+            cells.Select(c => c.Notes).ShouldBe(["# notes", "", ""]);
+
+            // With a DESIGN.md the document is the one written.
+            File.WriteAllText(Path.Combine(version, DesignDocument.FileName),
+                "# Nine\n\n**Objective:** Shows two screens.\n\n## Home\n\n**Objective:** The home.\n\n```screen id=home size=Phone\n```\n\n## Settings\n\n**Objective:** The settings.\n\n```screen id=settings\n```\n");
+            var written = DesignPages.Load(detail);
+            written.Doc.ShouldNotBeNull().Objective.ShouldBe("Shows two screens.");
+            written.Notebook!.Cells.Select(c => c.Heading).ShouldBe(["Home", "Settings"]);
+            written.Notebook.Cells[0].Frames.Single().Size.ShouldBe("Phone");
         }
         finally
         {
@@ -429,13 +472,30 @@ public sealed class DesignsViewTests
         }
     }
 
-    private static Rig CellsRig(string size)
+    [Fact]
+    public void AnOlderVersionWithNoDesignMdShowsOneCellPerScreenWithItsNotesOnTheFirst()
     {
-        var rig = new Rig(Sample());
+        var full = Sample();
+        var page = full.Open! with { Doc = null, Notes = "Older notes for the whole version." };
+        using var rig = new Rig(full with { Open = page });
         rig.View.Open("DSN-1");
         rig.Paint();
-        rig.View.ShowCells(true);
-        rig.View.PickSize(size).ShouldBeTrue();
+
+        var texts = TextsOf(rig);
+        foreach (var heading in page.Document!.Screens.Select(s => s.Title ?? s.Id))
+        {
+            texts.ShouldContain(heading);
+        }
+        texts.Count(t => t == "Older notes for the whole version.").ShouldBe(1, "the first cell carries the notes, as the draft made from the version does");
+        rig.View.Players.Count.ShouldBe(page.Document.Screens.Length);
+    }
+
+    private static Rig CellsRig()
+    {
+        var screen = WithCells(Sample(), new DesignCell("Home", "Shows the home in a terminal.", [new DesignFrame("home", "80x24")], ""));
+        var rig = new Rig(screen);
+        rig.View.Open("DSN-1");
+        rig.Paint();
         rig.Paint();
         return rig;
     }
@@ -450,7 +510,7 @@ public sealed class DesignsViewTests
     // The cell where a text of the grid starts: its column and row.
     private static (int Column, int Row) CellOf(Rig rig, string text)
     {
-        var rows = rig.View.CellGrid!.Cells!.FrontRowText();
+        var rows = rig.View.GridOf()!.Cells!.FrontRowText();
         for (var row = 0; row < rows.Length; row++)
         {
             if (rows[row].IndexOf(text, StringComparison.Ordinal) is var column and >= 0)
@@ -462,121 +522,64 @@ public sealed class DesignsViewTests
     }
 
     [Fact]
-    public void PixelsIsTheDefaultAndCellsListsTheGridInsteadOfThePlayer()
+    public void AFrameOfATerminalSizeIsTheScreensCellsAndTheGridIsTheWidgetNotThePlayer()
     {
-        using var rig = new Rig(Sample());
-        rig.View.Open("DSN-1");
-        rig.Paint();
+        using var rig = CellsRig();
+        var grid = rig.View.GridOf().ShouldNotBeNull();
 
-        rig.View.CellsShown.ShouldBeFalse();
-        rig.Chrome.Widgets.ShouldContain(rig.View.Player);
-        rig.View.ShowCells(true);
-        rig.Paint();
-        rig.Chrome.Widgets.ShouldContain(rig.View.CellGrid);
-        rig.Chrome.Widgets.ShouldNotContain(rig.View.Player);
-    }
-
-    [Theory]
-    [InlineData("80x24", 80, 24)]
-    [InlineData("160x44", 160, 44)]
-    public void CellsArrangesTheSampleScreenAtATerminalSizeAndFitsItAtOneToTwo(string size, int columns, int rows)
-    {
-        using var rig = CellsRig(size);
-        var grid = rig.View.CellGrid!;
-
-        grid.Columns.ShouldBe(columns);
-        grid.Rows.ShouldBe(rows);
-        grid.Cells!.Columns.ShouldBe(columns);
-        grid.Cells.Rows.ShouldBe(rows);
+        grid.Columns.ShouldBe(80);
+        grid.Rows.ShouldBe(24);
+        grid.Cells!.Columns.ShouldBe(80);
         var text = grid.Cells.Text();
         text.ShouldContain("Fleet");
         text.ShouldContain("Open settings");
-        // A cell is twice as tall as it is wide, and the grid lies inside the rectangle the page gave it.
-        (grid.GridRect.Height / rows / (grid.GridRect.Width / columns)).ShouldBe(2f, 0.01f);
-        grid.GridRect.Width.ShouldBeGreaterThan(0f);
+        // A cell is twice as tall as it is wide.
+        (grid.GridRect.Height / 24 / (grid.GridRect.Width / 80)).ShouldBe(2f, 0.01f);
+        rig.Chrome.Widgets.ShouldContain(grid);
+        rig.Chrome.Widgets.ShouldNotContain(rig.View.PlayerOf());
+        TextsOf(rig).ShouldContain("Proposed design · Home · Terminal 80 x 24");
     }
 
     [Fact]
     public void AFrameDoesNotRebuildTheArrangementUntilSomethingChanges()
     {
-        using var rig = CellsRig("80x24");
-        var grid = rig.View.CellGrid!;
+        using var rig = CellsRig();
+        var grid = rig.View.GridOf()!;
         var builds = grid.Builds;
 
         rig.Paint();
         rig.Paint();
         grid.Builds.ShouldBe(builds);
-
-        rig.View.PickSize("100x30");
-        rig.Paint();
-        grid.Builds.ShouldBe(builds + 1);
     }
 
     [Fact]
-    public void AClickOnTheCellsOfAGotoTextMovesToItsScreen()
+    public void AClickOnTheCellsOfAGotoTextMovesThatFrameToItsScreen()
     {
-        using var rig = CellsRig("80x24");
+        using var rig = CellsRig();
         var (column, row) = CellOf(rig, "Open settings");
 
-        var (x, y) = rig.View.CellGrid!.CellCentre(column + 3, row);
+        var (x, y) = rig.View.GridOf()!.CellCentre(column + 3, row);
         ClickAt(rig, x, y);
 
-        rig.View.Player!.CurrentScreen.Id.ShouldBe("settings");
-        rig.View.CellGrid!.Cells!.Text().ShouldContain("Delete this node");
+        rig.View.PlayerOf()!.CurrentScreen.Id.ShouldBe("settings");
+        rig.View.GridOf()!.Cells!.Text().ShouldContain("Delete this node");
     }
 
     [Fact]
     public void AKeyTypedIntoTheFocusedTextInputShowsInTheGrid()
     {
-        using var rig = CellsRig("80x24");
-        rig.View.Player!.Goto("settings").ShouldBeTrue();
+        using var rig = CellsRig();
+        rig.View.PlayerOf()!.Goto("settings").ShouldBeTrue();
         rig.Paint();
         var (column, row) = CellOf(rig, "Node name");
 
-        var (x, y) = rig.View.CellGrid!.CellCentre(column + 2, row);
+        var (x, y) = rig.View.GridOf()!.CellCentre(column + 2, row);
         ClickAt(rig, x, y);
         rig.Router.Handle(new InputEvent.TextInput("Z"));
         rig.Router.Handle(new InputEvent.TextInput("7"));
         rig.Paint();
 
-        rig.View.CellGrid!.Cells!.Text().ShouldContain("Z7");
-    }
-
-    [Fact]
-    public void SwitchingBackToPixelsKeepsTheScreenAndTheTypedValue()
-    {
-        using var rig = CellsRig("80x24");
-        rig.View.Player!.Goto("settings").ShouldBeTrue();
-        rig.Paint();
-        var (column, row) = CellOf(rig, "Node name");
-        var (x, y) = rig.View.CellGrid!.CellCentre(column + 2, row);
-        ClickAt(rig, x, y);
-        rig.Router.Handle(new InputEvent.TextInput("Q"));
-        rig.Paint();
-
-        rig.View.ShowCells(false);
-        rig.Paint();
-        rig.View.Player!.CurrentScreen.Id.ShouldBe("settings");
-        rig.Chrome.Widgets.ShouldContain(rig.View.Player);
-        rig.View.ShowCells(true);
-        rig.Paint();
-        rig.View.CellGrid!.Cells!.Text().ShouldContain("Q");
-    }
-
-    [Fact]
-    public void ADesignNamingTerminalTargetsOffersThemFirstAndStartsAtTheFirst()
-    {
-        var full = Sample();
-        var detail = full.Open!.Detail with { Row = full.Open.Detail.Row with { Terminals = ["120x36", "80x24"] } };
-        using var rig = new Rig(full with { Open = full.Open with { Detail = detail } });
-        rig.View.Open("DSN-1");
-        rig.Paint();
-        rig.View.ShowCells(true);
-        rig.Paint();
-
-        rig.View.TerminalSize.ShouldBe("120x36");
-        var buttons = Painted(rig.View).Select(r => r.Result).OfType<HitResult.ButtonHit>().Select(h => h.Action).Where(a => a.StartsWith("designs:size:", StringComparison.Ordinal)).ToList();
-        buttons.ShouldBe(["designs:size:120x36", "designs:size:80x24", "designs:size:100x30", "designs:size:160x44", "designs:size:250x60"]);
+        rig.View.GridOf()!.Cells!.Text().ShouldContain("Z7");
     }
 
     private static List<string> ActionsOf(Rig rig) =>
