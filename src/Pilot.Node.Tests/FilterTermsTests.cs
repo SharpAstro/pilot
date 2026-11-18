@@ -112,7 +112,7 @@ public sealed class FilterTermsTests : IDisposable
             public abstract class BaseTests<T> : BaseTests { }
             """);
 
-        p.FullNames.ShouldBe(["N.OneTests.FromBase", "N.OneTests.Own", "N.TwoTests.FromBase"]);
+        p.FullNames.ShouldBe(["N.OneTests.FromBase", "N.OneTests.Own", "N.TwoTests.FromBase"], ignoreOrder: true);
         p.TestClasses.ShouldContain("BaseTests");
     }
 

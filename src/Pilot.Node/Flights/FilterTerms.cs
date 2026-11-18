@@ -843,10 +843,9 @@ public static partial class FilterTerms
                 {
                     continue;
                 }
-                var own = declaredTypes.Select(t => t.File).ToHashSet(StringComparer.OrdinalIgnoreCase);
                 var use = new Regex($@"\b{Regex.Escape(word)}\b");
                 var users = project.Types
-                    .Where(t => project.TestClasses.Contains(t.Simple) && !own.Contains(t.File)
+                    .Where(t => project.TestClasses.Contains(t.Simple)
                         && project.Files.Any(f => f.Path == t.File && use.IsMatch(f.Text)))
                     .Select(t => t.Simple).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).Take(5).ToList();
                 return $"the done-when names {word}, a class of {project.Name} that holds no test (a helper), so a filter on it runs nothing" +
