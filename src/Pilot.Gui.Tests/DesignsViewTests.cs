@@ -207,6 +207,81 @@ public sealed class DesignsViewTests
         texts.ShouldContain(t => t.Contains("Brief", StringComparison.Ordinal));
     }
 
+    private static IEnumerable<Layout.ArrangedNode<float>> ArrangedAt(Rig rig, float width, float height, float dpi = 1f) =>
+        Layout.Engine.Arrange(rig.View.Tree(rig.Screen), new Rect<float>(0, 0, width, height), new PixelMeasureContext<RgbaImage>(rig.Renderer, SessionsCapture.FontPath, dpi));
+
+    [Theory]
+    [InlineData(360)]
+    [InlineData(700)]
+    [InlineData(1000)]
+    [InlineData(1400)]
+    public void ALongTitleAndANoVersionTextAreWrappedOrCutWithTheWholeOnHover(int width)
+    {
+        var title = "A very long design title that goes on and on about the whole of the observatory control panel";
+        var full = Sample();
+        var detail = full.Open!.Detail with { Row = full.Open.Detail.Row with { Title = title, Current = null, Versions = 0 }, Versions = [], Brief = string.Join(' ', Enumerable.Repeat("A long brief sentence.", 40)) };
+        using var rig = new Rig(full with { Open = DesignPages.Load(detail) });
+        rig.View.Open("DSN-1");
+        rig.Paint();
+
+        var arranged = ArrangedAt(rig, width, 900).ToList();
+        var counts = $"DSN-1 · {title}";
+        arranged.ShouldContain(a => a.Node.Tooltip == counts, "the title line carries its whole text on hover");
+        arranged.ShouldNotContain(a => a.Node.Tooltip == null && a.Node is Layout.Node.Leaf { Content: Layout.Content.Text t } && t.Value == counts, "never one plain leaf that a column clips with no ellipsis");
+        var texts = SentenceRuns.Texts(arranged.Select(a => a.Node));
+        texts.ShouldNotContain(t => t.StartsWith("This design has no version yet. The brief", StringComparison.Ordinal), "the no-version text is words that wrap, not one line");
+        texts.ShouldContain(t => t.StartsWith("version", StringComparison.Ordinal) || t.StartsWith("yet.", StringComparison.Ordinal) || t.Contains("no version", StringComparison.Ordinal) || t.Contains("version", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void EveryTimeOnADesignsPageIsLocalWithUtcOnHover()
+    {
+        PageTime.Zone = TimeZoneInfo.CreateCustomTimeZone("test+5:30", TimeSpan.FromHours(5.5), "test", "test");
+        try
+        {
+            var full = Sample();
+            var brief = $"## 2026-11-16T09:00:00Z{Environment.NewLine}{Environment.NewLine}A piece.";
+            var detail = full.Open!.Detail with { Brief = brief };
+            using var rig = new Rig(full with { Open = DesignPages.Load(detail) });
+            rig.Paint();
+            var list = ArrangedAt(rig, 1400, 900).ToList();
+            SentenceRuns.Texts(list.Select(a => a.Node)).ShouldContain("v2 · SharpAstro/pilot · 2026-11-16 14:30");
+            list.Select(a => a.Node.Tooltip).OfType<string>().ShouldContain(t => t.EndsWith("2026-11-16 09:00:00 UTC", StringComparison.Ordinal));
+
+            rig.View.Open("DSN-1");
+            rig.Paint();
+            var page = ArrangedAt(rig, 1400, 900).ToList();
+            var texts = SentenceRuns.Texts(page.Select(a => a.Node));
+            texts.ShouldContain(t => t.Contains("2026-11-16 14:30", StringComparison.Ordinal) && t.StartsWith("v", StringComparison.Ordinal), "the versions list");
+            texts.ShouldNotContain(t => t.Contains("09:00", StringComparison.Ordinal) && !t.Contains("UTC", StringComparison.Ordinal), "no UTC time without its label");
+            page.Select(a => a.Node.Tooltip).OfType<string>().ShouldContain(t => t.StartsWith("Play v", StringComparison.Ordinal) && t.EndsWith("09:00:00 UTC", StringComparison.Ordinal));
+            PageTime.LocalHeadings(brief).ShouldStartWith("## 2026-11-16 14:30 (2026-11-16 09:00 UTC)");
+            PageTime.Hover(new DateTimeOffset(2026, 11, 16, 9, 0, 0, TimeSpan.Zero)).ShouldContain("+05:30").ShouldContain("09:00:00 UTC");
+        }
+        finally
+        {
+            PageTime.Zone = TimeZoneInfo.Local;
+        }
+    }
+
+    [Fact]
+    public void PointAtThisIsAsWideAsItsLabelPlusPaddingAndSharesOneHeightAndMiddleWithTheHeading()
+    {
+        using var rig = new Rig(Sample());
+        rig.View.Open("DSN-1");
+        rig.Paint();
+        foreach (var width in new[] { 1000f, 1600f })
+        {
+            var all = ArrangedAt(rig, width, 900).ToList();
+            var button = all.Single(a => a.Node.Hit is HitResult.ButtonHit { Action: "designs:point" });
+            var label = all.Single(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text t } && t.Value == "Point at this");
+            var heading = all.First(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text t } && t.Value == "Chat with the designer");
+            button.Bounds.Width.ShouldBeLessThan(label.Bounds.Width + 40f, "label plus padding, not a star share");
+            button.Bounds.Height.ShouldBe(heading.Bounds.Height, 0.5f, "one height");
+            (button.Bounds.Y + button.Bounds.Height / 2f).ShouldBe(heading.Bounds.Y + heading.Bounds.Height / 2f, 0.5f, "one middle");
+        }
+    }
+
     [Fact]
     public void ADesignsPageShowsThePlayerTheRendersTheVersionsAndTheNotes()
     {
