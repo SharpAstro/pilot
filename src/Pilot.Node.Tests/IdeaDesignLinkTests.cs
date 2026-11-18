@@ -66,10 +66,7 @@ public sealed class IdeaDesignLinkTests : IssueBoardFixture
     public async Task ThePicturesTheNodeHoldsAreKeptInTheDesignsFolderAndTheOthersAreNamedByTheirUrl()
     {
         var held = _attachments.AddIdeaImage([1, 2, 3, 4], "png");
-        GitHub.AddIssue(Repo, "Ring map", IdeaIds.Milestone, body: $"look
-
-![mock](pilot-attachment:{held}.png)
-![web](https://example.com/web.png)");
+        GitHub.AddIssue(Repo, "Ring map", IdeaIds.Milestone, body: $"look\n\n![mock](pilot-attachment:{held}.png)\n![web](https://example.com/web.png)");
         await Run(Verbs.MarkDesign, Idea(8));
 
         var id = await Start(8);
