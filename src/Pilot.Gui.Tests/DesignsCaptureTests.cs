@@ -363,11 +363,9 @@ public sealed class DesignsCaptureTests
         var buffer = new CellBuffer { ColorMode = ColorMode.TrueColor };
         var frame = await TerminalWireframeSweepTests.RecordCase("design page", state, columns, rows, buffer);
         var lines = Enumerable.Range(0, rows).Select(y => string.Concat(Enumerable.Range(0, columns).Select(x => buffer.BackAt(x, y).Glyph))).ToArray();
-        var text = string.Join('
-', lines);
+        var text = string.Join(Environment.NewLine, lines);
         text.ShouldContain("Design 0");
-        TerminalWireframeSweepTests.Findings(TerminalWireframeSweepTests.Check(frame)).ShouldBeEmpty($"{state} {columns}x{rows}:
-{text}");
+        TerminalWireframeSweepTests.Findings(TerminalWireframeSweepTests.Check(frame)).ShouldBeEmpty($"{state} {columns}x{rows}:{Environment.NewLine}{text}");
         Keep($"after-design-document-pilot-tui-{state}-{columns}x{rows}.png", DesignsWaitingIdeasTests.Png(lines));
     }
 }
