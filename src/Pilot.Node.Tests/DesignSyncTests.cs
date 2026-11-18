@@ -186,6 +186,16 @@ public sealed class DesignSyncTests : IDisposable
         line.ShouldBe("Not synced: SharpAstro/pilot has no issue #404. v1 is saved on DE1 and will be sent again.");
     }
 
+    [Theory]
+    [InlineData("gh: HTTP 422: Validation Failed.\nhttps://docs.github.com/rest\n  stderr: more", "gh: HTTP 422: Validation Failed")]
+    [InlineData("\r\n  the issue changed while its body was written.\r\n", "the issue changed while its body was written")]
+    [InlineData("one line", "one line")]
+    public void AFailureLineOnThePageIsTheFirstLineOfTheMessage(string message, string first)
+    {
+        // A gh failure can run to many lines; the page takes the first with words on it (the node's log keeps the whole).
+        DesignSync.FirstLine(message).ShouldBe(first);
+    }
+
     [Fact]
     public async Task LinkingAnIssueThatIsNotThereIsRefused()
     {

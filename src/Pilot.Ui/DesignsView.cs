@@ -1071,7 +1071,9 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
         }
         if (_edit is not null && !OnCurrent(page))
         {
-            // The page moved off the current version (a newer one was published while typing): the editor closes, and what was sent stays in the draft.
+            // The page moved off the current version (a newer one was published while typing): the editor closes. What was typed since the last autosave is sent first, as the autosave
+            // would have sent it a moment later, so the last words are not dropped without a word; a cell the newer version no longer has is refused by the node, and the refusal is shown.
+            SaveEdit();
             _edit = null;
         }
         var notebook = page.Notebook;
@@ -1093,14 +1095,14 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
         {
             items.Add(Typable(-1, "objective", "Objective of the design", WrappedProse.Of(notebook?.Objective ?? "", 14f, Body)));
         }
-        if (notebook?.Notes is { Length: > 0 } designNotes || _edit == (-1, "notes"))
-        {
-            items.Add(Typable(-1, "notes", "Notes on the design", Markdown(notebook?.Notes ?? "")));
-        }
         else if (OnEdit is not null && !ReadOnly(row) && OnCurrent(page))
         {
-            // The check asks every design for an objective, so a missing one is offered for typing like a cell's notes.
+            // The check asks every design for an objective, so a missing one is offered for typing like a cell's.
             items.Add(Typable(-1, "objective", "", WrappedProse.OneLine(AddObjective, 11f, Dim, selectable: false).RowH(18f)));
+        }
+        if (notebook?.Notes is { Length: > 0 } || _edit == (-1, "notes"))
+        {
+            items.Add(Typable(-1, "notes", "Notes on the design", Markdown(notebook?.Notes ?? "")));
         }
         if (_edit is { Cell: -1 } || _edit is null && page.HasDraftChange && OnCurrent(page))
         {

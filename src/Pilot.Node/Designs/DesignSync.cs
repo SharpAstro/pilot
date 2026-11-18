@@ -204,8 +204,12 @@ public sealed class DesignSync(DesignStore store, RepoCatalog repos, IGitHub git
             Failed(design.Id, DesignSyncText.Failure($"{repoName} is no repo on GitHub that {node} lists", version, node));
             return false;
         }
-        // The page shows 'Writing v<k> to <repo>#<n>...' while the try runs: the last failure's line is taken off.
-        store.Update(design.Id, r => r with { SyncError = null, SyncErrorAt = null, SyncHeld = null });
+        // The page shows 'Writing v<k> to <repo>#<n>...' while the try runs: the last failure's line is taken off. A held version keeps its 'Held:' line until the hold is seen gone,
+        // so a round under a hold writes the record at most once and the page never flickers through 'Writing' on the way back to 'Held'.
+        if (design.SyncError is not null)
+        {
+            store.Update(design.Id, r => r with { SyncError = null, SyncErrorAt = null });
+        }
         try
         {
             using var deadline = Deadlined(cancellationToken);
@@ -213,8 +217,15 @@ public sealed class DesignSync(DesignStore store, RepoCatalog repos, IGitHub git
             if (design.IssueNumber is { } held && (await github.IssueLabelsOrThrowAsync(info.Path, held, token).ConfigureAwait(false)).Contains(PilotMarks.Hold, StringComparer.OrdinalIgnoreCase))
             {
                 // 'pilot: hold' keeps its meaning: no node acts on the issue. Not an error; the page says it is held, and the timer sends the version once the hold is off.
-                store.Update(design.Id, r => r with { SyncHeld = true });
+                if (design.SyncHeld != true)
+                {
+                    store.Update(design.Id, r => r with { SyncHeld = true });
+                }
                 return false;
+            }
+            if (design.SyncHeld == true)
+            {
+                store.Update(design.Id, r => r with { SyncHeld = null });
             }
             var files = store.ReadVersion(design.Id, version);
             var row = design;
@@ -247,6 +258,7 @@ public sealed class DesignSync(DesignStore store, RepoCatalog repos, IGitHub git
                 SyncedVersion = version,
                 SyncError = null,
                 SyncErrorAt = null,
+                SyncHeld = null,
                 History = [.. r.History.Select(v => v.Number == version ? v with { SyncedAt = at } : v)],
             });
             return true;
@@ -255,13 +267,18 @@ public sealed class DesignSync(DesignStore store, RepoCatalog repos, IGitHub git
         {
             await Error.WriteLineAsync($"design: {design.Id} v{version.ToString(CultureInfo.InvariantCulture)} was not written to GitHub: {(ex is OperationCanceledException ? "it took longer than " + Deadline : ex.Message)}").ConfigureAwait(false);
             // The page says the real reason: 'GitHub did not answer' only for a try that ran out of time, else what failed (an issue changed while its body was written, a missing issue, a refusal).
-            Failed(design.Id, DesignSyncText.Failure(ex is OperationCanceledException ? DesignSyncText.NoAnswer : ex.Message.TrimEnd('.'), version, node));
+            // A gh failure can run to many lines; the page takes its first, and the whole message is in the node's log just above.
+            Failed(design.Id, DesignSyncText.Failure(ex is OperationCanceledException ? DesignSyncText.NoAnswer : FirstLine(ex.Message), version, node));
             return false;
         }
     }
 
     private void Failed(string id, string line) =>
         store.Update(id, r => r with { SyncError = line, SyncErrorAt = time.GetUtcNow() });
+
+    // The first line of a failure's message with words on it, without its closing full stop (the page's sentence adds its own).
+    internal static string FirstLine(string message) =>
+        (message.Split('\n').Select(l => l.Trim()).FirstOrDefault(l => l.Length > 0) ?? message.Trim()).TrimEnd('.');
 
     /// <summary>
     /// Reads the open issues labelled <see cref="DesignSyncText.Label"/> of the repos the node knows, and keeps each one made on another node (and not linked here) as a read-only design:

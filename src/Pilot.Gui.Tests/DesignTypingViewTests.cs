@@ -53,7 +53,7 @@ public sealed class DesignTypingViewTests
         }
 
         public List<Layout.ArrangedNode<float>> Arranged(DesignsScreen? other = null) =>
-            Layout.Engine.Arrange(View.Tree(other ?? Screen),new Rect<float>(0, 0, 1920, 1080), new PixelMeasureContext<RgbaImage>(_renderer, SessionsCapture.FontPath, 1f)).ToList();
+            Layout.Engine.Arrange(View.Tree(other ?? Screen), new Rect<float>(0, 0, 1920, 1080), new PixelMeasureContext<RgbaImage>(_renderer, SessionsCapture.FontPath, 1f)).ToList();
 
         public byte[] Png() => SharpAstro.Png.PngWriter.Encode([.. _renderer.Surface.Pixels], 1920, 1080);
 
@@ -172,10 +172,13 @@ public sealed class DesignTypingViewTests
         // A newer version published while the owner types: the page on show is no longer the current one, so the editor and the panel go.
         using var rig = new Rig();
         rig.View.BeginEdit(1, "objective").ShouldBeTrue();
+        rig.View.Editor.Text = "Typed a moment before v3 came.";
         var open = rig.Screen.Open!;
         var passed = rig.Screen with { Open = open with { Detail = open.Detail with { Row = open.Detail.Row with { Current = 3 } } } };
         var all = rig.Arranged(passed);
         rig.View.Editing.ShouldBeNull();
+        // The words typed since the last autosave are sent as the autosave would have sent them, not dropped.
+        rig.Edits.ShouldHaveSingleItem().ShouldBe(("DSN-1", "objective", "2", "Typed a moment before v3 came."));
         all.Select(a => a.Node).OfType<Layout.Node.Leaf>().Any(l => l.Content is Layout.Content.TextEditor).ShouldBeFalse();
         SentenceRuns.Texts(all.Select(a => a.Node)).ShouldNotContain("Discard draft");
     }
@@ -195,6 +198,44 @@ public sealed class DesignTypingViewTests
         var words = string.Concat(all.Select(a => a.Node).OfType<Layout.Node.Leaf>().Select(l => l.Content).OfType<Layout.Content.Text>().Select(t => t.Value));
         words.Split(DesignsView<RgbaImage>.AddObjective).Length.ShouldBe(3, "one 'Add objective' for the design and one for cell 2");
         rig.View.BeginEdit(1, "objective").ShouldBeTrue();
+        rig.View.Editor.Text.ShouldBe("");
+    }
+
+    private static int AddObjectives(List<Layout.ArrangedNode<float>> all) =>
+        string.Concat(all.Select(a => a.Node).OfType<Layout.Node.Leaf>().Select(l => l.Content).OfType<Layout.Content.Text>().Select(t => t.Value))
+            .Split(DesignsView<RgbaImage>.AddObjective).Length - 1;
+
+    [Fact]
+    public void ADesignWithAnObjectiveAndNoNotesOffersNoAddObjectiveAndOneEditorWhileItsObjectiveIsTyped()
+    {
+        // R3 blocking 1 of the review: the offer hung on the notes' if, so the usual design (an objective, no design notes) showed a false 'Add objective' and two editors once its objective was opened.
+        var sample = PageData.DesignsFor("sample", Now);
+        sample.Open!.Doc!.Notes.ShouldBe("", "the sample design has no notes of its own");
+        using var rig = new Rig(sample);
+        var all = rig.Arranged();
+        AddObjectives(all).ShouldBe(0);
+        all.Count(a => a.Node.Hit is HitResult.ButtonHit { Action: "designs:edit:-1:objective" }).ShouldBe(1, "the objective's own prose only");
+
+        rig.View.BeginEdit(-1, "objective").ShouldBeTrue();
+        rig.View.Editor.Text.ShouldBe(sample.Open.Doc.Objective);
+        all = rig.Arranged();
+        all.Select(a => a.Node).OfType<Layout.Node.Leaf>().Count(l => l.Content is Layout.Content.TextEditor).ShouldBe(1);
+        SentenceRuns.Texts(all.Select(a => a.Node)).ShouldContain("Objective of the design");
+        TextOverlap.Faults([.. all]).Select(f => f.Line).ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void ADesignWithNotesAndNoObjectiveOffersAddObjective()
+    {
+        // The case R1.6 asked for: the check refuses a design with no objective, so one with notes and no objective must still be able to get it by typing.
+        var sample = PageData.DesignsFor("sample", Now);
+        var doc = sample.Open!.Doc! with { Objective = null, Notes = "The design's own notes." };
+        using var rig = new Rig(sample with { Open = sample.Open with { Doc = doc } });
+        var all = rig.Arranged();
+        AddObjectives(all).ShouldBe(1, "the design's; every cell has one");
+        Has(all, "designs:edit:-1:objective").ShouldBeTrue();
+        Has(all, "designs:edit:-1:notes").ShouldBeTrue("the notes are shown and typable");
+        rig.View.BeginEdit(-1, "objective").ShouldBeTrue();
         rig.View.Editor.Text.ShouldBe("");
     }
 
