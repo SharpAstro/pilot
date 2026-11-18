@@ -5,7 +5,7 @@ namespace Pilot.Ui;
 /// <summary>
 /// The back row (PIL1183): the one declaration of a page's first row. A "← Page" pill at its left, its own parts after it at one height and one middle. The
 /// Sessions transcript, a flight's page, the archived flights and a design's page all head their first row with it, so the arrow, the size, the colours, the
-/// tooltip and the hit are written once, on the pixel page and the terminal's alike. Escape runs the same <see cref="Up"/> as the pill: each page's key handler
+/// tooltip and the hit are written once, on the pixel page and the terminal's alike. Escape runs the same action as the pill: each page's key handler
 /// calls the action it gave here.
 /// </summary>
 internal static class BackRow
