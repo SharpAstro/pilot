@@ -48,6 +48,47 @@ public static class DesignPaths
     public static string TerminalRender(string folder, string screen, int columns, int rows) =>
         Path.Combine(RendersOf(folder), string.Create(CultureInfo.InvariantCulture, $"{screen}.{columns}x{rows}.png"));
 
+    /// <summary>
+    /// The name of the first target of the <c>prototype.json</c> in <paramref name="folder"/> (a string entry as it is, an object by its <c>name</c>, else <c>&lt;width&gt;x&lt;height&gt;</c>), or null
+    /// when it names none or cannot be read: the target whose PNG stands for a screen when the design has none at its design size.
+    /// </summary>
+    public static string? FirstTarget(string folder)
+    {
+        if (ReadText(PrototypeFile(folder)) is not { } json)
+        {
+            return null;
+        }
+        try
+        {
+            using var document = System.Text.Json.JsonDocument.Parse(json);
+            if (document.RootElement.ValueKind != System.Text.Json.JsonValueKind.Object
+                || !document.RootElement.TryGetProperty("targets", out var targets) || targets.ValueKind != System.Text.Json.JsonValueKind.Array || targets.GetArrayLength() == 0)
+            {
+                return null;
+            }
+            var first = targets[0];
+            if (first.ValueKind == System.Text.Json.JsonValueKind.String)
+            {
+                return first.GetString();
+            }
+            if (first.ValueKind != System.Text.Json.JsonValueKind.Object)
+            {
+                return null;
+            }
+            if (first.TryGetProperty("name", out var name) && name.ValueKind == System.Text.Json.JsonValueKind.String && name.GetString() is { Length: > 0 } text)
+            {
+                return text;
+            }
+            return first.TryGetProperty("width", out var w) && first.TryGetProperty("height", out var h) && w.TryGetInt32(out var width) && h.TryGetInt32(out var height)
+                ? string.Create(CultureInfo.InvariantCulture, $"{width}x{height}")
+                : null;
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            return null;
+        }
+    }
+
     /// <summary>Reads a text file, or null when it is not there or cannot be read.</summary>
     public static string? ReadText(string file)
     {

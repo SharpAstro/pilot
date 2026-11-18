@@ -80,7 +80,13 @@ internal sealed class ResourceReadParams
 
 internal sealed record ResourceReadResult(ResourceContents[] Contents);
 
-internal sealed record ResourceContents(string Uri, string MimeType, string Text);
+/// <summary>One piece of a resource: text, or for a binary one (a render's PNG) its bytes as base64 in <see cref="Blob"/>.</summary>
+internal sealed record ResourceContents(string Uri, string MimeType, string? Text = null, string? Blob = null);
+
+/// <summary>A URI template (RFC 6570) for a family of resources, as <c>resources/templates/list</c> lists it.</summary>
+internal sealed record McpResourceTemplate(string UriTemplate, string Name, string Description, string MimeType);
+
+internal sealed record ResourceTemplatesListResult(McpResourceTemplate[] ResourceTemplates);
 
 /// <summary>
 /// The MCP server's own source-generated JSON, AOT-safe as the node's wire is (<c>PilotJsonContext</c>): the protocol's
@@ -100,4 +106,5 @@ internal sealed record ResourceContents(string Uri, string MimeType, string Text
 [JsonSerializable(typeof(ResourcesListResult))]
 [JsonSerializable(typeof(ResourceReadParams))]
 [JsonSerializable(typeof(ResourceReadResult))]
+[JsonSerializable(typeof(ResourceTemplatesListResult))]
 internal sealed partial class McpJsonContext : JsonSerializerContext;

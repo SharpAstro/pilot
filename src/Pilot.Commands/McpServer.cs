@@ -69,8 +69,8 @@ internal sealed class McpServer(string cwd, string? node, string? socket,
     private const int InvalidRequest = -32600;
     private const int MethodNotFound = -32601;
     private const int InvalidParams = -32602;
-    private const int InternalError = -32603;
-    private const int ResourceNotFound = -32002;
+    internal const int InternalError = -32603;
+    internal const int ResourceNotFound = -32002;
 
     private const string Json = "application/json";
 
@@ -410,7 +410,8 @@ internal sealed class McpServer(string cwd, string? node, string? socket,
                 "ping" => Reply(answering, new EmptyResult(), McpJsonContext.Default.EmptyResult),
                 "tools/list" => Reply(answering, new ToolsListResult([.. _tools.Select(t => Describe(t.Key, t.Value.Path, t.Value.Chain))]), McpJsonContext.Default.ToolsListResult),
                 "tools/call" => Reply(answering, await CallAsync(Params(request, McpJsonContext.Default.ToolCallParams), cancellationToken), McpJsonContext.Default.ToolCallResult),
-                "resources/list" => Reply(answering, new ResourcesListResult(Resources), McpJsonContext.Default.ResourcesListResult),
+                "resources/list" => Reply(answering, new ResourcesListResult(await ListedAsync(cancellationToken)), McpJsonContext.Default.ResourcesListResult),
+                "resources/templates/list" => Reply(answering, new ResourceTemplatesListResult(McpDesigns.Templates), McpJsonContext.Default.ResourceTemplatesListResult),
                 "resources/read" => Reply(answering, await ReadAsync(Params(request, McpJsonContext.Default.ResourceReadParams), cancellationToken), McpJsonContext.Default.ResourceReadResult),
                 _ => Reply(answering, MethodNotFound, $"pilot's MCP server has no method {method}"),
             };
@@ -444,7 +445,7 @@ internal sealed class McpServer(string cwd, string? node, string? socket,
         return new InitializeResult(protocol, new ServerCapabilities(new ListCapability(ListChanged: true), new ResourcesCapability()), new McpImplementation("pilot", version),
             "pilot v2's node. The tools are pilot's commands, named by their path (flight_create, leg_plan, check, cards, answer), and do what "
             + "the CLI does: a refusal says why. Inside a flight's plane a leg's tools need no leg named. The resources are the node's flights, "
-            + "legs, cards and sessions as JSON. Every tool takes an optional node (a name like DE1, a host, or host:port, as the nodes tool lists "
+            + "legs, cards and sessions as JSON; the designs are resources too (pilot://designs, and per design its record, DESIGN.md, screen renders as PNG and chat; resources/templates/list has the URIs). Every tool takes an optional node (a name like DE1, a host, or host:port, as the nodes tool lists "
             + "them) to run that call on another node; without it a call runs on the node this server started with, and the resources are always that node's.");
     }
 
@@ -499,7 +500,9 @@ internal sealed class McpServer(string cwd, string? node, string? socket,
     /// <summary>One piece of the node's snapshot as JSON, each row as the node's wire writes it.</summary>
     private async Task<ResourceReadResult> ReadAsync(ResourceReadParams read, CancellationToken cancellationToken)
     {
-        if (Resources.FirstOrDefault(r => r.Uri == read.Uri) is not { } resource)
+        var design = McpDesigns.Is(read.Uri);
+        var resource = Resources.FirstOrDefault(r => r.Uri == read.Uri);
+        if (!design && resource is null)
         {
             throw new McpException(ResourceNotFound, $"there is no resource {read.Uri}; resources/list lists them");
         }
@@ -514,6 +517,10 @@ internal sealed class McpServer(string cwd, string? node, string? socket,
         SnapshotEvent snapshot;
         try
         {
+            if (design)
+            {
+                return await McpDesigns.ReadAsync(read.Uri!, client, remote: !here && target is not null, target, Who, cancellationToken);
+            }
             snapshot = await PilotCommand.SnapshotAsync(client, cancellationToken);
         }
         catch (Exception ex) when (ex is HttpRequestException or SocketException or IOException or WebSocketException or ObjectDisposedException
@@ -521,7 +528,7 @@ internal sealed class McpServer(string cwd, string? node, string? socket,
         {
             throw new McpException(InternalError, $"{Restarting} (no node answers on {client.SocketPath}: {ex.Message})");
         }
-        var text = resource.Name switch
+        var text = resource!.Name switch
         {
             "flights" => Rows(snapshot.Flights, PilotJsonContext.Default.FlightRow),
             "legs" => Rows(snapshot.Legs, PilotJsonContext.Default.LegRow),
@@ -529,6 +536,26 @@ internal sealed class McpServer(string cwd, string? node, string? socket,
             _ => Rows(snapshot.Sessions, PilotJsonContext.Default.SessionRow),
         };
         return new ResourceReadResult([new ResourceContents(resource.Uri, Json, text)]);
+    }
+
+    /// <summary>The four snapshot resources, then the designs the node has (the list, and for each its record, current document and chat); only the four when the node does not answer.</summary>
+    private async Task<McpResource[]> ListedAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            var (target, here, unknown) = await ResolvedAsync(cancellationToken);
+            if (unknown is not null)
+            {
+                return Resources;
+            }
+            using var client = await NodeTargets.ConnectAsync(target, socket, cancellationToken, here: here);
+            return [.. Resources, .. McpDesigns.Listed(await McpDesigns.ListAsync(client, Who, cancellationToken) ?? [])];
+        }
+        catch (Exception ex) when (ex is HttpRequestException or SocketException or IOException or WebSocketException or ObjectDisposedException
+            || (ex is OperationCanceledException && !cancellationToken.IsCancellationRequested))
+        {
+            return Resources;
+        }
     }
 
     /// <summary>The node this server was started against, passed on to every command it runs.</summary>
@@ -824,7 +851,7 @@ internal sealed class McpServer(string cwd, string? node, string? socket,
     }
 
     /// <summary>A JSON-RPC error to answer with, where a tool's own failure is a result instead.</summary>
-    private sealed class McpException(int code, string message) : Exception(message)
+    internal sealed class McpException(int code, string message) : Exception(message)
     {
         public int Code { get; } = code;
     }
