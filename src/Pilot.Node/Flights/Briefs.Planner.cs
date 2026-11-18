@@ -13,7 +13,7 @@ public static partial class Briefs
     /// The planner's brief: read the issue and the code, and plan the flight's legs as the node flies them (one worker each,
     /// in order, on one branch), then say <c>planned</c>. It writes no code.
     /// </summary>
-    public static string Plan(FlightRow flight, IReadOnlyList<LegRow> legs, string run, string? machine = null, string? pilotMd = null)
+    public static string Plan(FlightRow flight, IReadOnlyList<LegRow> legs, string run, string? machine = null, string? pilotMd = null, DesignRef? design = null)
     {
         var text = new StringBuilder();
         var title = flight.Title is { Length: > 0 } t ? $": {t}" : "";
@@ -49,6 +49,7 @@ public static partial class Briefs
             text.AppendLine("legs and the PR, not over those words. If the issue's body needs more, add a section under the idea's words (a heading of");
             text.AppendLine("your own, then the addition); never replace, shorten or reword what is there.");
         }
+        text.Append(DesignVersion(flight, DesignRole.Planner, design));
         if (legs.Count > 0)
         {
             text.AppendLine();

@@ -111,7 +111,7 @@ public sealed partial class LegCommander
             async entering =>
             {
                 await planes.EnsureAsync(flight.RepoPath, flight.Worktree, flight.Branch, CancellationToken.None);
-                var brief = Briefs.Plan(flight, state.Legs(flight.Code), Briefs.Run(Cli, Socket), options.Machine, await PilotMdOfAsync(flight));
+                var brief = Briefs.Plan(flight, state.Legs(flight.Code), Briefs.Run(Cli, Socket), options.Machine, await PilotMdOfAsync(flight), DesignRefOf(flight));
                 entering();
                 return await workers.StartAsync(new WorkerStart(planner, flight.RepoPath, PlaneOf(flight), brief, Models.Model(RoleModels.Planner), Models.Effort(RoleModels.Planner), Reason: SessionStartReasons.Planner), CancellationToken.None);
             },

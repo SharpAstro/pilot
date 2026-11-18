@@ -22,7 +22,7 @@ public static partial class Briefs
 
     /// <param name="socket">The node's socket when it is not the default one: the CLI is told it, or it would ask another node.</param>
     /// <param name="reboot">The flight's reboot file (#916), where it will be once read, and its text: what the session before the reboot wrote down.</param>
-    public static string For(FlightRow flight, LegRow leg, IReadOnlyList<LegRow> legs, string? why = null, PlaneState? plane = null, string? cli = null, string? socket = null, string? resumed = null, string? machine = null, string? update = null, string? pilotMd = null, (string File, string Text)? reboot = null)
+    public static string For(FlightRow flight, LegRow leg, IReadOnlyList<LegRow> legs, string? why = null, PlaneState? plane = null, string? cli = null, string? socket = null, string? resumed = null, string? machine = null, string? update = null, string? pilotMd = null, (string File, string Text)? reboot = null, DesignRef? design = null)
     {
         var run = Run(cli, socket);
         var text = new StringBuilder();
@@ -73,6 +73,7 @@ public static partial class Briefs
             text.AppendLine($"The node reruns `{check}` in this folder before it takes the leg as done; it must exit 0. Run it yourself first.");
         }
         text.Append(PilotMdSection(pilotMd));
+        text.Append(DesignVersion(flight, DesignRole.Worker, design));
         text.Append(LfsRule(flight.Worktree));
         text.AppendLine();
         text.AppendLine(CiRule);

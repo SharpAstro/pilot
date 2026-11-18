@@ -7,7 +7,7 @@ public static partial class Briefs
 {
     /// <param name="plan">The depth the node chose (#74); null reviews at standard depth, said no more than that.</param>
     /// <param name="again">The last round and what changed since its head: a re-review reads only that range; null reads the whole diff.</param>
-    public static string Review(FlightRow flight, IReadOnlyList<LegRow> legs, PlaneState plane, string run, ReviewPlan? plan = null, string? machine = null, ReReview? again = null, string? pilotMd = null)
+    public static string Review(FlightRow flight, IReadOnlyList<LegRow> legs, PlaneState plane, string run, ReviewPlan? plan = null, string? machine = null, ReReview? again = null, string? pilotMd = null, DesignRef? design = null)
     {
         var depth = plan?.Depth ?? ReviewDepth.Standard;
         var text = new StringBuilder();
@@ -33,6 +33,7 @@ public static partial class Briefs
         text.Append(NamingRule(machine, flight.Code.ToLowerInvariant()));
         text.Append(LfsRule(flight.Worktree));
         text.Append(PilotMdSection(pilotMd));
+        text.Append(DesignVersion(flight, DesignRole.Reviewer, design));
         if (Trackers.Reading(flight.Tracker).Reminder(flight.Item) is { } item)
         {
             text.AppendLine(item);
