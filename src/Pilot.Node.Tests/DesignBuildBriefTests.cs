@@ -35,7 +35,7 @@ public class DesignBuildBriefTests
         Order = 1,
         Goal = "Build the screens.",
         DoneWhen = "They exist.",
-        State = LegState.Pending,
+        State = LegState.Planned,
     };
 
     private static readonly Briefs.PlaneState Plane = new("", "");
