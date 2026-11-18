@@ -224,7 +224,11 @@ internal sealed partial class DesignsView<TSurface>
             }
             else
             {
-                yield return Layout.Builder.WrapH([.. repos.Select(repo => Chip(repo, $"designs:build-repo:{repo}", $"Build in {repo}", () => { PickBuildRepo(repo); }))]).WithGap(6f).WithLineGap(4f).WStar();
+                foreach (var repo in repos)
+                {
+                    var chosen = repo;
+                    yield return Chip(chosen, $"designs:build-repo:{chosen}", $"Build in {chosen}", () => { PickBuildRepo(chosen); });
+                }
             }
         }
         else
@@ -237,13 +241,18 @@ internal sealed partial class DesignsView<TSurface>
             }
             else
             {
-                yield return Layout.Builder.WrapH([.. milestones.Select(m => Chip(m.Title, $"designs:build-milestone:{m.Number}", $"Plan the idea into {m.Title}", () => { PickBuildMilestone(m.Title); }))]).WithGap(6f).WithLineGap(4f).WStar();
+                foreach (var m in milestones)
+                {
+                    var chosen = m;
+                    yield return Chip(chosen.Title, $"designs:build-milestone:{chosen.Number}", $"Plan the idea into {chosen.Title}", () => { PickBuildMilestone(chosen.Title); });
+                }
             }
         }
-        yield return Layout.Builder.HStack(Chip("Cancel", "designs:build-cancel", "Do not build", CancelBuild)).WithGap(6f).RowH(26f);
+        yield return Chip("Cancel", "designs:build-cancel", "Do not build", CancelBuild);
     }
 
+    // One full-width row of the column's one row height, like a version's: a long name ends in an ellipsis and the tooltip says it whole, never a chip wider than its column.
     private static Layout.Node Chip(string label, string hit, string tip, Action press) =>
-        Layout.Builder.Text(label, 12f, Bright, TextAlign.Center, TextAlign.Center).Pad(10f, 0f).WAuto().HFixed(26f).Bg(Button).BgHover(ButtonHover)
-            .WithTooltip(tip).Follows(new HitResult.ButtonHit(hit), _ => press());
+        WrappedProse.OneLine(label, 12f, Bright, selectable: false, vAlign: TextAlign.Center).Pad(10f, 4f).Bg(Button).BgHover(ButtonHover)
+            .WithTooltip(tip).Follows(new HitResult.ButtonHit(hit), _ => press()).RowH(26f);
 }
