@@ -34,20 +34,41 @@ public sealed class DesignCliTests : IAsyncLifetime
         (await Pilot("design", "new", "--title", "Settings", "--", "second")).Output.ShouldContain("DSN-2");
 
         var (_, shown) = await Pilot("design", "show", "DSN-1");
-        shown.ShouldContain("DSN-1  A login screen with a button");
+        shown.ShouldContain("DSN-1" + Environment.NewLine);
         shown.ShouldContain("repo: pilot");
         (await Pilot("design", "show", "DSN-2")).Output.ShouldContain("DSN-2  Settings");
     }
 
     [Fact]
-    public async Task ATitleFromTheBriefIsItsFirstLineWholeUpToTwoHundredThenCutWithAnEllipsis()
+    public async Task ADesignIsNeverTitledFromItsBriefAndNewRefusesATitleOverForty()
     {
         await Pilot("design", "new", "--", new string('w', 120));
-        await Pilot("design", "new", "--", new string('v', 250));
+        (await Pilot("design", "show", "DSN-1")).Output.ShouldContain("DSN-1" + Environment.NewLine);
+        var (exit, said) = await Pilot("design", "new", "--title", new string('t', 41), "--", "brief");
+        exit.ShouldNotBe(0);
+        said.ShouldContain("41 characters, over the limit of 40");
+    }
 
-        // 120 characters is whole (it was cut at 80 before #1160); a spaceless line over 200 is cut at the limit and says so.
-        (await Pilot("design", "show", "DSN-1")).Output.ShouldContain("DSN-1  " + new string('w', 120) + Environment.NewLine);
-        (await Pilot("design", "show", "DSN-2")).Output.ShouldContain("DSN-2  " + new string('v', 199) + "…" + Environment.NewLine);
+    [Fact]
+    public async Task DesignTitleSetsTheRowAndTheDraftsHeadingAndRefusesEmptyOrOverForty()
+    {
+        await Pilot("design", "new", "--", "brief");
+        (await Pilot("design", "draft", "DSN-1")).Exit.ShouldBe(0);
+
+        var (exit, said) = await Pilot("design", "title", "DSN-1", "--", "Disk", "alert");
+        exit.ShouldBe(0, said);
+        (await Pilot("design", "show", "DSN-1")).Output.ShouldContain("DSN-1  Disk alert");
+        File.ReadAllText(Path.Combine(DesignFolder("DSN-1"), "draft", "DESIGN.md")).ShouldStartWith("# Disk alert");
+
+        var exact = new string('t', 40);
+        (await Pilot("design", "title", "DSN-1", "--", exact)).Exit.ShouldBe(0);
+        var (overExit, over) = await Pilot("design", "title", "DSN-1", "--", exact + "t");
+        overExit.ShouldNotBe(0);
+        over.ShouldContain("41 characters, over the limit of 40");
+        var (emptyExit, empty) = await Pilot("design", "title", "DSN-1", "--", "   ");
+        emptyExit.ShouldNotBe(0);
+        empty.ShouldContain("title is empty");
+        (await Pilot("design", "show", "DSN-1")).Output.ShouldContain("DSN-1  " + exact);
     }
 
     [Fact]
@@ -182,8 +203,8 @@ public sealed class DesignCliTests : IAsyncLifetime
     {
         (await Pilot("designs")).Output.ShouldContain("No designs");
 
-        await Pilot("design", "new", "--", "older one");
-        await Pilot("design", "new", "--repo", "tianwen", "--", "newer one");
+        await Pilot("design", "new", "--title", "older one", "--", "brief");
+        await Pilot("design", "new", "--repo", "tianwen", "--title", "newer one", "--", "brief");
 
         var (exit, list) = await Pilot("designs");
         exit.ShouldBe(0);

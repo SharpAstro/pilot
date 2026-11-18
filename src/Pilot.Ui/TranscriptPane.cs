@@ -272,8 +272,7 @@ internal sealed class TranscriptPane
         var shown = entries.Count < total ? $"{(from >= 0 ? "from the moment" : "its last")} {entries.Count} of {total}" : $"{total} {(total == 1 ? "entry" : "entries")}";
         var head = new List<Layout.Node>
         {
-            Layout.Builder.Text("← Sessions", 13f, Bright, TextAlign.Center).Pad(12f, 5f).WAuto().Bg(Button).BgHover(ButtonHover)
-                .Follows(new HitResult.ButtonHit("transcript:back"), _ => GoUp()).WithTooltip("Up to the Sessions page (Escape)"),
+            BackRow.Pill("Sessions", "transcript:back", GoUp),
             // At most two lines, the whole title on hover: a long session name took the page's height from its entries.
             WrappedProse.Of(Title ?? "", 16f, Bright, TitleLines).WAuto().WithTooltip(Title ?? ""),
             Layout.Builder.Text(live ? "● live" : "session ended", 12f, live ? Ok : Faint).WAuto(),

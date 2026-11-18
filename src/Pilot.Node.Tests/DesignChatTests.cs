@@ -249,7 +249,9 @@ public sealed class DesignChatTests : IDisposable
         var id = await DesignWithDesignerAsync();
         Status(id).ShouldBe("drafting");
 
-        // A real design-check on the starter draft counts its findings: the empty objectives of the design and of its one screen.
+        // A real design-check on the starter draft counts its findings: the empty objectives of the design and of its one screen
+        // (the design is given a title first, as a heading of the id alone is a third finding).
+        _store.SetTitle(id, "Night list");
         Run(Verbs.DesignDraft, id).Ok.ShouldBeTrue();
         Run(Verbs.DesignCheck, id);
         Status(id).ShouldBe("checking: 2 findings");

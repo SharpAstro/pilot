@@ -392,7 +392,8 @@ public sealed class DesignsCaptureTests
         var frame = await TerminalWireframeSweepTests.RecordCase("design page", state, columns, rows, buffer);
         var lines = Enumerable.Range(0, rows).Select(y => string.Concat(Enumerable.Range(0, columns).Select(x => buffer.BackAt(x, y).Glyph))).ToArray();
         var text = string.Join(Environment.NewLine, lines);
-        text.ShouldContain("Design 0");
+        // The long state's design has a title of the longest allowed length (#1183): its first words, then an ellipsis where the column ends.
+        text.ShouldContain(state == "long" ? "Mw Wm" : "Design 0");
         var result = TerminalWireframeSweepTests.Check(frame);
         TerminalWireframeSweepTests.Findings(result).ShouldBeEmpty($"{state} {columns}x{rows}:{Environment.NewLine}{CellWireframe.Describe(result)}{Environment.NewLine}{text}");
         Keep($"after-design-document-pilot-tui-{state}-{columns}x{rows}.png", DesignsWaitingIdeasTests.Png(lines));

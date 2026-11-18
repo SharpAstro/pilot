@@ -1004,6 +1004,9 @@ public static class Verbs
     /// </summary>
     public const string DesignGitHub = "design-github";
 
+    /// <summary><c>design-title design/DSN-&lt;n&gt; title</c> (#1183): sets the design's title (at most <see cref="Pilot.Contracts.DesignTitle.MaxLength"/> characters) on its row and in the draft's DESIGN.md heading.</summary>
+    public const string DesignSetTitle = "design-title";
+
     /// <summary><c>design-discard design/DSN-&lt;n&gt;</c> (PIL1171): removes the draft.</summary>
     public const string DesignDiscard = "design-discard";
 
