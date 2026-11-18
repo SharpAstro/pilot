@@ -81,7 +81,7 @@ public static partial class Briefs
         text.AppendLine(notes is { Length: > 0 } ? "The current version's DESIGN.md:" : "There is no version yet; the starter DESIGN.md (`draft` makes it) is:");
         text.AppendLine();
         text.AppendLine("````markdown");
-        text.AppendLine((notes is { Length: > 0 } ? notes : DesignDocument.Starter(detail.Row.Title ?? detail.Row.Id).Format()).Trim());
+        text.AppendLine((notes is { Length: > 0 } ? notes : DesignDocument.Starter(DesignTitle.Shown(detail.Row.Title) ?? detail.Row.Id).Format()).Trim());
         text.AppendLine("````");
         text.AppendLine();
         text.AppendLine($"## The brief so far (BRIEF.md, the owner's words, oldest first)");
