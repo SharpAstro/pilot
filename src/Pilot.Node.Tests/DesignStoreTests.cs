@@ -59,9 +59,7 @@ public sealed class DesignStoreTests : IDisposable
     public void ADesignHasNoTitleUnlessGivenAndItIsNeverMadeFromTheBrief()
     {
         var store = Store();
-        store.New(null, null, "
-  A login screen
-with more below").Title.ShouldBeNull();
+        store.New(null, null, "\n  A login screen\nwith more below").Title.ShouldBeNull();
         store.New(null, "  ", new string('x', 300)).Title.ShouldBeNull();
         store.New("pilot", "  My title ", "brief").Title.ShouldBe("My title");
         store.New(null, new string('t', DesignTitle.MaxLength), "brief").Title.ShouldBe(new string('t', DesignTitle.MaxLength));

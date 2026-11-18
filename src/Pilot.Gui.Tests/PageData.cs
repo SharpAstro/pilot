@@ -134,8 +134,7 @@ internal sealed partial class PageData
         // A design from before #1183: its stored title is the old cut of the brief's first line, far over the limit, so the page shows its id alone.
         var brief = "A card for one job: its id j6917 and the command on the first line, a line saying what it is doing and the whole of its output\n\n"
             + "## 2026-11-16T09:00:00Z\n\n" + string.Join(' ', Enumerable.Repeat("A long brief sentence about one job's card.", 30));
-        var title = brief.Split('
-')[0];
+        var title = brief.Split('\n')[0];
         var detail = full.Open!.Detail with
         {
             Row = full.Open.Detail.Row with { Title = title, Current = null, Versions = 0 },
