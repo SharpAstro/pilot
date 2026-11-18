@@ -69,31 +69,84 @@ public sealed class DesignChatTests : IDisposable
         return id;
     }
 
-    private void Listed(SessionState state, bool gone = false, DateTimeOffset? lastResponse = null, string job = Job) =>
+    private const string Designer = "de1-dsn1-designer";
+
+    /// <summary>A row that is not the designer (a Gone or a Failed one), listed under the designer's name.</summary>
+    private const string Other = "job00002";
+
+    private void Listed(SessionState state, bool gone = false, DateTimeOffset? lastResponse = null, string job = Job, DateTimeOffset? started = null) =>
         _state.PutSession(new SessionRow
         {
-            Id = job, SessionId = job == Job ? Session : job + "-s", Name = "de1-dsn1-designer", Kind = SessionKind.Background, Cwd = "/x", Role = SessionRole.Designer,
-            ContextTokens = 1, ContextWindow = 200_000, State = state, SpendWeighted = 0, StartedAt = Start, Gone = gone, LastResponseAt = lastResponse ?? Start.AddMinutes(2),
+            Id = job, SessionId = job == Job ? Session : job + "-s", Name = Designer, Kind = SessionKind.Background, Cwd = "/x", Role = SessionRole.Designer,
+            ContextTokens = 1, ContextWindow = 200_000, State = state, SpendWeighted = 0, StartedAt = started ?? Start, Gone = gone,
+            LastResponseAt = lastResponse ?? Start.AddMinutes(2),
         });
 
-    [Fact]
-    public async Task AGoneIdleRowDoesNotMakeAFreshlyStartedDesignerIdle()
+    /// <summary>
+    /// Lists <see cref="Other"/> started after the live row, so <see cref="NodeState.Sessions"/> (newest start first) gives it before the live one and a
+    /// <c>FirstOrDefault</c> by name meets it first: the Gone and Failed skip in <see cref="DesignChat"/> is then what the test turns on, not the order.
+    /// </summary>
+    private void ListedFirst(SessionState state, bool gone = false, DateTimeOffset? lastResponse = null)
+    {
+        Listed(state, gone, lastResponse, job: Other, started: Start.AddMinutes(3));
+        _state.Sessions().Where(s => s.Name == Designer).Select(s => s.Id).ShouldBe([Other, Job], "the row to skip is the one met first");
+    }
+
+    private bool Working(string id) => Run(Verbs.DesignChat, id).DesignChat.ShouldNotBeNull().Working;
+
+    /// <summary>A design whose designer's turn started at 09:05, with its live row (<see cref="Job"/>) still listed Working.</summary>
+    private async Task<string> TurnStartedAsync()
     {
         var id = await DesignWithDesignerAsync();
         _store.Update(id, r => r with { DesignerTurnStartedAt = Start.AddMinutes(5) });
-        Listed(SessionState.Idle, gone: true, lastResponse: Start.AddMinutes(10), job: "old-job");
-        Run(Verbs.DesignChat, id).DesignChat.ShouldNotBeNull().Working.ShouldBeTrue();
+        return id;
     }
 
     [Fact]
-    public async Task AFailedRowIsNotTheDesignerSoTheLiveRowsIdleEndsTheTurn()
+    public async Task AGoneIdleRowAloneDoesNotEndAFreshlyStartedDesignersTurn()
     {
-        var id = await DesignWithDesignerAsync();
-        _store.Update(id, r => r with { DesignerTurnStartedAt = Start.AddMinutes(5) });
-        Listed(SessionState.Failed, lastResponse: Start.AddMinutes(10), job: "old-job");
-        Run(Verbs.DesignChat, id).DesignChat.ShouldNotBeNull().Working.ShouldBeTrue("a Failed row alone is not the designer's turn end");
+        var id = await TurnStartedAsync();
+        _state.RemoveSession(Job);
+        // The previous designer's row, gone, with a Stop after this turn's start: read as the designer, it would end the turn.
+        Listed(SessionState.Idle, gone: true, lastResponse: Start.AddMinutes(10), job: Other);
+        Working(id).ShouldBeTrue("a fresh start stays Working until its own row is listed");
+    }
+
+    [Fact]
+    public async Task AGoneIdleRowListedFirstDoesNotEndTheLiveDesignersTurn()
+    {
+        var id = await TurnStartedAsync();
+        ListedFirst(SessionState.Idle, gone: true, lastResponse: Start.AddMinutes(10));
+        Working(id).ShouldBeTrue("the live row, still Working, is the designer; the Gone Idle one before it is not");
+    }
+
+    [Fact]
+    public async Task AGoneRowListedFirstIsPassedSoTheLiveRowsIdleEndsTheTurn()
+    {
+        var id = await TurnStartedAsync();
+        // A designer that died mid-turn: the tracker keeps its last state, Working, and marks it gone.
+        ListedFirst(SessionState.Working, gone: true, lastResponse: Start.AddMinutes(4));
         Listed(SessionState.Idle, lastResponse: Start.AddMinutes(6));
-        Run(Verbs.DesignChat, id).DesignChat.ShouldNotBeNull().Working.ShouldBeFalse("the live row's Idle is read past the Failed one");
+        Working(id).ShouldBeFalse("the live row's Idle, after the turn's start, is read past the Gone one");
+    }
+
+    [Fact]
+    public async Task AFailedRowAloneDoesNotEndTheTurn()
+    {
+        var id = await TurnStartedAsync();
+        _state.RemoveSession(Job);
+        Listed(SessionState.Failed, lastResponse: Start.AddMinutes(10), job: Other);
+        Working(id).ShouldBeTrue("a Failed row is not the designer's turn end; a fresh start stays Working until its own row is listed");
+    }
+
+    [Fact]
+    public async Task AFailedRowListedFirstIsPassedSoTheLiveRowsIdleEndsTheTurn()
+    {
+        var id = await TurnStartedAsync();
+        ListedFirst(SessionState.Failed, lastResponse: Start.AddMinutes(10));
+        Working(id).ShouldBeTrue("the live row is still Working");
+        Listed(SessionState.Idle, lastResponse: Start.AddMinutes(6));
+        Working(id).ShouldBeFalse("the live row's Idle, after the turn's start, is read past the Failed one");
     }
 
     [Fact]

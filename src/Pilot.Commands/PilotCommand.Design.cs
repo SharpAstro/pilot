@@ -80,7 +80,7 @@ public static partial class PilotCommand
         {
             var newBrief = Words("brief", "The owner's words, kept verbatim as the first piece of the design's brief (after --)");
             var newRepo = new Option<string?>("--repo") { Description = "The repo the design is for, as its name" };
-            var newTitle = new Option<string?>("--title") { Description = "The design's title; the brief's first line, cut to 80 characters, when left out" };
+            var newTitle = new Option<string?>("--title") { Description = $"The design's title; when left out, the brief's first line, whole up to {DesignTitle.MaxLength} characters, else cut at a word with an ellipsis" };
             var newTerminal = new Option<string[]>("--terminal") { Description = "A terminal size the design is also checked and rendered at in cells, <cols>x<rows> (80x24, 100x30, 160x44, 250x60 are the standard ones); give it once per size", AllowMultipleArgumentsPerToken = false };
             var designNew = Action(new Command("new", "Make a design from a brief and print its id, DSN-<n>") { Arguments = { newBrief }, Options = { newRepo, newTitle, newTerminal } },
                 (p, client, ct) => Send(client, Verbs.DesignNew, Verbs.NodeTarget, [p.GetValue(newRepo) ?? "", p.GetValue(newTitle) ?? "", Join(p, newBrief), .. p.GetValue(newTerminal) ?? []], who, ct));

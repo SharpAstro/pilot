@@ -67,6 +67,10 @@ public sealed class DesignStoreTests : IDisposable
         var cut = store.New(null, null, string.Join(' ', Enumerable.Repeat("word", 60))).Title.ShouldNotBeNull();
         cut.Length.ShouldBeLessThanOrEqualTo(DesignStore.TitleLength);
         cut.ShouldEndWith("word…");
+        // A cut that lands after a comma drops it, so the ellipsis follows the word ("word…", never "word,…").
+        var listed = store.New(null, null, string.Join(' ', Enumerable.Repeat("word,", 60))).Title.ShouldNotBeNull();
+        listed.Length.ShouldBeLessThanOrEqualTo(DesignStore.TitleLength);
+        listed.ShouldEndWith("word…");
         store.New("pilot", "  My title ", "brief").Title.ShouldBe("My title");
         store.New("pilot", null, "brief").Repo.ShouldBe("pilot");
         store.New("  ", null, "brief").Repo.ShouldBeNull();
