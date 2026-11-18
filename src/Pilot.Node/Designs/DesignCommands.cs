@@ -11,7 +11,7 @@ public sealed class DesignCommands(NodeState state, DesignStore store, Designers
 {
     /// <summary>Whether <paramref name="verb"/> is one of these.</summary>
     public static bool Handles(string verb) => verb is Verbs.DesignNew or Verbs.DesignBrief or Verbs.DesignSay or Verbs.DesignChat or Verbs.DesignDraft or Verbs.DesignShow or Verbs.Designs
-        or Verbs.DesignTerminals or Verbs.DesignCheck or Verbs.DesignRender or Verbs.DesignPublish or Verbs.DesignEdit or Verbs.DesignDiscard or Verbs.DesignIssue or Verbs.DesignGitHub;
+        or Verbs.DesignTerminals or Verbs.DesignCheck or Verbs.DesignRender or Verbs.DesignPublish or Verbs.DesignEdit or Verbs.DesignSetTitle or Verbs.DesignDiscard or Verbs.DesignIssue or Verbs.DesignGitHub;
 
     public CommandResult Run(CommandRequest command)
     {
@@ -84,6 +84,10 @@ public sealed class DesignCommands(NodeState state, DesignStore store, Designers
                     // The owner typing has the design open for editing: the issue is labelled, in the background, and a failure never blocks the edit.
                     locks?.Want(editId);
                     return state.Complete(command, null, made: $"{editId} draft: {editPart.Trim().ToLowerInvariant()} typed");
+                case Verbs.DesignSetTitle:
+                    // args: the title (words joined by the CLI).
+                    var titled = store.SetTitle(IdOf(command), args.Length > 0 ? args[0] : "");
+                    return state.Complete(command, null, made: $"{titled.Id} title: {titled.Title}");
                 case Verbs.DesignDiscard:
                     var discarded = DesignStore.Normalise(IdOf(command));
                     store.Discard(discarded);

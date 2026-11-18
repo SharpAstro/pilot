@@ -17,9 +17,6 @@ public sealed class DesignException(string message) : Exception(message);
 /// </summary>
 public sealed class DesignStore(string dataFolder, TimeProvider? time = null)
 {
-    /// <summary>The longest title taken from a brief's first line (<see cref="DesignTitle.MaxLength"/>).</summary>
-    public const int TitleLength = DesignTitle.MaxLength;
-
     public const string BriefFile = "BRIEF.md";
     public const string RecordFile = "design.json";
     public const string PrototypeFile = "prototype.json";
@@ -87,9 +84,6 @@ public sealed class DesignStore(string dataFolder, TimeProvider? time = null)
                 ? throw new DesignException($"{row.Id}: {DesignLockText.BeingEdited(editor)}")
                 : row;
 
-    /// <summary>The title a brief gets when none is given: <see cref="DesignTitle.Of"/>, its first line whole, or cut at a word, or at the limit when it has no space, with an ellipsis.</summary>
-    public static string TitleOf(string brief) => DesignTitle.Of(brief);
-
     private static string[] NormaliseTerminals(string[] sizes) =>
         DesignTerminals.TryNormalise(sizes, out var normalised, out var bad)
             ? normalised
@@ -126,7 +120,7 @@ public sealed class DesignStore(string dataFolder, TimeProvider? time = null)
             var row = new DesignRow
             {
                 Id = id,
-                Title = title?.Trim() is { Length: > 0 } given ? given : TitleOf(brief),
+                Title = title?.Trim() is { Length: > 0 } given ? (DesignTitle.Problem(given) is { } bad ? throw new DesignException(bad) : DesignTitle.Clean(given)) : null,
                 Repo = repo?.Trim() is { Length: > 0 } named ? named : null,
                 At = _time.GetUtcNow(),
                 Versions = 0,
@@ -261,7 +255,7 @@ public sealed class DesignStore(string dataFolder, TimeProvider? time = null)
                 {
                     // An older version: its NOTES.md becomes the notes of the starter document, and its screens are split into screens/.
                     var old = Path.Combine(from, NotesFile);
-                    File.WriteAllText(Path.Combine(draft, DocumentFile), DesignDocument.Starter(row.Title ?? row.Id, "home", File.Exists(old) ? File.ReadAllText(old).Trim() : "").Format());
+                    File.WriteAllText(Path.Combine(draft, DocumentFile), DesignDocument.Starter(DesignTitle.Shown(row.Title) ?? row.Id, "home", File.Exists(old) ? File.ReadAllText(old).Trim() : "").Format());
                 }
                 var json = File.ReadAllText(Path.Combine(from, PrototypeFile));
                 if (Directory.Exists(screens))
@@ -286,7 +280,7 @@ public sealed class DesignStore(string dataFolder, TimeProvider? time = null)
                         // The starter's cell is replaced by one cell per screen, headed by the screen's title, with the notes kept on the first.
                         var notes = File.Exists(Path.Combine(from, NotesFile)) ? File.ReadAllText(Path.Combine(from, NotesFile)).Trim() : "";
                         var cells = split.Screens.Select((s, i) => new DesignCell(ScreenTitle(s.Json, s.Id), "", [new DesignFrame(s.Id)], i == 0 ? notes : "")).ToArray();
-                        File.WriteAllText(Path.Combine(draft, DocumentFile), new DesignDocument(row.Title ?? row.Id, "", cells).Format());
+                        File.WriteAllText(Path.Combine(draft, DocumentFile), new DesignDocument(DesignTitle.Shown(row.Title) ?? row.Id, "", cells).Format());
                     }
                 }
                 else
@@ -299,9 +293,34 @@ public sealed class DesignStore(string dataFolder, TimeProvider? time = null)
                 File.WriteAllText(Path.Combine(draft, PrototypeFile), StarterPrototype);
                 Directory.CreateDirectory(Path.Combine(draft, ScreensFolderName));
                 File.WriteAllText(Path.Combine(draft, ScreensFolderName, "home.json"), StarterScreen);
-                File.WriteAllText(Path.Combine(draft, DocumentFile), DesignDocument.Starter(row.Title ?? row.Id).Format());
+                File.WriteAllText(Path.Combine(draft, DocumentFile), DesignDocument.Starter(DesignTitle.Shown(row.Title) ?? row.Id).Format());
             }
             return draft;
+        }
+    }
+
+    /// <summary>
+    /// Sets the title of design <paramref name="id"/> (#1183): the row's, and the heading of the draft's DESIGN.md when there is a draft. Refused when empty or over
+    /// <see cref="DesignTitle.MaxLength"/>. Returns the record.
+    /// </summary>
+    public DesignRow SetTitle(string id, string title)
+    {
+        if (DesignTitle.Problem(title) is { } bad)
+        {
+            throw new DesignException(bad);
+        }
+        var clean = DesignTitle.Clean(title);
+        lock (_lock)
+        {
+            var row = Writable(Find(id) ?? throw new DesignException($"There is no design {id}"));
+            var file = Path.Combine(FolderOf(row.Id), DraftFolderName, DocumentFile);
+            if (File.Exists(file))
+            {
+                File.WriteAllText(file, (DesignDocument.Parse(File.ReadAllText(file)) with { Title = clean }).Format());
+            }
+            var updated = row with { Title = clean };
+            WriteRecord(updated);
+            return updated;
         }
     }
 
@@ -707,6 +726,8 @@ public sealed class DesignStore(string dataFolder, TimeProvider? time = null)
             var at = _time.GetUtcNow();
             var made = row with
             {
+                // The version's title is the document's heading (the check held it to a title of at most 40 characters).
+                Title = DesignTitle.Clean(DesignDocument.Parse(File.ReadAllText(designFile)).Title),
                 Current = number,
                 Versions = number,
                 Why = why,

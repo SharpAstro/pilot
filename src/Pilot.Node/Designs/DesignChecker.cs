@@ -114,6 +114,16 @@ public static class DesignChecker
         }
         var document = DesignDocument.Parse(text);
         var lines = new List<string>();
+        var title = DesignTitle.Clean(document.Title);
+        // The starter's heading is the id when there is no title yet, so an id alone is no title.
+        if (title.Length == 0 || title.StartsWith("DSN-", StringComparison.OrdinalIgnoreCase) && title.Length > 4 && title[4..].All(char.IsAsciiDigit))
+        {
+            lines.Add($"{DesignDocument.FileName} | - | title: The design has no title. Start the document with '# <title>', a short name of at most {DesignTitle.MaxLength} characters (not the id, not a sentence).");
+        }
+        else if (DesignTitle.Problem(title) is { } tooLong)
+        {
+            lines.Add($"{DesignDocument.FileName} | {title} | title: {tooLong}");
+        }
         if (string.IsNullOrWhiteSpace(document.Objective))
         {
             lines.Add($"{DesignDocument.FileName} | {document.Title} | objective: This design has no objective. Say in one or two lines what it is for.");

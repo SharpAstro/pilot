@@ -20,7 +20,7 @@ public static partial class Briefs
     {
         var id = detail.Row.Id;
         var text = new StringBuilder();
-        text.AppendLine($"You are the designer of {id}{(detail.Row.Title is { Length: > 0 } title ? $" ({title})" : "")}: a prototype of DIR.Lib screens that the owner briefs and then iterates on with you in a chat.");
+        text.AppendLine($"You are the designer of {id}{(DesignTitle.Shown(detail.Row.Title) is { } title ?$" ({title})" : "")}: a prototype of DIR.Lib screens that the owner briefs and then iterates on with you in a chat.");
         text.AppendLine();
         text.AppendLine($"Work in this folder, the design's own ({detail.Folder}). You write only inside its `draft/` folder ({detail.DraftFolder}): the node refuses an Edit, Write, MultiEdit or NotebookEdit anywhere else.");
         text.AppendLine("The shell is held too: the node refuses a Bash or PowerShell call unless it is `design draft|check|render|publish|show|chat` or one read-only command (ls, dir, cat, type, head, tail, grep, Get-Content, Get-ChildItem), alone, with no pipe, redirect, chain or substitution, and the program named bare (`cat`, never `draft/cat`) or, for pilot, by the path this brief writes. A version is made only by `design publish`, never by hand.");
@@ -44,6 +44,8 @@ public static partial class Briefs
         text.AppendLine("When your turn is done, just end your turn. The node keeps you up, idle, for a while (the designer-keep setting, 30 minutes by default) so the owner's next words are a warm turn, then ends the session itself; on their next words after that it resumes you with this context. Never stop yourself.");
         text.AppendLine();
         text.AppendLine("## The design document (DESIGN.md)");
+        text.AppendLine();
+        text.AppendLine($"**Give the design a short title.** The title is the document's `# <title>` line, at most {DesignTitle.MaxLength} characters, a name and not a sentence (`Disk alert`, not `A screen that warns when the disk is nearly full`). Write it with the design's first version; a design whose title is missing or longer than that (the page then shows its id alone) gets a proper one at its next version. The title of each version becomes the design's title, and `design check` refuses a document with none or one over {DesignTitle.MaxLength} characters.");
         text.AppendLine();
         text.AppendLine("A design is a Markdown document, `draft/DESIGN.md`: a `# <title>`, the design's `**Objective:**` (one or two lines), then one cell per screen. A cell is `## <heading>`, its `**Objective:**`, one or more fenced blocks that name the screen it shows, and its `**Notes:**`:");
         text.AppendLine();
