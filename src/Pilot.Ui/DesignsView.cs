@@ -1003,8 +1003,12 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
         var column = Terminal is { } terminal
             ? terminal.Columns * PrototypeCells.CellWidth - 2f * Gutter
             : ChatBeside ? _width - 3f * Gutter - ChatWidth : _width - 2f * Gutter;
-        return Math.Max(120f, column - scrollRoom - 2f * WellPadX);
+        return Math.Max(120f, (column - scrollRoom - (_across - 1) * WellGap) / _across - 2f * WellPadX);
     }
+
+    // How many frames the cell being built has: its wells stand side by side and share the document's width (PIL1171).
+    private int _across = 1;
+    private const float WellGap = 12f;
 
     // The height of a frame's rectangle in the window: the screen's size scaled to the well's width, never taller than MaxFrameH, with a margin the frame's border draws in.
     private static float FrameHeight(float width, float height, float innerWidth)
@@ -1110,9 +1114,20 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
         }
         if (page.Document is not null)
         {
+            _across = Math.Max(1, cell.Frames.Count);
+            List<Layout.Node> wells = [];
             for (var j = 0; j < cell.Frames.Count; j++)
             {
-                items.Add(FrameWell(page, index, j, cell.Frames[j]));
+                wells.Add(FrameWell(page, index, j, cell.Frames[j]));
+            }
+            _across = 1;
+            if (wells.Count == 1)
+            {
+                items.Add(wells[0]);
+            }
+            else if (wells.Count > 1)
+            {
+                items.Add(Layout.Builder.HStack([.. wells]).WithGap(WellGap).WStar().HAuto());
             }
         }
         if (cell.Notes.Length > 0)
@@ -1153,7 +1168,7 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
     private Layout.Node EmbeddedFrame(FramePlay play)
     {
         var terminal = Terminal!.Value;
-        var available = Math.Max(20, terminal.Columns - 2 * (int)((Gutter + WellPadX) / PrototypeCells.CellWidth) - 2);
+        var available = Math.Max(20, (terminal.Columns - 2 * (int)(Gutter / PrototypeCells.CellWidth)) / _across - 2 * (int)(WellPadX / PrototypeCells.CellWidth) - 2);
         int columns, rows;
         if (play.Cells is { } own)
         {
