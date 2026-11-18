@@ -115,7 +115,7 @@ public sealed class DesignLockTests : IDisposable
         de1.Store.Edit(design.Id, "objective", "", "Lets the owner pick the threshold.");
         var row = await LockedAsync(de1, design.Id);
 
-        LabelsOf(issue).ShouldBe([Editing, "pilot: design", "pilot node: DE1"]);
+        LabelsOf(issue).ShouldBe(["pilot node: DE1", "pilot: design", Editing]);
         _github.LabelsEnsured.Select(e => e.Label).ShouldContain(Editing);
         _github.LabelsEnsured.Select(e => e.Label).ShouldContain("pilot node: DE1");
         PilotMarks.LabelStyle(PilotMarks.Editing).Description.ShouldBe("a pilot node has this design open for editing");
@@ -250,7 +250,7 @@ public sealed class DesignLockTests : IDisposable
         _github.IssueLabelFails = null;
         await de1.Lock.SweepAsync(Ct);
 
-        LabelsOf(issue).ShouldBe([Editing, "pilot: design", "pilot node: DE1"]);
+        LabelsOf(issue).ShouldBe(["pilot node: DE1", "pilot: design", Editing]);
         de1.Store.Find(design.Id)!.LockError.ShouldBeNull();
     }
 

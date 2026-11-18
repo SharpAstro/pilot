@@ -119,15 +119,10 @@ public static partial class NodeApp
             Run = Briefs.Run(Briefs.PilotCli(), null),
             Keep = () => TimeSpan.FromMinutes(services.GetRequiredService<RoleModels>().DesignerKeep),
             GuardSettings = HookCommands.DesignerSettings(Environment.ProcessPath ?? "pilot-node", options.SocketPath),
-            Say = (command, ct) => services.GetRequiredService<SessionMessenger>().SayAsync(command, ct),
-            Locks = services.GetRequiredService<Pilot.Node.Designs.DesignLock>(),
+            Say = (command, ct) => services.GetRequiredService<SessionMessenger>().SayAsync(command, ct), Locks =services.GetRequiredService<Pilot.Node.Designs.DesignLock>(),
         });
         builder.Services.AddSingleton(services => new Pilot.Node.Designs.DesignLock(services.GetRequiredService<Pilot.Node.Designs.DesignStore>(), services.GetRequiredService<RepoCatalog>(), services.GetRequiredService<IGitHub>(), services.GetRequiredService<TimeProvider>(), options.Machine,
-            peer => services.GetRequiredService<FleetCopy>().Silence(peer))
-        {
-            Error = logWriter,
-            Typed = (id, part, cell, text) => services.GetRequiredService<Pilot.Node.Designs.Designers>().Queue(id, part, cell, text),
-        });
+            peer => services.GetRequiredService<FleetCopy>().Silence(peer)) { Error = logWriter, Typed = (id, part, cell, text) => services.GetRequiredService<Pilot.Node.Designs.Designers>().Queue(id, part, cell, text) });
         builder.Services.AddHostedService(services => new Pilot.Node.Designs.DesignerSweep(services.GetRequiredService<Pilot.Node.Designs.Designers>()));
         builder.Services.AddSingleton(services => new Pilot.Node.Designs.DesignerGuard(services.GetRequiredService<NodeState>(), services.GetRequiredService<Pilot.Node.Designs.DesignStore>()));
         builder.Services.AddSingleton(services => new Pilot.Node.Designs.DesignChat(services.GetRequiredService<Pilot.Node.Designs.DesignStore>(), services.GetRequiredService<TranscriptBook>(), () => services.GetRequiredService<NodeState>().Sessions()));

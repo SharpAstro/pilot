@@ -184,10 +184,10 @@ public sealed class DesignStoreTests : IDisposable
         back.History.ShouldBeEmpty();
         back.Terminals.ShouldBeEmpty();
         back.DesignerPending.ShouldBeEmpty();
-        (back with { History = row.History, Terminals = row.Terminals, DesignerPending = row.DesignerPending, DesignerTyped = row.DesignerTyped, DesignerSessions = row.DesignerSessions, Builds = row.Builds }).ShouldBe(row);
+        (back with { History = row.History, Terminals = row.Terminals, DesignerPending = row.DesignerPending, DesignerTyped = row.DesignerTyped, DesignerSessions = row.DesignerSessions, Builds = row.Builds, GitHubEdits = row.GitHubEdits, GitHubIgnored = row.GitHubIgnored }).ShouldBe(row);
 
         var made = store.New("pilot", "T", "brief");
-        (store.Find("DSN-1").ShouldNotBeNull() with { History = made.History, Terminals = made.Terminals, DesignerPending = made.DesignerPending, DesignerTyped = made.DesignerTyped, DesignerSessions = made.DesignerSessions, Builds = made.Builds }).ShouldBe(made);
+        (store.Find("DSN-1").ShouldNotBeNull() with { History = made.History, Terminals = made.Terminals, DesignerPending = made.DesignerPending, DesignerTyped = made.DesignerTyped, DesignerSessions = made.DesignerSessions, Builds = made.Builds, GitHubEdits = made.GitHubEdits, GitHubIgnored = made.GitHubIgnored }).ShouldBe(made);
         made.Current.ShouldBeNull();
         made.Versions.ShouldBe(0);
 
@@ -206,7 +206,7 @@ public sealed class DesignStoreTests : IDisposable
         var detail = store.Detail(row.Id);
 
         detail.Row.History.ShouldBeEmpty();
-        (detail.Row with { History = row.History, Terminals = row.Terminals, DesignerPending = row.DesignerPending, DesignerTyped = row.DesignerTyped, DesignerSessions = row.DesignerSessions, Builds = row.Builds }).ShouldBe(row);
+        (detail.Row with { History = row.History, Terminals = row.Terminals, DesignerPending = row.DesignerPending, DesignerTyped = row.DesignerTyped, DesignerSessions = row.DesignerSessions, Builds = row.Builds, GitHubEdits = row.GitHubEdits, GitHubIgnored = row.GitHubIgnored }).ShouldBe(row);
         detail.Brief.ShouldNotBeNull().ShouldContain("the brief");
         detail.Folder.ShouldBe(Path.Combine(_data, "designs", "DSN-1"));
         detail.DraftFolder.ShouldBe(Path.Combine(_data, "designs", "DSN-1", "draft"));
