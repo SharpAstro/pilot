@@ -447,9 +447,9 @@ public sealed class DesignerTests : IDisposable
         brief.ShouldContain("gets a proper one at its next version");
         brief.ShouldContain("`design check` refuses a document with none or one over 40 characters");
 
-        var old = Briefs.Designer(new DesignDetail { Row = new DesignRow { Id = "DSN-2", Title = new string('x', 80) }, Folder = "f", DraftFolder = "f/draft" }, "{}", null, "pilot");
+        var old = Briefs.Designer(new DesignDetail { Row = new DesignRow { Id = "DSN-2", Title = string.Concat(Enumerable.Repeat("oldcut ", 12)).Trim() }, Folder = "f", DraftFolder = "f/draft" }, "{}", null, "pilot");
         old.ShouldContain("designer of DSN-2:");
-        old.ShouldNotContain(new string('x', 80));
+        old.ShouldNotContain("oldcut");
     }
 
     [Fact]

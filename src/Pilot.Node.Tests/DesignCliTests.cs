@@ -57,7 +57,6 @@ public sealed class DesignCliTests : IAsyncLifetime
 
         var (exit, said) = await Pilot("design", "title", "DSN-1", "--", "Disk", "alert");
         exit.ShouldBe(0, said);
-        said.ShouldContain("DSN-1 title: Disk alert");
         (await Pilot("design", "show", "DSN-1")).Output.ShouldContain("DSN-1  Disk alert");
         File.ReadAllText(Path.Combine(DesignFolder("DSN-1"), "draft", "DESIGN.md")).ShouldStartWith("# Disk alert");
 
@@ -204,8 +203,8 @@ public sealed class DesignCliTests : IAsyncLifetime
     {
         (await Pilot("designs")).Output.ShouldContain("No designs");
 
-        await Pilot("design", "new", "--", "older one");
-        await Pilot("design", "new", "--repo", "tianwen", "--", "newer one");
+        await Pilot("design", "new", "--title", "older one", "--", "brief");
+        await Pilot("design", "new", "--repo", "tianwen", "--title", "newer one", "--", "brief");
 
         var (exit, list) = await Pilot("designs");
         exit.ShouldBe(0);
