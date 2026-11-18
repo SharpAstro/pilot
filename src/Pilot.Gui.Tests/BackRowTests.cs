@@ -110,7 +110,7 @@ public sealed class BackRowTests
         var line = narrow.Single(a => a.Node.Tooltip == $"DSN-1 · {title}");
         var drawn = narrow.Where(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text } && a.Bounds.Y >= line.Bounds.Y - 0.5f && a.Bounds.Y + a.Bounds.Height <= line.Bounds.Y + line.Bounds.Height + 0.5f
             && a.Bounds.X >= line.Bounds.X - 0.5f && a.Bounds.X <= line.Bounds.X + line.Bounds.Width + 0.5f).Select(TextOf).ToList();
-        var words = drawn.Where(w => w != "…").Select(w => w.Trim()).Where(w => w.Length > 0).ToList();
+        var words = drawn.Where(w => w != "…").Select(w => w.Trim().TrimEnd('…')).Where(w => w.Length > 0).ToList();
         var whole = $"DSN-1 · {title}".Split(' ', StringSplitOptions.RemoveEmptyEntries);
         words.ShouldBe(whole.Take(words.Count), "the line is a run of whole words, never cut mid-word");
         (words.Count == whole.Length || drawn.Any(w => w.EndsWith('…'))).ShouldBeTrue("a title that does not fit ends in an ellipsis");
