@@ -20,13 +20,14 @@ public sealed class TopBarCountsAlignmentTests
         using var prepared = await PageTextOverlapTests.Prepare(page, "sample", 1400, 1f);
         var ctx = new PixelMeasureContext<RgbaImage>(prepared.Renderer, SessionsCapture.FontPath, 1f);
         var arranged = Layout.Engine.Arrange(prepared.Tree, prepared.Rect, ctx).ToList();
-        var counts = arranged.SingleOrDefault(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text { FontSize: 15f } } && a.Node.Tooltip is not null && a.Bounds.Y < 140f);
-        if (counts is null)
+        var found = arranged.Where(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text { FontSize: 15f } } && a.Node.Tooltip is not null && a.Bounds.Y < 140f).ToList();
+        if (found.Count == 0)
         {
             // A counts line over 80 characters (the pull requests sample's) is words in a capped wrap, on main as before #1160, with no alignment to keep.
             page.ShouldBe("pull requests");
             return;
         }
+        var counts = found.Single();
         var text = (Layout.Content.Text)((Layout.Node.Leaf)counts.Node).Content;
         text.HAlign.ShouldBe(TextAlign.Far, "the counts line is right-aligned");
         text.VAlign.ShouldBe(TextAlign.Far, "and bottom-aligned");
