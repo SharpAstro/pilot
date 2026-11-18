@@ -163,6 +163,41 @@ internal sealed partial class PageData
         return new DesignsScreen([row], "test", now, page);
     }
 
+    /// <summary>
+    /// A design made at 1920 x 1080 whose screen holds a row of fixed-width children far wider than a phone and a label of its own near the right edge (DSN-3's toolbar
+    /// and its '640 x 240 at 2x' label, PIL1166): at a smaller target the player lays it out wider than the frame.
+    /// </summary>
+    internal static DesignsScreen WideDesigns(DateTimeOffset now) => TargetsDesigns(now, doc =>
+    {
+        doc["width"] = 1920;
+        doc["height"] = 1080;
+        var row = new System.Text.Json.Nodes.JsonArray();
+        for (var i = 0; i < 6; i++)
+        {
+            row.Add(new System.Text.Json.Nodes.JsonObject { ["kind"] = "box", ["width"] = 320, ["height"] = 120, ["color"] = "Accent" });
+        }
+        var screen = new System.Text.Json.Nodes.JsonObject
+        {
+            ["id"] = "home",
+            ["title"] = "Home",
+            ["root"] = new System.Text.Json.Nodes.JsonObject
+            {
+                ["kind"] = "vstack", ["gap"] = 12, ["padding"] = 16,
+                ["children"] = new System.Text.Json.Nodes.JsonArray(
+                    new System.Text.Json.Nodes.JsonObject { ["kind"] = "text", ["text"] = "Toolbar", ["fontSize"] = 20, ["color"] = "HeaderText" },
+                    new System.Text.Json.Nodes.JsonObject { ["kind"] = "hstack", ["gap"] = 8, ["children"] = row },
+                    new System.Text.Json.Nodes.JsonObject
+                    {
+                        ["kind"] = "hstack",
+                        ["children"] = new System.Text.Json.Nodes.JsonArray(
+                            new System.Text.Json.Nodes.JsonObject { ["kind"] = "box", ["width"] = 1700, ["height"] = 24 },
+                            new System.Text.Json.Nodes.JsonObject { ["kind"] = "text", ["text"] = "640 x 240 at 2x", ["fontSize"] = 20, ["color"] = "HeaderText" }),
+                    }),
+            },
+        };
+        doc["screens"] = new System.Text.Json.Nodes.JsonArray(screen);
+    });
+
     private static readonly NodeMark Here = new("node.sock", "node.sock", "SE1", true);
     private static readonly NodeMark Other = new("10.0.0.9:47731", "10.0.0.9:47731", "LE1", false);
 

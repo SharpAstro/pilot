@@ -586,7 +586,15 @@ internal sealed class DesignsView<TSurface> : PilotWidgetBase<TSurface>
             // Painted where the page arranged its leaf, so what the page lays over it (the ? card) is over it.
             if (Player is { } player)
             {
-                player.Render(rect);
+                var frame = FittedFrame(rect, player.DesignSize);
+                FrameRect = frame;
+                if (!SkipPlayer && frame is { } fitted)
+                {
+                    // The prototype is drawn only inside its frame: a screen made wider than the target (a fixed-width row, a label near the right edge) is cut, not painted over the chat and notes.
+                    if (false) Renderer.PushClip(new RectInt(new PointInt((int)MathF.Ceiling(fitted.X + fitted.Width), (int)MathF.Ceiling(fitted.Y + fitted.Height)), new PointInt((int)MathF.Floor(fitted.X), (int)MathF.Floor(fitted.Y))));
+                    player.Render(rect);
+                    if (false) Renderer.PopClip();
+                }
                 DrawFrame(rect, player.DesignSize);
             }
         }
@@ -605,17 +613,32 @@ internal sealed class DesignsView<TSurface> : PilotWidgetBase<TSurface>
     }
 
     // A plain frame of the target's shape around where the player drew it: no device chrome, notch or status bar.
-    private void DrawFrame(RectF32 rect, (float Width, float Height) size)
+    /// <summary>The frame rect the player's last paint was fitted to, or null where nothing was painted. Set by the one helper the drawing uses (<see cref="FittedFrame"/>).</summary>
+    internal RectF32? FrameRect { get; private set; }
+
+    /// <summary>Test switch: paint the frame but leave the player's own painting out, to tell what the player painted.</summary>
+    internal bool SkipPlayer { get; set; }
+
+    // The design size scaled to fit and centred in rect: where the player draws and where the frame goes. Null for a size with no area.
+    private static RectF32? FittedFrame(RectF32 rect, (float Width, float Height) size)
     {
         if (size.Width <= 0 || size.Height <= 0)
         {
-            return;
+            return null;
         }
         var s = MathF.Min(rect.Width / size.Width, rect.Height / size.Height);
         var w = size.Width * s;
         var h = size.Height * s;
-        var x = rect.X + (rect.Width - w) / 2f;
-        var y = rect.Y + (rect.Height - h) / 2f;
+        return new RectF32(rect.X + (rect.Width - w) / 2f, rect.Y + (rect.Height - h) / 2f, w, h);
+    }
+
+    private void DrawFrame(RectF32 rect, (float Width, float Height) size)
+    {
+        if (FittedFrame(rect, size) is not { } frame)
+        {
+            return;
+        }
+        float x = frame.X, y = frame.Y, w = frame.Width, h = frame.Height;
         const float t = 2f;
         foreach (var edge in new[] { new RectF32(x - t, y - t, w + 2 * t, t), new RectF32(x - t, y + h, w + 2 * t, t), new RectF32(x - t, y, t, h), new RectF32(x + w, y, t, h) })
         {
