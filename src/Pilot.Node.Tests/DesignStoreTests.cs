@@ -177,7 +177,7 @@ public sealed class DesignStoreTests : IDisposable
         (back with { History = row.History, Terminals = row.Terminals, DesignerPending = row.DesignerPending, DesignerSessions = row.DesignerSessions, Builds = row.Builds }).ShouldBe(row);
 
         var made = store.New("pilot", "T", "brief");
-        (store.Find("DSN-1").ShouldNotBeNull() with { History = made.History, Terminals = made.Terminals, DesignerPending = made.DesignerPending, DesignerSessions = made.DesignerSessions }).ShouldBe(made);
+        (store.Find("DSN-1").ShouldNotBeNull() with { History = made.History, Terminals = made.Terminals, DesignerPending = made.DesignerPending, DesignerSessions = made.DesignerSessions, Builds = made.Builds }).ShouldBe(made);
         made.Current.ShouldBeNull();
         made.Versions.ShouldBe(0);
 
