@@ -449,10 +449,7 @@ public sealed class DesignerTests : IDisposable
         starter.ShouldContain("# Disk alert");
         starter.ShouldContain("Do it yourself, in this session: no subagents.");
 
-        var current = Briefs.Designer(detail, "{}", "# Disk alert
-
-**Objective:** Warns.
-", "pilot");
+        var current = Briefs.Designer(detail, "{}", "# Disk alert\n\n**Objective:** Warns.\n", "pilot");
         current.ShouldContain("The current version's DESIGN.md:");
         current.ShouldContain("**Objective:** Warns.");
         current.ShouldNotContain("the starter DESIGN.md");

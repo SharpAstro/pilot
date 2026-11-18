@@ -285,15 +285,20 @@ public sealed class DesignPublishTests : IAsyncLifetime
 
         (await Pilot("design", "draft", "DSN-1")).Exit.ShouldBe(0);
         (await Pilot("design", "render", "DSN-1")).Exit.ShouldBe(0);
-        // The starter's notes are empty.
-        var (noNotes, noNotesSaid) = await Pilot("design", "publish", "DSN-1", "--why", "brief");
-        noNotes.ShouldBe(1);
-        noNotesSaid.ShouldContain("NOTES.md");
+        // The starter's document has no objectives: the check refuses it.
+        var (noObjective, noObjectiveSaid) = await Pilot("design", "publish", "DSN-1", "--why", "brief");
+        noObjective.ShouldBe(1);
+        noObjectiveSaid.ShouldContain("This screen has no objective. Say in one or two lines what it shows.");
 
-        File.WriteAllText(Draft("NOTES.md"), "  \n");
-        (await Pilot("design", "publish", "DSN-1", "--why", "brief")).Output.ShouldContain("NOTES.md");
+        // A draft without DESIGN.md is refused, naming the file; NOTES.md is not required.
+        File.Delete(Draft("DESIGN.md"));
+        var (noDocument, noDocumentSaid) = await Pilot("design", "publish", "DSN-1", "--why", "brief");
+        noDocument.ShouldBe(1);
+        noDocumentSaid.ShouldContain("DESIGN.md");
+        File.WriteAllText(Draft("DESIGN.md"), "  \n");
+        (await Pilot("design", "publish", "DSN-1", "--why", "brief")).Output.ShouldContain("DESIGN.md");
 
-        File.WriteAllText(Draft("NOTES.md"), "What this is.");
+        File.WriteAllText(Draft("DESIGN.md"), "# T\n\n**Objective:** Whole.\n\n## Home\n\n**Objective:** Shows it.\n\n```screen id=home\n```\n");
         foreach (var (bad, reason) in new[] { ("", "not empty"), ("  ", "not empty"), ("two\nlines", "one line"), (new string('x', DesignWhys.MaxLength + 1), "at most 120") })
         {
             var (badWhy, badWhySaid) = await Pilot("design", "publish", "DSN-1", "--why", bad);

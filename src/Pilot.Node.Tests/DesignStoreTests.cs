@@ -142,8 +142,7 @@ public sealed class DesignStoreTests : IDisposable
         Directory.CreateDirectory(v2);
         File.WriteAllText(Path.Combine(v2, "prototype.json"), """{"from":"v2"}""");
         File.WriteAllText(Path.Combine(v2, "NOTES.md"), "what changed");
-        File.WriteAllText(Path.Combine(v2, "DESIGN.md"), "# T
-");
+        File.WriteAllText(Path.Combine(v2, "DESIGN.md"), "# T\n");
         Directory.CreateDirectory(Path.Combine(v2, "screens"));
         File.WriteAllText(Path.Combine(v2, "screens", "a.json"), "{}");
         File.WriteAllText(Path.Combine(_data, "designs", row.Id, "design.json"), JsonSerializer.Serialize(row with { Current = 2, Versions = 2 }, PilotJsonContext.Default.DesignRow));
@@ -152,8 +151,7 @@ public sealed class DesignStoreTests : IDisposable
 
         File.ReadAllText(Path.Combine(draft, "prototype.json")).ShouldBe("""{"from":"v2"}""");
         File.Exists(Path.Combine(draft, "NOTES.md")).ShouldBeFalse("only DESIGN.md and screens/ carry over");
-        File.ReadAllText(Path.Combine(draft, "DESIGN.md")).ShouldBe("# T
-");
+        File.ReadAllText(Path.Combine(draft, "DESIGN.md")).ShouldBe("# T\n");
         File.ReadAllText(Path.Combine(draft, "screens", "a.json")).ShouldBe("{}");
         File.ReadAllText(Path.Combine(v2, "prototype.json")).ShouldBe("""{"from":"v2"}""");
     }
