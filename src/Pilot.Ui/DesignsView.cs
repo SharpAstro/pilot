@@ -947,10 +947,13 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
         {
             parts.Add(Layout.Builder.Text(id, 14f, Bright, TextAlign.Near, TextAlign.Center).WStar().HFixed(BackRowH));
         }
-        return BackRow.Of("Designs", "designs:list", Close, [.. parts]).Pad(Gutter, 8f).RowH(BackRowH + 16f);
+        return BackRow.Of("Designs", "designs:list", Close, [.. parts]).Pad(Gutter, 8f).RowH(BackRowFullH);
     }
 
     private const float BackRowH = 26f;
+
+    // The row with its 8 above and below.
+    private const float BackRowFullH = BackRowH + 16f;
 
     // The design's title as the page shows it: the notebook's, else the row's; empty when it has none (the id then stands alone).
     // A stored title over the limit (an old cut of the brief) or none shows the id alone (#1183), and nothing ending mid-word is drawn.
