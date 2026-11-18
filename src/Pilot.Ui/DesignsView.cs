@@ -76,7 +76,6 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
     private const float WellPadX = 16f;
     private const float WellPadY = 12f;
     private const float CaptionH = 20f;
-    private const float ToolbarH = 30f;
     private const float FrameMargin = 4f;
 
     private static RGBAColor32 Ground => Palette.Current.Ground;
@@ -287,8 +286,10 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
     {
         public PrototypePlayer<TSurface> Real { get; } = real;
         public PrototypePlayer<TSurface> Shown { get; set; } = real;
-        public string? Size { get; } = size;
-        public (int Columns, int Rows)? Cells { get; } = cells;
+        public string? Size { get; set; } = size;
+        public bool Swapped { get; set; }
+        public string Title { get; set; } = "";
+        public (int Columns, int Rows)? Cells { get; set; } = cells;
         public PrototypeCellGrid<TSurface>? RealGrid { get; set; }
         public PrototypeCellGrid<TSurface>? Grid { get; set; }
         public DesignSurface? ShownTarget { get; set; }
@@ -318,6 +319,12 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
 
     // The size a frame is played at: its block's built-in target, or the terminal it names (which the window draws as a grid of cells and the terminal as the cells themselves),
     // else the one the page shows the design at (the design's own size unless the window chose another).
+    private (DesignSurface Surface, (int Columns, int Rows)? Cells) SizeOf(string? size, bool swapped)
+    {
+        var (surface, cells) = SizeOf(size);
+        return swapped ? (new DesignSurface(surface.Name, surface.Height, surface.Width, surface.Scale), cells is { } c ? (c.Rows, c.Columns) : null) : (surface, cells);
+    }
+
     private (DesignSurface Surface, (int Columns, int Rows)? Cells) SizeOf(string? size)
     {
         if (size is { Length: > 0 })
@@ -345,6 +352,7 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
         _playerFor = null;
         _document = null;
         _pointing = false;
+        Chat.AttachScreen(null);
     }
 
     // Makes a player for each frame of the document whose screen the prototype has, again when the version, its prototype, the font or the document's frames changed.
@@ -356,6 +364,8 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
             return;
         }
         _document = document;
+        _terminalSize = notebook.Cells.SelectMany(c => c.Frames).Select(f => f.Size).Concat(document.Targets.Select(t => t.Name))
+            .FirstOrDefault(n => DesignTerminals.TryParse(n, out _, out _)) ?? "80x24";
         var sha = page.Detail.Versions.FirstOrDefault(v => v.Number == page.Version)?.PrototypeSha256 ?? (page.Version == page.Detail.Row.Current ? page.Detail.Row.PrototypeSha256 : null);
         var frames = string.Join('|', notebook.Cells.SelectMany((c, i) => c.Frames.Select((f, j) => $"{i}.{j}:{f.Id}:{f.Size}")));
         var key = (page.Detail.Row.Id, page.Version, sha, FontPath ?? "", frames);
@@ -376,8 +386,14 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
                 }
                 var real = new PrototypePlayer<TSurface>(Renderer, document, Prototype.DefaultTheme, FontPath ?? "");
                 real.Goto(frame.Id);
-                var cells = SizeOf(frame.Size).Cells;
-                var play = new FramePlay(real, frame.Size, cells);
+                var own = OwnFrameSize(i, j);
+                var size = own?.Size ?? frame.Size;
+                var cells = SizeOf(size, own?.Swapped ?? false).Cells;
+                var play = new FramePlay(real, size, cells)
+                {
+                    Swapped = own?.Swapped ?? false,
+                    Title = document.Screens.First(sc => sc.Id == frame.Id) is { } sc2 && !string.IsNullOrEmpty(sc2.Title) ? sc2.Title : frame.Id,
+                };
                 if (cells is { } c)
                 {
                     play.RealGrid = play.Grid = new PrototypeCellGrid<TSurface>(Renderer, real) { Columns = c.Columns, Rows = c.Rows };
@@ -401,7 +417,7 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
     {
         foreach (var play in _plays.Values)
         {
-            var surface = SizeOf(play.Size).Surface;
+            var surface = SizeOf(play.Size, play.Swapped).Surface;
             if (play.ShownTarget == surface)
             {
                 continue;
@@ -483,6 +499,75 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
     internal Dictionary<string, SavedDesignTarget> SnapshotTargets() =>
         _choices.ToDictionary(c => c.Key, c => SavedDesignTarget.Of(c.Value), StringComparer.Ordinal);
 
+    // The size each frame of each design was given with its own toolbar (PIL1171), by design id and then "cell.frame"; kept in gui-settings.json with the targets.
+    private readonly Dictionary<string, Dictionary<string, SavedFrameSize>> _frameChoices = new(StringComparer.Ordinal);
+
+    // The design's first terminal size (the Terminal button's), else 80x24.
+    private string _terminalSize = "80x24";
+
+    private static string FrameKey(int cell, int frame) => $"{cell.ToString(CultureInfo.InvariantCulture)}.{frame.ToString(CultureInfo.InvariantCulture)}";
+
+    private SavedFrameSize? OwnFrameSize(int cell, int frame) =>
+        OpenId is { } id && _frameChoices.TryGetValue(id, out var frames) && frames.TryGetValue(FrameKey(cell, frame), out var own) ? own : null;
+
+    /// <summary>The frame sizes the file held, replacing any made so far.</summary>
+    internal void RestoreFrameSizes(IReadOnlyDictionary<string, Dictionary<string, SavedFrameSize>>? saved)
+    {
+        _frameChoices.Clear();
+        foreach (var (id, frames) in saved ?? new Dictionary<string, Dictionary<string, SavedFrameSize>>())
+        {
+            _frameChoices[id] = new Dictionary<string, SavedFrameSize>(frames.Where(f => f.Value is { IsValid: true }), StringComparer.Ordinal);
+        }
+    }
+
+    /// <summary>The frame sizes as the file keeps them, a copy.</summary>
+    internal Dictionary<string, Dictionary<string, SavedFrameSize>> SnapshotFrameSizes() =>
+        _frameChoices.Where(c => c.Value.Count > 0).ToDictionary(c => c.Key, c => new Dictionary<string, SavedFrameSize>(c.Value, StringComparer.Ordinal), StringComparer.Ordinal);
+
+    /// <summary>The size of frame <paramref name="frame"/> of cell <paramref name="cell"/> now: its built-in target's name, "Terminal", or null where there is no such frame or it has a size of no name.</summary>
+    internal string? FrameSizeName(int cell = 0, int frame = 0) =>
+        _plays.TryGetValue((cell, frame), out var play) ? play.Cells is not null ? "Terminal" : DesignTargets.Named(SizeOf(play.Size).Surface.Name)?.Name : null;
+
+    /// <summary>The surface frame <paramref name="frame"/> of cell <paramref name="cell"/> is shown at, sides swapped when it was rotated; null where there is no such frame.</summary>
+    internal DesignSurface? FrameSurfaceOf(int cell = 0, int frame = 0) =>
+        _plays.TryGetValue((cell, frame), out var play) ? SizeOf(play.Size, play.Swapped).Surface : null;
+
+    /// <summary>The cells of frame <paramref name="frame"/> of cell <paramref name="cell"/> when it is a terminal one, else null.</summary>
+    internal (int Columns, int Rows)? FrameCellsOf(int cell = 0, int frame = 0) => _plays.TryGetValue((cell, frame), out var play) ? play.Cells : null;
+
+    /// <summary>Shows one frame at built-in target <paramref name="name"/> (its own shape, upright); no other frame changes.</summary>
+    public bool PickFrameTarget(int cell, int frame, string name) =>
+        DesignTargets.Named(name) is { } target && SetFrameSize(cell, frame, target.Name, false);
+
+    /// <summary>Shows one frame as a cell grid of the design's first terminal size, else 80x24.</summary>
+    public bool PickFrameTerminal(int cell, int frame) => SetFrameSize(cell, frame, _terminalSize, false);
+
+    /// <summary>Swaps one frame's width and height (a terminal's columns and rows too).</summary>
+    public bool RotateFrame(int cell, int frame) =>
+        _plays.TryGetValue((cell, frame), out var play) && SetFrameSize(cell, frame, play.Size, !play.Swapped);
+
+    private bool SetFrameSize(int cell, int frame, string? size, bool swapped)
+    {
+        if (OpenId is not { } id || !_plays.TryGetValue((cell, frame), out var play))
+        {
+            return false;
+        }
+        if (!_frameChoices.TryGetValue(id, out var frames))
+        {
+            _frameChoices[id] = frames = new Dictionary<string, SavedFrameSize>(StringComparer.Ordinal);
+        }
+        frames[FrameKey(cell, frame)] = new SavedFrameSize(size, swapped);
+        play.Size = size;
+        play.Swapped = swapped;
+        var cells = SizeOf(size, swapped).Cells;
+        play.Cells = cells;
+        play.RealGrid = cells is { } c ? new PrototypeCellGrid<TSurface>(Renderer, play.Real) { Columns = c.Columns, Rows = c.Rows } : null;
+        play.Grid = play.RealGrid is null ? null : ReferenceEquals(play.Shown, play.Real) ? play.RealGrid : new PrototypeCellGrid<TSurface>(Renderer, play.Shown) { Columns = cells!.Value.Columns, Rows = cells.Value.Rows };
+        play.ShownTarget = null;
+        TargetChanged?.Invoke();
+        return true;
+    }
+
     /// <summary>Shows the open design at built-in target <paramref name="name"/>, keeping the orientation.</summary>
     public bool PickTarget(string name)
     {
@@ -541,6 +626,7 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
     {
         OpenId = id;
         _pointing = false;
+        Chat.AttachScreen(null);
         _pointAt = null;
         _versionsOpen = false;
         _chatVersion = null;
@@ -609,6 +695,7 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
         {
             StartPointing(play);
         }
+        Chat.AttachScreen(on ? play.Title : null);
     }
 
     private void StartPointing(FramePlay play)
@@ -1044,17 +1131,13 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
             var missing = $"The screen {frame.Id} is not in the prototype.";
             return WrappedProse.Of(missing, 12f, Dim).Pad(WellPadX, WellPadY).Bg(Well).WStar().HAuto();
         }
-        var (surface, cells) = SizeOf(play.Size);
+        var (surface, cells) = SizeOf(play.Size, play.Swapped);
         var caption = $"Proposed design · {(string.IsNullOrEmpty(screen.Title) ? screen.Id : screen.Title)} · {SizeLabel(surface, cells)}";
         var captionRow = WrappedProse.OneLine(caption, 11f, Dim, selectable: false, vAlign: TextAlign.Center).RowH(CaptionH).Whole(frame.Caption is { Length: > 0 } extra ? $"{caption}\n{extra}" : caption);
         var played = Terminal is not null ? EmbeddedFrame(play) : PlayedFrame(play, cell, index, cells);
-        // The place of the frame's own size toolbar, which the next leg fills: inside the well, under the frame.
-        List<Layout.Node> parts = [captionRow, played];
-        if (Terminal is null)
-        {
-            parts.Add(Layout.Builder.Fill().WStar().HFixed(ToolbarH));
-        }
-        return Layout.Builder.VStack([.. parts]).WithGap(4f).Pad(WellPadX, WellPadY).Bg(Well).WStar().HAuto();
+        // The frame's own toolbar: inside the well, under the frame; the well of the frame pointed at has an accent border.
+        var well = Layout.Builder.VStack(captionRow, played, FrameToolbar(play, cell, index).Node).WithGap(4f).Pad(WellPadX, WellPadY).Bg(Well).WStar().HAuto();
+        return _pointing && _pointAt == (cell, index) ? well.Border(Palette.Current.RailAccent, 2f, 0f) : well;
     }
 
     private Layout.Node PlayedFrame(FramePlay play, int cell, int index, (int Columns, int Rows)? cells)
@@ -1103,23 +1186,58 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
     // The chat column: its heading with the Point at this switch, and the chat's own feed, status and box under it.
     private Layout.Node ChatPane(DesignPage page)
     {
-        var heading = Heading("Chat with the designer");
-        var head = _plays.Count == 0
-            ? heading
-            : Layout.Builder.HStack(heading.WStar(), PointButton()).WithGap(6f).RowH(26f);
-        return Layout.Builder.VStack(head, Chat.Tree().HStar()).WithGap(4f);
+        return Layout.Builder.VStack(Heading("Chat with the designer"), Chat.Tree().HStar()).WithGap(4f);
     }
 
-    private Layout.Node PointButton() =>
-        Layout.Builder.Text("Point at this", 12f, Bright, TextAlign.Center, TextAlign.Center)
-            .Pad(10f, 0f)
-            .WAuto()
-            .Bg(Pointing ? Active : Button)
-            .BgHover(ButtonHover)
-            .WithTooltip(Pointing ? "Pointing: a click on the prototype puts that node's key in your message. Click again to play it." : "Click a part of the prototype to put its key in your message instead of playing the click")
-            .Follows(new HitResult.ButtonHit("designs:point"), _ => Point(!Pointing))
-            // RowH gives a star share of the row (the button was a third of the chat column); the start button's WAuto and fixed height hold it label-wide.
-            .WAuto().HFixed(26f);
+    // One button of a frame's toolbar: the same height and middle as the rest of the row, filled with the selection colour when it is the size chosen, with the accent when it is Point at this, on.
+    private static Layout.Node ToolButton(string label, string tooltip, string action, Action click, bool chosen = false, bool pointing = false)
+    {
+        var fill = pointing ? Palette.Current.RailAccent : chosen ? Palette.Current.SelectionBg : Button;
+        var text = pointing ? Ground : chosen ? Palette.Current.SelectionText : Bright;
+        var node = Layout.Builder.Text(label, 12f, text, TextAlign.Center, TextAlign.Center).Pad(10f, 0f).WAuto().HFixed(ToolButtonH).Bg(fill);
+        return (pointing || chosen ? node : node.BgHover(ButtonHover))
+            .WithTooltip(tooltip)
+            .Follows(new HitResult.ButtonHit(action), _ => click());
+    }
+
+    private const float ToolButtonH = 26f;
+    private const float ToolGap = 6f;
+
+    // The frame's own toolbar, in one place under every frame, inside its well: Desktop, Laptop, Tablet, Phone, Rotate, Terminal and Point at this. It wraps onto a second row
+    // where the well is narrow, never cuts. Returns the toolbar and its height.
+    private (Layout.Node Node, float Height) FrameToolbar(FramePlay play, int cell, int index)
+    {
+        var size = FrameSizeName(cell, index);
+        var pointing = _pointing && _pointAt == (cell, index);
+        List<(string Label, Layout.Node Button)> buttons = [];
+        foreach (var target in DesignTargets.BuiltIn)
+        {
+            var name = target.Name;
+            buttons.Add((name, ToolButton(name, $"Show this frame as a {name.ToLowerInvariant()} ({target.Width} x {target.Height})", $"designs:frame-size:{cell}:{index}:{name}", () => PickFrameTarget(cell, index, name), chosen: size == name)));
+        }
+        buttons.Add(("Rotate", ToolButton("Rotate", "Swap this frame's width and height", $"designs:frame-rotate:{cell}:{index}", () => RotateFrame(cell, index))));
+        buttons.Add(("Terminal", ToolButton("Terminal", $"Show this frame as a terminal ({_terminalSize} cells)", $"designs:frame-terminal:{cell}:{index}", () => PickFrameTerminal(cell, index), chosen: size == "Terminal")));
+        buttons.Add(("Point at this", ToolButton("Point at this", pointing ? "Pointing: a click on this screen puts that node's key in your message. Click again to play it." : "Click a part of this screen to put its key in your message instead of playing the click", $"designs:frame-point:{cell}:{index}", () => Point(!pointing, cell, index), pointing: pointing)));
+        var room = WellInnerWidth();
+        List<Layout.Node> rows = [];
+        List<Layout.Node> row = [];
+        var used = 0f;
+        foreach (var (label, button) in buttons)
+        {
+            var width = label.Length * 7f + 20f;
+            if (row.Count > 0 && used + ToolGap + width > room)
+            {
+                rows.Add(Layout.Builder.HStack([.. row]).WithGap(ToolGap).HFixed(ToolButtonH));
+                row = [];
+                used = 0f;
+            }
+            used += (row.Count > 0 ? ToolGap : 0f) + width;
+            row.Add(button);
+        }
+        rows.Add(Layout.Builder.HStack([.. row]).WithGap(ToolGap).HFixed(ToolButtonH));
+        var height = rows.Count * ToolButtonH + (rows.Count - 1) * ToolGap;
+        return (Layout.Builder.VStack([.. rows]).WithGap(ToolGap).WStar().HFixed(height), height);
+    }
 
     // The rows the chat takes under the cell view, whatever the terminal's height: what the box, its hint, the status and a few lines of the feed need.
     // A taller terminal gives the rows to the prototype, which is what the chat talks about.

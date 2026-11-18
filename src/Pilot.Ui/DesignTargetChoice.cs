@@ -86,3 +86,13 @@ internal sealed record SavedDesignTarget(string? Name, int? Width, int? Height, 
             ? new DesignTargetChoice(null, Width, Height, Scale is > 0 and <= DesignTargetChoice.MaxScale ? Scale : 1, Swapped)
             : null;
 }
+
+/// <summary>
+/// The size one frame of a design is shown at, as gui-settings.json keeps it (PIL1171): a built-in target's name or a terminal size <c>&lt;cols&gt;x&lt;rows&gt;</c>
+/// (null: the size the document's block gives), and whether the sides are swapped (Rotate).
+/// </summary>
+internal sealed record SavedFrameSize(string? Size, bool Swapped)
+{
+    /// <summary>True for no size of its own, a built-in target or a terminal size; a file naming anything else is read as the block's own size.</summary>
+    public bool IsValid => Size is null || DesignDocument.IsValidSize(Size);
+}

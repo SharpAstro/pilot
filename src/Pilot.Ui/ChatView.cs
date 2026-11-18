@@ -349,6 +349,47 @@ internal sealed partial class ChatView<TSurface>(Renderer<TSurface> renderer) : 
         Changed?.Invoke();
     }
 
+    private string? _screen;
+
+    /// <summary>The title of the design screen the next message is about (a frame's Point at this), shown as the About chip above the box; null when none.</summary>
+    public string? ScreenTitle => Volatile.Read(ref _screen);
+
+    /// <summary>Ties the next message to the design screen <paramref name="title"/> (an About chip above the box), or with null drops the tie. What is typed is kept.</summary>
+    public void AttachScreen(string? title)
+    {
+        if (Volatile.Read(ref _screen) == title)
+        {
+            return;
+        }
+        Volatile.Write(ref _screen, title);
+        Changed?.Invoke();
+    }
+
+    /// <summary>The message as it goes to the designer when it is about a screen: <c>About "title": words</c> (a quote in the title is made a single quote, so the first <c>": </c> ends the title).</summary>
+    internal static string AboutScreen(string title, string words) => $"About \"{title.ReplaceLineEndings(" ").Replace('"', '\'')}\": {words}";
+
+    /// <summary>Reads <see cref="AboutScreen"/>'s form back, or false for any other text.</summary>
+    internal static bool TryParseScreen(string text, out string title, out string words)
+    {
+        title = words = "";
+        const string start = "About \"";
+        if (!text.StartsWith(start, StringComparison.Ordinal))
+        {
+            return false;
+        }
+        var end = text.IndexOf("\": ", start.Length, StringComparison.Ordinal);
+        if (end < 0)
+        {
+            return false;
+        }
+        title = text[start.Length..end];
+        words = text[(end + 3)..];
+        return true;
+    }
+
+    // What a sent line says in the chat: a message about a screen shows the About chip and then the words.
+    private static string ShownOut(string text) => TryParseScreen(text, out var title, out var words) ? $"> About: {title}\n{words}" : text;
+
     /// <summary>Drops the card the next message was about; it is then sent as a plain one.</summary>
     public void Detach()
     {
@@ -682,6 +723,11 @@ internal sealed partial class ChatView<TSurface>(Renderer<TSurface> renderer) : 
             return Task.CompletedTask;
         }
         var message = _composer.Message;
+        if (Volatile.Read(ref _screen) is { } screen)
+        {
+            message = AboutScreen(screen, message);
+            Volatile.Write(ref _screen, null);
+        }
         var quoted = Volatile.Read(ref _about);
         Func<string, Task<string?>>? send = null;
         // A message about a card goes through the card's tell.
@@ -966,7 +1012,7 @@ internal sealed partial class ChatView<TSurface>(Renderer<TSurface> renderer) : 
         Palette.Use(Night);
         var held = Volatile.Read(ref _held);
         _composer.Input.OnCommit = _ => SendAsync();
-        _composer.Input.Placeholder = Embedded ? $"Message the {Who}" : Node is { } to ? $"Message {to.Name}'s watchtower" : "Message the fleet chat";
+        _composer.Input.Placeholder = ScreenTitle is { } aboutScreen ? $"About \"{aboutScreen}\": what should change?" : Embedded ? $"Message the {Who}" : Node is { } to ? $"Message {to.Name}'s watchtower" : "Message the fleet chat";
         // Ctrl+V with a picture on the clipboard keeps it for the next message; with none the paste is the text's.
         _composer.Input.OnKeyOverride = OnSendWithPicture is null ? null : key => key == TextInputKey.Paste && PastePicture();
         _entries.OpenDivider = OpenDivider;
@@ -1093,10 +1139,10 @@ internal sealed partial class ChatView<TSurface>(Renderer<TSurface> renderer) : 
             var id = mine.Id;
             var row = mine.State switch
             {
-                OutState.Sending => Sent(mine.Text, "you · sending…", null),
-                OutState.Queued => Sent(mine.Text, $"you · queued {++place}", CardsView<TSurface>.Pill("Drop", $"chat:drop:{id:N}", () => Drop(id))),
-                OutState.Failed => FailedLine(mine.Text, mine.Reason ?? "", CardsView<TSurface>.Pill("Retry", $"chat:retry:{id:N}", () => Retry(id)), CardsView<TSurface>.Pill("Edit", $"chat:edit:{id:N}", () => Edit(id))),
-                _ => Sent(mine.Text, "you", null),
+                OutState.Sending => Sent(ShownOut(mine.Text), "you · sending…", null),
+                OutState.Queued => Sent(ShownOut(mine.Text), $"you · queued {++place}", CardsView<TSurface>.Pill("Drop", $"chat:drop:{id:N}", () => Drop(id))),
+                OutState.Failed => FailedLine(ShownOut(mine.Text), mine.Reason ?? "", CardsView<TSurface>.Pill("Retry", $"chat:retry:{id:N}", () => Retry(id)), CardsView<TSurface>.Pill("Edit", $"chat:edit:{id:N}", () => Edit(id))),
+                _ => Sent(ShownOut(mine.Text), "you", null),
             };
             rows.Add(row.WStar());
         }
@@ -1201,6 +1247,10 @@ internal sealed partial class ChatView<TSurface>(Renderer<TSurface> renderer) : 
         if (entry is { Kind: TranscriptKind.User, From: null, Note: true } && CardNotice.TryParse(entry.Text, out var notice))
         {
             return entry with { Text = QuotedNotice(notice) };
+        }
+        if (entry is { Kind: TranscriptKind.User, From: null } && TryParseScreen(entry.Text, out var screenTitle, out var screenWords))
+        {
+            return entry with { Text = $"> About: {screenTitle}\n{screenWords}" };
         }
         if (entry.Kind != TranscriptKind.User || entry.From is not null || !CardContext.TryParse(entry.Text, out var chat))
         {
@@ -1426,6 +1476,17 @@ internal sealed partial class ChatView<TSurface>(Renderer<TSurface> renderer) : 
             .WStar()
             .HAuto();
 
+    // The design screen the next message is about, above the box: an About chip, the screen's title and a way to drop it.
+    private Layout.Node ScreenChip(string title) =>
+        Layout.Builder.HStack(
+                Layout.Builder.Text("About", 12f, Bright, TextAlign.Center, TextAlign.Center).Pad(8f, 0f).WAuto().HFixed(22f).Bg(Palette.Current.SelectionBg),
+                WrappedProse.OneLine(title, 12f, Body, vAlign: TextAlign.Center).WStar().HFixed(22f).Whole(title),
+                CardsView<TSurface>.Pill("Drop", "chat:drop-screen", () => AttachScreen(null)))
+            .WithGap(8f)
+            .Pad(0f, 3f)
+            .WStar()
+            .HAuto();
+
     /// <summary>How many lines the quoted card takes above the box.</summary>
     internal const int QuoteLines = 2;
 
@@ -1567,6 +1628,10 @@ internal sealed partial class ChatView<TSurface>(Renderer<TSurface> renderer) : 
         if (OnSendAboutCard is not null && Volatile.Read(ref _about) is { } quoted)
         {
             rows.Add(Quote(quoted.Card, quoted.Node));
+        }
+        if (Volatile.Read(ref _screen) is { } aboutTitle)
+        {
+            rows.Add(ScreenChip(aboutTitle));
         }
         rows.Add(Cells ? CellComposer() : Layout.Builder.TextEditor(_composer.Input, 14f, colors: Palette.Input, focusOnOpen: true).WStar());
         if (ChatStatus.Line(Volatile.Read(ref _held).Timings) is { } status)
