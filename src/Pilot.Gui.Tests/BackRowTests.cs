@@ -105,8 +105,8 @@ public sealed class BackRowTests
         shortTitle.Single(a => a.Node.Tooltip == "DSN-1 · Design 0");
 
         var title = PageData.LongTitle;
-        var longPage = DesignPages.Load(sample.Open!.Detail with { Row = sample.Open.Detail.Row with { Title = title } });
-        var narrow = Arrange(chrome.Designs.Tree(sample with { Open = longPage with { Doc = longPage.Doc! with { Title = title } } }), renderer, 900f, 900f);
+        var longPage = sample.Open! with { Detail = sample.Open.Detail with { Row = sample.Open.Detail.Row with { Title = title } }, Doc = sample.Open.Doc! with { Title = title } };
+        var narrow = Arrange(chrome.Designs.Tree(sample with { Open = longPage }), renderer, 900f, 900f);
         var line = narrow.Single(a => a.Node.Tooltip == $"DSN-1 · {title}");
         var drawn = narrow.Where(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text } && a.Bounds.Y >= line.Bounds.Y - 0.5f && a.Bounds.Y + a.Bounds.Height <= line.Bounds.Y + line.Bounds.Height + 0.5f
             && a.Bounds.X >= line.Bounds.X - 0.5f && a.Bounds.X <= line.Bounds.X + line.Bounds.Width + 0.5f).Select(TextOf).ToList();
