@@ -115,6 +115,33 @@ internal sealed class DesignReads(NodeClient client, string who, Action redraw)
     }
 
     /// <summary>
+    /// Sends <c>design-build</c> for version <paramref name="version"/> of design <paramref name="id"/> (what <c>pilot design build</c> does), with the repo and the
+    /// milestone when the page asked for them, and says the made flight's code, or the node's refusal.
+    /// </summary>
+    public async Task<(string? Flight, string? Error)> BuildAsync(string id, int version, string? repo, string? milestone, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var args = new[] { version.ToString(System.Globalization.CultureInfo.InvariantCulture), repo ?? "", milestone ?? "" };
+            var answer = await client.SendAsync(new CommandRequest { Verb = Verbs.DesignBuild, Target = Verbs.DesignTarget(id), Args = args, Who = who }, cancellationToken).ConfigureAwait(false);
+            if (answer.Response is { Ok: true, Made: { Length: > 0 } code })
+            {
+                AskDesign(id, version, force: true);
+                return (code, null);
+            }
+            return (null, answer.Response?.Error ?? answer.Error ?? "the node did not answer");
+        }
+        catch (Exception e) when (e is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+        {
+            return (null, e.Message);
+        }
+    }
+
+    /// <summary>The flights built from version <paramref name="version"/> of design <paramref name="id"/> among <paramref name="flights"/>, oldest first: the snapshot's <c>FromDesign</c> and <c>FromDesignVersion</c>.</summary>
+    public static FlightRow[] BuiltOf(IEnumerable<FlightRow>? flights, string id, int version) =>
+        [.. (flights ?? []).Where(f => string.Equals(f.FromDesign, id, StringComparison.OrdinalIgnoreCase) && f.FromDesignVersion == version).OrderBy(f => f.CreatedAt)];
+
+    /// <summary>
     /// Reads design <paramref name="id"/>'s chat after entry <paramref name="after"/> (all of it for a negative one): the node's <c>design-chat</c>, which the chat
     /// on the design's page follows at the Chat page's pace, asking only for what came after its last index. A refusal or a silent node throws, which the chat
     /// shows as its problem and tries again at its next look.
@@ -148,6 +175,13 @@ internal sealed class DesignReads(NodeClient client, string who, Action redraw)
         chat.Track = track;
         chat.Changed = redraw;
         // Start its design on a waiting idea (PIL1152): the same wiring in both hosts; the made design's page opens at the next frame.
+        // Build a version (PIL1153): design-build for it, the answer shown on the page at the next frame.
+        designs.OnBuild = (id, version, repo, milestone) => _ = Task.Run(async () =>
+        {
+            var (flight, error) = await BuildAsync(id, version, repo, milestone, CancellationToken.None).ConfigureAwait(false);
+            designs.Built(id, version, flight, error);
+            redraw();
+        });
         designs.OnStartIdea = (idea, node) => _ = Task.Run(async () =>
         {
             var (id, error) = await StartFromIdeaAsync(idea, CancellationToken.None).ConfigureAwait(false);

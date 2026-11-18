@@ -139,6 +139,14 @@ public static partial class PilotCommand
             var designPublish = Action(new Command("publish", "Make the next read-only version from the draft, when the check is clean and the renders are of the draft as it stands; prints the version. Only prototype.json, NOTES.md and renders/ are copied; other files in draft/ are ignored") { Arguments = { publishId }, Options = { publishWhy } },
                 (p, client, ct) => Send(client, Verbs.DesignPublish, Verbs.DesignTarget(p.GetValue(publishId)!), [p.GetValue(publishWhy)!], who, ct));
 
+            var buildId = Arg("design", "The design's id, DSN-<n>");
+            var buildVersion = new Option<int?>("--version") { Description = "The version to build; the current one when left out" };
+            var buildRepo = new Option<string?>("--repo") { Description = "The repo to file the issue and fly the flight in; the design's own when left out" };
+            var buildMilestone = new Option<string?>("--milestone") { Description = "For a design that came from an idea: the open milestone to plan the idea into" };
+            var designBuild = Action(new Command("build", "Build a version: file one issue holding its brief, notes, renders and prototype hash, and make one flight on it that remembers the design and version (a design from an idea plans that idea instead); refused while a flight of that version is in the air") { Arguments = { buildId }, Options = { buildVersion, buildRepo, buildMilestone } },
+                (p, client, ct) => Send(client, Verbs.DesignBuild, Verbs.DesignTarget(p.GetValue(buildId)!),
+                    [p.GetValue(buildVersion)?.ToString(CultureInfo.InvariantCulture) ?? "", p.GetValue(buildRepo) ?? "", p.GetValue(buildMilestone) ?? ""], who, ct));
+
             var showId = Arg("design", "The design's id, DSN-<n>");
             var designShow = Action(new Command("show", "Show a design: its record, its brief and the paths of its folders") { Arguments = { showId } },
                 async (p, client, ct) =>
@@ -153,7 +161,7 @@ public static partial class PilotCommand
                     return 1;
                 });
 
-            var design = new Command("design", "Designs: a prototype of DIR.Lib screens, briefed by the owner and kept in versions on the node. new, brief, say, chat, draft, check, render, publish, show, terminals") { Subcommands = { designNew, designTerminals, designBrief, designSay, designChat, designDraft, designCheck, designRender, designPublish, designShow } };
+            var design = new Command("design", "Designs: a prototype of DIR.Lib screens, briefed by the owner and kept in versions on the node. new, brief, say, chat, draft, check, render, publish, build, show, terminals") { Subcommands = { designNew, designTerminals, designBrief, designSay, designChat, designDraft, designCheck, designRender, designPublish, designBuild, designShow } };
 
             var designs = Action(new Command("designs", "Every design, newest first"),
                 async (p, client, ct) =>

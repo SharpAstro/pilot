@@ -286,7 +286,7 @@ public sealed partial class LegCommander
                 }
                 // Read before the launcher is asked: from entering() on a command waits only StartAnswerWithin for the start.
                 var reboot = RebootFileOf(flight);
-                var brief = Briefs.For(flight, leg, legs, plane: plane, cli: Cli, socket: Socket, resumed: resumed, machine: options.Machine, pilotMd: await PilotMdOfAsync(flight), reboot: BriefedAs(reboot));
+                var brief = Briefs.For(flight, leg, legs, plane: plane, cli: Cli, socket: Socket, resumed: resumed, machine: options.Machine, pilotMd: await PilotMdOfAsync(flight), reboot: BriefedAs(reboot), design: DesignRefOf(flight));
                 entering();
                 return ReadOnStart(reboot, await workers.StartAsync(new WorkerStart(worker, flight.RepoPath, PlaneOf(flight), brief, attemptModel, attemptEffort, Reason: SessionStartReasons.LegLaunch), CancellationToken.None));
             },

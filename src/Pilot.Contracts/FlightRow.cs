@@ -34,6 +34,15 @@ public sealed record FlightRow
     /// <summary>The id of the idea (<c>I381</c>) it was planned from, when it was (<c>plan-idea</c>); null for any other flight.</summary>
     public string? FromIdea { get; init; }
 
+    /// <summary>The design (<c>DSN-&lt;n&gt;</c>) it was built from (<c>design-build</c>, PIL1153); null for any other flight.</summary>
+    public string? FromDesign { get; init; }
+
+    /// <summary>The version of <see cref="FromDesign"/> it builds to; null when it has no design.</summary>
+    public int? FromDesignVersion { get; init; }
+
+    /// <summary>The SHA-256 (hex) of that version's <c>prototype.json</c> when the flight was made, so a review can tell the prototype it holds the build to; null when it has no design.</summary>
+    public string? FromDesignSha256 { get; init; }
+
     /// <summary>What it is for, in a line: the issue's title, or what the controller called it.</summary>
     public string? Title { get; init; }
 

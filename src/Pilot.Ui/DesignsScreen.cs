@@ -28,6 +28,15 @@ internal sealed record DesignsScreen(DesignRow[] Rows, string Source, DateTimeOf
     /// <summary>The snapshot's ideas (PIL1152): the marked ones with no design are listed under the brief input. Null where the host has none.</summary>
     public IdeaRow[]? Ideas { get; init; }
 
+    /// <summary>The snapshot's flights (PIL1153): the ones built from a design version (<see cref="FlightRow.FromDesign"/>) are shown on its page. Null where the host has none.</summary>
+    public IReadOnlyList<FlightRow>? Flights { get; init; }
+
+    /// <summary>The open milestones of every repo (PIL1153): the choices when a design from an idea is built. Null where the host has none.</summary>
+    public IReadOnlyList<MilestoneRow>? Milestones { get; init; }
+
+    /// <summary>The repos the node tracks, by folder name (PIL1153): the choices when a design with no repo is built. Null where the host has none.</summary>
+    public IReadOnlyList<string>? Repos { get; init; }
+
     public static DesignsScreen Empty(string source, DateTimeOffset at) => new([], source, at);
 }
 

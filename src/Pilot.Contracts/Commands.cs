@@ -991,6 +991,13 @@ public static class Verbs
     public const string DesignPublish = "design-publish";
 
     /// <summary>
+    /// <c>design-build design/DSN-&lt;n&gt; [version] [repo] [milestone]</c> (PIL1153): files one issue holding the design version's brief, notes, renders and prototype hash
+    /// and makes one flight on it that remembers the design; a design that came from an idea plans that idea instead (milestone needed). Args are each empty for
+    /// "not given"; the version is the current one then. Refused while a flight built from that version is in the air.
+    /// </summary>
+    public const string DesignBuild = "design-build";
+
+    /// <summary>
     /// <c>design-terminals design/DSN-&lt;n&gt; &lt;cols&gt;x&lt;rows&gt;...</c> (PIL1098): sets the terminal sizes the design is checked and rendered at in cells; no args clears them.
     /// <c>design-new</c> takes them as its fourth and later args.
     /// </summary>

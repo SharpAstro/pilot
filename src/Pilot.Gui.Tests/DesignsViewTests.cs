@@ -579,6 +579,195 @@ public sealed class DesignsViewTests
         buttons.ShouldBe(["designs:size:120x36", "designs:size:80x24", "designs:size:100x30", "designs:size:160x44", "designs:size:250x60"]);
     }
 
+    private static List<string> ActionsOf(Rig rig) =>
+        [.. Painted(rig.View).Select(r => r.Result).OfType<HitResult.ButtonHit>().Select(h => h.Action)];
+
+    [Fact]
+    public void TheButtonOnAPublishedVersionSendsDesignBuildWithTheVersionAndNoQuestion()
+    {
+        using var rig = new Rig(PageData.BuildableDesigns(Now, repo: true, idea: false, flight: null));
+        (string Id, int Version, string? Repo, string? Milestone)? asked = null;
+        rig.View.OnBuild = (id, version, repo, milestone) => asked = (id, version, repo, milestone);
+        rig.View.Open("DSN-1");
+        rig.Paint();
+        TextsOf(rig).ShouldContain(DesignsView<RgbaImage>.BuildLabel);
+
+        rig.Click(rig.Region(Painted(rig.View), h => h is HitResult.ButtonHit { Action: "designs:build" }));
+
+        asked.ShouldBe(("DSN-1", 2, null, null));
+        // With the node, the button reads Building… and takes no second press; the answer is applied at the next frame.
+        rig.Paint();
+        TextsOf(rig).ShouldContain("Building…");
+        ActionsOf(rig).ShouldNotContain("designs:build");
+        rig.View.Built("DSN-1", 2, "PIL1153", null);
+        rig.Paint();
+        rig.View.BuildNote.ShouldBe("Built as PIL1153.");
+        ActionsOf(rig).ShouldContain("designs:build");
+    }
+
+    [Fact]
+    public void ARefusedBuildSaysWhyAndKeepsTheButton()
+    {
+        using var rig = new Rig(PageData.BuildableDesigns(Now, repo: true, idea: false, flight: null));
+        rig.View.OnBuild = (_, _, _, _) => { };
+        rig.View.Open("DSN-1");
+        rig.Paint();
+        rig.View.Build().ShouldBeTrue();
+        rig.View.Built("DSN-1", 2, null, "DSN-1 v2 is being built already");
+        rig.Paint();
+        TextsOf(rig).ShouldContain("DSN-1 v2 is being built already");
+        ActionsOf(rig).ShouldContain("designs:build");
+    }
+
+    [Fact]
+    public void ADesignWithNoRepoAsksForOneFirstAndSendsTheChoice()
+    {
+        using var rig = new Rig(PageData.BuildableDesigns(Now, repo: false, idea: false, flight: null));
+        var sent = new List<(string? Repo, string? Milestone)>();
+        rig.View.OnBuild = (_, _, repo, milestone) => sent.Add((repo, milestone));
+        rig.View.Open("DSN-1");
+        rig.Paint();
+
+        rig.Click(rig.Region(Painted(rig.View), h => h is HitResult.ButtonHit { Action: "designs:build" }));
+
+        sent.ShouldBeEmpty("nothing is sent before a repo is chosen");
+        rig.View.BuildAsking.ShouldBeTrue();
+        TextsOf(rig).ShouldContain("Which repo is it built in?");
+        ActionsOf(rig).ShouldContain("designs:build-repo:pilot");
+        ActionsOf(rig).ShouldContain("designs:build-repo:tianwen");
+
+        rig.Click(rig.Region(Painted(rig.View), h => h is HitResult.ButtonHit { Action: "designs:build-repo:tianwen" }));
+
+        sent.ShouldBe([("tianwen", null)]);
+    }
+
+    [Fact]
+    public void ADesignFromAnIdeaAsksForTheMilestoneOfItsReposOpenOnesAndSendsIt()
+    {
+        using var rig = new Rig(PageData.BuildableDesigns(Now, repo: true, idea: true, flight: null));
+        var sent = new List<(string? Repo, string? Milestone)>();
+        rig.View.OnBuild = (_, _, repo, milestone) => sent.Add((repo, milestone));
+        rig.View.Open("DSN-1");
+        rig.Paint();
+
+        rig.Click(rig.Region(Painted(rig.View), h => h is HitResult.ButtonHit { Action: "designs:build" }));
+
+        sent.ShouldBeEmpty();
+        TextsOf(rig).ShouldContain("Which milestone is its idea planned into?");
+        ActionsOf(rig).ShouldContain("designs:build-milestone:12");
+        ActionsOf(rig).ShouldContain("designs:build-milestone:11");
+        ActionsOf(rig).ShouldNotContain("designs:build-milestone:3", "another repo's milestone is not offered");
+
+        rig.Click(rig.Region(Painted(rig.View), h => h is HitResult.ButtonHit { Action: "designs:build-milestone:12" }));
+
+        sent.ShouldBe([(null, "Designs: build a version")]);
+    }
+
+    [Fact]
+    public void ALaterBuildOfADesignFromAnIdeaAsksForNoMilestone()
+    {
+        var screen = PageData.BuildableDesigns(Now, repo: true, idea: true, flight: null);
+        var row = screen.Rows[0] with { Builds = [new DesignBuildRow { Version = 1, Flight = "PIL1", Repo = "pilot", Issue = 1, At = Now }] };
+        screen = screen with { Rows = [row, .. screen.Rows.Skip(1)], Open = screen.Open! with { Detail = screen.Open.Detail with { Row = row } } };
+        using var rig = new Rig(screen);
+        var sent = new List<(string? Repo, string? Milestone)>();
+        rig.View.OnBuild = (_, _, repo, milestone) => sent.Add((repo, milestone));
+        rig.View.Open("DSN-1");
+        rig.Paint();
+
+        rig.Click(rig.Region(Painted(rig.View), h => h is HitResult.ButtonHit { Action: "designs:build" }));
+
+        sent.ShouldBe([(null, null)]);
+    }
+
+    [Fact]
+    public void CancellingTheAskDropsTheChoiceAndSendsNothing()
+    {
+        using var rig = new Rig(PageData.BuildableDesigns(Now, repo: false, idea: false, flight: null));
+        var asked = 0;
+        rig.View.OnBuild = (_, _, _, _) => asked++;
+        rig.View.Open("DSN-1");
+        rig.Paint();
+        rig.View.Build().ShouldBeFalse();
+        rig.Paint();
+
+        rig.Click(rig.Region(Painted(rig.View), h => h is HitResult.ButtonHit { Action: "designs:build-cancel" }));
+
+        asked.ShouldBe(0);
+        rig.View.BuildAsking.ShouldBeFalse();
+        ActionsOf(rig).ShouldContain("designs:build");
+    }
+
+    [Theory]
+    [InlineData(FlightState.Flying)]
+    [InlineData(FlightState.Held)]
+    public void AVersionWhoseFlightFliesShowsTheFlightItsStateAndPrAndOffersNoSecondBuild(FlightState state)
+    {
+        using var rig = new Rig(PageData.BuildableDesigns(Now, repo: true, idea: false, flight: state));
+        string? flight = null, url = null;
+        rig.View.OnFlight = code => flight = code;
+        rig.View.OnUrl = address => url = address;
+        var asked = 0;
+        rig.View.OnBuild = (_, _, _, _) => asked++;
+        rig.View.Open("DSN-1");
+        rig.Paint();
+
+        var texts = TextsOf(rig);
+        texts.ShouldContain("PIL1153");
+        texts.ShouldContain(state.ToString().ToLowerInvariant());
+        texts.ShouldContain("PR #1170");
+        texts.ShouldNotContain("PIL9", "a flight built from another version is not this version's");
+        ActionsOf(rig).ShouldNotContain("designs:build");
+        rig.View.Build().ShouldBeFalse();
+        asked.ShouldBe(0);
+
+        rig.Click(rig.Region(Painted(rig.View), h => h is HitResult.ButtonHit { Action: "designs:flight:PIL1153" }));
+        flight.ShouldBe("PIL1153");
+        rig.Click(rig.Region(Painted(rig.View), h => h is HitResult.ButtonHit { Action: "designs:pr:PIL1153" }));
+        url.ShouldBe("https://github.com/SharpAstro/pilot/pull/1170");
+    }
+
+    [Fact]
+    public void ALandedFlightIsShownAndTheVersionCanBeBuiltAgain()
+    {
+        using var rig = new Rig(PageData.BuildableDesigns(Now, repo: true, idea: false, flight: FlightState.Landed));
+        rig.View.OnBuild = (_, _, _, _) => { };
+        rig.View.Open("DSN-1");
+        rig.Paint();
+
+        TextsOf(rig).ShouldContain("landed");
+        ActionsOf(rig).ShouldContain("designs:build");
+    }
+
+    [Fact]
+    public void TheBuildLineAndButtonShareOneHeightAndOneMiddleWithTheVersionRows()
+    {
+        using var rig = new Rig(PageData.BuildableDesigns(Now, repo: true, idea: false, flight: FlightState.Landed));
+        rig.View.OnBuild = (_, _, _, _) => { };
+        rig.View.Open("DSN-1");
+        rig.Paint();
+        var all = ArrangeAt(rig, 1400, 900);
+
+        var code = all.Single(a => a.Node.Hit is HitResult.ButtonHit { Action: "designs:flight:PIL1153" }).Bounds;
+        var pr = all.Single(a => a.Node.Hit is HitResult.ButtonHit { Action: "designs:pr:PIL1153" }).Bounds;
+        var build = all.Single(a => a.Node.Hit is HitResult.ButtonHit { Action: "designs:build" }).Bounds;
+        code.Height.ShouldBe(26f, "one height");
+        pr.Height.ShouldBe(26f, "one height");
+        build.Height.ShouldBe(26f, "one height");
+        (code.Y + code.Height / 2f).ShouldBe(pr.Y + pr.Height / 2f, 0.5f, "one middle on the built line");
+    }
+
+    [Fact]
+    public void DesignReadsFindsTheFlightsBuiltFromAVersionByTheSnapshotsDesignAndVersion()
+    {
+        var screen = PageData.BuildableDesigns(Now, repo: true, idea: false, flight: FlightState.Flying);
+
+        DesignReads.BuiltOf(screen.Flights, "DSN-1", 2).Select(f => f.Code).ShouldBe(["PIL1153"]);
+        DesignReads.BuiltOf(screen.Flights, "DSN-1", 1).Select(f => f.Code).ShouldBe(["PIL9"]);
+        DesignReads.BuiltOf(screen.Flights, "DSN-2", 2).ShouldBeEmpty();
+        DesignReads.BuiltOf(null, "DSN-1", 2).ShouldBeEmpty();
+    }
+
     [Fact]
     public void DesignSizesAreTheDistinctSizesOfTheWireframeSweep()
     {

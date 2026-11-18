@@ -32,6 +32,17 @@ public sealed partial class LegCommander
         return true;
     }
 
+    /// <summary>Where the design of a flight built from one is on this node, and its terminal sizes, for its briefs (PIL1153); null for any other flight.</summary>
+    private Briefs.DesignRef? DesignRefOf(FlightRow flight)
+    {
+        if (flight.FromDesign is not { Length: > 0 } id)
+        {
+            return null;
+        }
+        var store = new Designs.DesignStore(options.DataFolder);
+        return new Briefs.DesignRef(store.Root, store.Find(id)?.Terminals ?? []);
+    }
+
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, bool> _pilotMdRung = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>

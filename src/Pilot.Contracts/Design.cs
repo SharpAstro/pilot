@@ -80,6 +80,26 @@ public sealed record DesignRow
 
     /// <summary>How many findings the last <c>design-check</c> had; null before any.</summary>
     public int? CheckFindings { get; init; }
+
+    /// <summary>Every build of a version of this design (<c>design-build</c>, PIL1153), oldest first. Empty while there is none, and in a record an older release wrote.</summary>
+    public DesignBuildRow[] Builds { get; init => field = value ?? []; } = [];
+}
+
+/// <summary>One build of a design version (PIL1153): the flight <c>design-build</c> made, and the issue it flies on.</summary>
+public sealed record DesignBuildRow
+{
+    public required int Version { get; init; }
+
+    /// <summary>The flight's code.</summary>
+    public string? Flight { get; init; }
+
+    /// <summary>The repo's folder name the flight is in.</summary>
+    public string? Repo { get; init; }
+
+    /// <summary>The issue the flight flies on: the one the build filed, or the idea's.</summary>
+    public int? Issue { get; init; }
+
+    public DateTimeOffset? At { get; init; }
 }
 
 /// <summary>The values of <see cref="DesignRow.DesignerPhase"/>: the last step taken on the draft.</summary>
