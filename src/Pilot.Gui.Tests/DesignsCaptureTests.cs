@@ -122,6 +122,8 @@ public sealed class DesignsCaptureTests
         (size.Width * scale).ShouldBeGreaterThan(720f);
 
         var folder = Path.Combine(Path.GetTempPath(), $"pilot-design-own-{Guid.NewGuid():N}");
+        // Captures read the same on DE1 and CI: times in UTC, as Capture draws them.
+        PageTime.Zone = TimeZoneInfo.Utc;
         try
         {
             var png = Path.Combine(folder, "own.png");

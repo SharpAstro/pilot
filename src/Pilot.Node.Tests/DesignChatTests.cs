@@ -86,6 +86,17 @@ public sealed class DesignChatTests : IDisposable
     }
 
     [Fact]
+    public async Task AFailedRowIsNotTheDesignerSoTheLiveRowsIdleEndsTheTurn()
+    {
+        var id = await DesignWithDesignerAsync();
+        _store.Update(id, r => r with { DesignerTurnStartedAt = Start.AddMinutes(5) });
+        Listed(SessionState.Failed, lastResponse: Start.AddMinutes(10), job: "old-job");
+        Run(Verbs.DesignChat, id).DesignChat.ShouldNotBeNull().Working.ShouldBeTrue("a Failed row alone is not the designer's turn end");
+        Listed(SessionState.Idle, lastResponse: Start.AddMinutes(6));
+        Run(Verbs.DesignChat, id).DesignChat.ShouldNotBeNull().Working.ShouldBeFalse("the live row's Idle is read past the Failed one");
+    }
+
+    [Fact]
     public async Task AnIdleOlderThanTheTurnsStartIsThePreviousTurnsEndNotThisOnes()
     {
         var id = await DesignWithDesignerAsync();

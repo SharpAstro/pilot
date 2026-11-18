@@ -21,7 +21,7 @@ public static class TerminalWireframeSweepTests
     internal static readonly string[] Cases =
     [
         "home", "sessions", "flights", "repos", "pull requests", "jobs", "fleet", "ideas", "spend", "settings", "chat", "designs", "design page",
-        "help card", "open card", "chat long typed", "tooltip open",
+        PageTextOverlapTests.DesignPageNoVersion, "help card", "open card", "chat long typed", "tooltip open",
     ];
 
     internal static IEnumerable<TheoryDataRow<string, string, int, int>> RowsOf(int columns, int rows, string state) =>
@@ -82,10 +82,11 @@ public static class TerminalWireframeSweepTests
         {
             // pilot-tui plays the prototype in its own cells: the page embeds its tree, arranged in the room the page has (the cards panel beside it takes its columns), as Program.cs sets it.
             chrome.Designs.Terminal = (TerminalFrame.PageColumns(columns, cardsBeside), rows);
-            if (name == "design page")
+            if (name is "design page" or PageTextOverlapTests.DesignPageNoVersion)
             {
-                // The chat under the cell view has something said: three turns and two versions, the designer checking.
-                await PageData.OpenDesignChat(chrome.Designs, data.Designs.Open!.Detail.Row.Id, PageData.DesignChatPage(lengthen: state is "long" or "many"));
+                // The chat under the cell view has something said: three turns and two versions, the designer checking. The no-version
+                // page (#1160) is the issue's design: a long title made from its brief, a long brief, and no version, so the page says so.
+                await PageData.OpenDesignChat(chrome.Designs, PageTextOverlapTests.DesignsOf(data, name).Open!.Detail.Row.Id, PageData.DesignChatPage(lengthen: state is "long" or "many"));
             }
         }
         var width = columns * 8f;
@@ -116,7 +117,7 @@ public static class TerminalWireframeSweepTests
             case PilotPage.Fleet: tree = chrome.Fleet.Tree(data.Fleet); break;
             case PilotPage.Ideas: tree = chrome.Ideas.Tree(PageTextOverlapTests.IdeasFor(state)); break;
             case PilotPage.Spend: tree = chrome.Spend.Tree(data.Spend); break;
-            case PilotPage.Designs: tree = chrome.Designs.Tree(data.Designs); break;
+            case PilotPage.Designs: tree = chrome.Designs.Tree(PageTextOverlapTests.DesignsOf(data, name)); break;
             case PilotPage.Settings:
                 // The page is read from the node's answer on its own task: the first Tree starts the read, and Changed says the page is in.
                 var loaded = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);

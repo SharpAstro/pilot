@@ -239,9 +239,15 @@ public sealed class DesignsViewTests
     [InlineData(1920, 1080, 1f)]
     public void TheIssuesTitleLineIsWholeOrEndsInAnEllipsisAtTheIssuesWindow(int width, int height, float dpi)
     {
-        var title = "A card for one job: its id j6917 and the command on the first line, a line saying what it is doing and the whole of its output";
+        // The title is made from the brief by the store's own rule, as DesignStore.New makes it: the issue's first line ran past 80
+        // characters and the store cut it mid-word ("a line sayin") before the page ever drew it.
+        var firstLine = "A card for one job: its id j6917 and the command on the first line, a line saying what it is doing and the whole of its output";
+        var brief = firstLine + "
+The card sits on the job's page.";
+        var title = DesignTitle.Of(brief);
+        title.ShouldBe(firstLine, "a first line this long is kept whole, so the page's one-line cut and its hover have all of it");
         var full = Sample();
-        var detail = full.Open!.Detail with { Row = full.Open.Detail.Row with { Title = title } };
+        var detail = full.Open!.Detail with { Row = full.Open.Detail.Row with { Title = title }, Brief = brief };
         using var rig = new Rig(full with { Open = DesignPages.Load(detail) });
         rig.View.Open("DSN-1");
         rig.Paint();
