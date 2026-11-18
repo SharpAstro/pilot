@@ -518,6 +518,8 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
         {
             _frameChoices[id] = new Dictionary<string, SavedFrameSize>(frames.Where(f => f.Value is { IsValid: true }), StringComparer.Ordinal);
         }
+        // Players already made for an open design are made again, so they take the restored sizes.
+        _playerFor = null;
     }
 
     /// <summary>The frame sizes as the file keeps them, a copy.</summary>

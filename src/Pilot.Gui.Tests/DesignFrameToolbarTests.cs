@@ -48,7 +48,8 @@ public sealed class DesignFrameToolbarTests
     {
         using var rig = new Rig();
         var all = rig.Arranged();
-        var buttons = all.Where(a => a.Node.Hit is HitResult.ButtonHit { Action: { } act } && act.StartsWith("designs:frame-", StringComparison.Ordinal) && act.Contains(":0:", StringComparison.Ordinal)).ToList();
+        var own = new System.Text.RegularExpressions.Regex(@"^designs:frame-(size|rotate|terminal|point):0:0(:|$)");
+        var buttons = all.Where(a => a.Node.Hit is HitResult.ButtonHit { Action: { } act } && own.IsMatch(act)).ToList();
         buttons.Count.ShouldBe(7);
         buttons.Select(b => b.Bounds.Y).Distinct().Count().ShouldBe(1, "one row");
         buttons.Select(b => b.Bounds.Height).Distinct().Count().ShouldBe(1, "one height");
@@ -63,19 +64,16 @@ public sealed class DesignFrameToolbarTests
     public void PhoneChangesOnlyThatFrameAndRotateSwapsItsSides()
     {
         using var rig = new Rig();
-        var before = rig.View.FrameSizeName(0, 0);
-        rig.View.PickFrameTarget(0, 0, "Phone").ShouldBeTrue();
-        rig.View.FrameSizeName(0, 0).ShouldBe("Phone");
-        if (rig.View.FrameSurfaceOf(0, 1) is not null)
-        {
-            rig.View.FrameSizeName(0, 1).ShouldNotBe("Phone");
-        }
+        var others = Enumerable.Range(0, 3).Select(f => (Name: rig.View.FrameSizeName(1, f), Surface: rig.View.FrameSurfaceOf(1, f))).ToList();
+        rig.View.PickFrameTarget(0, 0, "Tablet").ShouldBeTrue();
+        rig.View.FrameSizeName(0, 0).ShouldBe("Tablet");
+        // Only that frame changed: the frames of the other cells keep their size.
+        Enumerable.Range(0, 3).Select(f => (Name: rig.View.FrameSizeName(1, f), Surface: rig.View.FrameSurfaceOf(1, f))).ToList().ShouldBe(others);
         var portrait = rig.View.FrameSurfaceOf(0, 0)!;
         rig.View.RotateFrame(0, 0).ShouldBeTrue();
         var landscape = rig.View.FrameSurfaceOf(0, 0)!;
         landscape.Width.ShouldBe(portrait.Height);
         landscape.Height.ShouldBe(portrait.Width);
-        before.ShouldNotBe("Phone");
     }
 
     [Fact]

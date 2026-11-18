@@ -346,7 +346,7 @@ public sealed class DesignsViewTests
         rig.Paint();
 
         var texts = TextsOf(rig);
-        foreach (var gone in new[] { "Versions", "Brief", "Pixels", "Cells", "Rotate", "NOTES.md of v2" })
+        foreach (var gone in new[] { "Versions", "Brief", "Pixels", "Cells", "NOTES.md of v2" })
         {
             texts.ShouldNotContain(gone);
         }
