@@ -78,8 +78,10 @@ public sealed class FileJournal : INodeJournal, IDisposable
     /// 5: the <c>flightWithdrawn</c> event in the journal (PIL1111). An older node would fail on that kind in <c>journal.jsonl</c>.
     /// 6: <c>passedBy</c> on a flight's review round (PIL1140). An older node would drop it when it compacts the snapshot, and the round
     /// would then read as the reviewer's own: its repeated report numbered twice, and its open points left out of the follow-up's pass anyway.
+    /// 7: <c>fromDesign</c>, <c>fromDesignVersion</c> and <c>fromDesignSha256</c> on a flight (PIL1153). An older node would drop them when it compacts the snapshot,
+    /// and the review would then no longer hold the flight to its design.
     /// </remarks>
-    public const int StoreContract = 6;
+    public const int StoreContract = 7;
 
     private static readonly byte[] NewLine = "\n"u8.ToArray();
 
