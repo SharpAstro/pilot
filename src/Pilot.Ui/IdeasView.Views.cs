@@ -187,6 +187,10 @@ internal sealed partial class IdeasView<TSurface>
             title.Add(grip);
         }
         title.Add(Layout.Builder.Text(Marked(item), 12f, Link).Selectable().WAuto());
+        if (item.Idea is { } marked && IdeaDesignMark<TSurface>.Chip(marked, "ideas:tree-design", P, Link, Tint.Hover, OnDesign) is { } mark)
+        {
+            title.Add(mark);
+        }
         title.Add(Layout.Builder.Text(item.Title, 14f, P.Bright).Selectable().WStar().Whole(item.Title));
 
         var cells = new List<Layout.Node>

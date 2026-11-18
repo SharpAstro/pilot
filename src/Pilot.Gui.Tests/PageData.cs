@@ -9,7 +9,7 @@ namespace Pilot.Gui.Tests;
 /// from the contract's fixtures (<see cref="SessionsCapture"/>), <b>long</b> has titles, paths and reports far past a column,
 /// <b>many</b> has rows enough to scroll, and <b>empty</b> has nothing.
 /// </summary>
-internal sealed class PageData
+internal sealed partial class PageData
 {
     /// <summary>
     /// How many entries the chat holds in the "long" and "many" states (PIL907): a watchtower's transcript of a few days. The page lays out only

@@ -179,6 +179,11 @@ internal sealed class PilotChrome<TSurface>
             Show(PilotPage.Flights);
             Flights.OpenDetail(code);
         };
+        Ideas.OnDesign = id =>
+        {
+            Show(PilotPage.Designs);
+            Designs.Open(id);
+        };
         // Every page reports the nodes it arranged to the one text check, under the name of what it shows now.
         Sessions.Arranged = nodes => TextCheck.Observe(Sessions.Transcript.Line is null ? "sessions" : "transcript", nodes, DpiScale);
         Flights.Arranged = nodes => TextCheck.Observe(

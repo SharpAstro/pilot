@@ -126,6 +126,7 @@ internal sealed partial class IdeasView<TSurface>
             return;
         }
         _open = new Open(key, mode);
+        _designAsk = null;
         _editFrom = null;
         RowInput.Text = "";
         RowInput.CursorPos = 0;
@@ -159,6 +160,11 @@ internal sealed partial class IdeasView<TSurface>
             _proposal = null;
             Run(() => TidyAsync(idea), $"tidy {idea.Id}");
         }
+        else if (mode == Mode.Plan && IdeaDesignMark<TSurface>.PlanAsksFirst(idea) && _planAnyway != key)
+        {
+            // A marked idea whose design has no version asks first: the milestone list waits for the answer.
+            _designAsk = key;
+        }
         else if (mode == Mode.Plan)
         {
             if (_proposal is { Tidy.Milestone: { } kept } held && held.Key == key)
@@ -174,6 +180,38 @@ internal sealed partial class IdeasView<TSurface>
             }
         }
         Changed?.Invoke();
+    }
+
+    /// <summary>
+    /// Plan's first question for a marked idea whose design has no version: Start its design makes the design from the idea and opens its page; Plan anyway
+    /// goes on to the milestone list, and the plan is sent with <see cref="Verbs.PlanAnywayArg"/>.
+    /// </summary>
+    internal async Task StartDesignAsync(IdeaRow idea)
+    {
+        Close();
+        var reply = await RunAsync(idea, $"ideas:design-start:{KeyOf(idea)}", "starting its design", Verbs.DesignFromIdea, []);
+        if (reply is null)
+        {
+            return;
+        }
+        if (reply is { Ok: true, Made: { Length: > 0 } id })
+        {
+            Say($"started the design {id} of {Name(idea)}", refusal: false);
+            OnDesign?.Invoke(id);
+        }
+        else
+        {
+            Say($"no design started for {Name(idea)}: {(reply.Ok ? "the node named none" : reply.Error)}", refusal: true);
+        }
+    }
+
+    /// <summary>Plan anyway: the question is answered, the milestone list opens, and the plan carries the argument that goes past the design.</summary>
+    internal void PlanAnyway(IdeaRow idea)
+    {
+        var key = KeyOf(idea);
+        _open = null;
+        _planAnyway = key;
+        OpenOn(idea, Mode.Plan);
     }
 
     private async Task ProposeAsync(IdeaRow idea)
@@ -280,6 +318,10 @@ internal sealed partial class IdeasView<TSurface>
             return;
         }
         string[] args = !chosen.IsNew ? [chosen.Title] : chosen.Description is { Length: > 0 } description ? [Verbs.NewMilestoneArg, chosen.Title, description] : [Verbs.NewMilestoneArg, chosen.Title];
+        if (_planAnyway == KeyOf(idea))
+        {
+            args = [.. args, Verbs.PlanAnywayArg];
+        }
         await PlanAsync(idea, args);
     }
 
@@ -287,6 +329,8 @@ internal sealed partial class IdeasView<TSurface>
     public void Close()
     {
         _open = null;
+        _designAsk = null;
+        _planAnyway = null;
         _proposal = null;
         _breakUp = null;
         _choices = null;

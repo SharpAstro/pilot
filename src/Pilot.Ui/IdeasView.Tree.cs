@@ -96,11 +96,19 @@ internal sealed partial class IdeasView<TSurface>
         var dropped = folded.Count - planned;
         var counts = $"{noted.Count} noted · {planned} planned · {dropped} dropped";
         var shown = board.Rest.Where(s => s.Kind != BoardSectionKind.NoMilestone || s.Items.Count > 0 || board.Rest.Count() > 1).ToList();
+        if (OnlyNeedsDesign)
+        {
+            // The filter leaves the ideas marked as needing a design, in the pinned section, and nothing else.
+            board = _board = board.OnlyNeedingDesign();
+            noted = board.Unsorted.Items;
+            shown = [];
+            folded = [];
+        }
         // Ideas are this window's node's own, so no node pills: one would only leave the page on this node.
         var top = TopBar.Build(new PageHeader(TopBar.ThisNodeTitle(Nodes, "ideas"))
         {
             Counts = counts,
-            Buttons = [.. FoldAllPill(shown), ViewSwitch.Build(ViewChoices, ViewMode, mode =>
+            Buttons = [DesignFilterPill(), .. FoldAllPill(shown), ViewSwitch.Build(ViewChoices, ViewMode, mode =>
             {
                 ViewMode = mode;
                 Changed?.Invoke();
@@ -127,7 +135,7 @@ internal sealed partial class IdeasView<TSurface>
             head.Add(Ask(ask));
         }
         var ideating = Volatile.Read(ref _noting);
-        var empty = UnsortedEmpty(ideas.Count, noted.Count, !ideating.IsEmpty);
+        var empty = OnlyNeedsDesign && noted.Count == 0 ? WrappedProse.Of("No idea needs a design. Mark one with Mark for design.", 13f, P.Dim).Pad(0f, 8f) : UnsortedEmpty(ideas.Count, noted.Count, !ideating.IsEmpty);
 
         Layout.Node body;
         switch (ViewMode)
@@ -146,6 +154,14 @@ internal sealed partial class IdeasView<TSurface>
         whole = WithPageSelection(whole);
         return Gallery.Over(About?.Over(whole, NightOrNull) ?? whole);
     }
+
+    // The filter beside the view switch: a click shows only the ideas marked as needing a design, and a click again shows all.
+    private Layout.Node DesignFilterPill() =>
+        CardsView<TSurface>.Pill(IdeaDesignMark<TSurface>.FilterLabel, "ideas:filter-design", () =>
+        {
+            OnlyNeedsDesign = !OnlyNeedsDesign;
+            Changed?.Invoke();
+        }, OnlyNeedsDesign ? Lit : Tint, P.Bright);
 
     // What the pinned section says while it holds nothing, or null once it holds something.
     private Layout.Node? UnsortedEmpty(int ideas, int noted, bool ideating) =>
