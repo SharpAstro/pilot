@@ -218,7 +218,7 @@ internal sealed partial class PageData
         var header = new System.Text.Json.Nodes.JsonObject
         {
             ["kind"] = "hstack", ["side"] = "top", ["size"] = 52, ["padding"] = 10, ["gap"] = 12, ["background"] = "HeaderBg", ["border"] = "Separator",
-            ["children"] = new System.Text.Json.Nodes.JsonArray(Text("Back to designs"), Text("DSN-1", "DimText"), Text("Disk alert", "HeaderText"), Text("published 09:36, check clean", "DimText"), Spacer(), Text("DE1"), Text("LP1", "DimText")),
+            ["children"] = new System.Text.Json.Nodes.JsonArray(Text("← Designs"), Text("DSN-1 · Disk alert", "HeaderText"), Text("published 09:36, check clean", "DimText"), Spacer(), Text("DE1"), Text("LP1", "DimText")),
         };
         var toolbar = new System.Text.Json.Nodes.JsonObject
         {

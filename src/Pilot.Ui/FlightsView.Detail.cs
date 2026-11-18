@@ -138,7 +138,7 @@ internal sealed partial class FlightsView<TSurface>
         var color = StateColor(line);
         var head = new List<Layout.Node>
         {
-            Pill("← Flights", "flight:back", GoUp).WithTooltip("Up to the Flights page (Escape)"),
+            BackRow.Pill("Flights", "flight:back", GoUp),
             Layout.Builder.Text(line.Code, 16f, Bright).WAuto().Selectable(),
             WrappedProse.Of(line.Title, 14f, Body, selectable: true).WAuto(),
         };

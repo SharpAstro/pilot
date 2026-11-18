@@ -168,10 +168,7 @@ internal sealed partial class FlightsView<TSurface>
     {
         var rows = new List<Layout.Node>
         {
-            Layout.Builder.HStack(
-                    Pill("← Flights", ArchivedBackHit, CloseArchived).WithTooltip("Back to the Flights page (Escape)"),
-                    Layout.Builder.Text($"Archived flights · {screen.ArchivedCount}", 16f, Bright).WAuto())
-                .WithGap(12f).RowH(32f),
+            BackRow.Of("Flights", ArchivedBackHit, CloseArchived, Layout.Builder.Text($"Archived flights · {screen.ArchivedCount}", 16f, Bright).WAuto()).RowH(32f),
         };
         if (screen.Archived.Count == 0)
         {
