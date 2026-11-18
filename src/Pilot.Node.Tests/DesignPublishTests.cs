@@ -179,13 +179,13 @@ public sealed class DesignPublishTests : IAsyncLifetime
         // The draft of a design with a version starts from it, writable.
         (await Pilot("design", "draft", "DSN-1", "--replace")).Exit.ShouldBe(0);
         new FileInfo(Draft("prototype.json")).IsReadOnly.ShouldBeFalse();
-        File.WriteAllText(Draft("prototype.json"), File.ReadAllText(Draft("prototype.json")).Replace("Fleet", "Fleets"));
+        File.WriteAllText(Draft(Path.Combine("screens", "home.json")), File.ReadAllText(Draft(Path.Combine("screens", "home.json"))).Replace("Fleet", "Fleets"));
         (await Pilot("design", "render", "DSN-1")).Exit.ShouldBe(0);
 
         var (exit, said) = await Pilot("design", "publish", "DSN-1", "--why", "message");
         exit.ShouldBe(0, said);
         said.ShouldContain("DSN-1 v2");
-        File.ReadAllText(Path.Combine(DesignFolder(), "versions", "v2", "prototype.json")).ShouldContain("Fleets");
+        File.ReadAllText(Path.Combine(DesignFolder(), "versions", "v2", "screens", "home.json")).ShouldContain("Fleets");
         HashOf(v1).ShouldBe(before);
         File.ReadAllText(Path.Combine(v1, "prototype.json")).ShouldNotContain("Fleets");
 
@@ -268,9 +268,17 @@ public sealed class DesignPublishTests : IAsyncLifetime
         (await Pilot("design", "new", "--", "brief")).Exit.ShouldBe(0);
         (await Pilot("design", "draft", "DSN-1")).Exit.ShouldBe(0);
 
+        // The starter loads; what it lacks is the two objectives (the design's and its one screen's), which the designer writes.
         var (exit, said) = await Pilot("design", "check", "DSN-1");
-        exit.ShouldBe(0, said);
-        said.Trim().ShouldEndWith("clean");
+        exit.ShouldBe(1, said);
+        said.ShouldContain("This design has no objective");
+        said.ShouldContain("DESIGN.md | Home | objective: This screen has no objective. Say in one or two lines what it shows.");
+        said.ShouldNotContain("$.");
+
+        File.WriteAllText(Draft("DESIGN.md"), "# T\n\n**Objective:** Whole.\n\n## Home\n\n**Objective:** Shows it.\n\n```screen id=home\n```\n");
+        var (clean, cleanSaid) = await Pilot("design", "check", "DSN-1");
+        clean.ShouldBe(0, cleanSaid);
+        cleanSaid.Trim().ShouldEndWith("clean");
     }
 
     [Fact]

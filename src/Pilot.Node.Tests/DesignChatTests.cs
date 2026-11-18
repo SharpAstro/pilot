@@ -249,10 +249,10 @@ public sealed class DesignChatTests : IDisposable
         var id = await DesignWithDesignerAsync();
         Status(id).ShouldBe("drafting");
 
-        // A real design-check on the starter draft is a clean check, and says so with its count.
+        // A real design-check on the starter draft counts its findings: the empty objectives of the design and of its one screen.
         Run(Verbs.DesignDraft, id).Ok.ShouldBeTrue();
         Run(Verbs.DesignCheck, id);
-        Status(id).ShouldBe("checking: 0 findings");
+        Status(id).ShouldBe("checking: 2 findings");
         _store.Update(id, r => r with { CheckFindings = 3 });
         Status(id).ShouldBe("checking: 3 findings");
 

@@ -17,11 +17,7 @@ public sealed class DesignDocumentTests : IDisposable
 
     public void Dispose()
     {
-        foreach (var file in Directory.EnumerateFiles(_folder, "*", SearchOption.AllDirectories))
-        {
-            File.SetAttributes(file, FileAttributes.Normal);
-        }
-        Directory.Delete(_folder, recursive: true);
+        TestDirs.DeleteTree(_folder);
     }
 
     private const string Sample = """
@@ -71,7 +67,7 @@ public sealed class DesignDocumentTests : IDisposable
     private void CleanDraft()
     {
         Write("prototype.json", Header);
-        Write("screens/alert.json", Screen("alert"));
+        Write("screens/alert.json", $$"""{ "id": "alert", "title": "alert", "root": { "kind": "vstack", "children": [ { "kind": "text", "text": "Open terminal", "action": "goto:terminal" }, { "kind": "text", "text": "Open dismissed", "action": "goto:dismissed" } ] } }""");
         Write("screens/terminal.json", Screen("terminal"));
         Write("screens/dismissed.json", Screen("dismissed"));
         Write("DESIGN.md", Text(Sample));
@@ -217,7 +213,7 @@ public sealed class DesignDocumentTests : IDisposable
         DesignChecker.Load(Path.Combine(draft, "prototype.json"), out var problems).ShouldNotBeNull().Screens.Select(s => s.Id).ShouldBe(["home", "settings", "confirm"]);
         problems.ShouldBeEmpty();
         // The empty objectives are what the designer is then asked to write.
-        store.Check(row.Id).ShouldAllBe(p => p.Contains("This screen has no objective"));
+        store.Check(row.Id).ShouldContain(p => p.Contains("This screen has no objective"));
     }
 
     [Fact]

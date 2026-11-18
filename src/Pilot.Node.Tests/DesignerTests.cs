@@ -96,7 +96,7 @@ public sealed class DesignerTests : IDisposable
         // The contract: the brief so far, the prototype format and the starter prototype, the loop, and when it may publish.
         start.Brief.ShouldContain("A dashboard for the observatory, dark, with a night list.");
         start.Brief.ShouldContain("prototype.json");
-        start.Brief.ShouldContain("\"entry\": \"home\"");
+        start.Brief.ShouldContain("\"entry\":\"home\"");
         start.Brief.ShouldContain("design draft DSN-1");
         start.Brief.ShouldContain("design check DSN-1");
         start.Brief.ShouldContain("design render DSN-1");
@@ -441,7 +441,7 @@ public sealed class DesignerTests : IDisposable
         var starter = Briefs.Designer(detail, "{}", null, "pilot");
         starter.ShouldContain("draft/DESIGN.md");
         starter.ShouldContain("draft/screens/<id>.json");
-        starter.ShouldContain("```screen id=<screen id> size=<size>");
+        starter.ShouldContain("`screen id=<screen id> size=<size>`");
         starter.ShouldContain("Every screen needs an objective");
         starter.ShouldContain("`design check` refuses a cell without one");
         starter.ShouldContain("This screen has no objective. Say in one or two lines what it shows.");

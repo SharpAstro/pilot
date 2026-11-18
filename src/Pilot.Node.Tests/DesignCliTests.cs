@@ -108,7 +108,8 @@ public sealed class DesignCliTests : IAsyncLifetime
         exit.ShouldBe(0);
         made.ShouldContain("DSN-1 draft");
         File.Exists(Path.Combine(DesignFolder("DSN-1"), "draft", "prototype.json")).ShouldBeTrue();
-        File.Exists(Path.Combine(DesignFolder("DSN-1"), "draft", "NOTES.md")).ShouldBeTrue();
+        File.Exists(Path.Combine(DesignFolder("DSN-1"), "draft", "DESIGN.md")).ShouldBeTrue();
+        File.Exists(Path.Combine(DesignFolder("DSN-1"), "draft", "screens", "home.json")).ShouldBeTrue();
 
         var (again, refused) = await Pilot("design", "draft", "DSN-1");
         again.ShouldBe(1);
