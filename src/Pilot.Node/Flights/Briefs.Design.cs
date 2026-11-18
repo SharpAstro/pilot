@@ -31,8 +31,8 @@ public static partial class Briefs
         text.AppendLine();
         text.AppendLine($"## Design {id} version {v}");
         text.AppendLine($"This flight was built from version {v} of design {id}. The version is on the node, in `{folder}`:");
-        text.AppendLine($"- `{DesignStore.PrototypeFile}`: the screens as a tree, SHA-256 `{flight.FromDesignSha256 ?? "(not recorded)"}`;");
-        text.AppendLine($"- `{DesignStore.NotesFile}`: what the designer wrote about it;");
+        text.AppendLine($"- `{DesignStore.DocumentFile}`: the design as a document, its objective and one cell per screen (an older version has `{DesignStore.NotesFile}` instead);");
+        text.AppendLine($"- `{DesignStore.PrototypeFile}` and `{DesignStore.ScreensFolderName}/<id>.json`: the screens as trees, SHA-256 `{flight.FromDesignSha256 ?? "(not recorded)"}` (an older version holds its screens in `{DesignStore.PrototypeFile}`);");
         text.AppendLine($"- `{DesignChecker.RendersFolderName}/`: one image of each screen, as the version looks.");
         if (role == DesignRole.Reviewer)
         {

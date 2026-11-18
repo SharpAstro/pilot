@@ -23,22 +23,28 @@ public sealed class DesignStore(string dataFolder, TimeProvider? time = null)
     public const string BriefFile = "BRIEF.md";
     public const string RecordFile = "design.json";
     public const string PrototypeFile = "prototype.json";
+    /// <summary>The designer's own notes on a version (optional since PIL1171; the design is <see cref="DocumentFile"/>).</summary>
     public const string NotesFile = "NOTES.md";
+    public const string DocumentFile = DesignDocument.FileName;
+    public const string ScreensFolderName = DesignFiles.ScreensFolder;
     public const string DraftFolderName = "draft";
     public const string ChatFile = "chat.jsonl";
     public const string PicturesFolderName = "pictures";
     public const string VersionsFolderName = "versions";
 
-    /// <summary>What a design with no version starts its draft from: one screen, entry set, a single text node (DIR.Lib's prototype format).</summary>
+    /// <summary>What a design with no version starts its draft's <c>prototype.json</c> from: the header, entry set, no screens (they are files under <c>screens/</c>).</summary>
     public const string StarterPrototype = """
         {
           "width": 1280,
           "height": 720,
           "entry": "home",
-          "screens": [
-            { "id": "home", "title": "Home", "root": { "kind": "text", "text": "New design" } }
-          ]
+          "screens": []
         }
+        """;
+
+    /// <summary>The starter's one screen, <c>screens/home.json</c>: a single text node (DIR.Lib's prototype format).</summary>
+    public const string StarterScreen = """
+        { "id": "home", "title": "Home", "root": { "kind": "text", "text": "New design" } }
         """;
 
     private readonly TimeProvider _time = time ?? TimeProvider.System;
@@ -229,21 +235,54 @@ public sealed class DesignStore(string dataFolder, TimeProvider? time = null)
             var from = row.Current is { } current ? Path.Combine(folder, VersionsFolderName, "v" + current.ToString(CultureInfo.InvariantCulture)) : null;
             if (from is not null && File.Exists(Path.Combine(from, PrototypeFile)))
             {
-                CopyWritable(Path.Combine(from, PrototypeFile), Path.Combine(draft, PrototypeFile));
-                var notes = Path.Combine(from, NotesFile);
-                if (File.Exists(notes))
+                var screens = Path.Combine(from, ScreensFolderName);
+                if (File.Exists(Path.Combine(from, DocumentFile)))
                 {
-                    CopyWritable(notes, Path.Combine(draft, NotesFile));
+                    CopyWritable(Path.Combine(from, DocumentFile), Path.Combine(draft, DocumentFile));
                 }
                 else
                 {
-                    File.WriteAllText(Path.Combine(draft, NotesFile), "");
+                    // An older version: its NOTES.md becomes the notes of the starter document, and its screens are split into screens/.
+                    var old = Path.Combine(from, NotesFile);
+                    File.WriteAllText(Path.Combine(draft, DocumentFile), DesignDocument.Starter(row.Title ?? row.Id, "home", File.Exists(old) ? File.ReadAllText(old).Trim() : "").Format());
+                }
+                var json = File.ReadAllText(Path.Combine(from, PrototypeFile));
+                if (Directory.Exists(screens))
+                {
+                    CopyWritable(Path.Combine(from, PrototypeFile), Path.Combine(draft, PrototypeFile));
+                    Directory.CreateDirectory(Path.Combine(draft, ScreensFolderName));
+                    foreach (var file in Directory.EnumerateFiles(screens, "*.json"))
+                    {
+                        CopyWritable(file, Path.Combine(draft, ScreensFolderName, Path.GetFileName(file)));
+                    }
+                }
+                else if (DesignFiles.Split(json) is { } split && split.Screens.Length > 0)
+                {
+                    File.WriteAllText(Path.Combine(draft, PrototypeFile), split.Header);
+                    Directory.CreateDirectory(Path.Combine(draft, ScreensFolderName));
+                    foreach (var (screenId, screen) in split.Screens)
+                    {
+                        File.WriteAllText(Path.Combine(draft, ScreensFolderName, screenId + ".json"), screen);
+                    }
+                    if (!File.Exists(Path.Combine(from, DocumentFile)))
+                    {
+                        // The starter's cell is replaced by one cell per screen, headed by the screen's title, with the notes kept on the first.
+                        var notes = File.Exists(Path.Combine(from, NotesFile)) ? File.ReadAllText(Path.Combine(from, NotesFile)).Trim() : "";
+                        var cells = split.Screens.Select((s, i) => new DesignCell(ScreenTitle(s.Json, s.Id), "", [new DesignFrame(s.Id)], i == 0 ? notes : "")).ToArray();
+                        File.WriteAllText(Path.Combine(draft, DocumentFile), new DesignDocument(row.Title ?? row.Id, "", cells).Format());
+                    }
+                }
+                else
+                {
+                    CopyWritable(Path.Combine(from, PrototypeFile), Path.Combine(draft, PrototypeFile));
                 }
             }
             else
             {
                 File.WriteAllText(Path.Combine(draft, PrototypeFile), StarterPrototype);
-                File.WriteAllText(Path.Combine(draft, NotesFile), "");
+                Directory.CreateDirectory(Path.Combine(draft, ScreensFolderName));
+                File.WriteAllText(Path.Combine(draft, ScreensFolderName, "home.json"), StarterScreen);
+                File.WriteAllText(Path.Combine(draft, DocumentFile), DesignDocument.Starter(row.Title ?? row.Id).Format());
             }
             return draft;
         }
@@ -348,6 +387,18 @@ public sealed class DesignStore(string dataFolder, TimeProvider? time = null)
         }
     }
 
+    private static string ScreenTitle(string screenJson, string fallback)
+    {
+        try
+        {
+            return System.Text.Json.Nodes.JsonNode.Parse(screenJson) is System.Text.Json.Nodes.JsonObject o && o["title"] is { } t && t.GetValue<string>() is { Length: > 0 } title ? title : fallback;
+        }
+        catch (Exception ex) when (ex is JsonException or InvalidOperationException)
+        {
+            return fallback;
+        }
+    }
+
     private static void CopyWritable(string from, string to)
     {
         File.Copy(from, to);
@@ -372,7 +423,7 @@ public sealed class DesignStore(string dataFolder, TimeProvider? time = null)
         lock (_lock)
         {
             var file = DraftPrototypeOf(id, out var row);
-            var problems = DesignChecker.Problems(file, terminals: row.Terminals);
+            var problems = DesignChecker.Problems(file, terminals: row.Terminals, requireDocument: true);
             Update(row.Id, r => r with { DesignerPhase = DesignerPhases.Checking, CheckFindings = problems.Length });
             return problems;
         }
@@ -409,12 +460,13 @@ public sealed class DesignStore(string dataFolder, TimeProvider? time = null)
             var prototype = DraftPrototypeOf(id, out var row);
             var draft = Path.GetDirectoryName(prototype)!;
             var notes = Path.Combine(draft, NotesFile);
-            if (!File.Exists(notes) || string.IsNullOrWhiteSpace(File.ReadAllText(notes)))
+            var designFile = Path.Combine(draft, DocumentFile);
+            if (!File.Exists(designFile) || string.IsNullOrWhiteSpace(File.ReadAllText(designFile)))
             {
-                throw new DesignException($"{row.Id} has no notes: {NotesFile} in the draft is missing or empty, and a version says in it what it is");
+                throw new DesignException($"{row.Id} has no {DocumentFile}: the draft's {DocumentFile} is missing or empty, and a version is a document with an objective for each screen");
             }
             var document = DesignChecker.Load(prototype, out var problems);
-            var found = document is null ? problems : DesignChecker.Problems(prototype, terminals: row.Terminals);
+            var found = document is null ? problems : DesignChecker.Problems(prototype, terminals: row.Terminals, requireDocument: true);
             if (found.Length > 0)
             {
                 throw new DesignException($"{row.Id} draft is not clean, so there is no version to make:\n{string.Join('\n', found)}");
@@ -445,7 +497,19 @@ public sealed class DesignStore(string dataFolder, TimeProvider? time = null)
             try
             {
                 File.Copy(prototype, Path.Combine(building, PrototypeFile));
-                File.Copy(notes, Path.Combine(building, NotesFile));
+                File.Copy(designFile, Path.Combine(building, DocumentFile));
+                if (File.Exists(notes))
+                {
+                    File.Copy(notes, Path.Combine(building, NotesFile));
+                }
+                if (Directory.Exists(Path.Combine(draft, ScreensFolderName)))
+                {
+                    Directory.CreateDirectory(Path.Combine(building, ScreensFolderName));
+                    foreach (var screen in Directory.EnumerateFiles(Path.Combine(draft, ScreensFolderName), "*.json"))
+                    {
+                        File.Copy(screen, Path.Combine(building, ScreensFolderName, Path.GetFileName(screen)));
+                    }
+                }
                 foreach (var (png, _) in pngs)
                 {
                     File.Copy(png, Path.Combine(building, DesignChecker.RendersFolderName, Path.GetFileName(png)));
@@ -485,7 +549,7 @@ public sealed class DesignStore(string dataFolder, TimeProvider? time = null)
     }
 
     /// <summary>The hex SHA-256 of a file's bytes, for the record's hash of a prototype.</summary>
-    public static string Sha256Of(string file) => Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(file)));
+    public static string Sha256Of(string file) => DesignFiles.Sha256Of(file);
 
     private DesignIds ReadIds()
     {

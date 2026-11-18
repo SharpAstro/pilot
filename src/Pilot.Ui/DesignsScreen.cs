@@ -55,8 +55,10 @@ internal static class DesignPages
         {
             return new DesignPage(detail, null, null, null, []);
         }
-        var notes = Read(Path.Combine(folder, "NOTES.md"));
-        var json = Read(Path.Combine(folder, "prototype.json"));
+        // The designer's notes where the version has them, else the document (PIL1171: the page as a document is a later leg).
+        var notes = Read(Path.Combine(folder, "NOTES.md")) ?? Read(Path.Combine(folder, DesignDocument.FileName));
+        var prototypeFile = Path.Combine(folder, "prototype.json");
+        var json = File.Exists(prototypeFile) ? DesignFiles.AssembledJson(prototypeFile, out _) : null;
         if (json is null)
         {
             return new DesignPage(detail, n, null, notes, [], $"v{n} has no readable prototype.json");

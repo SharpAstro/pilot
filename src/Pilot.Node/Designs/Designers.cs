@@ -193,10 +193,10 @@ public sealed class Designers(NodeState state, DesignStore store, IWorkerLaunche
         // None up: start the one designer, in the design's folder, with the contract and the brief so far.
         var detail = store.Detail(row.Id);
         var prototype = detail.CurrentFolder is { } current && File.Exists(Path.Combine(current, DesignStore.PrototypeFile))
-            ? File.ReadAllText(Path.Combine(current, DesignStore.PrototypeFile))
-            : DesignStore.StarterPrototype;
-        var notes = detail.CurrentFolder is { } folder && File.Exists(Path.Combine(folder, DesignStore.NotesFile))
-            ? File.ReadAllText(Path.Combine(folder, DesignStore.NotesFile))
+            ? DesignFiles.AssembledJson(Path.Combine(current, DesignStore.PrototypeFile), out _) ?? File.ReadAllText(Path.Combine(current, DesignStore.PrototypeFile))
+            : DesignFiles.Join(DesignStore.StarterPrototype, [DesignStore.StarterScreen]);
+        var notes = detail.CurrentFolder is { } folder && File.Exists(Path.Combine(folder, DesignStore.DocumentFile))
+            ? File.ReadAllText(Path.Combine(folder, DesignStore.DocumentFile))
             : null;
         var brief = Briefs.Designer(detail, prototype, notes, Run);
         var job = await workers.StartAsync(new WorkerStart(name, store.FolderOf(row.Id), null, brief, models.Model(RoleModels.Designer), models.Effort(RoleModels.Designer), Reason: SessionStartReasons.Designer, Settings: GuardSettings), CancellationToken.None).ConfigureAwait(false);

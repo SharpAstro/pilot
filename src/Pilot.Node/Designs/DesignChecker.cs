@@ -37,7 +37,7 @@ public static class DesignChecker
     /// Every problem of the prototype at <paramref name="prototypeFile"/>, a line each: a loader problem as <c>&lt;json path&gt;: &lt;message&gt;</c>, a finding as
     /// <c>&lt;screen&gt; | &lt;width&gt;x&lt;height&gt; | &lt;rule&gt;: &lt;message&gt;</c>. Empty when the prototype is clean at every <see cref="DesignSizes"/>.
     /// </summary>
-    public static string[] Problems(string prototypeFile, string? fontPath = null, string[]? terminals = null)
+    public static string[] Problems(string prototypeFile, string? fontPath = null, string[]? terminals = null, bool requireDocument = false)
     {
         var loaded = Load(prototypeFile, out var problems);
         if (loaded is null)
@@ -50,7 +50,7 @@ public static class DesignChecker
             var findings = NamesTargets(loaded)
                 ? Prototype.Check(loaded, fontPath: fontPath ?? FontPath)
                 : Prototype.Check(loaded, DesignSizes.All, fontPath: fontPath ?? FontPath);
-            return [.. findings.Select(Line).Concat(CellLines(loaded, terminals ?? [])).Distinct(StringComparer.Ordinal)];
+            return [.. findings.Select(Line).Concat(CellLines(loaded, terminals ?? [])).Concat(DocumentLines(prototypeFile, loaded, requireDocument)).Distinct(StringComparer.Ordinal)];
         }
         catch (FileNotFoundException ex)
         {
@@ -92,6 +92,62 @@ public static class DesignChecker
         }
     }
 
+    /// <summary>
+    /// The findings of the design's document (PIL1171), <c>DESIGN.md | &lt;cell heading&gt; | &lt;rule&gt;: &lt;message&gt;</c> a line each: no design objective, a cell with no objective, a frame whose
+    /// id has no screen, a screen no frame names, a size that is neither a built-in target nor <c>&lt;cols&gt;x&lt;rows&gt;</c>. A missing DESIGN.md is a finding only when <paramref name="require"/>.
+    /// </summary>
+    private static IEnumerable<string> DocumentLines(string prototypeFile, PrototypeDocument loaded, bool require)
+    {
+        var file = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(prototypeFile))!, DesignDocument.FileName);
+        string text;
+        try
+        {
+            if (!File.Exists(file))
+            {
+                return require ? [$"{DesignDocument.FileName} | - | document: {DesignDocument.FileName} is missing; the design is a document with one cell per screen"] : [];
+            }
+            text = File.ReadAllText(file);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return [$"{DesignDocument.FileName} | - | document: cannot be read: {ex.Message}"];
+        }
+        var document = DesignDocument.Parse(text);
+        var lines = new List<string>();
+        if (string.IsNullOrWhiteSpace(document.Objective))
+        {
+            lines.Add($"{DesignDocument.FileName} | {document.Title} | objective: This design has no objective. Say in one or two lines what it is for.");
+        }
+        var known = loaded.Screens.Select(s => s.Id).ToHashSet(StringComparer.Ordinal);
+        var named = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var cell in document.Cells)
+        {
+            if (string.IsNullOrWhiteSpace(cell.Objective))
+            {
+                lines.Add($"{DesignDocument.FileName} | {cell.Heading} | objective: {DesignDocument.NoObjectiveMessage}");
+            }
+            foreach (var frame in cell.Frames)
+            {
+                named.Add(frame.Id);
+                if (!known.Contains(frame.Id))
+                {
+                    lines.Add($"{DesignDocument.FileName} | {cell.Heading} | frame: the block names screen '{frame.Id}', which has no screen file (screens/{frame.Id}.json)");
+                }
+                if (frame.Size is { } size && !DesignDocument.IsValidSize(size))
+                {
+                    lines.Add($"{DesignDocument.FileName} | {cell.Heading} | size: '{size}' is neither {string.Join(", ", DesignTargets.BuiltIn.Select(t => t.Name))} nor <cols>x<rows>");
+                }
+            }
+        }
+        var files = DesignFiles.ScreenFileIds(prototypeFile).ToHashSet(StringComparer.Ordinal);
+        foreach (var id in known.Where(id => !named.Contains(id)))
+        {
+            var what = files.Contains(id) ? $"screens/{id}.json" : $"screen '{id}'";
+            lines.Add($"{DesignDocument.FileName} | - | screen: {what} is named by no frame block; add a cell for it or remove it");
+        }
+        return lines;
+    }
+
     private static string Line(PrototypeFinding f)
     {
         // A state variant (a when's name=value) is named after its screen; the default state is the screen alone.
@@ -113,14 +169,10 @@ public static class DesignChecker
     /// <summary>The prototype at <paramref name="prototypeFile"/>, or null with <paramref name="problems"/> (a line each, with its JSON path) when it cannot be read.</summary>
     public static PrototypeDocument? Load(string prototypeFile, out string[] problems)
     {
-        string json;
-        try
+        var json = DesignFiles.AssembledJson(prototypeFile, out var problem);
+        if (json is null)
         {
-            json = File.ReadAllText(prototypeFile);
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            problems = [$"$: {Path.GetFileName(prototypeFile)} cannot be read: {ex.Message}"];
+            problems = [problem];
             return null;
         }
         var result = Prototype.Load(json);

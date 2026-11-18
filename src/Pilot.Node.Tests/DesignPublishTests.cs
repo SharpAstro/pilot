@@ -41,8 +41,39 @@ public sealed class DesignPublishTests : IAsyncLifetime
         (await Pilot("design", "new", "--", "A fleet screen")).Exit.ShouldBe(0);
         (await Pilot("design", "draft", "DSN-1")).Exit.ShouldBe(0);
         File.Copy(Fixture(fixture), Draft("prototype.json"), overwrite: true);
+        // The fixture carries its screens (the older shape), so the starter's screens/ folder goes.
+        Directory.Delete(Draft("screens"), recursive: true);
+        File.WriteAllText(Draft("DESIGN.md"), SampleDocument);
         File.WriteAllText(Draft("NOTES.md"), notes);
     }
+
+    private const string SampleDocument = """
+        # A fleet screen
+
+        **Objective:** Shows the sample: a home screen, its settings and a confirm modal.
+
+        ## Home
+
+        **Objective:** Shows the fleet at a glance.
+
+        ```screen id=home
+        ```
+
+        ## Settings
+
+        **Objective:** Shows what can be changed.
+
+        ```screen id=settings size=Phone
+        ```
+
+        ## Confirm
+
+        **Objective:** Shows the question asked before a change.
+
+        ```screen id=confirm
+        ```
+
+        """;
 
     private async Task<string> PublishedV1()
     {
@@ -135,7 +166,7 @@ public sealed class DesignPublishTests : IAsyncLifetime
         exit.ShouldBe(0, said);
 
         var v1 = Path.Combine(DesignFolder(), "versions", "v1");
-        Directory.EnumerateFileSystemEntries(v1).Select(Path.GetFileName).Order().ShouldBe(["NOTES.md", "prototype.json", "renders"]);
+        Directory.EnumerateFileSystemEntries(v1).Select(Path.GetFileName).Order().ShouldBe(["DESIGN.md", "NOTES.md", "prototype.json", "renders"]);
         Directory.EnumerateFiles(Path.Combine(v1, "renders")).Select(Path.GetFileName).ShouldNotContain("render.json");
     }
 
@@ -243,7 +274,7 @@ public sealed class DesignPublishTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task PublishRefusesWithoutADraftWithoutNotesAndWithAnUnknownWhy()
+    public async Task PublishRefusesWithoutADraftWithoutADocumentAndWithAnUnknownWhy()
     {
         (await Pilot("design", "new", "--", "brief")).Exit.ShouldBe(0);
 

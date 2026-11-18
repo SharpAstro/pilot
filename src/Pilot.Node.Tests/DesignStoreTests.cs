@@ -118,13 +118,18 @@ public sealed class DesignStoreTests : IDisposable
         var draft = store.Draft(row.Id, replace: false);
 
         draft.ShouldBe(Path.Combine(_data, "designs", "DSN-1", "draft"));
-        File.ReadAllText(Path.Combine(draft, "NOTES.md")).ShouldBe("");
-        using var document = JsonDocument.Parse(File.ReadAllText(Path.Combine(draft, "prototype.json")));
+        File.Exists(Path.Combine(draft, "NOTES.md")).ShouldBeFalse("NOTES.md is the designer's own, optional");
+        var starter = DesignDocument.Parse(File.ReadAllText(Path.Combine(draft, "DESIGN.md")));
+        starter.Objective.ShouldBe("");
+        starter.Cells.ShouldHaveSingleItem().Frames.ShouldHaveSingleItem().Id.ShouldBe("home");
+        File.ReadAllText(Path.Combine(draft, "prototype.json")).ShouldBe(DesignStore.StarterPrototype);
+        using var document = JsonDocument.Parse(DesignFiles.AssembledJson(Path.Combine(draft, "prototype.json"), out _)!);
         var root = document.RootElement;
         var screens = root.GetProperty("screens");
         screens.GetArrayLength().ShouldBe(1);
         root.GetProperty("entry").GetString().ShouldBe(screens[0].GetProperty("id").GetString());
         screens[0].GetProperty("root").GetProperty("kind").GetString().ShouldBe("text");
+        File.Exists(Path.Combine(draft, "screens", "home.json")).ShouldBeTrue();
         Directory.Exists(Path.Combine(_data, "designs", "DSN-1", "versions")).ShouldBeFalse("a draft writes nothing under versions/");
     }
 
@@ -137,12 +142,19 @@ public sealed class DesignStoreTests : IDisposable
         Directory.CreateDirectory(v2);
         File.WriteAllText(Path.Combine(v2, "prototype.json"), """{"from":"v2"}""");
         File.WriteAllText(Path.Combine(v2, "NOTES.md"), "what changed");
+        File.WriteAllText(Path.Combine(v2, "DESIGN.md"), "# T
+");
+        Directory.CreateDirectory(Path.Combine(v2, "screens"));
+        File.WriteAllText(Path.Combine(v2, "screens", "a.json"), "{}");
         File.WriteAllText(Path.Combine(_data, "designs", row.Id, "design.json"), JsonSerializer.Serialize(row with { Current = 2, Versions = 2 }, PilotJsonContext.Default.DesignRow));
 
         var draft = store.Draft(row.Id, replace: false);
 
         File.ReadAllText(Path.Combine(draft, "prototype.json")).ShouldBe("""{"from":"v2"}""");
-        File.ReadAllText(Path.Combine(draft, "NOTES.md")).ShouldBe("what changed");
+        File.Exists(Path.Combine(draft, "NOTES.md")).ShouldBeFalse("only DESIGN.md and screens/ carry over");
+        File.ReadAllText(Path.Combine(draft, "DESIGN.md")).ShouldBe("# T
+");
+        File.ReadAllText(Path.Combine(draft, "screens", "a.json")).ShouldBe("{}");
         File.ReadAllText(Path.Combine(v2, "prototype.json")).ShouldBe("""{"from":"v2"}""");
     }
 

@@ -71,7 +71,7 @@ public sealed partial class DesignerGuard(NodeState state, DesignStore store)
             {
                 return null;
             }
-            return Answer($"{id}'s designer writes only inside its draft/ folder ({draft}); {path ?? "that call"} is outside it. Edit draft/prototype.json and draft/NOTES.md, then check, render and publish.");
+            return Answer($"{id}'s designer writes only inside its draft/ folder ({draft}); {path ?? "that call"} is outside it. Edit draft/DESIGN.md, draft/prototype.json and draft/screens/, then check, render and publish.");
         }
         catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException or DesignException)
         {

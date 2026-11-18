@@ -123,7 +123,7 @@ public static partial class PilotCommand
 
             var draftId = Arg("design", "The design's id, DSN-<n>");
             var draftReplace = new Option<bool>("--replace") { Description = "Make the draft again over an existing one" };
-            var designDraft = Action(new Command("draft", "Make the design's draft/ folder: the current version's prototype.json and NOTES.md, or a starter prototype when there is no version; refused over an existing draft unless --replace") { Arguments = { draftId }, Options = { draftReplace } },
+            var designDraft = Action(new Command("draft", "Make the design's draft/ folder: the current version's DESIGN.md, prototype.json and screens/, or a starter when there is no version; refused over an existing draft unless --replace") { Arguments = { draftId }, Options = { draftReplace } },
                 (p, client, ct) => Send(client, Verbs.DesignDraft, Verbs.DesignTarget(p.GetValue(draftId)!), p.GetValue(draftReplace) ? ["replace"] : [], who, ct));
 
             var checkId = Arg("design", "The design's id, DSN-<n>");
@@ -136,7 +136,7 @@ public static partial class PilotCommand
 
             var publishId = Arg("design", "The design's id, DSN-<n>");
             var publishWhy = new Option<string>("--why") { Description = "Why this version was made: a short reason, one line, at most 120 characters, saying what changed (the chat shows it as \"published v<n>: <why>\")", Required = true };
-            var designPublish = Action(new Command("publish", "Make the next read-only version from the draft, when the check is clean and the renders are of the draft as it stands; prints the version. Only prototype.json, NOTES.md and renders/ are copied; other files in draft/ are ignored") { Arguments = { publishId }, Options = { publishWhy } },
+            var designPublish = Action(new Command("publish", "Make the next read-only version from the draft, when the check is clean and the renders are of the draft as it stands; prints the version. Only DESIGN.md, prototype.json, screens/, NOTES.md (optional) and renders/ are copied; other files in draft/ are ignored") { Arguments = { publishId }, Options = { publishWhy } },
                 (p, client, ct) => Send(client, Verbs.DesignPublish, Verbs.DesignTarget(p.GetValue(publishId)!), [p.GetValue(publishWhy)!], who, ct));
 
             var buildId = Arg("design", "The design's id, DSN-<n>");

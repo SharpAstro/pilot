@@ -421,16 +421,41 @@ public sealed class DesignerTests : IDisposable
     }
 
     [Fact]
-    public void TheBriefAsksForAShortWhyAndSaysPublishTakesOnlyThePrototypeNotesAndRenders()
+    public void TheBriefAsksForAShortWhyAndSaysPublishTakesTheDocumentThePrototypeItsScreensAndTheRenders()
     {
         var detail = new DesignDetail { Row = new DesignRow { Id = "DSN-1" }, Folder = "f", DraftFolder = "f/draft" };
         var brief = Briefs.Designer(detail, "{}", null, "pilot");
         brief.ShouldContain("--why \"<what changed>\"");
         brief.ShouldContain($"at most {DesignWhys.MaxLength} characters");
-        brief.ShouldContain("only `prototype.json`, `NOTES.md` and `renders/`");
+        brief.ShouldContain("only `DESIGN.md`, `prototype.json`, `screens/`, `NOTES.md` (when there is one) and `renders/`");
         brief.ShouldContain("nothing needs deleting");
         brief.ShouldNotContain("brief|message|fix");
         Briefs.DesignerPiece("DSN-1", "words").ShouldContain("--why");
+    }
+
+    [Fact]
+    public void TheBriefDescribesTheDocumentAndAsksForAnObjectiveOnEveryScreen()
+    {
+        var detail = new DesignDetail { Row = new DesignRow { Id = "DSN-1", Title = "Disk alert" }, Folder = "f", DraftFolder = "f/draft" };
+
+        var starter = Briefs.Designer(detail, "{}", null, "pilot");
+        starter.ShouldContain("draft/DESIGN.md");
+        starter.ShouldContain("draft/screens/<id>.json");
+        starter.ShouldContain("```screen id=<screen id> size=<size>");
+        starter.ShouldContain("Every screen needs an objective");
+        starter.ShouldContain("`design check` refuses a cell without one");
+        starter.ShouldContain("This screen has no objective. Say in one or two lines what it shows.");
+        starter.ShouldContain("the starter DESIGN.md");
+        starter.ShouldContain("# Disk alert");
+        starter.ShouldContain("Do it yourself, in this session: no subagents.");
+
+        var current = Briefs.Designer(detail, "{}", "# Disk alert
+
+**Objective:** Warns.
+", "pilot");
+        current.ShouldContain("The current version's DESIGN.md:");
+        current.ShouldContain("**Objective:** Warns.");
+        current.ShouldNotContain("the starter DESIGN.md");
     }
 
     [Theory]
