@@ -121,7 +121,7 @@ public sealed partial class DesignerGuard(NodeState state, DesignStore store)
             }
             // The owner's publish is the owner's: a designer cannot label its own version 'owner: ...'.
             return i + 1 < words.Count && words[i] == "design" && DesignVerbs.Contains(words[i + 1], StringComparer.Ordinal)
-                && !words.Skip(i + 2).Any(w => string.Equals(w, "--owner", StringComparison.OrdinalIgnoreCase) || w.StartsWith("--owner=", StringComparison.OrdinalIgnoreCase));
+                && !words.Skip(i + 2).Any(w => string.Equals(w, "--owner", StringComparison.OrdinalIgnoreCase) || w.StartsWith("--owner=", StringComparison.OrdinalIgnoreCase) || w.StartsWith("--owner:", StringComparison.OrdinalIgnoreCase));
         }
         return bare && ReadOnly.Contains(program, StringComparer.OrdinalIgnoreCase);
     }

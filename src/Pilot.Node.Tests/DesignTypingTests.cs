@@ -218,6 +218,41 @@ public sealed class DesignTypingTests : IDisposable
         Run(Verbs.DesignPublish, new string('x', DesignWhys.MaxLength - DesignWhys.OwnerPrefix.Length), "owner").Ok.ShouldBeTrue();
     }
 
+    [Theory]
+    [InlineData("notes", "Louder.\n## A cell of its own")]
+    [InlineData("notes", "# A new title")]
+    [InlineData("objective", "## Split")]
+    [InlineData("notes", "```screen id=x\nnot typed\n```")]
+    public void TypedProseThatWouldSplitTheCellIsRefused(string part, string text)
+    {
+        // A '# ' or '## ' line is where DesignDocument splits the document, and a fence is a frame's source: neither is typed, notes included.
+        PublishedV1();
+
+        var refused = Run(Verbs.DesignEdit, part, "Home", text);
+
+        refused.Ok.ShouldBeFalse();
+        refused.Error!.ShouldContain("typed prose cannot hold");
+        Directory.Exists(Draft()).ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task EveryAutosaveOfOnePartIsOneLineForTheDesignerWithTheLastWords()
+    {
+        // The page saves what is typed each time it rests; the designer hears the part's last words once, not every save.
+        PublishedV1();
+        await _designers.Settled;
+
+        Run(Verbs.DesignEdit, "objective", "Settings", "Shows the").Ok.ShouldBeTrue();
+        Run(Verbs.DesignEdit, "objective", "Settings", "Shows the settings").Ok.ShouldBeTrue();
+        Run(Verbs.DesignEdit, "notes", "Home", "Louder.").Ok.ShouldBeTrue();
+        Run(Verbs.DesignEdit, "objective", "Settings", "Shows the settings, grouped.").Ok.ShouldBeTrue();
+
+        _store.Find("DSN-1")!.DesignerTyped.ShouldBe([
+            "The owner typed into DESIGN.md: notes of Home now reads: Louder.",
+            "The owner typed into DESIGN.md: objective of Settings now reads: Shows the settings, grouped.",
+        ]);
+    }
+
     [Fact]
     public void DiscardRemovesTheDraftAndRefusesWhenThereIsNone()
     {

@@ -52,8 +52,8 @@ public sealed class DesignTypingViewTests
             Chrome.Render(data.Sessions, data.Flights, data.Cards, data.Jobs, data.Fleet, data.Repos, data.PullRequests, new RectF32(0, 0, 1920, 1080), data.Machines, null, data.Spend, Screen);
         }
 
-        public List<Layout.ArrangedNode<float>> Arranged() =>
-            Layout.Engine.Arrange(View.Tree(Screen), new Rect<float>(0, 0, 1920, 1080), new PixelMeasureContext<RgbaImage>(_renderer, SessionsCapture.FontPath, 1f)).ToList();
+        public List<Layout.ArrangedNode<float>> Arranged(DesignsScreen? other = null) =>
+            Layout.Engine.Arrange(View.Tree(other ?? Screen),new Rect<float>(0, 0, 1920, 1080), new PixelMeasureContext<RgbaImage>(_renderer, SessionsCapture.FontPath, 1f)).ToList();
 
         public byte[] Png() => SharpAstro.Png.PngWriter.Encode([.. _renderer.Surface.Pixels], 1920, 1080);
 
@@ -144,6 +144,68 @@ public sealed class DesignTypingViewTests
         var texts = SentenceRuns.Texts(all.Select(a => a.Node));
         texts.ShouldNotContain("Add notes");
         texts.ShouldContain(t => t.StartsWith("This is v1. Open the current version, v2", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void PickingAnOlderVersionClosesTheEditorAfterSendingWhatWasTyped()
+    {
+        // R1.3 of the review: an editor open on the current version must not survive a pick of an older one, or its typing would land in the current draft by cell number.
+        using var rig = new Rig();
+        rig.View.BeginEdit(1, "objective").ShouldBeTrue();
+        rig.View.Editor.Text = "Typed before the pick.";
+        rig.View.PickVersion(1);
+        rig.View.Editing.ShouldBeNull();
+        rig.Edits.ShouldHaveSingleItem().ShouldBe(("DSN-1", "objective", "2", "Typed before the pick."));
+
+        var older = rig.Screen with { Open = rig.Screen.Open! with { Version = 1, Draft = null } };
+        var all = rig.Arranged(older);
+        all.Select(a => a.Node).OfType<Layout.Node.Leaf>().Any(l => l.Content is Layout.Content.TextEditor).ShouldBeFalse("no editor on v1");
+        var texts = SentenceRuns.Texts(all.Select(a => a.Node));
+        texts.ShouldNotContain("Discard draft");
+        texts.ShouldNotContain(DesignsView<RgbaImage>.EditHint);
+        Has(all, "designs:typed-publish").ShouldBeFalse();
+    }
+
+    [Fact]
+    public void AnEditorOpenWhenTheShownPageStopsBeingCurrentCloses()
+    {
+        // A newer version published while the owner types: the page on show is no longer the current one, so the editor and the panel go.
+        using var rig = new Rig();
+        rig.View.BeginEdit(1, "objective").ShouldBeTrue();
+        var open = rig.Screen.Open!;
+        var passed = rig.Screen with { Open = open with { Detail = open.Detail with { Row = open.Detail.Row with { Current = 3 } } } };
+        var all = rig.Arranged(passed);
+        rig.View.Editing.ShouldBeNull();
+        all.Select(a => a.Node).OfType<Layout.Node.Leaf>().Any(l => l.Content is Layout.Content.TextEditor).ShouldBeFalse();
+        SentenceRuns.Texts(all.Select(a => a.Node)).ShouldNotContain("Discard draft");
+    }
+
+    [Fact]
+    public void AMissingObjectiveIsOfferedForTyping()
+    {
+        // R1.6 of the review: the check asks for an objective on the design and on every cell, so a missing one has an 'Add objective' like 'Add notes'.
+        var sample = PageData.DesignsFor("sample", Now);
+        var doc = sample.Open!.Doc!;
+        var bare = doc with { Objective = null, Cells = [doc.Cells[0], doc.Cells[1] with { Objective = null }] };
+        using var rig = new Rig(sample with { Open = sample.Open with { Doc = bare } });
+        var all = rig.Arranged();
+        Has(all, "designs:edit:-1:objective").ShouldBeTrue("the design's objective");
+        Has(all, "designs:edit:1:objective").ShouldBeTrue("cell 2's objective");
+        SentenceRuns.Texts(all.Select(a => a.Node)).Count(t => t == DesignsView<RgbaImage>.AddObjective).ShouldBe(2);
+        rig.View.BeginEdit(1, "objective").ShouldBeTrue();
+        rig.View.Editor.Text.ShouldBe("");
+    }
+
+    [Fact]
+    public void AnOlderVersionsNotesAreOnItsFirstCellOnlyAsTheDraftMadeFromItKeepsThem()
+    {
+        // R1.5 of the review: the store's draft of a version with no DESIGN.md keeps NOTES.md on the first cell; the page reads the version the same way, so cells 2 and up are not 'draft' with nothing typed.
+        var sample = PageData.DesignsFor("sample", Now);
+        var open = sample.Open! with { Doc = null };
+        open.Notebook!.Cells[0].Notes.ShouldBe(open.Notes!.Trim());
+        open.Notebook.Cells.Skip(1).ShouldAllBe(c => c.Notes == "");
+        var draft = open.Notebook with { Objective = "", Cells = [.. open.Notebook.Cells.Select(c => c with { Objective = "" })] };
+        (open with { Draft = draft }).HasDraftChange.ShouldBeFalse("the draft the store makes from the version changes nothing");
     }
 
     [Fact]

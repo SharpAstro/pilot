@@ -85,8 +85,9 @@ public sealed class Designers(NodeState state, DesignStore store, IWorkerLaunche
     public void Queue(string id, string part, string cell, string text)
     {
         var where = cell.Trim().Length == 0 ? part + " of the design" : $"{part} of {cell.Trim()}";
-        var line = $"The owner typed into DESIGN.md: {where} now reads: {text.Trim()}";
-        store.Update(id, r => r with { DesignerTyped = [.. r.DesignerTyped, line] });
+        var lead = $"The owner typed into DESIGN.md: {where} now reads: ";
+        // Every autosave of one part is one more edit: the designer is told the part's last words once, not each save.
+        store.Update(id, r => r with { DesignerTyped = [.. r.DesignerTyped.Where(l => !l.StartsWith(lead, StringComparison.Ordinal)), lead + text.Trim()] });
     }
 
     /// <summary>Takes up what waits: a held ask whose hold has ended, and pieces for a designer that is up now. Called on a timer by the node, and by a test.</summary>

@@ -1057,8 +1057,16 @@ internal sealed class FakeGitHub : IGitHub
     /// <summary>When set, a label read that must tell failure from absence (<see cref="IGitHub.IssueLabelsOrThrowAsync"/>) fails with it, as gh exiting non-zero; the plain read answers none, as the real one does.</summary>
     public string? IssueLabelsReadFails { get; set; }
 
-    public Task<string[]> IssueLabelsOrThrowAsync(string repoPath, int number, CancellationToken cancellationToken) =>
-        IssueLabelsReadFails is { } why ? Task.FromException<string[]>(new FlightException(why)) : IssueLabelsAsync(repoPath, number, cancellationToken);
+    public Task<string[]> IssueLabelsOrThrowAsync(string repoPath, int number, CancellationToken cancellationToken)
+    {
+        Interlocked.Increment(ref _labelReads);
+        return IssueLabelsReadFails is { } why ? Task.FromException<string[]>(new FlightException(why)) : IssueLabelsAsync(repoPath, number, cancellationToken);
+    }
+
+    private int _labelReads;
+
+    /// <summary>How many times <see cref="IssueLabelsOrThrowAsync"/> was called: a test that says a call reads no labels counts them.</summary>
+    public int IssueLabelReads => Volatile.Read(ref _labelReads);
 
     /// <summary>When set, adding or removing an issue label fails with it, as GitHub refusing it.</summary>
     public string? IssueLabelFails { get; set; }

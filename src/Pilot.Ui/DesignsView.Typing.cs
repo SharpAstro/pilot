@@ -45,6 +45,9 @@ internal sealed partial class DesignsView<TSurface>
     /// <summary>The label of the publish button for the version after <paramref name="version"/>.</summary>
     internal static string PublishLabel(int version) => $"Publish v{(version + 1).ToString(CultureInfo.InvariantCulture)}";
 
+    /// <summary>What a missing objective offers: a click opens it for typing (the check asks for one).</summary>
+    internal const string AddObjective = "Add objective";
+
     /// <summary>The label of the discard button.</summary>
     internal const string DiscardLabel = "Discard draft";
 

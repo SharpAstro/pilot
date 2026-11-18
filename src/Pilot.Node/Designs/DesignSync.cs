@@ -114,8 +114,17 @@ public sealed class DesignSync(DesignStore store, RepoCatalog repos, IGitHub git
         {
             using var deadline = Deadlined(cancellationToken);
             var token = deadline.Token;
-            _ = await github.IssueNowAsync(info.Path, number, token).ConfigureAwait(false)
+            var now = await github.IssueNowAsync(info.Path, number, token).ConfigureAwait(false)
                 ?? throw new DesignException($"{info.GitHub} has no issue #{number.ToString(CultureInfo.InvariantCulture)}");
+            // One issue keeps one design: an issue whose body holds another design's block (or that another design here is linked to) is refused, never overwritten.
+            if (DesignIssueDocument.Meta(now.Body) is { } meta && !(string.Equals(meta.Design, design.Id, StringComparison.Ordinal) && string.Equals(meta.Node, node, StringComparison.OrdinalIgnoreCase)))
+            {
+                throw new DesignException($"{info.GitHub}#{number.ToString(CultureInfo.InvariantCulture)} already keeps {meta.Design} of {meta.Node}: one issue keeps one design");
+            }
+            if (store.List().FirstOrDefault(d => d.Id != design.Id && d.MadeOn is null && string.Equals(d.IssueRepo, info.GitHub, StringComparison.OrdinalIgnoreCase) && d.IssueNumber == number) is { } other)
+            {
+                throw new DesignException($"{info.GitHub}#{number.ToString(CultureInfo.InvariantCulture)} already keeps {other.Id}: one issue keeps one design");
+            }
             await github.EnsureLabelAsync(info.Path, DesignSyncText.Label, token).ConfigureAwait(false);
             await github.AddIssueLabelAsync(info.Path, number, DesignSyncText.Label, token).ConfigureAwait(false);
         }
@@ -196,14 +205,15 @@ public sealed class DesignSync(DesignStore store, RepoCatalog repos, IGitHub git
             return false;
         }
         // The page shows 'Writing v<k> to <repo>#<n>...' while the try runs: the last failure's line is taken off.
-        store.Update(design.Id, r => r with { SyncError = null, SyncErrorAt = null });
+        store.Update(design.Id, r => r with { SyncError = null, SyncErrorAt = null, SyncHeld = null });
         try
         {
             using var deadline = Deadlined(cancellationToken);
             var token = deadline.Token;
             if (design.IssueNumber is { } held && (await github.IssueLabelsOrThrowAsync(info.Path, held, token).ConfigureAwait(false)).Contains(PilotMarks.Hold, StringComparer.OrdinalIgnoreCase))
             {
-                // 'pilot: hold' keeps its meaning: no node acts on the issue. Not an error; the timer sends the version once the hold is off.
+                // 'pilot: hold' keeps its meaning: no node acts on the issue. Not an error; the page says it is held, and the timer sends the version once the hold is off.
+                store.Update(design.Id, r => r with { SyncHeld = true });
                 return false;
             }
             var files = store.ReadVersion(design.Id, version);
@@ -244,7 +254,8 @@ public sealed class DesignSync(DesignStore store, RepoCatalog repos, IGitHub git
         catch (Exception ex) when (ex is FlightException or DesignException or IOException or OperationCanceledException && !cancellationToken.IsCancellationRequested)
         {
             await Error.WriteLineAsync($"design: {design.Id} v{version.ToString(CultureInfo.InvariantCulture)} was not written to GitHub: {(ex is OperationCanceledException ? "it took longer than " + Deadline : ex.Message)}").ConfigureAwait(false);
-            Failed(design.Id, DesignSyncText.Failure(DesignSyncText.NoAnswer, version, node));
+            // The page says the real reason: 'GitHub did not answer' only for a try that ran out of time, else what failed (an issue changed while its body was written, a missing issue, a refusal).
+            Failed(design.Id, DesignSyncText.Failure(ex is OperationCanceledException ? DesignSyncText.NoAnswer : ex.Message.TrimEnd('.'), version, node));
             return false;
         }
     }

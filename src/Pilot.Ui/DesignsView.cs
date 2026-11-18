@@ -763,6 +763,12 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
     public void PickVersion(int number)
     {
         _versionsOpen = false;
+        if (_edit is not null)
+        {
+            // Typing lands in the current draft by cell number, so the editor closes when another version is picked; what was typed is sent first, while the page is still the current one.
+            SaveEdit();
+            _edit = null;
+        }
         if (OpenId is { } id)
         {
             OnVersion?.Invoke(id, number);
@@ -1063,6 +1069,11 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
         {
             items.AddRange(VersionPanel(page));
         }
+        if (_edit is not null && !OnCurrent(page))
+        {
+            // The page moved off the current version (a newer one was published while typing): the editor closes, and what was sent stays in the draft.
+            _edit = null;
+        }
         var notebook = page.Notebook;
         var title = notebook is { Title.Length: > 0 } ? notebook.Title : row.Title is { Length: > 0 } t ? t : row.Id;
         var titleText = WrappedProse.Of(title, 20f, Bright);
@@ -1086,7 +1097,12 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
         {
             items.Add(Typable(-1, "notes", "Notes on the design", Markdown(notebook?.Notes ?? "")));
         }
-        if (_edit is { Cell: -1 } || _edit is null && page.HasDraftChange)
+        else if (OnEdit is not null && !ReadOnly(row) && OnCurrent(page))
+        {
+            // The check asks every design for an objective, so a missing one is offered for typing like a cell's notes.
+            items.Add(Typable(-1, "objective", "", WrappedProse.OneLine(AddObjective, 11f, Dim, selectable: false).RowH(18f)));
+        }
+        if (_edit is { Cell: -1 } || _edit is null && page.HasDraftChange && OnCurrent(page))
         {
             items.AddRange(TypingPanel(page));
         }
@@ -1120,7 +1136,9 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
             return null;
         }
         var synced = row.SyncedVersion ?? 0;
-        var line = synced < current ? DesignSyncText.Writing(synced + 1, repo, issue) : DesignSyncText.Synced(synced, repo, issue);
+        var line = synced >= current ? DesignSyncText.Synced(synced, repo, issue)
+            : row.SyncHeld == true ? DesignSyncText.Held(synced + 1, repo, issue)
+            : DesignSyncText.Writing(synced + 1, repo, issue);
         return WrappedProse.OneLine(line, 12f, synced < current ? Bright : Dim).RowH(22f).Whole(line);
     }
 
@@ -1184,6 +1202,11 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
         {
             items.Add(Typable(index, "objective", $"Objective of {cell.Heading}", WrappedProse.Of(cell.Objective ?? "", 13f, Body)));
         }
+        else if (OnEdit is not null && !ReadOnly(page.Detail.Row) && OnCurrent(page))
+        {
+            // The check refuses a screen with no objective, so a missing one is offered for typing like the notes.
+            items.Add(Typable(index, "objective", "", WrappedProse.OneLine(AddObjective, 11f, Dim, selectable: false).RowH(18f)));
+        }
         if (page.Document is not null)
         {
             _across = Math.Max(1, cell.Frames.Count);
@@ -1213,7 +1236,7 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
             items.Add(WrappedProse.OneLine("Notes", 11f, Dim, selectable: false).RowH(18f));
             items.Add(Typable(index, "notes", $"Notes of {cell.Heading}", Markdown(cell.Notes)));
         }
-        else if (OnEdit is not null && OnCurrent(page))
+        else if (OnEdit is not null && !ReadOnly(page.Detail.Row) && OnCurrent(page))
         {
             items.Add(Typable(index, "notes", "", WrappedProse.OneLine("Add notes", 11f, Dim, selectable: false).RowH(18f)));
         }

@@ -331,11 +331,14 @@ public sealed class DesignLockTests : IDisposable
         var held = de1.Store.Find(design.Id)!;
         held.SyncedVersion.ShouldBe(1);
         held.SyncError.ShouldBeNull();
+        // The page says the version is held, not that it is being written.
+        held.SyncHeld.ShouldBe(true);
 
         _github.IssueLabels[issue].TryRemove("pilot: hold", out _);
         await de1.Sync.SweepAsync(Ct);
 
         de1.Store.Find(design.Id)!.SyncedVersion.ShouldBe(2);
+        de1.Store.Find(design.Id)!.SyncHeld.ShouldNotBe(true);
         _github.IssueComments.Count.ShouldBe(comments + 1);
     }
 
@@ -378,6 +381,48 @@ public sealed class DesignLockTests : IDisposable
         // The same text is handled once.
         await de1.Lock.ReadBackAsync(design.Id, Ct);
         de1.Store.Find(design.Id)!.DesignerTyped.Length.ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task ADesignNobodyEditsHasItsIssueReadOnceEveryQuietSpellNotEveryRound()
+    {
+        // R1.8 of the review: a node with many designs must not read every issue every two minutes. A design open for editing anywhere is read every round; the rest once every QuietEvery.
+        var de1 = NodeOf("DE1");
+        var (design, issue) = await SyncedAsync(de1);
+        await de1.Lock.SweepAsync(Ct);
+
+        await EditBodyAsync(issue, "Shows the setting before a change.", "Shows how little free space rings a card.");
+        _time.Advance(DesignLock.QuietEvery - TimeSpan.FromMinutes(1));
+        await de1.Lock.SweepAsync(Ct);
+        de1.Store.Find(design.Id)!.DraftWhy.ShouldBeNull("not read again inside the quiet spell");
+
+        _time.Advance(TimeSpan.FromMinutes(1));
+        await de1.Lock.SweepAsync(Ct);
+        de1.Store.Find(design.Id)!.DraftWhy.ShouldBe("owner on GitHub: edited objective");
+
+        // Now open for editing here: every round reads it.
+        await de1.Lock.WhenIdleAsync();
+        DesignLock.Busy(de1.Store.Find(design.Id)!).ShouldBeTrue();
+        await EditBodyAsync(issue, "Notes of the cell.", "Notes from GitHub.");
+        await de1.Lock.SweepAsync(Ct);
+        de1.Store.Find(design.Id)!.GitHubEdits.ShouldContain(e => e.Part == "notes");
+    }
+
+    [Fact]
+    public async Task ARepeatedWantOfAHeldLockDoesNotReadTheIssueAgain()
+    {
+        // R1.9 of the review: every autosave of the owner's typing wants the lock; once it is held that needs no settle and no GitHub call.
+        var de1 = NodeOf("DE1");
+        var (design, _) = await SyncedAsync(de1);
+        await LockedAsync(de1, design.Id);
+        var reads = _github.IssueLabelReads;
+
+        de1.Lock.Want(design.Id);
+        de1.Lock.Want(design.Id);
+        await de1.Lock.WhenIdleAsync();
+
+        _github.IssueLabelReads.ShouldBe(reads);
+        de1.Store.Find(design.Id)!.LockHeld.ShouldBe(true);
     }
 
     [Fact]

@@ -324,6 +324,10 @@ public sealed class DesignerTests : IDisposable
     [InlineData("Bash", "cat a.txt | tee ../design.json")]
     [InlineData("Bash", "pilot design check DSN-1; rm -rf .")]
     [InlineData("Bash", "git commit -am x")]
+    // The owner's publish is the owner's, in every spelling System.CommandLine takes.
+    [InlineData("Bash", "pilot design publish DSN-1 --why x --owner")]
+    [InlineData("Bash", "pilot design publish DSN-1 --why x --owner=true")]
+    [InlineData("Bash", "pilot design publish DSN-1 --why x --owner:true")]
     [InlineData("PowerShell", "Set-Content -Path ..\\BRIEF.md -Value x")]
     [InlineData("PowerShell", "Get-Content a.txt > b.txt")]
     [InlineData("Bash", "cat $(echo x)")]

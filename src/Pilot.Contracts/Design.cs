@@ -102,6 +102,9 @@ public sealed record DesignRow
     /// <summary>When the last try failed.</summary>
     public DateTimeOffset? SyncErrorAt { get; init; }
 
+    /// <summary>Whether the last try found <c>pilot: hold</c> on the issue and wrote nothing (<see cref="DesignSyncText.Held"/>); null and false once a try was not held.</summary>
+    public bool? SyncHeld { get; init; }
+
     /// <summary>
     /// The node a design was made on, set only on a design this node read from its GitHub issue (PIL1171): such a design is read-only here, with no draft, no typing and no designer.
     /// Null for a design made on this node, and in a record an older release wrote.
@@ -320,7 +323,7 @@ public static class DesignSyncText
 
     public const string End = "<!-- /pilot:design -->";
 
-    /// <summary>The reason a failed write gives when GitHub did not take it or did not answer in time.</summary>
+    /// <summary>The reason a failed write gives when GitHub did not answer in time; any other failure gives its own message.</summary>
     public const string NoAnswer = "GitHub did not answer";
 
     /// <summary>The branch a design's files are written to: <c>design/&lt;issue number&gt;</c>.</summary>
@@ -331,6 +334,9 @@ public static class DesignSyncText
 
     /// <summary>Once version <paramref name="version"/> is on the issue.</summary>
     public static string Synced(int version, string repo, int issue) => $"v{N(version)} is on {repo}#{N(issue)}";
+
+    /// <summary>While <c>pilot: hold</c> is on the issue: nothing is written, and the version waits for the hold to come off.</summary>
+    public static string Held(int version, string repo, int issue) => $"Held: pilot: hold is on {repo}#{N(issue)}; v{N(version)} will be sent when it is off.";
 
     /// <summary>The failure line, in the error colour: why, which version is kept and where, and that it is sent again.</summary>
     public static string Failure(string reason, int version, string node) => $"Not synced: {reason}. v{N(version)} is saved on {node} and will be sent again.";

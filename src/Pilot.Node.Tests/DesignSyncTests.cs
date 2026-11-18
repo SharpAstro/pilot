@@ -146,6 +146,47 @@ public sealed class DesignSyncTests : IDisposable
     }
 
     [Fact]
+    public async Task LinkingAnIssueThatKeepsAnotherDesignIsRefusedAndItsBodyIsLeftAlone()
+    {
+        // R1.10 of the review: one issue keeps one design. A link to an issue holding another design's block (this node's or another's) is refused, never written over.
+        var de1 = NodeOf("DE1");
+        var first = Made(de1);
+        Published(de1.Store, first.Id, 1, "first");
+        await de1.Sync.SyncAsync(first.Id, Ct);
+        var issue = de1.Store.Find(first.Id)!.IssueNumber!.Value;
+        var body = (await _github.IssueNowAsync(_repo, issue, Ct))!.Body;
+
+        var second = Made(de1);
+        var refused = await Should.ThrowAsync<DesignException>(() => de1.Sync.LinkAsync(second.Id, "pilot", issue, Ct));
+        refused.Message.ShouldContain($"already keeps {first.Id}");
+        de1.Store.Find(second.Id)!.IssueNumber.ShouldBeNull();
+
+        var de2 = NodeOf("DE2");
+        var theirs = Made(de2);
+        (await Should.ThrowAsync<DesignException>(() => de2.Sync.LinkAsync(theirs.Id, "pilot", issue, Ct))).Message.ShouldContain("one issue keeps one design");
+        (await _github.IssueNowAsync(_repo, issue, Ct))!.Body.ShouldBe(body);
+
+        // Linking a design again to its own issue is fine.
+        (await de1.Sync.LinkAsync(first.Id, "pilot", issue, Ct)).ShouldContain($"#{issue}");
+    }
+
+    [Fact]
+    public async Task AWriteThatFailsSaysItsOwnReasonNotThatGitHubDidNotAnswer()
+    {
+        // R1.11 of the review: 'GitHub did not answer' is for a try that ran out of time only; a missing issue says so.
+        var de1 = NodeOf("DE1");
+        var design = Made(de1);
+        Published(de1.Store, design.Id, 1, "first");
+        de1.Store.Update(design.Id, r => r with { IssueRepo = "SharpAstro/pilot", IssueNumber = 404 });
+
+        await de1.Sync.SyncAsync(design.Id, Ct);
+
+        var line = de1.Store.Find(design.Id)!.SyncError.ShouldNotBeNull();
+        line.ShouldNotContain(DesignSyncText.NoAnswer);
+        line.ShouldBe("Not synced: SharpAstro/pilot has no issue #404. v1 is saved on DE1 and will be sent again.");
+    }
+
+    [Fact]
     public async Task LinkingAnIssueThatIsNotThereIsRefused()
     {
         var de1 = NodeOf("DE1");
@@ -158,7 +199,7 @@ public sealed class DesignSyncTests : IDisposable
     }
 
     [Fact]
-    public async Task GitHubNotAnsweringLeavesTheVersionSavedSaysSoAndTheTimerSendsItAgain()
+    public async Task AFailedWriteLeavesTheVersionSavedSaysWhyAndTheTimerSendsItAgain()
     {
         var de1 = NodeOf("DE1");
         var design = Made(de1);
@@ -170,7 +211,7 @@ public sealed class DesignSyncTests : IDisposable
         var failed = de1.Store.Find(design.Id)!;
         failed.Current.ShouldBe(1);
         failed.SyncedVersion.ShouldBeNull();
-        failed.SyncError.ShouldBe("Not synced: GitHub did not answer. v1 is saved on DE1 and will be sent again.");
+        failed.SyncError.ShouldBe("Not synced: offline. v1 is saved on DE1 and will be sent again.");
         _github.BranchCommits.ShouldBeEmpty();
 
         _github.DesignCallsFail = null;

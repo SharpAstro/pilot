@@ -21,7 +21,7 @@ internal sealed record DesignPage(DesignDetail Detail, int? Version, PrototypeDo
 
     /// <summary>
     /// The document the page shows: <see cref="Doc"/>, else for an older version (one with no DESIGN.md) one cell per screen of its prototype, headed by the screen's title,
-    /// whose notes are the version's NOTES.md. Null while there is no version or its prototype did not load and it has no document.
+    /// whose notes are the version's NOTES.md on the first cell only, as the draft the store makes from such a version keeps them (DesignStore). Null while there is no version or its prototype did not load and it has no document.
     /// </summary>
     public DesignDocument? Notebook => Merged(Baseline, Draft);
 
@@ -30,7 +30,7 @@ internal sealed record DesignPage(DesignDetail Detail, int? Version, PrototypeDo
 
     private DesignDocument? Baseline => Doc ?? (Document is { } prototype
         ? new DesignDocument(Detail.Row.Title ?? Detail.Row.Id, null,
-            [.. prototype.Screens.Select(s => new DesignCell(string.IsNullOrEmpty(s.Title) ? s.Id : s.Title, null, [new DesignFrame(s.Id)], Notes ?? ""))])
+            [.. prototype.Screens.Select((s, i) => new DesignCell(string.IsNullOrEmpty(s.Title) ? s.Id : s.Title, null, [new DesignFrame(s.Id)], i == 0 ? (Notes ?? "").Trim() : ""))])
         : null);
 
     // The version's document with the draft's prose laid over it, cell by cell where the draft's cell shows the same screens; the frames are always the version's.

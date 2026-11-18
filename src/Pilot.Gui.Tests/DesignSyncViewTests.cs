@@ -87,6 +87,16 @@ public sealed class DesignSyncViewTests
     }
 
     [Fact]
+    public void AVersionHeldByPilotHoldSaysItIsHeldNotBeingWritten()
+    {
+        using var rig = new Rig(With(r => r with { IssueRepo = Repo, IssueNumber = 1171, SyncedVersion = 1, SyncHeld = true }));
+
+        Says(rig, "Held: pilot: hold is on SharpAstro/pilot#1171; v2 will be sent when it is off.").ShouldBeTrue();
+        Says(rig, "Writing v").ShouldBeFalse();
+        TextOverlap.Faults([.. rig.Arranged()]).Select(f => f.Line).ShouldBeEmpty();
+    }
+
+    [Fact]
     public void OnceTheVersionIsOnTheIssueTheLineSaysSo()
     {
         using var rig = new Rig(With(r => r with { IssueRepo = Repo, IssueNumber = 1171, SyncedVersion = 2 }));

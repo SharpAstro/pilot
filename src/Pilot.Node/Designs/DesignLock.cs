@@ -24,6 +24,13 @@ public sealed class DesignLock(DesignStore store, RepoCatalog repos, IGitHub git
     /// </summary>
     public static readonly TimeSpan StaleAfter = TimeSpan.FromMinutes(15);
 
+    /// <summary>
+    /// How often the sweep reads the issue of a design nothing suggests is changing (no lock wanted, held or seen, no labelling to retry). Such a design is read for an edit made on
+    /// GitHub or a lock another node took; ten minutes, as often as the mirror of other nodes' designs, keeps a node with many designs from reading every issue every round.
+    /// A design open for editing here or elsewhere is read every round.
+    /// </summary>
+    public static readonly TimeSpan QuietEvery = TimeSpan.FromMinutes(10);
+
     /// <summary>The longest one try (a read, a labelling) may take.</summary>
     public TimeSpan Deadline { get; set; } = TimeSpan.FromSeconds(60);
 
@@ -36,6 +43,7 @@ public sealed class DesignLock(DesignStore store, RepoCatalog repos, IGitHub git
     private readonly SemaphoreSlim _one = new(1, 1);
     private readonly Lock _kicks = new();
     private readonly List<Task> _running = [];
+    private readonly Dictionary<string, DateTimeOffset> _read = new(StringComparer.Ordinal);
 
     /// <summary>This node's code, as its node label names it.</summary>
     public string Node => node;
@@ -51,6 +59,11 @@ public sealed class DesignLock(DesignStore store, RepoCatalog repos, IGitHub git
         if (row.LockedBy is { Length: > 0 } by && row.LockHeld != true)
         {
             throw new DesignException(DesignLockText.BeingEdited(by));
+        }
+        if (row.LockWanted == true && (row.LockHeld == true || row.LockError is null))
+        {
+            // Wanted already: held, or the labelling is under way. A further typed edit (every autosave makes one) needs no settle of its own; a failed one is tried again here or by the sweep.
+            return;
         }
         if (row.LockWanted != true)
         {
@@ -96,11 +109,20 @@ public sealed class DesignLock(DesignStore store, RepoCatalog repos, IGitHub git
         }
     }
 
-    /// <summary>The timer's round: every design with an issue is settled, then its issue's text is read back.</summary>
+    /// <summary>
+    /// The timer's round: every design with an issue that something suggests is changing (<see cref="Busy"/>) is settled and its issue's text read back; the rest once every
+    /// <see cref="QuietEvery"/>.
+    /// </summary>
     public async Task SweepAsync(CancellationToken cancellationToken)
     {
         foreach (var design in store.List().Where(d => d.IssueNumber is not null))
         {
+            var now = time.GetUtcNow();
+            if (!Busy(design) && _read.TryGetValue(design.Id, out var last) && now - last < QuietEvery)
+            {
+                continue;
+            }
+            _read[design.Id] = now;
             try
             {
                 await SettleAsync(design.Id, cancellationToken).ConfigureAwait(false);
@@ -113,6 +135,10 @@ public sealed class DesignLock(DesignStore store, RepoCatalog repos, IGitHub git
             }
         }
     }
+
+    /// <summary>Whether a design is open for editing here or elsewhere, or its labels are still to be put right: its issue is read every round.</summary>
+    internal static bool Busy(DesignRow design) =>
+        design.LockWanted == true || design.LockHeld == true || design.LockedBy is { Length: > 0 } || design.LockError is not null || design.GitHubEdits.Length > 0;
 
     private RepoInfo? Resolve(string? given) =>
         given is { Length: > 0 }
