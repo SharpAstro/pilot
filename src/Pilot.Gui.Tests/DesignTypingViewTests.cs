@@ -116,7 +116,7 @@ public sealed class DesignTypingViewTests
         {
             using var rig = new Rig(sample with { Open = DesignPages.Load(sample.Open!.Detail with { Row = sample.Open.Detail.Row with { Title = stored } }) });
             var all = rig.Arranged();
-            all.ShouldContain(a => a.Node.Tooltip is { } t && t.StartsWith("DSN-1", StringComparison.Ordinal) && !t.Contains('·'), $"the id alone for {stored?.Length.ToString() ?? "null"}");
+            all.Any(a => a.Node.Tooltip != null && a.Node.Tooltip.StartsWith("DSN-1", StringComparison.Ordinal) && !a.Node.Tooltip.Contains('·')).ShouldBeTrue($"the id alone for {stored?.Length.ToString() ?? "null"}");
             SentenceRuns.Texts(all.Select(a => a.Node)).ShouldNotContain(t => t.Contains(new string('x', 10), StringComparison.Ordinal));
         }
         DesignTitle.Shown(new string('x', DesignTitle.MaxLength)).ShouldNotBeNull();
