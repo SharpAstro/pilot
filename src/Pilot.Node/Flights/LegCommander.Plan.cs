@@ -120,10 +120,11 @@ public sealed partial class LegCommander
         // A filter term that matches no test runs nothing and still exits 0 (pilot #1157): a class the leg adds is declared with new-tests.
         if (check is not null)
         {
-            if (FilterTerms.Refusal(check, flight.Worktree, declaredTests) is { } unmatched
-                || FilterTerms.DoneWhenRefusal(statedDoneWhen, check, flight.Worktree, declaredTests) is { } helper)
+            var unmatched = FilterTerms.Refusal(check, flight.Worktree, declaredTests)
+                ?? FilterTerms.DoneWhenRefusal(statedDoneWhen, check, flight.Worktree, declaredTests);
+            if (unmatched is not null)
             {
-                throw new FlightException(unmatched ?? helper!);
+                throw new FlightException(unmatched);
             }
         }
         if (declaredTests.Count > 0)
