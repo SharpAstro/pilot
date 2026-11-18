@@ -291,7 +291,7 @@ public sealed class DesignSyncTests : IDisposable
         de1.Store.List().Select(d => d.Id).ToArray().ShouldBe([design.Id]);
         var before = _github.IssueComments.Count;
         await se2.Sync.MirrorAsync(Ct);
-        se2.Store.List().Count.ShouldBe(1);
+        se2.Store.List().Length.ShouldBe(1);
         _github.IssueComments.Count.ShouldBe(before);
     }
 
