@@ -254,22 +254,13 @@ public sealed class DesignsWaitingIdeasTests
     }
 
     [Fact]
-    public void CapturesOfTheDesignsPageInPilotTui()
+    public async Task CapturesOfTheDesignsPageInPilotTui()
     {
-        foreach (var (name, open) in new[] { ("designs-waiting-ideas", false), ("design-from-idea", true) })
+        // The sweep's own recorder draws the page as Program.cs does, from the sample, which carries the ideas and the design made from one.
+        foreach (var (name, page, open) in new[] { ("designs-waiting-ideas", "designs", false), ("design-from-idea", "design page", true) })
         {
-            using var host = new Host(true);
-            var chrome = host.Make();
-            var screen = PageData.DesignsFor("long", Now);
-            if (open)
-            {
-                chrome.Designs.Open(screen.Open!.Detail.Row.Id);
-            }
-            var rail = TerminalRail.Tree(PilotPage.Designs, GlyphMode.Emoji, null, null, Now, _ => { }, null, Columns);
-            var cells = TerminalFrame.Build(rail, chrome.Designs.Tree(screen), null, Columns, Rows, CellMeasureContext.PixelAuthored);
             var buffer = new CellBuffer { ColorMode = ColorMode.TrueColor };
-            buffer.Resize(Columns, Rows);
-            CellWireframe.RecordCells(new BufferedViewport(buffer, Columns, Rows), cells, null, false);
+            await TerminalWireframeSweepTests.RecordCase(page, "long", Columns, Rows, buffer);
             var lines = Enumerable.Range(0, Rows).Select(y => string.Concat(Enumerable.Range(0, Columns).Select(x => buffer.BackAt(x, y).Glyph))).ToArray();
             string.Join('\n', lines).ShouldContain(open ? "pilot I381" : "Ideas waiting for a design");
             Keep($"after-{name}-pilot-tui.png", Png(lines));
