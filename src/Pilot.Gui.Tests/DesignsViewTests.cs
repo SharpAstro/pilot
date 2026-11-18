@@ -219,7 +219,7 @@ public sealed class DesignsViewTests
     [InlineData(1400)]
     public void ALongTitleAndANoVersionTextAreWrappedOrCutWithTheWholeOnHover(int width)
     {
-        var title = "A very long design title that goes on and on about the whole of the observatory control panel";
+        var title = PageData.MaxTitle;
         var full = Sample();
         var detail = full.Open!.Detail with { Row = full.Open.Detail.Row with { Title = title, Current = null, Versions = 0 }, Versions = [], Brief = string.Join(' ', Enumerable.Repeat("A long brief sentence.", 40)) };
         using var rig = new Rig(full with { Open = DesignPages.Load(detail) });
@@ -237,26 +237,21 @@ public sealed class DesignsViewTests
     [InlineData(2880, 1814, 1.5f)]
     [InlineData(2880, 1814, 1f)]
     [InlineData(1920, 1080, 1f)]
-    public void TheIssuesTitleLineIsWholeOrEndsInAnEllipsisAtTheIssuesWindow(int width, int height, float dpi)
+    public void AnOldStoredTitleOverTheLimitShowsTheIdAloneAtTheIssuesWindow(int width, int height, float dpi)
     {
-        // The title is made from the brief by the store's own rule, as DesignStore.New makes it: the issue's first line ran past 80
-        // characters and the store cut it mid-word ("a line sayin") before the page ever drew it.
+        // A stored title over the limit is an old cut of the brief ("a line sayin"): the page shows the id alone and draws nothing ending mid-word (#1183).
         var firstLine = "A card for one job: its id j6917 and the command on the first line, a line saying what it is doing and the whole of its output";
         var brief = firstLine + "\nThe card sits on the job's page.";
-        var title = DesignTitle.Of(brief);
-        title.ShouldBe(firstLine, "a first line this long is kept whole, so the page's one-line cut and its hover have all of it");
+        var title = firstLine[..80] + "sayin";
+        DesignTitle.Shown(title).ShouldBeNull();
         var full = Sample();
         var detail = full.Open!.Detail with { Row = full.Open.Detail.Row with { Title = title }, Brief = brief };
         using var rig = new Rig(full with { Open = DesignPages.Load(detail) });
         rig.View.Open("DSN-1");
         rig.Paint();
-        var counts = $"DSN-1 · {title}";
         var arranged = ArrangedAt(rig, width, height, dpi).ToList();
-        var line = arranged.Single(a => a.Node.Tooltip == counts);
-        var words = arranged.Where(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text } && a.Bounds.Y >= line.Bounds.Y - 0.5f && a.Bounds.Y + a.Bounds.Height <= line.Bounds.Y + line.Bounds.Height + 0.5f
-            && a.Bounds.X >= line.Bounds.X - 0.5f && a.Bounds.X <= line.Bounds.X + line.Bounds.Width + 0.5f).Select(a => (Layout.Content.Text)((Layout.Node.Leaf)a.Node).Content).Select(t => t.Value).ToList();
-        var drawn = string.Concat(words).Replace(" ", "");
-        (drawn.EndsWith("…", StringComparison.Ordinal) || drawn == counts.Replace(" ", "")).ShouldBeTrue($"the title line is whole or ends in an ellipsis, drew: {string.Join("|", words)}");
+        arranged.ShouldContain(a => a.Node.Tooltip == "DSN-1", "the back row shows the id alone");
+        arranged.Any(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text t } && t.Value.Contains("sayin", StringComparison.Ordinal)).ShouldBeFalse("a cut title is never drawn");
     }
 
     [Fact]
@@ -383,7 +378,7 @@ public sealed class DesignsViewTests
         rig.View.Open("DSN-1");
         rig.Paint();
 
-        TextsOf(rig).ShouldContain("v2 of 2 ▾");
+        TextsOf(rig).ShouldContain(t => t.Contains("v2 of 2 ▾", StringComparison.Ordinal));
         ArrangeAt(rig, 1400, 900).Single(a => a.Node.Hit is HitResult.ButtonHit { Action: "designs:versions" }).Node.Tooltip.ShouldBe("See earlier versions");
         ActionsOf(rig).ShouldNotContain("designs:version:1");
 

@@ -7,7 +7,7 @@ using Pilot.Contracts;
 namespace Pilot.Ui;
 
 /// <summary>
-/// The Designs page (PIL1096): the designs newest first, and a design as a document (PIL1171): the top bar (Back to designs, the design's name, the version chip),
+/// The Designs page (PIL1096): the designs newest first, and a design as a document (PIL1171): the back row (← Designs, the design's name, the version chip),
 /// the document scrolling in the middle (the design's objective, then each cell: number, heading, state tag, objective, the screen played in a framed well with its caption, notes)
 /// and the chat on the right. Each frame of a cell is played live in a <see cref="PrototypePlayer{TSurface}"/> of its own, listed after the page (<see cref="FrameWidgets"/>) so the
 /// router reaches its <see cref="ClickableRegion"/>s as it reaches any widget's; the page's own buttons all sit outside the rectangles the frames play in.
@@ -32,6 +32,7 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
     // The page's width in design units as the last Render had it, and the width from which the chat stands beside the document: the document keeps at least 500, the chat 300 to 460.
     // Narrower, the chat sits under the document.
     private float _width = 10_000f;
+    private float _pageHeight = 900f;
     private const float WideColumns = 900f;
     private const float ChatWidthMin = 300f;
     private const float ChatWidthMax = 460f;
@@ -93,6 +94,17 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
     private readonly ListScrollController _docScroll = new() { Mode = ScrollBarMode.Interactive };
 
     protected override IEnumerable<ListScrollController> PageScrolls => [_listScroll, _docScroll, .. Chat.Scrolls];
+
+    // Escape does what the back row's pill does (PIL1183): an open design goes back to the list, unless a cell is being typed into, which Escape leaves.
+    public override bool HandleInput(InputEvent evt)
+    {
+        if (evt is InputEvent.KeyDown { Key: InputKey.Escape } && OpenId is not null && _edit is null)
+        {
+            Close();
+            return true;
+        }
+        return base.HandleInput(evt);
+    }
 
     /// <summary>The design whose page is open; null shows the list.</summary>
     public string? OpenId { get; private set; }
@@ -781,6 +793,7 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
         _frameRects.Clear();
         NoteHeight(bounds);
         _width = Scale.ToDesignX(bounds.Width);
+        _pageHeight = Scale.ToDesignY(bounds.Height);
         var tree = Tree(screen);
         RenderLayout(tree, bounds, null, null, DrawFill);
     }
@@ -876,28 +889,75 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
             EnsurePlayers(open);
             ApplyTargets();
         }
-        var buttons = OpenId is { } ? [BackButton(), .. VersionChip(open)] : Array.Empty<Layout.Node>();
         var header = TopBar.Build(new PageHeader("designs")
         {
-            Counts = OpenId is { } openId ? $"{openId}{(open?.Detail.Row.Title is { Length: > 0 } t ? " · " + t : "")}" : $"{screen.Rows.Length} {(screen.Rows.Length == 1 ? "design" : "designs")}",
+            // An open design's name and buttons are on the back row of its own page (PIL1183), not in the bar.
+            Counts = OpenId is { } ? "" : $"{screen.Rows.Length} {(screen.Rows.Length == 1 ? "design" : "designs")}",
             CountsFit = true,
-            CountsCut = OpenId is { },
-            Buttons = buttons,
             Source = PageHeader.SourceLine(screen.Source, screen.AsOf),
         }, new TopBarParts(Nodes, null, Autopilot, About, Night));
-        var body = OpenId is null ? List(screen) : open is null ? Layout.Builder.Text($"Reading {OpenId}…", 16f, Dim, TextAlign.Center).Selectable().Stretch() : DesignBody(open);
+        var body = OpenId is null
+            ? List(screen)
+            : Layout.Builder.VStack(
+                DesignBackRow(open),
+                (open is null ? Layout.Builder.Text($"Reading {OpenId}…", 16f, Dim, TextAlign.Center).Selectable().Stretch() : DesignBody(open)).Stretch()).Stretch();
         var page = Layout.Builder.VStack(header, body.Stretch()).Bg(Ground).Stretch();
         return About?.Over(WhenShort(page)) ?? WhenShort(page);
     }
 
-    private Layout.Node BackButton() =>
-        Layout.Builder.Text("Back to designs", 12f, Bright, TextAlign.Center)
-            .Pad(10f, 4f)
-            .WAuto()
-            .Bg(Button)
-            .BgHover(ButtonHover)
-            .WithTooltip("Back to the list of designs")
-            .Follows(new HitResult.ButtonHit("designs:list"), _ => Close());
+    /// <summary>
+    /// The design page's first row (PIL1183), the one back row the Sessions and Flights pages have: "← Designs" (Escape does the same), the design's id and its title on
+    /// one line (whole or ended in an ellipsis with the whole on hover; the id alone with no title), the version chip, the draft mark and the sync state.
+    /// </summary>
+    private Layout.Node DesignBackRow(DesignPage? page)
+    {
+        var parts = new List<Layout.Node>();
+        var id = page?.Detail.Row.Id ?? OpenId ?? "";
+        if (page is not null)
+        {
+            var title = TitleOf(page);
+            var line = title.Length > 0 ? $"{id} · {title}" : id;
+            if (_edit == (-1, "title"))
+            {
+                // The title typed in place (#1183): the id stays, the box holds the title, the border is the accent like any part in edit.
+                parts.Add(Layout.Builder.HStack(
+                    Layout.Builder.Text(id, 14f, Bright, TextAlign.Near, TextAlign.Center).WAuto().HFixed(BackRowH),
+                    Layout.Builder.TextEditor(Editor, 14f, colors: Palette.Input, focusOnOpen: true).WStar().HFixed(BackRowH).Border(Palette.Current.RailAccent, 2f, 0f)).WithGap(8f).WStar().HFixed(BackRowH));
+            }
+            else
+            {
+                var shown = BackRow.Middle(WrappedProse.OneLine(line, 14f, Bright, vAlign: TextAlign.Center, cut: true).Whole(line), BackRowH);
+                // A click types the title like any part of the document; a design read from elsewhere or an old version is read only.
+                parts.Add(OnEdit is null || ReadOnly(page.Detail.Row) || !OnCurrent(page)
+                    ? shown
+                    : shown.BgHover(RowHoverBg).WithTooltip(title.Length > 0 ? $"{line}\nClick to edit the title" : "Click to give the design a title (at most " + DesignTitle.MaxLength.ToString(CultureInfo.InvariantCulture) + " characters)")
+                        .Follows(new HitResult.ButtonHit("designs:edit:-1:title"), _ => BeginEdit(-1, "title")));
+            }
+            parts.AddRange(VersionChip(page).Select(c => c.HFixed(BackRowH)));
+            if (page.DesignIsDraft)
+            {
+                parts.Add(StateTag("draft", true).HFixed(BackRowH));
+            }
+            if (SyncLine(page.Detail.Row) is { } sync)
+            {
+                parts.Add(BackRow.Middle(sync, BackRowH));
+            }
+        }
+        else
+        {
+            parts.Add(Layout.Builder.Text(id, 14f, Bright, TextAlign.Near, TextAlign.Center).WStar().HFixed(BackRowH));
+        }
+        return BackRow.Of("Designs", "designs:list", Close, [.. parts]).Pad(Gutter, 8f).RowH(BackRowFullH);
+    }
+
+    private const float BackRowH = 26f;
+
+    // The row with its 8 above and below.
+    private const float BackRowFullH = BackRowH + 16f;
+
+    // The design's title as the page shows it: the notebook's, else the row's; empty when it has none (the id then stands alone).
+    // A stored title over the limit (an old cut of the brief) or none shows the id alone (#1183), and nothing ending mid-word is drawn.
+    private static string TitleOf(DesignPage page) => DesignTitle.Shown(page.Detail.Row.Title) ?? "";
 
     // The version chip (PIL1171): 'v3 of 3', which opens the list of versions and the brief at the top of the document.
     private IEnumerable<Layout.Node> VersionChip(DesignPage? page)
@@ -907,8 +967,8 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
             yield break;
         }
         var total = Math.Max(page.Detail.Row.Versions ?? 0, page.Detail.Versions.Select(v => (int)v.Number).DefaultIfEmpty(0).Max());
-        yield return Layout.Builder.Text($"v{version} of {Math.Max(total, version)} ▾", 12f, Bright, TextAlign.Center)
-            .Pad(10f, 4f)
+        yield return Layout.Builder.Text($"v{version} of {Math.Max(total, version)} ▾", 12f, Bright, TextAlign.Center, TextAlign.Center)
+            .Pad(10f, 0f)
             .WAuto()
             .Bg(_versionsOpen ? Active : Button)
             .BgHover(ButtonHover)
@@ -985,7 +1045,7 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
 
     private Layout.Node ListRow(DesignRow row, int index)
     {
-        var title = row.Title is { Length: > 0 } t ? t : row.Id;
+        var title = DesignTitle.Shown(row.Title) ?? row.Id;
         var version = row.Current is { } v ? "v" + v.ToString(CultureInfo.InvariantCulture) : "no version";
         var when = row.At is { } at ? PageTime.Text(at) : "";
         var repo = row.Repo ?? "";
@@ -1077,13 +1137,7 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
             _edit = null;
         }
         var notebook = page.Notebook;
-        var title = notebook is { Title.Length: > 0 } ? notebook.Title : row.Title is { Length: > 0 } t ? t : row.Id;
-        var titleText = WrappedProse.Of(title, 20f, Bright);
-        items.Add(page.DesignIsDraft ? Layout.Builder.HStack(titleText.WStar(), StateTag("draft", true)).WithGap(8f).WStar().HAuto() : titleText);
-        if (SyncLine(row) is { } sync)
-        {
-            items.Add(sync);
-        }
+        // The title and the sync state are on the back row above (PIL1183): the document starts with what the design is for.
         items.AddRange(LockLines(row));
         if (OnEdit is not null && !ReadOnly(row) && !OnCurrent(page) && row.Current is { } now)
         {
@@ -1127,11 +1181,15 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
         if (row.MadeOn is { Length: > 0 } node)
         {
             var read = $"Read from {row.IssueRepo}#{row.IssueNumber}, made on {node}. Changed there, not here.";
-            return WrappedProse.OneLine(read, 12f, Dim).RowH(22f).Whole(read);
+            return SyncText(read, Dim);
         }
-        if (row.SyncError is { Length: > 0 } failure)
+        if (row.SyncError is { Length: > 0 } failure && !DesignSyncText.IsOldNoRepoLine(failure))
         {
-            return WrappedProse.Of(failure, 12f, Palette.Current.Failed);
+            return SyncText(failure, Palette.Current.Failed);
+        }
+        if ((row.IssueRepo ?? row.Repo) is not { Length: > 0 } && row.Current is not null)
+        {
+            return KeptHere(row);
         }
         if (row.IssueRepo is not { Length: > 0 } repo || row.IssueNumber is not { } issue || row.Current is not { } current)
         {
@@ -1141,8 +1199,55 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
         var line = synced >= current ? DesignSyncText.Synced(synced, repo, issue)
             : row.SyncHeld == true ? DesignSyncText.Held(synced + 1, repo, issue)
             : DesignSyncText.Writing(synced + 1, repo, issue);
-        return WrappedProse.OneLine(line, 12f, synced < current ? Bright : Dim).RowH(22f).Whole(line);
+        return SyncText(line, synced < current ? Bright : Dim);
     }
+
+    // A design with no repo is in a state, not in trouble (#1183): kept on this node only, in the neutral colour, with the button that links an issue.
+    // The button opens a small field for '<repo>#<n>' that goes through the page's command path (design-issue), as 'pilot design issue' does.
+    private Layout.Node KeptHere(DesignRow row)
+    {
+        var state = SyncText(DesignSyncText.KeptOnly(StartNode), Dim);
+        if (OnLinkIssue is null || ReadOnly(row))
+        {
+            return state;
+        }
+        if (_linking)
+        {
+            return Layout.Builder.HStack(
+                Layout.Builder.TextInput(LinkInput, 12f, Palette.Input).WFixed(220f).RowH(26f),
+                LinkButton("Link", "designs:link-go", "Link the design to this issue", () => SubmitLink(row.Id)),
+                LinkButton("Cancel", "designs:link-cancel", "Close without linking", () => _linking = false)).WithGap(6f).WAuto().RowH(26f);
+        }
+        return Layout.Builder.HStack(state, LinkButton("Link an issue", "designs:link", DesignSyncText.LinkCommand(row.Id), () => { _linking = true; LinkInput.Text = ""; })).WithGap(8f).WStar().RowH(26f);
+    }
+
+    private static Layout.Node LinkButton(string text, string id, string tip, Action press) =>
+        Layout.Builder.Text(text, 12f, Bright, TextAlign.Center, TextAlign.Center).Pad(10f, 0f).WAuto().HFixed(26f).Bg(Button).BgHover(ButtonHover)
+            .WithTooltip(tip).Follows(new HitResult.ButtonHit(id), _ => press());
+
+    /// <summary>Asked to link a design to an issue: the design's id and <c>&lt;repo&gt;#&lt;n&gt;</c>. The host sends <c>design-issue</c> and answers with <see cref="Typed"/>.</summary>
+    public Action<string, string>? OnLinkIssue { get; set; }
+
+    /// <summary>The field the issue to link is typed in.</summary>
+    public TextInputState LinkInput { get; } = new() { Placeholder = "<repo>#<n>" };
+
+    private bool _linking;
+
+    /// <summary>Sends the typed <c>&lt;repo&gt;#&lt;n&gt;</c>. False while the field is empty.</summary>
+    public bool SubmitLink(string id)
+    {
+        if (OnLinkIssue is null || LinkInput.Text.Trim() is not { Length: > 0 } reference)
+        {
+            return false;
+        }
+        _linking = false;
+        OnLinkIssue(id, reference);
+        return true;
+    }
+
+    // The sync state as one cell of the back row: one line, whole on hover where the row is too narrow for it.
+    private static Layout.Node SyncText(string text, RGBAColor32 color) =>
+        WrappedProse.OneLine(text, 12f, color, vAlign: TextAlign.Center).WStar().RowH(22f).Whole(text);
 
     // The lock and the GitHub read-back (PIL1171): who has the design open, a labelling that failed, and the differences on GitHub that were not applied and why.
     private IEnumerable<Layout.Node> LockLines(DesignRow row)
@@ -1191,6 +1296,7 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
         var heading = WrappedProse.OneLine(cell.Heading, 16f, Bright, vAlign: TextAlign.Center).WStar().HFixed(26f).Whole(cell.Heading);
         var tag = StateTag(page.CellIsDraft(index) ? "draft" : $"published in v{version}", page.CellIsDraft(index));
         List<Layout.Node> items = [];
+        _cellContentWidth = page.Document is not null && cell.Frames.Count > 0 ? WellInnerWidth() + 2f * WellPadX : null;
         items.AddRange(GitHubEditsAbove(page.Detail.Row, (index + 1).ToString(CultureInfo.InvariantCulture)));
         if (_edit == (index, "heading"))
         {
@@ -1237,7 +1343,7 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
         if (cell.Notes.Length > 0 || _edit == (index, "notes"))
         {
             items.Add(WrappedProse.OneLine("Notes", 11f, Dim).RowH(18f));
-            items.Add(Typable(index, "notes", $"Notes of {cell.Heading}", Markdown(cell.Notes)));
+            items.Add(Typable(index, "notes", "", Markdown(cell.Notes)));
         }
         else if (OnEdit is not null && !ReadOnly(page.Detail.Row) && OnCurrent(page))
         {

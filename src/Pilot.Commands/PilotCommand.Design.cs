@@ -80,7 +80,7 @@ public static partial class PilotCommand
         {
             var newBrief = Words("brief", "The owner's words, kept verbatim as the first piece of the design's brief (after --)");
             var newRepo = new Option<string?>("--repo") { Description = "The repo the design is for, as its name" };
-            var newTitle = new Option<string?>("--title") { Description = $"The design's title; when left out, the brief's first line, whole up to {DesignTitle.MaxLength} characters, else cut at a word (at the limit when it has no space) with an ellipsis" };
+            var newTitle = new Option<string?>("--title") { Description = $"The design's title, at most {DesignTitle.MaxLength} characters; when left out the design has none until the designer's DESIGN.md gives it one" };
             var newTerminal = new Option<string[]>("--terminal") { Description = "A terminal size the design is also checked and rendered at in cells, <cols>x<rows> (80x24, 100x30, 160x44, 250x60 are the standard ones); give it once per size", AllowMultipleArgumentsPerToken = false };
             var designNew = Action(new Command("new", "Make a design from a brief and print its id, DSN-<n>") { Arguments = { newBrief }, Options = { newRepo, newTitle, newTerminal } },
                 (p, client, ct) => Send(client, Verbs.DesignNew, Verbs.NodeTarget, [p.GetValue(newRepo) ?? "", p.GetValue(newTitle) ?? "", Join(p, newBrief), .. p.GetValue(newTerminal) ?? []], who, ct));
@@ -147,6 +147,11 @@ public static partial class PilotCommand
             var designEdit = Action(new Command("edit", "Type into the draft's DESIGN.md as the owner does: the design's objective or notes, or a cell's heading, objective or notes. Makes the draft from the current version when there is none; the designer is told at its next turn, not woken") { Arguments = { editId, editPart, editText }, Options = { editCell } },
                 (p, client, ct) => Send(client, Verbs.DesignEdit, Verbs.DesignTarget(p.GetValue(editId)!), [p.GetValue(editPart)!, p.GetValue(editCell) ?? "", Join(p, editText)], who, ct));
 
+            var titleId = Arg("design", "The design's id, DSN-<n>");
+            var titleText = Words("title", $"The design's new title, a short name of at most {DesignTitle.MaxLength} characters (after --)");
+            var designTitle = Action(new Command("title", $"Set a design's title: a short name, at most {DesignTitle.MaxLength} characters, kept on the design and as the heading of the draft's DESIGN.md (the next version's title is that heading)") { Arguments = { titleId, titleText } },
+                (p, client, ct) => Send(client, Verbs.DesignSetTitle, Verbs.DesignTarget(p.GetValue(titleId)!), [Join(p, titleText)], who, ct));
+
             var discardId = Arg("design", "The design's id, DSN-<n>");
             var designDiscard = Action(new Command("discard", "Remove the design's draft: what was typed or designed there and not published is gone") { Arguments = { discardId } },
                 (p, client, ct) => Send(client, Verbs.DesignDiscard, Verbs.DesignTarget(p.GetValue(discardId)!), [], who, ct));
@@ -178,7 +183,7 @@ public static partial class PilotCommand
                     return 1;
                 });
 
-            var design = new Command("design", "Designs: a prototype of DIR.Lib screens, briefed by the owner and kept in versions on the node. new, brief, say, chat, draft, check, render, edit, discard, publish, issue, build, show, terminals") { Subcommands = { designNew, designTerminals, designBrief, designSay, designChat, designDraft, designEdit, designDiscard, designCheck, designRender, designPublish, designIssue, designBuild, designShow } };
+            var design = new Command("design", "Designs: a prototype of DIR.Lib screens, briefed by the owner and kept in versions on the node. new, brief, say, chat, draft, check, render, edit, title, discard, publish, issue, build, show, terminals") { Subcommands = { designNew, designTerminals, designBrief, designSay, designChat, designDraft, designEdit, designTitle, designDiscard, designCheck, designRender, designPublish, designIssue, designBuild, designShow } };
 
             var designs = Action(new Command("designs", "Every design, newest first"),
                 async (p, client, ct) =>

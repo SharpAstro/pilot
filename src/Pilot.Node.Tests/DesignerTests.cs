@@ -438,6 +438,21 @@ public sealed class DesignerTests : IDisposable
     }
 
     [Fact]
+    public void TheBriefAsksForAShortTitleOfAtMostFortyCharactersInTheDocumentsHeading()
+    {
+        var brief = Briefs.Designer(new DesignDetail { Row = new DesignRow { Id = "DSN-1" }, Folder = "f", DraftFolder = "f/draft" }, "{}", null, "pilot");
+
+        brief.ShouldContain("Give the design a short title");
+        brief.ShouldContain("at most 40 characters, a name and not a sentence");
+        brief.ShouldContain("gets a proper one at its next version");
+        brief.ShouldContain("`design check` refuses a document with none or one over 40 characters");
+
+        var old = Briefs.Designer(new DesignDetail { Row = new DesignRow { Id = "DSN-2", Title = string.Concat(Enumerable.Repeat("oldcut ", 12)).Trim() }, Folder = "f", DraftFolder = "f/draft" }, "{}", null, "pilot");
+        old.ShouldContain("designer of DSN-2:");
+        old.ShouldNotContain("oldcut");
+    }
+
+    [Fact]
     public void TheBriefDescribesTheDocumentAndAsksForAnObjectiveOnEveryScreen()
     {
         var detail = new DesignDetail { Row = new DesignRow { Id = "DSN-1", Title = "Disk alert" }, Folder = "f", DraftFolder = "f/draft" };

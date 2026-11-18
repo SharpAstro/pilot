@@ -1,27 +1,28 @@
 namespace Pilot.Contracts;
 
 /// <summary>
-/// The title a design gets from its brief when none is given (#1160). It lives here, beside <see cref="DesignRow"/>, so the node's store
-/// and the page's tests make a title by the one rule.
+/// A design's title (#1183): short and given by the designer, in DESIGN.md's <c>#</c> heading at each published version, or by <c>pilot design title</c>. It is never made from
+/// the brief. It lives here, beside <see cref="DesignRow"/>, so the node's store, its check and the page's tests hold to the one rule.
 /// </summary>
 public static class DesignTitle
 {
-    /// <summary>The longest title taken from a brief's first line. It is generous on purpose: the page draws the title on one line, ending
-    /// in an ellipsis with the whole on hover, so the store keeps the line whole and cuts only a very long one.</summary>
-    public const int MaxLength = 200;
+    /// <summary>The longest title a design can be given.</summary>
+    public const int MaxLength = 40;
 
-    /// <summary>The brief's first non-empty line, whole up to <see cref="MaxLength"/> characters. A longer one is cut after the last word
-    /// that fits (at the limit when its first 199 characters hold no space, as a pasted URL or hash) and ends in an ellipsis, so a cut always says so.</summary>
-    public static string Of(string brief)
+    /// <summary>The title in one line, trimmed; empty when there is none.</summary>
+    public static string Clean(string? title) => (title ?? "").ReplaceLineEndings(" ").Trim();
+
+    /// <summary>The problem with <paramref name="title"/> as a design's title (empty, or over <see cref="MaxLength"/> with its length and the limit); null when it is fine.</summary>
+    public static string? Problem(string? title)
     {
-        var line = brief.Split('\n').Select(l => l.Trim()).FirstOrDefault(l => l.Length > 0) ?? "";
-        if (line.Length <= MaxLength)
-        {
-            return line;
-        }
-        var room = MaxLength - 1;
-        var space = line.LastIndexOf(' ', room);
-        var cut = space > 0 ? line[..space] : line[..room];
-        return cut.TrimEnd(' ', ',', ';', ':', '.') + "…";
+        var clean = Clean(title);
+        return clean.Length == 0
+            ? "the title is empty: give the design a short name, at most " + MaxLength + " characters"
+            : clean.Length > MaxLength
+                ? $"the title is {clean.Length} characters, over the limit of {MaxLength}: a title is a short name, not a sentence"
+                : null;
     }
+
+    /// <summary>The title to draw for a stored one: itself when it is non-empty and at most <see cref="MaxLength"/> characters, else null (the page shows the id alone). An old long cut is never drawn.</summary>
+    public static string? Shown(string? title) => Clean(title) is { Length: > 0 and <= MaxLength } clean ? clean : null;
 }

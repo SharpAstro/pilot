@@ -39,6 +39,14 @@ internal sealed partial class DesignsView<TSurface>
     /// <summary>The box the part in edit is typed in.</summary>
     public TextEditorState Editor { get; } = new() { MinLines = 1, MaxLines = 8 };
 
+    /// <summary>The share of the page's height the editor grows to before it scrolls (keeping the caret's line in view).</summary>
+    internal const float EditorPageShare = 0.45f;
+
+    private const float EditorLineHeight = 18f;
+
+    /// <summary>The width of the cell being built (a frame's well, which is what a cell's content is as wide as); null where the cell has no frames to give it one.</summary>
+    private float? _cellContentWidth;
+
     /// <summary>The box the why of the typed version is typed in.</summary>
     public TextInputState WhyInput { get; } = new() { Placeholder = "Why this change?" };
 
@@ -58,6 +66,9 @@ internal sealed partial class DesignsView<TSurface>
 
     /// <summary>What the hint under a cell in edit says.</summary>
     internal const string EditHint = "Typing changes the words only. A screen's frame is changed through the designer.";
+
+    /// <summary>What the hint under notes in edit says: the box holds Markdown source, which the page draws rendered once it is closed.</summary>
+    internal const string NotesHint = "Markdown. Typing changes the words only, not a screen's frame.";
 
     private const string PublishKey = "designs:typed-publish";
     private const string DiscardKey = "designs:typed-discard";
@@ -97,7 +108,7 @@ internal sealed partial class DesignsView<TSurface>
     private static string CellKey(int cell) => cell < 0 ? "" : (cell + 1).ToString(CultureInfo.InvariantCulture);
 
     private static string PartText(DesignDocument document, int cell, string part) => cell < 0
-        ? part == "objective" ? document.Objective ?? "" : document.Notes
+        ? part switch { "title" => document.Title, "objective" => document.Objective ?? "", _ => document.Notes }
         : part switch { "heading" => document.Cells[cell].Heading, "objective" => document.Cells[cell].Objective ?? "", _ => document.Cells[cell].Notes };
 
     /// <summary>Opens the part <paramref name="part"/> of cell <paramref name="cell"/> (-1: the design) in place. False with no document on show.</summary>
@@ -107,7 +118,7 @@ internal sealed partial class DesignsView<TSurface>
         {
             return false;
         }
-        var text = PartText(document, cell, part);
+        var text = part == "title" ? DesignTitle.Shown(_buildScreen.Open.Detail.Row.Title) ?? "" : PartText(document, cell, part);
         _edit = (cell, part);
         Editor.Text = text;
         Editor.CursorPos = text.Length;
@@ -193,9 +204,15 @@ internal sealed partial class DesignsView<TSurface>
     {
         if (_edit == (cell, part))
         {
-            return Layout.Builder.VStack(
-                WrappedProse.OneLine(label, 11f, Dim, selectable: false).RowH(18f).Whole(label),
-                Layout.Builder.TextEditor(Editor, 13f, colors: Palette.Input, focusOnOpen: true).WStar().Border(Palette.Current.RailAccent, 2f, 0f)).WithGap(2f);
+            // The editor is as wide as the cell: it is star-wide inside a column that is itself stretched (a column left to its content gave its star child the minimum).
+            // It grows with its text up to a share of the page, then scrolls. A part whose label is already above it (a cell's Notes) has none here, so the text starts where the rendered one did.
+            Editor.MaxLines = Math.Max(3, (int)(_pageHeight * EditorPageShare / EditorLineHeight));
+            // Its width is the cell's content width, stated, because a column left to its content measures the editor's lines at the room offered (the page) and then arranges it narrower: it came out taller than measured, over the row below.
+            var editor = Layout.Builder.TextEditor(Editor, 13f, colors: Palette.Input, focusOnOpen: true);
+            var box = (_cellContentWidth is { } across ? editor.WFixed(across) : editor.WStar()).Border(Palette.Current.RailAccent, 2f, 0f);
+            return (label.Length == 0
+                ? Layout.Builder.VStack(box)
+                : Layout.Builder.VStack(WrappedProse.OneLine(label, 11f, Dim, selectable: false).RowH(18f).Whole(label), box).WithGap(2f)).WStar();
         }
         if (OnEdit is null || _buildScreen?.Open is { } shownPage && (ReadOnly(shownPage.Detail.Row) || !OnCurrent(shownPage)))
         {
@@ -231,20 +248,26 @@ internal sealed partial class DesignsView<TSurface>
         ? Layout.Builder.Text(text, 11f, Ground, TextAlign.Center, TextAlign.Center).Selectable().Pad(6f, 0f).WAuto().HFixed(26f).Bg(Palette.Current.RailAccent)
         : Layout.Builder.Text(text, 11f, Body, TextAlign.Center, TextAlign.Center).Selectable().Pad(6f, 0f).WAuto().HFixed(26f).Bg(Button);
 
+    // What a dimmed Publish waits for (#1183): the draft that changes nothing, a why not typed yet, or the why's own problem.
+    private string WaitsFor(DesignPage page) =>
+        !(page.HasDraftChange || EditUnsaved) ? "Nothing to publish: the draft changes nothing yet"
+        : WhyInput.Text.Trim().Length == 0 ? "Write a why to publish"
+        : DesignWhys.Problem(WhyInput.Text) ?? DesignWhys.Problem(DesignWhys.OwnerPrefix + WhyInput.Text.Trim()) ?? "Write a why to publish";
+
     // Under the cell in edit (or under the title while a draft is waiting): the hint, the why, Publish and Discard, and what the node refused with.
     private IEnumerable<Layout.Node> TypingPanel(DesignPage page)
     {
         var version = page.Version ?? 0;
-        yield return WrappedProse.Of(EditHint, 12f, Dim);
+        yield return WrappedProse.Of(_edit is { Part: "notes" } ? NotesHint : EditHint, 12f, Dim);
         yield return Layout.Builder.HStack(
-            Layout.Builder.Text("Why", 12f, Dim, TextAlign.Near, TextAlign.Center).Selectable().WAuto().HFixed(26f),
+            Layout.Builder.Text("Why (required)", 12f, Dim, TextAlign.Near, TextAlign.Center).Selectable().WAuto().HFixed(26f),
             Layout.Builder.TextInput(WhyInput, 12f, Palette.Input).WStar().RowH(26f)).WithGap(8f).RowH(26f);
         var usable = WhyUsable && OnPublishTyped is not null && (page.HasDraftChange || EditUnsaved);
         Layout.Node Label(string text, RGBAColor32 color) => Layout.Builder.Text(text, 12f, color, TextAlign.Center, TextAlign.Center).Pad(10f, 0f).WAuto().HFixed(26f).Bg(Button);
         var publish = StartPresses.Button(PublishKey, PublishKey,
             () => usable
                 ? Label(PublishLabel(version), Bright).BgHover(ButtonHover).WithTooltip($"Make v{version + 1} of {page.Detail.Row.Id} from the draft, with the why 'owner: …'").Follows(new HitResult.ButtonHit(PublishKey), _ => PublishTyped())
-                : Label(PublishLabel(version), Dim).WithTooltip("Type why this changed first: one short line"),
+                : Label(PublishLabel(version), Dim).WithTooltip(WaitsFor(page)),
             _ => Label("Publishing…", Dim).WithTooltip($"Making v{version + 1}"));
         var discard = StartPresses.Button(DiscardKey, DiscardKey,
             () => Label(DiscardLabel, Bright).BgHover(ButtonHover).WithTooltip("Remove the draft: what was typed and not published is gone").Follows(new HitResult.ButtonHit(DiscardKey), _ => DiscardTyped()),
