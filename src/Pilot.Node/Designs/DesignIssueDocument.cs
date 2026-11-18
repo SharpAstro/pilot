@@ -133,12 +133,10 @@ public static partial class DesignIssueDocument
         }
         var block = body[from..to];
         block = block[..(match.Index - from)] + "<!-- pilot:design-meta " + meta.ToJsonString() + " -->" + block[(match.Index - from + match.Length)..];
-        block = Regex.Replace(block, @"^Ideas: .*
-", "", RegexOptions.Multiline | RegexOptions.CultureInvariant);
+        block = Regex.Replace(block, @"^Ideas: .*\n", "", RegexOptions.Multiline | RegexOptions.CultureInvariant);
         if (ideas.Count > 0)
         {
-            block += "Ideas: " + string.Join(", ", ideas) + "
-";
+            block += "Ideas: " + string.Join(", ", ideas) + "\n";
         }
         return body[..from] + block + body[to..];
     }
