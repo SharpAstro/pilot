@@ -18,8 +18,8 @@ public sealed class BackRowTests
     // Where the before and after captures go: outside the plane, in the job's tmp, under the tag the file tag.txt there holds (after when absent).
     private static string? CaptureFolder()
     {
-        // The folder is named by the variable, or by the first line of a pointer file in the temp folder (a job does not always carry the session's environment).
-        var pointer = Path.Combine(Path.GetTempPath(), "pilot-backrow-captures.txt");
+        // The folder is named by the variable, or by the first line of a pointer file in the user profile (a job does not always carry the session's environment).
+        var pointer = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".pilot-backrow-captures");
         var root = Environment.GetEnvironmentVariable("PILOT_BACKROW_CAPTURES") ?? (File.Exists(pointer) ? File.ReadAllText(pointer).Trim() : null);
         if (string.IsNullOrEmpty(root))
         {
