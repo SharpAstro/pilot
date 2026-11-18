@@ -296,6 +296,62 @@ public sealed class DesignsCaptureTests
 
     // ---- The design as a document (PIL1171) ----
 
+    private static DesignsScreen PhoneAndTerminalSideBySide()
+    {
+        var sample = PageData.DesignsFor("sample", Now);
+        var cell = new DesignCell("Home", "Shows the home screen as a phone and as a terminal, side by side.", [new DesignFrame("home", "Phone"), new DesignFrame("home", "80x24")], "Each frame keeps its own size.");
+        return sample with { Open = sample.Open! with { Doc = sample.Open.Doc! with { Cells = [cell] } } };
+    }
+
+    /// <summary>A cell with two frames, a phone and a terminal, each with its own toolbar in its own well, at 1920 wide: one PNG for the PR and no text overlap.</summary>
+    [Fact]
+    public async Task APhoneFrameAndATerminalFrameSideBySideEachWithItsToolbarAreCapturedInPilotGui()
+    {
+        PageTime.Zone = TimeZoneInfo.Utc;
+        const int width = 1920, height = 1080;
+        var screen = PhoneAndTerminalSideBySide();
+        using var renderer = new RgbaImageRenderer(width, height);
+        using var accent = Pilot.Ui.Palette.StandardForCapture(null);
+        var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
+        chrome.Autopilot.OnToggle = _ => Task.FromResult<string?>(null);
+        chrome.Show(PilotPage.Designs);
+        await PageData.OpenDesignChat(chrome.Designs, "DSN-1", PageData.DesignChatPage());
+        var data = PageData.For("sample");
+        chrome.Render(data.Sessions, data.Flights, data.Cards, data.Jobs, data.Fleet, data.Repos, data.PullRequests, new RectF32(0, 0, width, height), data.Machines, null, data.Spend, screen);
+
+        chrome.Designs.Players.Count.ShouldBe(2);
+        chrome.Designs.FrameCellsOf(0, 1).ShouldNotBeNull();
+        var arranged = Layout.Engine.Arrange(chrome.Designs.Tree(screen), new Rect<float>(0, 0, width, height), new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, 1f)).ToList();
+        arranged.Count(a => a.Node.Hit is HitResult.ButtonHit { Action: { } act } && act.StartsWith("designs:frame-point:", StringComparison.Ordinal)).ShouldBe(2, "a toolbar for each frame");
+        TextOverlap.Faults([.. arranged]).Select(f => f.Line).ShouldBeEmpty();
+        Keep($"after-design-phone-and-terminal-pilot-gui-{width}.png", SharpAstro.Png.PngWriter.Encode([.. renderer.Surface.Pixels], width, height));
+    }
+
+    /// <summary>The same two frames in pilot-tui: the phone's cells and the terminal's 80 x 24 grid, each under a toolbar of its own, the overlap check passing.</summary>
+    [Fact]
+    public void APhoneFrameAndATerminalFrameSideBySideEachWithItsToolbarAreCapturedInPilotTui()
+    {
+        PageTime.Zone = TimeZoneInfo.Utc;
+        const int columns = 200, rows = 60;
+        var screen = PhoneAndTerminalSideBySide();
+        using var vessel = new RgbaImageRenderer(1, 1);
+        var chrome = new PilotChrome<RgbaImage>(vessel, new SessionsView<RgbaImage>(vessel)) { FontPath = SessionsCapture.FontPath };
+        chrome.WithoutScrollBars();
+        chrome.Show(PilotPage.Designs);
+        chrome.Designs.Terminal = (columns, rows);
+        chrome.Designs.Open("DSN-1");
+        var rail = TerminalRail.Tree(PilotPage.Designs, GlyphMode.Emoji, null, null, Now, _ => { }, null, columns);
+        var arranged = TerminalFrame.Build(rail, chrome.Designs.Tree(screen), null, columns, rows, CellMeasureContext.PixelAuthored);
+        chrome.Designs.Players.Count.ShouldBe(2);
+        chrome.Designs.FrameCellsOf(0, 1).ShouldBe((80, 24));
+        arranged.Count(a => a.Node.Hit is HitResult.ButtonHit { Action: { } act } && act.StartsWith("designs:frame-point:", StringComparison.Ordinal)).ShouldBe(2, "a toolbar for each frame");
+        TextOverlap.Faults(arranged).Select(f => f.Line).ShouldBeEmpty();
+        var buffer = new CellBuffer { ColorMode = ColorMode.TrueColor };
+        TerminalWireframeSweepTests.Record(arranged, columns, rows, buffer);
+        var lines = Enumerable.Range(0, rows).Select(y => string.Concat(Enumerable.Range(0, columns).Select(x => buffer.BackAt(x, y).Glyph))).ToArray();
+        Keep($"after-design-phone-and-terminal-pilot-tui-{columns}x{rows}.png", DesignsWaitingIdeasTests.Png(lines));
+    }
+
     /// <summary>The design opened as a document in pilot-gui at the owner's two window sizes, with short and with long content: PNGs for the PR, the text overlap check passing, and every frame playing inside its own frame.</summary>
     [Theory]
     [InlineData("sample", 1920, 1080)]
