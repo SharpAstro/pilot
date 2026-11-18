@@ -251,7 +251,6 @@ public sealed class DesignsViewTests
         var words = arranged.Where(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text } && a.Bounds.Y >= line.Bounds.Y - 0.5f && a.Bounds.Y + a.Bounds.Height <= line.Bounds.Y + line.Bounds.Height + 0.5f
             && a.Bounds.X >= line.Bounds.X - 0.5f && a.Bounds.X <= line.Bounds.X + line.Bounds.Width + 0.5f).Select(a => (Layout.Content.Text)((Layout.Node.Leaf)a.Node).Content).Select(t => t.Value).ToList();
         var drawn = string.Concat(words).Replace(" ", "");
-        Console.Error.WriteLine($"LINE w={line.Bounds.Width} drawn=[{string.Join("|", words)}]");
         (drawn.EndsWith("…", StringComparison.Ordinal) || drawn == counts.Replace(" ", "")).ShouldBeTrue($"the title line is whole or ends in an ellipsis, drew: {string.Join("|", words)}");
     }
 
