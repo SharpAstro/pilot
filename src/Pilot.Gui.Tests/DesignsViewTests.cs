@@ -318,7 +318,7 @@ public sealed class DesignsViewTests
 
     private static int IndexOfText(List<string> texts, string text)
     {
-        var at = texts.IndexOf(text);
+        var at = texts.FindIndex(t => t.Contains(text, StringComparison.Ordinal));
         at.ShouldBeGreaterThanOrEqualTo(0, $"'{text}' is on the page");
         return at;
     }

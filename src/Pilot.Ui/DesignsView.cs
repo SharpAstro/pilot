@@ -1013,7 +1013,7 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
     {
         var number = Layout.Builder.Text((index + 1).ToString(CultureInfo.InvariantCulture), 12f, Dim, TextAlign.Center, TextAlign.Center).WFixed(26f).HFixed(26f).Bg(Button);
         var heading = WrappedProse.OneLine(cell.Heading, 16f, Bright, vAlign: TextAlign.Center).WStar().HFixed(26f).Whole(cell.Heading);
-        var tag = Layout.Builder.Text($"published in v{version}", 11f, Dim, TextAlign.Center, TextAlign.Center).Pad(6f, 0f).WAuto().HFixed(26f).Border(Dim, 1f, 3f);
+        var tag = Layout.Builder.Text($"published in v{version}", 11f, Body, TextAlign.Center, TextAlign.Center).Pad(6f, 0f).WAuto().HFixed(26f).Bg(Button);
         List<Layout.Node> items = [Layout.Builder.HStack(number, heading, tag).WithGap(8f).RowH(26f)];
         if (cell.Objective is { Length: > 0 } objective)
         {
