@@ -38,7 +38,11 @@ public sealed class DesignSync(DesignStore store, RepoCatalog repos, IGitHub git
         // A design with no repo has nowhere to be written: that is said on its record before the publish returns, not by a task that races the reader of the record.
         if (store.Find(id) is { MadeOn: null, Current: not null } design && (design.IssueRepo ?? design.Repo) is not { Length: > 0 })
         {
-            Failed(design.Id, DesignSyncText.NoRepo(design.Id, (design.SyncedVersion ?? 0) + 1, node));
+            // Not a failure (#1183): the design is kept here only, which the page shows as a state. A line an older release stored for it is cleared.
+            if (design.SyncError is not null)
+            {
+                store.Update(design.Id, r => r with { SyncError = null, SyncErrorAt = null });
+            }
             return;
         }
         var task = Task.Run(() => SyncAsync(id, CancellationToken.None));
@@ -195,7 +199,6 @@ public sealed class DesignSync(DesignStore store, RepoCatalog repos, IGitHub git
         var repoName = design.IssueRepo ?? design.Repo;
         if (repoName is not { Length: > 0 })
         {
-            Failed(design.Id, DesignSyncText.NoRepo(design.Id, version, node));
             return false;
         }
         var info = Resolve(repoName);

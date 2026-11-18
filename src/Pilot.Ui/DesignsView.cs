@@ -32,6 +32,7 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
     // The page's width in design units as the last Render had it, and the width from which the chat stands beside the document: the document keeps at least 500, the chat 300 to 460.
     // Narrower, the chat sits under the document.
     private float _width = 10_000f;
+    private float _pageHeight = 900f;
     private const float WideColumns = 900f;
     private const float ChatWidthMin = 300f;
     private const float ChatWidthMax = 460f;
@@ -792,6 +793,7 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
         _frameRects.Clear();
         NoteHeight(bounds);
         _width = Scale.ToDesignX(bounds.Width);
+        _pageHeight = Scale.ToDesignY(bounds.Height);
         var tree = Tree(screen);
         RenderLayout(tree, bounds, null, null, DrawFill);
     }
@@ -1178,9 +1180,13 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
             var read = $"Read from {row.IssueRepo}#{row.IssueNumber}, made on {node}. Changed there, not here.";
             return SyncText(read, Dim);
         }
-        if (row.SyncError is { Length: > 0 } failure)
+        if (row.SyncError is { Length: > 0 } failure && !DesignSyncText.IsOldNoRepoLine(failure))
         {
             return SyncText(failure, Palette.Current.Failed);
+        }
+        if ((row.IssueRepo ?? row.Repo) is not { Length: > 0 } && row.Current is not null)
+        {
+            return KeptHere(row);
         }
         if (row.IssueRepo is not { Length: > 0 } repo || row.IssueNumber is not { } issue || row.Current is not { } current)
         {
@@ -1191,6 +1197,49 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
             : row.SyncHeld == true ? DesignSyncText.Held(synced + 1, repo, issue)
             : DesignSyncText.Writing(synced + 1, repo, issue);
         return SyncText(line, synced < current ? Bright : Dim);
+    }
+
+    // A design with no repo is in a state, not in trouble (#1183): kept on this node only, in the neutral colour, with the button that links an issue.
+    // The button opens a small field for '<repo>#<n>' that goes through the page's command path (design-issue), as 'pilot design issue' does.
+    private Layout.Node KeptHere(DesignRow row)
+    {
+        var state = SyncText(DesignSyncText.KeptOnly(StartNode), Dim);
+        if (OnLinkIssue is null || ReadOnly(row))
+        {
+            return state;
+        }
+        if (_linking)
+        {
+            return Layout.Builder.HStack(
+                Layout.Builder.TextInput(LinkInput, 12f, Palette.Input).WFixed(220f).RowH(26f),
+                LinkButton("Link", "designs:link-go", "Link the design to this issue", () => SubmitLink(row.Id)),
+                LinkButton("Cancel", "designs:link-cancel", "Close without linking", () => _linking = false)).WithGap(6f).WAuto().RowH(26f);
+        }
+        return Layout.Builder.HStack(state, LinkButton("Link an issue", "designs:link", DesignSyncText.LinkCommand(row.Id), () => { _linking = true; LinkInput.Text = ""; })).WithGap(8f).WStar().RowH(26f);
+    }
+
+    private static Layout.Node LinkButton(string text, string id, string tip, Action press) =>
+        Layout.Builder.Text(text, 12f, Bright, TextAlign.Center, TextAlign.Center).Pad(10f, 0f).WAuto().HFixed(26f).Bg(Button).BgHover(ButtonHover)
+            .WithTooltip(tip).Follows(new HitResult.ButtonHit(id), _ => press());
+
+    /// <summary>Asked to link a design to an issue: the design's id and <c>&lt;repo&gt;#&lt;n&gt;</c>. The host sends <c>design-issue</c> and answers with <see cref="Typed"/>.</summary>
+    public Action<string, string>? OnLinkIssue { get; set; }
+
+    /// <summary>The field the issue to link is typed in.</summary>
+    public TextInputState LinkInput { get; } = new() { Placeholder = "<repo>#<n>" };
+
+    private bool _linking;
+
+    /// <summary>Sends the typed <c>&lt;repo&gt;#&lt;n&gt;</c>. False while the field is empty.</summary>
+    public bool SubmitLink(string id)
+    {
+        if (OnLinkIssue is null || LinkInput.Text.Trim() is not { Length: > 0 } reference)
+        {
+            return false;
+        }
+        _linking = false;
+        OnLinkIssue(id, reference);
+        return true;
     }
 
     // The sync state as one cell of the back row: one line, whole on hover where the row is too narrow for it.
@@ -1290,7 +1339,7 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
         if (cell.Notes.Length > 0 || _edit == (index, "notes"))
         {
             items.Add(WrappedProse.OneLine("Notes", 11f, Dim).RowH(18f));
-            items.Add(Typable(index, "notes", $"Notes of {cell.Heading}", Markdown(cell.Notes)));
+            items.Add(Typable(index, "notes", "", Markdown(cell.Notes)));
         }
         else if (OnEdit is not null && !ReadOnly(page.Detail.Row) && OnCurrent(page))
         {

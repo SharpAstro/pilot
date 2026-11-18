@@ -284,7 +284,7 @@ public sealed class DesignSyncTests : IDisposable
     }
 
     [Fact]
-    public async Task ADesignWithNoRepoIsNotSyncedAndSaysWhy()
+    public async Task ADesignWithNoRepoIsKeptHereOnlyAndStoresNoSyncError()
     {
         var de1 = NodeOf("DE1");
         var design = Made(de1, repo: null);
@@ -293,7 +293,8 @@ public sealed class DesignSyncTests : IDisposable
         await de1.Sync.SyncAsync(design.Id, Ct);
 
         var row = de1.Store.Find(design.Id)!;
-        row.SyncError.ShouldBe($"Not synced: {design.Id} names no repo, so v1 is kept on DE1 only. Link an issue with: pilot design issue {design.Id} <repo>#<n>");
+        row.SyncError.ShouldBeNull();
+        row.IssueNumber.ShouldBeNull();
         _github.IssuesCreated.ShouldBeEmpty();
         _github.BranchCommits.ShouldBeEmpty();
     }

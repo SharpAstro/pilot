@@ -341,9 +341,14 @@ public static class DesignSyncText
     /// <summary>The failure line, in the error colour: why, which version is kept and where, and that it is sent again.</summary>
     public static string Failure(string reason, int version, string node) => $"Not synced: {reason}. v{N(version)} is saved on {node} and will be sent again.";
 
-    /// <summary>The line for a design that names no repo, so a version has nowhere to be written: it is kept here only, and says how to link one.</summary>
-    public static string NoRepo(string design, int version, string node) =>
-        $"Not synced: {design} names no repo, so v{N(version)} is kept on {node} only. Link an issue with: pilot design issue {design} <repo>#<n>";
+    /// <summary>The state of a design that names no repo (#1183): nothing failed, a version has nowhere to be written, so it is kept on the node only. Shown in the neutral colour.</summary>
+    public static string KeptOnly(string node) => $"Kept on {node} only";
+
+    /// <summary>The command that links a design to its issue, as the page's tooltip and the CLI say it.</summary>
+    public static string LinkCommand(string design) => $"pilot design issue {design} <repo>#<n>";
+
+    /// <summary>Whether a stored <c>SyncError</c> is the old no-repo line an earlier release wrote as a failure: that is the state of a design kept here only, not a failed write.</summary>
+    public static bool IsOldNoRepoLine(string? line) => line is { Length: > 0 } && line.StartsWith("Not synced: ", StringComparison.Ordinal) && line.Contains(" names no repo, so ", StringComparison.Ordinal);
 
     /// <summary>What the version list says of a version: its comment on the issue, or that it is not there yet.</summary>
     public static string Comment(int version, string? why, bool written) =>
