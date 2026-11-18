@@ -148,7 +148,7 @@ internal sealed class DesignReads(NodeClient client, string who, Action redraw)
         chat.Track = track;
         chat.Changed = redraw;
         // Start its design on a waiting idea (PIL1152): the same wiring in both hosts; the made design's page opens at the next frame.
-        designs.OnStartIdea = (idea, _) => _ = Task.Run(async () =>
+        designs.OnStartIdea = (idea, node) => _ = Task.Run(async () =>
         {
             var (id, error) = await StartFromIdeaAsync(idea, CancellationToken.None).ConfigureAwait(false);
             if (id is not null)
