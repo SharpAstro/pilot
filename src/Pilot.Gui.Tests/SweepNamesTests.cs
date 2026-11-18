@@ -17,8 +17,19 @@ public sealed class SweepNamesTests
     private static Type[] SweepClasses(params Type[] parameters) =>
         [.. typeof(SweepNamesTests).Assembly.GetTypes().Where(t => t.IsClass && t.IsPublic && HasSweepTheory(t, parameters))];
 
+    // A sweep class feeds its theory from its helper's RowsOf (PageFrameTimeTests and PageTextOverlapTests share the pixel
+    // signature but build their own cases), so its Cases() body must call RowsOf: the call's metadata token is in the IL.
+    private static bool CallsRowsOf(MethodInfo cases)
+    {
+        var il = cases.GetMethodBody()?.GetILAsByteArray();
+        if (il is null) return false;
+        return new[] { typeof(TerminalWireframeSweepTests), typeof(WireframeSweepTests) }
+            .Select(h => BitConverter.GetBytes(h.GetMethod("RowsOf", BindingFlags.NonPublic | BindingFlags.Static)!.MetadataToken))
+            .Any(token => il.AsSpan().IndexOf(token) >= 0);
+    }
+
     private static bool HasSweepTheory(Type t, Type[] parameters) =>
-        t.GetMethod("Cases", BindingFlags.Public | BindingFlags.Static, Type.EmptyTypes) is not null
+        t.GetMethod("Cases", BindingFlags.Public | BindingFlags.Static, Type.EmptyTypes) is { } cases && CallsRowsOf(cases)
         && t.GetMethods().Any(m => m.GetCustomAttributes<TheoryAttribute>().Any()
             && m.GetCustomAttributes<MemberDataAttribute>().Any(a => a.MemberName == "Cases")
             && m.GetParameters().Select(p => p.ParameterType).SequenceEqual(parameters));
