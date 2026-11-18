@@ -151,7 +151,8 @@ internal sealed partial class PageData
             edit(node);
             json = node.ToJsonString();
         }
-        var document = DIR.Lib.Prototyping.Prototype.Load(json).Document ?? throw new InvalidDataException("the targets prototype does not load");
+        var loaded = DIR.Lib.Prototyping.Prototype.Load(json);
+        var document = loaded.Document ?? throw new InvalidDataException("the targets prototype does not load: " + string.Join("; ", loaded.Problems));
         var detail = new DesignDetail
         {
             Row = row,
