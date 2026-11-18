@@ -743,6 +743,12 @@ public static class Verbs
     /// </summary>
     public const string PinIssue = "pin-issue";
 
+    /// <summary>
+    /// <c>mark-design idea/&lt;repo&gt;/I&lt;n&gt; [off]</c> (an issue target works too): puts the needs-design label on the open issue (made in the repo when it has
+    /// none), or with <see cref="PinOff"/> takes it off. The mark lives on GitHub, so every node sees it (<see cref="IdeaRow.NeedsDesign"/>).
+    /// </summary>
+    public const string MarkDesign = "mark-design";
+
     /// <summary>The argument of <see cref="PinIssue"/> that unpins.</summary>
     public const string PinOff = "off";
 

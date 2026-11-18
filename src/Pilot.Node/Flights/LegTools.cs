@@ -558,6 +558,15 @@ public static class PilotMarks
     /// </summary>
     public const string Pinned = "pinned";
 
+    /// <summary>
+    /// Put on an idea's issue to say it needs a design before it flies. A GitHub label so every node sees it; plain, like <see cref="Pinned"/>,
+    /// so a review's label change does not replace it.
+    /// </summary>
+    public const string NeedsDesign = "needs design";
+
+    /// <summary>Whether <paramref name="labels"/> hold <see cref="NeedsDesign"/> (any case).</summary>
+    public static bool IsNeedsDesign(IEnumerable<string>? labels) => labels is not null && labels.Contains(NeedsDesign, StringComparer.OrdinalIgnoreCase);
+
     /// <summary>Whether <paramref name="labels"/> hold <see cref="Pinned"/> (any case).</summary>
     public static bool IsPinned(IEnumerable<string>? labels) => labels is not null && labels.Contains(Pinned, StringComparer.OrdinalIgnoreCase);
 
@@ -578,6 +587,7 @@ public static class PilotMarks
         Queued => ("5319e7", "this PR waits in the merge queue"),
         Recheck => ("1d76db", "ask pilot to look at this PR again"),
         Pinned => ("fbca04", "pinned to the top of its section in pilot's Ideas pane"),
+        NeedsDesign => ("c2e0c6", "an idea that needs a design before it flies; pilot starts the design from it"),
         Priority => ("e99695", "pilot: its starts bypass the Opus cap and the repo hold"),
         Hold => ("b60205", "the owner holds this flight: no pilot node acts on it"),
         HumanVerification => ("c5def5", "a person must check this flight's live behaviour; pilot files those checks as issues"),

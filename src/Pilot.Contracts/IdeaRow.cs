@@ -56,6 +56,10 @@ public sealed record IdeaRow
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
     public bool Pinned { get; init; }
 
+    /// <summary>Whether the issue carries the needs-design label on GitHub: the idea wants a design before it flies.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public bool NeedsDesign { get; init; }
+
     /// <summary>The issue's GitHub Priority field; null when unset or when the repo has no such field.</summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public IssuePriority? Priority { get; init; }
