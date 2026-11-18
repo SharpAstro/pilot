@@ -27,7 +27,7 @@ public sealed class IdeaDesignLinkTests : IssueBoardFixture
         State.Designs = _store.List;
     }
 
-    public new void Dispose()
+    void IDisposable.Dispose()
     {
         if (Directory.Exists(_data))
         {
@@ -56,9 +56,9 @@ public sealed class IdeaDesignLinkTests : IssueBoardFixture
 
         var design = _store.Detail(id);
         design.Row.Repo.ShouldBe("pilot");
+        var text = design.Brief.ShouldNotBeNull();
         design.Row.Title.ShouldBe("Ring shadows");
-        design.Brief.ShouldContain("Ring shadows\n\non the planet");
-        design.Brief.IndexOf("Ring shadows", StringComparison.Ordinal).ShouldBeLessThan(design.Brief.IndexOf("on the planet", StringComparison.Ordinal));
+        text.ShouldContain("Ring shadows\n\non the planet");
         _store.List().Length.ShouldBe(1);
     }
 
@@ -74,7 +74,7 @@ public sealed class IdeaDesignLinkTests : IssueBoardFixture
         var pictures = Directory.GetFiles(Path.Combine(_store.FolderOf(id), DesignStore.PicturesFolderName));
         pictures.Length.ShouldBe(1);
         File.ReadAllBytes(pictures[0]).ShouldBe([1, 2, 3, 4]);
-        var brief = _store.Detail(id).Brief;
+        var brief = _store.Detail(id).Brief.ShouldNotBeNull();
         brief.ShouldContain("pictures/1-mock.png");
         brief.ShouldContain("https://example.com/web.png");
         brief.ShouldContain("no copy");
