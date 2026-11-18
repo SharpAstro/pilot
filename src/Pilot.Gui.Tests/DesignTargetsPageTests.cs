@@ -21,10 +21,11 @@ public sealed class DesignTargetsPageTests
     {
         private readonly RectF32 _bounds = new(0, 0, 1400, 900);
         private readonly RgbaImageRenderer _renderer = new(1400, 900);
-        private readonly DesignsScreen _screen = PageData.TargetsDesigns(Now);
+        private readonly DesignsScreen _screen;
 
-        public Rig()
+        public Rig(Action<System.Text.Json.Nodes.JsonObject>? edit = null)
         {
+            _screen = PageData.TargetsDesigns(Now, edit);
             Chrome = new PilotChrome<RgbaImage>(_renderer, new SessionsView<RgbaImage>(_renderer)) { FontPath = SessionsCapture.FontPath };
             Chrome.Autopilot.OnToggle = _ => Task.FromResult<string?>(null);
             Chrome.Show(PilotPage.Designs);
@@ -51,6 +52,37 @@ public sealed class DesignTargetsPageTests
     }
 
     private static string TempFile() => Path.Combine(Directory.CreateTempSubdirectory("pilot-design-target-").FullName, "gui-settings.json");
+
+    [Fact]
+    public void ADocumentOfItsOwnSizeWithNoTargetOpensAtThatSizeNotDesktop()
+    {
+        using var rig = new Rig(doc =>
+        {
+            doc.Remove("targets");
+            doc["width"] = 720;
+            doc["height"] = 1000;
+        });
+        rig.Paint();
+        rig.View.Surface.Width.ShouldBe(720);
+        rig.View.Surface.Height.ShouldBe(1000);
+        rig.View.Surface.Scale.ShouldBe(1d);
+        rig.View.PickTarget("Desktop").ShouldBeTrue();
+        rig.View.Surface.Width.ShouldBe(1440);
+        rig.View.PickOwn().ShouldBeTrue();
+        rig.View.Surface.Width.ShouldBe(720);
+    }
+
+    [Fact]
+    public void ADocumentNamingACustomSizeTargetOpensAtThatSizeAndASavedChoiceStillWins()
+    {
+        using var rig = new Rig(doc => doc["targets"] = new System.Text.Json.Nodes.JsonArray(new System.Text.Json.Nodes.JsonObject { ["name"] = "Pane", ["width"] = 640, ["height"] = 480, ["scale"] = 2 }));
+        rig.Paint();
+        rig.View.Surface.Width.ShouldBe(640);
+        rig.View.Surface.Height.ShouldBe(480);
+        rig.View.Surface.Scale.ShouldBe(2d);
+        rig.View.PickTarget("Phone");
+        rig.View.Surface.Width.ShouldBe(390);
+    }
 
     [Fact]
     public void AtPhoneTheCompactNodeIsDrawnAndTheRegularOneIsNot()

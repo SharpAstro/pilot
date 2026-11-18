@@ -273,7 +273,7 @@ internal sealed class DesignsView<TSurface> : PilotWidgetBase<TSurface>
     public event Action? TargetChanged;
 
     /// <summary>The choice of target of the open design: the saved one, else the first target its document names, else Desktop.</summary>
-    internal DesignTargetChoice Choice => OpenId is { } id && _choices.TryGetValue(id, out var c) ? c : Named(Player?.Document) is { } first ? DesignTargetChoice.Of(first) : DesignTargetChoice.Default;
+    internal DesignTargetChoice Choice => OpenId is { } id && _choices.TryGetValue(id, out var c) ? c : OwnChoice(Player?.Document) ?? DesignTargetChoice.Default;
 
     /// <summary>The surface the open design is shown at.</summary>
     internal DesignSurface Surface => Choice.Surface();
@@ -281,8 +281,40 @@ internal sealed class DesignsView<TSurface> : PilotWidgetBase<TSurface>
     /// <summary>What went wrong with the last custom size typed, or null.</summary>
     internal string? CustomProblem => _customProblem;
 
-    private static DesignSurface? Named(PrototypeDocument? document) =>
-        document is { Targets.Length: > 0 } && DesignTargets.Named(document.Targets[0].Name) is { } known ? known : null;
+    // The document's own size (#1160): its first targets entry resolved with its size (a built-in name alone gives the built-in), else its
+    // Width x Height at 1x. A built-in of that exact size is chosen by name so its chip lights; any other size is a custom choice.
+    private static DesignTargetChoice? OwnChoice(PrototypeDocument? document)
+    {
+        if (document is null)
+        {
+            return null;
+        }
+        var surface = document.Targets.Length > 0
+            ? DesignTargets.Resolve(document.Targets[0].Name, document.Targets[0].Width, document.Targets[0].Height, document.Targets[0].Scale)
+            : null;
+        surface ??= document.Width > 0 && document.Height > 0 ? new DesignSurface($"{document.Width}x{document.Height}", document.Width, document.Height, 1) : null;
+        if (surface is null)
+        {
+            return null;
+        }
+        return DesignTargets.Named(surface.Name) is { } known && known.Width == surface.Width && known.Height == surface.Height && known.Scale == surface.Scale
+            ? DesignTargetChoice.Of(known)
+            : new DesignTargetChoice(null, surface.Width, surface.Height, surface.Scale, false);
+    }
+
+    /// <summary>The surface the open design's document gives itself, or null before it is read.</summary>
+    internal DesignSurface? OwnSurface => OwnChoice(Player?.Document)?.Surface();
+
+    /// <summary>Goes back to the size the document gives itself, dropping the window's own choice.</summary>
+    public bool PickOwn()
+    {
+        if (OpenId is not { } id || OwnChoice(Player?.Document) is not { } own)
+        {
+            return false;
+        }
+        Set(id, own);
+        return true;
+    }
 
     /// <summary>The choices the file held: each design's, replacing any made so far.</summary>
     internal void RestoreTargets(IReadOnlyDictionary<string, SavedDesignTarget>? saved)
@@ -891,6 +923,15 @@ internal sealed class DesignsView<TSurface> : PilotWidgetBase<TSurface>
                 .Follows(new HitResult.ButtonHit($"designs:target:{name}"), _ => PickTarget(name));
         });
         var landscape = surface.Width >= surface.Height;
+        var own = OwnSurface;
+        var ownChosen = own is not null && own.Width == surface.Width && own.Height == surface.Height && own.Scale == surface.Scale;
+        var ownLabel = own is null ? "Design" : $"Design {own.Width}x{own.Height}";
+        var ownChip = Layout.Builder.Text(ownLabel, 12f, Bright, TextAlign.Center)
+            .Pad(4f, 4f).WAuto()
+            .Bg(ownChosen ? Active : Button)
+            .BgHover(ButtonHover)
+            .WithTooltip("The size the design gives itself")
+            .Follows(new HitResult.ButtonHit("designs:target-own"), _ => PickOwn());
         var swap = Layout.Builder.Text("Rotate", 12f, Bright, TextAlign.Center)
             .Pad(4f, 4f).WAuto()
             .Bg(Button)
@@ -908,7 +949,7 @@ internal sealed class DesignsView<TSurface> : PilotWidgetBase<TSurface>
         // Three rows, the chips sharing the column's width: one row of chips, swap and input overran a narrow column onto the versions beside it.
         return Layout.Builder.VStack(
             Layout.Builder.HStack([.. chips]).WithGap(4f).RowH(26f),
-            Layout.Builder.HStack(swap).RowH(26f),
+            Layout.Builder.HStack(ownChip, swap).WithGap(4f).RowH(26f),
             custom,
             WrappedProse.OneLine(caption, 12f, _customProblem is null ? Dim : Bright).RowH(22f).Whole(caption)).WithGap(4f).RowH(116f);
     }

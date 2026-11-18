@@ -117,10 +117,20 @@ internal sealed class PageData
     internal static string TargetsPrototypePath => Path.Combine(AppContext.BaseDirectory, "Fixtures", "Designs", "targets.prototype.json");
 
     /// <summary>One design whose prototype names Desktop and Phone and has a rail for a regular target and a bottom bar for a compact one.</summary>
-    internal static DesignsScreen TargetsDesigns(DateTimeOffset now)
+    internal static DesignsScreen TargetsDesigns(DateTimeOffset now) => TargetsDesigns(now, null);
+
+    /// <summary>As <see cref="TargetsDesigns(DateTimeOffset)"/>, with <paramref name="edit"/> applied to the prototype's JSON first (its own size, its targets).</summary>
+    internal static DesignsScreen TargetsDesigns(DateTimeOffset now, Action<System.Text.Json.Nodes.JsonObject>? edit)
     {
         var row = new DesignRow { Id = "DSN-7", Title = "Targets", Repo = "SharpAstro/pilot", Current = 1, Versions = 1, At = now, Why = "brief", PrototypeSha256 = "cd" };
-        var document = DIR.Lib.Prototyping.Prototype.Load(File.ReadAllText(TargetsPrototypePath)).Document ?? throw new InvalidDataException("the targets prototype does not load");
+        var json = File.ReadAllText(TargetsPrototypePath);
+        if (edit is not null)
+        {
+            var node = System.Text.Json.Nodes.JsonNode.Parse(json)!.AsObject();
+            edit(node);
+            json = node.ToJsonString();
+        }
+        var document = DIR.Lib.Prototyping.Prototype.Load(json).Document ?? throw new InvalidDataException("the targets prototype does not load");
         var detail = new DesignDetail
         {
             Row = row,

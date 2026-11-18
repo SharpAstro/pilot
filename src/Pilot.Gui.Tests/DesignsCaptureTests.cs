@@ -89,4 +89,51 @@ public sealed class DesignsCaptureTests
             TextOverlap.Faults(arranged).Select(f => f.Line).ShouldBeEmpty();
         }
     }
+
+    [Theory]
+    [InlineData(1920, 1080)]
+    [InlineData(2880, 1620)]
+    public void AWideDesignIsPlayedScaledUpToFillTheLeftColumnOnABigWindow(int width, int height)
+    {
+        var screen = PageData.TargetsDesigns(Now, doc =>
+        {
+            doc.Remove("targets");
+            doc["width"] = 720;
+            doc["height"] = 900;
+        });
+        using var renderer = new RgbaImageRenderer(width, height);
+        using var accent = Pilot.Ui.Palette.StandardForCapture(null);
+        var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
+        chrome.Autopilot.OnToggle = _ => Task.FromResult<string?>(null);
+        chrome.Show(PilotPage.Designs);
+        chrome.Designs.Open("DSN-7");
+        var data = PageData.For("sample");
+        chrome.Render(data.Sessions, data.Flights, data.Cards, data.Jobs, data.Fleet, data.Repos, data.PullRequests, new RectF32(0, 0, width, height), data.Machines, null, data.Spend, screen);
+
+        chrome.Designs.Surface.Width.ShouldBe(720);
+        var arranged = Layout.Engine.Arrange(chrome.Designs.Tree(screen), new Rect<float>(0, 0, width, height), new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, 1f));
+        var rect = arranged.Single(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Fill { Key: "design-player" } }).Bounds;
+        var size = chrome.Designs.Player!.DesignSize;
+        size.Width.ShouldBe(720f);
+        var scale = Math.Min(rect.Width / size.Width, rect.Height / size.Height);
+        scale.ShouldBeGreaterThan(1f, "the played frame is scaled up so its text is readable");
+        (size.Width * scale).ShouldBeGreaterThan(720f);
+
+        var folder = Path.Combine(Path.GetTempPath(), $"pilot-design-own-{Guid.NewGuid():N}");
+        try
+        {
+            var png = Path.Combine(folder, "own.png");
+            SessionsCapture.Write(new SessionsScreen([], "test", Now), png, width, height, page: PilotPage.Designs, designs: screen, openDesign: "DSN-7");
+            File.Exists(png).ShouldBeTrue();
+            if (Environment.GetEnvironmentVariable("PILOT_JOB_ARTIFACTS") is { Length: > 0 } artifacts)
+            {
+                Directory.CreateDirectory(artifacts);
+                File.Copy(png, Path.Combine(artifacts, $"{Environment.GetEnvironmentVariable("PILOT_CAPTURE_TAG") ?? "after"}-design-own-size-{width}.png"), overwrite: true);
+            }
+        }
+        finally
+        {
+            Directory.Delete(folder, recursive: true);
+        }
+    }
 }
