@@ -790,6 +790,26 @@ public static partial class FilterTerms
         return [];
     }
 
+    /// <summary>The first name term of <paramref name="command"/>'s <c>dotnet test</c> filter that matches no test of the project it targets, with that project's name. Null when every term matches or nothing can be read (what <see cref="Refusal"/> reads, without the leg's declared classes).</summary>
+    public static (Term Term, string Project)? Unmatched(string command, string cwd)
+    {
+        foreach (var target in Targets(command, cwd))
+        {
+            if (target.Terms.Count == 0 || Load(target.Projects, cwd) is not { } project || project.FullNames.Count == 0)
+            {
+                continue;
+            }
+            foreach (var term in target.Terms)
+            {
+                if (!Matches(term, project))
+                {
+                    return (term, project.Name);
+                }
+            }
+        }
+        return null;
+    }
+
     /// <summary>
     /// The refusal for the first name term of <paramref name="check"/> that matches no test of the project its <c>dotnet test</c> targets
     /// and no class in <paramref name="declared"/>: the term, the project and the nearest test classes. Null when every term matches, a

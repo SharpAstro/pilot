@@ -785,7 +785,9 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
         job = Unpaused(job, EndOf(job, exitPath));
         var ended = ReadExit(exitPath) switch
         {
-            0 => job with { State = JobState.Succeeded, ExitCode = 0 },
+            0 => EmptyFilter.ErrorFromLog(job) is { } none
+                ? job with { State = JobState.Failed, ExitCode = 0, Error = none }
+                : job with { State = JobState.Succeeded, ExitCode = 0 },
             { } code => job with { State = JobState.Failed, ExitCode = code, Error = $"exit {code}" },
             null => job with { State = JobState.Failed, Error = "ended while the node was down, no exit recorded" },
         };
@@ -1336,6 +1338,9 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
             JobState.Succeeded => new CheckRun(0, tail),
             _ when ended.Error?.StartsWith(TimeoutPrefix, StringComparison.Ordinal) == true =>
                 new CheckRun(-1, $"the check was stopped at {CheckLimit.Describe(ended.Timeout)} of running: {basis ?? "its limit"}") { StoppedByBudget = true, Saturation = share },
+            // Exited 0 but ended failed: it ran no test (pilot #1157). Not a pass, and its tail says why.
+            _ when ended.ExitCode == 0 => new CheckRun(-1, string.IsNullOrEmpty(tail) ? ended.Error ?? "the check ran no test" : $"{ended.Error}
+{tail}"),
             _ when ended.ExitCode is { } code => new CheckRun(code, tail),
             _ => new CheckRun(-1, string.IsNullOrEmpty(tail) ? ended.Error ?? "the check did not run" : $"{ended.Error}\n{tail}"),
         };
@@ -2613,6 +2618,7 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
         int looks = 0, hot = 0;
 
         var failures = new TestFailures();
+        var empty = new EmptyFilter();
         // When a fail-fast job read its first failed test, and the test it was stopped at.
         DateTimeOffset? failedAt = null;
         string? stoppedAt = null;
@@ -2622,6 +2628,7 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
             foreach (var line in follower.Read(final))
             {
                 var failure = failures.Read(line);
+                empty.Read(line);
                 // A fail-fast job's tail ends with its first failed test's report: what came after is cut short by the stop, and
                 // other tests' reports read in the same look would push why it failed out of the tail.
                 if (!(job.FailFast && failures.PastFirstReport))
@@ -2791,7 +2798,9 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
             else if (exitCode is { } code)
             {
                 ended = code == 0
-                    ? latest with { State = JobState.Succeeded, ExitCode = 0 }
+                    ? (empty.Error(latest) is { } none
+                        ? latest with { State = JobState.Failed, ExitCode = 0, Error = none }
+                        : latest with { State = JobState.Succeeded, ExitCode = 0 })
                     : latest with { State = JobState.Failed, ExitCode = code, Error = $"exit {code}" };
             }
             else
