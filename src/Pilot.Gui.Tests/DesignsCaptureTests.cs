@@ -99,7 +99,7 @@ public sealed class DesignsCaptureTests
         {
             doc.Remove("targets");
             doc["width"] = 720;
-            doc["height"] = 900;
+            doc["height"] = 480;
         });
         using var renderer = new RgbaImageRenderer((uint)width, (uint)height);
         using var accent = Pilot.Ui.Palette.StandardForCapture(null);
