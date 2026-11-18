@@ -32,6 +32,12 @@ public sealed class DesignSync(DesignStore store, RepoCatalog repos, IGitHub git
     /// <summary>Starts sending <paramref name="id"/>'s unsent versions in the background, so a publish does not wait for GitHub.</summary>
     public void Kick(string id)
     {
+        // A design with no repo has nowhere to be written: that is said on its record before the publish returns, not by a task that races the reader of the record.
+        if (store.Find(id) is { MadeOn: null, Current: not null } design && (design.IssueRepo ?? design.Repo) is not { Length: > 0 })
+        {
+            Failed(design.Id, DesignSyncText.NoRepo(design.Id, (design.SyncedVersion ?? 0) + 1, node));
+            return;
+        }
         var task = Task.Run(() => SyncAsync(id, CancellationToken.None));
         lock (_kicks)
         {

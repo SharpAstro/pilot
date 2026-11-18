@@ -34,14 +34,7 @@ public sealed class DesignSyncTests : IDisposable
 
     public void Dispose()
     {
-        if (Directory.Exists(_root))
-        {
-            foreach (var file in Directory.EnumerateFiles(_root, "*", SearchOption.AllDirectories))
-            {
-                File.SetAttributes(file, FileAttributes.Normal);
-            }
-            Directory.Delete(_root, recursive: true);
-        }
+        TestDirs.DeleteTree(_root);
     }
 
     /// <summary>One node: its store, and the sync of it named <paramref name="node"/>.</summary>

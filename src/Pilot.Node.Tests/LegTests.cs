@@ -541,7 +541,7 @@ internal sealed class FakeGitHub : IGitHub
     }
 
     /// <summary>The files of each branch, by repo folder path and branch: what CommitFilesAsync last wrote there (PIL1171).</summary>
-    public ConcurrentDictionary<(string Repo, string Branch), Dictionary<string, byte[]>> Branches { get; } = [];
+    public ConcurrentDictionary<(string Repo, string Branch), ConcurrentDictionary<string, byte[]>> Branches { get; } = [];
 
     /// <summary>Every commit CommitFilesAsync made, as (repo folder path, branch, message, paths), in order.</summary>
     public ConcurrentQueue<(string Repo, string Branch, string Message, string[] Paths)> BranchCommits { get; } = [];
@@ -567,7 +567,7 @@ internal sealed class FakeGitHub : IGitHub
     public async Task<string> CommitFilesAsync(string repoPath, string branch, string message, IReadOnlyDictionary<string, byte[]> files, CancellationToken cancellationToken)
     {
         await DesignCall(cancellationToken);
-        Branches[(RepoKey(repoPath), branch)] = new Dictionary<string, byte[]>(files, StringComparer.Ordinal);
+        Branches[(RepoKey(repoPath), branch)] = new ConcurrentDictionary<string, byte[]>(files, StringComparer.Ordinal);
         BranchCommits.Enqueue((RepoKey(repoPath), branch, message, [.. files.Keys.Order(StringComparer.Ordinal)]));
         return $"commit{BranchCommits.Count}";
     }
