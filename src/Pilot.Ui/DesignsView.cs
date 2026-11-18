@@ -915,7 +915,7 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
         {
             var title = TitleOf(page);
             var line = title.Length > 0 ? $"{id} · {title}" : id;
-            parts.Add(WrappedProse.OneLine(line, 14f, Bright, vAlign: TextAlign.Center, cut: true).WStar().HFixed(BackRowH).Whole(line));
+            parts.Add(BackRow.Middle(WrappedProse.OneLine(line, 14f, Bright, vAlign: TextAlign.Center, cut: true).Whole(line), BackRowH));
             parts.AddRange(VersionChip(page).Select(c => c.HFixed(BackRowH)));
             if (page.DesignIsDraft)
             {
@@ -923,7 +923,7 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
             }
             if (SyncLine(page.Detail.Row) is { } sync)
             {
-                parts.Add(sync.HFixed(BackRowH));
+                parts.Add(BackRow.Middle(sync, BackRowH));
             }
         }
         else
