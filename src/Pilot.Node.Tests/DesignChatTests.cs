@@ -69,12 +69,32 @@ public sealed class DesignChatTests : IDisposable
         return id;
     }
 
-    private void Listed(SessionState state) =>
+    private void Listed(SessionState state, bool gone = false, DateTimeOffset? lastResponse = null, string job = Job) =>
         _state.PutSession(new SessionRow
         {
-            Id = Job, SessionId = Session, Name = "de1-dsn1-designer", Kind = SessionKind.Background, Cwd = "/x", Role = SessionRole.Designer,
-            ContextTokens = 1, ContextWindow = 200_000, State = state, SpendWeighted = 0, StartedAt = Start,
+            Id = job, SessionId = job == Job ? Session : job + "-s", Name = "de1-dsn1-designer", Kind = SessionKind.Background, Cwd = "/x", Role = SessionRole.Designer,
+            ContextTokens = 1, ContextWindow = 200_000, State = state, SpendWeighted = 0, StartedAt = Start, Gone = gone, LastResponseAt = lastResponse ?? Start.AddMinutes(2),
         });
+
+    [Fact]
+    public async Task AGoneIdleRowDoesNotMakeAFreshlyStartedDesignerIdle()
+    {
+        var id = await DesignWithDesignerAsync();
+        _store.Update(id, r => r with { DesignerTurnStartedAt = Start.AddMinutes(5) });
+        Listed(SessionState.Idle, gone: true, lastResponse: Start.AddMinutes(10), job: "old-job");
+        Run(Verbs.DesignChat, id).DesignChat.ShouldNotBeNull().Working.ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task AnIdleOlderThanTheTurnsStartIsThePreviousTurnsEndNotThisOnes()
+    {
+        var id = await DesignWithDesignerAsync();
+        _store.Update(id, r => r with { DesignerTurnStartedAt = Start.AddMinutes(5) });
+        Listed(SessionState.Idle, lastResponse: Start.AddMinutes(1));
+        Run(Verbs.DesignChat, id).DesignChat.ShouldNotBeNull().Working.ShouldBeTrue();
+        Listed(SessionState.Idle, lastResponse: Start.AddMinutes(6));
+        Run(Verbs.DesignChat, id).DesignChat.ShouldNotBeNull().Working.ShouldBeFalse();
+    }
 
     private void DesignerReplies(string when, string text) =>
         _profile.Append(_profile.TranscriptPath(Session),

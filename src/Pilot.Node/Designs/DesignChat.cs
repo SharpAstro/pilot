@@ -24,8 +24,12 @@ public sealed partial class DesignChat(DesignStore store, TranscriptBook transcr
         {
             return row;
         }
-        var listed = sessions().FirstOrDefault(s => string.Equals(s.Name, name, StringComparison.OrdinalIgnoreCase));
-        if (listed is null || listed.State is not (SessionState.Idle or SessionState.Ended))
+        // The row Designers.AskAsync would take: a Gone or Failed one is not the designer, so a fresh start stays Working until its own row is listed.
+        var listed = sessions().FirstOrDefault(s => string.Equals(s.Name, name, StringComparison.OrdinalIgnoreCase) && s.State is not SessionState.Failed && !s.Gone);
+        // After a resume the previous turn's Stop is the latest hook until the new turn's prompt lands, so an Idle older than the turn's start is not its end.
+        var ended = listed is { State: SessionState.Ended }
+            || listed is { State: SessionState.Idle } && (row.DesignerTurnStartedAt is not { } turn || listed.LastResponseAt is { } last && last >= turn);
+        if (!ended)
         {
             return row;
         }
