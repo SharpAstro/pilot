@@ -27,7 +27,7 @@ every finding is now fixed in a view or sits in a commented exemption.
 
 ## The sweep's time
 
-`dotnet test --filter FullyQualifiedName~WireframeSweep` runs 320 cases in 26 to 29 s (test host time, two threads), under the 30 s the class has.
+`dotnet test --filter FullyQualifiedName~WireframeSweep` runs the pixel sweep (the terminal sweep is `FullyQualifiedName~TerminalWireframeSweep`): 320 cases in 26 to 29 s (test host time, two threads), under the 30 s the class has.
 The whole `Pilot.Gui.Tests` in Release with `GITHUB_ACTIONS=true`: 3779 passed, 0 failed, 3 m 43 s.
 
 ## The revert proof (scratch copy under the job tmp folder, not committed, removed)

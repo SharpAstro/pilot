@@ -18,6 +18,11 @@ namespace Pilot.Gui.Tests;
 /// </summary>
 public static class TerminalWireframeSweepTests
 {
+    /// <summary>The sizes (columns, rows) and states the sweep classes split into; <c>SweepNamesTests</c> holds the class count to their product.</summary>
+    internal static readonly (int Columns, int Rows)[] Sizes = [(80, 24), (100, 30), (160, 44), (250, 60)];
+
+    internal static readonly string[] States = ["long", "many"];
+
     internal static readonly string[] Cases =
     [
         "home", "sessions", "flights", "repos", "pull requests", "jobs", "fleet", "ideas", "spend", "settings", "chat", "designs", "design page",
@@ -291,14 +296,14 @@ public static class TerminalWireframeSweepTests
 
 // One class a size and state, so xunit runs them in parallel.
 
-public sealed class TerminalWireframe80Long { public static IEnumerable<TheoryDataRow<string, string, int, int>> Cases() => TerminalWireframeSweepTests.RowsOf(80, 24, "long"); [Theory, MemberData(nameof(Cases))] public Task Sweep(string page, string state, int c, int r) => TerminalWireframeSweepTests.Run(page, state, c, r); }
-public sealed class TerminalWireframe80Many { public static IEnumerable<TheoryDataRow<string, string, int, int>> Cases() => TerminalWireframeSweepTests.RowsOf(80, 24, "many"); [Theory, MemberData(nameof(Cases))] public Task Sweep(string page, string state, int c, int r) => TerminalWireframeSweepTests.Run(page, state, c, r); }
-public sealed class TerminalWireframe100Long { public static IEnumerable<TheoryDataRow<string, string, int, int>> Cases() => TerminalWireframeSweepTests.RowsOf(100, 30, "long"); [Theory, MemberData(nameof(Cases))] public Task Sweep(string page, string state, int c, int r) => TerminalWireframeSweepTests.Run(page, state, c, r); }
-public sealed class TerminalWireframe100Many { public static IEnumerable<TheoryDataRow<string, string, int, int>> Cases() => TerminalWireframeSweepTests.RowsOf(100, 30, "many"); [Theory, MemberData(nameof(Cases))] public Task Sweep(string page, string state, int c, int r) => TerminalWireframeSweepTests.Run(page, state, c, r); }
-public sealed class TerminalWireframe160Long { public static IEnumerable<TheoryDataRow<string, string, int, int>> Cases() => TerminalWireframeSweepTests.RowsOf(160, 44, "long"); [Theory, MemberData(nameof(Cases))] public Task Sweep(string page, string state, int c, int r) => TerminalWireframeSweepTests.Run(page, state, c, r); }
-public sealed class TerminalWireframe160Many { public static IEnumerable<TheoryDataRow<string, string, int, int>> Cases() => TerminalWireframeSweepTests.RowsOf(160, 44, "many"); [Theory, MemberData(nameof(Cases))] public Task Sweep(string page, string state, int c, int r) => TerminalWireframeSweepTests.Run(page, state, c, r); }
-public sealed class TerminalWireframe250Long { public static IEnumerable<TheoryDataRow<string, string, int, int>> Cases() => TerminalWireframeSweepTests.RowsOf(250, 60, "long"); [Theory, MemberData(nameof(Cases))] public Task Sweep(string page, string state, int c, int r) => TerminalWireframeSweepTests.Run(page, state, c, r); }
-public sealed class TerminalWireframe250Many { public static IEnumerable<TheoryDataRow<string, string, int, int>> Cases() => TerminalWireframeSweepTests.RowsOf(250, 60, "many"); [Theory, MemberData(nameof(Cases))] public Task Sweep(string page, string state, int c, int r) => TerminalWireframeSweepTests.Run(page, state, c, r); }
+public sealed class TerminalWireframeSweep80LongTests { public static IEnumerable<TheoryDataRow<string, string, int, int>> Cases() => TerminalWireframeSweepTests.RowsOf(80, 24, "long"); [Theory, MemberData(nameof(Cases))] public Task Sweep(string page, string state, int c, int r) => TerminalWireframeSweepTests.Run(page, state, c, r); }
+public sealed class TerminalWireframeSweep80ManyTests { public static IEnumerable<TheoryDataRow<string, string, int, int>> Cases() => TerminalWireframeSweepTests.RowsOf(80, 24, "many"); [Theory, MemberData(nameof(Cases))] public Task Sweep(string page, string state, int c, int r) => TerminalWireframeSweepTests.Run(page, state, c, r); }
+public sealed class TerminalWireframeSweep100LongTests { public static IEnumerable<TheoryDataRow<string, string, int, int>> Cases() => TerminalWireframeSweepTests.RowsOf(100, 30, "long"); [Theory, MemberData(nameof(Cases))] public Task Sweep(string page, string state, int c, int r) => TerminalWireframeSweepTests.Run(page, state, c, r); }
+public sealed class TerminalWireframeSweep100ManyTests { public static IEnumerable<TheoryDataRow<string, string, int, int>> Cases() => TerminalWireframeSweepTests.RowsOf(100, 30, "many"); [Theory, MemberData(nameof(Cases))] public Task Sweep(string page, string state, int c, int r) => TerminalWireframeSweepTests.Run(page, state, c, r); }
+public sealed class TerminalWireframeSweep160LongTests { public static IEnumerable<TheoryDataRow<string, string, int, int>> Cases() => TerminalWireframeSweepTests.RowsOf(160, 44, "long"); [Theory, MemberData(nameof(Cases))] public Task Sweep(string page, string state, int c, int r) => TerminalWireframeSweepTests.Run(page, state, c, r); }
+public sealed class TerminalWireframeSweep160ManyTests { public static IEnumerable<TheoryDataRow<string, string, int, int>> Cases() => TerminalWireframeSweepTests.RowsOf(160, 44, "many"); [Theory, MemberData(nameof(Cases))] public Task Sweep(string page, string state, int c, int r) => TerminalWireframeSweepTests.Run(page, state, c, r); }
+public sealed class TerminalWireframeSweep250LongTests { public static IEnumerable<TheoryDataRow<string, string, int, int>> Cases() => TerminalWireframeSweepTests.RowsOf(250, 60, "long"); [Theory, MemberData(nameof(Cases))] public Task Sweep(string page, string state, int c, int r) => TerminalWireframeSweepTests.Run(page, state, c, r); }
+public sealed class TerminalWireframeSweep250ManyTests { public static IEnumerable<TheoryDataRow<string, string, int, int>> Cases() => TerminalWireframeSweepTests.RowsOf(250, 60, "many"); [Theory, MemberData(nameof(Cases))] public Task Sweep(string page, string state, int c, int r) => TerminalWireframeSweepTests.Run(page, state, c, r); }
 
 /// <summary>The sweep's own tests: the defects that were fixed, built again, fail the same check.</summary>
 public sealed class TerminalWireframeRegressionTests

@@ -26,7 +26,7 @@ public static class WireframeSweepTests
         (1280, 1f, 1440), (2560, 1f, 1440), (1280, 1.5f, 1440), (2560, 1.5f, 1440),
     ];
 
-    private static readonly (int Width, float Dpi, int Height)[] ManySizes = [.. LongSizes.Where(s => s.Height == 900)];
+    internal static readonly (int Width, float Dpi, int Height)[] ManySizes = [.. LongSizes.Where(s => s.Height == 900)];
     private static readonly string[] States = ["long", "many"];
 
     internal static readonly string[] Pages =
