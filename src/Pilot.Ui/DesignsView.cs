@@ -627,6 +627,7 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
     public void Open(string id)
     {
         OpenId = id;
+        _edit = null;
         _pointing = false;
         Chat.AttachScreen(null);
         _pointAt = null;
@@ -858,6 +859,7 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
         ApplyStartAnswer();
         Palette.Use(Night);
         NoteBuildTarget(screen);
+        NoteTyping();
         var open = OpenId is { } id && screen.Open is { } shown && shown.Detail.Row.Id == id ? shown : null;
         if (OpenId is null)
         {
@@ -1058,14 +1060,19 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
         }
         var notebook = page.Notebook;
         var title = notebook is { Title.Length: > 0 } ? notebook.Title : row.Title is { Length: > 0 } t ? t : row.Id;
-        items.Add(WrappedProse.Of(title, 20f, Bright));
-        if (notebook?.Objective is { Length: > 0 } objective)
+        var titleText = WrappedProse.Of(title, 20f, Bright);
+        items.Add(page.DesignIsDraft ? Layout.Builder.HStack(titleText.WStar(), StateTag("draft", true)).WithGap(8f).WStar().HAuto() : titleText);
+        if (notebook?.Objective is { Length: > 0 } objective || _edit == (-1, "objective"))
         {
-            items.Add(WrappedProse.Of(objective, 14f, Body));
+            items.Add(Typable(-1, "objective", "Objective of the design", WrappedProse.Of(notebook?.Objective ?? "", 14f, Body)));
         }
-        if (notebook?.Notes is { Length: > 0 } designNotes)
+        if (notebook?.Notes is { Length: > 0 } designNotes || _edit == (-1, "notes"))
         {
-            items.Add(Markdown(designNotes));
+            items.Add(Typable(-1, "notes", "Notes on the design", Markdown(notebook?.Notes ?? "")));
+        }
+        if (_edit is { Cell: -1 } || _edit is null && page.HasDraftChange)
+        {
+            items.AddRange(TypingPanel(page));
         }
         if (page.Document is null)
         {
@@ -1106,11 +1113,20 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
     {
         var number = Layout.Builder.Text((index + 1).ToString(CultureInfo.InvariantCulture), 12f, Dim, TextAlign.Center, TextAlign.Center).WFixed(26f).HFixed(26f).Bg(Button);
         var heading = WrappedProse.OneLine(cell.Heading, 16f, Bright, vAlign: TextAlign.Center).WStar().HFixed(26f).Whole(cell.Heading);
-        var tag = Layout.Builder.Text($"published in v{version}", 11f, Body, TextAlign.Center, TextAlign.Center).Pad(6f, 0f).WAuto().HFixed(26f).Bg(Button);
-        List<Layout.Node> items = [Layout.Builder.HStack(number, heading, tag).WithGap(8f).RowH(26f)];
-        if (cell.Objective is { Length: > 0 } objective)
+        var tag = StateTag(page.CellIsDraft(index) ? "draft" : $"published in v{version}", page.CellIsDraft(index));
+        List<Layout.Node> items = [];
+        if (_edit == (index, "heading"))
         {
-            items.Add(WrappedProse.Of(objective, 13f, Body));
+            items.Add(Typable(index, "heading", $"Heading of cell {index + 1}", heading));
+            items.Add(Layout.Builder.HStack(number, tag).WithGap(8f).RowH(26f));
+        }
+        else
+        {
+            items.Add(Layout.Builder.HStack(number, Typable(index, "heading", "", heading), tag).WithGap(8f).RowH(26f));
+        }
+        if (cell.Objective is { Length: > 0 } objective || _edit == (index, "objective"))
+        {
+            items.Add(Typable(index, "objective", $"Objective of {cell.Heading}", WrappedProse.Of(cell.Objective ?? "", 13f, Body)));
         }
         if (page.Document is not null)
         {
@@ -1136,10 +1152,18 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
                 items.Add(Layout.Builder.HStack([.. wells]).WithGap(WellGap).WStar().HAuto());
             }
         }
-        if (cell.Notes.Length > 0)
+        if (cell.Notes.Length > 0 || _edit == (index, "notes"))
         {
             items.Add(WrappedProse.OneLine("Notes", 11f, Dim, selectable: false).RowH(18f));
-            items.Add(Markdown(cell.Notes));
+            items.Add(Typable(index, "notes", $"Notes of {cell.Heading}", Markdown(cell.Notes)));
+        }
+        else if (OnEdit is not null)
+        {
+            items.Add(Typable(index, "notes", "", WrappedProse.OneLine("Add notes", 11f, Dim, selectable: false).RowH(18f)));
+        }
+        if (_edit is { } editing && editing.Cell == index)
+        {
+            items.AddRange(TypingPanel(page));
         }
         return Layout.Builder.VStack([.. items]).WithGap(6f);
     }
