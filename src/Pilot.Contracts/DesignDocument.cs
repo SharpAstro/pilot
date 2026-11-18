@@ -235,7 +235,7 @@ public static class DesignFiles
                 {
                     if (have.Add(screen["id"]?.GetValue<string>()))
                     {
-                        screens.Add(screen);
+                        screens.Add((JsonNode?)screen);
                     }
                 }
                 else
