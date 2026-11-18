@@ -844,7 +844,7 @@ pilot flight disconnect <code> <other> [--anyway]   # undoes a connect (this nod
 pilot flight pr <code> [title…]                # pushes the plane, opens its PR (body: the legs, Closes #<issue>)
 pilot flight merge <code> <head> [--method squash|rebase|merge]   # or --squash, --rebase, --merge
 pilot flight land <code>
-pilot leg plan <code> <name> --goal … --done-when … [--check …] [--ci-differs …] [--whole-suite …] [--budget …] [--model …] [--effort …] [--item …]…
+pilot leg plan <code> <name> --goal … --done-when … [--check …] [--ci-differs …] [--whole-suite …] [--new-tests …] [--budget …] [--model …] [--effort …] [--item …]…
 pilot leg remove <code> <leg> [why…]           # takes a planned leg out of the flight
 pilot leg start <code> <leg>
 pilot leg validate go|no-go [report…]          # a leg's validator, from its plane (--leg <code>/<leg> elsewhere)

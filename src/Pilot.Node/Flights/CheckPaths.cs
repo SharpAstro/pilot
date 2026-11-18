@@ -222,6 +222,10 @@ public static class CheckPaths
         return new Dotnet(verb, at + 1, paths);
     }
 
+    /// <summary>The project, solution or folder paths a <c>dotnet</c> line names (verbatim, unresolved); empty for no path or a line that is no dotnet build/test/run/pack.</summary>
+    internal static List<string> PathsOf(List<Token> tokens) =>
+        Parse(tokens) is { } dotnet ? [.. dotnet.Paths.Select(p => p.Value)] : [];
+
     private static bool NamesProject(string value)
     {
         var extension = Path.GetExtension(value);

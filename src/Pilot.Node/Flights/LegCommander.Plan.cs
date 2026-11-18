@@ -20,7 +20,7 @@ public sealed partial class LegCommander
         }
         HoldForOverlap(flight);
 
-        string? name = null, goal = null, doneWhen = null, check = null, model = null, effort = null, ciDiffers = null, wholeSuite = null;
+        string? name = null, goal = null, doneWhen = null, check = null, model = null, effort = null, ciDiffers = null, wholeSuite = null, newTests = null;
         long? budget = null;
         var items = new List<CheckItem>();
         foreach (var arg in command.Args ?? [])
@@ -28,7 +28,7 @@ public sealed partial class LegCommander
             var equals = arg.IndexOf('=');
             if (equals <= 0)
             {
-                throw new FlightException($"plan-leg takes key=value arguments (name, goal, done-when, check, ci-differs, whole-suite, budget, model, effort, item), not '{arg}'");
+                throw new FlightException($"plan-leg takes key=value arguments (name, goal, done-when, check, ci-differs, whole-suite, new-tests, budget, model, effort, item), not '{arg}'");
             }
             var (key, value) = (arg[..equals].Trim(), arg[(equals + 1)..].Trim());
             switch (key)
@@ -39,6 +39,7 @@ public sealed partial class LegCommander
                 case "check": check = value.Length > 0 ? value : null; break;
                 case "ci-differs": ciDiffers = value.Length > 0 ? value : null; break;
                 case CheckScope.WholeSuiteKey: wholeSuite = value.Length > 0 ? value : null; break;
+                case FilterTerms.NewTestsKey: newTests = value.Length > 0 ? value : null; break;
                 case "model": model = value.Length > 0 ? value : null; break;
                 case "effort": effort = value.Length > 0 ? value : null; break;
                 case "item" when value.Length > 0: items.Add(new CheckItem { Text = value }); break;
@@ -68,6 +69,12 @@ public sealed partial class LegCommander
         if (goal.Trim().Length < 3 || doneWhen.Trim().Length < 3)
         {
             throw new FlightException($"a leg's goal and done-when say what it does and how it is known done, not '{goal.Trim()}' and '{doneWhen.Trim()}'");
+        }
+        var statedDoneWhen = doneWhen;
+        var declaredTests = FilterTerms.ParseDeclared(newTests);
+        if (declaredTests.Any(d => !ClassWord().IsMatch(d)))
+        {
+            throw new FlightException($"{FilterTerms.NewTestsKey} names test classes, as in --new-tests \"FooTests BarTests\", not '{newTests}'");
         }
         // The node runs a check in a shell of its own (pwsh on Windows, sh elsewhere): one wrapped in another shell has its
         // quoting read twice, and TIA1827's check, double-quoted around a $LASTEXITCODE, failed every run for it.
@@ -108,6 +115,20 @@ public sealed partial class LegCommander
         if (check is not null && TestRunner.Refusal(check, flight.Worktree) is { } runner)
         {
             throw new FlightException(runner);
+        }
+
+        // A filter term that matches no test runs nothing and still exits 0 (pilot #1157): a class the leg adds is declared with new-tests.
+        if (check is not null)
+        {
+            if (FilterTerms.Refusal(check, flight.Worktree, declaredTests) is { } unmatched
+                || FilterTerms.DoneWhenRefusal(statedDoneWhen, check, flight.Worktree, declaredTests) is { } helper)
+            {
+                throw new FlightException(unmatched ?? helper!);
+            }
+        }
+        if (declaredTests.Count > 0)
+        {
+            doneWhen = $"{doneWhen}\n{FilterTerms.NewTestsMark}{string.Join(", ", declaredTests)}";
         }
 
         // A check fits its change: a dotnet test with no filter runs the whole suite, which is CI's on the PR. The refusal suggests
@@ -174,6 +195,9 @@ public sealed partial class LegCommander
             RaiseLegCapCard(flight, name, legs.Length + 1);
         }
     }
+
+    [GeneratedRegex(@"^[A-Za-z_][A-Za-z0-9_.+]*$")]
+    private static partial Regex ClassWord();
 
     /// <summary>The card a flight's second extra leg raises: it grew past the legs its planner laid.</summary>
     public const string LegCapKind = "leg-cap";

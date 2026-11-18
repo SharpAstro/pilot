@@ -216,7 +216,8 @@ public static partial class Briefs
     internal const string CheckScopeRule =
         "A leg's check filters `dotnet test` over the test classes of the files the flight touches plus the classes the leg names (`--filter 'FullyQualifiedName~FooTests|FullyQualifiedName~BarTests'`). " +
         "The whole suite is CI's, on the PR: `leg plan` refuses a `dotnet test` with no filter (--filter, or --filter-class and its siblings for a Microsoft.Testing.Platform runner), suggesting one, unless it is given `--whole-suite \"<why>\"`. " +
-        "The --filter-class siblings, --project and --solution are for a repo whose global.json or dotnet.config selects Microsoft.Testing.Platform; any other repo runs VSTest and takes `dotnet test <proj> --filter 'FullyQualifiedName~...'`, and `leg plan` refuses the wrong runner's switches.";
+        "The --filter-class siblings, --project and --solution are for a repo whose global.json or dotnet.config selects Microsoft.Testing.Platform; any other repo runs VSTest and takes `dotnet test <proj> --filter 'FullyQualifiedName~...'`, and `leg plan` refuses the wrong runner's switches. " +
+        "`leg plan` also refuses a filter term (FullyQualifiedName~X, Name~X, ClassName~X, --filter-class) that matches no test in the project's sources, since it runs nothing and still passes: a test class this leg adds is declared with `--new-tests \"FooTests BarTests\"`.";
 
     /// <summary>The line the worker is told: run the check and the classes touched, never the whole suite, which CI runs on the PR.</summary>
     internal const string WorkerScopeRule =
