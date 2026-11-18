@@ -204,7 +204,7 @@ internal sealed class DesignsView<TSurface> : PilotWidgetBase<TSurface>
 
     private void ApplyIdeaAnswers()
     {
-        var answers = System.Collections.Immutable.ImmutableInterlocked.InterlockedExchange(ref _ideaAnswers, System.Collections.Immutable.ImmutableList<(string Key, string? Made, string? Why)>.Empty);
+        var answers = Interlocked.Exchange(ref _ideaAnswers, System.Collections.Immutable.ImmutableList<(string Key, string? Made, string? Why)>.Empty);
         foreach (var (key, made, why) in answers)
         {
             StartPresses.NotePending(key, null);
