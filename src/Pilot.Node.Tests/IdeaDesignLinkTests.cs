@@ -12,7 +12,7 @@ namespace Pilot.Node.Tests;
 /// An idea and its design (PIL1152): the design is started from a marked idea and the two are linked both ways, and planning waits for it. Fakes only: a fake GitHub and
 /// a design store in a temporary folder; no designer session is started.
 /// </summary>
-public sealed class IdeaDesignLinkTests : IssueBoardFixture
+public sealed class IdeaDesignLinkTests : IssueBoardFixture, IDisposable
 {
     private readonly string _data = Path.Combine(Path.GetTempPath(), "p2idl-" + Guid.NewGuid().ToString("N")[..8]);
     private readonly DesignStore _store;
