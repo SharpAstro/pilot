@@ -101,7 +101,7 @@ public sealed class DesignsCaptureTests
             doc["width"] = 720;
             doc["height"] = 900;
         });
-        using var renderer = new RgbaImageRenderer(width, height);
+        using var renderer = new RgbaImageRenderer((uint)width, (uint)height);
         using var accent = Pilot.Ui.Palette.StandardForCapture(null);
         var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
         chrome.Autopilot.OnToggle = _ => Task.FromResult<string?>(null);
