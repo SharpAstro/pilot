@@ -22,6 +22,9 @@ internal sealed partial class DesignsView<TSurface>
     private IdeaRow? IdeaOf(string qualified) =>
         _ideas.FirstOrDefault(i => string.Equals(i.Qualified, qualified, StringComparison.OrdinalIgnoreCase));
 
+    // Where the page is wide enough the design's ideas share the first row with its title; a narrower page gives them a row of their own right under it, so neither is squeezed to an ellipsis.
+    private bool ForIdeasOnFirstRow => (Terminal is { } cells ? cells.Columns * PrototypeCells.CellWidth : _width) >= 1100f;
+
     private bool CanLinkIdeas(DesignRow row) => OnLinkIdea is not null && !ReadOnly(row);
 
     /// <summary>The design's ideas on its first row (#1185): "For:" and each idea as a linked thing with its remove, then Link an idea; null when there is nothing to show.</summary>
@@ -57,6 +60,10 @@ internal sealed partial class DesignsView<TSurface>
     /// <summary>The list Link an idea opens under the first row: the ideas that are not linked yet, each a press that links it; empty while it is closed.</summary>
     private IEnumerable<Layout.Node> IdeaPicker(DesignPage? page)
     {
+        if (!ForIdeasOnFirstRow && page is not null && ForIdeasRow(page.Detail.Row) is { } own)
+        {
+            yield return own.Pad(Gutter, 0f);
+        }
         if (!_pickingIdea || page is null || !CanLinkIdeas(page.Detail.Row))
         {
             yield break;

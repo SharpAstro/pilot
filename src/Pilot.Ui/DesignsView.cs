@@ -946,7 +946,7 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
             {
                 parts.Add(StateTag("draft", true).HFixed(BackRowH));
             }
-            if (ForIdeasRow(page.Detail.Row) is { } forIdeas)
+            if (ForIdeasOnFirstRow && ForIdeasRow(page.Detail.Row) is { } forIdeas)
             {
                 parts.Add(forIdeas);
             }

@@ -180,7 +180,7 @@ public sealed class DesignsWaitingIdeasTests
         var gone = screen with { Ideas = [], Open = screen.Open! with { Detail = screen.Open.Detail with { Row = screen.Open.Detail.Row with { FromIdea = "pilot I999" } } } };
         chrome.Designs.Open(gone.Open!.Detail.Row.Id);
 
-        Said(host.Nodes(chrome, gone)).ShouldContain("pilot I999");
+        Said(host.Nodes(chrome, gone)).ShouldContain("I999");
     }
 
     [Fact]

@@ -30,7 +30,8 @@ internal sealed partial class PageData
         };
         return new IdeasScreen(
         [
-            Idea(381, "Ideas pane", "Show **ideas** in a pane.\n\n- a list\n- a box", true, "DSN-1", 2),
+            Idea(381, "Ideas pane", "Show **ideas** in a pane.\n\n- a list\n- a box", true, "DSN-1", 2,
+                [new IdeaDesignLink("DSN-1", "Design 0", 2), new IdeaDesignLink("DSN-3", "Design 2", 2)]),
             Idea(382, "Rail count", "", true),
             Idea(383, "Night mode for the rail", "Keep the red.", false, designs: [new IdeaDesignLink("DSN-1", "Design 0", 2)]),
             Idea(384, "Export the flights page", "As a table.", true, "DSN-2"),
