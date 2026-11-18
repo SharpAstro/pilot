@@ -315,8 +315,7 @@ public sealed class DesignsCaptureTests
         var buffer = new CellBuffer { ColorMode = ColorMode.TrueColor };
         TerminalWireframeSweepTests.Record(arranged, columns, rows, buffer);
         var lines = Enumerable.Range(0, rows).Select(y => string.Concat(Enumerable.Range(0, columns).Select(x => buffer.BackAt(x, y).Glyph))).ToArray();
-        var text = string.Join('
-', lines);
+        var text = string.Join('\n', lines);
         text.ShouldContain(state == "built" ? "PIL1153" : "Which ");
         Keep($"after-design-build-{state}-pilot-tui-{columns}x{rows}.png", DesignsWaitingIdeasTests.Png(lines));
     }
