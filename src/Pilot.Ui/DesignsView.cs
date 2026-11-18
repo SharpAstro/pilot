@@ -757,7 +757,7 @@ internal sealed class DesignsView<TSurface> : PilotWidgetBase<TSurface>
                 .Follows(new HitResult.ButtonHit(key), _ => StartIdea(idea)),
             _ => Layout.Builder.Text("Starting…", 12f, Dim, TextAlign.Center, TextAlign.Center).Pad(10f, 0f).WAuto().Bg(Button).WithTooltip($"Making the design of {idea.Qualified} on {StartNode}"));
         var row = Layout.Builder.HStack(
-            WrappedProse.OneLine(text, 13f, Bright, selectable: false, vAlign: TextAlign.Center).WStar().HFixed(26f).Whole($"{idea.Qualified}  {idea.Title}"),
+            WrappedProse.OneLine(text, 13f, Bright, vAlign: TextAlign.Center).WStar().HFixed(26f).Whole($"{idea.Qualified}  {idea.Title}"),
             button.WAuto().HFixed(26f)).WithGap(6f).Pad(4f, 0f).RowH(34f);
         return IdeaNote(idea) is { } note
             ? Layout.Builder.VStack(row, WrappedProse.OneLine(note, 12f, Bright).RowH(22f).Whole(note)).WithGap(0f)
