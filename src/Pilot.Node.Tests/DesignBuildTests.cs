@@ -172,6 +172,31 @@ public sealed class DesignBuildTests : IDisposable
         second.Made.ShouldNotBe(first.Made);
         var flight = _state.Flights().Single(f => f.Code == second.Made);
         (flight.FromDesign, flight.FromDesignVersion).ShouldBe((design.Id, 2));
+        flight.Repo.ShouldBe("pilot");
+        flight.FromIdea.ShouldBeNull();
+        var latest = _store.Find(design.Id)!.Builds.Last();
+        (latest.Repo, latest.Version, latest.Flight).ShouldBe(("pilot", 2, second.Made));
+        latest.Issue.ShouldNotBe(1);
         _store.Find(design.Id)!.Builds.Length.ShouldBe(2);
+    }
+
+    [Fact]
+    public async Task AFlightBuiltFromTheVersionStillRefusesItWhenTheDesignsBuildListLostTheEntry()
+    {
+        var design = Design("pilot");
+        var first = await Build(design.Id);
+        first.Ok.ShouldBeTrue(first.Error);
+        _store.Update(design.Id, r => r with { Builds = [] });
+        var issuesBefore = _github.IssuesCreated.Count;
+
+        var again = await Build(design.Id);
+
+        again.Ok.ShouldBeFalse();
+        again.Error.ShouldNotBeNull().ShouldContain("is being built already");
+        again.Error.ShouldContain(first.Made!);
+        _github.IssuesCreated.Count.ShouldBe(issuesBefore);
+
+        _state.PutFlight(_state.Flights().Single() with { State = FlightState.Landed });
+        (await Build(design.Id)).Ok.ShouldBeTrue();
     }
 }
