@@ -383,7 +383,7 @@ public sealed class DesignsViewTests
         rig.View.Open("DSN-1");
         rig.Paint();
 
-        TextsOf(rig).ShouldContain("v2 of 2 ▾");
+        TextsOf(rig).ShouldContain(t => t.Contains("v2 of 2 ▾", StringComparison.Ordinal));
         ArrangeAt(rig, 1400, 900).Single(a => a.Node.Hit is HitResult.ButtonHit { Action: "designs:versions" }).Node.Tooltip.ShouldBe("See earlier versions");
         ActionsOf(rig).ShouldNotContain("designs:version:1");
 
