@@ -153,7 +153,7 @@ internal sealed partial class PageData
     internal static DesignsScreen BuildableDesigns(DateTimeOffset now, bool repo, bool idea, FlightState? flight, bool longNames = false)
     {
         var full = DesignsFor("sample", now);
-        DesignRow Edit(DesignRow r) => r with { Repo = repo ? r.Repo : null, FromIdea = idea ? "pilot I381" : null };
+        DesignRow Edit(DesignRow r) => r with { Repo = repo ? r.Repo : null, FromIdea = idea ? "pilot I381" : null, ForIdeas = idea ? ["pilot I381"] : [] };
         var row = Edit(full.Rows[0]);
         var detail = full.Open!.Detail with { Row = row };
         var open = full.Open with { Detail = detail };
