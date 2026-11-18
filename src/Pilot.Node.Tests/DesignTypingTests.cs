@@ -194,7 +194,7 @@ public sealed class DesignTypingTests : IDisposable
         var published = Run(Verbs.DesignPublish, "louder", "owner");
 
         published.Ok.ShouldBeFalse();
-        published.Error.ShouldContain("renders are not of the draft");
+        published.Error!.ShouldContain("renders are not of the draft");
         _store.Find("DSN-1")!.Current.ShouldBe(1);
     }
 
