@@ -349,7 +349,7 @@ public static partial class PilotCommand
                             if (p.GetValue(ideaNewMilestone) is { Length: > 0 } newMilestone)
                             {
                                 return await Send(client, Verbs.PlanIdea, IdeaIds.Target(named, call.Number),
-                                    [.. p.GetValue(ideaMilestoneDescription) is { Length: > 0 } description ? [Verbs.NewMilestoneArg, newMilestone, description] : [Verbs.NewMilestoneArg, newMilestone], .. Anyway()], who, ct);
+                                    [Verbs.NewMilestoneArg, newMilestone, .. p.GetValue(ideaMilestoneDescription) is { Length: > 0 } description ? new[] { description } : [], .. Anyway()], who, ct);
                             }
                             return p.GetValue(ideaMilestone) is { Length: > 0 } milestone
                                 ? await Send(client, Verbs.PlanIdea, IdeaIds.Target(named, call.Number), [milestone, .. Anyway()], who, ct)
