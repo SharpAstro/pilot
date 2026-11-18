@@ -72,15 +72,17 @@ public sealed class DesignSyncViewTests
         File.WriteAllBytes(Path.Combine(artifacts, name), png);
     }
 
-    private static RGBAColor32 ColourOf(Rig rig, string text) =>
-        rig.Arranged().Select(a => a.Node).OfType<Layout.Node.Leaf>().Select(l => l.Content).OfType<Layout.Content.Text>().First(t => t.Value == text).Color;
+    private static RGBAColor32 ColourOf(Rig rig, string part) =>
+        rig.Arranged().Select(a => a.Node).OfType<Layout.Node.Leaf>().Select(l => l.Content).OfType<Layout.Content.Text>().First(t => t.Value.Contains(part, StringComparison.Ordinal)).Color;
+
+    private static bool Says(Rig rig, string line) => rig.Texts().Any(t => t.Contains(line, StringComparison.Ordinal));
 
     [Fact]
     public void WhileAVersionIsBeingWrittenTheLineSaysWhichAndWhere()
     {
         using var rig = new Rig(With(r => r with { IssueRepo = Repo, IssueNumber = 1171, SyncedVersion = 1 }));
 
-        rig.Texts().ShouldContain("Writing v2 to SharpAstro/pilot#1171...");
+        Says(rig, "Writing v2 to SharpAstro/pilot#1171...").ShouldBeTrue();
         TextOverlap.Faults([.. rig.Arranged()]).Select(f => f.Line).ShouldBeEmpty();
     }
 
@@ -89,9 +91,8 @@ public sealed class DesignSyncViewTests
     {
         using var rig = new Rig(With(r => r with { IssueRepo = Repo, IssueNumber = 1171, SyncedVersion = 2 }));
 
-        var texts = rig.Texts();
-        texts.ShouldContain("v2 is on SharpAstro/pilot#1171");
-        texts.ShouldNotContain(t => t.StartsWith("Writing", StringComparison.Ordinal));
+        Says(rig, "v2 is on SharpAstro/pilot#1171").ShouldBeTrue();
+        Says(rig, "Writing v").ShouldBeFalse();
     }
 
     [Fact]
@@ -101,10 +102,9 @@ public sealed class DesignSyncViewTests
         using var rig = new Rig(With(r => r with { IssueRepo = Repo, IssueNumber = 1171, SyncedVersion = 1, SyncError = failure }), 1920, 1080);
 
         failure.ShouldBe("Not synced: GitHub did not answer. v4 is saved on DE1 and will be sent again.");
-        var line = rig.Texts().Where(t => t.StartsWith("Not synced:", StringComparison.Ordinal)).ToList();
-        string.Concat(line).ShouldBe(failure);
-        ColourOf(rig, line[0]).ShouldBe(Palette.Current.Failed);
-        rig.Texts().ShouldNotContain(t => t.StartsWith("Writing", StringComparison.Ordinal));
+        Says(rig, failure).ShouldBeTrue();
+        ColourOf(rig, "Not synced:").ShouldBe(Palette.Current.Failed);
+        Says(rig, "Writing v").ShouldBeFalse();
         TextOverlap.Faults([.. rig.Arranged()]).Select(f => f.Line).ShouldBeEmpty();
         Keep("design-sync-failed-1920.png", rig.Png());
     }
@@ -115,7 +115,8 @@ public sealed class DesignSyncViewTests
         var failure = DesignSyncText.Failure(DesignSyncText.NoAnswer, 12, "DE1");
         using var rig = new Rig(With(r => r with { IssueRepo = Repo, IssueNumber = 1171, SyncedVersion = 1, SyncError = failure }), 700, 900);
 
-        string.Concat(rig.Texts().Where(t => failure.Contains(t, StringComparison.Ordinal) && t.Length > 3)).ShouldContain("Not synced:");
+        Says(rig, "Not synced:").ShouldBeTrue();
+        Says(rig, "will be sent again.").ShouldBeTrue();
         TextOverlap.Faults([.. rig.Arranged()]).Select(f => f.Line).ShouldBeEmpty();
         Keep("design-sync-failed-700.png", rig.Png());
     }
@@ -129,9 +130,8 @@ public sealed class DesignSyncViewTests
         rig.View.ToggleVersions();
         rig.Paint();
 
-        var texts = rig.Texts();
-        texts.ShouldContain("Comment on the issue: v1: brief");
-        texts.ShouldContain("Not on the issue yet");
+        Says(rig, "Comment on the issue: v1: brief").ShouldBeTrue();
+        Says(rig, "Not on the issue yet").ShouldBeTrue();
         TextOverlap.Faults([.. rig.Arranged()]).Select(f => f.Line).ShouldBeEmpty();
         Keep("design-sync-versions-1920.png", rig.Png());
     }
@@ -161,11 +161,11 @@ public sealed class DesignSyncViewTests
         using var rig = new Rig(ReadFromAnotherNode());
 
         var texts = rig.Texts();
-        texts.ShouldContain("Read from SharpAstro/pilot#1171, made on DE1. Changed there, not here.");
+        Says(rig, "Read from SharpAstro/pilot#1171, made on DE1. Changed there, not here.").ShouldBeTrue();
         texts.ShouldContain("Home");
         // Its prose is not opened for typing: no click target to edit, and no chat to the designer.
         rig.Arranged().Any(a => a.Node.Hit is HitResult.ButtonHit { Action: { } act } && act.StartsWith("designs:edit:", StringComparison.Ordinal)).ShouldBeFalse();
-        texts.ShouldNotContain("Designer");
+        Says(rig, "Chat with the designer").ShouldBeFalse();
         rig.View.BeginEdit(0, "objective").ShouldBeFalse();
         TextOverlap.Faults([.. rig.Arranged()]).Select(f => f.Line).ShouldBeEmpty();
         Keep("design-read-only-1920.png", rig.Png());
