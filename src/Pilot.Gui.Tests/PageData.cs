@@ -98,6 +98,8 @@ internal sealed partial class PageData
             At = now.AddHours(-i),
             Why = "brief",
             PrototypeSha256 = "ab",
+            // The first design was started from the idea I381, which the sample's ideas hold marked (PIL1152).
+            FromIdea = i == 0 ? "pilot I381" : null,
         };
         var first = Row(0);
         var rows = Enumerable.Range(0, count).Select(Row).ToArray();
@@ -111,7 +113,9 @@ internal sealed partial class PageData
         };
         var notes = lengthen ? "# Notes\n\n" + LongReport + "\n\n" + LongPath : "# Notes\n\n- the home screen has two tabs\n- Settings is one goto away";
         var page = new DesignPage(detail, 2, document, notes, [.. document.Screens.Select(s => new DesignRender(s.Id, s.Title ?? s.Id, null))]);
-        return new DesignsScreen(rows, "test", now, page);
+        // The sample's ideas (PIL1152): I381 and I384 are marked and have a design, I382 is marked and waits for one, I383 is not marked. The long state adds a waiting idea with a long title.
+        IdeaRow[] ideas = [.. DesignIdeas().Ideas, .. lengthen ? [new IdeaRow { Id = "I390", Repo = "pilot", Title = LongTitle, State = IdeaState.Noted, NeedsDesign = true, UpdatedAt = now }] : Array.Empty<IdeaRow>()];
+        return new DesignsScreen(rows, "test", now, page) { Ideas = ideas };
     }
 
     /// <summary>The issue's design (#1160): a title that runs on past the column, a long brief and no version, so its page shows the no-version text.</summary>

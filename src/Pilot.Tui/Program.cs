@@ -554,7 +554,7 @@ while (!stop.IsCancellationRequested)
             PilotPage.Fleet => fleet.Tree(fleetWatch.Screen(nodeWhere, feed.Summary(now), CanCommand, held.Entries, now)),
             PilotPage.Ideas => chrome.Ideas.Tree(pages.Ideas ?? new IdeasScreen([], [], [], pages.Sessions.Source, now)),
             PilotPage.Spend => chrome.Spend.Tree(spendReads.Screen ?? new SpendScreen(chrome.Spend.Window, null, null, pages.Sessions.Source, now)),
-            PilotPage.Designs => chrome.Designs.Tree(designReads.Screen(pages.Sessions.Source, now, chrome.Designs.OpenId) ?? DesignsScreen.Empty(pages.Sessions.Source, now)),
+            PilotPage.Designs => chrome.Designs.Tree(PilotChrome<DIR.Lib.RgbaImage>.WithIdeas(designReads.Screen(pages.Sessions.Source, now, chrome.Designs.OpenId) ?? DesignsScreen.Empty(pages.Sessions.Source, now), pages.Ideas)),
             PilotPage.Settings => settings.Tree(now, width),
             _ => home.Tree(new HomeScreen(pages.Flights, pages.Sessions, pages.Jobs, pages.Cards, pages.Machines)),
         };

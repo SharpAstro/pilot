@@ -85,6 +85,11 @@ internal sealed partial class IdeasView<TSurface>
         var ideas = IdeaIds.Order(screen.Ideas).ToList();
         var board = _board = IdeasBoard.Build(screen);
         Prune(board);
+        if (_showIdea is { } wanted)
+        {
+            _showIdea = null;
+            _selected = board.Sections.SelectMany(s => s.Items).FirstOrDefault(i => i.Idea?.Qualified == wanted)?.Key;
+        }
         // The selected row is one the board still holds: one the node's read moved away or closed is no longer selected.
         if (_selected is { } picked && board.Find(picked) is null)
         {

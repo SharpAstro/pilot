@@ -184,6 +184,11 @@ internal sealed class PilotChrome<TSurface>
             Show(PilotPage.Designs);
             Designs.Open(id);
         };
+        Designs.OnIdea = idea =>
+        {
+            Show(PilotPage.Ideas);
+            Ideas.ShowIdea(idea);
+        };
         // Every page reports the nodes it arranged to the one text check, under the name of what it shows now.
         Sessions.Arranged = nodes => TextCheck.Observe(Sessions.Transcript.Line is null ? "sessions" : "transcript", nodes, DpiScale);
         Flights.Arranged = nodes => TextCheck.Observe(
@@ -1138,6 +1143,10 @@ internal sealed class PilotChrome<TSurface>
     /// <summary>The pointer, so the rail resolves its own hover.</summary>
     public (float X, float Y)? Pointer { get; set; }
 
+    /// <summary>The Designs screen with the snapshot's ideas (PIL1152), so the page lists the ones waiting for a design; one that already carries its ideas is kept.</summary>
+    internal static DesignsScreen WithIdeas(DesignsScreen designs, IdeasScreen? ideas) =>
+        designs.Ideas is null && ideas is not null ? designs with { Ideas = [.. ideas.Ideas] } : designs;
+
     public void Render(SessionsScreen screen, RectF32 bounds) => Render(screen, null, bounds);
 
     public void Render(SessionsScreen screen, FlightsScreen? flights, RectF32 bounds) => Render(screen, flights, null, bounds);
@@ -1298,7 +1307,7 @@ internal sealed class PilotChrome<TSurface>
                     Spend.Render(spend ?? new SpendScreen(Spend.Window, null, null, screen.Source, screen.AsOf), rect);
                     break;
                 case PageKey when Page == PilotPage.Designs:
-                    Designs.Render(designs ?? DesignsScreen.Empty(screen.Source, screen.AsOf), rect);
+                    Designs.Render(WithIdeas(designs ?? DesignsScreen.Empty(screen.Source, screen.AsOf), ideas), rect);
                     break;
                 case PageKey when Page == PilotPage.Settings:
                     Settings.Render(DateTimeOffset.UtcNow, rect);
