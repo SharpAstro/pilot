@@ -251,7 +251,7 @@ public static partial class FilterTerms
     [GeneratedRegex("""Path\s*=\s*"([^"]+\.csproj)""", RegexOptions.IgnoreCase)]
     private static partial Regex SlnxProject();
 
-    [GeneratedRegex("""\"([^"]+\.csproj)\"""", RegexOptions.IgnoreCase)]
+    [GeneratedRegex(@"""([^""]+\.csproj)""", RegexOptions.IgnoreCase)]
     private static partial Regex SlnProject();
 
     // ---- the tests of a project ----
