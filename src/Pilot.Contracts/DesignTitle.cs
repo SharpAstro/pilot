@@ -11,7 +11,7 @@ public static class DesignTitle
     public const int MaxLength = 200;
 
     /// <summary>The brief's first non-empty line, whole up to <see cref="MaxLength"/> characters. A longer one is cut after the last word
-    /// that fits and ends in an ellipsis, never mid-word with nothing to say it was cut.</summary>
+    /// that fits (at the limit when its first 199 characters hold no space, as a pasted URL or hash) and ends in an ellipsis, so a cut always says so.</summary>
     public static string Of(string brief)
     {
         var line = brief.Split('\n').Select(l => l.Trim()).FirstOrDefault(l => l.Length > 0) ?? "";

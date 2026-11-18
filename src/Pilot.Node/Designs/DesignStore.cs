@@ -64,7 +64,7 @@ public sealed class DesignStore(string dataFolder, TimeProvider? time = null)
         throw new DesignException($"{id} is not a design id (DSN-<n>)");
     }
 
-    /// <summary>The title a brief gets when none is given: <see cref="DesignTitle.Of"/>, its first line whole, or cut at a word with an ellipsis.</summary>
+    /// <summary>The title a brief gets when none is given: <see cref="DesignTitle.Of"/>, its first line whole, or cut at a word, or at the limit when it has no space, with an ellipsis.</summary>
     public static string TitleOf(string brief) => DesignTitle.Of(brief);
 
     private static string[] NormaliseTerminals(string[] sizes) =>

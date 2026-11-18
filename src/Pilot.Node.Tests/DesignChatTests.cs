@@ -136,7 +136,7 @@ public sealed class DesignChatTests : IDisposable
         var id = await TurnStartedAsync();
         _state.RemoveSession(Job);
         Listed(SessionState.Failed, lastResponse: Start.AddMinutes(10), job: Other);
-        Working(id).ShouldBeTrue("a Failed row is not the designer's turn end; a fresh start stays Working until its own row is listed");
+        Working(id).ShouldBeTrue("a Failed row alone ends nothing: Live reads only an Idle or Ended row, so a fresh start stays Working until its own row is listed");
     }
 
     [Fact]
