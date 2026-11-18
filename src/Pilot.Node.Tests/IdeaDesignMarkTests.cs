@@ -111,9 +111,12 @@ public sealed class IdeaDesignMarkTests : IssueBoardFixture
     [Fact]
     public void TheRowMemberIsDefaultedSoAnOlderStoreReadsFalse()
     {
-        var row = JsonSerializer.Deserialize("""{"Id":"I1","Repo":"pilot"}""", PilotJsonContext.Default.IdeaRow);
+        // An older store wrote no needsDesign: a row serialised without the mark (it is omitted when false) reads back false.
+        var older = JsonSerializer.Serialize(new IdeaRow { Id = "I1", Repo = "pilot", Title = "t", State = IdeaState.Noted }, PilotJsonContext.Default.IdeaRow);
 
-        row.ShouldNotBeNull().NeedsDesign.ShouldBeFalse();
-        JsonSerializer.Serialize(new IdeaRow { Id = "I1", Repo = "pilot", Title = "t", State = IdeaState.Noted }, PilotJsonContext.Default.IdeaRow).ShouldNotContain("eedsDesign");
+        older.ShouldNotContain("eedsDesign");
+        JsonSerializer.Deserialize(older, PilotJsonContext.Default.IdeaRow).ShouldNotBeNull().NeedsDesign.ShouldBeFalse();
+        var marked = JsonSerializer.Serialize(new IdeaRow { Id = "I1", Repo = "pilot", Title = "t", State = IdeaState.Noted, NeedsDesign = true }, PilotJsonContext.Default.IdeaRow);
+        JsonSerializer.Deserialize(marked, PilotJsonContext.Default.IdeaRow).ShouldNotBeNull().NeedsDesign.ShouldBeTrue();
     }
 }
