@@ -1,3 +1,4 @@
+using Console.Lib;
 using DIR.Lib;
 using Layout = DIR.Lib.Layout;
 using Pilot.Contracts;
@@ -235,5 +236,88 @@ public sealed class DesignsCaptureTests
                 escaped.ShouldBe(0, $"{target} at {width}: {escaped} pixels outside the frame {frame} are painted by the player");
             }
         }
+    }
+
+    // ---- Build this version (PIL1153) ----
+
+    private static void Keep(string name, byte[] png)
+    {
+        if (Environment.GetEnvironmentVariable("PILOT_JOB_ARTIFACTS") is { Length: > 0 } artifacts)
+        {
+            Directory.CreateDirectory(artifacts);
+            File.WriteAllBytes(Path.Combine(artifacts, name), png);
+        }
+    }
+
+    /// <summary>The page of a built version with its flight and PR, and of a design with no repo asking for one, in pilot-gui at a narrow, a wide and a big window: PNGs for the PR, and the text overlap check passing.</summary>
+    [Theory]
+    [InlineData("built", 480, 900)]
+    [InlineData("built", 1280, 900)]
+    [InlineData("built", 1920, 1080)]
+    [InlineData("ask-repo", 480, 900)]
+    [InlineData("ask-repo", 1280, 900)]
+    [InlineData("ask-milestone", 1280, 900)]
+    public void ABuiltVersionAndTheBuildQuestionAreCapturedInPilotGuiWithNoTextOverlap(string state, int width, int height)
+    {
+        PageTime.Zone = TimeZoneInfo.Utc;
+        var screen = state == "built"
+            ? PageData.BuildableDesigns(Now, repo: true, idea: false, flight: FlightState.Flying, longNames: true)
+            : PageData.BuildableDesigns(Now, repo: state == "ask-milestone", idea: state == "ask-milestone", flight: null, longNames: true);
+        using var renderer = new RgbaImageRenderer((uint)width, (uint)height);
+        using var accent = Pilot.Ui.Palette.StandardForCapture(null);
+        var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
+        chrome.Autopilot.OnToggle = _ => Task.FromResult<string?>(null);
+        chrome.Show(PilotPage.Designs);
+        chrome.Designs.OnBuild = (_, _, _, _) => { };
+        chrome.Designs.Open("DSN-1");
+        var data = PageData.For("sample");
+        var bounds = new RectF32(0, 0, width, height);
+        chrome.Render(data.Sessions, data.Flights, data.Cards, data.Jobs, data.Fleet, data.Repos, data.PullRequests, bounds, data.Machines, null, data.Spend, screen);
+        if (state != "built")
+        {
+            chrome.Designs.Build().ShouldBeFalse("the question is asked before anything is sent");
+            chrome.Render(data.Sessions, data.Flights, data.Cards, data.Jobs, data.Fleet, data.Repos, data.PullRequests, bounds, data.Machines, null, data.Spend, screen);
+        }
+        var arranged = Layout.Engine.Arrange(chrome.Designs.Tree(screen), new Rect<float>(0, 0, width, height), new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, 1f));
+        TextOverlap.Faults(arranged).Select(f => f.Line).ShouldBeEmpty($"{state} at {width}");
+        Keep($"after-design-build-{state}-pilot-gui-{width}.png", SharpAstro.Png.PngWriter.Encode([.. renderer.Surface.Pixels], width, height));
+    }
+
+    /// <summary>The same states in pilot-tui at the terminal sizes of the sweep, as pictures of the cells.</summary>
+    [Theory]
+    [InlineData("built", 80, 24)]
+    [InlineData("built", 100, 30)]
+    [InlineData("built", 160, 44)]
+    [InlineData("ask-repo", 80, 24)]
+    [InlineData("ask-repo", 100, 30)]
+    [InlineData("ask-milestone", 100, 30)]
+    public void ABuiltVersionAndTheBuildQuestionAreCapturedInPilotTui(string state, int columns, int rows)
+    {
+        PageTime.Zone = TimeZoneInfo.Utc;
+        var screen = state == "built"
+            ? PageData.BuildableDesigns(Now, repo: true, idea: false, flight: FlightState.Flying, longNames: true)
+            : PageData.BuildableDesigns(Now, repo: state == "ask-milestone", idea: state == "ask-milestone", flight: null, longNames: true);
+        using var vessel = new RgbaImageRenderer(1, 1);
+        var chrome = new PilotChrome<RgbaImage>(vessel, new SessionsView<RgbaImage>(vessel)) { FontPath = SessionsCapture.FontPath };
+        chrome.WithoutScrollBars();
+        chrome.Show(PilotPage.Designs);
+        chrome.Designs.Terminal = (columns, rows);
+        chrome.Designs.OnBuild = (_, _, _, _) => { };
+        chrome.Designs.Open("DSN-1");
+        var rail = TerminalRail.Tree(PilotPage.Designs, GlyphMode.Emoji, null, null, Now, _ => { }, null, columns);
+        Layout.Node Tree() => chrome.Designs.Tree(screen);
+        var arranged = TerminalFrame.Build(rail, Tree(), null, columns, rows, CellMeasureContext.PixelAuthored);
+        if (state != "built")
+        {
+            chrome.Designs.Build().ShouldBeFalse();
+            arranged = TerminalFrame.Build(rail, Tree(), null, columns, rows, CellMeasureContext.PixelAuthored);
+        }
+        var buffer = new CellBuffer { ColorMode = ColorMode.TrueColor };
+        TerminalWireframeSweepTests.Record(arranged, columns, rows, buffer);
+        var lines = Enumerable.Range(0, rows).Select(y => string.Concat(Enumerable.Range(0, columns).Select(x => buffer.BackAt(x, y).Glyph))).ToArray();
+        var text = string.Join('
+', lines);
+        text.ShouldContain(state == "built" ? "PIL1153" : "Which ");
+        Keep($"after-design-build-{state}-pilot-tui-{columns}x{rows}.png", DesignsWaitingIdeasTests.Png(lines));
     }
 }

@@ -78,6 +78,99 @@ public sealed class TerminalDesignsViewTests
         chrome.Designs.OpenId.ShouldBe("DSN-7");
     }
 
+    private static (PilotChrome<RgbaImage> Chrome, RgbaImageRenderer Vessel) Opened(DesignsScreen screen, int columns = Columns, int rows = Rows)
+    {
+        var vessel = new RgbaImageRenderer(1, 1);
+        var chrome = new PilotChrome<RgbaImage>(vessel, new SessionsView<RgbaImage>(vessel)) { FontPath = SessionsCapture.FontPath };
+        chrome.WithoutScrollBars();
+        chrome.Show(PilotPage.Designs);
+        chrome.Designs.Terminal = (columns, rows);
+        chrome.Designs.Open(screen.Open!.Detail.Row.Id);
+        return (chrome, vessel);
+    }
+
+    private static Layout.ArrangedNode<int> Button(System.Collections.Immutable.ImmutableArray<Layout.ArrangedNode<int>> arranged, string action) =>
+        arranged.Single(a => a.Node.Hit is HitResult.ButtonHit hit && hit.Action == action);
+
+    [Fact]
+    public void TheTerminalPageSendsDesignBuildForTheVersionOnShowWithNoQuestionWhenTheDesignHasARepo()
+    {
+        var screen = PageData.BuildableDesigns(PageData.Now, repo: true, idea: false, flight: null);
+        var (chrome, vessel) = Opened(screen);
+        using var vesselScope = vessel;
+        (string Id, int Version, string? Repo, string? Milestone)? asked = null;
+        chrome.Designs.OnBuild = (id, version, repo, milestone) => asked = (id, version, repo, milestone);
+
+        var arranged = Frame(chrome, screen);
+        arranged.ShouldContain(a => IsText(a, "Build this version"));
+        var button = Button(arranged, "designs:build");
+        button.Bounds.Height.ShouldBe(1, "a row of cells");
+        CellLayout.HitTest(arranged, button.Bounds.X + 1, button.Bounds.Y).ShouldNotBeNull();
+
+        asked.ShouldBe(("DSN-1", 2, null, null));
+    }
+
+    [Fact]
+    public void TheTerminalPageAsksForTheRepoOfADesignWithNoneAndThenSends()
+    {
+        var screen = PageData.BuildableDesigns(PageData.Now, repo: false, idea: false, flight: null);
+        var (chrome, vessel) = Opened(screen);
+        using var vesselScope = vessel;
+        var sent = new List<string?>();
+        chrome.Designs.OnBuild = (_, _, repo, _) => sent.Add(repo);
+
+        var arranged = Frame(chrome, screen);
+        var button = Button(arranged, "designs:build");
+        CellLayout.HitTest(arranged, button.Bounds.X + 1, button.Bounds.Y).ShouldNotBeNull();
+        sent.ShouldBeEmpty("a repo is asked for before anything is sent");
+
+        arranged = Frame(chrome, screen);
+        arranged.ShouldContain(a => IsText(a, "Which repo is it built in?"));
+        var chip = Button(arranged, "designs:build-repo:tianwen");
+        CellLayout.HitTest(arranged, chip.Bounds.X + 1, chip.Bounds.Y).ShouldNotBeNull();
+
+        sent.ShouldBe(["tianwen"]);
+    }
+
+    [Fact]
+    public void TheTerminalPageAsksForTheMilestoneOfADesignFromAnIdea()
+    {
+        var screen = PageData.BuildableDesigns(PageData.Now, repo: true, idea: true, flight: null);
+        var (chrome, vessel) = Opened(screen);
+        using var vesselScope = vessel;
+        var sent = new List<string?>();
+        chrome.Designs.OnBuild = (_, _, _, milestone) => sent.Add(milestone);
+
+        var arranged = Frame(chrome, screen);
+        var button = Button(arranged, "designs:build");
+        CellLayout.HitTest(arranged, button.Bounds.X + 1, button.Bounds.Y).ShouldNotBeNull();
+        arranged = Frame(chrome, screen);
+        arranged.ShouldContain(a => IsText(a, "Which milestone is its idea planned into?"));
+        var chip = Button(arranged, "designs:build-milestone:11");
+        CellLayout.HitTest(arranged, chip.Bounds.X + 1, chip.Bounds.Y).ShouldNotBeNull();
+
+        sent.ShouldBe(["Ideas"]);
+    }
+
+    [Fact]
+    public void TheTerminalPageShowsABuiltVersionsFlightStateAndPrAndOffersNoSecondBuildWhileItFlies()
+    {
+        var screen = PageData.BuildableDesigns(PageData.Now, repo: true, idea: false, flight: FlightState.Flying);
+        var (chrome, vessel) = Opened(screen);
+        using var vesselScope = vessel;
+        string? flight = null;
+        chrome.Designs.OnFlight = code => flight = code;
+
+        var arranged = Frame(chrome, screen);
+        arranged.ShouldContain(a => IsText(a, "PIL1153"));
+        arranged.ShouldContain(a => IsText(a, "flying"));
+        arranged.ShouldContain(a => IsText(a, "PR #1170"));
+        arranged.Any(a => a.Node.Hit is HitResult.ButtonHit { Action: "designs:build" }).ShouldBeFalse();
+        var link = Button(arranged, "designs:flight:PIL1153");
+        CellLayout.HitTest(arranged, link.Bounds.X + 1, link.Bounds.Y).ShouldNotBeNull();
+        flight.ShouldBe("PIL1153");
+    }
+
     /// <summary>
     /// The issue's design (#1160) in cells: its title made from the brief by the store's rule, a long brief, and no version. At every terminal
     /// sweep size the title line carries the whole title on hover and its cells hold it whole or end in an ellipsis, and the no-version text is

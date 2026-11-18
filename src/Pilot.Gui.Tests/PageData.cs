@@ -135,6 +135,35 @@ internal sealed partial class PageData
         return full with { Rows = [full.Rows[0] with { Title = title, Current = null, Versions = 0 }, .. full.Rows.Skip(1)], Open = DesignPages.Load(detail) };
     }
 
+    /// <summary>
+    /// The first design with its page on v2 as PIL1153's Build this version sees it: <paramref name="repo"/> says whether the design names a repo, <paramref name="idea"/> whether it came from the
+    /// idea I381, and <paramref name="flight"/> the state of a flight built from v2 (null: none). The node's repos and open milestones are listed, and the flight (when there is one) has a PR.
+    /// </summary>
+    internal static DesignsScreen BuildableDesigns(DateTimeOffset now, bool repo, bool idea, FlightState? flight, bool longNames = false)
+    {
+        var full = DesignsFor("sample", now);
+        DesignRow Edit(DesignRow r) => r with { Repo = repo ? r.Repo : null, FromIdea = idea ? "pilot I381" : null };
+        var row = Edit(full.Rows[0]);
+        var detail = full.Open!.Detail with { Row = row };
+        var open = full.Open with { Detail = detail };
+        FlightRow[] flights = flight is { } state
+            ? [new FlightRow
+            {
+                Code = "PIL1153", Repo = "pilot", RepoPath = "C:/repos/pilot", Issue = 1153, Branch = "flight/pil1153", Worktree = "C:/repos/pilot/.claude/worktrees/pil1153", Base = "origin/main",
+                State = state, CreatedAt = now.AddHours(-2), FromDesign = row.Id, FromDesignVersion = 2, FromDesignSha256 = "ab",
+                PullRequest = state == FlightState.Landed ? 1160 : 1170, PullRequestUrl = "https://github.com/SharpAstro/pilot/pull/1170",
+            },
+            new FlightRow
+            {
+                Code = "PIL9", Repo = "pilot", RepoPath = "C:/repos/pilot", Issue = 9, Branch = "flight/pil9", Worktree = "C:/repos/pilot/.claude/worktrees/pil9", Base = "origin/main",
+                State = FlightState.Flying, CreatedAt = now.AddHours(-1), FromDesign = row.Id, FromDesignVersion = 1,
+            }]
+            : [];
+        string[] repos = longNames ? ["pilot", "tianwen", LongWord] : ["pilot", "tianwen"];
+        MilestoneRow[] milestones = [new MilestoneRow { Repo = "pilot", Number = 12, Title = longNames ? LongTitle : "Designs: build a version" }, new MilestoneRow { Repo = "pilot", Number = 11, Title = "Ideas" }, new MilestoneRow { Repo = "tianwen", Number = 3, Title = "Other repo" }];
+        return full with { Rows = [row, .. full.Rows.Skip(1)], Open = open, Flights = flights, Repos = repos, Milestones = milestones };
+    }
+
     internal static string TargetsPrototypePath => Path.Combine(AppContext.BaseDirectory, "Fixtures", "Designs", "targets.prototype.json");
 
     /// <summary>One design whose prototype names Desktop and Phone and has a rail for a regular target and a bottom bar for a compact one.</summary>

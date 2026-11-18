@@ -184,6 +184,12 @@ internal sealed class PilotChrome<TSurface>
             Show(PilotPage.Designs);
             Designs.Open(id);
         };
+        Designs.OnFlight = code =>
+        {
+            Show(PilotPage.Flights);
+            Flights.OpenDetail(code);
+        };
+        Designs.OnUrl = url => Cards.OnOpen?.Invoke(url);
         Designs.OnIdea = idea =>
         {
             Show(PilotPage.Ideas);
@@ -1145,7 +1151,9 @@ internal sealed class PilotChrome<TSurface>
 
     /// <summary>The Designs screen with the snapshot's ideas (PIL1152), so the page lists the ones waiting for a design; one that already carries its ideas is kept.</summary>
     internal static DesignsScreen WithIdeas(DesignsScreen designs, IdeasScreen? ideas) =>
-        designs.Ideas is null && ideas is not null ? designs with { Ideas = [.. ideas.Ideas] } : designs;
+        designs.Ideas is null && ideas is not null
+            ? designs with { Ideas = [.. ideas.Ideas], Flights = designs.Flights ?? ideas.Flights, Milestones = designs.Milestones ?? ideas.Milestones, Repos = designs.Repos ?? ideas.Repos }
+            : designs;
 
     public void Render(SessionsScreen screen, RectF32 bounds) => Render(screen, null, bounds);
 

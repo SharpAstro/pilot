@@ -12,7 +12,7 @@ namespace Pilot.Ui;
 /// and NOTES.md and the brief beside it. The player is a widget of its own (<see cref="Player"/>, which the chrome lists after the page, so the router
 /// reaches its <see cref="ClickableRegion"/>s as it reaches any widget's); the page's own buttons all sit outside the rectangle it plays in.
 /// </summary>
-internal sealed class DesignsView<TSurface> : PilotWidgetBase<TSurface>
+internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
 {
     public DesignsView(Renderer<TSurface> renderer) : base(renderer)
     {
@@ -225,6 +225,7 @@ internal sealed class DesignsView<TSurface> : PilotWidgetBase<TSurface>
     private void ApplyStartAnswer()
     {
         ApplyIdeaAnswers();
+        ApplyBuildAnswer();
         if (Interlocked.Exchange(ref _startAnswer, null) is not { } answer)
         {
             return;
@@ -659,6 +660,7 @@ internal sealed class DesignsView<TSurface> : PilotWidgetBase<TSurface>
     {
         ApplyStartAnswer();
         Palette.Use(Night);
+        NoteBuildTarget(screen);
         var open = OpenId is { } id && screen.Open is { } shown && shown.Detail.Row.Id == id ? shown : null;
         if (OpenId is null)
         {
@@ -867,6 +869,7 @@ internal sealed class DesignsView<TSurface> : PilotWidgetBase<TSurface>
             right.Insert(0, WrappedProse.Of("This design has no version yet. The brief is below; a version is made once a draft is checked, rendered and published.", 14f, Dim));
         }
         right.AddRange(Versions(page));
+        right.AddRange(BuildPart(page));
         if (row.FromIdea is { Length: > 0 } fromIdea)
         {
             right.Add(Heading("Made from"));
