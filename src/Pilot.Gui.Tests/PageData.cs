@@ -200,7 +200,7 @@ internal sealed partial class PageData
             }),
         };
         var root = blank
-            ? new System.Text.Json.Nodes.JsonObject { ["kind"] = "dock", ["background"] = "ContentBg" }
+            ? new System.Text.Json.Nodes.JsonObject { ["kind"] = "dock", ["background"] = "ContentBg", ["children"] = new System.Text.Json.Nodes.JsonArray(new System.Text.Json.Nodes.JsonObject { ["kind"] = "hstack" }) }
             : new System.Text.Json.Nodes.JsonObject { ["kind"] = "dock", ["background"] = "ContentBg", ["children"] = new System.Text.Json.Nodes.JsonArray(header, body) };
         doc["screens"] = new System.Text.Json.Nodes.JsonArray(new System.Text.Json.Nodes.JsonObject { ["id"] = "home", ["title"] = "Home", ["root"] = root });
     });
