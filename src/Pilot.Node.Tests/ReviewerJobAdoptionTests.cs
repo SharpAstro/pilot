@@ -234,7 +234,6 @@ public sealed class ReviewerJobAdoptionTests : ReviewTestsBase
         var ended = _state.Jobs().Single(j => j.Id == running);
 
         ended.State.ShouldBe(JobState.Cancelled);
-        _state.Jobs().Single(j => j.Id == running).State.ShouldBe(JobState.Cancelled);
         await jobs.StopAsync(CancellationToken.None);
     }
 
