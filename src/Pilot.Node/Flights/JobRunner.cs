@@ -1339,8 +1339,7 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
             _ when ended.Error?.StartsWith(TimeoutPrefix, StringComparison.Ordinal) == true =>
                 new CheckRun(-1, $"the check was stopped at {CheckLimit.Describe(ended.Timeout)} of running: {basis ?? "its limit"}") { StoppedByBudget = true, Saturation = share },
             // Exited 0 but ended failed: it ran no test (pilot #1157). Not a pass, and its tail says why.
-            _ when ended.ExitCode == 0 => new CheckRun(-1, string.IsNullOrEmpty(tail) ? ended.Error ?? "the check ran no test" : $"{ended.Error}
-{tail}"),
+            _ when ended.ExitCode == 0 => new CheckRun(-1, string.IsNullOrEmpty(tail) ? ended.Error ?? "the check ran no test" : $"{ended.Error}\n{tail}"),
             _ when ended.ExitCode is { } code => new CheckRun(code, tail),
             _ => new CheckRun(-1, string.IsNullOrEmpty(tail) ? ended.Error ?? "the check did not run" : $"{ended.Error}\n{tail}"),
         };
