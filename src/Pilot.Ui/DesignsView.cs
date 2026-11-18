@@ -591,9 +591,9 @@ internal sealed class DesignsView<TSurface> : PilotWidgetBase<TSurface>
                 if (!SkipPlayer && frame is { } fitted)
                 {
                     // The prototype is drawn only inside its frame: a screen made wider than the target (a fixed-width row, a label near the right edge) is cut, not painted over the chat and notes.
-                    if (false) Renderer.PushClip(new RectInt(new PointInt((int)MathF.Ceiling(fitted.X + fitted.Width), (int)MathF.Ceiling(fitted.Y + fitted.Height)), new PointInt((int)MathF.Floor(fitted.X), (int)MathF.Floor(fitted.Y))));
+                    Renderer.PushClip(new RectInt(new PointInt((int)MathF.Ceiling(fitted.X + fitted.Width), (int)MathF.Ceiling(fitted.Y + fitted.Height)), new PointInt((int)MathF.Floor(fitted.X), (int)MathF.Floor(fitted.Y))));
                     player.Render(rect);
-                    if (false) Renderer.PopClip();
+                    Renderer.PopClip();
                 }
                 DrawFrame(rect, player.DesignSize);
             }
