@@ -73,7 +73,7 @@ public sealed class EmptyFilterJobTests : JobTestsBase
     [Fact]
     public async Task ASolutionRunWithOneProjectsNoMatchAndAnotherPassingSucceeds()
     {
-        var ended = await RunAs("dotnet test S.slnx", FakeScript.Prints(0, NoMatch, "Passed!  - Failed: 0, Passed: 4, Skipped: 0, Total: 4"));
+        var ended = await RunAs("dotnet test S.slnx --filter Category=Fast", FakeScript.Prints(0, NoMatch, "Passed!  - Failed: 0, Passed: 4, Skipped: 0, Total: 4"));
 
         ended.State.ShouldBe(JobState.Succeeded);
     }
