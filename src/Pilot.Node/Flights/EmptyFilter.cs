@@ -67,7 +67,7 @@ internal sealed partial class EmptyFilter
                     empty.Read(line);
                 }
             }
-            catch (IOException)
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
             {
                 // An unreadable log leaves the output flags unset; the term check below still runs.
             }

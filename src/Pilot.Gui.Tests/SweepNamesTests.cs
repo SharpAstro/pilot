@@ -6,7 +6,7 @@ namespace Pilot.Gui.Tests;
 
 /// <summary>
 /// The documented filters find every sweep class (pilot #1157): <c>FullyQualifiedName~TerminalWireframeSweep</c> runs the terminal sweep and
-/// <c>FullyQualifiedName~WireframeSweep</c> the pixel sweep. A class renamed past its term would pass a filtered run without running.
+/// <c>FullyQualifiedName~WireframeSweep</c> runs every sweep class, the pixel ones and the terminal ones too, since "TerminalWireframeSweep" contains the term. A class renamed past its term would pass a filtered run without running.
 /// </summary>
 [Trait("Category", "Invariant")]
 public sealed class SweepNamesTests
