@@ -64,7 +64,8 @@ public sealed class DesignBuilds(NodeState state, DesignStore store, RepoCatalog
         // Refused while a flight built from this version is in the air; a landed one (or one withdrawn, which the node no longer lists) lets it be built again.
         var flying = design.Builds.Where(b => b.Version == version && b.Flight is { Length: > 0 })
             .Select(b => state.Flights().FirstOrDefault(f => string.Equals(f.Code, b.Flight, StringComparison.OrdinalIgnoreCase)))
-            .FirstOrDefault(f => f is { State: not FlightState.Landed });
+            .FirstOrDefault(f => f is { State: not FlightState.Landed })
+            ?? state.Flights().FirstOrDefault(f => string.Equals(f.FromDesign, id, StringComparison.OrdinalIgnoreCase) && f.FromDesignVersion == version && f.State != FlightState.Landed);
         if (flying is not null)
         {
             throw new DesignException($"{id} v{version} is being built already: flight {flying.Code} is {flying.State.ToString().ToLowerInvariant()}; build it again once that flight has landed or been withdrawn");
@@ -79,9 +80,9 @@ public sealed class DesignBuilds(NodeState state, DesignStore store, RepoCatalog
         string repoName;
         int issue;
         string? way;
-        if (idea is { } from)
+        if (idea is { } from && design.Builds.Length == 0 && !state.Flights().Any(f => string.Equals(f.FromDesign, id, StringComparison.OrdinalIgnoreCase)))
         {
-            // The idea's own issue is the build's: plan-idea makes its flight (and refuses with the open milestones when none is named); no second issue is filed.
+            // The first build of an idea-born design: the idea's own issue is the build's: plan-idea makes its flight (and refuses with the open milestones when none is named); no second issue is filed.
             var repoOfIdea = from.Repo ?? (Arg(1).Length > 0 ? Arg(1) : design.Repo) ?? IdeaIds.DefaultRepo;
             var (name, path) = await RepoOfAsync(repoOfIdea, cancellationToken);
             var planned = await ideas.RunAsync(command with
@@ -110,7 +111,8 @@ public sealed class DesignBuilds(NodeState state, DesignStore store, RepoCatalog
         }
         else
         {
-            var repoGiven = Arg(1).Length > 0 ? Arg(1) : design.Repo;
+            // A later build of an idea-born design (the idea has its flight and has left the Ideas milestone) files a fresh issue in the idea's repo, as a design with no idea does.
+            var repoGiven = Arg(1).Length > 0 ? Arg(1) : design.Repo ?? idea?.Repo;
             if (repoGiven is not { Length: > 0 })
             {
                 throw new DesignException($"{id} names no repo and none is given: build it into one with --repo <name>");

@@ -664,6 +664,23 @@ public sealed class DesignsViewTests
     }
 
     [Fact]
+    public void ALaterBuildOfADesignFromAnIdeaAsksForNoMilestone()
+    {
+        var screen = PageData.BuildableDesigns(Now, repo: true, idea: true, flight: null);
+        var row = screen.Rows[0] with { Builds = [new DesignBuildRow { Version = 1, Flight = "PIL1", Repo = "pilot", Issue = 1, At = Now }] };
+        screen = screen with { Rows = [row, .. screen.Rows.Skip(1)], Open = screen.Open! with { Detail = screen.Open.Detail with { Row = row } } };
+        using var rig = new Rig(screen);
+        var sent = new List<(string? Repo, string? Milestone)>();
+        rig.View.OnBuild = (_, _, repo, milestone) => sent.Add((repo, milestone));
+        rig.View.Open("DSN-1");
+        rig.Paint();
+
+        rig.Click(rig.Region(Painted(rig.View), h => h is HitResult.ButtonHit { Action: "designs:build" }));
+
+        sent.ShouldBe([(null, null)]);
+    }
+
+    [Fact]
     public void CancellingTheAskDropsTheChoiceAndSendsNothing()
     {
         using var rig = new Rig(PageData.BuildableDesigns(Now, repo: false, idea: false, flight: null));

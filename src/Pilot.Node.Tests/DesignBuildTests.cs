@@ -147,4 +147,31 @@ public sealed class DesignBuildTests : IDisposable
         _github.IssueComments.Any(c => c.Number == 1 && c.Body.Contains(design.PrototypeSha256!)).ShouldBeTrue();
         _store.Find(design.Id)!.Builds.ShouldHaveSingleItem().Issue.ShouldBe(1);
     }
+
+    [Fact]
+    public async Task ASecondVersionOfAnIdeaBornDesignAfterTheFirstLandedFilesAFreshIssueInTheIdeasRepo()
+    {
+        _github.AddMilestone(Repo, "v1");
+        (await _ideas.RunAsync(new CommandRequest { Verb = Verbs.NoteIdea, Target = Verbs.RepoTarget(IdeaIds.DefaultRepo), Args = ["Night list"], Who = "tests" }, Ct)).Ok.ShouldBeTrue();
+        var design = Design(null, fromIdea: "pilot I1");
+        var first = await Build(design.Id, "", "", "v1");
+        first.Ok.ShouldBeTrue(first.Error);
+        var landed = _state.Flights().Single();
+        _state.PutFlight(landed with { State = FlightState.Landed });
+
+        var v2 = Path.Combine(_store.FolderOf(design.Id), DesignStore.VersionsFolderName, "v2");
+        Directory.CreateDirectory(v2);
+        File.WriteAllText(Path.Combine(v2, DesignStore.PrototypeFile), "{\"width\":1280,\"v\":2}");
+        _store.Update(design.Id, r => r with { Current = 2, Versions = 2 });
+        var issuesBefore = _github.IssuesCreated.Count;
+
+        var second = await Build(design.Id, "2");
+
+        second.Ok.ShouldBeTrue(second.Error);
+        _github.IssuesCreated.Count.ShouldBe(issuesBefore + 1);
+        second.Made.ShouldNotBe(first.Made);
+        var flight = _state.Flights().Single(f => f.Code == second.Made);
+        (flight.FromDesign, flight.FromDesignVersion).ShouldBe((design.Id, 2));
+        _store.Find(design.Id)!.Builds.Length.ShouldBe(2);
+    }
 }

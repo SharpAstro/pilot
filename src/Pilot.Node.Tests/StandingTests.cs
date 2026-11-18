@@ -72,6 +72,7 @@ public sealed class StandingTests
             (Verbs.RestartWatchtower, Verbs.WatchtowerTarget, []),
             (Verbs.PostReview, "flight/TIA1", []),
             (Verbs.SyncRepos, Verbs.NodeTarget, []),
+            (Verbs.DesignBuild, Verbs.DesignTarget("DSN-1"), []),
         })
         {
             (await Error(node, Command(verb, target, lookout, false, args))).ShouldBe($"{verb} is the controller's, not the watchtower's: leave its card open for them");
@@ -303,7 +304,7 @@ public sealed class StandingTests
         }
 
         // Nothing that reaches outside the flight, whatever it targets.
-        foreach (var (verb, target) in new[] { (Verbs.CreateIssue, "repo/tianwen"), (Verbs.CreateFlight, Verbs.NodeTarget), (Verbs.SyncRepos, Verbs.NodeTarget) })
+        foreach (var (verb, target) in new[] { (Verbs.CreateIssue, "repo/tianwen"), (Verbs.CreateFlight, Verbs.NodeTarget), (Verbs.SyncRepos, Verbs.NodeTarget), (Verbs.DesignBuild, Verbs.DesignTarget("DSN-1")) })
         {
             (await Error(node, Command(verb, target, worker, true, "x"))).ShouldStartWith($"{verb} is the controller's, not a flight session's: ");
             // It says why the sender counts as a flight session (its plane, its name) and where the command works (pilot #1020).

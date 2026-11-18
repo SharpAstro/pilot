@@ -47,7 +47,8 @@ internal sealed partial class DesignsView<TSurface>
     // A design with a repo of its own, or one from an idea (whose repo is the idea's), asks for no repo.
     internal static bool NeedsRepo(DesignRow row) => string.IsNullOrWhiteSpace(row.Repo) && string.IsNullOrWhiteSpace(row.FromIdea);
 
-    internal static bool NeedsMilestone(DesignRow row) => !string.IsNullOrWhiteSpace(row.FromIdea);
+    // Only the first build plans the idea; a later one files a fresh issue in the idea's repo and asks for no milestone.
+    internal static bool NeedsMilestone(DesignRow row) => !string.IsNullOrWhiteSpace(row.FromIdea) && row.Builds.Length == 0;
 
     /// <summary>The flights built from the version <paramref name="version"/> of the design <paramref name="id"/> on the screen, oldest first.</summary>
     internal static FlightRow[] BuiltFrom(DesignsScreen? screen, string id, int version) => DesignReads.BuiltOf(screen?.Flights, id, version);
