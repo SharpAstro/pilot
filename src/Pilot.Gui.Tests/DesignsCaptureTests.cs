@@ -216,11 +216,10 @@ public sealed class DesignsCaptureTests
 
     private static void Keep(string name, byte[] png)
     {
-        if (Environment.GetEnvironmentVariable("PILOT_JOB_ARTIFACTS") is { Length: > 0 } artifacts)
-        {
-            Directory.CreateDirectory(artifacts);
-            File.WriteAllBytes(Path.Combine(artifacts, name), png);
-        }
+        // In the job's artifacts when a pilot run job gives a place for them, else beside the test build (kept for the PR).
+        var artifacts = Environment.GetEnvironmentVariable("PILOT_JOB_ARTIFACTS") is { Length: > 0 } given ? given : Path.Combine(AppContext.BaseDirectory, "captures");
+        Directory.CreateDirectory(artifacts);
+        File.WriteAllBytes(Path.Combine(artifacts, name), png);
     }
 
     /// <summary>The page of a built version with its flight and PR, and of a design with no repo asking for one, in pilot-gui at a narrow, a wide and a big window: PNGs for the PR, and the text overlap check passing.</summary>
