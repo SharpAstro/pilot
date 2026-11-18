@@ -225,9 +225,13 @@ public sealed class ReviewerJobAdoptionTests : ReviewTestsBase
         await Until(running, j => j.State == JobState.Running);
         var after = Session("new00005", "du1-z2-review", DateTimeOffset.UtcNow);
         jobs.AfterEndedRow = _ => jobs.Dispatch(new JobRunner.Adopted(running, after.Id, after.Name, null, null));
+        // SlotFreed fires after AfterEndedRow and Finish, so waiting on it orders the asserts after the late adoption.
+        var freed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        jobs.SlotFreed = id => { if (id == running) freed.TrySetResult(); };
 
         jobs.Cancel(new CommandRequest { Verb = Verbs.CancelJob, Target = Verbs.JobTarget(running), Who = "test" });
-        var ended = await Until(running, j => j.State is not (JobState.Queued or JobState.Running));
+        await freed.Task.WaitAsync(Ceiling, Ct);
+        var ended = _state.Jobs().Single(j => j.Id == running);
 
         ended.State.ShouldBe(JobState.Cancelled);
         _state.Jobs().Single(j => j.Id == running).State.ShouldBe(JobState.Cancelled);
