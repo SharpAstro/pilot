@@ -611,8 +611,8 @@ public sealed partial class IdeaCommander(NodeState state, Planes planes, RepoCa
         var target = existing?.Title ?? wanted;
 
         // An idea marked as needing a design waits for one (PIL1152): its design must have a published version, or the person plans anyway.
-        var design = Designs?.FindByIdea(NodeState.IdeaKey(name, id));
-        if (issue.NeedsDesign && !anyway && design?.Current is null)
+        var published = (Designs?.ForIdea(NodeState.IdeaKey(name, id)) ?? []).Where(d => d.Current is not null).ToArray();
+        if (issue.NeedsDesign && !anyway && published.Length == 0)
         {
             throw new FlightException($"{id} needs a design and has none yet: start its design (pilot idea {id} design start), or plan anyway ({Verbs.AnywayFlag})");
         }
@@ -648,11 +648,11 @@ public sealed partial class IdeaCommander(NodeState state, Planes planes, RepoCa
             await RefreshAsync(name, path, cancellationToken);
             throw new FlightException($"flight {code} is made on {id}, but it stays in {IdeaIds.Milestone}: {ex.Message}");
         }
-        if (design is { Current: { } version })
+        foreach (var design in published)
         {
             try
             {
-                await github.CommentIssueAsync(path, issue.Number, $"Design: {design.Id} v{version.ToString(CultureInfo.InvariantCulture)} ({design.Title}). The flight's legs build to it: pilot design show {design.Id}.", cancellationToken);
+                await github.CommentIssueAsync(path, issue.Number, $"Design: {design.Id} v{design.Current!.Value.ToString(CultureInfo.InvariantCulture)} ({design.Title}). The flight's legs build to it: pilot design show {design.Id}.", cancellationToken);
             }
             catch (FlightException ex)
             {
@@ -817,7 +817,7 @@ public sealed partial class IdeaCommander(NodeState state, Planes planes, RepoCa
     /// <summary>
     /// <c>design-from-idea idea/&lt;repo&gt;/I&lt;n&gt;</c>: a design for the idea's repo whose first brief is the idea's title and text; each picture the node holds a copy
     /// of is kept in the design's pictures folder and named in a second piece of the brief (any other is named by its URL); the design remembers the idea
-    /// (<see cref="DesignRow.FromIdea"/>) and its designer is woken. An idea that has a design already answers that one: never a second.
+    /// (<see cref="DesignRow.ForIdeas"/>) and its designer is woken. An idea that has a design already answers that one: never a second.
     /// </summary>
     private async Task<CommandResult> DesignFromIdeaAsync(CommandRequest command, CancellationToken cancellationToken)
     {

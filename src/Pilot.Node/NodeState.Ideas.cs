@@ -172,20 +172,42 @@ public sealed partial class NodeState
         {
             designs = [];
         }
-        var byIdea = new Dictionary<string, DesignRow>(StringComparer.OrdinalIgnoreCase);
-        // List() is newest first, so the oldest design of an idea is written last and is the one an idea shows.
-        foreach (var d in designs.Where(d => d.FromIdea is { Length: > 0 }))
+        // List() is newest first; an idea lists its designs oldest first. A link follows its idea through a move or a fold (IdeaIds.Follow), so it is looked up by where the idea is now.
+        var moves = _ideaMoves;
+        var byIdea = new Dictionary<string, List<DesignRow>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var d in designs.Reverse())
         {
-            byIdea[d.FromIdea!] = d;
+            foreach (var key in d.Ideas())
+            {
+                var followed = key;
+                if (IdeaIds.Parse(key).Ref is { Repo: { } repo } parsed)
+                {
+                    var at = IdeaIds.Follow(moves, repo, parsed.Number);
+                    followed = IdeaKey(at.Repo, IdeaIds.Id(at.Number));
+                }
+                if (!byIdea.TryGetValue(followed, out var list))
+                {
+                    byIdea[followed] = list = [];
+                }
+                if (!list.Any(x => x.Id == d.Id))
+                {
+                    list.Add(d);
+                }
+            }
         }
-        return [.. rows.Select(r => byIdea.TryGetValue(IdeaKey(r.Repo, r.Id), out var d) ? r with { Design = d.Id, DesignVersion = d.Current } : r with { Design = null, DesignVersion = null })];
+        return [.. rows.Select(r =>
+        {
+            var linked = byIdea.TryGetValue(IdeaKey(r.Repo, r.Id), out var list) ? list : [];
+            var links = linked.Select(d => new IdeaDesignLink(d.Id, d.Title, d.Current)).ToArray();
+            return r with { Designs = links, Design = links.Length > 0 ? links[0].Id : null, DesignVersion = links.Length > 0 ? links[0].Version : null };
+        })];
     }
 
     private void PutIdeasLocked(IEnumerable<IdeaRow> all)
     {
         var next = IdeaIds.Order(WithDesigns(all)).ToArray();
         // Age moves with the clock alone: a read that changes nothing else is no delta.
-        if (next.Length != _ideas.Length || next.Zip(_ideas).Any(pair => pair.First with { Age = "", Images = [] } != pair.Second with { Age = "", Images = [] }))
+        if (next.Length != _ideas.Length || next.Zip(_ideas).Any(pair => pair.First with { Age = "", Images = [], Designs = [] } != pair.Second with { Age = "", Images = [], Designs = [] } || !pair.First.Designs.SequenceEqual(pair.Second.Designs)))
         {
             Publish(new IdeasChangedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Ideas = next });
         }

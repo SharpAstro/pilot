@@ -71,7 +71,7 @@ public sealed class DesignBuilds(NodeState state, DesignStore store, RepoCatalog
             throw new DesignException($"{id} v{version} is being built already: flight {flying.Code} is {flying.State.ToString().ToLowerInvariant()}; build it again once that flight has landed or been withdrawn");
         }
 
-        var idea = design.FromIdea is { Length: > 0 } key ? IdeaIds.Parse(key).Ref : null;
+        var idea = design.Ideas().FirstOrDefault() is { Length: > 0 } key ? IdeaIds.Parse(key).Ref : null;
         var text = IssueText(design, version, folder, prototype);
         var title = $"Build {design.Title ?? id} ({id} v{version.ToString(CultureInfo.InvariantCulture)})";
         var sha = DesignStore.Sha256Of(prototype);
@@ -94,7 +94,7 @@ public sealed class DesignBuilds(NodeState state, DesignStore store, RepoCatalog
             }, cancellationToken);
             if (planned is not { Ok: true, Made: { Length: > 0 } plannedCode })
             {
-                throw new FlightException(planned.Error ?? $"{design.FromIdea} was not planned");
+                throw new FlightException(planned.Error ?? $"{design.Ideas().FirstOrDefault()} was not planned");
             }
             code = plannedCode;
             repoName = name;

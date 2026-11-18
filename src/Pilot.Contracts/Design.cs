@@ -42,6 +42,16 @@ public sealed record DesignRow
     /// <summary>The idea this design was started from (PIL1152), qualified by its repo, e.g. <c>pilot I381</c>; null for a design not started from one. Kept when the idea is dropped or folded.</summary>
     public string? FromIdea { get; init; }
 
+    /// <summary>
+    /// Every idea this design is for (#1185), each qualified by its repo, e.g. <c>pilot I381</c>, in the order they were linked; empty while it is for none, and in a record an older
+    /// release wrote. New links are written here only: <see cref="FromIdea"/> stays readable as the first link of a record that has no list (<see cref="Ideas"/>).
+    /// </summary>
+    public string[] ForIdeas { get; init => field = value ?? []; } = [];
+
+    /// <summary>The ideas the design is for: <see cref="ForIdeas"/>, with <see cref="FromIdea"/> of an older record read as the first link when the list does not name it.</summary>
+    public string[] Ideas() =>
+        FromIdea is { Length: > 0 } from && !ForIdeas.Contains(from, StringComparer.OrdinalIgnoreCase) ? [from, .. ForIdeas] : ForIdeas;
+
     /// <summary>The design's designer session (PIL1151), as <see cref="DesignerState"/> and the members after it say; null for a design that never had one, and in a record an older release wrote.</summary>
     public string? DesignerName { get; init; }
 

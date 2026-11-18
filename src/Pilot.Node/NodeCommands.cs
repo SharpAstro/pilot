@@ -593,6 +593,10 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
         {
             return await Get<Pilot.Node.Designs.DesignBuilds>().RunAsync(command, cancellationToken);
         }
+        if (command.Verb is Verbs.DesignLink or Verbs.DesignUnlink)
+        {
+            return await Get<Pilot.Node.Designs.DesignCommands>().LinkAsync(command, cancellationToken);
+        }
         if (command.Verb == Verbs.DesignIssue)
         {
             return await Get<Pilot.Node.Designs.DesignCommands>().IssueAsync(command, cancellationToken);

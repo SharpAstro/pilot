@@ -1269,10 +1269,13 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
 
     private IEnumerable<Layout.Node> FromIdeaPart(DesignRow row)
     {
-        if (row.FromIdea is { Length: > 0 } fromIdea)
+        if (row.Ideas() is { Length: > 0 } ideas)
         {
-            yield return Heading("Made from");
-            yield return FromIdeaLink(fromIdea);
+            yield return Heading(ideas.Length == 1 ? "Made from" : "For ideas");
+            foreach (var idea in ideas)
+            {
+                yield return FromIdeaLink(idea);
+            }
         }
     }
 

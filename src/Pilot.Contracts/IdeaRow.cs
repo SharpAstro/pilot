@@ -60,6 +60,9 @@ public sealed record IdeaRow
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
     public bool NeedsDesign { get; init; }
 
+    /// <summary>Every design linked to this idea (#1185), the oldest link first; empty when it has none. <see cref="Design"/> and <see cref="DesignVersion"/> repeat the first of them.</summary>
+    public IdeaDesignLink[] Designs { get; init => field = value ?? []; } = [];
+
     /// <summary>The id of the design started from this idea (<c>DSN-&lt;n&gt;</c>), read from the node's design store; null while it has none.</summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Design { get; init; }
@@ -93,6 +96,9 @@ public readonly record struct IdeaRef(string? Repo, int Number)
     /// <summary><c>I381</c>.</summary>
     public string Id => IdeaIds.Id(Number);
 }
+
+/// <summary>One design an idea is linked to: its id, its title and its current version (null while it has none).</summary>
+public sealed record IdeaDesignLink(string Id, string? Title, int? Version);
 
 /// <summary>Idea ids: how they are written, read and addressed.</summary>
 public static class IdeaIds

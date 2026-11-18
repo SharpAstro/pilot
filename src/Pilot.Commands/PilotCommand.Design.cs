@@ -156,6 +156,15 @@ public static partial class PilotCommand
             var designDiscard = Action(new Command("discard", "Remove the design's draft: what was typed or designed there and not published is gone") { Arguments = { discardId } },
                 (p, client, ct) => Send(client, Verbs.DesignDiscard, Verbs.DesignTarget(p.GetValue(discardId)!), [], who, ct));
 
+            var linkId = Arg("design", "The design's id, DSN-<n>");
+            var linkIdea = Arg("idea", "The idea: I<n> in the design's repo, or the repo and the id (tianwen I1829)");
+            var designLink = Action(new Command("link", "Link the design to an idea it is for; designs and ideas are linked many to many. The design's issue lists the idea, and the idea's issue is told once") { Arguments = { linkId, linkIdea } },
+                (p, client, ct) => Send(client, Verbs.DesignLink, Verbs.DesignTarget(p.GetValue(linkId)!), [p.GetValue(linkIdea)!], who, ct));
+            var unlinkId = Arg("design", "The design's id, DSN-<n>");
+            var unlinkIdea = Arg("idea", "The idea: I<n> in the design's repo, or the repo and the id (tianwen I1829)");
+            var designUnlink = Action(new Command("unlink", "Take the link of the design to an idea away, on the design and on its issue") { Arguments = { unlinkId, unlinkIdea } },
+                (p, client, ct) => Send(client, Verbs.DesignUnlink, Verbs.DesignTarget(p.GetValue(unlinkId)!), [p.GetValue(unlinkIdea)!], who, ct));
+
             var issueId = Arg("design", "The design's id, DSN-<n>");
             var issueRef = Arg("issue", "The issue to keep the design in, <repo>#<n>: a repo name the node lists, or owner/name");
             var designIssue = Action(new Command("issue", "Link the design to an existing GitHub issue (it gets the 'pilot: design' label): each published version is written there, its DESIGN.md, prototype and renders on the branch design/<n> and the document in the issue's body. A design with no link gets an issue of its own in its repo at its first publish") { Arguments = { issueId, issueRef } },
@@ -183,7 +192,7 @@ public static partial class PilotCommand
                     return 1;
                 });
 
-            var design = new Command("design", "Designs: a prototype of DIR.Lib screens, briefed by the owner and kept in versions on the node. new, brief, say, chat, draft, check, render, edit, title, discard, publish, issue, build, show, terminals") { Subcommands = { designNew, designTerminals, designBrief, designSay, designChat, designDraft, designEdit, designTitle, designDiscard, designCheck, designRender, designPublish, designIssue, designBuild, designShow } };
+            var design = new Command("design", "Designs: a prototype of DIR.Lib screens, briefed by the owner and kept in versions on the node. new, brief, say, chat, draft, check, render, edit, title, discard, link, unlink, publish, issue, build, show, terminals") { Subcommands = { designNew, designTerminals, designBrief, designSay, designChat, designDraft, designEdit, designTitle, designDiscard, designLink, designUnlink, designCheck, designRender, designPublish, designIssue, designBuild, designShow } };
 
             var designs = Action(new Command("designs", "Every design, newest first"),
                 async (p, client, ct) =>
