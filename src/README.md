@@ -713,7 +713,7 @@ writer; `check` and `render` load the draft's `prototype.json` with DIR.Lib's `P
 `pilot design new --terminal 80x24 --terminal 160x44 -- <brief>` sets them, `pilot design terminals DSN-1 80x24 100x30` replaces
 them and `pilot design terminals DSN-1` with no size clears them (`design_terminals` over MCP). `DesignRow.Terminals` holds them
 (defaulted, so a record an older release wrote has none); `DesignTerminals.Standard` in Pilot.Contracts names the standard sizes,
-80x24, 100x30, 160x44 and 250x60, the sizes of `TerminalWireframeSweepTests`, and a test holds the list to the sweep. A design with
+80x24, 100x30, 160x44 and 250x60, the sizes of `TerminalWireframeSweepTests`, and a test holds the list to the sweep (`--filter FullyQualifiedName~TerminalWireframeSweep` runs the terminal sweep only, `~WireframeSweep` both the pixel and the terminal sweep, and `SweepNamesTests` fails on a sweep class either term would miss). A design with
 no terminal target checks and renders exactly as before.
 
 **The designer's life (PIL1159).** A designer's turn ends with the session idle, not stopped: it stays up so the owner's next words
@@ -844,7 +844,7 @@ pilot flight disconnect <code> <other> [--anyway]   # undoes a connect (this nod
 pilot flight pr <code> [title…]                # pushes the plane, opens its PR (body: the legs, Closes #<issue>)
 pilot flight merge <code> <head> [--method squash|rebase|merge]   # or --squash, --rebase, --merge
 pilot flight land <code>
-pilot leg plan <code> <name> --goal … --done-when … [--check …] [--ci-differs …] [--whole-suite …] [--budget …] [--model …] [--effort …] [--item …]…
+pilot leg plan <code> <name> --goal … --done-when … [--check …] [--ci-differs …] [--whole-suite …] [--new-tests …] [--budget …] [--model …] [--effort …] [--item …]…
 pilot leg remove <code> <leg> [why…]           # takes a planned leg out of the flight
 pilot leg start <code> <leg>
 pilot leg validate go|no-go [report…]          # a leg's validator, from its plane (--leg <code>/<leg> elsewhere)
