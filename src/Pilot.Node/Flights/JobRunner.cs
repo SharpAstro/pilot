@@ -2780,37 +2780,54 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
         try
         {
             last = [.. tail.Snapshot];
-            // Ended while frozen (a cancel or timeout thaws it to kill it): the span counts, and it is no longer paused.
-            var latest = Unpaused(state.Jobs().FirstOrDefault(j => j.Id == job.Id) ?? job, time.GetUtcNow());
-            if (_cancelled.TryRemove(job.Id, out var by))
+            // How it ended is settled once, here; the row it is applied to is read again under _rowLock below (pilot #1175).
+            var cancelled = _cancelled.TryRemove(job.Id, out var by);
+            var forced = cancelled && _forced.TryRemove(job.Id, out _);
+            // The slow file reads stay outside the lock: the artifacts directory is the job's own, not part of the row.
+            var (artifactFiles, artifactsNote) = JobArtifacts.Collect(ArtifactsOf(job));
+            var endedAt = time.GetUtcNow();
+            JobRow EndOf(JobRow current)
             {
-                ended = latest with { State = JobState.Cancelled, Error = _forced.TryRemove(job.Id, out _) ? $"cancelled (forced) by {by}" : $"cancelled by {by}" };
+                // Ended while frozen (a cancel or timeout thaws it to kill it): the span counts, and it is no longer paused.
+                var latest = Unpaused(current, endedAt);
+                JobRow row;
+                if (cancelled)
+                {
+                    row = latest with { State = JobState.Cancelled, Error = forced ? $"cancelled (forced) by {by}" : $"cancelled by {by}" };
+                }
+                else if (timedOut)
+                {
+                    row = latest with { State = JobState.Failed, Error = $"{TimeoutPrefix} of {Took(job.Timeout)}" };
+                }
+                else if (stoppedAt is not null)
+                {
+                    row = latest with { State = JobState.Failed, Error = $"stopped at its first failure: {stoppedAt}" };
+                }
+                else if (exitCode is { } code)
+                {
+                    row = code == 0
+                        ? (empty.Error(latest) is { } none
+                            ? latest with { State = JobState.Failed, ExitCode = 0, Error = none }
+                            : latest with { State = JobState.Succeeded, ExitCode = 0 })
+                        : latest with { State = JobState.Failed, ExitCode = code, Error = $"exit {code}" };
+                }
+                else
+                {
+                    row = latest with { State = JobState.Failed, Error = "its process ended without leaving an exit code" };
+                }
+                row = row with { Step = StepOf(last, job), EndedAt = endedAt };
+                if (artifactFiles is not null || artifactsNote is not null)
+                {
+                    row = row with { Artifacts = artifactFiles, ArtifactsNote = artifactsNote };
+                }
+                if (memory.Count > 0)
+                {
+                    row = row with { MemoryMedian = JobMemory.Median(memory), MemoryPeak = memory.Max() };
+                }
+                return row;
             }
-            else if (timedOut)
-            {
-                ended = latest with { State = JobState.Failed, Error = $"{TimeoutPrefix} of {Took(job.Timeout)}" };
-            }
-            else if (stoppedAt is not null)
-            {
-                ended = latest with { State = JobState.Failed, Error = $"stopped at its first failure: {stoppedAt}" };
-            }
-            else if (exitCode is { } code)
-            {
-                ended = code == 0
-                    ? (empty.Error(latest) is { } none
-                        ? latest with { State = JobState.Failed, ExitCode = 0, Error = none }
-                        : latest with { State = JobState.Succeeded, ExitCode = 0 })
-                    : latest with { State = JobState.Failed, ExitCode = code, Error = $"exit {code}" };
-            }
-            else
-            {
-                ended = latest with { State = JobState.Failed, Error = "its process ended without leaving an exit code" };
-            }
-            ended = WithArtifacts(ended with { Step = StepOf(last, job), EndedAt = time.GetUtcNow() });
-            if (memory.Count > 0)
-            {
-                ended = ended with { MemoryMedian = JobMemory.Median(memory), MemoryPeak = memory.Max() };
-            }
+            JobRow Fresh() => state.Jobs().FirstOrDefault(j => j.Id == job.Id) ?? job;
+            ended = EndOf(Fresh());
             // This watch tells it, so the sweep leaves it alone (marked before the row shows it ended).
             _tried[job.Id] = 0;
             BeforeEndedRow?.Invoke(ended);
@@ -2821,7 +2838,14 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
                 lock (_checkEndLock)
                 {
                     _seeds.TryRemove(ended.Id, out _); // the seed mark goes before the row shows it ended
-                    state.PutJob(ended);
+                    // The ended row is built from the row as it is now and put in the same step under _rowLock (pilot #1175): every other
+                    // write to a running row holds it and checks Running, so none can land after the end (a late Adopted put its Running
+                    // copy back over the ended row), and one that landed before is carried into the ended row. Order: _checkEndLock, _rowLock.
+                    lock (_rowLock)
+                    {
+                        ended = EndOf(Fresh());
+                        state.PutJob(ended);
+                    }
                     if (looks > 0)
                     {
                         _saturation[job.Id] = (double)hot / looks;
