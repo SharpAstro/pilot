@@ -77,4 +77,37 @@ public sealed class TerminalDesignsViewTests
         Frame(chrome, screen);
         chrome.Designs.OpenId.ShouldBe("DSN-7");
     }
+
+    /// <summary>
+    /// The issue's design (#1160) in cells: its title made from the brief by the store's rule, a long brief, and no version. At every terminal
+    /// sweep size the title line carries the whole title on hover and its cells hold it whole or end in an ellipsis, and the no-version text is
+    /// words that wrap, never one line a column clips.
+    /// </summary>
+    [Theory]
+    [InlineData(80, 24)]
+    [InlineData(100, 30)]
+    [InlineData(160, 44)]
+    [InlineData(250, 60)]
+    public void TheNoVersionPagesTitleIsWholeOrEndsInAnEllipsisWithTheWholeOnHoverInCells(int columns, int rows)
+    {
+        using var vessel = new RgbaImageRenderer(1, 1);
+        var chrome = new PilotChrome<RgbaImage>(vessel, new SessionsView<RgbaImage>(vessel)) { FontPath = SessionsCapture.FontPath };
+        chrome.WithoutScrollBars();
+        var screen = PageData.NoVersionDesigns(PageData.Now);
+        chrome.Show(PilotPage.Designs);
+        chrome.Designs.Terminal = (columns, rows);
+        chrome.Designs.Open(screen.Open!.Detail.Row.Id);
+        var title = screen.Open.Detail.Row.Title!;
+        var counts = $"{screen.Open.Detail.Row.Id} · {title}";
+
+        var rail = TerminalRail.Tree(PilotPage.Designs, GlyphMode.Emoji, null, null, PageData.Now, _ => { }, null, columns);
+        var arranged = TerminalFrame.Build(rail, chrome.Designs.Tree(screen), null, columns, rows, CellMeasureContext.PixelAuthored);
+        var line = arranged.Single(a => a.Node.Tooltip == counts);
+        var buffer = new CellBuffer { ColorMode = ColorMode.TrueColor };
+        TerminalWireframeSweepTests.Record(arranged, columns, rows, buffer);
+        var drawn = string.Concat(Enumerable.Range(line.Bounds.X, Math.Min(line.Bounds.Width, columns - line.Bounds.X)).Select(x => buffer.BackAt(x, line.Bounds.Y).Glyph)).TrimEnd();
+        (drawn.EndsWith('…') || drawn == counts).ShouldBeTrue($"{columns}x{rows}: the title line is whole or ends in an ellipsis, drew '{drawn}'");
+        arranged.Any(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text t } && t.Value.StartsWith("This design has no version yet. The brief", StringComparison.Ordinal))
+            .ShouldBeFalse($"{columns}x{rows}: the no-version text is words that wrap, not one line");
+    }
 }

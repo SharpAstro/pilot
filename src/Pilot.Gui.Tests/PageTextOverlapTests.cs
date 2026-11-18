@@ -41,12 +41,15 @@ public sealed class PageTextOverlapTests
     internal const string DesignPagePhone = "design page phone";
     internal const string DesignPageDesktop = "design page desktop";
 
+    /// <summary>A design's page with a long title, a long brief and no version (#1160): the title line and the no-version text are wrapped or end in an ellipsis with the whole on hover.</summary>
+    internal const string DesignPageNoVersion = "design page no version";
+
     /// <summary>The Designs data a page is drawn from: the targets fixture for the two target pages, the sample's otherwise.</summary>
     internal static DesignsScreen DesignsOf(PageData data, string page) =>
-        page is DesignPagePhone or DesignPageDesktop ? PageData.TargetsDesigns(PageData.Now) : data.Designs;
+        page is DesignPagePhone or DesignPageDesktop ? PageData.TargetsDesigns(PageData.Now) : page == DesignPageNoVersion ? PageData.NoVersionDesigns(PageData.Now) : data.Designs;
 
     /// <summary>Every page the sweep walks: <see cref="Pages"/> and the two the issue adds.</summary>
-    internal static readonly string[] SweptPages = [.. Pages, IdeasPage, CardDetailPage];
+    internal static readonly string[] SweptPages = [.. Pages, IdeasPage, CardDetailPage, DesignPageNoVersion];
 
     internal static readonly string[] States = ["sample", "long", "many", "empty"];
 
@@ -206,7 +209,7 @@ public sealed class PageTextOverlapTests
         "chat" => PilotPage.Chat,
         "ideas" => PilotPage.Ideas,
         "spend" => PilotPage.Spend,
-        "designs" or "design page" or "design cells" or DesignPagePhone or DesignPageDesktop => PilotPage.Designs,
+        "designs" or "design page" or "design cells" or DesignPagePhone or DesignPageDesktop or DesignPageNoVersion => PilotPage.Designs,
         _ => PilotPage.Home,
     };
 
@@ -263,7 +266,7 @@ public sealed class PageTextOverlapTests
             chrome.Settings.LoadRepos ??= _ => Task.FromResult<RepoInfo[]>(data.WizardRepos.Length > 0 ? data.WizardRepos : [new RepoInfo { Name = "pilot", Path = @"C:\work\pilot" }]);
         }
         chrome.Show(PageOf(page));
-        if (page is "design page" or "design cells" or DesignPagePhone or DesignPageDesktop)
+        if (page is "design page" or "design cells" or DesignPagePhone or DesignPageDesktop or DesignPageNoVersion)
         {
             // The chat beside the prototype has something said: three turns and two versions, the designer checking.
             await PageData.OpenDesignChat(chrome.Designs, DesignsOf(data, page).Open!.Detail.Row.Id, PageData.DesignChatPage(lengthen: state is "long" or "many"));
@@ -354,6 +357,7 @@ public sealed class PageTextOverlapTests
             case "design cells":
             case DesignPagePhone:
             case DesignPageDesktop:
+            case DesignPageNoVersion:
                 tree = chrome.Designs.Tree(DesignsOf(data, page));
                 break;
             case "chat":

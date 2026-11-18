@@ -56,11 +56,21 @@ public sealed class DesignStoreTests : IDisposable
     }
 
     [Fact]
-    public void TheTitleIsTheBriefsFirstLineCutToEightyCharactersUnlessGiven()
+    public void TheTitleIsTheBriefsFirstLineWholeOrCutAtAWordWithAnEllipsisUnlessGiven()
     {
         var store = Store();
         store.New(null, null, "\n  A login screen\nwith more below").Title.ShouldBe("A login screen");
-        store.New(null, null, new string('x', 200)).Title.ShouldBe(new string('x', 80));
+        store.New(null, null, new string('x', 300)).Title.ShouldBe(new string('x', DesignStore.TitleLength - 1) + "…");
+        // #1160: the issue's brief, whose first line was cut at 80 characters mid-word ("a line sayin"), is kept whole now.
+        const string issues = "A card for one job: its id j6917 and the command on the first line, a line saying what it waits on, and a Cancel button";
+        store.New(null, null, issues + "\nmore").Title.ShouldBe(issues);
+        var cut = store.New(null, null, string.Join(' ', Enumerable.Repeat("word", 60))).Title.ShouldNotBeNull();
+        cut.Length.ShouldBeLessThanOrEqualTo(DesignStore.TitleLength);
+        cut.ShouldEndWith("word…");
+        // A cut that lands after a comma drops it, so the ellipsis follows the word ("word…", never "word,…").
+        var listed = store.New(null, null, string.Join(' ', Enumerable.Repeat("word,", 60))).Title.ShouldNotBeNull();
+        listed.Length.ShouldBeLessThanOrEqualTo(DesignStore.TitleLength);
+        listed.ShouldEndWith("word…");
         store.New("pilot", "  My title ", "brief").Title.ShouldBe("My title");
         store.New("pilot", null, "brief").Repo.ShouldBe("pilot");
         store.New("  ", null, "brief").Repo.ShouldBeNull();

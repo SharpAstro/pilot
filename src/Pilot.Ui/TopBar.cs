@@ -16,6 +16,9 @@ internal sealed record PageHeader(string Title)
     /// <summary>Whether the counts may be longer than the bar has room for: they then stand on a line of their own under the bar, ending in an ellipsis where the page is narrower and carrying the whole line on hover, rather than push the buttons out of the window.</summary>
     public bool CountsFit { get; init; }
 
+    /// <summary>The counts line is a title (a design's id and name) that may be long: always the words form, from the left, ending in an ellipsis with the whole on hover. The counts of the other pages stay right-aligned (#1160).</summary>
+    public bool CountsCut { get; init; }
+
     /// <summary>What In play leaves out (<c>29 landed hidden</c>), after the counts, as a click that shows everything; null says nothing is hidden.</summary>
     public string? Hidden { get; init; }
 
@@ -139,7 +142,7 @@ internal static class TopBar
         {
             // Counts that may be long stand on a line of their own under the bar: cut with an ellipsis and carried whole on hover where
             // the page is narrow, so they never push a button out of the window or past the page's edge. Bottom-aligned as Summary is.
-            rows.Add(WrappedProse.OneLine(page.Counts, 15f, palette.Body, TextAlign.Far, TextAlign.Far).WithTooltip(page.Counts).RowH(CountsHeight));
+            rows.Add(WrappedProse.OneLine(page.Counts, 15f, palette.Body, TextAlign.Far, TextAlign.Far, cut: page.CountsCut).WithTooltip(page.Counts).RowH(CountsHeight));
         }
         if (page.Source is { } source)
         {

@@ -12,20 +12,47 @@ namespace Pilot.Node.Designs;
 /// Everything the feed needs is in the design's folder and record, so a restarted node, or another node's client, reads the same chat. The answer is a
 /// <see cref="ChatPage"/>, the watchtower chat's contract, with <see cref="ChatPage.Status"/> in plain words.
 /// </summary>
-public sealed partial class DesignChat(DesignStore store, TranscriptBook transcripts)
+public sealed partial class DesignChat(DesignStore store, TranscriptBook transcripts, Func<IEnumerable<SessionRow>>? sessions = null)
 {
+    /// <summary>
+    /// The design's record as the designer's own session says it now (#1160): a record still Working whose designer session the tracker lists Idle or Ended has
+    /// finished its turn, so it reads Idle at once, as <see cref="Designers.Sweep"/> will write it on its next tick, rather than waiting for that timer.
+    /// </summary>
+    private DesignRow Live(DesignRow row)
+    {
+        if (row.DesignerState is not DesignerStates.Working || row.DesignerName is not { Length: > 0 } name || sessions is null)
+        {
+            return row;
+        }
+        // The row Designers.AskAsync would take: a Gone or Failed one is not the designer, so a fresh start stays Working until its own row is listed.
+        var listed = sessions().FirstOrDefault(s => string.Equals(s.Name, name, StringComparison.OrdinalIgnoreCase) && s.State is not SessionState.Failed && !s.Gone);
+        // After a resume the previous turn's Stop is the latest hook until the new turn's prompt lands, so an Idle older than the turn's start is not its end.
+        var ended = listed is { State: SessionState.Ended }
+            || listed is { State: SessionState.Idle } && (row.DesignerTurnStartedAt is not { } turn || listed.LastResponseAt is { } last && last >= turn);
+        if (!ended)
+        {
+            return row;
+        }
+        return row with
+        {
+            DesignerState = DesignerStates.Idle,
+            DesignerTurnPublished = row.DesignerTurnStartedAt is { } began && row.History.Any(v => v.At >= began),
+        };
+    }
+
     /// <summary>The entries after <paramref name="after"/> (all of them for a negative one), the feed's length and the designer's state in words.</summary>
     public ChatPage Page(string id, int after)
     {
         var row = store.Find(id) ?? throw new DesignException($"There is no design {id}");
+        var live = Live(row);
         var all = Feed(row);
         var from = after < 0 ? 0 : (int)Math.Min(all.Count, (long)after + 1);
         return new ChatPage
         {
             Entries = [.. all.Skip(from).Select((e, i) => e with { Index = from + i })],
             Total = all.Count,
-            Working = row.DesignerState is DesignerStates.Working,
-            Status = StatusOf(row),
+            Working = live.DesignerState is DesignerStates.Working,
+            Status = StatusOf(live),
         };
     }
 

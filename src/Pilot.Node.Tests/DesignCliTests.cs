@@ -40,11 +40,14 @@ public sealed class DesignCliTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task ATitleFromTheBriefIsCutToEightyCharacters()
+    public async Task ATitleFromTheBriefIsItsFirstLineWholeUpToTwoHundredThenCutWithAnEllipsis()
     {
         await Pilot("design", "new", "--", new string('w', 120));
+        await Pilot("design", "new", "--", new string('v', 250));
 
-        (await Pilot("design", "show", "DSN-1")).Output.ShouldContain("DSN-1  " + new string('w', 80) + "\n".Replace("\n", Environment.NewLine));
+        // 120 characters is whole (it was cut at 80 before #1160); a spaceless line over 200 is cut at the limit and says so.
+        (await Pilot("design", "show", "DSN-1")).Output.ShouldContain("DSN-1  " + new string('w', 120) + Environment.NewLine);
+        (await Pilot("design", "show", "DSN-2")).Output.ShouldContain("DSN-2  " + new string('v', 199) + "…" + Environment.NewLine);
     }
 
     [Fact]

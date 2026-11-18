@@ -24,6 +24,8 @@ public sealed class DesignsViewTests
 
         public Rig(DesignsScreen screen)
         {
+            // The page shows local time: the tests that read a time off it run in UTC unless one sets a zone after its rig.
+            PageTime.Zone = TimeZoneInfo.Utc;
             Screen = screen;
             Chrome = new PilotChrome<RgbaImage>(_renderer, new SessionsView<RgbaImage>(_renderer)) { FontPath = SessionsCapture.FontPath };
             Chrome.Autopilot.OnToggle = _ => Task.FromResult<string?>(null);
@@ -189,7 +191,7 @@ public sealed class DesignsViewTests
         var texts = TextsOf(rig);
         texts.ShouldContain("DSN-1  Design 0");
         texts.ShouldContain("v2 · SharpAstro/pilot · 2026-11-16 09:00");
-        texts.ShouldContain("3 designs");
+        texts.ShouldContain(t => t.StartsWith("3 designs", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -205,6 +207,109 @@ public sealed class DesignsViewTests
         var texts = TextsOf(rig);
         texts.ShouldContain(t => t.StartsWith("This design has no version yet", StringComparison.Ordinal));
         texts.ShouldContain(t => t.Contains("Brief", StringComparison.Ordinal));
+    }
+
+    private static IEnumerable<Layout.ArrangedNode<float>> ArrangedAt(Rig rig, float width, float height, float dpi = 1f) =>
+        Layout.Engine.Arrange(rig.View.Tree(rig.Screen), new Rect<float>(0, 0, width, height), new PixelMeasureContext<RgbaImage>(rig.Renderer, SessionsCapture.FontPath, dpi));
+
+    [Theory]
+    [InlineData(360)]
+    [InlineData(700)]
+    [InlineData(1000)]
+    [InlineData(1400)]
+    public void ALongTitleAndANoVersionTextAreWrappedOrCutWithTheWholeOnHover(int width)
+    {
+        var title = "A very long design title that goes on and on about the whole of the observatory control panel";
+        var full = Sample();
+        var detail = full.Open!.Detail with { Row = full.Open.Detail.Row with { Title = title, Current = null, Versions = 0 }, Versions = [], Brief = string.Join(' ', Enumerable.Repeat("A long brief sentence.", 40)) };
+        using var rig = new Rig(full with { Open = DesignPages.Load(detail) });
+        rig.View.Open("DSN-1");
+        rig.Paint();
+
+        var arranged = ArrangedAt(rig, width, 900).ToList();
+        var counts = $"DSN-1 · {title}";
+        arranged.ShouldContain(a => a.Node.Tooltip == counts, "the title line carries its whole text on hover");
+        arranged.Any(a => a.Node.Tooltip == null && a.Node is Layout.Node.Leaf { Content: Layout.Content.Text t } && t.Value == counts).ShouldBeFalse("never one plain leaf that a column clips with no ellipsis");
+        arranged.Any(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text t } && t.Value.StartsWith("This design has no version yet. The brief", StringComparison.Ordinal)).ShouldBeFalse("the no-version text is words that wrap, not one line");
+    }
+
+    [Theory]
+    [InlineData(2880, 1814, 1.5f)]
+    [InlineData(2880, 1814, 1f)]
+    [InlineData(1920, 1080, 1f)]
+    public void TheIssuesTitleLineIsWholeOrEndsInAnEllipsisAtTheIssuesWindow(int width, int height, float dpi)
+    {
+        // The title is made from the brief by the store's own rule, as DesignStore.New makes it: the issue's first line ran past 80
+        // characters and the store cut it mid-word ("a line sayin") before the page ever drew it.
+        var firstLine = "A card for one job: its id j6917 and the command on the first line, a line saying what it is doing and the whole of its output";
+        var brief = firstLine + "\nThe card sits on the job's page.";
+        var title = DesignTitle.Of(brief);
+        title.ShouldBe(firstLine, "a first line this long is kept whole, so the page's one-line cut and its hover have all of it");
+        var full = Sample();
+        var detail = full.Open!.Detail with { Row = full.Open.Detail.Row with { Title = title }, Brief = brief };
+        using var rig = new Rig(full with { Open = DesignPages.Load(detail) });
+        rig.View.Open("DSN-1");
+        rig.Paint();
+        var counts = $"DSN-1 · {title}";
+        var arranged = ArrangedAt(rig, width, height, dpi).ToList();
+        var line = arranged.Single(a => a.Node.Tooltip == counts);
+        var words = arranged.Where(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text } && a.Bounds.Y >= line.Bounds.Y - 0.5f && a.Bounds.Y + a.Bounds.Height <= line.Bounds.Y + line.Bounds.Height + 0.5f
+            && a.Bounds.X >= line.Bounds.X - 0.5f && a.Bounds.X <= line.Bounds.X + line.Bounds.Width + 0.5f).Select(a => (Layout.Content.Text)((Layout.Node.Leaf)a.Node).Content).Select(t => t.Value).ToList();
+        var drawn = string.Concat(words).Replace(" ", "");
+        (drawn.EndsWith("…", StringComparison.Ordinal) || drawn == counts.Replace(" ", "")).ShouldBeTrue($"the title line is whole or ends in an ellipsis, drew: {string.Join("|", words)}");
+    }
+
+    [Fact]
+    public void EveryTimeOnADesignsPageIsLocalWithUtcOnHover()
+    {
+        try
+        {
+            var full = Sample();
+            var brief = $"## 2026-11-16T09:00:00Z{Environment.NewLine}{Environment.NewLine}A piece.";
+            var detail = full.Open!.Detail with { Brief = brief };
+            using var rig = new Rig(full with { Open = DesignPages.Load(detail) });
+            PageTime.Zone = TimeZoneInfo.CreateCustomTimeZone("test+5:30", TimeSpan.FromHours(5.5), "test", "test");
+            rig.Paint();
+            var list = ArrangedAt(rig, 1400, 900).ToList();
+            SentenceRuns.Texts(list.Select(a => a.Node)).ShouldContain("v2 · SharpAstro/pilot · 2026-11-16 14:30");
+            list.Select(a => a.Node.Tooltip).OfType<string>().ShouldContain(t => t.EndsWith("2026-11-16 09:00:00 UTC", StringComparison.Ordinal));
+
+            rig.View.Open("DSN-1");
+            rig.Paint();
+            var page = ArrangedAt(rig, 1400, 900).ToList();
+            var texts = SentenceRuns.Texts(page.Select(a => a.Node));
+            texts.ShouldContain(t => t.Contains("2026-11-16 14:30", StringComparison.Ordinal) && t.StartsWith("v", StringComparison.Ordinal), "the versions list");
+            page.Select(a => a.Node.Tooltip).OfType<string>().ShouldContain(t => t.StartsWith("Play v", StringComparison.Ordinal) && t.EndsWith("09:00:00 UTC", StringComparison.Ordinal));
+            PageTime.LocalHeadings(brief).ShouldStartWith("## 2026-11-16 14:30 (2026-11-16 09:00 UTC)");
+            var hover = PageTime.Hover(new DateTimeOffset(2026, 11, 16, 9, 0, 0, TimeSpan.Zero));
+            hover.ShouldContain("+05:30");
+            hover.ShouldContain("09:00:00 UTC");
+        }
+        finally
+        {
+            PageTime.Zone = TimeZoneInfo.Local;
+        }
+    }
+
+    [Fact]
+    public void PointAtThisIsAsWideAsItsLabelPlusPaddingAndSharesOneHeightAndMiddleWithTheHeading()
+    {
+        using var rig = new Rig(Sample());
+        rig.View.Open("DSN-1");
+        rig.Paint();
+        foreach (var width in new[] { 1000f, 1600f })
+        {
+            var all = ArrangedAt(rig, width, 900).ToList();
+            var button = all.Single(a => a.Node.Hit is HitResult.ButtonHit { Action: "designs:point" });
+            var label = all.Single(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text t } && t.Value == "Point at this");
+            var heading = all.First(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text t } && t.Value == "Chat with the designer");
+            // The label's width as the renderer measures it, not the leaf's bounds, which stretch with the button.
+            var (measured, _) = rig.Renderer.MeasureText("Point at this", SessionsCapture.FontPath, 12f);
+            button.Bounds.Width.ShouldBe(measured + 20f, 2f, "the measured label plus 10 either side, not a star share of the column");
+            button.Bounds.Height.ShouldBe(heading.Bounds.Height, 0.5f, "one height");
+            (button.Bounds.Y + button.Bounds.Height / 2f).ShouldBe(heading.Bounds.Y + heading.Bounds.Height / 2f, 0.5f, "one middle");
+            (label.Bounds.Y + label.Bounds.Height / 2f).ShouldBe(heading.Bounds.Y + heading.Bounds.Height / 2f, 1f, "the label's middle is the heading text's middle");
+        }
     }
 
     [Fact]

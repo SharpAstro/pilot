@@ -54,7 +54,7 @@ internal sealed class PageData
     /// A design's chat as the node's design-chat feed gives it (PIL1151): three turns (the owner, the designer, the owner) and a line for each of
     /// <paramref name="versions"/> published versions, with the designer's state in words. <paramref name="lengthen"/> stretches the words.
     /// </summary>
-    internal static ChatPage DesignChatPage(string status = "checking: 2 findings", int versions = 2, bool lengthen = false)
+    internal static ChatPage DesignChatPage(string status = "checking: 2 findings", int versions = 2, bool lengthen = false, bool working = true)
     {
         var at = Now.AddMinutes(-30);
         var entries = new List<TranscriptEntry>
@@ -66,7 +66,7 @@ internal sealed class PageData
             new() { Index = 4, Id = "version:2", At = at.AddMinutes(15), Kind = TranscriptKind.Divider, Text = "published v2: message" },
         };
         entries.RemoveAll(e => e.Id is "version:2" && versions < 2);
-        return new ChatPage { Entries = [.. entries], Total = entries.Count, Working = true, Status = status };
+        return new ChatPage { Entries = [.. entries], Total = entries.Count, Working = working, Status = status };
     }
 
     /// <summary>Opens the design page's chat on <paramref name="page"/> and waits until it holds it, then stops following: the sweeps draw the page with a chat that has something said.</summary>
@@ -114,13 +114,40 @@ internal sealed class PageData
         return new DesignsScreen(rows, "test", now, page);
     }
 
+    /// <summary>The issue's design (#1160): a title that runs on past the column, a long brief and no version, so its page shows the no-version text.</summary>
+    internal static DesignsScreen NoVersionDesigns(DateTimeOffset now)
+    {
+        var full = DesignsFor("sample", now);
+        // The title is made from the brief by the store's own rule (DesignTitle.Of, as DesignStore.New makes it), not written in by hand.
+        var brief = "A card for one job: its id j6917 and the command on the first line, a line saying what it is doing and the whole of its output\n\n"
+            + "## 2026-11-16T09:00:00Z\n\n" + string.Join(' ', Enumerable.Repeat("A long brief sentence about one job's card.", 30));
+        var title = DesignTitle.Of(brief);
+        var detail = full.Open!.Detail with
+        {
+            Row = full.Open.Detail.Row with { Title = title, Current = null, Versions = 0 },
+            Versions = [],
+            Brief = brief,
+        };
+        return full with { Rows = [full.Rows[0] with { Title = title, Current = null, Versions = 0 }, .. full.Rows.Skip(1)], Open = DesignPages.Load(detail) };
+    }
+
     internal static string TargetsPrototypePath => Path.Combine(AppContext.BaseDirectory, "Fixtures", "Designs", "targets.prototype.json");
 
     /// <summary>One design whose prototype names Desktop and Phone and has a rail for a regular target and a bottom bar for a compact one.</summary>
-    internal static DesignsScreen TargetsDesigns(DateTimeOffset now)
+    internal static DesignsScreen TargetsDesigns(DateTimeOffset now) => TargetsDesigns(now, null);
+
+    /// <summary>As <see cref="TargetsDesigns(DateTimeOffset)"/>, with <paramref name="edit"/> applied to the prototype's JSON first (its own size, its targets).</summary>
+    internal static DesignsScreen TargetsDesigns(DateTimeOffset now, Action<System.Text.Json.Nodes.JsonObject>? edit)
     {
         var row = new DesignRow { Id = "DSN-7", Title = "Targets", Repo = "SharpAstro/pilot", Current = 1, Versions = 1, At = now, Why = "brief", PrototypeSha256 = "cd" };
-        var document = DIR.Lib.Prototyping.Prototype.Load(File.ReadAllText(TargetsPrototypePath)).Document ?? throw new InvalidDataException("the targets prototype does not load");
+        var json = File.ReadAllText(TargetsPrototypePath);
+        if (edit is not null)
+        {
+            var node = System.Text.Json.Nodes.JsonNode.Parse(json)!.AsObject();
+            edit(node);
+            json = node.ToJsonString();
+        }
+        var document = DIR.Lib.Prototyping.Prototype.Load(json).Document ?? throw new InvalidDataException("the targets prototype does not load");
         var detail = new DesignDetail
         {
             Row = row,

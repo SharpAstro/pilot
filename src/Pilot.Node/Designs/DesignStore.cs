@@ -17,8 +17,8 @@ public sealed class DesignException(string message) : Exception(message);
 /// </summary>
 public sealed class DesignStore(string dataFolder, TimeProvider? time = null)
 {
-    /// <summary>The longest title taken from a brief's first line.</summary>
-    public const int TitleLength = 80;
+    /// <summary>The longest title taken from a brief's first line (<see cref="DesignTitle.MaxLength"/>).</summary>
+    public const int TitleLength = DesignTitle.MaxLength;
 
     public const string BriefFile = "BRIEF.md";
     public const string RecordFile = "design.json";
@@ -64,12 +64,8 @@ public sealed class DesignStore(string dataFolder, TimeProvider? time = null)
         throw new DesignException($"{id} is not a design id (DSN-<n>)");
     }
 
-    /// <summary>The title a brief gets when none is given: its first non-empty line, cut to <see cref="TitleLength"/> characters.</summary>
-    public static string TitleOf(string brief)
-    {
-        var line = brief.Split('\n').Select(l => l.Trim()).FirstOrDefault(l => l.Length > 0) ?? "";
-        return line.Length <= TitleLength ? line : line[..TitleLength];
-    }
+    /// <summary>The title a brief gets when none is given: <see cref="DesignTitle.Of"/>, its first line whole, or cut at a word, or at the limit when it has no space, with an ellipsis.</summary>
+    public static string TitleOf(string brief) => DesignTitle.Of(brief);
 
     private static string[] NormaliseTerminals(string[] sizes) =>
         DesignTerminals.TryNormalise(sizes, out var normalised, out var bad)

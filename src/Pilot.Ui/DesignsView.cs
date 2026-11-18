@@ -273,7 +273,7 @@ internal sealed class DesignsView<TSurface> : PilotWidgetBase<TSurface>
     public event Action? TargetChanged;
 
     /// <summary>The choice of target of the open design: the saved one, else the first target its document names, else Desktop.</summary>
-    internal DesignTargetChoice Choice => OpenId is { } id && _choices.TryGetValue(id, out var c) ? c : Named(Player?.Document) is { } first ? DesignTargetChoice.Of(first) : DesignTargetChoice.Default;
+    internal DesignTargetChoice Choice => OpenId is { } id && _choices.TryGetValue(id, out var c) ? c : OwnChoice(Player?.Document) ?? DesignTargetChoice.Default;
 
     /// <summary>The surface the open design is shown at.</summary>
     internal DesignSurface Surface => Choice.Surface();
@@ -281,8 +281,41 @@ internal sealed class DesignsView<TSurface> : PilotWidgetBase<TSurface>
     /// <summary>What went wrong with the last custom size typed, or null.</summary>
     internal string? CustomProblem => _customProblem;
 
-    private static DesignSurface? Named(PrototypeDocument? document) =>
-        document is { Targets.Length: > 0 } && DesignTargets.Named(document.Targets[0].Name) is { } known ? known : null;
+    // The document's own size (#1160): its first targets entry resolved with its size (a built-in name alone gives the built-in), else its
+    // Width x Height at 1x. A built-in of that exact size is chosen by name so its chip lights; any other size is a custom choice.
+    private static DesignTargetChoice? OwnChoice(PrototypeDocument? document)
+    {
+        if (document is null)
+        {
+            return null;
+        }
+        var surface = document.Targets.Length > 0
+            ? DesignTargets.Resolve(document.Targets[0].Name, (int)MathF.Round(document.Targets[0].Width), (int)MathF.Round(document.Targets[0].Height), document.Targets[0].Scale)
+            : null;
+        var (w, h) = ((int)MathF.Round(document.Width), (int)MathF.Round(document.Height));
+        surface ??= w > 0 && h > 0 ? new DesignSurface($"{w}x{h}", w, h, 1) : null;
+        if (surface is null)
+        {
+            return null;
+        }
+        return DesignTargets.Named(surface.Name) is { } known && known.Width == surface.Width && known.Height == surface.Height && known.Scale == surface.Scale
+            ? DesignTargetChoice.Of(known)
+            : new DesignTargetChoice(null, surface.Width, surface.Height, surface.Scale, false);
+    }
+
+    /// <summary>The surface the open design's document gives itself, or null before it is read.</summary>
+    internal DesignSurface? OwnSurface => OwnChoice(Player?.Document)?.Surface();
+
+    /// <summary>Goes back to the size the document gives itself, dropping the window's own choice.</summary>
+    public bool PickOwn()
+    {
+        if (OpenId is not { } id || OwnChoice(Player?.Document) is not { } own)
+        {
+            return false;
+        }
+        Set(id, own);
+        return true;
+    }
 
     /// <summary>The choices the file held: each design's, replacing any made so far.</summary>
     internal void RestoreTargets(IReadOnlyDictionary<string, SavedDesignTarget>? saved)
@@ -553,6 +586,7 @@ internal sealed class DesignsView<TSurface> : PilotWidgetBase<TSurface>
         {
             Counts = OpenId is { } openId ? $"{openId}{(open?.Detail.Row.Title is { Length: > 0 } t ? " · " + t : "")}" : $"{screen.Rows.Length} {(screen.Rows.Length == 1 ? "design" : "designs")}",
             CountsFit = true,
+            CountsCut = OpenId is { },
             Buttons = buttons,
             Source = PageHeader.SourceLine(screen.Source, screen.AsOf),
         }, new TopBarParts(Nodes, null, Autopilot, About, Night));
@@ -656,13 +690,13 @@ internal sealed class DesignsView<TSurface> : PilotWidgetBase<TSurface>
     {
         var title = row.Title is { Length: > 0 } t ? t : row.Id;
         var version = row.Current is { } v ? "v" + v.ToString(CultureInfo.InvariantCulture) : "no version";
-        var when = row.At is { } at ? at.UtcDateTime.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture) : "";
+        var when = row.At is { } at ? PageTime.Text(at) : "";
         var repo = row.Repo ?? "";
         // Two lines of one string each: columns of a row squeezed each other's ellipses at a narrow window.
         var detail = string.Join(" · ", new[] { version, repo, when }.Where(t => t.Length > 0));
         var line = Layout.Builder.VStack(
             WrappedProse.OneLine($"{row.Id}  {title}", 13f, Bright, selectable: false).RowH(22f).Whole($"{row.Id}  {title}"),
-            WrappedProse.OneLine(detail, 12f, Dim, selectable: false).RowH(20f).Whole(detail)).WithGap(0f).Pad(4f, 2f).RowH(RowH);
+            WrappedProse.OneLine(detail, 12f, Dim, selectable: false).RowH(20f).Whole(row.At is { } stamp ? $"{detail} · {PageTime.Utc(stamp)}" : detail)).WithGap(0f).Pad(4f, 2f).RowH(RowH);
         var id = row.Id;
         return (index % 2 == 1 ? line.Bg(RowAltBg) : line)
             .BgHover(RowHoverBg)
@@ -675,7 +709,7 @@ internal sealed class DesignsView<TSurface> : PilotWidgetBase<TSurface>
         List<Layout.Node> left = [];
         if (page.Version is null)
         {
-            left.Add(Layout.Builder.Text("This design has no version yet. The brief is on the right; a version is made once a draft is checked, rendered and published.", 14f, Dim, TextAlign.Center).Selectable().Stretch());
+            // Said at the top of the right column, whose least width holds it: in a column of its own it was squeezed under its words at a narrow window (#1160).
         }
         else if (Player is null)
         {
@@ -704,27 +738,33 @@ internal sealed class DesignsView<TSurface> : PilotWidgetBase<TSurface>
         }
         // The target switcher sits above the versions, in the column that has the width for it: in the player's column it was squeezed at a narrow window and drew over the version line beside it.
         List<Layout.Node> right = page.Version is not null && Player is not null ? [TargetBar(page), Heading("Versions")] : [Heading("Versions")];
+        if (page.Version is null)
+        {
+            right.Insert(0, WrappedProse.Of("This design has no version yet. The brief is below; a version is made once a draft is checked, rendered and published.", 14f, Dim));
+        }
         right.AddRange(Versions(page));
         if (page.Notes is { Length: > 0 } notes)
         {
             right.Add(Heading($"NOTES.md{(page.Version is { } v ? $" of v{v}" : "")}"));
-            right.Add(Markdown(notes));
+            right.Add(Markdown(PageTime.LocalHeadings(notes)));
         }
         right.Add(Heading("Brief"));
-        right.Add(Markdown(string.IsNullOrWhiteSpace(page.Detail.Brief) ? "(no brief)" : page.Detail.Brief!));
+        right.Add(Markdown(string.IsNullOrWhiteSpace(page.Detail.Brief) ? "(no brief)" : PageTime.LocalHeadings(page.Detail.Brief!)));
         // In pixels the chat is a column of its own between the player and the versions: beside the prototype, where what the designer changes is in view.
         // Where the window has no width for three columns (their least widths and the gaps), the chat goes under the other two instead of past the page.
         var wide = _width >= WideColumns;
-        var two = Layout.Builder.HStack(
-            Layout.Builder.VStack([.. left]).WithGap(8f).WStar(2.2f).HStar(),
-            Layout.Builder.VStack([.. right]).WithGap(6f).WithScroll(_sideScroll).WStar(1f, 260f, 520f).HStar()).WithGap(Gutter).WStar().HStar();
+        var two = left.Count == 0
+            ? Layout.Builder.VStack([.. right]).WithGap(6f).WithScroll(_sideScroll).WStar().HStar()
+            : Layout.Builder.HStack(
+                Layout.Builder.VStack([.. left]).WithGap(8f).WStar(2.2f).HStar(),
+                Layout.Builder.VStack([.. right]).WithGap(6f).WithScroll(_sideScroll).WStar(1f, 260f, 520f).HStar()).WithGap(Gutter).WStar().HStar();
         var columns = Terminal is not null
             ? two
             : wide
-                ? Layout.Builder.HStack(
-                    Layout.Builder.VStack([.. left]).WithGap(8f).WStar(1.6f).HStar(),
+                ? Layout.Builder.HStack([
+                    .. left.Count == 0 ? [] : (Layout.Node[])[Layout.Builder.VStack([.. left]).WithGap(8f).WStar(1.6f).HStar()],
                     ChatPane(page).WStar(1.3f, 260f, 640f).HStar(),
-                    Layout.Builder.VStack([.. right]).WithGap(6f).WithScroll(_sideScroll).WStar(1f, 220f, 420f).HStar()).WithGap(Gutter).WStar().HStar()
+                    Layout.Builder.VStack([.. right]).WithGap(6f).WithScroll(_sideScroll).WStar(1f, 220f, 420f).HStar()]).WithGap(Gutter).WStar().HStar()
                 : Layout.Builder.VStack(two.HStar(), ChatPane(page).HStar(NarrowChatShare, NarrowChatFloor, NarrowChatHeight)).WithGap(8f).WStar().HStar();
         // The Pixels or Cells bar spans the page above both columns, so a narrow window cannot squeeze it into the player's column.
         return page.Version is not null && Player is not null && Terminal is null
@@ -743,14 +783,15 @@ internal sealed class DesignsView<TSurface> : PilotWidgetBase<TSurface>
     }
 
     private Layout.Node PointButton() =>
-        Layout.Builder.Text("Point at this", 12f, Bright, TextAlign.Center)
-            .Pad(10f, 4f)
+        Layout.Builder.Text("Point at this", 12f, Bright, TextAlign.Center, TextAlign.Center)
+            .Pad(10f, 0f)
             .WAuto()
             .Bg(Pointing ? Active : Button)
             .BgHover(ButtonHover)
             .WithTooltip(Pointing ? "Pointing: a click on the prototype puts that node's key in your message. Click again to play it." : "Click a part of the prototype to put its key in your message instead of playing the click")
             .Follows(new HitResult.ButtonHit("designs:point"), _ => Point(!Pointing))
-            .RowH(26f);
+            // RowH gives a star share of the row (the button was a third of the chat column); the start button's WAuto and fixed height hold it label-wide.
+            .WAuto().HFixed(26f);
 
     // The cells the page's left column has in a terminal, as the tree shares them: its 2.2 share beside the versions' 1, with the versions kept
     // between 260 and 520 where the room allows. The chat's box and the prototype's width are told this one number.
@@ -861,12 +902,12 @@ internal sealed class DesignsView<TSurface> : PilotWidgetBase<TSurface>
         foreach (var version in page.Detail.Versions.OrderByDescending(v => v.Number))
         {
             var number = version.Number;
-            var when = version.At is { } at ? at.UtcDateTime.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture) : "";
+            var when = version.At is { } at ? PageTime.Text(at) : "";
             var label = $"v{number}{(number == row.Current ? " (current)" : "")}{(version.Why is { Length: > 0 } why ? $" · {why}" : "")}{(when.Length > 0 ? $" · {when}" : "")}";
             yield return WrappedProse.OneLine(label, 12f, Bright, selectable: false).Pad(8f, 4f)
                 .Bg(number == page.Version ? Active : Button)
                 .BgHover(ButtonHover)
-                .WithTooltip($"Play v{number}")
+                .WithTooltip(version.At is { } made ? $"Play v{number} · {PageTime.Utc(made)}" : $"Play v{number}")
                 .Follows(new HitResult.ButtonHit($"designs:version:{number}"), _ => PickVersion(number))
                 .RowH(26f);
         }
@@ -891,6 +932,15 @@ internal sealed class DesignsView<TSurface> : PilotWidgetBase<TSurface>
                 .Follows(new HitResult.ButtonHit($"designs:target:{name}"), _ => PickTarget(name));
         });
         var landscape = surface.Width >= surface.Height;
+        var own = OwnSurface;
+        var ownChosen = own is not null && own.Width == surface.Width && own.Height == surface.Height && own.Scale == surface.Scale;
+        var ownLabel = own is null ? "Design" : $"Design {own.Width}x{own.Height}";
+        var ownChip = Layout.Builder.Text(ownLabel, 12f, Bright, TextAlign.Center)
+            .Pad(4f, 4f).WAuto()
+            .Bg(ownChosen ? Active : Button)
+            .BgHover(ButtonHover)
+            .WithTooltip("The size the design gives itself")
+            .Follows(new HitResult.ButtonHit("designs:target-own"), _ => PickOwn());
         var swap = Layout.Builder.Text("Rotate", 12f, Bright, TextAlign.Center)
             .Pad(4f, 4f).WAuto()
             .Bg(Button)
@@ -908,7 +958,7 @@ internal sealed class DesignsView<TSurface> : PilotWidgetBase<TSurface>
         // Three rows, the chips sharing the column's width: one row of chips, swap and input overran a narrow column onto the versions beside it.
         return Layout.Builder.VStack(
             Layout.Builder.HStack([.. chips]).WithGap(4f).RowH(26f),
-            Layout.Builder.HStack(swap).RowH(26f),
+            Layout.Builder.HStack(ownChip, swap).WithGap(4f).RowH(26f),
             custom,
             WrappedProse.OneLine(caption, 12f, _customProblem is null ? Dim : Bright).RowH(22f).Whole(caption)).WithGap(4f).RowH(116f);
     }
@@ -931,7 +981,7 @@ internal sealed class DesignsView<TSurface> : PilotWidgetBase<TSurface>
     }
 
     // Whole on hover: a heading beside a button (the chat's, at 80 columns) is cut with an ellipsis.
-    private static Layout.Node Heading(string text) => WrappedProse.OneLine(text, 14f, Bright).RowH(26f).Whole(text);
+    private static Layout.Node Heading(string text) => WrappedProse.OneLine(text, 14f, Bright, vAlign: TextAlign.Center).RowH(26f).Whole(text);
 
     // The Markdown of a text, parsed once: the page's tree is built every frame and a node is immutable.
     private readonly Dictionary<(string Text, bool Night), Layout.Node> _markdown = [];

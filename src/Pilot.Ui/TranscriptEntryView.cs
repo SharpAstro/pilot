@@ -387,12 +387,12 @@ internal sealed class TranscriptEntryView
     private static Layout.Node Divider(TranscriptEntry entry, Action? open)
     {
         var rule = Layout.Builder.Spacer().WStar().HFixed(1f).Bg(Faint);
-        var said = entry.At is { } at ? $"{entry.Text} · {at.ToLocalTime().ToString("d MMM HH:mm", CultureInfo.InvariantCulture)}" : entry.Text;
+        var said = entry.At is { } at ? $"{entry.Text} · {PageTime.Text(at, "d MMM HH:mm")}" : entry.Text;
         // A line that opens something is a control, whose label is not selected by a drag; a plain one is content and is.
         var label = Layout.Builder.Text(said, 12f, open is null ? Dim : Bright, TextAlign.Center);
         var line = Layout.Builder.HStack(
                 Layout.Builder.VStack(Layout.Builder.Spacer().HStar(), rule, Layout.Builder.Spacer().HStar()).WStar(),
-                (open is null ? label.Selectable() : label).WStarUpToContent(BodyWeight).WithTooltip(open is null ? said : said + " (click to show it)"),
+                (open is null ? label.Selectable() : label).WStarUpToContent(BodyWeight).WithTooltip((entry.At is { } when ? said + " · " + PageTime.Utc(when) : said) + (open is null ? "" : " (click to show it)")),
                 Layout.Builder.VStack(Layout.Builder.Spacer().HStar(), rule, Layout.Builder.Spacer().HStar()).WStar())
             .WithGap(10f)
             .Pad(0f, ProseSpace);
@@ -479,8 +479,8 @@ internal sealed class TranscriptEntryView
     internal Layout.Node Stamp(DateTimeOffset? at) =>
         at is { } when
             ? Layout.Builder.HStack(
-                    Layout.Builder.Text(when.ToLocalTime().ToString("HH:mm:ss", CultureInfo.InvariantCulture), 11f, Faint, TextAlign.Far).Selectable().WStar()
-                        .WithTooltip(when.ToLocalTime().ToString("ddd d MMM yyyy HH:mm:ss zzz", CultureInfo.InvariantCulture), Layout.DockSide.Left),
+                    Layout.Builder.Text(PageTime.Text(when, "HH:mm:ss"), 11f, Faint, TextAlign.Far).Selectable().WStar()
+                        .WithTooltip(PageTime.Hover(when), Layout.DockSide.Left),
                     Layout.Builder.Spacer().WFixed(StampGutter))
                 .WStar(1f, 0f, TimeWidth)
             : Layout.Builder.Spacer().WStar(1f, 0f, TimeWidth);
@@ -541,8 +541,8 @@ internal sealed class TranscriptEntryView
         if (entry.Kind == TranscriptKind.Error && RunOf(entry) is { } run)
         {
             // ASCII hyphen: the times are this machine's, the last one is also the stamp column's.
-            var first = (run.First ?? entry.At)?.ToLocalTime().ToString("HH:mm", CultureInfo.InvariantCulture);
-            var last = entry.At?.ToLocalTime().ToString("HH:mm", CultureInfo.InvariantCulture);
+            var first = (run.First ?? entry.At) is { } f ? PageTime.Text(f, "HH:mm") : null;
+            var last = entry.At is { } l ? PageTime.Text(l, "HH:mm") : null;
             body.Add(Layout.Builder.Text(first is null || last is null ? $"x{run.Count}" : $"x{run.Count}, {first}-{last}", 11f, Dim).Selectable());
         }
         var row = Layout.Builder.HStack(
