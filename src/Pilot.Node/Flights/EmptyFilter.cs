@@ -1,3 +1,4 @@
+using Pilot.Contracts;
 using System.Text.RegularExpressions;
 
 namespace Pilot.Node.Flights;
