@@ -54,7 +54,7 @@ internal sealed class PageData
     /// A design's chat as the node's design-chat feed gives it (PIL1151): three turns (the owner, the designer, the owner) and a line for each of
     /// <paramref name="versions"/> published versions, with the designer's state in words. <paramref name="lengthen"/> stretches the words.
     /// </summary>
-    internal static ChatPage DesignChatPage(string status = "checking: 2 findings", int versions = 2, bool lengthen = false)
+    internal static ChatPage DesignChatPage(string status = "checking: 2 findings", int versions = 2, bool lengthen = false, bool working = true)
     {
         var at = Now.AddMinutes(-30);
         var entries = new List<TranscriptEntry>
@@ -66,7 +66,7 @@ internal sealed class PageData
             new() { Index = 4, Id = "version:2", At = at.AddMinutes(15), Kind = TranscriptKind.Divider, Text = "published v2: message" },
         };
         entries.RemoveAll(e => e.Id is "version:2" && versions < 2);
-        return new ChatPage { Entries = [.. entries], Total = entries.Count, Working = true, Status = status };
+        return new ChatPage { Entries = [.. entries], Total = entries.Count, Working = working, Status = status };
     }
 
     /// <summary>Opens the design page's chat on <paramref name="page"/> and waits until it holds it, then stops following: the sweeps draw the page with a chat that has something said.</summary>

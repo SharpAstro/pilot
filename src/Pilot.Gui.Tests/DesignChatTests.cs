@@ -107,6 +107,18 @@ public sealed class DesignChatTests
         string.Join("\n", rig.Texts()).ShouldContain($"designer: {status}");
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task TheWorkingLineIsDrawnOnlyWhileTheDesignerWorks(bool working)
+    {
+        using var rig = new Rig(PageData.DesignChatPage("published v2", working: working));
+        await rig.OpenAsync(5);
+
+        string.Join("
+", rig.Texts()).Contains("working…", StringComparison.Ordinal).ShouldBe(working);
+    }
+
     [Fact]
     public async Task EnterSendsTheTypedWordsToTheHost()
     {

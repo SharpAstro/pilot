@@ -43,7 +43,7 @@ public sealed class DesignChatTests : IDisposable
                 return Task.FromResult(_state.Complete(command, null));
             },
         };
-        _chat = new DesignChat(_store, new TranscriptBook(_profile.Profile));
+        _chat = new DesignChat(_store, new TranscriptBook(_profile.Profile), () => _state.Sessions());
         _commands = new DesignCommands(_state, _store, _designers, _chat);
     }
 
@@ -79,6 +79,26 @@ public sealed class DesignChatTests : IDisposable
     private void DesignerReplies(string when, string text) =>
         _profile.Append(_profile.TranscriptPath(Session),
             $$$"""{"type":"assistant","timestamp":"{{{when}}}","message":{"role":"assistant","content":[{"type":"text","text":"{{{text}}}"}]}}""");
+
+    [Fact]
+    public async Task TheChatStopsWorkingAtOnceWhenTheDesignersTurnEndsWithoutASweep()
+    {
+        var id = await DesignWithDesignerAsync();
+        _store.Update(id, r => r with
+        {
+            DesignerPhase = DesignerPhases.Published, Current = 1, Versions = 1,
+            History = [new DesignVersionRow { Number = 1, At = Start.AddMinutes(1), Why = "brief" }], DesignerTurnStartedAt = Start,
+        });
+
+        var during = Run(Verbs.DesignChat, id).DesignChat.ShouldNotBeNull();
+        during.Working.ShouldBeTrue();
+
+        // The session's turn ends; no sweep runs, yet the page follows the tracker.
+        Listed(SessionState.Idle);
+        var after = Run(Verbs.DesignChat, id).DesignChat.ShouldNotBeNull();
+        after.Working.ShouldBeFalse();
+        after.Status.ShouldBe("published v1");
+    }
 
     [Fact]
     public async Task ASayIsAppendedToTheBriefVerbatimAndReachesTheOneDesignerResumed()
