@@ -1309,6 +1309,7 @@ internal sealed class PilotChrome<TSurface>
                     Chat.Render(rect);
                     break;
                 case PageKey when Page == PilotPage.Ideas:
+                    Ideas.Designs = designs?.Rows ?? [];
                     Ideas.Render(ideas ?? IdeasScreen.Empty, rect);
                     break;
                 case PageKey when Page == PilotPage.Spend:

@@ -30,8 +30,12 @@ internal static class IdeaDesignMark<TSurface>
     internal static string DesignText(IdeaRow idea) =>
         idea.Design is not { } id ? "" : idea.DesignVersion is { } version ? $"{id} v{version}" : $"{id}, no version yet";
 
+    /// <summary>Every design the idea is linked to (#1185): its list, else the one design an older node sent in <see cref="IdeaRow.Design"/>.</summary>
+    internal static IdeaDesignLink[] DesignsOf(IdeaRow idea) =>
+        idea.Designs.Length > 0 ? idea.Designs : idea.Design is { } id ? [new IdeaDesignLink(id, null, idea.DesignVersion)] : [];
+
     /// <summary>Whether Plan must ask first: the idea is marked and its design has no published version (or it has no design at all).</summary>
-    internal static bool PlanAsksFirst(IdeaRow idea) => idea.NeedsDesign && idea.DesignVersion is null;
+    internal static bool PlanAsksFirst(IdeaRow idea) => idea.NeedsDesign && DesignsOf(idea).All(d => d.Version is null);
 
     /// <summary>The question Plan asks first, in words.</summary>
     internal static string Question(string name) => $"{name} needs a design and has none yet. Start its design, or plan it anyway.";
@@ -40,21 +44,35 @@ internal static class IdeaDesignMark<TSurface>
     /// The mark and the design link on one line, or null when the idea has neither. <paramref name="hit"/> names the link in the view (a hit id is
     /// unique on a page, and the tree's row and its detail may both show one idea); a null <paramref name="open"/> leaves the design's id as plain text.
     /// </summary>
-    internal static Layout.Node? Chip(IdeaRow idea, string hit, Palette p, RGBAColor32 link, RGBAColor32 hover, Action<string>? open, float size = 12f)
+    internal static Layout.Node? Chip(IdeaRow idea, string hit, Palette p, RGBAColor32 link, RGBAColor32 hover, Action<string>? open, float size = 12f, bool designs = true)
     {
         var parts = new List<Layout.Node>();
         if (idea.NeedsDesign)
         {
             parts.Add(Layout.Builder.Text(MarkText, size, p.Body).Selectable().WAuto().WithTooltip("The idea is marked as needing a design before it flies"));
         }
-        if (idea.Design is { } id)
+        if (designs)
         {
-            var text = Layout.Builder.Text(DesignText(idea), size, link).WAuto();
-            parts.Add(open is null
-                ? text.Selectable()
-                : text.BgHover(hover).Follows(new HitResult.ButtonHit($"{hit}:{idea.Qualified}"), _ => open(id)).Pad(4f, 0f).WithTooltip($"Open the design {id}"));
+            foreach (var design in DesignsOf(idea))
+            {
+                parts.Add(LinkedThing.Chip($"{hit}:{idea.Qualified}", design.Id, null, LinkedThing.VersionText(design.Version), link, hover, p.Dim, $"Open the design {design.Id}", open, wide: false, size: size));
+            }
         }
         return parts.Count == 0 ? null : Layout.Builder.HStack([.. parts]).WithGap(8f).WAuto();
+    }
+
+    /// <summary>
+    /// The idea's designs as rows (#1185): each one's id, title and version as the one linked-thing component, a link to its page, with a remove when
+    /// <paramref name="remove"/> is given. Empty for an idea with none.
+    /// </summary>
+    internal static IEnumerable<Layout.Node> Links(IdeaRow idea, string hit, Palette p, RGBAColor32 link, RGBAColor32 hover, Action<string>? open, Action<IdeaDesignLink>? remove)
+    {
+        foreach (var design in DesignsOf(idea))
+        {
+            var d = design;
+            yield return LinkedThing.Chip($"{hit}:{idea.Qualified}", d.Id, d.Title, LinkedThing.VersionText(d.Version), link, hover, p.Dim,
+                $"Open the design {d.Id}", open, remove is null ? null : () => remove(d), $"Take the link of {d.Id} to this idea away", 12f).RowH(22f);
+        }
     }
 
     /// <summary>The button that marks the idea, or unmarks it once it is marked; while the node has the press it says so and takes no second one.</summary>

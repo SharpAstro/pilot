@@ -114,6 +114,16 @@ internal sealed partial class IdeasView<TSurface>
                     yield return node;
                 }
                 break;
+            case Mode.LinkDesign:
+                var linked = IdeaDesignMark<TSurface>.DesignsOf(idea).Select(d => d.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
+                var free = Designs.Where(d => !linked.Contains(d.Id)).ToList();
+                yield return free.Count == 0
+                    ? Layout.Builder.Text("The node has no other design to link.", 12f, P.Dim).Selectable().RowH(18f)
+                    : Layout.Builder.WrapH([.. free.Select(d => NodeButton(idea, LinkedThing.Text(d.Id, DesignTitle.Shown(d.Title), LinkedThing.VersionText(d.Current)), $"design-link:{d.Id}", "linking",
+                            () => Run(() => LinkDesignAsync(idea, d.Id), $"link {d.Id} to {idea.Id}"), Tint, idOf: false))])
+                        .WithGap(8f).WithLineGap(4f).WStar();
+                yield return CardsView<TSurface>.Pill("Cancel", $"ideas:cancel:{KeyOf(idea)}", Close, Tint, P.Body);
+                break;
             case Mode.Move:
                 var repos = _screen.Repos.Where(r => !string.Equals(r, idea.Repo, StringComparison.OrdinalIgnoreCase)).ToList();
                 yield return repos.Count == 0

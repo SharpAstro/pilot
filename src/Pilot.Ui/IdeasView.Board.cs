@@ -278,6 +278,10 @@ internal sealed partial class IdeasView<TSurface>
     {
         var idea = item.Idea;
         var parts = new List<Layout.Node> { ItemHead(item, compact) };
+        if (idea is not null)
+        {
+            parts.AddRange(IdeaDesignMark<TSurface>.Links(idea, "ideas:design", P, Link, Tint.Hover, OnDesign, Send is null ? null : link => Run(() => UnlinkDesignAsync(idea, link.Id), $"unlink {link.Id} from {idea.Id}")));
+        }
         var meta = string.Join(" · ", new[] { item.Repo.Length > 0 ? item.Repo : null, item.Age.Length > 0 ? $"{item.Age} ago" : null, item.Who.Length > 0 ? $"by {item.Who}" : null }.OfType<string>());
         if (meta.Length > 0)
         {
@@ -319,7 +323,7 @@ internal sealed partial class IdeasView<TSurface>
         {
             parts.Add(Layout.Builder.Text(PriorityChip(level), 12f, PriorityColour(level)).Selectable().WAuto().WithTooltip("The issue's Priority field on GitHub"));
         }
-        if (item.Idea is { } marked && IdeaDesignMark<TSurface>.Chip(marked, "ideas:design", P, Link, Tint.Hover, OnDesign) is { } mark)
+        if (item.Idea is { } marked && IdeaDesignMark<TSurface>.Chip(marked, "ideas:design", P, Link, Tint.Hover, OnDesign, designs: false) is { } mark)
         {
             parts.Add(mark);
         }
@@ -391,6 +395,7 @@ internal sealed partial class IdeasView<TSurface>
                 : CardsView<TSurface>.Pill(item.Pinned ? UnpinLabel : PinLabel, $"ideas:pin:{item.Key}", () => Run(() => PinAsync(item), $"{(item.Pinned ? "unpin" : "pin")} {Label(item)}"), Tint, P.Bright);
             if (idea is not null)
             {
+                yield return ActionPill(LinkedThing.LinkDesignLabel, idea, Mode.LinkDesign);
                 yield return IdeaDesignMark<TSurface>.Button(idea, $"ideas:design-mark:{item.Key}", IsBusy("design-mark:" + item.Key), () => Run(() => MarkDesignAsync(item, idea), $"{(idea.NeedsDesign ? "unmark" : "mark")} {Label(item)} for design"), Tint, P.Bright);
             }
             if (IsBusy("priority:" + item.Key))

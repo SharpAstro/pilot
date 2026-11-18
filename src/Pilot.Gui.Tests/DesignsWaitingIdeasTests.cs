@@ -161,8 +161,8 @@ public sealed class DesignsWaitingIdeasTests
         chrome.Designs.Open(screen.Open!.Detail.Row.Id);
         screen.Open.Detail.Row.FromIdea.ShouldBe("pilot I381");
 
-        Said(host.Nodes(chrome, screen)).ShouldContain("pilot I381");
-        host.Hits(chrome, screen).Single(h => h.Action == "designs:from-idea").Press();
+        Said(host.Nodes(chrome, screen)).ShouldContain("I381");
+        host.Hits(chrome, screen).Single(h => h.Action == "designs:for-idea:pilot:I381").Press();
 
         chrome.Page.ShouldBe(PilotPage.Ideas);
         chrome.Ideas.ShowingIdea.ShouldBe("pilot I381");
@@ -262,7 +262,7 @@ public sealed class DesignsWaitingIdeasTests
             var buffer = new CellBuffer { ColorMode = ColorMode.TrueColor };
             await TerminalWireframeSweepTests.RecordCase(page, "long", Columns, Rows, buffer);
             var lines = Enumerable.Range(0, Rows).Select(y => string.Concat(Enumerable.Range(0, Columns).Select(x => buffer.BackAt(x, y).Glyph))).ToArray();
-            string.Join('\n', lines).ShouldContain(open ? "pilot I381" : "Ideas waiting for a design");
+            string.Join('\n', lines).ShouldContain(open ? "I381" : "Ideas waiting for a design");
             Keep($"after-{name}-pilot-tui.png", Png(lines));
         }
     }

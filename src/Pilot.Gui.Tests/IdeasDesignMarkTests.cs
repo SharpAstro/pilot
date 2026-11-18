@@ -80,10 +80,11 @@ public sealed class IdeasDesignMarkTests
 
         var said = Spoken(renderer, chrome, screen);
         said.ShouldContain("◆ needs design");
-        said.ShouldContain("DSN-1 v2");
-        said.ShouldContain("DSN-2, no version yet");
+        // #1185: every design of an idea is a link, with its title where the view has the room for one (not in the tree grid's row).
+        said.ShouldContain(mode == IdeasViewMode.Tree ? "DSN-1 · v2" : "DSN-1 Design 0 · v2");
+        said.ShouldContain("DSN-2 · no version yet");
         var actions = Actions(Regions(chrome, screen)).ToList();
-        actions.ShouldContain(mode == IdeasViewMode.Tree ? "ideas:tree-design:pilot I381" : "ideas:design:pilot I381");
+        actions.ShouldContain(mode == IdeasViewMode.Tree ? "ideas:tree-design:pilot I381:DSN-1" : "ideas:design:pilot I381:DSN-1");
         if (mode == IdeasViewMode.Tree)
         {
             // The grid's detail is of the picked row: I381 is marked, so its button unmarks.
@@ -119,7 +120,7 @@ public sealed class IdeasDesignMarkTests
         }, PageData.DesignIdeas());
         var text = string.Join("\n", Enumerable.Range(0, 60).Select(y => string.Concat(Enumerable.Range(0, 200).Select(x => buffer.BackAt(x, y).Glyph)).TrimEnd()));
         text.ShouldContain("needs design");
-        text.ShouldContain("DSN-1 v2");
+        text.ShouldContain(mode == IdeasViewMode.Tree ? "DSN-1 · v2" : "DSN-1 Design 0 · v2");
         text.ShouldContain(mode == IdeasViewMode.Tree ? IdeaDesignMark<RgbaImage>.UnmarkLabel : IdeaDesignMark<RgbaImage>.MarkLabel);
     }
 
@@ -167,7 +168,7 @@ public sealed class IdeasDesignMarkTests
     {
         using var renderer = new RgbaImageRenderer(1280, 900);
         var (chrome, _, _) = Chrome(renderer);
-        Click(Regions(chrome, PageData.DesignIdeas()), "ideas:design:pilot I381");
+        Click(Regions(chrome, PageData.DesignIdeas()), "ideas:design:pilot I381:DSN-1");
         chrome.Page.ShouldBe(PilotPage.Designs);
         chrome.Designs.OpenId.ShouldBe("DSN-1");
     }

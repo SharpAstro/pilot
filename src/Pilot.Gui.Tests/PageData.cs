@@ -103,6 +103,8 @@ internal sealed partial class PageData
             PrototypeSha256 = "ab",
             // The first design was started from the idea I381, which the sample's ideas hold marked (PIL1152).
             FromIdea = i == 0 ? "pilot I381" : null,
+            // #1185: the first design is for two ideas (I381 and I383) and the third for I381, so I381 has two designs.
+            ForIdeas = i == 0 ? ["pilot I381", "pilot I383"] : i == 2 ? ["pilot I381"] : [],
         };
         var first = Row(0);
         var rows = Enumerable.Range(0, count).Select(Row).ToArray();

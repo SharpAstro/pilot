@@ -127,6 +127,12 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
     /// <summary>Asked for the Ideas page on an idea (its qualified id, e.g. <c>pilot I381</c>): the link on a design made from one.</summary>
     public Action<string>? OnIdea { get; set; }
 
+    /// <summary>
+    /// Asked to link a design to an idea, or to take the link away (#1185): the design's id, the idea (qualified, <c>pilot I381</c>) and whether to link. The host sends
+    /// <c>design-link</c> or <c>design-unlink</c> and answers with <see cref="Typed"/>.
+    /// </summary>
+    public Action<string, string, bool>? OnLinkIdea { get; set; }
+
     /// <summary>The box the brief of a new design is typed in, on the empty page and above the list.</summary>
     public TextInputState BriefInput { get; } = new() { Placeholder = "Describe the design" };
 
@@ -195,7 +201,7 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
 
     /// <summary>The marked ideas with no design yet, the ones the page lists under its input.</summary>
     internal static IdeaRow[] Waiting(DesignsScreen screen) =>
-        [.. (screen.Ideas ?? []).Where(i => i.NeedsDesign && i.Design is null && i.State == IdeaState.Noted)];
+        [.. (screen.Ideas ?? []).Where(i => i.NeedsDesign && IdeaDesignMark<TSurface>.DesignsOf(i).Length == 0 && i.State == IdeaState.Noted)];
 
     /// <summary>Presses Start its design of <paramref name="idea"/>: hands it and the node to <see cref="OnStartIdea"/>.</summary>
     public bool StartIdea(IdeaRow idea)
@@ -658,6 +664,7 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
         ClearPlays();
         _pointAt = null;
         _versionsOpen = false;
+        _pickingIdea = false;
         Chat.Close();
     }
 
@@ -896,11 +903,12 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
             CountsFit = true,
             Source = PageHeader.SourceLine(screen.Source, screen.AsOf),
         }, new TopBarParts(Nodes, null, Autopilot, About, Night));
+        _ideas = screen.Ideas ?? [];
         var body = OpenId is null
             ? List(screen)
             : Layout.Builder.VStack(
-                DesignBackRow(open),
-                (open is null ? Layout.Builder.Text($"Reading {OpenId}…", 16f, Dim, TextAlign.Center).Selectable().Stretch() : DesignBody(open)).Stretch()).Stretch();
+                [DesignBackRow(open), .. IdeaPicker(open),
+                 (open is null ? Layout.Builder.Text($"Reading {OpenId}…", 16f, Dim, TextAlign.Center).Selectable().Stretch() : DesignBody(open)).Stretch()]).Stretch();
         var page = Layout.Builder.VStack(header, body.Stretch()).Bg(Ground).Stretch();
         return About?.Over(WhenShort(page)) ?? WhenShort(page);
     }
@@ -937,6 +945,10 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
             if (page.DesignIsDraft)
             {
                 parts.Add(StateTag("draft", true).HFixed(BackRowH));
+            }
+            if (ForIdeasRow(page.Detail.Row) is { } forIdeas)
+            {
+                parts.Add(forIdeas);
             }
             if (SyncLine(page.Detail.Row) is { } sync)
             {
@@ -1050,7 +1062,7 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
         var when = row.At is { } at ? PageTime.Text(at) : "";
         var repo = row.Repo ?? "";
         // Two lines of one string each: columns of a row squeezed each other's ellipses at a narrow window.
-        var detail = string.Join(" · ", new[] { version, repo, row.MadeOn is { Length: > 0 } node ? $"made on {node}" : "", when }.Where(t => t.Length > 0));
+        var detail = string.Join(" · ", new[] { version, row.Ideas() is { Length: > 0 } ideas ? "for " + string.Join(", ", ideas.Select(IdeaName)) : "", repo, row.MadeOn is { Length: > 0 } node ? $"made on {node}" : "", when }.Where(t => t.Length > 0));
         var line = Layout.Builder.VStack(
             WrappedProse.OneLine($"{row.Id}  {title}", 13f, Bright, selectable: false).RowH(22f).Whole($"{row.Id}  {title}"),
             WrappedProse.OneLine(detail, 12f, Dim, selectable: false).RowH(20f).Whole(row.At is { } stamp ? $"{detail} · {PageTime.Utc(stamp)}" : detail)).WithGap(0f).Pad(4f, 2f).RowH(RowH);
@@ -1120,7 +1132,6 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
         if (page.Version is not { } version)
         {
             items.Add(WrappedProse.Of("This design has no version yet. The brief is below; a version is made once a draft is checked, rendered and published.", 14f, Dim));
-            items.AddRange(FromIdeaPart(row));
             items.Add(Heading("Brief"));
             items.Add(Markdown(string.IsNullOrWhiteSpace(page.Detail.Brief) ? "(no brief)" : PageTime.LocalHeadings(page.Detail.Brief!)));
             return Layout.Builder.VStack([.. items]).WithGap(6f);
@@ -1166,7 +1177,6 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
         {
             items.Add(WrappedProse.Of($"v{version} cannot be played: {page.Problem ?? "its prototype did not load"}", 14f, Dim));
         }
-        items.AddRange(FromIdeaPart(row));
         items.AddRange(BuildPart(page));
         for (var i = 0; i < (notebook?.Cells.Count ?? 0); i++)
         {
@@ -1264,18 +1274,6 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
         foreach (var ignored in row.GitHubIgnored)
         {
             yield return WrappedProse.Of(ignored, 12f, Dim);
-        }
-    }
-
-    private IEnumerable<Layout.Node> FromIdeaPart(DesignRow row)
-    {
-        if (row.Ideas() is { Length: > 0 } ideas)
-        {
-            yield return Heading(ideas.Length == 1 ? "Made from" : "For ideas");
-            foreach (var idea in ideas)
-            {
-                yield return FromIdeaLink(idea);
-            }
         }
     }
 
@@ -1414,15 +1412,6 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
             builder.DesignSize = before;
         }
     }
-    // The idea the design was started from, as a link to the Ideas page on it. DesignRow.FromIdea is kept when the idea is dropped or folded, so the id reads whatever the idea became.
-    private Layout.Node FromIdeaLink(string idea)
-    {
-        var text = WrappedProse.OneLine(idea, 13f, Bright, selectable: false, vAlign: TextAlign.Center).Pad(8f, 4f).RowH(26f).Whole($"Open the idea {idea} on the Ideas page");
-        return OnIdea is null
-            ? text
-            : text.Bg(Button).BgHover(ButtonHover).Follows(new HitResult.ButtonHit("designs:from-idea"), _ => OnIdea(idea));
-    }
-
     // The chat column: its heading with the Point at this switch, and the chat's own feed, status and box under it.
     private Layout.Node ChatPane(DesignPage page)
     {

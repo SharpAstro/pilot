@@ -494,6 +494,31 @@ internal sealed partial class IdeasView<TSurface>
         EditInput.InsertText(body.Length > 0 ? title + "\n" + body : title);
     }
 
+    /// <summary>Links the design <paramref name="designId"/> to the idea (design-link, #1185): the design is for the idea, here and on both issues.</summary>
+    internal async Task LinkDesignAsync(IdeaRow idea, string designId)
+    {
+        Close();
+        var reply = await RunDesignLinkAsync(idea, Verbs.DesignLink, designId, "linking");
+        if (reply is not null)
+        {
+            Say(reply.Ok ? $"linked {designId} to {Name(idea)}" : $"{designId} not linked to {Name(idea)}: {reply.Error}", !reply.Ok);
+        }
+    }
+
+    /// <summary>Takes the link of the design <paramref name="designId"/> to the idea away (design-unlink, #1185).</summary>
+    internal async Task UnlinkDesignAsync(IdeaRow idea, string designId)
+    {
+        var reply = await RunDesignLinkAsync(idea, Verbs.DesignUnlink, designId, "unlinking");
+        if (reply is not null)
+        {
+            Say(reply.Ok ? $"took {designId} off {Name(idea)}" : $"{designId} not taken off {Name(idea)}: {reply.Error}", !reply.Ok);
+        }
+    }
+
+    // The link verbs are the design's: its target, the idea in its words.
+    private Task<IdeaReply?> RunDesignLinkAsync(IdeaRow idea, string verb, string designId, string word) =>
+        RunAsync(KeyOf(idea), $"ideas:{verb}:{designId}:{KeyOf(idea)}", word, verb, Verbs.DesignTarget(designId), [idea.Qualified]);
+
     /// <summary>Moves the idea to <paramref name="repo"/>: its number there is new, its old id keeps finding it.</summary>
     public async Task MoveAsync(IdeaRow idea, string repo)
     {

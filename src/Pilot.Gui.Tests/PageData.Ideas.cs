@@ -11,7 +11,7 @@ internal sealed partial class PageData
     /// </summary>
     internal static IdeasScreen DesignIdeas(bool marked = true)
     {
-        IdeaRow Idea(int number, string title, string body, bool needs, string? design = null, int? version = null) => new()
+        IdeaRow Idea(int number, string title, string body, bool needs, string? design = null, int? version = null, IdeaDesignLink[]? designs = null) => new()
         {
             Id = IdeaIds.Id(number),
             Repo = "pilot",
@@ -25,12 +25,14 @@ internal sealed partial class PageData
             NeedsDesign = marked && needs,
             Design = marked ? design : null,
             DesignVersion = marked ? version : null,
+            // #1185: the designs the idea is linked to, kept whether or not the sample marks ideas.
+            Designs = !marked ? [] : designs ?? (design is null ? [] : [new IdeaDesignLink(design, null, version)]),
         };
         return new IdeasScreen(
         [
             Idea(381, "Ideas pane", "Show **ideas** in a pane.\n\n- a list\n- a box", true, "DSN-1", 2),
             Idea(382, "Rail count", "", true),
-            Idea(383, "Night mode for the rail", "Keep the red.", false),
+            Idea(383, "Night mode for the rail", "Keep the red.", false, designs: [new IdeaDesignLink("DSN-1", "Design 0", 2)]),
             Idea(384, "Export the flights page", "As a table.", true, "DSN-2"),
         ], [], ["pilot", "tianwen"], "live from the node", Now);
     }
