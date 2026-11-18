@@ -755,8 +755,6 @@ public static class Verbs
     /// </summary>
     public const string DesignFromIdea = "design-from-idea";
 
-    /// <summary>The last argument of <see cref="PlanIdea"/> that plans an idea marked as needing a design although its design has no published version.</summary>
-    public const string PlanAnywayArg = "--anyway";
 
     /// <summary>The argument of <see cref="PinIssue"/> that unpins.</summary>
     public const string PinOff = "off";

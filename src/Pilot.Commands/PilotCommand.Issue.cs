@@ -295,11 +295,11 @@ public static partial class PilotCommand
             var ideaAnyway = new Option<bool>("--anyway") { Description = "plan: plan an idea marked as needing a design although its design has no published version" };
             var ideaNo = new Option<bool>("--no") { Description = "design: take the needs-design mark off instead of putting it on" };
             var idea = Action(new Command("idea", $"Note an idea in the repo's {IdeaIds.Milestone} milestone (prints I<n>), or edit one (I<n> edit <text>: kept up to date with GitHub), tidy one (I<n> tidy: Claude's proposal as a diff, saved only by tidy --save), plan one (I<n> plan --milestone <name> or --new-milestone <title>: moves it to that milestone and creates its flight; without either it prints the milestone the node proposes and plans nothing), drop one (I<n> drop <why>) fold one into a flight (I<n> fold <code>: its text goes to the flight's issue as a comment, then it is dropped as folded) or mark one as needing a design (I<n> design, I<n> design --no to unmark: the GitHub label 'needs design'); I<n> design start makes the design from the idea (its title, text and pictures as the first brief, the design remembers the idea and the idea shows the design), and plan waits for a marked idea's design to have a published version unless --anyway")
-                { Arguments = { ideaWords }, Options = { ideaRepo, ideaContext, ideaMilestone, ideaNewMilestone, ideaMilestoneDescription, ideaSave, ideaDiscard, ideaNo, ideaAnyway } },
+                { Arguments = { ideaWords }, Options = { ideaRepo, ideaContext, ideaMilestone, ideaNewMilestone, ideaMilestoneDescription, ideaSave, ideaDiscard, ideaNo, ideaAnyway, actingOn } },
                 async (p, client, ct) =>
                 {
                     var call = ReadIdea(p.GetValue(ideaWords) ?? []);
-                    string[] Anyway() => p.GetValue(ideaAnyway) ? [Verbs.PlanAnywayArg] : [];
+                    string[] Anyway() => p.GetValue(ideaAnyway) ? [Verbs.AnywayFlag] : [];
                     var named = call.Repo ?? IdeaRepoOf(client, p.GetValue(ideaRepo), cwd, call.Action is null ? Verbs.AnyRepo : IdeaIds.DefaultRepo);
                     switch (call.Action)
                     {
@@ -349,10 +349,10 @@ public static partial class PilotCommand
                             if (p.GetValue(ideaNewMilestone) is { Length: > 0 } newMilestone)
                             {
                                 return await Send(client, Verbs.PlanIdea, IdeaIds.Target(named, call.Number),
-                                    [Verbs.NewMilestoneArg, newMilestone, .. p.GetValue(ideaMilestoneDescription) is { Length: > 0 } description ? new[] { description } : [], .. Anyway()], who, ct);
+                                    [Verbs.NewMilestoneArg, newMilestone, .. p.GetValue(ideaMilestoneDescription) is { Length: > 0 } description ? new[] { description } : [], .. Anyway()], who, ct, p.GetValue(actingOn));
                             }
                             return p.GetValue(ideaMilestone) is { Length: > 0 } milestone
-                                ? await Send(client, Verbs.PlanIdea, IdeaIds.Target(named, call.Number), [milestone, .. Anyway()], who, ct)
+                                ? await Send(client, Verbs.PlanIdea, IdeaIds.Target(named, call.Number), [milestone, .. Anyway()], who, ct, p.GetValue(actingOn))
                                 : await Send(client, Verbs.ProposeMilestone, IdeaIds.Target(named, call.Number), [], who, ct);
                         default:
                             return await Send(client, Verbs.DropIdea, IdeaIds.Target(named, call.Number), [call.Rest], who, ct);

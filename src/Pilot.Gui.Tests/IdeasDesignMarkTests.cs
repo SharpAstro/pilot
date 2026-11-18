@@ -241,7 +241,7 @@ public sealed class IdeasDesignMarkTests
 
         var plan = sent.Single(s => s.Verb == Verbs.PlanIdea);
         plan.Target.ShouldBe(IdeaIds.Target("pilot", 382));
-        plan.Args.ShouldBe([Verbs.NewMilestoneArg, "Designs", Verbs.PlanAnywayArg]);
+        plan.Args.ShouldBe([Verbs.NewMilestoneArg, "Designs", Verbs.AnywayFlag]);
     }
 
     [Fact]
@@ -296,12 +296,13 @@ public sealed class IdeasDesignMarkTests
         {
             var buffer = new CellBuffer { ColorMode = ColorMode.TrueColor };
             await TerminalWireframeSweepTests.RecordCase("ideas", "sample", 140, 44, buffer, chrome => chrome.Ideas.Send = (_, _, _, _) => Task.FromResult(new IdeaReply(true)), PageData.DesignIdeas(marked));
-            var text = string.Join(Environment.NewLine, Enumerable.Range(0, 44).Select(y => string.Concat(Enumerable.Range(0, 140).Select(x => buffer.BackAt(x, y).Glyph)).TrimEnd()));
+            var lines = Enumerable.Range(0, 44).Select(y => string.Concat(Enumerable.Range(0, 140).Select(x => buffer.BackAt(x, y).Glyph))).ToArray();
+            var text = string.Join(Environment.NewLine, lines.Select(l => l.TrimEnd()));
             text.Contains("needs design", StringComparison.Ordinal).ShouldBe(marked);
             if (artifacts is { Length: > 0 })
             {
                 Directory.CreateDirectory(artifacts);
-                File.WriteAllText(Path.Combine(artifacts, $"{tag}-ideas-pilot-tui.txt"), text);
+                File.WriteAllBytes(Path.Combine(artifacts, $"{tag}-ideas-pilot-tui.png"), DesignsWaitingIdeasTests.Png(lines));
             }
         }
     }

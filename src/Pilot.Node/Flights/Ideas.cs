@@ -585,8 +585,8 @@ public sealed partial class IdeaCommander(NodeState state, Planes planes, RepoCa
         var (name, path, issue) = await IdeaOfAsync(command, cancellationToken);
         var id = IdeaIds.Id(issue.Number);
         var allArgs = command.Args ?? [];
-        var anyway = allArgs.Contains(Verbs.PlanAnywayArg, StringComparer.Ordinal);
-        var args = anyway ? [.. allArgs.Where(a => a != Verbs.PlanAnywayArg)] : allArgs;
+        var anyway = allArgs.Contains(Verbs.AnywayFlag, StringComparer.Ordinal);
+        var args = anyway ? [.. allArgs.Where(a => a != Verbs.AnywayFlag)] : allArgs;
         var asksNew = args.Length > 0 && args[0] == Verbs.NewMilestoneArg;
         var wanted = asksNew ? (args.Length > 1 ? args[1] : "").Trim() : string.Join(' ', args).Trim();
         var newDescription = asksNew ? string.Join(' ', args.Skip(2)).Trim() : "";
@@ -614,7 +614,7 @@ public sealed partial class IdeaCommander(NodeState state, Planes planes, RepoCa
         var design = Designs?.FindByIdea(NodeState.IdeaKey(name, id));
         if (issue.NeedsDesign && !anyway && design?.Current is null)
         {
-            throw new FlightException($"{id} needs a design and has none yet: start its design (pilot idea {id} design start), or plan anyway ({Verbs.PlanAnywayArg})");
+            throw new FlightException($"{id} needs a design and has none yet: start its design (pilot idea {id} design start), or plan anyway ({Verbs.AnywayFlag})");
         }
 
         var made = await flights.RunAsync(command with

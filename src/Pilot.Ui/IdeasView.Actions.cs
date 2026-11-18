@@ -184,7 +184,7 @@ internal sealed partial class IdeasView<TSurface>
 
     /// <summary>
     /// Plan's first question for a marked idea whose design has no version: Start its design makes the design from the idea and opens its page; Plan anyway
-    /// goes on to the milestone list, and the plan is sent with <see cref="Verbs.PlanAnywayArg"/>.
+    /// goes on to the milestone list, and the plan is sent with <see cref="Verbs.AnywayFlag"/>.
     /// </summary>
     internal async Task StartDesignAsync(IdeaRow idea)
     {
@@ -320,7 +320,7 @@ internal sealed partial class IdeasView<TSurface>
         string[] args = !chosen.IsNew ? [chosen.Title] : chosen.Description is { Length: > 0 } description ? [Verbs.NewMilestoneArg, chosen.Title, description] : [Verbs.NewMilestoneArg, chosen.Title];
         if (_planAnyway == KeyOf(idea))
         {
-            args = [.. args, Verbs.PlanAnywayArg];
+            args = [.. args, Verbs.AnywayFlag];
         }
         await PlanAsync(idea, args);
     }

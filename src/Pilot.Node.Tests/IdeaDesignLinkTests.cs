@@ -151,7 +151,7 @@ public sealed class IdeaDesignLinkTests : IDisposable
         unpublished.Error.ShouldNotBeNull().ShouldContain("I1 needs a design and has none yet");
         State.Flights().ShouldBeEmpty();
 
-        var anyway = await Run(Verbs.PlanIdea, Idea(1), "v1", Verbs.PlanAnywayArg);
+        var anyway = await Run(Verbs.PlanIdea, Idea(1), "v1", Verbs.AnywayFlag);
         anyway.Ok.ShouldBeTrue(anyway.Error);
         State.Flights().Single().FromIdea.ShouldBe("I1");
         GitHub.IssueComments.ShouldBeEmpty();

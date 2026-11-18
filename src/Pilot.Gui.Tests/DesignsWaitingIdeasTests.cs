@@ -268,7 +268,7 @@ public sealed class DesignsWaitingIdeasTests
     }
 
     // The terminal's cells as a picture: one glyph a cell on a dark ground, in the mono face where the build has it, so the columns line up as they do in the terminal.
-    private static byte[] Png(string[] lines)
+    internal static byte[] Png(string[] lines)
     {
         const int cw = 9, ch = 18;
         var width = lines.Max(l => l.Length) * cw;
