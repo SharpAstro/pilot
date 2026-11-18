@@ -2,6 +2,7 @@ using System.Text;
 using Pilot.Contracts;
 using Pilot.Node.Designs;
 using Pilot.Node.Flights;
+using Pilot.Node.Tests.Sessions;
 using Shouldly;
 using Xunit;
 
