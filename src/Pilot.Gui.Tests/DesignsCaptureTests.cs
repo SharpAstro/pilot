@@ -167,4 +167,73 @@ public sealed class DesignsCaptureTests
             Directory.Delete(folder, recursive: true);
         }
     }
+
+    /// <summary>
+    /// PIL1166: the 1920 x 1080 fixture design at Phone and Tablet on the owner's two window sizes. Each frame is written as a PNG (to PILOT_JOB_ARTIFACTS when a job gives
+    /// one, else a temp folder that is deleted), the player paints no pixel outside its frame, and the page holds pilot's own size readout once.
+    /// </summary>
+    [Theory]
+    [InlineData("Phone", 1920, 1080)]
+    [InlineData("Tablet", 1920, 1080)]
+    [InlineData("Phone", 2880, 1620)]
+    [InlineData("Tablet", 2880, 1620)]
+    public void ThePlayedPrototypeStaysInsideItsFrameAndThePageHoldsOneSizeReadout(string target, int width, int height)
+    {
+        PageTime.Zone = TimeZoneInfo.Utc;
+        var screen = PageData.WideDesigns(Now);
+        var blankScreen = PageData.WideDesigns(Now, blank: true);
+        var data = PageData.For("sample");
+
+        byte[] Paint(bool blank, out PilotChrome<RgbaImage> chromeOut, out Layout.Node.Leaf[] leaves, out RgbaImageRenderer rendererOut)
+        {
+            var renderer = new RgbaImageRenderer((uint)width, (uint)height);
+            using var accent = Pilot.Ui.Palette.StandardForCapture(null);
+            var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
+            chrome.Autopilot.OnToggle = _ => Task.FromResult<string?>(null);
+            chrome.Show(PilotPage.Designs);
+            chrome.Designs.Open("DSN-7");
+            chrome.Designs.PickTarget(target).ShouldBeTrue();
+            chrome.Render(data.Sessions, data.Flights, data.Cards, data.Jobs, data.Fleet, data.Repos, data.PullRequests, new RectF32(0, 0, width, height), data.Machines, null, data.Spend, blank ? blankScreen : screen);
+            var arranged = Layout.Engine.Arrange(chrome.Designs.Tree(screen), new Rect<float>(0, 0, width, height), new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, 1f));
+            leaves = [.. arranged.Select(a => a.Node).OfType<Layout.Node.Leaf>()];
+            chromeOut = chrome;
+            rendererOut = renderer;
+            return [.. renderer.Surface.Pixels];
+        }
+
+        var with = Paint(false, out var chrome, out var leaves, out var renderer);
+        using (renderer)
+        {
+            var frame = chrome.Designs.FrameClip ?? throw new InvalidOperationException("no frame was painted");
+            var surface = chrome.Designs.Surface;
+
+            // The capture, kept for the PR.
+            var folder = Path.Combine(Path.GetTempPath(), $"pilot-design-clip-{Guid.NewGuid():N}");
+            var kept = Environment.GetEnvironmentVariable("PILOT_JOB_ARTIFACTS") is { Length: > 0 } given ? given : folder;
+            Directory.CreateDirectory(kept);
+            try
+            {
+                File.WriteAllBytes(Path.Combine(kept, $"{Environment.GetEnvironmentVariable("PILOT_CAPTURE_TAG") ?? "after"}-design-clip-{target.ToLowerInvariant()}-{width}.png"), SharpAstro.Png.PngWriter.Encode(with, width, height));
+            }
+            finally
+            {
+                if (Directory.Exists(folder))
+                {
+                    Directory.Delete(folder, recursive: true);
+                }
+            }
+
+            // One readout: pilot's own '<name>: W x H at Sx' line is in the page's tree once.
+            var readout = $"{surface.Name}: {surface.Width} x {surface.Height} at ";
+            leaves.Select(l => l.Content).OfType<Layout.Content.Text>().Count(t => t.Value.StartsWith(readout, StringComparison.Ordinal)).ShouldBe(1);
+
+            // The fixture's own label ('640 x 240 at 2x') is the player's: no pixel it paints lies outside the frame, so it is inside the frame or clipped away.
+            var without = Paint(true, out _, out _, out var otherRenderer);
+            using (otherRenderer)
+            {
+                var (escaped, _) = DesignPlayerClipTests.PixelsDifferingOutside(with, without, width, height, frame);
+                escaped.ShouldBe(0, $"{target} at {width}: {escaped} pixels outside the frame {frame} are painted by the player");
+            }
+        }
+    }
 }
