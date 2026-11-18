@@ -689,13 +689,13 @@ internal sealed class DesignsView<TSurface> : PilotWidgetBase<TSurface>
     {
         var title = row.Title is { Length: > 0 } t ? t : row.Id;
         var version = row.Current is { } v ? "v" + v.ToString(CultureInfo.InvariantCulture) : "no version";
-        var when = row.At is { } at ? at.UtcDateTime.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture) : "";
+        var when = row.At is { } at ? PageTime.Text(at) : "";
         var repo = row.Repo ?? "";
         // Two lines of one string each: columns of a row squeezed each other's ellipses at a narrow window.
         var detail = string.Join(" · ", new[] { version, repo, when }.Where(t => t.Length > 0));
         var line = Layout.Builder.VStack(
             WrappedProse.OneLine($"{row.Id}  {title}", 13f, Bright, selectable: false).RowH(22f).Whole($"{row.Id}  {title}"),
-            WrappedProse.OneLine(detail, 12f, Dim, selectable: false).RowH(20f).Whole(detail)).WithGap(0f).Pad(4f, 2f).RowH(RowH);
+            WrappedProse.OneLine(detail, 12f, Dim, selectable: false).RowH(20f).Whole(row.At is { } stamp ? $"{detail} · {PageTime.Utc(stamp)}" : detail)).WithGap(0f).Pad(4f, 2f).RowH(RowH);
         var id = row.Id;
         return (index % 2 == 1 ? line.Bg(RowAltBg) : line)
             .BgHover(RowHoverBg)
@@ -708,7 +708,7 @@ internal sealed class DesignsView<TSurface> : PilotWidgetBase<TSurface>
         List<Layout.Node> left = [];
         if (page.Version is null)
         {
-            left.Add(Layout.Builder.Text("This design has no version yet. The brief is on the right; a version is made once a draft is checked, rendered and published.", 14f, Dim, TextAlign.Center).Selectable().Stretch());
+            left.Add(WrappedProse.Of("This design has no version yet. The brief is on the right; a version is made once a draft is checked, rendered and published.", 14f, Dim).Pad(Gutter, Gutter).Stretch());
         }
         else if (Player is null)
         {
@@ -741,10 +741,10 @@ internal sealed class DesignsView<TSurface> : PilotWidgetBase<TSurface>
         if (page.Notes is { Length: > 0 } notes)
         {
             right.Add(Heading($"NOTES.md{(page.Version is { } v ? $" of v{v}" : "")}"));
-            right.Add(Markdown(notes));
+            right.Add(Markdown(PageTime.LocalHeadings(notes)));
         }
         right.Add(Heading("Brief"));
-        right.Add(Markdown(string.IsNullOrWhiteSpace(page.Detail.Brief) ? "(no brief)" : page.Detail.Brief!));
+        right.Add(Markdown(string.IsNullOrWhiteSpace(page.Detail.Brief) ? "(no brief)" : PageTime.LocalHeadings(page.Detail.Brief!)));
         // In pixels the chat is a column of its own between the player and the versions: beside the prototype, where what the designer changes is in view.
         // Where the window has no width for three columns (their least widths and the gaps), the chat goes under the other two instead of past the page.
         var wide = _width >= WideColumns;
@@ -776,8 +776,8 @@ internal sealed class DesignsView<TSurface> : PilotWidgetBase<TSurface>
     }
 
     private Layout.Node PointButton() =>
-        Layout.Builder.Text("Point at this", 12f, Bright, TextAlign.Center)
-            .Pad(10f, 4f)
+        Layout.Builder.Text("Point at this", 12f, Bright, TextAlign.Center, TextAlign.Center)
+            .Pad(10f, 0f)
             .WAuto()
             .Bg(Pointing ? Active : Button)
             .BgHover(ButtonHover)
@@ -894,12 +894,12 @@ internal sealed class DesignsView<TSurface> : PilotWidgetBase<TSurface>
         foreach (var version in page.Detail.Versions.OrderByDescending(v => v.Number))
         {
             var number = version.Number;
-            var when = version.At is { } at ? at.UtcDateTime.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture) : "";
+            var when = version.At is { } at ? PageTime.Text(at) : "";
             var label = $"v{number}{(number == row.Current ? " (current)" : "")}{(version.Why is { Length: > 0 } why ? $" · {why}" : "")}{(when.Length > 0 ? $" · {when}" : "")}";
             yield return WrappedProse.OneLine(label, 12f, Bright, selectable: false).Pad(8f, 4f)
                 .Bg(number == page.Version ? Active : Button)
                 .BgHover(ButtonHover)
-                .WithTooltip($"Play v{number}")
+                .WithTooltip(version.At is { } made ? $"Play v{number} · {PageTime.Utc(made)}" : $"Play v{number}")
                 .Follows(new HitResult.ButtonHit($"designs:version:{number}"), _ => PickVersion(number))
                 .RowH(26f);
         }
@@ -973,7 +973,7 @@ internal sealed class DesignsView<TSurface> : PilotWidgetBase<TSurface>
     }
 
     // Whole on hover: a heading beside a button (the chat's, at 80 columns) is cut with an ellipsis.
-    private static Layout.Node Heading(string text) => WrappedProse.OneLine(text, 14f, Bright).RowH(26f).Whole(text);
+    private static Layout.Node Heading(string text) => WrappedProse.OneLine(text, 14f, Bright, vAlign: TextAlign.Center).RowH(26f).Whole(text);
 
     // The Markdown of a text, parsed once: the page's tree is built every frame and a node is immutable.
     private readonly Dictionary<(string Text, bool Night), Layout.Node> _markdown = [];
