@@ -191,7 +191,7 @@ public sealed class DesignsViewTests
         var texts = TextsOf(rig);
         texts.ShouldContain("DSN-1  Design 0");
         texts.ShouldContain("v2 · SharpAstro/pilot · 2026-11-16 09:00");
-        texts.ShouldContain("3 designs");
+        texts.ShouldContain(t => t.StartsWith("3 designs", StringComparison.Ordinal));
     }
 
     [Fact]

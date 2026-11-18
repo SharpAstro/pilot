@@ -30,7 +30,7 @@ internal static partial class PageTime
     /// <summary>The hover of a time on a row that also names its local zone: the full local date and offset, then UTC.</summary>
     public static string Hover(DateTimeOffset at) => $"{Local(at).ToString("ddd d MMM yyyy HH:mm:ss zzz", CultureInfo.InvariantCulture)} · {Utc(at)}";
 
-    [GeneratedRegex(@"^(#{1,6} +)(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?(?:\.\d+)?Z)[ \t]*$", RegexOptions.Multiline)]
+    [GeneratedRegex(@"^(#{1,6} +)(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?(?:\.\d+)?Z)[ \t\r]*$", RegexOptions.Multiline)]
     private static partial Regex PieceHeading();
 
     /// <summary>
