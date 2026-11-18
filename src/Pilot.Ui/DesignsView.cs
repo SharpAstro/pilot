@@ -984,7 +984,7 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
         var when = row.At is { } at ? PageTime.Text(at) : "";
         var repo = row.Repo ?? "";
         // Two lines of one string each: columns of a row squeezed each other's ellipses at a narrow window.
-        var detail = string.Join(" · ", new[] { version, repo, when }.Where(t => t.Length > 0));
+        var detail = string.Join(" · ", new[] { version, repo, row.MadeOn is { Length: > 0 } node ? $"made on {node}" : "", when }.Where(t => t.Length > 0));
         var line = Layout.Builder.VStack(
             WrappedProse.OneLine($"{row.Id}  {title}", 13f, Bright, selectable: false).RowH(22f).Whole($"{row.Id}  {title}"),
             WrappedProse.OneLine(detail, 12f, Dim, selectable: false).RowH(20f).Whole(row.At is { } stamp ? $"{detail} · {PageTime.Utc(stamp)}" : detail)).WithGap(0f).Pad(4f, 2f).RowH(RowH);
@@ -1026,6 +1026,11 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
     private Layout.Node DesignBody(DesignPage page)
     {
         var document = DocumentColumn(page).WithScroll(_docScroll).WStar().HStar();
+        if (page.Detail.Row.MadeOn is not null)
+        {
+            // A design read from its GitHub issue (PIL1171) has no designer to talk to: the document has the whole page.
+            return Layout.Builder.VStack(document).Pad(Gutter, 8f).WStar().HStar();
+        }
         if (Terminal is { } cells)
         {
             // The chat under the document, in the same column: its rows are the terminal's, and its box is drawn in cells.
@@ -1062,6 +1067,10 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
         var title = notebook is { Title.Length: > 0 } ? notebook.Title : row.Title is { Length: > 0 } t ? t : row.Id;
         var titleText = WrappedProse.Of(title, 20f, Bright);
         items.Add(page.DesignIsDraft ? Layout.Builder.HStack(titleText.WStar(), StateTag("draft", true)).WithGap(8f).WStar().HAuto() : titleText);
+        if (SyncLine(row) is { } sync)
+        {
+            items.Add(sync);
+        }
         if (notebook?.Objective is { Length: > 0 } objective || _edit == (-1, "objective"))
         {
             items.Add(Typable(-1, "objective", "Objective of the design", WrappedProse.Of(notebook?.Objective ?? "", 14f, Body)));
@@ -1085,6 +1094,27 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
             items.Add(CellNode(page, version, i, notebook!.Cells[i]));
         }
         return Layout.Builder.VStack([.. items]).WithGap(10f);
+    }
+
+    // Where the design is kept on GitHub (PIL1171), under its title: a design read from another node says so, the failed write is in the error colour, a write in the air or done is plain.
+    private Layout.Node? SyncLine(DesignRow row)
+    {
+        if (row.MadeOn is { Length: > 0 } node)
+        {
+            var read = $"Read from {row.IssueRepo}#{row.IssueNumber}, made on {node}. Changed there, not here.";
+            return WrappedProse.OneLine(read, 12f, Dim).RowH(22f).Whole(read);
+        }
+        if (row.SyncError is { Length: > 0 } failure)
+        {
+            return WrappedProse.Of(failure, 12f, Palette.Current.Failed);
+        }
+        if (row.IssueRepo is not { Length: > 0 } repo || row.IssueNumber is not { } issue || row.Current is not { } current)
+        {
+            return null;
+        }
+        var synced = row.SyncedVersion ?? 0;
+        var line = synced < current ? DesignSyncText.Writing(synced + 1, repo, issue) : DesignSyncText.Synced(synced, repo, issue);
+        return WrappedProse.OneLine(line, 12f, synced < current ? Bright : Dim).RowH(22f).Whole(line);
     }
 
     private IEnumerable<Layout.Node> FromIdeaPart(DesignRow row)
@@ -1304,12 +1334,16 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
             var number = version.Number;
             var when = version.At is { } at ? PageTime.Text(at) : "";
             var label = $"v{number}{(number == row.Current ? " (current)" : "")}{(version.Why is { Length: > 0 } why ? $" · {why}" : "")}{(when.Length > 0 ? $" · {when}" : "")}";
-            yield return WrappedProse.OneLine(label, 12f, Bright, selectable: false).Pad(8f, 4f)
+            var kept = row.IssueNumber is not null || row.MadeOn is not null;
+            var line = WrappedProse.OneLine(label, 12f, Bright, selectable: false).RowH(18f).Whole(label);
+            var comment = kept ? DesignSyncText.Comment(number, version.Why, version.SyncedAt is not null || row.MadeOn is not null) : null;
+            yield return (comment is null
+                    ? line.Pad(8f, 4f).RowH(26f)
+                    : Layout.Builder.VStack(line, WrappedProse.OneLine(comment, 11f, Dim, selectable: false).RowH(16f).Whole(comment)).WithGap(0f).Pad(8f, 4f).RowH(40f))
                 .Bg(number == page.Version ? Active : Button)
                 .BgHover(ButtonHover)
                 .WithTooltip(version.At is { } made ? $"Play v{number} · {PageTime.Utc(made)}" : $"Play v{number}")
-                .Follows(new HitResult.ButtonHit($"designs:version:{number}"), _ => PickVersion(number))
-                .RowH(26f);
+                .Follows(new HitResult.ButtonHit($"designs:version:{number}"), _ => PickVersion(number));
         }
     }
 

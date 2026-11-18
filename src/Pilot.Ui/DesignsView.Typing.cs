@@ -80,7 +80,7 @@ internal sealed partial class DesignsView<TSurface>
     /// <summary>Opens the part <paramref name="part"/> of cell <paramref name="cell"/> (-1: the design) in place. False with no document on show.</summary>
     public bool BeginEdit(int cell, string part)
     {
-        if (_buildScreen?.Open?.Notebook is not { } document || cell >= document.Cells.Count || OnEdit is null)
+        if (_buildScreen?.Open?.Notebook is not { } document || cell >= document.Cells.Count || OnEdit is null || _buildScreen.Open.Detail.Row.MadeOn is not null)
         {
             return false;
         }
@@ -174,8 +174,9 @@ internal sealed partial class DesignsView<TSurface>
                 WrappedProse.OneLine(label, 11f, Dim, selectable: false).RowH(18f).Whole(label),
                 Layout.Builder.TextEditor(Editor, 13f, colors: Palette.Input, focusOnOpen: true).WStar().Border(Palette.Current.RailAccent, 2f, 0f)).WithGap(2f);
         }
-        if (OnEdit is null)
+        if (OnEdit is null || _buildScreen?.Open?.Detail.Row.MadeOn is not null)
         {
+            // A design read from another node's issue is read only (PIL1171): its prose is not opened for typing.
             return shown;
         }
         var id = $"designs:edit:{cell.ToString(CultureInfo.InvariantCulture)}:{part}";
