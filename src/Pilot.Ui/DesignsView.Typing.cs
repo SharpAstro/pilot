@@ -221,10 +221,10 @@ internal sealed partial class DesignsView<TSurface>
         }
     }
 
-    // The state tag of a cell: published in the version on show, or the filled accent 'draft' while its prose differs from that version's.
+    // The state tag of a cell: published in the version on show, or the filled accent 'draft' while its prose differs from that version's. It is a label, not a button, so it selects as content.
     private static Layout.Node StateTag(string text, bool draft) => draft
-        ? Layout.Builder.Text(text, 11f, Ground, TextAlign.Center, TextAlign.Center).Pad(6f, 0f).WAuto().HFixed(26f).Bg(Palette.Current.RailAccent)
-        : Layout.Builder.Text(text, 11f, Body, TextAlign.Center, TextAlign.Center).Pad(6f, 0f).WAuto().HFixed(26f).Bg(Button);
+        ? Layout.Builder.Text(text, 11f, Ground, TextAlign.Center, TextAlign.Center).Selectable().Pad(6f, 0f).WAuto().HFixed(26f).Bg(Palette.Current.RailAccent)
+        : Layout.Builder.Text(text, 11f, Body, TextAlign.Center, TextAlign.Center).Selectable().Pad(6f, 0f).WAuto().HFixed(26f).Bg(Button);
 
     // Under the cell in edit (or under the title while a draft is waiting): the hint, the why, Publish and Discard, and what the node refused with.
     private IEnumerable<Layout.Node> TypingPanel(DesignPage page)

@@ -1186,7 +1186,8 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
     // One cell: its number, heading and state tag on one row, its objective, each frame in its well, and its notes.
     private Layout.Node CellNode(DesignPage page, int version, int index, DesignCell cell)
     {
-        var number = Layout.Builder.Text((index + 1).ToString(CultureInfo.InvariantCulture), 12f, Dim, TextAlign.Center, TextAlign.Center).WFixed(26f).HFixed(26f).Bg(Button);
+        // The number, the tag, the captions and the Notes label are content the owner copies ("cell 2, published in v2"), so they select like the prose.
+        var number = Layout.Builder.Text((index + 1).ToString(CultureInfo.InvariantCulture), 12f, Dim, TextAlign.Center, TextAlign.Center).Selectable().WFixed(26f).HFixed(26f).Bg(Button);
         var heading = WrappedProse.OneLine(cell.Heading, 16f, Bright, vAlign: TextAlign.Center).WStar().HFixed(26f).Whole(cell.Heading);
         var tag = StateTag(page.CellIsDraft(index) ? "draft" : $"published in v{version}", page.CellIsDraft(index));
         List<Layout.Node> items = [];
@@ -1235,7 +1236,7 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
         }
         if (cell.Notes.Length > 0 || _edit == (index, "notes"))
         {
-            items.Add(WrappedProse.OneLine("Notes", 11f, Dim, selectable: false).RowH(18f));
+            items.Add(WrappedProse.OneLine("Notes", 11f, Dim).RowH(18f));
             items.Add(Typable(index, "notes", $"Notes of {cell.Heading}", Markdown(cell.Notes)));
         }
         else if (OnEdit is not null && !ReadOnly(page.Detail.Row) && OnCurrent(page))
@@ -1261,7 +1262,7 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
         }
         var (surface, cells) = SizeOf(play.Size, play.Swapped);
         var caption = $"Proposed design · {(string.IsNullOrEmpty(screen.Title) ? screen.Id : screen.Title)} · {SizeLabel(surface, cells)}";
-        var captionRow = WrappedProse.OneLine(caption, 11f, Dim, selectable: false, vAlign: TextAlign.Center).RowH(CaptionH).Whole(frame.Caption is { Length: > 0 } extra ? $"{caption}\n{extra}" : caption);
+        var captionRow = WrappedProse.OneLine(caption, 11f, Dim, vAlign: TextAlign.Center).RowH(CaptionH).Whole(frame.Caption is { Length: > 0 } extra ? $"{caption}\n{extra}" : caption);
         var played = Terminal is not null ? EmbeddedFrame(play) : PlayedFrame(play, cell, index, cells);
         // The frame's own toolbar: inside the well, under the frame; the well of the frame pointed at has an accent border.
         var well = Layout.Builder.VStack(captionRow, played, FrameToolbar(play, cell, index).Node).WithGap(4f).Pad(WellPadX, WellPadY).Bg(Well).WStar().HAuto();
@@ -1292,10 +1293,12 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
         }
         var builder = play.Shown.TreeBuilder;
         var before = builder.DesignSize;
-        builder.DesignSize = (columns * PrototypeCells.CellWidth, rows * PrototypeCells.CellHeight);
+        var area = (Width: columns * PrototypeCells.CellWidth, Height: rows * PrototypeCells.CellHeight);
+        builder.DesignSize = area;
         try
         {
-            return Layout.Builder.VStack(play.Shown.BuildTree().Stretch()).Border(Body, 2f, 0f).HFixed((rows + 2) * (float)PrototypeCells.CellHeight).WStar();
+            // The screen is as tall as the area it was built for, and the frame is Auto round it: the engine reserves the border's cell on each side.
+            return Layout.Builder.VStack(play.Shown.BuildTree().WStar().HFixed(area.Height)).Border(Body, 2f, 0f).WStar().HAuto();
         }
         finally
         {
