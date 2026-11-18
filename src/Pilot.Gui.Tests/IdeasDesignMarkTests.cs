@@ -56,7 +56,7 @@ public sealed class IdeasDesignMarkTests
     private static string Spoken(RgbaImageRenderer renderer, PilotChrome<RgbaImage> chrome, IdeasScreen screen, float width = 1280)
     {
         var arranged = Layout.Engine.Arrange(chrome.Ideas.Tree(screen), new Rect<float>(0, 0, width, 6000), new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, 1f));
-        return string.Join("\n", arranged
+        return string.Concat(arranged
             .Where(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text })
             .Select(a => ((Layout.Content.Text)((Layout.Node.Leaf)a.Node).Content).Value));
     }
