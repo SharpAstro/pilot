@@ -142,6 +142,30 @@ public sealed class DesignPublishTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task ATitleSetWithNoDraftIsTheNextVersionsTitleAndTypingItMakesTheDraft()
+    {
+        var v1 = await PublishedV1();
+        (await Pilot("design", "discard", "DSN-1")).Exit.ShouldBe(0);
+        Directory.Exists(Path.Combine(DesignFolder(), "draft")).ShouldBeFalse();
+
+        (await Pilot("design", "title", "DSN-1", "--", "Night list")).Exit.ShouldBe(0);
+        (await Pilot("design", "edit", "DSN-1", "notes", "--", "A note for v2")).Exit.ShouldBe(0);
+        File.ReadAllText(Draft("DESIGN.md")).ShouldStartWith("# Night list");
+
+        (await Pilot("design", "render", "DSN-1")).Exit.ShouldBe(0);
+        var (exit, said) = await Pilot("design", "publish", "DSN-1", "--why", "a title");
+        exit.ShouldBe(0, said);
+        File.ReadAllText(Path.Combine(DesignFolder(), "versions", "v2", "DESIGN.md")).ShouldStartWith("# Night list");
+        File.Exists(Path.Combine(v1, "DESIGN.md")).ShouldBeTrue();
+        (await Pilot("design", "show", "DSN-1")).Output.ShouldContain("DSN-1  Night list");
+
+        // Typed on the page with no draft: the edit makes the draft, so the Publish that follows has something to publish.
+        (await Pilot("design", "discard", "DSN-1")).Exit.ShouldBe(0);
+        (await Pilot("design", "edit", "DSN-1", "title", "--", "Fleet list")).Exit.ShouldBe(0);
+        File.ReadAllText(Draft("DESIGN.md")).ShouldStartWith("# Fleet list");
+    }
+
+    [Fact]
     public async Task AVersionTakesTheTitleOfItsDocumentAndADraftWithNoneOrOverFortyIsNotPublished()
     {
         await DraftOf("sample.prototype.json");

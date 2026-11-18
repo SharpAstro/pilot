@@ -295,6 +295,16 @@ public sealed class DesignStore(string dataFolder, TimeProvider? time = null)
                 File.WriteAllText(Path.Combine(draft, ScreensFolderName, "home.json"), StarterScreen);
                 File.WriteAllText(Path.Combine(draft, DocumentFile), DesignDocument.Starter(DesignTitle.Shown(row.Title) ?? row.Id).Format());
             }
+            // The row's title is the owner's latest word (set with no draft, or typed on the page): the new draft's heading says it, so the next version does too.
+            var document = Path.Combine(draft, DocumentFile);
+            if (DesignTitle.Shown(row.Title) is { } rowTitle && File.Exists(document))
+            {
+                var parsed = DesignDocument.Parse(File.ReadAllText(document));
+                if (parsed.Title != rowTitle)
+                {
+                    File.WriteAllText(document, (parsed with { Title = rowTitle }).Format());
+                }
+            }
             return draft;
         }
     }
@@ -502,7 +512,16 @@ public sealed class DesignStore(string dataFolder, TimeProvider? time = null)
         if (part == "title")
         {
             // The design's title typed on the page (#1183): the same as 'design title', so the row and the draft's heading agree.
-            return SetTitle(id, cell.Trim().Length == 0 ? text : throw new DesignException("the title belongs to the design: leave the cell out")).Title!;
+            // Typed on the page it is followed by Publish, so it makes the draft first as the other parts do: Publish has something to publish.
+            var set = SetTitle(id, cell.Trim().Length == 0 ? text : throw new DesignException("the title belongs to the design: leave the cell out"));
+            lock (_lock)
+            {
+                if (!File.Exists(Path.Combine(FolderOf(set.Id), DraftFolderName, DocumentFile)))
+                {
+                    Draft(set.Id, replace: true);
+                }
+            }
+            return set.Title!;
         }
         if (part != "notes" && text.Length == 0)
         {
