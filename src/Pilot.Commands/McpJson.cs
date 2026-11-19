@@ -62,11 +62,18 @@ internal sealed class ToolCallParams
 }
 
 /// <summary>A tool's result: what the command printed, and whether it failed (refused, usage, no node).</summary>
-internal sealed record ToolCallResult(TextContent[] Content, bool IsError);
+internal sealed record ToolCallResult(McpContent[] Content, bool IsError);
 
-internal sealed record TextContent(string Text)
+/// <summary>
+/// One item of a tool's result: <c>text</c> with <see cref="Text"/>, or <c>image</c> with <see cref="Data"/> (base64) and
+/// <see cref="MimeType"/> (PIL1186). One flat record so the source-generated context writes either without polymorphism;
+/// the members a kind does not use are null and left out.
+/// </summary>
+internal sealed record McpContent(string Type, string? Text = null, string? Data = null, string? MimeType = null)
 {
-    public string Type => "text";
+    public static McpContent OfText(string text) => new("text", Text: text);
+
+    public static McpContent OfImage(byte[] bytes, string mimeType) => new("image", Data: Convert.ToBase64String(bytes), MimeType: mimeType);
 }
 
 internal sealed record ResourcesListResult(McpResource[] Resources);

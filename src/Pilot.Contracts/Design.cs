@@ -445,3 +445,60 @@ public sealed record DesignIds
 {
     public int Last { get; init; }
 }
+
+/// <summary>The most a <c>design-renders</c> answer carries (PIL1186), so one call cannot flood a session's context: pictures per call, bytes per call and the longest side of a picture.</summary>
+public static class DesignRenderCaps
+{
+    /// <summary>Pictures in one answer; the rest are named in <see cref="DesignRenders.NotSent"/>.</summary>
+    public const int Pictures = 4;
+
+    /// <summary>PNG bytes in one answer, 3 MB; a picture over its share is scaled down.</summary>
+    public const int Bytes = 3 * 1024 * 1024;
+
+    /// <summary>The longest side of a picture in pixels; a larger one is scaled down to it.</summary>
+    public const int LongestSide = 1600;
+}
+
+/// <summary>One render of a <c>design-renders</c> answer (PIL1186): which screen at which size, the prototype hash it was drawn from, and the PNG itself.</summary>
+public sealed record DesignRenderPicture
+{
+    public required string Screen { get; init; }
+
+    /// <summary>The size as the file names it: <c>design</c> for the design size, a target's name, or <c>&lt;cols&gt;x&lt;rows&gt;</c> for a terminal.</summary>
+    public required string Size { get; init; }
+
+    /// <summary>The hash the renders folder was stamped with, null when it has no stamp.</summary>
+    public string? PrototypeSha256 { get; init; }
+
+    public required byte[] Png { get; init; }
+
+    public int Width { get; init; }
+
+    public int Height { get; init; }
+
+    /// <summary>The size the file has when <see cref="Png"/> was scaled down to fit the caps, as <c>WxH</c>; null when it is the file's own bytes.</summary>
+    public string? ScaledFrom { get; init; }
+
+    /// <summary>Where the file is on the node.</summary>
+    public string? Path { get; init; }
+}
+
+/// <summary>A <c>design-renders</c> answer (PIL1186).</summary>
+public sealed record DesignRenders
+{
+    public required string Design { get; init; }
+
+    /// <summary>The version the renders belong to; null for the draft.</summary>
+    public int? Version { get; init; }
+
+    public DesignRenderPicture[] Pictures { get; init; } = [];
+
+    /// <summary>The screens that were not sent: the entry screen's siblings when no screen was named, or the ones past the picture cap.</summary>
+    public string[] NotSent { get; init; } = [];
+
+    /// <summary>True for a draft whose renders are older than its prototype, or that has none.</summary>
+    public bool Stale { get; init; }
+
+    /// <summary>What a person should know beyond the pictures, such as why they are stale or what the cap did.</summary>
+    public string? Note { get; init; }
+}
