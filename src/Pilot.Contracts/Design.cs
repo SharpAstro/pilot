@@ -175,6 +175,12 @@ public sealed record DesignRecordRow
 
     /// <summary>How the merge was recorded: <c>closed</c> (issue closed, lock labels off) or <c>commented</c> (a comment only); null while not yet written.</summary>
     public string? Landed { get; init; }
+
+    /// <summary>The folder in the flight's repo the built version's files were committed to (<see cref="DesignSyncText.RepoFolder"/>); null when they were not placed.</summary>
+    public string? Folder { get; init; }
+
+    /// <summary>Why the files were not placed: the render or the version is over its limit, in words; null otherwise.</summary>
+    public string? Oversize { get; init; }
 }
 
 /// <summary>A prose part the issue's text says differently from the published version (PIL1171): <see cref="Part"/> is objective, heading or notes, <see cref="Cell"/> the cell's number (empty for the design itself).</summary>
@@ -363,6 +369,29 @@ public static class DesignSyncText
 
     /// <summary>The reason a failed write gives when GitHub did not answer in time; any other failure gives its own message.</summary>
     public const string NoAnswer = "GitHub did not answer";
+
+    /// <summary>The folder in the repo a built design's files are committed to: the issue number, unique in the repo (a DSN id repeats across nodes), as the branch is.</summary>
+    public static string RepoFolder(int issue) => "docs/designs/" + N(issue);
+
+    /// <summary>The largest render a flight commits to the repo: 500 KB.</summary>
+    public const int RenderLimitBytes = 500 * 1024;
+
+    /// <summary>The largest version a flight commits to the repo, all its files together: 3 MB.</summary>
+    public const int VersionLimitBytes = 3 * 1024 * 1024;
+
+    /// <summary>The Designs line of a design whose files are committed.</summary>
+    public static string Placed(string folder) => $"files in {folder}";
+
+    /// <summary>The Designs line of a design whose files stay on its branch because its issue is in another repo.</summary>
+    public static string Elsewhere(int issue, string repo) => $"files stay on {Branch(issue)} of {repo}";
+
+    /// <summary>Why a render is not committed.</summary>
+    public static string RenderOversize(string render, long bytes) => $"not committed: render {render} is {Kb(bytes)} KB, over {Kb(RenderLimitBytes)} KB";
+
+    /// <summary>Why a version is not committed.</summary>
+    public static string TotalOversize(long bytes) => $"not committed: version is {Kb(bytes)} KB, over {Kb(VersionLimitBytes)} KB";
+
+    private static string Kb(long bytes) => ((bytes + 1023) / 1024).ToString(System.Globalization.CultureInfo.InvariantCulture);
 
     /// <summary>The branch a design's files are written to: <c>design/&lt;issue number&gt;</c>.</summary>
     public static string Branch(int issue) => "design/" + N(issue);

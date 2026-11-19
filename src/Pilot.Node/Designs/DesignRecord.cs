@@ -23,6 +23,12 @@ public sealed class DesignRecord(DesignStore store, RepoCatalog repos, NodeState
     /// <summary>Where a failed call is told: the node's log; nothing for one built without.</summary>
     public TextWriter Error { get; set; } = TextWriter.Null;
 
+    /// <summary>The kind of the card raised once for a design whose files are over a limit and so not committed (PIL1208).</summary>
+    public const string OversizeKind = "design-oversize";
+
+    /// <summary>The git that places a built design's files in a plane (PIL1208); null places nothing.</summary>
+    public IGit? Git { get; set; }
+
     private readonly SemaphoreSlim _one = new(1, 1);
 
     private RepoInfo? RepoOf(string? gitHub) =>
@@ -48,6 +54,21 @@ public sealed class DesignRecord(DesignStore store, RepoCatalog repos, NodeState
             {
                 line.Append($", design issue {repo}#{issue.ToString(CultureInfo.InvariantCulture)}");
             }
+            if (design?.Record.FirstOrDefault(r => Is(r, flight.Code, d.Version)) is { } placed)
+            {
+                if (placed.Folder is { Length: > 0 } folder)
+                {
+                    line.Append(", " + DesignSyncText.Placed(folder));
+                }
+                else if (placed.Oversize is { Length: > 0 } note)
+                {
+                    line.Append(", " + note);
+                }
+            }
+            if (design is { IssueNumber: { } n, IssueRepo: { Length: > 0 } issueRepo } && FlightRepo(flight) is { } here && !string.Equals(here, issueRepo, StringComparison.OrdinalIgnoreCase))
+            {
+                line.Append(", " + DesignSyncText.Elsewhere(n, issueRepo));
+            }
             if (design is not null && IdeaRefs(design) is { Length: > 0 } ideas)
             {
                 line.Append($", for {string.Join(", ", ideas)}");
@@ -56,6 +77,46 @@ public sealed class DesignRecord(DesignStore store, RepoCatalog repos, NodeState
         }
         text.AppendLine(SectionEnd);
         return text.ToString();
+    }
+
+    private string? FlightRepo(FlightRow flight) =>
+        repos.Repos().FirstOrDefault(r => string.Equals(r.Path, flight.RepoPath, StringComparison.OrdinalIgnoreCase))?.GitHub;
+
+    /// <summary>
+    /// Commits each built design's files into the flight's plane (<see cref="DesignRepoFiles"/>) and keeps the result on the design's record row, so the Designs section says it.
+    /// An oversized design raises one card per flight, design and version. A design that cannot be read or committed is logged and skipped; it never fails the PR.
+    /// </summary>
+    public async Task PlaceFilesAsync(FlightRow flight, CancellationToken cancellationToken)
+    {
+        if (Git is not { } git || flight.Designs.Length == 0)
+        {
+            return;
+        }
+        var here = FlightRepo(flight);
+        foreach (var d in flight.Designs)
+        {
+            try
+            {
+                if (store.Find(d.Id) is not { } design)
+                {
+                    continue;
+                }
+                var files = design.IssueNumber is not null && design.IssueRepo is { Length: > 0 } && here is not null && string.Equals(design.IssueRepo, here, StringComparison.OrdinalIgnoreCase)
+                    ? store.ReadVersion(d.Id, d.Version) : new Dictionary<string, byte[]>();
+                var result = await DesignRepoFiles.PlaceAsync(git, flight.Worktree, flight.Code, here, design, d, files, cancellationToken);
+                Put(d.Id, flight.Code, d.Version, r => r with { Folder = result.Folder, Oversize = result.Note });
+                if (result.Kind == DesignPlacement.Oversized)
+                {
+                    state.RaiseCard(CardBin.ForYou, OversizeKind, Verbs.FlightTarget(flight.Code), $"{flight.Code}: design {d.Id} v{d.Version.ToString(CultureInfo.InvariantCulture)} is not committed to the repo",
+                        $"{result.Note}. The files stay on {DesignSyncText.Branch(design.IssueNumber!.Value)}; make the renders smaller and publish a new version to have them placed.",
+                        cause: $"{flight.Code}/{d.Id}/v{d.Version.ToString(CultureInfo.InvariantCulture)}");
+                }
+            }
+            catch (Exception ex) when (ex is DesignException or FlightException or IOException)
+            {
+                await Error.WriteLineAsync($"design: {d.Id}'s files were not placed in {flight.Code}'s plane: {ex.Message}");
+            }
+        }
     }
 
     private string[] IdeaRefs(DesignRow design) =>

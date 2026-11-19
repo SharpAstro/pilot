@@ -65,6 +65,11 @@ public sealed partial class LegCommander
                 repaired = repaired with { MergedHead = null };
                 mergedBase = true;
             }
+            // The built designs' files are committed into the plane (PIL1208), so the push carries the current built version.
+            if (DesignRecord is { } placing)
+            {
+                await placing.PlaceFilesAsync(repaired, cancellationToken);
+            }
             // Pushed every time, not only for a new PR: a go-around's commits must reach the PR before it is reviewed again.
             await PushAsync(repaired, cancellationToken);
             var pr = await github.PullRequestAsync(repaired.RepoPath, repaired.Branch, cancellationToken);
