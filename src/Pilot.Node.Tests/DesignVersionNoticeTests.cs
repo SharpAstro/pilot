@@ -32,7 +32,7 @@ public sealed class DesignVersionNoticeTests : OverlapTestsBase
     /// <summary>Publishes version <paramref name="number"/> of design <paramref name="id"/> with a screen of its own, so each version has a prototype of its own.</summary>
     private void Publish(string id, int number)
     {
-        var draft = _store.Draft(id, replace: false);
+        var draft = _store.Draft(id, replace: number > 1);
         File.WriteAllText(Path.Combine(draft, DesignStore.DocumentFile),
             $"# Rings\n\n**Objective:** Objective of version {number}.\n\n## Home\n\n**Objective:** Objective of the home screen of version {number}.\n\n```screen id=home\nVersion {number}\n```\n");
         _store.Render(id);
