@@ -185,7 +185,7 @@ public sealed class DesignRendersMcpTests : IAsyncLifetime
         }
         using var process = Process.Start(start)!;
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(Ct);
-        deadline.CancelAfter(TimeSpan.FromSeconds(60));
+        deadline.CancelAfter(TimeSpan.FromSeconds(25));
         try
         {
             // Drain stderr so a chatty child cannot block on a full pipe.
