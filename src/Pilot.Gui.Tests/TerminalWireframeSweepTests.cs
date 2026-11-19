@@ -448,7 +448,7 @@ public sealed class TerminalWireframeRegressionTests
 public sealed class TerminalDockedBarSweepTests
 {
     public static IEnumerable<TheoryDataRow<string, string, int, int>> DockedCases() =>
-        from size in new[] { (80, 24), (100, 30) }
+        from size in new[] { (80, 24), (100, 30), (120, 30) }
         from page in TerminalWireframeSweepTests.Cases.Where(c => c != "tooltip open")
         select new TheoryDataRow<string, string, int, int>(page, "long", size.Item1, size.Item2) { TestDisplayName = TerminalWireframeSweepTests.Key(page, "long", size.Item1, size.Item2) + " | docked" };
 

@@ -152,8 +152,8 @@ internal sealed class NotificationsHost
     /// <summary>Whether the bar is set to dock beside the page (its state; <see cref="DockedNow"/> is whether the window has room for it).</summary>
     public bool Docked => _state == BarStates.Docked;
 
-    /// <summary>The least width, in design units, a docked bar leaves the page: the flights canvas needs about 370, so a narrower window opens the bar over the page instead.</summary>
-    public const float MinPageUnits = 400f;
+    /// <summary>The least width, in design units, a docked bar leaves the page: the pages stand (the page-wide sweeps pass) from about 480, so a narrower window opens the bar over the page instead.</summary>
+    public const float MinPageUnits = 500f;
 
     /// <summary>The design-unit width of the area beside the rail, which the page and a docked bar share; null (unknown) lets a docked bar dock.</summary>
     public float? RoomUnits { get; set; }
