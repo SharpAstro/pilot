@@ -181,6 +181,15 @@ public sealed record DesignRecordRow
 
     /// <summary>Why the files were not placed: the render or the version is over its limit, in words; null otherwise.</summary>
     public string? Oversize { get; init; }
+
+    /// <summary>The full commit the PR merged as (PIL1208); null for a row written before it was kept, whose <see cref="MergedAt"/> is the short one.</summary>
+    public string? MergeCommit { get; init; }
+
+    /// <summary>True once the design issue's picture links and the PR's Designs section name <see cref="MergeCommit"/> (PIL1208); null while they are not written.</summary>
+    public bool? LinksWritten { get; init; }
+
+    /// <summary>True once every link to the merged files answered and the branch <c>design/&lt;n&gt;</c> was deleted (PIL1208); null otherwise.</summary>
+    public bool? BranchGone { get; init; }
 }
 
 /// <summary>A prose part the issue's text says differently from the published version (PIL1171): <see cref="Part"/> is objective, heading or notes, <see cref="Cell"/> the cell's number (empty for the design itself).</summary>
@@ -381,6 +390,12 @@ public static class DesignSyncText
 
     /// <summary>The Designs line of a design whose files are committed.</summary>
     public static string Placed(string folder) => $"files in {folder}";
+
+    /// <summary>The permalink of <paramref name="folder"/> at <paramref name="commit"/> (PIL1208).</summary>
+    public static string FolderLink(string repo, string commit, string folder) => $"https://github.com/{repo}/tree/{commit}/{folder}";
+
+    /// <summary>The Designs line of a built design whose files are on the default branch: the folder at the merge commit.</summary>
+    public static string PlacedAt(string repo, string commit, string folder) => $"files in [{folder}]({FolderLink(repo, commit, folder)})";
 
     /// <summary>The Designs line of a design whose files stay on its branch because its issue is in another repo.</summary>
     public static string Elsewhere(int issue, string repo) => $"files stay on {Branch(issue)} of {repo}";

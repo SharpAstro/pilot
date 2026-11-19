@@ -87,6 +87,44 @@ public sealed partial class GhCli
         return files;
     }
 
+    public async Task<bool> FileAtAsync(string repoPath, string commit, string path, CancellationToken cancellationToken)
+    {
+        var (exit, _, error) = await RunAsync(["api", $"repos/{{owner}}/{{repo}}/contents/{path}?ref={commit}", "--jq", ".path"], repoPath, cancellationToken);
+        return ParseFound(exit, error) ?? throw new FlightException($"gh could not ask GitHub for {path} at {commit}: {error.Trim()}");
+    }
+
+    public async Task DeleteBranchAsync(string repoPath, string branch, CancellationToken cancellationToken)
+    {
+        var (exit, _, error) = await RunAsync(["api", "-X", "DELETE", $"repos/{{owner}}/{{repo}}/git/refs/heads/{branch}"], repoPath, cancellationToken);
+        // A branch that is gone answers 422 'Reference does not exist' (or 404): the aim is met.
+        if (exit != 0 && !error.Contains("(HTTP 404)", StringComparison.Ordinal) && !error.Contains("Reference does not exist", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new FlightException($"gh could not delete the branch {branch}: {error.Trim()}");
+        }
+    }
+
+    public async Task<IReadOnlyDictionary<string, byte[]>?> FolderFilesAtAsync(string repoPath, string commit, string folder, CancellationToken cancellationToken)
+    {
+        var (exit, output, error) = await RunAsync(["api", $"repos/{{owner}}/{{repo}}/git/trees/{commit}?recursive=1", "--jq", ".tree[] | select(.type == \"blob\") | .path"], repoPath, cancellationToken);
+        if (ParseFound(exit, error) is false)
+        {
+            return null;
+        }
+        if (exit != 0)
+        {
+            throw new FlightException($"gh could not list the files at {commit}: {error.Trim()}");
+        }
+        var prefix = folder.TrimEnd('/') + "/";
+        var files = new Dictionary<string, byte[]>(StringComparer.Ordinal);
+        foreach (var path in output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Where(p => p.StartsWith(prefix, StringComparison.Ordinal)))
+        {
+            var (readExit, bytes, readError) = await RunBytesAsync(
+                ["api", "-H", "Accept: application/vnd.github.raw", $"repos/{{owner}}/{{repo}}/contents/{path}?ref={commit}"], repoPath, null, cancellationToken);
+            files[path[prefix.Length..]] = readExit == 0 ? bytes : throw new FlightException($"gh could not read {path} at {commit}: {readError.Trim()}");
+        }
+        return files.Count > 0 ? files : null;
+    }
+
     public async Task<MilestoneIssue[]> LabelledIssuesAsync(string repoPath, string label, CancellationToken cancellationToken)
     {
         var (exit, output, error) = await RunAsync(["issue", "list", "--label", label, "--state", "open", "--limit", "200", "--json", IssueFields], repoPath, cancellationToken);

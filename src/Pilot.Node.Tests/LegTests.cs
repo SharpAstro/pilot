@@ -578,6 +578,39 @@ internal sealed class FakeGitHub : IGitHub
         return Branches.TryGetValue((RepoKey(repoPath), branch), out var files) ? new Dictionary<string, byte[]>(files, StringComparer.Ordinal) : null;
     }
 
+    /// <summary>What the design land asked, in order: <c>fileat &lt;commit&gt; &lt;path&gt;</c> and <c>delete &lt;branch&gt;</c> (PIL1208).</summary>
+    public ConcurrentQueue<string> LandCalls { get; } = [];
+
+    /// <summary>Answers FileAtAsync (repo folder path, commit, path); null answers true. The Slow test reads a real repo with it.</summary>
+    public Func<string, string, string, bool>? FileAt { get; set; }
+
+    /// <summary>Answers FolderFilesAtAsync (repo folder path, commit, folder); null has no files.</summary>
+    public Func<string, string, string, IReadOnlyDictionary<string, byte[]>?>? FolderAt { get; set; }
+
+    /// <summary>The branches DeleteBranchAsync removed, as (repo folder path, branch).</summary>
+    public ConcurrentQueue<(string Repo, string Branch)> BranchesDeleted { get; } = [];
+
+    public async Task<bool> FileAtAsync(string repoPath, string commit, string path, CancellationToken cancellationToken)
+    {
+        await DesignCall(cancellationToken);
+        LandCalls.Enqueue($"fileat {commit} {path}");
+        return FileAt?.Invoke(RepoKey(repoPath), commit, path) ?? true;
+    }
+
+    public async Task DeleteBranchAsync(string repoPath, string branch, CancellationToken cancellationToken)
+    {
+        await DesignCall(cancellationToken);
+        LandCalls.Enqueue($"delete {branch}");
+        BranchesDeleted.Enqueue((RepoKey(repoPath), branch));
+        Branches.TryRemove((RepoKey(repoPath), branch), out _);
+    }
+
+    public async Task<IReadOnlyDictionary<string, byte[]>?> FolderFilesAtAsync(string repoPath, string commit, string folder, CancellationToken cancellationToken)
+    {
+        await DesignCall(cancellationToken);
+        return FolderAt?.Invoke(RepoKey(repoPath), commit, folder);
+    }
+
     public async Task<MilestoneIssue[]> LabelledIssuesAsync(string repoPath, string label, CancellationToken cancellationToken)
     {
         await DesignCall(cancellationToken);

@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text;
+using System.Text.RegularExpressions;
 using Pilot.Contracts;
 using Pilot.Node.Flights;
 
@@ -12,7 +13,7 @@ namespace Pilot.Node.Designs;
 /// What was told is kept on the design (<see cref="DesignRow.Record"/>), so a push or a retry after a failed call never says a thing twice.
 /// A failure is the node's log and a retry by <see cref="SweepAsync"/>; it never blocks the PR or the land.
 /// </summary>
-public sealed class DesignRecord(DesignStore store, RepoCatalog repos, NodeState state, IGitHub github)
+public sealed partial class DesignRecord(DesignStore store, RepoCatalog repos, NodeState state, IGitHub github)
 {
     /// <summary>Opens the Designs section's block in a PR body.</summary>
     public const string SectionStart = "<!-- pilot:designs -->";
@@ -58,7 +59,8 @@ public sealed class DesignRecord(DesignStore store, RepoCatalog repos, NodeState
             {
                 if (placed.Folder is { Length: > 0 } folder)
                 {
-                    line.Append(", " + DesignSyncText.Placed(folder));
+                    line.Append(", " + (placed.MergeCommit is { Length: > 0 } sha1 && design?.IssueRepo is { Length: > 0 } where
+                        ? DesignSyncText.PlacedAt(where, sha1, folder) : DesignSyncText.Placed(folder)));
                 }
                 else if (placed.Oversize is { Length: > 0 } note)
                 {
@@ -211,7 +213,8 @@ public sealed class DesignRecord(DesignStore store, RepoCatalog repos, NodeState
     /// The PR <paramref name="pr"/> of <paramref name="flight"/> merged as <paramref name="mergedAt"/>: each design's result is written to GitHub, and remembered, so a retry never doubles it.
     /// Never throws for GitHub's refusal: it is logged, and <see cref="SweepAsync"/> tries again.
     /// </summary>
-    public async Task LandedAsync(FlightRow flight, int pr, string mergedAt, CancellationToken cancellationToken)
+    /// <param name="mergeCommit">The full commit the PR merged as; the links to the placed files name it (PIL1208). Null keeps the short one only.</param>
+    public async Task LandedAsync(FlightRow flight, int pr, string mergedAt, CancellationToken cancellationToken, string? mergeCommit = null)
     {
         if (flight.Designs.Length == 0)
         {
@@ -223,7 +226,7 @@ public sealed class DesignRecord(DesignStore store, RepoCatalog repos, NodeState
             foreach (var d in flight.Designs)
             {
                 // The merge is on the row before anything is said, so the sweep can finish what a failed call left.
-                Put(d.Id, flight.Code, d.Version, r => r with { Pr = r.Pr ?? pr, MergedAt = r.MergedAt ?? mergedAt });
+                Put(d.Id, flight.Code, d.Version, r => r with { Pr = r.Pr ?? pr, MergedAt = r.MergedAt ?? mergedAt, MergeCommit = r.MergeCommit ?? (mergeCommit is { Length: > 0 } ? mergeCommit : null) });
                 await TryLandedAsync(d.Id, flight.Code, d.Version, cancellationToken);
             }
         }
@@ -241,7 +244,7 @@ public sealed class DesignRecord(DesignStore store, RepoCatalog repos, NodeState
         {
             foreach (var design in store.List())
             {
-                foreach (var row in design.Record.Where(r => r.MergedAt is not null && r.Landed is null).ToList())
+                foreach (var row in design.Record.Where(r => r.MergedAt is not null && (r.Landed is null || FilesPending(design, r))).ToList())
                 {
                     await TryLandedAsync(design.Id, row.Flight, row.Version, cancellationToken);
                 }
@@ -265,15 +268,39 @@ public sealed class DesignRecord(DesignStore store, RepoCatalog repos, NodeState
         }
     }
 
+    /// <summary>Whether the merged files of <paramref name="row"/> still wait for their links or their branch delete (PIL1208): placed, merged with a full commit, built version current, branch not gone.</summary>
+    private static bool FilesPending(DesignRow design, DesignRecordRow row) =>
+        row.Folder is { Length: > 0 } && row.MergeCommit is { Length: > 0 } && row.BranchGone is null && row.Version == (design.Current ?? row.Version);
+
     private async Task WriteLandedAsync(string id, string code, int version, CancellationToken cancellationToken)
     {
         var design = store.Find(id);
         var row = design?.Record.FirstOrDefault(r => Is(r, code, version));
-        if (design is not { IssueNumber: { } issue } || row is not { Landed: null } || RepoOf(design.IssueRepo) is not { } info)
+        if (design is not { IssueNumber: { } issue } || row is null || RepoOf(design.IssueRepo) is not { } info)
         {
             return;
         }
+        if (row.Landed is null)
+        {
+            await WriteResultAsync(design, row, issue, info, cancellationToken);
+            row = store.Find(id)?.Record.FirstOrDefault(r => Is(r, code, version));
+        }
+        if (row is not null && FilesPending(store.Find(id) ?? design, row))
+        {
+            await LinkFilesAsync(id, row, issue, info, cancellationToken);
+        }
+    }
+
+    private async Task WriteResultAsync(DesignRow design, DesignRecordRow row, int issue, RepoInfo info, CancellationToken cancellationToken)
+    {
+        var id = design.Id;
+        var code = row.Flight;
+        var version = row.Version;
         var built = $"Built as v{version.ToString(CultureInfo.InvariantCulture)} by {code} in #{row.Pr?.ToString(CultureInfo.InvariantCulture)}, merged at {row.MergedAt}";
+        if (FilesPending(design, row))
+        {
+            built += $"; files: {DesignSyncText.FolderLink(info.GitHub!, row.MergeCommit!, row.Folder!)}";
+        }
         var current = design.Current ?? version;
         var other = state.Flights().FirstOrDefault(f => f.State != FlightState.Landed && !string.Equals(f.Code, code, StringComparison.OrdinalIgnoreCase)
             && f.Designs.Any(x => string.Equals(x.Id, id, StringComparison.OrdinalIgnoreCase)));
@@ -302,5 +329,65 @@ public sealed class DesignRecord(DesignStore store, RepoCatalog repos, NodeState
         store.Update(id, r => r with { LockWanted = false, LockHeld = false, LockedBy = null, LockError = null });
         await github.CloseIssueAsync(info.Path, issue, built, cancellationToken);
         Put(id, code, version, r => r with { Landed = "closed" });
+    }
+
+    [GeneratedRegex(@"/blob/[0-9a-fA-F]+/(?<path>[^)?\s]+)\?raw=true")]
+    private static partial Regex LinkedPath();
+
+    /// <summary>
+    /// A placed design's files are on the default branch (PIL1208): the issue's block and the PR's Designs section link them at the merge commit, every new link is asked for,
+    /// and only when all answer, and the design is still at the built version, the branch <c>design/&lt;n&gt;</c> goes. Each sub-step is on the row once done, so a retry repeats none.
+    /// </summary>
+    private async Task LinkFilesAsync(string id, DesignRecordRow row, int issue, RepoInfo info, CancellationToken cancellationToken)
+    {
+        var repo = info.GitHub!;
+        var at = DesignLinkBase.OfCommit(row.MergeCommit!, row.Folder!);
+        if (row.LinksWritten != true)
+        {
+            var now = await github.IssueNowAsync(info.Path, issue, cancellationToken)
+                ?? throw new FlightException($"{repo} has no issue #{issue.ToString(CultureInfo.InvariantCulture)}");
+            if (DesignIssueDocument.Meta(now.Body) is { } meta)
+            {
+                var files = store.ReadVersion(id, row.Version);
+                var document = files.TryGetValue(DesignStore.DocumentFile, out var text) ? DesignDocument.Parse(Encoding.UTF8.GetString(text)) : new DesignDocument(meta.Title ?? id, "", []);
+                var block = DesignIssueDocument.Block(id, document, row.Version, meta.Why ?? $"v{row.Version.ToString(CultureInfo.InvariantCulture)}", meta.Node, repo, issue,
+                    [.. files.Keys.Where(k => k.StartsWith("renders/", StringComparison.Ordinal))], meta.Ideas, at);
+                var body = DesignIssueDocument.Splice(now.Body, block);
+                if (body != now.Body && !await github.EditIssueAsync(info.Path, issue, now.Title, body, now.UpdatedAt, cancellationToken))
+                {
+                    throw new FlightException($"{repo}#{issue.ToString(CultureInfo.InvariantCulture)} changed while its links were written");
+                }
+            }
+            if (row.Pr is { } pr && state.Flights().FirstOrDefault(f => string.Equals(f.Code, row.Flight, StringComparison.OrdinalIgnoreCase)) is { } flight
+                && await github.PullRequestBodyAsync(flight.RepoPath, pr, cancellationToken) is { } prBody)
+            {
+                var next = Splice(prBody, Section(flight));
+                if (!string.Equals(next, prBody, StringComparison.Ordinal))
+                {
+                    await github.EditPullRequestBodyAsync(flight.RepoPath, pr, next, cancellationToken);
+                }
+            }
+            Put(id, row.Flight, row.Version, r => r with { LinksWritten = true });
+        }
+        // Every new link is asked for: the folder, its document and the pictures of the block.
+        var paths = new List<string> { row.Folder!, at.PathOf(DesignStore.DocumentFile) };
+        if ((await github.IssueNowAsync(info.Path, issue, cancellationToken))?.Body is { } written)
+        {
+            paths.AddRange(LinkedPath().Matches(written).Select(m => m.Groups["path"].Value).Where(p => p.StartsWith(row.Folder + "/", StringComparison.Ordinal)));
+        }
+        foreach (var path in paths.Distinct(StringComparer.Ordinal))
+        {
+            if (!await github.FileAtAsync(info.Path, row.MergeCommit!, path, cancellationToken))
+            {
+                throw new FlightException($"the link to {path} at {CommitRefs.Short(row.MergeCommit!)} does not answer yet");
+            }
+        }
+        // A newer version published meanwhile keeps the branch: its block links the branch again.
+        if (store.Find(id) is { } latest && (latest.Current ?? row.Version) > row.Version)
+        {
+            return;
+        }
+        await github.DeleteBranchAsync(info.Path, DesignSyncText.Branch(issue), cancellationToken);
+        Put(id, row.Flight, row.Version, r => r with { BranchGone = true });
     }
 }

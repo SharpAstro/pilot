@@ -414,6 +414,11 @@ public sealed class DesignSync(DesignStore store, RepoCatalog repos, IGitHub git
             return;
         }
         var files = await github.BranchFilesAsync(info.Path, DesignSyncText.Branch(issue.Number), token).ConfigureAwait(false);
+        if (files is null && meta.Commit is { Length: > 0 } commit && meta.Folder is { Length: > 0 } folder)
+        {
+            // The branch went once the built files were on the default branch (PIL1208): they are read from the merge commit, folder prefix stripped.
+            files = await github.FolderFilesAtAsync(info.Path, commit, folder, token).ConfigureAwait(false);
+        }
         if (files is null || !files.ContainsKey(DesignStore.PrototypeFile))
         {
             return;

@@ -391,7 +391,7 @@ public sealed partial class FlightCommander
             if (DesignRecord is { } record && flight.Designs.Length > 0)
             {
                 var (commit, _) = await MergeOfAsync(flight, cancellationToken);
-                await record.LandedAsync(flight, merged, commit is { Length: > 0 } ? CommitRefs.Short(commit) : CommitRefs.Short(landedHead ?? mergedHead ?? ""), cancellationToken);
+                await record.LandedAsync(flight, merged, commit is { Length: > 0 } ? CommitRefs.Short(commit) : CommitRefs.Short(landedHead ?? mergedHead ?? ""), cancellationToken, commit is { Length: > 0 } ? commit : null);
             }
         }
 

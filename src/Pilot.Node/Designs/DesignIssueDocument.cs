@@ -7,7 +7,26 @@ using Pilot.Contracts;
 namespace Pilot.Node.Designs;
 
 /// <summary>What a design's issue body holds between the <see cref="DesignSyncText.Begin"/> and <see cref="DesignSyncText.End"/> markers (PIL1171), and how it is read back.</summary>
-public sealed record DesignIssueMeta(string Node, string Design, int Version, string? Why, string? Title, string[]? Ideas = null);
+public sealed record DesignIssueMeta(string Node, string Design, int Version, string? Why, string? Title, string[]? Ideas = null, string? Commit = null, string? Folder = null);
+
+/// <summary>
+/// Where the links of a design's block point (PIL1208): a ref of the repo and the folder the design's files sit under at that ref. The design branch holds them at its root;
+/// a built version's files are under <c>docs/designs/&lt;n&gt;/</c> at the merge commit.
+/// </summary>
+public sealed record DesignLinkBase(string Ref, string Folder = "")
+{
+    /// <summary>The design's branch, files at its root.</summary>
+    public static DesignLinkBase OfBranch(int issue) => new(DesignSyncText.Branch(issue));
+
+    /// <summary>The merge commit <paramref name="sha"/>, files under <paramref name="folder"/>.</summary>
+    public static DesignLinkBase OfCommit(string sha, string folder) => new(sha, folder);
+
+    /// <summary>True for a commit's folder, false for the branch.</summary>
+    public bool IsCommit => Folder.Length > 0;
+
+    /// <summary>The path of <paramref name="file"/> (relative to the design's root) at this ref.</summary>
+    public string PathOf(string file) => Folder.Length > 0 ? Folder.TrimEnd('/') + "/" + file : file;
+}
 
 /// <summary>
 /// The design's document as the issue's body shows it: the title, objective and each cell, every frame as its render's raw link into the design's branch. The block
@@ -20,13 +39,18 @@ public static partial class DesignIssueDocument
     private static partial Regex MetaLine();
 
     /// <summary>The raw link of file <paramref name="path"/> of the design's branch, the way an issue body shows a picture.</summary>
-    public static string RawLink(string repo, int issue, string path) =>
-        $"https://github.com/{repo}/blob/{DesignSyncText.Branch(issue)}/{path}?raw=true";
+    public static string RawLink(string repo, int issue, string path) => RawLink(repo, DesignLinkBase.OfBranch(issue), path);
+
+    /// <summary>The raw link of <paramref name="path"/> (relative to the design's root) at <paramref name="at"/>: one function for the branch's links and a built version's.</summary>
+    public static string RawLink(string repo, DesignLinkBase at, string path) =>
+        $"https://github.com/{repo}/blob/{at.Ref}/{at.PathOf(path)}?raw=true";
 
     /// <summary>The block for version <paramref name="version"/>: markers included.</summary>
     /// <param name="renders">The paths of the version's renders (<c>renders/&lt;file&gt;.png</c>), from which each frame's picture is chosen.</param>
-    public static string Block(string designId, DesignDocument document, int version, string why, string node, string repo, int issue, IReadOnlyCollection<string> renders, IReadOnlyCollection<string>? ideas = null)
+    /// <param name="at">Where the links point; the design's branch when null. A commit's folder is also written to the meta line, so another node knows where the built files are.</param>
+    public static string Block(string designId, DesignDocument document, int version, string why, string node, string repo, int issue, IReadOnlyCollection<string> renders, IReadOnlyCollection<string>? ideas = null, DesignLinkBase? at = null)
     {
+        at ??= DesignLinkBase.OfBranch(issue);
         var meta = new JsonObject
         {
             ["node"] = node,
@@ -38,6 +62,11 @@ public static partial class DesignIssueDocument
         if (ideas is { Count: > 0 })
         {
             meta["ideas"] = new JsonArray([.. ideas.Select(i => (JsonNode?)JsonValue.Create(i))]);
+        }
+        if (at.IsCommit)
+        {
+            meta["commit"] = at.Ref;
+            meta["folder"] = at.Folder;
         }
         var text = new StringBuilder();
         text.Append(DesignSyncText.Begin).Append('\n');
@@ -65,7 +94,7 @@ public static partial class DesignIssueDocument
             {
                 var file = RenderOf(frame, renders);
                 var label = (frame.Caption ?? frame.Id).Replace('\n', ' ').Replace("]", "", StringComparison.Ordinal).Replace("[", "", StringComparison.Ordinal);
-                text.Append(file is null ? $"_{label} (no render)_" : $"![{label}]({RawLink(repo, issue, file)})").Append("\n\n");
+                text.Append(file is null ? $"_{label} (no render)_" : $"![{label}]({RawLink(repo, at, file)})").Append("\n\n");
             }
             if (cell.Notes.Length > 0)
             {
@@ -161,7 +190,8 @@ public static partial class DesignIssueDocument
                 && o["version"]?.GetValue<int>() is > 0 and var version)
             {
                 return new DesignIssueMeta(node, o["design"]?.GetValue<string>() ?? "", version, o["why"]?.GetValue<string>(), o["title"]?.GetValue<string>(),
-                    o["ideas"] is JsonArray list ? [.. list.Select(n => n?.GetValue<string>()).OfType<string>()] : null);
+                    o["ideas"] is JsonArray list ? [.. list.Select(n => n?.GetValue<string>()).OfType<string>()] : null,
+                    o["commit"]?.GetValue<string>() is { Length: > 0 } commit ? commit : null, o["folder"]?.GetValue<string>() is { Length: > 0 } folder ? folder : null);
             }
         }
         catch (Exception ex) when (ex is System.Text.Json.JsonException or InvalidOperationException or FormatException)
