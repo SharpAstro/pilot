@@ -1075,11 +1075,11 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
             .Follows(new HitResult.ButtonHit($"designs:open:{id}"), _ => Open(id));
     }
     // The room the document has: where the chat stands beside it (a window wide enough), the chat's width; else the document has the page's.
-    private bool ChatBeside => Terminal is null && _width >= MinDocumentWidth + ChatWidth + 3f * Gutter;
+    private bool ChatBeside => Terminal is null && _width >= MinDocumentColumns + ChatWidth + 3f * Gutter;
 
     // The chat is one fixed width at the right edge; the document is the star beside it and takes every unit left.
     private const float ChatWidth = 420f;
-    private const float MinDocumentWidth = 500f;
+    private const float MinDocumentColumns = 500f;
 
     // The width the played screen has inside its well: the document's column less its scroll bar and the well's own padding. In a terminal, the columns the page has.
     private float WellInnerWidth()
