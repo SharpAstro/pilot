@@ -820,6 +820,13 @@ public static class Verbs
     public const string PlanFlight = "plan-flight";
 
     /// <summary>
+    /// <c>design-replan flight/&lt;code&gt; &lt;design&gt;</c> (PIL1185): the controller's answer to "DSN-3 is now v4; this flight builds v3". Moves the flight's entry for the design to the
+    /// design's current published version and prototype hash, says so on the flight's issue, and has a fresh planner re-plan the flight. Refused for a landed flight, a design the
+    /// flight does not build and a design with no newer version than the flight's. Publishing a design never changes a flight's recorded version.
+    /// </summary>
+    public const string DesignReplan = "design-replan";
+
+    /// <summary>
     /// <c>planned flight/&lt;code&gt; &lt;summary…&gt;</c>: the planner is done; a card offers the first leg's start.
     /// </summary>
     public const string Planned = "planned";
