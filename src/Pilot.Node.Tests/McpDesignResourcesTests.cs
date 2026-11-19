@@ -243,6 +243,8 @@ public sealed class McpDesignResourcesTests : IAsyncLifetime
         await Published();
         var renders = Path.Combine(Version1(), "renders");
         File.Move(Path.Combine(renders, "home.png"), Path.Combine(renders, "home.Phone.png"));
+        // A published version's files are read-only.
+        File.SetAttributes(DesignPaths.PrototypeFile(Version1()), FileAttributes.Normal);
         File.WriteAllText(DesignPaths.PrototypeFile(Version1()), """{"targets":["Phone","Tablet"]}""");
 
         var png = Contents(await ReadOne("pilot://designs/DSN-1/versions/1/screens/home"));
