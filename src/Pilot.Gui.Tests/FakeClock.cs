@@ -8,6 +8,11 @@ internal sealed class FakeClock : TimeProvider
 
     public override DateTimeOffset GetUtcNow() => _now;
 
+    // The monotonic timestamp moves with the hand-set time too, so a reader of GetTimestamp (the caret blink's phase) is not on the wall clock.
+    public override long TimestampFrequency => TimeSpan.TicksPerSecond;
+
+    public override long GetTimestamp() => _now.UtcTicks;
+
     /// <summary>How many timers are armed and not yet fired.</summary>
     public int Armed => _timers.Count(t => t.Due is not null);
 
