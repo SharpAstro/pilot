@@ -344,8 +344,8 @@ internal sealed class NotificationsHost
     }
 }
 
-/// <summary>The rail bell's state: <paramref name="Count"/> is what needs the person, <paramref name="Ringing"/> a card in the Ring bin.</summary>
 /// <summary>The edge handle's tint.</summary>
 internal enum HandleTints { Neutral, New, NeedsYou }
 
+/// <summary>The rail bell's state: <paramref name="Count"/> is what needs the person, <paramref name="Ringing"/> a card in the Ring bin.</summary>
 internal readonly record struct BellState(int Count, bool Ringing);
