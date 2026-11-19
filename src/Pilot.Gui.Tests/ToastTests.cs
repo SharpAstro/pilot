@@ -251,6 +251,73 @@ public sealed class ToastTests
     }
 
     [Fact]
+    public void AFadingToastLeavesOnTheWallClockWhenThePagesTimeStandsStill()
+    {
+        // Home builds no new pages while nothing changed, so the snapshot's AsOf stops: the window's Clock carries the countdown.
+        using var w = new Window(1920, 1080);
+        var now = T0;
+        w.Chrome.Clock = () => now;
+        w.Frame(T0, job: JobState.Running);
+        now = T0.AddSeconds(1);
+        w.Frame(T0, job: JobState.Succeeded);
+        Fading(w).ShouldHaveSingleItem();
+        now = T0.AddSeconds(3);
+        w.Frame(T0, job: JobState.Succeeded);
+        w.Feed.Toasts.Single().RemainingFraction.ShouldBeLessThan(0.6, "the countdown moved with the clock, the snapshot's time unchanged");
+        now = T0.AddSeconds(7);
+        w.Frame(T0, job: JobState.Succeeded);
+        Fading(w).ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void APressOnAToastOpensWhatItIsAboutForEachKindOfEvent()
+    {
+        var data = PageData.For("sample");
+        using var w = new Window(1920, 1080);
+        var line = data.Flights.Lines[0];
+        FlightsScreen FlightIn(FlightState state) => data.Flights with { Lines = [line with { Row = line.Row with { State = state } }] };
+        DesignsScreen DesignAt(int versions) => new([new DesignRow { Id = "DSN-1", Title = "A design", Versions = versions }], "sample", T0);
+
+        w.Chrome.ObserveEvents(null, FlightIn(FlightState.Running), DesignAt(1), T0);
+        w.Chrome.ObserveEvents(null, FlightIn(FlightState.Landed), DesignAt(2), T0.AddSeconds(1));
+        var toasts = Fading(w);
+        toasts.Count.ShouldBe(2);
+
+        // Each toast, pressed as the layer's hit would be, opens its page and goes into the history as handled.
+        var landed = toasts.Single(t => t.Title.Contains("landed"));
+        w.Chrome.Show(PilotPage.Home);
+        w.Chrome.PressNotification(new NotificationHit(NotificationPart.Toast, landed.Id)).ShouldBeTrue();
+        w.Chrome.Page.ShouldBe(PilotPage.Flights);
+        w.Chrome.Flights.OpenCode.ShouldBe(line.Code);
+
+        var design = toasts.Single(t => t.Title.Contains("published"));
+        w.Chrome.Show(PilotPage.Home);
+        w.Chrome.PressNotification(new NotificationHit(NotificationPart.Toast, design.Id)).ShouldBeTrue();
+        w.Chrome.Page.ShouldBe(PilotPage.Designs);
+        w.Chrome.Designs.OpenId.ShouldBe("DSN-1");
+        Fading(w).ShouldBeEmpty("handled toasts leave");
+
+        w.Frame(T0.AddSeconds(2), job: JobState.Running);
+        w.Frame(T0.AddSeconds(3), job: JobState.Succeeded);
+        var job = Fading(w).ShouldHaveSingleItem();
+        w.Chrome.Show(PilotPage.Home);
+        w.Chrome.PressNotification(new NotificationHit(NotificationPart.Toast, job.Id)).ShouldBeTrue();
+        w.Chrome.Page.ShouldBe(PilotPage.Jobs);
+    }
+
+    [Fact]
+    public void NoToastStandsOverTheNotificationsPage()
+    {
+        using var w = new Window(1920, 1080);
+        w.Frame(T0, CardsScreen.From([new CardRow { Id = "c1", Bin = CardBin.Ring, Kind = "pr-ready", Subject = "flight/X", Title = "A ringing card", Summary = "s", At = Live.At, State = CardState.Open }]));
+        w.Feed.Toasts.ShouldNotBeEmpty("the card toasts on another page while collapsed");
+        w.Chrome.Show(PilotPage.Notifications);
+        w.Frame(T0.AddSeconds(1), CardsScreen.From([new CardRow { Id = "c1", Bin = CardBin.Ring, Kind = "pr-ready", Subject = "flight/X", Title = "A ringing card", Summary = "s", At = Live.At, State = CardState.Open }]));
+        w.Chrome.Notifications.ToastsOnPage.ShouldBeFalse();
+        w.Chrome.Notifications.Animating.ShouldBeFalse();
+    }
+
+    [Fact]
     public void CapturesOfAStayingAndAFadingToastAtBothWidths()
     {
         foreach (var (width, height, dpi) in new[] { (1920, 1080, 1f), (2880, 1620, 1.5f) })

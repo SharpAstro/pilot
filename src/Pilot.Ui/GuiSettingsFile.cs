@@ -76,7 +76,7 @@ internal sealed class GuiSettingsFile : IDisposable
 
     private Dictionary<string, Dictionary<string, SavedFrameSize>> _frameSizes = [];
     private volatile bool _notificationsCollapsed;
-    private double? _keepHours;
+    private double? _keepHours; // written and read under the same call path as the others; the host's event runs on the render thread
 
     private GuiSettingsFile(string path, Dictionary<string, Dictionary<string, float>> tables, Dictionary<string, SavedSort> sorts, bool night, MapLayerSettings? layers, List<string> folds, Dictionary<string, SavedDesignTarget> designTargets,
         Dictionary<string, Dictionary<string, SavedFrameSize>> frameSizes, bool notificationsCollapsed, double? keepHours)
@@ -158,6 +158,7 @@ internal sealed class GuiSettingsFile : IDisposable
             sorts.Clear();
             night = false;
             collapsed = false;
+            keepHours = null;
             folds.Clear();
             layers = null;
             designTargets.Clear();

@@ -308,6 +308,8 @@ using var guiSettings = GuiSettingsFile.Open();
 chrome.KeepColumnWidths(guiSettings, loop.RequestRedraw);
 // The For you bar's open or collapsed choice is the window's: kept in its settings file, and a change repaints.
 guiSettings.Attach(chrome.Notifications);
+// The toasts count down on the wall clock: the pages are built only when something changed, so their time can stand still.
+chrome.Clock = () => DateTimeOffset.UtcNow;
 chrome.Notifications.OpenChanged += _ => loop.RequestRedraw();
 // The Flights page asks for frames of its own: the map's layer menu while it fades, and the links' "Copied" notice.
 chrome.Flights.Changed = loop.RequestRedraw;

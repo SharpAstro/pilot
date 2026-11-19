@@ -539,6 +539,7 @@ while (!stop.IsCancellationRequested)
         // The For you bar (PIL1184) is the window's too: open it covers the page's right side, collapsed it is a strip with the bell, and the page is the
         // columns less the strip either way. Every open card is a notification in its feed.
         var bar = chrome.Notifications;
+        bar.ToastsOnPage = page != PilotPage.Notifications;
         bar.Sync(pages.Cards.Open, card => cards.NodeOf(card)?.Name, now);
         chrome.ObserveEvents(pages.Jobs, pages.Flights, null, now);
         var cardsOver = bar.Open && (pages.Cards.HasAny || cards.CanTell && !cards.OnChatPage);

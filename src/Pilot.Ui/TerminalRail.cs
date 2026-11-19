@@ -37,6 +37,8 @@ internal static class TerminalRail
     /// </summary>
     public static int NarrowCellsOf(PilotPage page) => page == PilotPage.Ideas ? NarrowEntryCells : NarrowEntryCells - 1;
 
+    private static float WidthOf(PilotPage page, bool narrow) => narrow ? NarrowCellsOf(page) * 8f : EntryWidth;
+
     private static int NarrowGlyphCellsOf(PilotPage page) => NarrowCellsOf(page) - 3;
 
     /// <summary>Whether a terminal this many columns wide gets narrow entries.</summary>
@@ -190,7 +192,7 @@ internal static class TerminalRail
         {
             var on = k.Page == active;
             return Layout.Builder.Text(Remember(memory, k.Page, EntryText(k.Page, mode, jobs, ideas, now, narrow)), 12f, on ? palette.Bright : palette.Dim, TextAlign.Near, TextAlign.Center)
-                .WFixed(narrow ? NarrowCellsOf(k.Page) * 8f : EntryWidth)
+                .WFixed(WidthOf(k.Page, narrow))
                 .HFixed(16f)
                 .Bg(on ? palette.RowFocusBg : palette.RowAltBg)
                 .BgHover(palette.RowHoverBg)

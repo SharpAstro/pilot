@@ -79,8 +79,14 @@ internal sealed class NotificationsHost
         return NotificationsLayout.Build(Layout.Builder.Spacer().Stretch(), Feed, _page, Colors(), style);
     }
 
+    /// <summary>
+    /// Whether toasts may stand over the page; false on the Notifications page, which lists everything itself (a toast there would cover its
+    /// header and repeat a row). Set by the chrome and the terminal's frame from the page shown.
+    /// </summary>
+    public bool ToastsOnPage { get; set; } = true;
+
     /// <summary>Whether a fading toast is on screen, so the window draws a frame each tick for its countdown.</summary>
-    public bool Animating => !Open && Feed.Toasts.Any(t => t.Notification.Kind == NotificationKind.Fading);
+    public bool Animating => !Open && ToastsOnPage && Feed.Toasts.Any(t => t.Notification.Kind == NotificationKind.Fading);
 
     /// <summary>
     /// The buttons a staying card's toast carries, as the card's own panel answers them (null for a card with none); set by the chrome,
@@ -164,8 +170,9 @@ internal sealed class NotificationsHost
                 }, now).Id;
             }
         }
-        foreach (var gone in _ids.Keys.Where(k => !seen.Contains(k)).ToList())
+        foreach (var gone in _ids.Keys.Where(k => !seen.Contains(k)).ToArray())
         {
+            // A card gone from the panel (answered, or handled elsewhere) is closed into the history.
             Feed.Dismiss(_ids[gone]);
             _ids.Remove(gone);
         }
@@ -212,15 +219,31 @@ internal sealed class NotificationsHost
     /// and, while it is open, <paramref name="panel"/> over the page's right side, under a row holding the collapse button. A null
     /// <paramref name="panel"/> (nothing to show) leaves the page and the strip.
     /// </summary>
-    public Layout.Node Frame(Layout.Node page, Layout.Node? panel, float contentWidth = float.MaxValue)
+    public Layout.Node Frame(Layout.Node page, Layout.Node? panel, bool room = true)
     {
         Fold();
         // A window so narrow that the strip would leave the page less than the width its tables need keeps no strip: the page takes the room
         // (the key still toggles the bar, and the rail's Notifications page lists everything).
-        var style = contentWidth - Style.StripWidth < MinPageWidth ? Style with { StripWidth = 0f } : Style;
+        var style = room ? Style : Style with { StripWidth = 0f };
+        if (!ToastsOnPage)
+        {
+            style = style with { MaxToasts = 0 };
+        }
         var colors = Colors();
         // Open, the bar holds every card, so no toast stands beside it (the stack is wider than the bar and would peek out past its edge).
         var frame = NotificationsLayout.Build(page, Feed, _lib, colors, Open && panel is not null ? style with { MaxToasts = 0 } : style, Pointer, PageRect);
+        if (!Open && room && style.StripWidth > 0f)
+        {
+            // The collapsed strip's bell opens the page, so the way back to the open bar is this button at the strip's foot.
+            var expand = Layout.Builder.HStack(Layout.Builder.Text("◂", 14f, colors.Text, TextAlign.Center).WStar())
+                .HFixed(28f).Bg(colors.Card)
+                .Clickable(new HitResult.ButtonHit(ExpandAction), _ => Toggle(), CursorKind.Pointer)
+                .WithTooltip($"Open the For you bar ({ChordText()})", Layout.DockSide.Left)
+                .WStar();
+            return Layout.Builder.Overlay(frame,
+                Layout.Builder.HStack(Layout.Builder.Spacer().WStar().HStar(),
+                    Layout.Builder.VStack(Layout.Builder.Spacer().HStar(), expand).WFixed(style.StripWidth).HStar()).Stretch());
+        }
         if (!Open || panel is null)
         {
             return frame;
@@ -237,7 +260,7 @@ internal sealed class NotificationsHost
                 Layout.Builder.HStack(Layout.Builder.Text("Collapse ▸", 12f, colors.Text, TextAlign.Center).WAuto())
                     .Pad(6f, 2f)
                     .Bg(colors.Card)
-                    .Clickable(new NotificationHit(NotificationPart.Bell), _ => Toggle(), CursorKind.Pointer)
+                    .Clickable(new HitResult.ButtonHit(CollapseAction), _ => Toggle(), CursorKind.Pointer)
                     .WithTooltip($"Collapse the For you bar to its strip ({ChordText()})", Layout.DockSide.Bottom)
                     .WAuto())
             .WithGap(6f).CrossCenter().Pad(6f, 2f).WStar();
@@ -248,7 +271,16 @@ internal sealed class NotificationsHost
     }
 
     /// <summary>The narrowest page, in design units, the strip may leave beside it; a window narrower than that has no strip.</summary>
-    public const float MinPageWidth = 400f;
+    public const float MinPageUnits = 400f;
+
+    /// <summary>Whether a page of <paramref name="pageUnits"/> design units (the content's, strip included) keeps the strip beside it.</summary>
+    public static bool StripFits(float pageUnits) => pageUnits >= MinPageUnits + Style.StripWidth;
+
+    /// <summary>The hit of the open bar's Collapse button, apart from the strip's bell so a press on it toggles the bar and does not open the page.</summary>
+    public const string CollapseAction = "notifications:collapse";
+
+    /// <summary>The hit of the collapsed strip's expander.</summary>
+    public const string ExpandAction = "notifications:expand";
 
     /// <summary>The toggle key as a person reads it, for a tooltip.</summary>
     public static string ChordText() => "Ctrl+N";

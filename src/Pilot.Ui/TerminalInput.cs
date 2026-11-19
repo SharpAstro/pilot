@@ -156,6 +156,17 @@ internal sealed class TerminalInput<TSurface>(
             return;
         }
 
+        // The For you bar's bell and toasts act as the window's do (the library declares them with no click action of their own), and the
+        // pointer on a toast stops its countdown.
+        if (evt is InputEvent.MouseDown(var px, var py, MouseButton.Left) && chrome.PressNotification(HitTest(Arranged, (int)px, (int)py)))
+        {
+            return;
+        }
+        if (evt is InputEvent.MouseMove(var mx, var my))
+        {
+            chrome.Notifications.Hover(HitTest(Arranged, (int)mx, (int)my));
+        }
+
         Router.Handle(evt);
 
         // The composer is drawn from the editor's lines, so a click on it also places the caret where it landed.

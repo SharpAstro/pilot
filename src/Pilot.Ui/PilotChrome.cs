@@ -516,6 +516,9 @@ internal sealed class PilotChrome<TSurface>
     /// <summary>The For you side bar: open over the page's right side, or collapsed to the strip with the bell (PIL1184). One per window.</summary>
     public NotificationsHost Notifications { get; } = new();
 
+    /// <summary>The wall clock the toasts count down on; null reads the snapshot's time (what tests step). The window sets it.</summary>
+    public Func<DateTimeOffset>? Clock { get; set; }
+
     private readonly PilotEventWatch _events = new();
 
     /// <summary>Posts the events the pages' changes since the last call make (a null page is skipped); the terminal's frame calls it as the window's does.</summary>
@@ -558,6 +561,21 @@ internal sealed class PilotChrome<TSurface>
             }
             return Layout.Builder.VStack([.. parts]).WithGap(4f).WStar();
         };
+    }
+
+    /// <summary>
+    /// A left press on <paramref name="hit"/> as the For you bar's frame answers it, the same for the window and the terminal: the bell opens
+    /// the Notifications page, a toast opens what it is about. False when the hit is neither (the collapse and expand buttons are plain
+    /// clickables the router runs).
+    /// </summary>
+    public bool PressNotification(HitResult? hit)
+    {
+        if (hit is NotificationHit { Part: NotificationPart.Bell })
+        {
+            Show(PilotPage.Notifications);
+            return true;
+        }
+        return Notifications.Press(hit);
     }
 
     /// <summary>The strip, the bell and the toasts, painted by DIR.Lib's component over the page.</summary>
@@ -732,15 +750,8 @@ internal sealed class PilotChrome<TSurface>
     /// </summary>
     public bool HandleInput(InputEvent evt)
     {
-        // A press on the strip's bell opens the Notifications page (the key still toggles the bar).
-        if (evt is InputEvent.MouseDown { Button: MouseButton.Left } bell && NotificationsLayer.HitTest(bell.X, bell.Y) is NotificationHit { Part: NotificationPart.Bell })
-        {
-            Show(PilotPage.Notifications);
-            return true;
-        }
-
-        // A press on a fading toast opens what it is about, ahead of the page beneath it.
-        if (evt is InputEvent.MouseDown { Button: MouseButton.Left } press && Notifications.Press(NotificationsLayer.HitTest(press.X, press.Y)))
+        // A press on the strip's bell opens the Notifications page, and a press on a toast opens what it is about, ahead of the page beneath.
+        if (evt is InputEvent.MouseDown { Button: MouseButton.Left } down && PressNotification(NotificationsLayer.HitTest(down.X, down.Y)))
         {
             return true;
         }
@@ -1313,21 +1324,25 @@ internal sealed class PilotChrome<TSurface>
             PilotPage.PullRequests => PullRequests.FocusFlight,
             _ => null,
         };
+        // The feed's clock: the window's own when one is set (the pages are built only when something changed, so their AsOf can stand still
+        // while a toast counts down), else the snapshot's.
+        var feedNow = Clock?.Invoke() ?? screen.AsOf;
         // Every open card is a notification in the bar's feed; its bell counts them and goes amber while one rings.
         if (cards is not null)
         {
-            Notifications.Sync(cards.Open, c => Cards.NodeOf(c)?.Name, screen.AsOf);
+            Notifications.Sync(cards.Open, c => Cards.NodeOf(c)?.Name, feedNow);
         }
         // Events from the pages' changes: while the bar is open they go to the history, collapsed they are fading toasts.
-        ObserveEvents(jobs, flights, designs, screen.AsOf);
+        ObserveEvents(jobs, flights, designs, feedNow);
         if (Pointer is { } over)
         {
             Notifications.Pointer = new System.Numerics.Vector2(over.X, over.Y);
         }
+        Notifications.ToastsOnPage = Page != PilotPage.Notifications;
         Notifications.PageRect = PageBounds ?? default;
         // The page is laid out over the whole content, less the library's strip; the open bar is laid over its right side (an overlay), so the
         // page is the same size open and collapsed.
-        Layout.Node Frame() => Notifications.Frame(Layout.Builder.Fill(key: PageKey).Stretch(), hasPanel ? Layout.Builder.Fill(key: CardsKey).Stretch() : null, bounds.Width / DpiScale - RailWidth);
+        Layout.Node Frame() => Notifications.Frame(Layout.Builder.Fill(key: PageKey).Stretch(), hasPanel ? Layout.Builder.Fill(key: CardsKey).Stretch() : null, NotificationsHost.StripFits(Rail.Scale.ToDesignX(bounds.Width) - RailWidth));
         var tree = Layout.Builder.HStack(Layout.Builder.Fill(key: RailKey).ColW(RailWidth), Frame().Stretch());
         var measure = new PixelMeasureContext<TSurface>(_renderer, FontPath, DpiScale);
         var window = new Rect<float>(bounds.X, bounds.Y, bounds.Width, bounds.Height);

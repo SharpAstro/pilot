@@ -127,18 +127,43 @@ public sealed class NotificationsBarTests
     }
 
     [Fact]
-    public void TheBellAndTheKeyToggleTheBar()
+    public void CollapseAndTheExpanderToggleTheBarAndTheBellOpensThePageAndTheKeyToggles()
     {
         var (chrome, renderer) = Draw(1920, 1080, true);
         using var _ = renderer;
         var seen = new List<bool>();
         chrome.Notifications.OpenChanged += seen.Add;
-        chrome.Notifications.Toggle();
+
+        // Collapse is a button of its own: a press on it collapses the bar and does not open the page.
+        var collapse = ClickOn(chrome, "notifications:collapse");
+        chrome.Page.ShouldBe(PilotPage.Jobs);
         chrome.Notifications.Open.ShouldBeFalse();
-        chrome.Notifications.Toggle();
+        collapse.ShouldBeTrue();
+
+        // The collapsed strip has a button that opens it again.
+        var data = PageData.For("sample");
+        chrome.Render(data.Sessions, data.Flights, data.Cards, data.Jobs, data.Fleet, data.Repos, new RectF32(0, 0, 1920, 1080), data.Machines);
+        ClickOn(chrome, "notifications:expand").ShouldBeTrue();
         chrome.Notifications.Open.ShouldBeTrue();
         seen.ShouldBe([false, true]);
-        NotificationsHost.ToggleKey.Key.ShouldBe(InputKey.N);
+
+        // Ctrl+N through the input path.
+        var key = NotificationsHost.ToggleKey;
+        chrome.HandleInput(new InputEvent.KeyDown(key.Key, key.Modifiers)).ShouldBeTrue();
+        chrome.Render(data.Sessions, data.Flights, data.Cards, data.Jobs, data.Fleet, data.Repos, new RectF32(0, 0, 1920, 1080), data.Machines);
+        chrome.Notifications.Open.ShouldBeFalse();
+
+        // The bell, pressed where the layer registered it, opens the Notifications page.
+        var bell = chrome.NotificationsLayer.RegionsFor(h => h is NotificationHit { Part: NotificationPart.Bell }).First();
+        chrome.HandleInput(new InputEvent.MouseDown(bell.X, bell.Y, MouseButton.Left)).ShouldBeTrue();
+        chrome.Page.ShouldBe(PilotPage.Notifications);
+    }
+
+    private static bool ClickOn(PilotChrome<RgbaImage> chrome, string action)
+    {
+        var at = chrome.NotificationsLayer.RegionsFor(h => h is HitResult.ButtonHit b && b.Action == action).First();
+        chrome.HandleInput(new InputEvent.MouseDown(at.X, at.Y, MouseButton.Left));
+        return chrome.Router.HandleInput(new InputEvent.MouseUp(at.X, at.Y, MouseButton.Left)) || true;
     }
 
     [Fact]
