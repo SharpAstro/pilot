@@ -161,7 +161,7 @@ public sealed class DesignsWaitingIdeasTests
         chrome.Designs.Open(screen.Open!.Detail.Row.Id);
         screen.Open.Detail.Row.FromIdea.ShouldBe("pilot I381");
 
-        Said(host.Nodes(chrome, screen)).ShouldContain("I381");
+        Said(host.Nodes(chrome, screen)).ShouldContain(t => t.StartsWith("I381 ", StringComparison.Ordinal));
         host.Hits(chrome, screen).Single(h => h.Action == "designs:for-idea:pilot:I381").Press();
 
         chrome.Page.ShouldBe(PilotPage.Ideas);
