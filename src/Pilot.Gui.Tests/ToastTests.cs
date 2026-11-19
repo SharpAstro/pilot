@@ -214,7 +214,13 @@ public sealed class ToastTests
 
         w.Frame(T0.AddSeconds(1.1), job: JobState.Succeeded, pointer: (corner.X, corner.Y));
         NotificationsLayout.ToastIdOf(w.Chrome.NotificationsLayer.HitTest(corner.X, corner.Y)).ShouldBeNull("the toast is not under the pointer");
-        NotificationsLayout.ToastIdOf(w.Chrome.NotificationsLayer.HitTest(corner.X, page.Bottom - NotificationsHost.Style.Margin * dpi - 20f)).ShouldNotBeNull("it moved to the bottom right");
+        // It moved: the lower half of the content, at the toast's column, now holds a toast (scanned, so the test does not depend on the card's height).
+        var moved = false;
+        for (var y = page.Bottom - 2f; y > page.Y + page.Height / 2f && !moved; y -= 4f)
+        {
+            moved = NotificationsLayout.ToastIdOf(w.Chrome.NotificationsLayer.HitTest(corner.X, y)) is not null;
+        }
+        moved.ShouldBeTrue("it moved to the bottom right");
         w.Save($"toasts-dodging-the-pointer-{width}");
 
         // Five at once: three show.
