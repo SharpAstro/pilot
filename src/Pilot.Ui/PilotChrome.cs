@@ -1327,7 +1327,7 @@ internal sealed class PilotChrome<TSurface>
         Notifications.PageRect = PageBounds ?? default;
         // The page is laid out over the whole content, less the library's strip; the open bar is laid over its right side (an overlay), so the
         // page is the same size open and collapsed.
-        Layout.Node Frame() => Notifications.Frame(Layout.Builder.Fill(key: PageKey).Stretch(), hasPanel ? Layout.Builder.Fill(key: CardsKey).Stretch() : null);
+        Layout.Node Frame() => Notifications.Frame(Layout.Builder.Fill(key: PageKey).Stretch(), hasPanel ? Layout.Builder.Fill(key: CardsKey).Stretch() : null, bounds.Width / DpiScale - RailWidth);
         var tree = Layout.Builder.HStack(Layout.Builder.Fill(key: RailKey).ColW(RailWidth), Frame().Stretch());
         var measure = new PixelMeasureContext<TSurface>(_renderer, FontPath, DpiScale);
         var window = new Rect<float>(bounds.X, bounds.Y, bounds.Width, bounds.Height);

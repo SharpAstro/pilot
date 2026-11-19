@@ -212,12 +212,15 @@ internal sealed class NotificationsHost
     /// and, while it is open, <paramref name="panel"/> over the page's right side, under a row holding the collapse button. A null
     /// <paramref name="panel"/> (nothing to show) leaves the page and the strip.
     /// </summary>
-    public Layout.Node Frame(Layout.Node page, Layout.Node? panel)
+    public Layout.Node Frame(Layout.Node page, Layout.Node? panel, float contentWidth = float.MaxValue)
     {
         Fold();
+        // A window so narrow that the strip would leave the page less than the width its tables need keeps no strip: the page takes the room
+        // (the key still toggles the bar, and the rail's Notifications page lists everything).
+        var style = contentWidth - Style.StripWidth < MinPageWidth ? Style with { StripWidth = 0f } : Style;
         var colors = Colors();
         // Open, the bar holds every card, so no toast stands beside it (the stack is wider than the bar and would peek out past its edge).
-        var frame = NotificationsLayout.Build(page, Feed, _lib, colors, Open && panel is not null ? Style with { MaxToasts = 0 } : Style, Pointer, PageRect);
+        var frame = NotificationsLayout.Build(page, Feed, _lib, colors, Open && panel is not null ? style with { MaxToasts = 0 } : style, Pointer, PageRect);
         if (!Open || panel is null)
         {
             return frame;
@@ -241,8 +244,11 @@ internal sealed class NotificationsHost
         var bar = Layout.Builder.VStack(collapse, panel.HStar())
             .Bg(colors.Surface).BorderLeft(colors.Separator).WithCursor(CursorKind.Default).WFixed(Style.BarWidth).HStar();
         return Layout.Builder.Overlay(frame,
-            Layout.Builder.HStack(Layout.Builder.Spacer().WStar().HStar(), bar, Layout.Builder.Spacer().WFixed(Style.StripWidth).HStar()).Stretch());
+            Layout.Builder.HStack(Layout.Builder.Spacer().WStar().HStar(), bar, Layout.Builder.Spacer().WFixed(style.StripWidth).HStar()).Stretch());
     }
+
+    /// <summary>The narrowest page, in design units, the strip may leave beside it; a window narrower than that has no strip.</summary>
+    public const float MinPageWidth = 280f;
 
     /// <summary>The toggle key as a person reads it, for a tooltip.</summary>
     public static string ChordText() => "Ctrl+N";
