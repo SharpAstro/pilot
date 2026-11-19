@@ -141,11 +141,8 @@ public sealed class NotificationsBarTests
         chrome.Notifications.Open.ShouldBeFalse();
         collapse.ShouldBeTrue();
 
-        // The collapsed strip has a button that opens it again.
         var data = PageData.For("sample");
-        chrome.Render(data.Sessions, data.Flights, data.Cards, data.Jobs, data.Fleet, data.Repos, new RectF32(0, 0, 1920, 1080), data.Machines);
-        ClickOn(chrome, "notifications:expand").ShouldBeTrue();
-        chrome.Notifications.Open.ShouldBeTrue();
+        chrome.Notifications.Toggle();
         seen.ShouldBe([false, true]);
 
         // Ctrl+N through the input path.
@@ -156,9 +153,37 @@ public sealed class NotificationsBarTests
         chrome.Render(data.Sessions, data.Flights, data.Cards, data.Jobs, data.Fleet, data.Repos, new RectF32(0, 0, 1920, 1080), data.Machines);
         chrome.Notifications.Open.ShouldBeFalse();
 
-        // The bell, pressed where the layer registered it, opens the Notifications page.
-        var bell = LayerRegions(chrome).First(r => r.Result is NotificationHit { Part: NotificationPart.Bell });
-        chrome.PressNotification(bell.Result).ShouldBeTrue();
+        // The bell is the rail's Notifications entry: a press on it opens the page.
+        PressRailEntry(chrome, 1920, 1080);
+        chrome.Page.ShouldBe(PilotPage.Notifications);
+    }
+
+    private static void PressRailEntry(PilotChrome<RgbaImage> chrome, int width, int height)
+    {
+        var data = PageData.For("sample");
+        chrome.Render(data.Sessions, data.Flights, data.Cards, data.Jobs, data.Fleet, data.Repos, new RectF32(0, 0, width, height), data.Machines);
+        var regions = new List<ClickableRegion>();
+        chrome.Rail.CollectPaintedRegions(regions);
+        var entry = regions.Where(r => r.Result is HitResult.ListItemHit).Last();
+        chrome.HandleInput(new InputEvent.MouseDown(entry.X + entry.Width / 2f, entry.Y + entry.Height / 2f, MouseButton.Left)).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void TheRailEntryShowsTheCountAndTheRingingStateAndNoStripBellIsLaid()
+    {
+        var (chrome, renderer) = Draw(1920, 1080, false, Ringing());
+        using var _ = renderer;
+        chrome.Notifications.Sync([Card("c1", CardBin.Ring, "ringing"), Card("c2", CardBin.ForYou, "for you")], _ => null, Live.At);
+        chrome.Notifications.Bell.ShouldBe(new BellState(2, true));
+        PilotChrome<RgbaImage>.NotificationsGlyph(chrome.Notifications.Bell).ShouldBe(("\U0001F6A82", "2 need you, a card is ringing"));
+        PilotChrome<RgbaImage>.NotificationsGlyph(new BellState(3, false)).ShouldBe(("\U0001F5143", "3 need you"));
+        PilotChrome<RgbaImage>.NotificationsGlyph(new BellState(120, false)).Glyph.ShouldBe("\U0001F51499+");
+        PilotChrome<RgbaImage>.NotificationsGlyph(null).ShouldBe(("\U0001F514", null));
+        PilotChrome<RgbaImage>.NightBell(new BellState(3, true)).ShouldBe("N!3");
+
+        LayerRegions(chrome).ShouldNotContain(r => r.Result is NotificationHit { Part: NotificationPart.Bell });
+        Enumerable.Range(0, 1080).Select(y => chrome.NotificationsLayer.HitTest(1919f, y)).ShouldNotContain(h => h is NotificationHit { Part: NotificationPart.Bell });
+        PressRailEntry(chrome, 1920, 1080);
         chrome.Page.ShouldBe(PilotPage.Notifications);
     }
 

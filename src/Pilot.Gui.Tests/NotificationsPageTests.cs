@@ -143,17 +143,15 @@ public sealed class NotificationsPageTests
     }
 
     [Fact]
-    public void TheBellOpensThePage()
+    public void TheStripHasNoBellAndTheRailEntryOpensThePage()
     {
         using var w = new Window(1920, 1080);
         Fill(w);
-        var bell = Enumerable.Range(0, 200).Select(y => (X: w.Width - 24f, Y: (float)y))
-            .FirstOrDefault(p => w.Chrome.NotificationsLayer.HitTest(p.X, p.Y) is NotificationHit { Part: NotificationPart.Bell });
-        bell.X.ShouldBeGreaterThan(0f, "the strip has its bell");
+        Enumerable.Range(0, 200).Select(y => w.Chrome.NotificationsLayer.HitTest(w.Width - 24f, y))
+            .ShouldNotContain(h => h is NotificationHit { Part: NotificationPart.Bell }, "the rail's entry is the one bell");
 
-        w.Chrome.HandleInput(new InputEvent.MouseDown(bell.X, bell.Y, MouseButton.Left)).ShouldBeTrue();
+        w.Chrome.Show(PilotPage.Notifications);
         w.Chrome.Page.ShouldBe(PilotPage.Notifications);
-        w.Bar.Open.ShouldBeFalse("the bell opens the page; the bar's own key and Collapse button toggle the bar");
     }
 
     [Fact]
