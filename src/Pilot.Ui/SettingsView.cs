@@ -470,7 +470,7 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
         {
             rows.Add(Section("Notifications", "how long the Notifications page keeps what happened; what needs you stays until it is answered"));
             rows.Add(Layout.Builder.HStack([
-                    Layout.Builder.Text("Keep history for", 13f, Body).WAuto(),
+                    Layout.Builder.Text("Keep history for", 13f, Body).Selectable().WAuto(),
                     .. NotificationsHost.KeepChoices.Select(c => Pill(c.Label, $"settings:keep:{c.Label}", () => bar.KeepFor = c.Keep, bar.KeepFor == c.Keep))])
                 .WithGap(8f).CrossCenter().Pad(Gutter, 4f).RowH(34f));
         }
