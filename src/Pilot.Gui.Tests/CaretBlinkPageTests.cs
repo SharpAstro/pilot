@@ -99,6 +99,8 @@ public sealed class CaretBlinkPageTests
     public void TheIdeasNoteBoxBlinks() => ShowsABlink(renderer =>
     {
         var chrome = Chrome(renderer, PilotPage.Ideas);
+        // The note box is only on the page when the page can send a note.
+        chrome.Ideas.Send = (_, _, _, _) => Task.FromResult(new IdeaReply(true));
         var data = PageData.For("sample");
         Paint(chrome, data);
         chrome.Ideas.Ui.Focus.Focus(chrome.Ideas.NoteInput);
