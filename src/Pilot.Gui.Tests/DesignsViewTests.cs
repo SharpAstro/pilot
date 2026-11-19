@@ -42,7 +42,9 @@ public sealed class DesignsViewTests
         public void Paint()
         {
             var data = PageData.For("sample");
-            Chrome.Render(data.Sessions, data.Flights, data.Cards, data.Jobs, data.Fleet, data.Repos, data.PullRequests, _bounds, data.Machines, null, data.Spend, Screen);
+            // No cards: they open the For you bar over the page's right side (#1184), over the version chip and Start these tests press,
+            // and the tests are about the page. Collapsed, the cards would stand as toasts at its top right instead.
+            Chrome.Render(data.Sessions, data.Flights, null, data.Jobs, data.Fleet, data.Repos, data.PullRequests, _bounds, data.Machines, null, data.Spend, Screen);
         }
 
         public ClickableRegion Region(IEnumerable<ClickableRegion> regions, Func<HitResult, bool> match) =>
@@ -190,7 +192,7 @@ public sealed class DesignsViewTests
 
         var texts = TextsOf(rig);
         texts.ShouldContain("DSN-1  Design 0");
-        texts.ShouldContain("v2 · SharpAstro/pilot · 2026-11-16 09:00");
+        texts.ShouldContain("v2 · for I381, I383 · SharpAstro/pilot · 2026-11-16 09:00");
         texts.ShouldContain(t => t.StartsWith("3 designs", StringComparison.Ordinal));
     }
 
@@ -266,7 +268,7 @@ public sealed class DesignsViewTests
             PageTime.Zone = TimeZoneInfo.CreateCustomTimeZone("test+5:30", TimeSpan.FromHours(5.5), "test", "test");
             rig.Paint();
             var list = ArrangedAt(rig, 1400, 900).ToList();
-            SentenceRuns.Texts(list.Select(a => a.Node)).ShouldContain("v2 · SharpAstro/pilot · 2026-11-16 14:30");
+            SentenceRuns.Texts(list.Select(a => a.Node)).ShouldContain("v2 · for I381, I383 · SharpAstro/pilot · 2026-11-16 14:30");
             list.Select(a => a.Node.Tooltip).OfType<string>().ShouldContain(t => t.EndsWith("2026-11-16 09:00:00 UTC", StringComparison.Ordinal));
 
             rig.View.Open("DSN-1");

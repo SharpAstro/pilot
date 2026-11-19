@@ -154,7 +154,7 @@ public sealed class HomeTests
     public void HomeIsFirstOnTheRailWithCtrlOne()
     {
         PilotChrome<RgbaImage>.Pages.First().Page.ShouldBe(PilotPage.Home);
-        PilotChrome<RgbaImage>.Pages.Select(p => p.Shortcut.Key).ShouldBe([InputKey.D1, InputKey.D2, InputKey.D3, InputKey.D4, InputKey.D5, InputKey.D9, InputKey.D6, InputKey.D7, InputKey.D8, InputKey.D0, InputKey.S, InputKey.D]);
+        PilotChrome<RgbaImage>.Pages.Select(p => p.Shortcut.Key).ShouldBe([InputKey.D1, InputKey.D2, InputKey.D3, InputKey.D4, InputKey.D5, InputKey.D9, InputKey.D6, InputKey.D7, InputKey.D8, InputKey.D0, InputKey.S, InputKey.D, InputKey.N]);
     }
 
     [Fact]

@@ -23,9 +23,7 @@ public class DesignBuildBriefTests
         Base = "origin/main",
         State = FlightState.Flying,
         CreatedAt = DateTimeOffset.UnixEpoch,
-        FromDesign = design ? "DSN-7" : null,
-        FromDesignVersion = design ? 3 : null,
-        FromDesignSha256 = design ? Sha : null,
+        Designs = design ? [new FlightDesignRow { Id = "DSN-7", Version = 3, Sha256 = Sha }] : [],
     };
 
     private static readonly LegRow Leg = new()

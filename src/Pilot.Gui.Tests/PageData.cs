@@ -103,6 +103,8 @@ internal sealed partial class PageData
             PrototypeSha256 = "ab",
             // The first design was started from the idea I381, which the sample's ideas hold marked (PIL1152).
             FromIdea = i == 0 ? "pilot I381" : null,
+            // #1185: the first design is for two ideas (I381 and I383) and the third for I381, so I381 has two designs.
+            ForIdeas = i == 0 ? ["pilot I381", "pilot I383"] : i == 2 ? ["pilot I381"] : [],
         };
         var first = Row(0);
         var rows = Enumerable.Range(0, count).Select(Row).ToArray();
@@ -151,7 +153,7 @@ internal sealed partial class PageData
     internal static DesignsScreen BuildableDesigns(DateTimeOffset now, bool repo, bool idea, FlightState? flight, bool longNames = false)
     {
         var full = DesignsFor("sample", now);
-        DesignRow Edit(DesignRow r) => r with { Repo = repo ? r.Repo : null, FromIdea = idea ? "pilot I381" : null };
+        DesignRow Edit(DesignRow r) => r with { Repo = repo ? r.Repo : null, FromIdea = idea ? "pilot I381" : null, ForIdeas = idea ? ["pilot I381"] : [] };
         var row = Edit(full.Rows[0]);
         var detail = full.Open!.Detail with { Row = row };
         var open = full.Open with { Detail = detail };
@@ -159,13 +161,13 @@ internal sealed partial class PageData
             ? [new FlightRow
             {
                 Code = "PIL1153", Repo = "pilot", RepoPath = "C:/repos/pilot", Issue = 1153, Branch = "flight/pil1153", Worktree = "C:/repos/pilot/.claude/worktrees/pil1153", Base = "origin/main",
-                State = state, CreatedAt = now.AddHours(-2), FromDesign = row.Id, FromDesignVersion = 2, FromDesignSha256 = "ab",
+                State = state, CreatedAt = now.AddHours(-2), Designs = [new FlightDesignRow { Id = row.Id, Version = 2, Sha256 = "ab" }],
                 PullRequest = state == FlightState.Landed ? 1160 : 1170, PullRequestUrl = "https://github.com/SharpAstro/pilot/pull/1170",
             },
             new FlightRow
             {
                 Code = "PIL9", Repo = "pilot", RepoPath = "C:/repos/pilot", Issue = 9, Branch = "flight/pil9", Worktree = "C:/repos/pilot/.claude/worktrees/pil9", Base = "origin/main",
-                State = FlightState.Flying, CreatedAt = now.AddHours(-1), FromDesign = row.Id, FromDesignVersion = 1,
+                State = FlightState.Flying, CreatedAt = now.AddHours(-1), Designs = [new FlightDesignRow { Id = row.Id, Version = 1 }],
             }]
             : [];
         string[] repos = longNames ? ["pilot", "tianwen", LongWord] : ["pilot", "tianwen"];

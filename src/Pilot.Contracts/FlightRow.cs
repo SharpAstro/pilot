@@ -34,14 +34,24 @@ public sealed record FlightRow
     /// <summary>The id of the idea (<c>I381</c>) it was planned from, when it was (<c>plan-idea</c>); null for any other flight.</summary>
     public string? FromIdea { get; init; }
 
-    /// <summary>The design (<c>DSN-&lt;n&gt;</c>) it was built from (<c>design-build</c>, PIL1153); null for any other flight.</summary>
+    /// <summary>The design (<c>DSN-&lt;n&gt;</c>) it was built from; read only since PIL1185 (older releases wrote it): <see cref="Designs"/> holds every design.</summary>
     public string? FromDesign { get; init; }
 
-    /// <summary>The version of <see cref="FromDesign"/> it builds to; null when it has no design.</summary>
+    /// <summary>The version of <see cref="FromDesign"/> it builds to; read only, see <see cref="Designs"/>.</summary>
     public int? FromDesignVersion { get; init; }
 
-    /// <summary>The SHA-256 (hex) of that version's <c>prototype.json</c> when the flight was made, so a review can tell the prototype it holds the build to; null when it has no design.</summary>
+    /// <summary>The SHA-256 (hex) of that version's <c>prototype.json</c>; read only, see <see cref="Designs"/>.</summary>
     public string? FromDesignSha256 { get; init; }
+
+    /// <summary>
+    /// The designs the flight is built to (PIL1185), each at the version and prototype hash recorded when it was planned or built; none for a flight with no
+    /// design. A row an older release wrote with only <see cref="FromDesign"/> reads as a one-item list.
+    /// </summary>
+    public FlightDesignRow[] Designs
+    {
+        get => field ?? (FromDesign is { Length: > 0 } id && FromDesignVersion is { } v ? [new FlightDesignRow { Id = id, Version = v, Sha256 = FromDesignSha256 }] : []);
+        init => field = value is { Length: > 0 } ? value : null;
+    }
 
     /// <summary>What it is for, in a line: the issue's title, or what the controller called it.</summary>
     public string? Title { get; init; }
@@ -931,4 +941,17 @@ public enum FlightState
     /// <summary>Its work is in: its worktree is gone, its branch and code are kept.</summary>
     [JsonStringEnumMemberName("landed")]
     Landed,
+}
+
+/// <summary>One design a flight is built to (PIL1185): its id, the version recorded and the SHA-256 of that version's <c>prototype.json</c>.</summary>
+public sealed record FlightDesignRow
+{
+    /// <summary>The design's id, <c>DSN-&lt;n&gt;</c>.</summary>
+    public required string Id { get; init; }
+
+    /// <summary>The version the flight builds to.</summary>
+    public required int Version { get; init; }
+
+    /// <summary>The SHA-256 (hex) of that version's <c>prototype.json</c>; null when it was not recorded.</summary>
+    public string? Sha256 { get; init; }
 }

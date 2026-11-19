@@ -76,6 +76,7 @@ internal sealed partial class IdeasView<TSurface>
         _showIdea = qualified;
         ViewMode = IdeasViewMode.Tree;
         OnlyNeedsDesign = false;
+        OnlyHasDesign = false;
         Changed?.Invoke();
     }
 

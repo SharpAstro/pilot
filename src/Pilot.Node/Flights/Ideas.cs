@@ -611,8 +611,13 @@ public sealed partial class IdeaCommander(NodeState state, Planes planes, RepoCa
         var target = existing?.Title ?? wanted;
 
         // An idea marked as needing a design waits for one (PIL1152): its design must have a published version, or the person plans anyway.
-        var design = Designs?.FindByIdea(NodeState.IdeaKey(name, id));
-        if (issue.NeedsDesign && !anyway && design?.Current is null)
+        var linked = Designs?.ForIdea(NodeState.IdeaKey(name, id), state.IdeaMoves()) ?? [];
+        var published = linked.Where(d => d.Current is not null).ToArray();
+        if (!anyway && linked.FirstOrDefault(d => d.Current is null) is { } unpublished)
+        {
+            throw new FlightException($"{unpublished.Id} has no published version: publish one (pilot design publish {unpublished.Id} --why ...), or plan anyway ({Verbs.AnywayFlag})");
+        }
+        if (issue.NeedsDesign && !anyway && published.Length == 0)
         {
             throw new FlightException($"{id} needs a design and has none yet: start its design (pilot idea {id} design start), or plan anyway ({Verbs.AnywayFlag})");
         }
@@ -631,7 +636,15 @@ public sealed partial class IdeaCommander(NodeState state, Planes planes, RepoCa
         // A flight made on another node (maintenance) is not in these rows: that node remembers where it came from.
         if (state.Flights().FirstOrDefault(f => f.Code == code) is { } flight)
         {
-            state.PutFlight(flight with { FromIdea = id });
+            // Every linked design with a published version is recorded at its current version and the prototype hash design build records (PIL1185).
+            var recorded = published.Select(d =>
+            {
+                var prototype = Designs is { } designStore
+                    ? Path.Combine(designStore.FolderOf(d.Id), DesignStore.VersionsFolderName, "v" + d.Current!.Value.ToString(CultureInfo.InvariantCulture), DesignStore.PrototypeFile)
+                    : null;
+                return new FlightDesignRow { Id = d.Id, Version = d.Current!.Value, Sha256 = prototype is not null && File.Exists(prototype) ? DesignStore.Sha256Of(prototype) : null };
+            }).ToArray();
+            state.PutFlight(flight with { FromIdea = id, Designs = recorded });
         }
         try
         {
@@ -648,15 +661,17 @@ public sealed partial class IdeaCommander(NodeState state, Planes planes, RepoCa
             await RefreshAsync(name, path, cancellationToken);
             throw new FlightException($"flight {code} is made on {id}, but it stays in {IdeaIds.Milestone}: {ex.Message}");
         }
-        if (design is { Current: { } version })
+        if (published.Length > 0)
         {
+            // One comment lists every design and its version (PIL1185).
+            var lines = string.Join('\n', published.Select(d => $"- {d.Id} v{d.Current!.Value.ToString(CultureInfo.InvariantCulture)} ({d.Title}): pilot design show {d.Id}"));
             try
             {
-                await github.CommentIssueAsync(path, issue.Number, $"Design: {design.Id} v{version.ToString(CultureInfo.InvariantCulture)} ({design.Title}). The flight's legs build to it: pilot design show {design.Id}.", cancellationToken);
+                await github.CommentIssueAsync(path, issue.Number, $"Designs: the flight's legs build to {(published.Length == 1 ? "this design" : "these designs")}.\n{lines}", cancellationToken);
             }
             catch (FlightException ex)
             {
-                await Error.WriteLineAsync($"idea: {id} is planned as {code}, but its issue got no word of {design.Id}: {ex.Message}");
+                await Error.WriteLineAsync($"idea: {id} is planned as {code}, but its issue got no word of its designs: {ex.Message}");
             }
         }
         await RefreshAsync(name, path, cancellationToken);
@@ -817,7 +832,7 @@ public sealed partial class IdeaCommander(NodeState state, Planes planes, RepoCa
     /// <summary>
     /// <c>design-from-idea idea/&lt;repo&gt;/I&lt;n&gt;</c>: a design for the idea's repo whose first brief is the idea's title and text; each picture the node holds a copy
     /// of is kept in the design's pictures folder and named in a second piece of the brief (any other is named by its URL); the design remembers the idea
-    /// (<see cref="DesignRow.FromIdea"/>) and its designer is woken. An idea that has a design already answers that one: never a second.
+    /// (<see cref="DesignRow.ForIdeas"/>) and its designer is woken. An idea that has a design already answers that one, the oldest with no published version first (the draft Plan's question names): never a second.
     /// </summary>
     private async Task<CommandResult> DesignFromIdeaAsync(CommandRequest command, CancellationToken cancellationToken)
     {
@@ -825,7 +840,8 @@ public sealed partial class IdeaCommander(NodeState state, Planes planes, RepoCa
         var (name, _, issue) = await IdeaOfAsync(command, cancellationToken);
         var id = IdeaIds.Id(issue.Number);
         var key = NodeState.IdeaKey(name, id);
-        if (store.FindByIdea(key) is { } existing)
+        // The question that sent Start its design names the linked designs with no published version: the oldest of those is answered, else the design the idea is satisfied by.
+        if ((store.ForIdea(key, state.IdeaMoves()).FirstOrDefault(d => d.Current is null) ?? store.FindByIdea(key, state.IdeaMoves())) is { } existing)
         {
             return state.Complete(command, null, made: existing.Id);
         }

@@ -7,7 +7,7 @@ using Pilot.Contracts;
 namespace Pilot.Node.Designs;
 
 /// <summary>What a design's issue body holds between the <see cref="DesignSyncText.Begin"/> and <see cref="DesignSyncText.End"/> markers (PIL1171), and how it is read back.</summary>
-public sealed record DesignIssueMeta(string Node, string Design, int Version, string? Why, string? Title);
+public sealed record DesignIssueMeta(string Node, string Design, int Version, string? Why, string? Title, string[]? Ideas = null);
 
 /// <summary>
 /// The design's document as the issue's body shows it: the title, objective and each cell, every frame as its render's raw link into the design's branch. The block
@@ -25,7 +25,7 @@ public static partial class DesignIssueDocument
 
     /// <summary>The block for version <paramref name="version"/>: markers included.</summary>
     /// <param name="renders">The paths of the version's renders (<c>renders/&lt;file&gt;.png</c>), from which each frame's picture is chosen.</param>
-    public static string Block(string designId, DesignDocument document, int version, string why, string node, string repo, int issue, IReadOnlyCollection<string> renders)
+    public static string Block(string designId, DesignDocument document, int version, string why, string node, string repo, int issue, IReadOnlyCollection<string> renders, IReadOnlyCollection<string>? ideas = null)
     {
         var meta = new JsonObject
         {
@@ -35,6 +35,10 @@ public static partial class DesignIssueDocument
             ["why"] = why,
             ["title"] = document.Title,
         };
+        if (ideas is { Count: > 0 })
+        {
+            meta["ideas"] = new JsonArray([.. ideas.Select(i => (JsonNode?)JsonValue.Create(i))]);
+        }
         var text = new StringBuilder();
         text.Append(DesignSyncText.Begin).Append('\n');
         // The default encoder writes '<', '>' and '&' as \u escapes, so no '-->' of the why can close the comment.
@@ -105,6 +109,38 @@ public static partial class DesignIssueDocument
         return body.Trim().Length == 0 ? block : body.TrimEnd() + "\n\n" + block;
     }
 
+    /// <summary>
+    /// <paramref name="body"/> with the ideas of its block replaced by <paramref name="ideas"/> (<c>owner/repo#n</c> each): the meta line and the <c>Ideas:</c> footer line change, the rest of
+    /// the body is exactly as it was. A body with no readable block is returned as it was.
+    /// </summary>
+    public static string WithIdeas(string body, IReadOnlyCollection<string> ideas)
+    {
+        var from = body.IndexOf(DesignSyncText.Begin, StringComparison.Ordinal);
+        var to = from < 0 ? -1 : body.IndexOf(DesignSyncText.End, from, StringComparison.Ordinal);
+        if (from < 0 || to < 0 || MetaLine().Match(body, from, to - from) is not { Success: true } match)
+        {
+            return body;
+        }
+        var meta = JsonNode.Parse(match.Groups[1].Value) as JsonObject;
+        if (meta is null)
+        {
+            return body;
+        }
+        meta.Remove("ideas");
+        if (ideas.Count > 0)
+        {
+            meta["ideas"] = new JsonArray([.. ideas.Select(i => (JsonNode?)JsonValue.Create(i))]);
+        }
+        var block = body[from..to];
+        block = block[..(match.Index - from)] + "<!-- pilot:design-meta " + meta.ToJsonString() + " -->" + block[(match.Index - from + match.Length)..];
+        block = Regex.Replace(block, @"^Ideas: .*\n", "", RegexOptions.Multiline | RegexOptions.CultureInvariant);
+        if (ideas.Count > 0)
+        {
+            block += "Ideas: " + string.Join(", ", ideas) + "\n";
+        }
+        return body[..from] + block + body[to..];
+    }
+
     /// <summary>What the block of <paramref name="body"/> says it holds; null when the body has no block, or one this node cannot read.</summary>
     public static DesignIssueMeta? Meta(string? body)
     {
@@ -124,7 +160,8 @@ public static partial class DesignIssueDocument
                 && o["node"]?.GetValue<string>() is { Length: > 0 } node
                 && o["version"]?.GetValue<int>() is > 0 and var version)
             {
-                return new DesignIssueMeta(node, o["design"]?.GetValue<string>() ?? "", version, o["why"]?.GetValue<string>(), o["title"]?.GetValue<string>());
+                return new DesignIssueMeta(node, o["design"]?.GetValue<string>() ?? "", version, o["why"]?.GetValue<string>(), o["title"]?.GetValue<string>(),
+                    o["ideas"] is JsonArray list ? [.. list.Select(n => n?.GetValue<string>()).OfType<string>()] : null);
             }
         }
         catch (Exception ex) when (ex is System.Text.Json.JsonException or InvalidOperationException or FormatException)

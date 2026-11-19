@@ -80,8 +80,9 @@ public sealed class FileJournal : INodeJournal, IDisposable
     /// would then read as the reviewer's own: its repeated report numbered twice, and its open points left out of the follow-up's pass anyway.
     /// 7: <c>fromDesign</c>, <c>fromDesignVersion</c> and <c>fromDesignSha256</c> on a flight (PIL1153). An older node would lose them when it compacts the snapshot,
     /// and the review would then no longer hold the flight to its design.
+    /// 8: <c>designs</c> on a flight (PIL1185), every design it is built to. An older node would lose all but the first when it compacts the snapshot.
     /// </remarks>
-    public const int StoreContract = 7;
+    public const int StoreContract = 8;
 
     private static readonly byte[] NewLine = "\n"u8.ToArray();
 

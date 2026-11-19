@@ -279,15 +279,17 @@ public sealed class ReposPageTests
     [Fact]
     public void TheWindowPaintsTheRowsAndTheirLinks()
     {
-        using var renderer = new RgbaImageRenderer(1280, 800);
+        // The page a 1280 window gave before the For you strip: room for the Open PRs column, whose PR links the test reads.
+        var wide = StripRoom.Beside(1280);
+        using var renderer = new RgbaImageRenderer((uint)wide, 800);
         var (chrome, repos) = Chrome(renderer);
         chrome.Show(PilotPage.Repos);
-        chrome.Render(new SessionsScreen([], "test", Live.At), null, null, null, null, null, new RectF32(0, 0, 1280, 800));
+        chrome.Render(new SessionsScreen([], "test", Live.At), null, null, null, null, null, new RectF32(0, 0, wide, 800));
         var empty = renderer.Surface.Pixels.ToArray();
-        chrome.Render(new SessionsScreen([], "test", Live.At), null, null, null, null, Screen(), new RectF32(0, 0, 1280, 800));
+        chrome.Render(new SessionsScreen([], "test", Live.At), null, null, null, null, Screen(), new RectF32(0, 0, wide, 800));
         repos.HandleInput(new InputEvent.KeyDown(InputKey.Right, InputModifier.None)).ShouldBeTrue();
 
-        chrome.Render(new SessionsScreen([], "test", Live.At), null, null, null, null, Screen(), new RectF32(0, 0, 1280, 800));
+        chrome.Render(new SessionsScreen([], "test", Live.At), null, null, null, null, Screen(), new RectF32(0, 0, wide, 800));
 
         var regions = new List<ClickableRegion>();
         repos.CollectPaintedRegions(regions);

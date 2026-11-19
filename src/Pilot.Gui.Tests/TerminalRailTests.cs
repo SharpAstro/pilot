@@ -20,7 +20,7 @@ public sealed class TerminalRailTests
     [
         (PilotPage.Home, '1'), (PilotPage.Chat, '2'), (PilotPage.Sessions, '3'), (PilotPage.Flights, '4'), (PilotPage.Repos, '5'),
         (PilotPage.PullRequests, '9'), (PilotPage.Jobs, '6'), (PilotPage.Fleet, '7'), (PilotPage.Settings, '8'), (PilotPage.Ideas, '0'),
-        (PilotPage.Spend, '$'), (PilotPage.Designs, 'd'),
+        (PilotPage.Spend, '$'), (PilotPage.Designs, 'd'), (PilotPage.Notifications, 'n'),
     ];
 
     private static JobsScreen JobsOf(params JobState[] states) =>
@@ -73,7 +73,7 @@ public sealed class TerminalRailTests
     [InlineData("emoji", 80)]
     [InlineData("initials", 80)]
     [InlineData("initials", 77)]
-    public void ANarrowTerminalKeepsAllTwelveEntriesOnScreenAndClickable(string modeName, int columns)
+    public void ANarrowTerminalKeepsAllThirteenEntriesOnScreenAndClickable(string modeName, int columns)
     {
         var mode = TerminalRail.Parse(modeName)!.Value;
         var shown = new List<PilotPage>();
@@ -84,7 +84,7 @@ public sealed class TerminalRailTests
         {
             var entry = EntryOf(arranged, page);
             (entry.Bounds.X + entry.Bounds.Width).ShouldBeLessThanOrEqualTo(columns);
-            entry.Bounds.Width.ShouldBe(TerminalRail.NarrowEntryCells);
+            entry.Bounds.Width.ShouldBe(TerminalRail.NarrowCellsOf(page));
             TerminalRail.EntryText(page, mode, null, IdeasOf(120), Now, narrow: true).TrimEnd().ShouldEndWith(key.ToString());
         }
         var last = EntryOf(arranged, PilotPage.Designs);
@@ -148,8 +148,8 @@ public sealed class TerminalRailTests
 
     [Theory]
     [InlineData(72)]
-    [InlineData(95)]
-    public void UnderNinetySixColumnsAllTwelveEntriesStayOnScreenAndClickable(int columns)
+    [InlineData(103)]
+    public void UnderOneHundredFourColumnsAllThirteenEntriesStayOnScreenAndClickable(int columns)
     {
         var shown = new List<PilotPage>();
         var arranged = Layout.Engine.Arrange(
@@ -191,7 +191,7 @@ public sealed class TerminalRailTests
     public void TheIdeasCountIsToldApartFromItsKeyAndTheEntryKeepsItsWidth(bool emoji, bool narrow)
     {
         var mode = emoji ? GlyphMode.Emoji : GlyphMode.Initials;
-        var width = narrow ? TerminalRail.NarrowEntryCells : TerminalRail.EntryCells;
+        var width = narrow ? TerminalRail.NarrowCellsOf(PilotPage.Ideas) : TerminalRail.EntryCells;
         foreach (var noted in new[] { 3, 10, 120 })
         {
             var text = TerminalRail.EntryText(PilotPage.Ideas, mode, null, IdeasOf(noted), Now, narrow);

@@ -31,7 +31,7 @@ public sealed class TextSelectionHostTests
     {
         private readonly RgbaImageRenderer _renderer;
         private readonly InputRouter _router;
-        private RectF32 _size;
+        private readonly RectF32 _size;
 
         public Window(int width = 1400, int height = 900)
         {
@@ -51,8 +51,6 @@ public sealed class TextSelectionHostTests
         public List<string> Cards { get; } = [];
         public List<string> Chat { get; } = [];
         public RgbaImageRenderer Renderer => _renderer;
-
-        public void Resize(int width, int height) => _size = new RectF32(0, 0, width, height);
 
         public void Render() =>
             Chrome.Render(new SessionsScreen([], "test", Now), new FlightsScreen([], "test", Now), CardsScreen, _size);
@@ -197,8 +195,9 @@ public sealed class TextSelectionHostTests
         window.Drag(Start(title), End(title));
         window.Chrome.Cards.PageSelection.HasSelection.ShouldBeTrue();
 
-        // A window with no room for the panel beside the page: its text is not there to keep selected.
-        window.Resize(500, 900);
+        // The For you bar collapsed to its strip: the panel's text is not there to keep selected. (A narrow window no longer drops the
+        // panel: the open bar lies over the page rather than beside it, #1184.)
+        window.Chrome.Notifications.Open = false;
         window.Render();
         window.Send(new InputEvent.MouseMove(10, 10));
         window.Chrome.Cards.PageSelection.HasSelection.ShouldBeFalse();

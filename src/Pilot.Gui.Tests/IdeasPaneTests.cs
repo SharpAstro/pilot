@@ -67,9 +67,15 @@ public sealed class IdeasPaneTests
     private static void Draw(PilotChrome<RgbaImage> chrome, IdeasScreen screen, float width = 1280, float height = 1400) =>
         chrome.Render(new SessionsScreen([], "test", Live.At), null, null, null, null, null, new RectF32(0, 0, width, height), null, screen);
 
-    private static List<ClickableRegion> Regions(PilotChrome<RgbaImage> chrome, IdeasScreen screen)
+    /// <summary>
+    /// A window as wide as the page a 1280 window gave before the For you strip: the tests that need every canvas column on one line, or the
+    /// last row of the list whole, draw in it (at 1280 the fourth column wraps and the last row's buttons fall below the window).
+    /// </summary>
+    private static readonly int Wide = StripRoom.Beside(1280);
+
+    private static List<ClickableRegion> Regions(PilotChrome<RgbaImage> chrome, IdeasScreen screen, float width = 1280)
     {
-        Draw(chrome, screen);
+        Draw(chrome, screen, width);
         var regions = new List<ClickableRegion>();
         chrome.Ideas.CollectPaintedRegions(regions);
         return regions;
@@ -1161,7 +1167,7 @@ public sealed class IdeasPaneTests
     [Fact]
     public async Task ReadyAsksTheNodeShowsItsAnswerAndAPressWhileItRunsSendsNothing()
     {
-        using var renderer = new RgbaImageRenderer(1280, 1400);
+        using var renderer = new RgbaImageRenderer((uint)Wide, 1400);
         var (chrome, sent, tasks) = Chrome(renderer);
         var gate = new TaskCompletionSource();
         var calls = 0;
@@ -1181,13 +1187,13 @@ public sealed class IdeasPaneTests
         spoken.ShouldContain("checked 5m ago");
         spoken.ShouldContain("Plan flight");
 
-        var regions = Regions(chrome, screen);
+        var regions = Regions(chrome, screen, Wide);
         Actions(regions).ShouldContain("ideas:ready:pilot#12");
         Click(regions, "ideas:ready:pilot#12");
-        Draw(chrome, screen);
+        Draw(chrome, screen, Wide);
         Spoken(renderer, chrome, screen, 1280).ShouldContain("checking whether it is ready to fly");
         // Pressed again while it runs: the button is gone, and asking again sends nothing more.
-        Actions(Regions(chrome, screen)).ShouldNotContain("ideas:ready:pilot#12");
+        Actions(Regions(chrome, screen, Wide)).ShouldNotContain("ideas:ready:pilot#12");
         await chrome.Ideas.CheckReadyAsync(chrome.Ideas.Board.Find("pilot#12")!);
         calls.ShouldBe(1);
         gate.SetResult();
@@ -1195,7 +1201,7 @@ public sealed class IdeasPaneTests
         calls.ShouldBe(1);
         sent.Count.ShouldBe(0);
 
-        Draw(chrome, screen);
+        Draw(chrome, screen, Wide);
         var after = Spoken(renderer, chrome, screen, 1280);
         after.ShouldContain("which GPU?");
         after.ShouldNotContain("checking whether it is ready to fly");
@@ -1532,11 +1538,11 @@ public sealed class IdeasPaneTests
     [Fact]
     public void TheCanvasHasAColumnForEachSectionUnsortedAndNoMilestoneFirstAndEachCardHasTheItemButtons()
     {
-        using var renderer = new RgbaImageRenderer(1280, 1400);
+        using var renderer = new RgbaImageRenderer((uint)Wide, 1400);
         var (chrome, _, _) = Chrome(renderer);
         chrome.Ideas.ViewMode = IdeasViewMode.Canvas;
         var screen = BoardScreen();
-        var regions = Regions(chrome, screen);
+        var regions = Regions(chrome, screen, Wide);
 
         // One column for each section, side by side in the board's order: every header on one line, left to right.
         var headers = new[] { "unsorted", "none", "m:pilot/v2.3", "m:pilot/Rings" }.Select(k => Region(regions, "ideas:section:" + k)).ToList();
@@ -1553,7 +1559,7 @@ public sealed class IdeasPaneTests
         // A card is the item's row: the same buttons on the same ids as the list's, under the column of its section.
         var chat = new List<string>();
         chrome.Ideas.OnChatAbout = chat.Add;
-        regions = Regions(chrome, screen);
+        regions = Regions(chrome, screen, Wide);
         foreach (var action in new[] { "ideas:chat:pilot#12", "ideas:ready:pilot#12", "ideas:suggest:pilot#20", "ideas:drag:pilot#12", "ideas:open:pilot#12", "ideas:flight:pilot#13", "ideas:suggest-section:none", "ideas:suggest-section:unsorted" })
         {
             Actions(regions).ShouldContain(action);
@@ -1885,13 +1891,13 @@ public sealed class IdeasPaneTests
     [Fact]
     public async Task AFlightMadeFromARowShowsAtOnceAndTheRowOffersNoSecondMakeFlight()
     {
-        using var renderer = new RgbaImageRenderer(1280, 1400);
+        using var renderer = new RgbaImageRenderer((uint)Wide, 1400);
         var (chrome, _, _) = Chrome(renderer, new IdeaReply(true));
         var screen = BoardScreen();
-        Actions(Regions(chrome, screen)).ShouldContain("ideas:make-flight:pilot#12");
+        Actions(Regions(chrome, screen, Wide)).ShouldContain("ideas:make-flight:pilot#12");
         var flight = new FlightRow { Code = "PIL12", Repo = "pilot", RepoPath = "/r/pilot", Issue = 12, Title = "Resize", Branch = "flight/pil12", Worktree = "/w", Base = "origin/main", State = FlightState.Flying, CreatedAt = Updated };
         screen = screen with { Flights = [.. screen.Flights, flight] };
-        Actions(Regions(chrome, screen)).ShouldNotContain("ideas:make-flight:pilot#12");
+        Actions(Regions(chrome, screen, Wide)).ShouldNotContain("ideas:make-flight:pilot#12");
         Spoken(renderer, chrome, screen, 1280).ShouldContain("PIL12");
         await Task.CompletedTask;
     }

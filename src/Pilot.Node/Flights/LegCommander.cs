@@ -36,6 +36,12 @@ public sealed partial class LegCommander(
     /// <summary>The model and effort each kind of session starts on; a test's commander passes none.</summary>
     public RoleModels Models { get; set; } = RoleModels.Unset;
 
+    /// <summary>The Designs section of a PR and the comments on the design issues (PIL1185); null where none is wired.</summary>
+    public Designs.DesignRecord? DesignRecord { get; set; }
+
+    /// <summary>The designs, so a flight can be moved to a design's newer version (design-replan, PIL1185); null where none is wired.</summary>
+    public Designs.DesignStore? DesignFiles { get; set; }
+
     /// <summary>Takes the queued jobs owned by any of the given session ids off the queue, told (owners, why); null where there is no job runner (#327).</summary>
     public Func<IReadOnlyCollection<string>, string, int>? DropJobs { get; set; }
 
@@ -106,7 +112,7 @@ public sealed partial class LegCommander(
     public static bool Handles(string verb) =>
         verb is Verbs.PlanLeg or Verbs.RemoveLeg or Verbs.StartLeg or Verbs.ValidateLeg or Verbs.Check or Verbs.FinishLeg or Verbs.WaitLeg or Verbs.GoAround or Verbs.Merge or Verbs.RerunChecks or Verbs.MoveFlight
             or Verbs.OpenPr or Verbs.AddArtifact or Verbs.ExtendBudget or Verbs.StartReview or Verbs.Review or Verbs.AllowRound or Verbs.CiBudget or Verbs.Clear or Verbs.Hold or Verbs.Ground or Verbs.Unground
-            or Verbs.PlanFlight or Verbs.Planned or Verbs.Overlap or Verbs.Touches or Verbs.FlightChanges or Verbs.Fold or Verbs.Separate or Verbs.ConnectOverlap;
+            or Verbs.PlanFlight or Verbs.DesignReplan or Verbs.Planned or Verbs.Overlap or Verbs.Touches or Verbs.FlightChanges or Verbs.Fold or Verbs.Separate or Verbs.ConnectOverlap;
 
     /// <summary>Runs <paramref name="command"/>; one that waits for the lock past <see cref="LockWait.Patience"/> is answered as queued, saying what holds it, and runs once it frees.</summary>
     public Task<CommandResult> RunAsync(CommandRequest command, CancellationToken cancellationToken) =>
@@ -305,6 +311,9 @@ public sealed partial class LegCommander(
                     break;
                 case Verbs.PlanFlight:
                     StartPlanner(FlightOf(command.Target));
+                    break;
+                case Verbs.DesignReplan:
+                    made = await ReplanOnDesignAsync(command, cancellationToken);
                     break;
                 case Verbs.Planned:
                     Planned(command);

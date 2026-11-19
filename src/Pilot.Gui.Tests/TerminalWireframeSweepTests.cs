@@ -26,7 +26,7 @@ public static class TerminalWireframeSweepTests
     internal static readonly string[] Cases =
     [
         "home", "sessions", "flights", "repos", "pull requests", "jobs", "fleet", "ideas", "spend", "settings", "chat", "designs", "design page",
-        PageTextOverlapTests.DesignPageNoVersion, "help card", "open card", "chat long typed", "tooltip open",
+        PageTextOverlapTests.DesignPageNoVersion, PageTextOverlapTests.NotificationsPage, "help card", "open card", "chat long typed", "tooltip open",
     ];
 
     internal static IEnumerable<TheoryDataRow<string, string, int, int>> RowsOf(int columns, int rows, string state) =>
@@ -96,6 +96,13 @@ public static class TerminalWireframeSweepTests
             }
         }
         var width = columns * 8f;
+        if (page == PilotPage.Notifications)
+        {
+            // As Program.cs has it: the page beside the For you strip, the state's open cards under Needs you and its events in the history.
+            PageData.PostEvents(chrome.Notifications, state);
+            chrome.Notifications.Sync(cards.Open, c => chrome.Cards.NodeOf(c)?.Name, PageData.Now);
+            width = TerminalFrame.PageColumnsWithBar(columns) * 8f;
+        }
         if (name == "help card")
         {
             chrome.About.Toggle();
@@ -124,6 +131,7 @@ public static class TerminalWireframeSweepTests
             case PilotPage.Ideas: tree = chrome.Ideas.Tree(ideas ?? PageTextOverlapTests.IdeasFor(state)); break;
             case PilotPage.Spend: tree = chrome.Spend.Tree(data.Spend); break;
             case PilotPage.Designs: tree = chrome.Designs.Tree(PageTextOverlapTests.DesignsOf(data, name)); break;
+            case PilotPage.Notifications: tree = chrome.NotificationsPage.Tree(data.Sessions.Source, data.Sessions.AsOf, width); break;
             case PilotPage.Settings:
                 // The page is read from the node's answer on its own task: the first Tree starts the read, and Changed says the page is in.
                 var loaded = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -142,8 +150,11 @@ public static class TerminalWireframeSweepTests
             default: tree = chrome.Home.Tree(new HomeScreen(data.Flights, data.Sessions, data.Jobs, cards, data.Machines)); break;
         }
         var rail = TerminalRail.Tree(page, GlyphMode.Emoji, data.Jobs, null, PageData.Now, _ => { }, null, columns);
-        var cardsTree = cardsBeside ? chrome.Cards.Tree(cards) : null;
-        var arranged = TerminalFrame.Build(rail, tree, cardsTree, columns, rows, CellMeasureContext.PixelAuthored);
+        // The Notifications page is framed as pilot-tui frames every page now: beside the For you strip, with no bar over it (the page is the list).
+        // The other cases still lay the cards panel beside the page, as the terminal did before the bar (#1184's follow-up brings them over).
+        var bar = page == PilotPage.Notifications ? (chrome.Notifications, page) : ((NotificationsHost, PilotPage)?)null;
+        var cardsTree = cardsBeside && bar is null ? chrome.Cards.Tree(cards) : null;
+        var arranged = TerminalFrame.Build(rail, tree, cardsTree, columns, rows, CellMeasureContext.PixelAuthored, null, bar);
         if (name == "tooltip open")
         {
             // A hovered node's tooltip is due: the first node that carries one (a cut card title when the panel stands beside the page,
@@ -237,6 +248,9 @@ public static class TerminalWireframeSweepTests
     /// </summary>
     internal static readonly (string Case, string Rule, string What)[] Baseline =
     [
+        // #1185: the design's ideas moved from a section of the document to the page's first row, so the document is shorter and the scroll viewport's clip falls on the played frame's well in these two states.
+        ("design page | many | 100x30", "EmptyRows", "a filled container is arranged 3 rows tall but its content sits on row 15 only; 2 row(s) are empty inside its fill (own vertical padding 0 row(s), visible border 0 row(s))"), // Console.Lib #78
+        ("design page | many | 250x60", "EmptyRows", "a filled container is arranged 2 rows tall but its content sits on row 46 only; 1 row(s) are empty inside its fill (own vertical padding 0 row(s), visible border 0 row(s))"), // Console.Lib #78
         ("pull requests | long | 100x30", "EmptyRows", "a filled container is arranged 2 rows tall but its content sits on row 11 only; 1 row(s) are empty inside its fill (own vertical padding 0 row(s), visible border 0 row(s))"), // pilot #1077
         ("pull requests | long | 100x30", "EmptyRows", "a filled container is arranged 2 rows tall but its content sits on row 13 only; 1 row(s) are empty inside its fill (own vertical padding 0 row(s), visible border 0 row(s))"), // pilot #1077
         ("pull requests | long | 100x30", "EmptyRows", "a filled container is arranged 2 rows tall but its content sits on row 21 only; 1 row(s) are empty inside its fill (own vertical padding 0 row(s), visible border 0 row(s))"), // pilot #1077

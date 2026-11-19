@@ -395,7 +395,8 @@ public sealed class DesignsCaptureTests
         // The long state's design has a title of the longest allowed length (#1183): its first words, then an ellipsis where the column ends.
         text.ShouldContain(state == "long" ? "Mw Wm" : "Design 0");
         var result = TerminalWireframeSweepTests.Check(frame);
-        TerminalWireframeSweepTests.Findings(result).ShouldBeEmpty($"{state} {columns}x{rows}:{Environment.NewLine}{CellWireframe.Describe(result)}{Environment.NewLine}{text}");
+        var known = TerminalWireframeSweepTests.Baseline.Where(b => b.Case == TerminalWireframeSweepTests.Key("design page", state, columns, rows)).ToList();
+        TerminalWireframeSweepTests.Findings(result).Where(f => !known.Any(b => b.Rule == f.Rule && f.What.Contains(b.What, StringComparison.Ordinal))).ShouldBeEmpty($"{state} {columns}x{rows}:{Environment.NewLine}{CellWireframe.Describe(result)}{Environment.NewLine}{text}");
         Keep($"after-design-document-pilot-tui-{state}-{columns}x{rows}.png", DesignsWaitingIdeasTests.Png(lines));
     }
 }

@@ -31,11 +31,11 @@
   <!-- Pilot.Gui: the SharpAstro stack. A local build compiles the sibling clones instead (the UseLocal* switches in
        Pilot.Gui.csproj); these are what CI restores. -->
   <ItemGroup>
-    <!-- Console.Lib is exact: 5.26.2761 is the first release with CON84 (EmptyRows skips a declared border row), and stays at 5.26.2761. The DIR.Lib and SdlVulkan.Renderer pins below are exact at the versions that bring the inspector opt-in (DIR_INSPECTOR) into Release builds; DIR.Lib and DIR.Lib.Debug are on 11.77.7621, the first release with the document's targets, Prototype.Check and Render taking them and the read-only target state (DIR250). -->
+    <!-- Console.Lib is exact: 5.26.2761 is the first release with CON84 (EmptyRows skips a declared border row), and stays at 5.26.2761. The DIR.Lib and SdlVulkan.Renderer pins below are exact at the versions that bring the inspector opt-in (DIR_INSPECTOR) into Release builds; DIR.Lib and DIR.Lib.Debug are on 11.83.7852, the first release with the document's targets, Prototype.Check and Render taking them and the read-only target state (DIR250). -->
     <PackageVersion Include="Console.Lib" Version="5.26.2761" />
     <PackageVersion Include="Console.Lib.Debug" Version="5.26.2761" />
-    <PackageVersion Include="DIR.Lib" Version="11.77.7621" />
-    <PackageVersion Include="DIR.Lib.Debug" Version="11.77.7621" />
+    <PackageVersion Include="DIR.Lib" Version="11.83.7852" />
+    <PackageVersion Include="DIR.Lib.Debug" Version="11.83.7852" />
     <PackageVersion Include="LAN.Lib" Version="2.4.*" />
     <!-- The per-user node's socket location, lock, Kestrel hosting, event queue and ring buffer (SharpAstro/Node.Lib), shared with tianwen. -->
     <PackageVersion Include="Node.Lib" Version="1.2.*" />

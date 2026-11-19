@@ -113,7 +113,7 @@ public sealed class IdeaDesignLinkTests : IDisposable
         await Run(Verbs.MarkDesign, Idea(1));
         var id = await Start(1);
 
-        _store.Find(id).ShouldNotBeNull().FromIdea.ShouldBe("pilot I1");
+        _store.Find(id).ShouldNotBeNull().ForIdeas.ShouldBe(["pilot I1"]);
         Row("I1").Design.ShouldBe(id);
         Row("I1").DesignVersion.ShouldBeNull();
         Row("I4").Design.ShouldBeNull();
@@ -148,7 +148,7 @@ public sealed class IdeaDesignLinkTests : IDisposable
 
         await Start(1);
         var unpublished = await Run(Verbs.PlanIdea, Idea(1), "v1");
-        unpublished.Error.ShouldNotBeNull().ShouldContain("I1 needs a design and has none yet");
+        unpublished.Error.ShouldNotBeNull().ShouldContain($"{_store.List().Single().Id} has no published version");
         State.Flights().ShouldBeEmpty();
 
         var anyway = await Run(Verbs.PlanIdea, Idea(1), "v1", Verbs.AnywayFlag);
@@ -188,13 +188,13 @@ public sealed class IdeaDesignLinkTests : IDisposable
         var id = await Start(1);
 
         (await Run(Verbs.MarkDesign, Idea(1), Verbs.PinOff)).Ok.ShouldBeTrue();
-        _store.Find(id).ShouldNotBeNull().FromIdea.ShouldBe("pilot I1");
+        _store.Find(id).ShouldNotBeNull().ForIdeas.ShouldBe(["pilot I1"]);
         Row("I1").NeedsDesign.ShouldBeFalse();
         Row("I1").Design.ShouldBe(id);
 
         (await Run(Verbs.DropIdea, Idea(1), "not now")).Ok.ShouldBeTrue();
 
-        _store.Find(id).ShouldNotBeNull().FromIdea.ShouldBe("pilot I1");
+        _store.Find(id).ShouldNotBeNull().ForIdeas.ShouldBe(["pilot I1"]);
         _store.List().Length.ShouldBe(1);
     }
 
@@ -209,7 +209,7 @@ public sealed class IdeaDesignLinkTests : IDisposable
         var folded = await Run(Verbs.FoldIdea, Idea(1), code);
 
         folded.Ok.ShouldBeTrue(folded.Error);
-        _store.Find(id).ShouldNotBeNull().FromIdea.ShouldBe("pilot I1");
+        _store.Find(id).ShouldNotBeNull().ForIdeas.ShouldBe(["pilot I1"]);
     }
 
     [Fact]
@@ -239,11 +239,12 @@ public sealed class IdeaDesignLinkTests : IDisposable
     public void TheNewMembersAreOmittedWhenNullSoAnOlderStoreReadsThemNull()
     {
         var idea = JsonSerializer.Serialize(new IdeaRow { Id = "I1", Repo = "pilot", Title = "t", State = IdeaState.Noted }, PilotJsonContext.Default.IdeaRow);
-        idea.ShouldNotContain("esign");
+        idea.ShouldNotContain("\"design\"");
+        idea.ShouldNotContain("esignVersion");
         var read = JsonSerializer.Deserialize(idea, PilotJsonContext.Default.IdeaRow).ShouldNotBeNull();
         (read.Design, read.DesignVersion).ShouldBe((null, null));
         var design = JsonSerializer.Deserialize("""{"id":"DSN-1"}""", PilotJsonContext.Default.DesignRow).ShouldNotBeNull();
-        design.FromIdea.ShouldBeNull();
+        design.Ideas().ShouldBeEmpty();
     }
 
     /// <summary>Publishes a first version the way the designer does: a starter draft, then the store's own publish.</summary>
