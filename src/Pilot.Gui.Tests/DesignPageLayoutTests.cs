@@ -113,7 +113,7 @@ public sealed class DesignPageLayoutTests
         var all = rig.Arranged();
         var chip = all.Where(a => a.Node.Hit is HitResult.ButtonHit { Action: "designs:versions" }).OrderBy(a => a.Bounds.Y).First().Bounds;
         var build = all.Single(a => a.Node.Hit is HitResult.ButtonHit { Action: "designs:build" }).Bounds;
-        var top = string.Join("; ", all.Where(a => a.Node.Hit is HitResult.ButtonHit && a.Bounds.Y < 200f).Select(a => $"{((HitResult.ButtonHit)a.Node.Hit!).Action} {a.Bounds}"));
+        var top = string.Join("; ", all.Where(a => a.Bounds.Y is >= 60f and < 200f).Select(a => $"{a.Node.GetType().Name}/{(a.Node.Hit as HitResult.ButtonHit)?.Action} {a.Bounds.X:0},{a.Bounds.Y:0},{a.Bounds.Width:0}x{a.Bounds.Height:0}"));
         build.X.ShouldBeGreaterThanOrEqualTo(chip.Right, $"after the chip; chip {chip}, build {build}; {top}");
         build.Y.ShouldBe(chip.Y, 0.5f, "one row");
         build.Height.ShouldBe(chip.Height, 0.5f, "one height");
