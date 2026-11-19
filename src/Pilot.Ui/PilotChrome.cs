@@ -1275,7 +1275,7 @@ internal sealed class PilotChrome<TSurface>
                     // Back and Forward over the tabs, the tabs in what is left of the rail.
                     var navHeight = Nav.Scale.ToSurface(NavControls<TSurface>.Height);
                     Nav.Render(new RectF32(rect.X, rect.Y, rect.Width, navHeight));
-                    RenderRail(new RectF32(rect.X, rect.Y + navHeight, rect.Width, rect.Height - navHeight), CardsOpen ? PilotPage.Cards : Page);
+                    RenderRail(new RectF32(rect.X, rect.Y + navHeight, rect.Width, rect.Height - navHeight), Page);
                     break;
                 case CardsKey:
                     // Painted last, over the strip's layer and the toasts: the open bar covers them.
