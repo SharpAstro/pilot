@@ -29,13 +29,16 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
 
     private int? _chatVersion;
 
-    // The page's width in design units as the last Render had it, and the width from which the chat stands beside the document: the document keeps at least 500, the chat 300 to 460.
+    // The page's width in design units as the last Render had it, and the width from which the chat stands beside the document: the document keeps at least 500 and the chat is 420.
     // Narrower, the chat sits under the document.
     private float _width = 10_000f;
     private float _pageHeight = 900f;
-    private const float WideColumns = 900f;
-    private const float ChatWidthMin = 300f;
-    private const float ChatWidthMax = 460f;
+
+    /// <summary>The width, in design units, of the For-you bar laid over the page's right side while it is open. An open design's page stands left of it, so the chat is not under the bar; 0 when the bar is collapsed.</summary>
+    public float ClearRight { get; set; }
+
+    // ClearRight as applied to this paint: only where the chat still fits beside the document left of the bar; a narrower window keeps the bar over the page's edge.
+    private float _clearRight;
 
     // Under the document, the chat takes a share of the height (NarrowChatShare to its 1), never under what its status, a line of the feed and the box need,
     // never over NarrowChatHeight. A share, not a scroll around both: the chat's own scroll inside another was painted unclipped over the prototype.
@@ -800,6 +803,8 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
         _frameRects.Clear();
         NoteHeight(bounds);
         _width = Scale.ToDesignX(bounds.Width);
+        _clearRight = OpenId is not null && Terminal is null && _width - ClearRight >= MinDocumentColumns + ChatWidth + 3f * Gutter ? ClearRight : 0f;
+        _width -= _clearRight;
         _pageHeight = Scale.ToDesignY(bounds.Height);
         var tree = Tree(screen);
         RenderLayout(tree, bounds, null, null, DrawFill);
@@ -824,7 +829,7 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
             framed = PrototypeCellGrid<TSurface>.Fit(rect, grid.Columns, grid.Rows);
             _frameRects[(cell, frame)] = framed.Value;
             Renderer.PushClip(ClipOf(framed.Value));
-            grid.Render(rect);
+            grid.Render(framed.Value);
             Renderer.PopClip();
         }
         else
@@ -835,7 +840,7 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
                 // The prototype is drawn only inside its frame: a screen made wider than the frame (a fixed-width row, a label near the right edge) is cut, not painted over the chat and notes.
                 _frameRects[(cell, frame)] = fitted;
                 Renderer.PushClip(ClipOf(fitted));
-                play.Shown.Render(rect);
+                play.Shown.Render(fitted);
                 Renderer.PopClip();
             }
         }
@@ -858,16 +863,20 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
         new(new PointInt((int)MathF.Ceiling(f.X + f.Width), (int)MathF.Ceiling(f.Y + f.Height)), new PointInt((int)MathF.Floor(f.X), (int)MathF.Floor(f.Y)));
 
     // The design size scaled to fit and centred in rect: where the player draws and where the frame goes. Null for a size with no area.
-    private static RectF32? FittedFrame(RectF32 rect, (float Width, float Height) size)
+    private RectF32? FittedFrame(RectF32 rect, (float Width, float Height) size)
     {
         if (size.Width <= 0 || size.Height <= 0)
         {
             return null;
         }
-        var s = MathF.Min(rect.Width / size.Width, rect.Height / size.Height);
-        var w = size.Width * s;
-        var h = size.Height * s;
-        return new RectF32(rect.X + (rect.Width - w) / 2f, rect.Y + (rect.Height - h) / 2f, w, h);
+        // The leaf is height * factor + 2 * FrameMargin tall (FrameHeight), so the frame is the leaf less its margin: its own size times the whole factor FrameScale chose.
+        var perPixelX = Scale.ToDesignX(1f);
+        var perPixelY = Scale.ToDesignY(1f);
+        var factor = (Scale.ToDesignY(rect.Height) - 2f * FrameMargin) / size.Height;
+        var w = size.Width * factor / perPixelX;
+        var h = size.Height * factor / perPixelY;
+        // Anchored at the well's left edge, so the caption above it and the toolbar under it start where the frame does.
+        return new RectF32(rect.X, rect.Y + FrameMargin / perPixelY, w, h);
     }
 
     // A plain 2 px light-grey frame of the target's shape around where the player drew it: no device chrome, notch or status bar, so it is never mistaken for the app.
@@ -909,6 +918,10 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
             : Layout.Builder.VStack(
                 [DesignBackRow(open), .. IdeaPicker(open),
                  (open is null ? Layout.Builder.Text($"Reading {OpenId}…", 16f, Dim, TextAlign.Center).Selectable().Stretch() : DesignBody(open)).Stretch()]).Stretch();
+        if (OpenId is not null && _clearRight > 0f)
+        {
+            body = Layout.Builder.HStack(body.Stretch(), Layout.Builder.Spacer().WFixed(_clearRight).HStar()).WithGap(0f).Stretch();
+        }
         var page = Layout.Builder.VStack(header, body.Stretch()).Bg(Ground).Stretch();
         return About?.Over(WhenShort(page)) ?? WhenShort(page);
     }
@@ -942,6 +955,10 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
                         .Follows(new HitResult.ButtonHit("designs:edit:-1:title"), _ => BeginEdit(-1, "title")));
             }
             parts.AddRange(VersionChip(page).Select(c => c.HFixed(BackRowH)));
+            if (BuildOnFirstRow && BuildButton(page) is { } build)
+            {
+                parts.Add(build);
+            }
             if (page.DesignIsDraft)
             {
                 parts.Add(StateTag("draft", true).HFixed(BackRowH));
@@ -1074,9 +1091,11 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
             .Follows(new HitResult.ButtonHit($"designs:open:{id}"), _ => Open(id));
     }
     // The room the document has: where the chat stands beside it (a window wide enough), the chat's width; else the document has the page's.
-    private bool ChatBeside => Terminal is null && _width >= WideColumns;
+    private bool ChatBeside => Terminal is null && _width >= MinDocumentColumns + ChatWidth + 3f * Gutter;
 
-    private float ChatWidth => Math.Clamp(_width * 0.26f, ChatWidthMin, ChatWidthMax);
+    // The chat is one fixed width at the right edge; the document is the star beside it and takes every unit left.
+    private const float ChatWidth = 420f;
+    private const float MinDocumentColumns = 500f;
 
     // The width the played screen has inside its well: the document's column less its scroll bar and the well's own padding. In a terminal, the columns the page has.
     private float WellInnerWidth()
@@ -1084,7 +1103,7 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
         const float scrollRoom = 16f;
         var column = Terminal is { } terminal
             ? terminal.Columns * PrototypeCells.CellWidth - 2f * Gutter
-            : ChatBeside ? _width - 3f * Gutter - ChatWidth : _width - 2f * Gutter;
+            : ChatBeside ? _width - ChatWidth - 2f * Gutter : _width - 2f * Gutter;
         return Math.Max(120f, (column - scrollRoom - (_across - 1) * WellGap) / _across - 2f * WellPadX);
     }
 
@@ -1093,14 +1112,23 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
     private const float WellGap = 12f;
 
     // The height of a frame's rectangle in the window: the screen's size scaled to the well's width, never taller than MaxFrameH, with a margin the frame's border draws in.
-    private static float FrameHeight(float width, float height, float innerWidth)
+    // A frame is played at a whole factor of its own size: the largest that fits the well's width (and MaxFrameH), at least 1x. One wider than the well is fitted below 1x.
+    private float FrameScale(float width, float height, float innerWidth)
+    {
+        var fit = (innerWidth - 2f * FrameMargin) / width;
+        var scale = fit >= 1f ? MathF.Floor(fit) : fit;
+        // The height cap keeps a frame tall at 1x from running off the page; a short one is limited by half the page's height, so a larger window plays it larger.
+        var cap = Math.Max(MaxFrameH, _pageHeight * 0.5f) / height;
+        return scale <= cap ? scale : cap >= 1f ? MathF.Floor(cap) : cap;
+    }
+
+    private float FrameHeight(float width, float height, float innerWidth)
     {
         if (width <= 0f || height <= 0f)
         {
             return 120f;
         }
-        var scale = MathF.Min((innerWidth - 2f * FrameMargin) / width, MaxFrameH / height);
-        return height * scale + 2f * FrameMargin;
+        return height * FrameScale(width, height, innerWidth) + 2f * FrameMargin;
     }
 
     private Layout.Node DesignBody(DesignPage page)
@@ -1121,7 +1149,7 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
         }
         // In pixels the chat is a column of its own beside the document, where what the designer changes is in view. A window with no width for both puts it under the document.
         return ChatBeside
-            ? Layout.Builder.HStack(document, ChatPane(page).WFixed(ChatWidth).HStar()).WithGap(Gutter).Pad(Gutter, 8f).WStar().HStar()
+            ? Layout.Builder.HStack(document.Pad(Gutter, 0f).WStar().HStar(), ChatPane(page).WFixed(ChatWidth).HStar()).WithGap(0f).Pad(0f, 8f).WStar().HStar()
             : Layout.Builder.VStack(document, ChatPane(page).HStar(NarrowChatShare, NarrowChatFloor, NarrowChatHeight)).WithGap(8f).Pad(Gutter, 8f).WStar().HStar();
     }
 
@@ -1184,7 +1212,7 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
         {
             items.Add(CellNode(page, version, i, notebook!.Cells[i]));
         }
-        return Layout.Builder.VStack([.. items]).WithGap(10f);
+        return Layout.Builder.VStack([.. items]).WithGap(10f).WStar();
     }
 
     // Where the design is kept on GitHub (PIL1171), under its title: a design read from another node says so, the failed write is in the error colour, a write in the air or done is plain.
@@ -1296,10 +1324,12 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
     {
         // The number, the tag, the captions and the Notes label are content the owner copies ("cell 2, published in v2"), so they select like the prose.
         var number = Layout.Builder.Text((index + 1).ToString(CultureInfo.InvariantCulture), 12f, Dim, TextAlign.Center, TextAlign.Center).Selectable().WFixed(26f).HFixed(26f).Bg(Button);
-        var heading = WrappedProse.OneLine(cell.Heading, 16f, Bright, vAlign: TextAlign.Center).WStar().HFixed(26f).Whole(cell.Heading);
+        // The heading takes its text's width (an ellipsis and the whole on hover where the row is narrower), then the tag follows it, then the filler takes the rest (PIL1191).
+        var heading = (cell.Heading.Length <= 80
+            ? Layout.Builder.Text(cell.Heading, 16f, Bright, TextAlign.Near, TextAlign.Center).Selectable().WAuto()
+            : WrappedProse.Of(cell.Heading, 16f, Bright, maxLines: 1).WStar()).HFixed(26f).Whole(cell.Heading);
         var tag = StateTag(page.CellIsDraft(index) ? "draft" : $"published in v{version}", page.CellIsDraft(index));
         List<Layout.Node> items = [];
-        _cellContentWidth = page.Document is not null && cell.Frames.Count > 0 ? WellInnerWidth() + 2f * WellPadX : null;
         items.AddRange(GitHubEditsAbove(page.Detail.Row, (index + 1).ToString(CultureInfo.InvariantCulture)));
         if (_edit == (index, "heading"))
         {
@@ -1308,7 +1338,7 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
         }
         else
         {
-            items.Add(Layout.Builder.HStack(number, Typable(index, "heading", "", heading), tag).WithGap(8f).RowH(26f));
+            items.Add(Layout.Builder.HStack(number, Typable(index, "heading", "", heading), tag, Layout.Builder.Spacer().WStar()).WithGap(8f).RowH(26f));
         }
         if (cell.Objective is { Length: > 0 } objective || _edit == (index, "objective"))
         {
@@ -1356,7 +1386,7 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
         {
             items.AddRange(TypingPanel(page));
         }
-        return Layout.Builder.VStack([.. items]).WithGap(6f);
+        return Layout.Builder.VStack([.. items]).WithGap(6f).WStar();
     }
 
     // A frame in its well: the caption above, the screen in a 2 px light-grey frame (a Fill the player draws into, or in a terminal the screen's own cells), and the place under it

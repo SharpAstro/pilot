@@ -108,7 +108,7 @@ public sealed class DesignTypingViewTestsNotes
         var editor = all.Single(IsEditor);
         // The cell's content ends where the Why field under the editor ends: both are star-wide in the same column.
         var why = all.Single(IsInput);
-        editor.Bounds.Right.ShouldBe(why.Bounds.Right, 1f);
+        editor.Bounds.Right.ShouldBe(why.Bounds.Right, 1f, $"editor {editor.Bounds} why {why.Bounds}");
         editor.Bounds.Width.ShouldBeGreaterThan(400f, "not the minimum width");
         // The notes were rendered as wide as the column too, so the page does not jump on switching.
         var before = new Rig(WithNotes(), width, height);

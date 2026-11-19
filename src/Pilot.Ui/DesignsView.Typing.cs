@@ -44,8 +44,6 @@ internal sealed partial class DesignsView<TSurface>
 
     private const float EditorLineHeight = 18f;
 
-    /// <summary>The width of the cell being built (a frame's well, which is what a cell's content is as wide as); null where the cell has no frames to give it one.</summary>
-    private float? _cellContentWidth;
 
     /// <summary>The box the why of the typed version is typed in.</summary>
     public TextInputState WhyInput { get; } = new() { Placeholder = "Why this change?" };
@@ -207,9 +205,10 @@ internal sealed partial class DesignsView<TSurface>
             // The editor is as wide as the cell: it is star-wide inside a column that is itself stretched (a column left to its content gave its star child the minimum).
             // It grows with its text up to a share of the page, then scrolls. A part whose label is already above it (a cell's Notes) has none here, so the text starts where the rendered one did.
             Editor.MaxLines = Math.Max(3, (int)(_pageHeight * EditorPageShare / EditorLineHeight));
-            // Its width is the cell's content width, stated, because a column left to its content measures the editor's lines at the room offered (the page) and then arranges it narrower: it came out taller than measured, over the row below.
+            // Star-wide: since PIL1191 the document column is itself star-wide (not left to its content), so the editor is measured and arranged at the same width, the cell's,
+            // and ends where the Why field under it ends. A width stated from WellInnerWidth came out narrower than the column the page arranges.
             var editor = Layout.Builder.TextEditor(Editor, 13f, colors: Palette.Input, focusOnOpen: true);
-            var box = (_cellContentWidth is { } across ? editor.WFixed(across) : editor.WStar()).Border(Palette.Current.RailAccent, 2f, 0f);
+            var box = editor.WStar().Border(Palette.Current.RailAccent, 2f, 0f);
             return (label.Length == 0
                 ? Layout.Builder.VStack(box)
                 : Layout.Builder.VStack(WrappedProse.OneLine(label, 11f, Dim, selectable: false).RowH(18f).Whole(label), box).WithGap(2f)).WStar();

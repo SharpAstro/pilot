@@ -399,4 +399,102 @@ public sealed class DesignsCaptureTests
         TerminalWireframeSweepTests.Findings(result).Where(f => !known.Any(b => b.Rule == f.Rule && f.What.Contains(b.What, StringComparison.Ordinal))).ShouldBeEmpty($"{state} {columns}x{rows}:{Environment.NewLine}{CellWireframe.Describe(result)}{Environment.NewLine}{text}");
         Keep($"after-design-document-pilot-tui-{state}-{columns}x{rows}.png", DesignsWaitingIdeasTests.Png(lines));
     }
+
+    // ---- PIL1191: the design page at the owner's two sizes, for a design like DSN-1 and for one with two cells ----
+
+    private static DesignsScreen AcceptedDesign(bool twoCells)
+    {
+        // The prototype's screen "home" is 640 x 240, so a frame naming no size plays at that size.
+        var screen = PageData.TargetsDesigns(Now, doc =>
+        {
+            doc.Remove("targets");
+            doc["width"] = 640;
+            doc["height"] = 240;
+        });
+        var notes = "- one frame, played at its own size\n- the **notes** are *Markdown*\n- `code` stays inline";
+        DesignCell[] cells = twoCells
+            ?
+            [
+                new DesignCell("Home", "Shows the home screen at its own size.", [new DesignFrame("home")], notes),
+                new DesignCell("Settings", "Lists the settings of the app.", [new DesignFrame("settings")], "Opens from the gear on Home."),
+            ]
+            : [new DesignCell("Home", null, [new DesignFrame("home")], notes)];
+        return screen with { Open = screen.Open! with { Doc = new DesignDocument("Targets", twoCells ? "A home screen and a settings screen." : null, cells) } };
+    }
+
+    /// <summary>The design page of DSN-1's shape (one cell, one 640 x 240 frame, Markdown notes, no objective) and of a design with two cells, at both window sizes: PNGs for the controller to set beside DSN-3 v3's opened.png.</summary>
+    [Theory]
+    [InlineData(false, 1920, 1080)]
+    [InlineData(false, 2880, 1620)]
+    [InlineData(true, 1920, 1080)]
+    [InlineData(true, 2880, 1620)]
+    public void TheDesignPageOfAOneCellAndOfATwoCellDesignIsCapturedInPilotGuiWithNoTextOverlap(bool twoCells, int width, int height)
+    {
+        PageTime.Zone = TimeZoneInfo.Utc;
+        var screen = AcceptedDesign(twoCells);
+        using var renderer = new RgbaImageRenderer((uint)width, (uint)height);
+        using var accent = Pilot.Ui.Palette.StandardForCapture(null);
+        var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
+        chrome.Autopilot.OnToggle = _ => Task.FromResult<string?>(null);
+        chrome.Show(PilotPage.Designs);
+        chrome.Designs.OnEdit = (_, _, _, _) => { };
+        // The open For-you bar covers the page's right edge by design; the page is captured with the bar collapsed so the chat shows whole.
+        chrome.Notifications.Open = false;
+        chrome.Designs.Open("DSN-7");
+        var data = PageData.For("sample");
+        chrome.Render(data.Sessions, data.Flights, null, data.Jobs, data.Fleet, data.Repos, data.PullRequests, new RectF32(0, 0, width, height), data.Machines, null, data.Spend, screen);
+
+        var page = chrome.PageBounds.ShouldNotBeNull();
+        var arranged = Layout.Engine.Arrange(chrome.Designs.Tree(screen), new Rect<float>(page.X, page.Y, page.Width, page.Height), new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, 1f)).ToList();
+        var name = twoCells ? "two-cells" : "dsn1-like";
+        arranged.Any(a => a.Bounds.Width == 420f && Math.Abs(a.Bounds.Right - (page.X + page.Width)) < 0.01f && a.Bounds.Height > page.Height / 2f).ShouldBeTrue($"{name}: a 420 chat at the right edge");
+        arranged.Any(a => Math.Abs(a.Bounds.X - page.X) < 0.01f && Math.Abs(a.Bounds.Width - (page.Width - 420f)) < 0.01f && a.Bounds.Height > page.Height / 2f).ShouldBeTrue($"{name}: the document takes the rest");
+        for (var cell = 0; cell < (twoCells ? 2 : 1); cell++)
+        {
+            var key = $"design-frame:{cell}:0";
+            var frame = arranged.Single(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Fill f } && f.Key == key).Bounds;
+            var surface = chrome.Designs.FrameSurfaceOf(cell, 0).ShouldNotBeNull();
+            var drawn = chrome.Designs.FrameRectOf(cell, 0).ShouldNotBeNull();
+            var factor = drawn.Height / surface.Height;
+            factor.ShouldBeGreaterThanOrEqualTo(1f);
+            Math.Abs(factor - MathF.Round(factor)).ShouldBeLessThan(0.001f, $"{name} cell {cell}: a whole factor");
+            (drawn.Width / surface.Width).ShouldBe(factor, 0.001f, $"{name} cell {cell}: the same factor across");
+            ((factor + 1f) * surface.Width + 8f).ShouldBeGreaterThan(frame.Width, $"{name} cell {cell}: the next whole factor would not fit the well");
+            drawn.X.ShouldBe(frame.X, 0.5f, $"{name} cell {cell}: at the well's left edge");
+            if (cell == 0 && width == 1920)
+            {
+                factor.ShouldBe(2f, 0.001f, "640 x 240 at 1920 x 1080 is 2x");
+            }
+        }
+        TextOverlap.Faults([.. arranged]).Select(f => f.Line).ShouldBeEmpty($"{name} at {width}");
+        Keep($"after-design-page-{name}-pilot-gui-{width}.png", SharpAstro.Png.PngWriter.Encode([.. renderer.Surface.Pixels], width, height));
+    }
+
+    /// <summary>With the For-you bar open and a card in it (how the window opens), the design page stands left of the bar: the 420 chat ends where the bar starts and no text overlaps.</summary>
+    [Fact]
+    public void TheDesignPageWithTheForYouBarOpenKeepsTheChatClearOfTheBar()
+    {
+        PageTime.Zone = TimeZoneInfo.Utc;
+        const int width = 1920, height = 1080;
+        var screen = AcceptedDesign(false);
+        using var renderer = new RgbaImageRenderer(width, height);
+        using var accent = Pilot.Ui.Palette.StandardForCapture(null);
+        var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
+        chrome.Autopilot.OnToggle = _ => Task.FromResult<string?>(null);
+        chrome.Show(PilotPage.Designs);
+        chrome.Designs.OnEdit = (_, _, _, _) => { };
+        chrome.Designs.Open("DSN-7");
+        var data = PageData.For("sample");
+        chrome.Render(data.Sessions, data.Flights, data.Cards, data.Jobs, data.Fleet, data.Repos, data.PullRequests, new RectF32(0, 0, width, height), data.Machines, null, data.Spend, screen);
+
+        chrome.ShowsCards.ShouldBeTrue("the bar is open with a card present");
+        var bar = chrome.CardsBounds.ShouldNotBeNull();
+        var page = chrome.PageBounds.ShouldNotBeNull();
+        var arranged = Layout.Engine.Arrange(chrome.Designs.Tree(screen), new Rect<float>(page.X, page.Y, page.Width, page.Height), new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, 1f)).ToList();
+        var chat = arranged.Where(a => a.Bounds.Width == 420f && a.Bounds.Height > page.Height / 2f).ToList();
+        chat.ShouldNotBeEmpty("a 420 chat");
+        chat.ShouldAllBe(a => a.Bounds.Right <= bar.X + 0.5f, "the chat ends where the open bar starts");
+        TextOverlap.Faults([.. arranged]).Select(f => f.Line).ShouldBeEmpty();
+        Keep("after-design-page-bar-open-pilot-gui-1920.png", SharpAstro.Png.PngWriter.Encode([.. renderer.Surface.Pixels], width, height));
+    }
 }

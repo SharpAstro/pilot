@@ -177,6 +177,9 @@ internal static class SessionsCapture
         {
             designs.Chat.Load = (_, _) => Task.FromResult(chat);
         }
+        // The window wires typing through DesignReads.Follow; a capture has no node to send to but draws the page as the window does, so a part that can be typed into
+        // (Add objective, Add notes, the title) shows as it does live. With no OnEdit the page read as read only, and DSN-1's capture showed no Add objective (PIL1191).
+        designs.OnEdit ??= (_, _, _, _) => { };
         designs.Open(id);
         designs.Chat.Close();
         if (chat is not null)
