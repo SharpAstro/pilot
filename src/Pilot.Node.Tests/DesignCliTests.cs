@@ -179,6 +179,23 @@ public sealed class DesignCliTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task RendersPrintsALinePerPictureAndMarkdownAnImageReferenceAndAMissingDesignIsRefused()
+    {
+        await Pilot("design", "new", "--", "brief");
+        await Pilot("design", "draft", "DSN-1");
+        (await Pilot("design", "render", "DSN-1")).Exit.ShouldBe(0);
+
+        var (exit, plain) = await Pilot("design", "renders", "DSN-1", "--draft");
+        exit.ShouldBe(0, plain);
+        plain.ShouldContain("DSN-1 draft screen home size design sha256 ");
+        var (_, markdown) = await Pilot("design", "renders", "DSN-1", "--draft", "--output-format", "markdown");
+        markdown.ShouldContain("![DSN-1 draft screen home");
+        var (refused, said) = await Pilot("design", "renders", "DSN-9");
+        refused.ShouldBe(1);
+        said.ShouldContain("There is no design DSN-9");
+    }
+
+    [Fact]
     public async Task CheckAndRenderUseTheDesignsTerminalTargets()
     {
         await Pilot("design", "new", "--terminal", "80x24", "--", "brief");

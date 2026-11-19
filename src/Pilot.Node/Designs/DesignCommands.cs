@@ -10,7 +10,7 @@ namespace Pilot.Node.Designs;
 public sealed class DesignCommands(NodeState state, DesignStore store, Designers? designers = null, DesignChat? chat = null, DesignSync? sync = null, DesignLock? locks = null)
 {
     /// <summary>Whether <paramref name="verb"/> is one of these.</summary>
-    public static bool Handles(string verb) => verb is Verbs.DesignNew or Verbs.DesignBrief or Verbs.DesignSay or Verbs.DesignChat or Verbs.DesignDraft or Verbs.DesignShow or Verbs.Designs
+    public static bool Handles(string verb) => verb is Verbs.DesignNew or Verbs.DesignBrief or Verbs.DesignSay or Verbs.DesignChat or Verbs.DesignDraft or Verbs.DesignShow or Verbs.DesignRenders or Verbs.Designs
         or Verbs.DesignTerminals or Verbs.DesignCheck or Verbs.DesignRender or Verbs.DesignPublish or Verbs.DesignEdit or Verbs.DesignSetTitle or Verbs.DesignDiscard or Verbs.DesignIssue or Verbs.DesignGitHub or Verbs.DesignLink or Verbs.DesignUnlink;
 
     public CommandResult Run(CommandRequest command)
@@ -105,6 +105,11 @@ public sealed class DesignCommands(NodeState state, DesignStore store, Designers
                         _ => throw new DesignException($"design-github takes apply or dismiss, not '{ghAction}'"),
                     };
                     return state.Complete(command, null, made: $"{ghId} GitHub edit of the {ghWhere}: {ghAction}");
+                case Verbs.DesignRenders:
+                    // args: version (empty for the current one), "draft" or empty, screen, size.
+                    int? asked = args.Length > 0 && args[0].Length > 0 ? int.Parse(args[0].TrimStart('v', 'V'), System.Globalization.CultureInfo.InvariantCulture) : null;
+                    var renders = DesignRenderReader.Read(store, IdOf(command), asked, args.Length > 1 && args[1] == "draft", args.Length > 2 ? args[2] : null, args.Length > 3 ? args[3] : null);
+                    return state.Complete(command, null) with { DesignRenders = renders };
                 case Verbs.DesignShow:
                     return state.Complete(command, null) with { Design = store.Detail(IdOf(command)) };
                 default:

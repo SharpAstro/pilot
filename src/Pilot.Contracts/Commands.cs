@@ -151,6 +151,10 @@ public sealed record CommandResult
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public DesignDetail? Design { get; init; }
 
+    /// <summary>A <c>design-renders</c>'s pictures, as bytes (PIL1186); null for any other command.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public DesignRenders? DesignRenders { get; init; }
+
     /// <summary>A <c>design-chat</c>'s feed (PIL1151); null for any other command.</summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public ChatPage? DesignChat { get; init; }
@@ -972,6 +976,12 @@ public static class Verbs
     /// and named to the designer.
     /// </summary>
     public const string DesignSay = "design-say";
+
+    /// <summary>
+    /// <c>design-renders design/DSN-&lt;n&gt; [version] [draft] [screen] [size]</c> (PIL1186): the render PNGs of a version (the current one when none is named), or of the draft when
+    /// the second argument is <c>draft</c>, as <see cref="CommandResult.DesignRenders"/>, bytes and not paths, so a session on another machine sees them. Changes nothing.
+    /// </summary>
+    public const string DesignRenders = "design-renders";
 
     /// <summary><c>design-chat design/DSN-&lt;n&gt; [after]</c>: reads the design's chat as <see cref="CommandResult.DesignChat"/>, the entries after the index asked for (all by default). Changes nothing.</summary>
     public const string DesignChat = "design-chat";
