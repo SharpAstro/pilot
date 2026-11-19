@@ -939,10 +939,6 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
                         .Follows(new HitResult.ButtonHit("designs:edit:-1:title"), _ => BeginEdit(-1, "title")));
             }
             parts.AddRange(VersionChip(page).Select(c => c.HFixed(BackRowH)));
-            if (BuildButton(page) is { } build)
-            {
-                parts.Add(build);
-            }
             if (page.DesignIsDraft)
             {
                 parts.Add(StateTag("draft", true).HFixed(BackRowH));
@@ -1307,10 +1303,7 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
     {
         // The number, the tag, the captions and the Notes label are content the owner copies ("cell 2, published in v2"), so they select like the prose.
         var number = Layout.Builder.Text((index + 1).ToString(CultureInfo.InvariantCulture), 12f, Dim, TextAlign.Center, TextAlign.Center).Selectable().WFixed(26f).HFixed(26f).Bg(Button);
-        // The heading takes its text's width (an ellipsis and the whole on hover where the row is narrower), then the tag follows it, then the filler takes the rest (PIL1191).
-        var heading = (cell.Heading.Length <= 80
-            ? Layout.Builder.Text(cell.Heading, 16f, Bright, TextAlign.Near, TextAlign.Center).Selectable().WAuto()
-            : WrappedProse.Of(cell.Heading, 16f, Bright, maxLines: 1).WStar()).HFixed(26f).Whole(cell.Heading);
+        var heading = WrappedProse.OneLine(cell.Heading, 16f, Bright, vAlign: TextAlign.Center).WStar().HFixed(26f).Whole(cell.Heading);
         var tag = StateTag(page.CellIsDraft(index) ? "draft" : $"published in v{version}", page.CellIsDraft(index));
         List<Layout.Node> items = [];
         _cellContentWidth = page.Document is not null && cell.Frames.Count > 0 ? WellInnerWidth() + 2f * WellPadX : null;
@@ -1322,7 +1315,7 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
         }
         else
         {
-            items.Add(Layout.Builder.HStack(number, Typable(index, "heading", "", heading), tag, Layout.Builder.Spacer().WStar()).WithGap(8f).RowH(26f));
+            items.Add(Layout.Builder.HStack(number, Typable(index, "heading", "", heading), tag).WithGap(8f).RowH(26f));
         }
         if (cell.Objective is { Length: > 0 } objective || _edit == (index, "objective"))
         {

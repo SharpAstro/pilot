@@ -23,8 +23,8 @@ internal sealed partial class DesignsView<TSurface>
     private IdeaRow? IdeaOf(string qualified) =>
         _ideas.FirstOrDefault(i => string.Equals(i.Qualified, qualified, StringComparison.OrdinalIgnoreCase));
 
-    // Where the page is wide enough (the Build button shares the row, PIL1191) the design's ideas share the first row with its title; a narrower page gives them a row of their own right under it, so neither is squeezed to an ellipsis.
-    private bool ForIdeasOnFirstRow => (Terminal is { } cells ? cells.Columns * PrototypeCells.CellWidth : _width) >= 1400f;
+    // Where the page is wide enough the design's ideas share the first row with its title; a narrower page gives them a row of their own right under it, so neither is squeezed to an ellipsis.
+    private bool ForIdeasOnFirstRow => (Terminal is { } cells ? cells.Columns * PrototypeCells.CellWidth : _width) >= 1100f;
 
     private bool CanLinkIdeas(DesignRow row) => OnLinkIdea is not null && !ReadOnly(row);
 
