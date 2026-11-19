@@ -37,7 +37,12 @@ internal static class TerminalRail
     /// </summary>
     public static int NarrowCellsOf(PilotPage page) => page == PilotPage.Ideas ? NarrowEntryCells : NarrowEntryCells - 1;
 
-    private static float WidthOf(PilotPage page, bool narrow) => narrow ? NarrowCellsOf(page) * 8f : EntryWidth;
+    /// <summary>A narrow entry's width in the layout's units: Ideas keeps <see cref="NarrowEntryCells"/>, every other entry is a cell less. Declared, so the tree holds no sum.</summary>
+    private const float NarrowIdeasWidth = NarrowEntryCells * 8f;
+
+    private const float NarrowEntryWidth = (NarrowEntryCells - 1) * 8f;
+
+    private static float WidthOf(PilotPage page, bool narrow) => !narrow ? EntryWidth : page == PilotPage.Ideas ? NarrowIdeasWidth : NarrowEntryWidth;
 
     private static int NarrowGlyphCellsOf(PilotPage page) => NarrowCellsOf(page) - 3;
 

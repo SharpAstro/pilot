@@ -539,10 +539,9 @@ while (!stop.IsCancellationRequested)
         // The For you bar (PIL1184) is the window's too: open it covers the page's right side, collapsed it is a strip with the bell, and the page is the
         // columns less the strip either way. Every open card is a notification in its feed.
         var bar = chrome.Notifications;
-        bar.ToastsOnPage = page != PilotPage.Notifications;
         bar.Sync(pages.Cards.Open, card => cards.NodeOf(card)?.Name, now);
         chrome.ObserveEvents(pages.Jobs, pages.Flights, null, now);
-        var cardsOver = bar.Open && page != PilotPage.Notifications && (pages.Cards.HasAny || cards.CanTell && !cards.OnChatPage);
+        var cardsOver = bar.Open && (pages.Cards.HasAny || cards.CanTell && !cards.OnChatPage);
         chat.CellColumns = TerminalFrame.PageColumnsWithBar(columns);
         if (page == PilotPage.Designs)
         {
@@ -578,7 +577,7 @@ while (!stop.IsCancellationRequested)
         // The cards panel stands beside the page when there is room beside a usable page, and something to show.
         // Arranged and cropped to each scroll container and page rect (Console.Lib's painter has no clip); the hit test reads the same tree.
         // No clear: the cell buffer diffs each frame against the last, and the tree's backgrounds cover every cell.
-        arranged = TerminalFrame.Build(railTree, pageTree, cardsOver ? cards.Tree(cardsScreen) : null, columns, rows, CellMeasureContext.PixelAuthored, input.Router.Tooltip, bar);
+        arranged = TerminalFrame.Build(railTree, pageTree, cardsOver ? cards.Tree(cardsScreen) : null, columns, rows, CellMeasureContext.PixelAuthored, input.Router.Tooltip, (bar, page));
         TerminalFrame.Paint(terminal.HideCaret, () => CellLayout.Paint(terminal, arranged, surface));
         input.Painted();
         if ((chat.ParkedCaret(page, focus, arranged) ?? (page == PilotPage.Designs ? chrome.Designs.Chat.ParkedCaretEmbedded(focus, arranged) : null)) is var (caretColumn, caretRow))

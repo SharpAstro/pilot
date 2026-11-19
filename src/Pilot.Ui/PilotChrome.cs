@@ -1339,11 +1339,10 @@ internal sealed class PilotChrome<TSurface>
         {
             Notifications.Pointer = new System.Numerics.Vector2(over.X, over.Y);
         }
-        Notifications.ToastsOnPage = Page != PilotPage.Notifications;
         Notifications.PageRect = PageBounds ?? default;
         // The page is laid out over the whole content, less the library's strip; the open bar is laid over its right side (an overlay), so the
-        // page is the same size open and collapsed.
-        Layout.Node Frame() => Notifications.Frame(Layout.Builder.Fill(key: PageKey).Stretch(), hasPanel ? Layout.Builder.Fill(key: CardsKey).Stretch() : null, NotificationsHost.StripFits(Rail.Scale.ToDesignX(bounds.Width) - RailWidth));
+        // page is the same size open and collapsed. The frame gives way to the page in a narrow window, and takes the toast rule from the page.
+        Layout.Node Frame() => Notifications.Frame(Layout.Builder.Fill(key: PageKey).Stretch(), hasPanel ? Layout.Builder.Fill(key: CardsKey).Stretch() : null, Page);
         var tree = Layout.Builder.HStack(Layout.Builder.Fill(key: RailKey).ColW(RailWidth), Frame().Stretch());
         var measure = new PixelMeasureContext<TSurface>(_renderer, FontPath, DpiScale);
         var window = new Rect<float>(bounds.X, bounds.Y, bounds.Width, bounds.Height);

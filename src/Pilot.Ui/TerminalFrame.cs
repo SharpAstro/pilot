@@ -22,13 +22,13 @@ internal static class TerminalFrame
     /// <summary>
     /// The frame's tree.<paramref name="cards"/> is the cards panel's tree, or null for none (a narrow terminal, nothing to show).
     /// </summary>
-    public static Layout.Node Tree(Layout.Node rail, Layout.Node page, Layout.Node? cards, NotificationsHost? bar = null)
+    public static Layout.Node Tree(Layout.Node rail, Layout.Node page, Layout.Node? cards, (NotificationsHost Host, PilotPage Shown)? bar = null)
     {
-        if (bar is not null)
+        if (bar is { } withBar)
         {
-            // The For you bar (PIL1184): the page takes the whole row less the library's strip, and the cards panel is laid over its right side
+            // The For you bar (PIL1184): the page takes the whole row less the library's strip (for the page shown, which sets the toast rule), and the cards panel is laid over its right side
             // while the bar is open, so the page is the same size open and collapsed. Nothing here reserves width for the panel.
-            return Layout.Builder.VStack(rail, bar.Frame(page, cards).HStar()).Bg(Palette.Current.Ground).Stretch();
+            return Layout.Builder.VStack(rail, withBar.Host.Frame(page, cards, withBar.Shown).HStar()).Bg(Palette.Current.Ground).Stretch();
         }
         // The panel takes 38 columns (the GUI's 300 units) beside the page.
         var beside = cards is not null
@@ -43,7 +43,7 @@ internal static class TerminalFrame
     /// cropped by <see cref="Clip"/>, and the router's due <paramref name="tooltip"/> (cell coordinates) arranged last, so it paints over the page and the panel, as the GUI's tooltip layer does. It is added after the crop and registers no region, so the hit test is unchanged. Program.cs paints this result and the wireframe sweep judges it, so a test arranges exactly what the
     /// terminal draws. <paramref name="measure"/> is Console.Lib's CellMeasureContext.PixelAuthored, which Pilot.Ui does not hold.
     /// </summary>
-    public static ImmutableArray<Layout.ArrangedNode<int>> Build(Layout.Node rail, Layout.Node page, Layout.Node? cards, int columns, int rows, Layout.IMeasureContext<int> measure, TooltipRequest? tooltip = null, NotificationsHost? bar = null)
+    public static ImmutableArray<Layout.ArrangedNode<int>> Build(Layout.Node rail, Layout.Node page, Layout.Node? cards, int columns, int rows, Layout.IMeasureContext<int> measure, TooltipRequest? tooltip = null, (NotificationsHost Host, PilotPage Shown)? bar = null)
     {
         var window = new Rect<int>(0, 0, columns, rows);
         var frame = Clip(Layout.Engine.Arrange(Tree(rail, page, cards, bar), window, measure));

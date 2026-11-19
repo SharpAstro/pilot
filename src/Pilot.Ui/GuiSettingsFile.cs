@@ -76,7 +76,9 @@ internal sealed class GuiSettingsFile : IDisposable
 
     private Dictionary<string, Dictionary<string, SavedFrameSize>> _frameSizes = [];
     private volatile bool _notificationsCollapsed;
-    private double? _keepHours; // written and read under the same call path as the others; the host's event runs on the render thread
+    // Written on the render thread (the host's event) and read by Flush on the timer thread. A double? cannot be volatile; each write is
+    // followed by Touch(), whose Interlocked is a full fence, so the timer's later read sees it.
+    private double? _keepHours;
 
     private GuiSettingsFile(string path, Dictionary<string, Dictionary<string, float>> tables, Dictionary<string, SavedSort> sorts, bool night, MapLayerSettings? layers, List<string> folds, Dictionary<string, SavedDesignTarget> designTargets,
         Dictionary<string, Dictionary<string, SavedFrameSize>> frameSizes, bool notificationsCollapsed, double? keepHours)

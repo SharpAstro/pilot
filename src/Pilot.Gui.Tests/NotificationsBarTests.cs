@@ -251,7 +251,7 @@ public sealed class NotificationsBarTests
             var jobs = new JobsScreen(JobLine.Build(snapshot.Jobs, snapshot.At), sessions.Source, snapshot.At);
             var page = chrome.Home.Tree(new HomeScreen(new FlightsScreen([], "sample", Live.At), sessions, jobs, cards, []));
             var rail = TerminalRail.Tree(PilotPage.Home, GlyphMode.Emoji, null, null, Live.At, _ => { }, null, columns);
-            var arranged = TerminalFrame.Build(rail, page, open ? chrome.Cards.Tree(cards) : null, columns, rows, CellMeasureContext.PixelAuthored, null, chrome.Notifications);
+            var arranged = TerminalFrame.Build(rail, page, open ? chrome.Cards.Tree(cards) : null, columns, rows, CellMeasureContext.PixelAuthored, null, (chrome.Notifications, PilotPage.Home));
             var buffer = new CellBuffer { ColorMode = ColorMode.TrueColor };
             buffer.Resize(columns, rows);
             CellLayout.Paint(new BufferedViewport(buffer, columns, rows), arranged);

@@ -311,10 +311,17 @@ public sealed class ToastTests
         using var w = new Window(1920, 1080);
         w.Frame(T0, CardsScreen.From([new CardRow { Id = "c1", Bin = CardBin.Ring, Kind = "pr-ready", Subject = "flight/X", Title = "A ringing card", Summary = "s", At = Live.At, State = CardState.Open }]));
         w.Feed.Toasts.ShouldNotBeEmpty("the card toasts on another page while collapsed");
+        var before = new List<ClickableRegion>();
+        w.Chrome.NotificationsLayer.CollectPaintedRegions(before);
+        before.ShouldContain(r => r.Result is NotificationHit { Part: NotificationPart.Toast }, "the toast is painted on the Jobs page");
         w.Chrome.Show(PilotPage.Notifications);
         w.Frame(T0.AddSeconds(1), CardsScreen.From([new CardRow { Id = "c1", Bin = CardBin.Ring, Kind = "pr-ready", Subject = "flight/X", Title = "A ringing card", Summary = "s", At = Live.At, State = CardState.Open }]));
         w.Chrome.Notifications.ToastsOnPage.ShouldBeFalse();
         w.Chrome.Notifications.Animating.ShouldBeFalse();
+        // What the layer paints, not only the flags: no toast region on the page.
+        var regions = new List<ClickableRegion>();
+        w.Chrome.NotificationsLayer.CollectPaintedRegions(regions);
+        regions.ShouldNotContain(r => r.Result is NotificationHit { Part: NotificationPart.Toast }, "a toast is painted over the Notifications page");
     }
 
     [Fact]
@@ -355,7 +362,7 @@ public sealed class ToastTests
         var jobs = new JobsScreen(JobLine.Build(snapshot.Jobs, snapshot.At), sessions.Source, snapshot.At);
         var page = chrome.Home.Tree(new HomeScreen(new FlightsScreen([], "sample", Live.At), sessions, jobs, cards, []));
         var rail = TerminalRail.Tree(PilotPage.Home, GlyphMode.Emoji, null, null, Live.At, _ => { }, null, columns);
-        var arranged = TerminalFrame.Build(rail, page, null, columns, rows, CellMeasureContext.PixelAuthored, null, chrome.Notifications);
+        var arranged = TerminalFrame.Build(rail, page, null, columns, rows, CellMeasureContext.PixelAuthored, null, (chrome.Notifications, PilotPage.Home));
         var buffer = new CellBuffer { ColorMode = ColorMode.TrueColor };
         buffer.Resize(columns, rows);
         CellLayout.Paint(new BufferedViewport(buffer, columns, rows), arranged);

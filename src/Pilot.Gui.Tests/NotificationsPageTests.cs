@@ -268,7 +268,7 @@ public sealed class NotificationsPageTests
 
         var page = chrome.NotificationsPage.Tree("sample", T0.AddMinutes(3), TerminalFrame.PageColumnsWithBar(columns) * 8f);
         var rail = TerminalRail.Tree(PilotPage.Notifications, GlyphMode.Emoji, null, null, Live.At, _ => { }, null, columns);
-        var arranged = TerminalFrame.Build(rail, page, null, columns, rows, CellMeasureContext.PixelAuthored, null, chrome.Notifications);
+        var arranged = TerminalFrame.Build(rail, page, null, columns, rows, CellMeasureContext.PixelAuthored, null, (chrome.Notifications, PilotPage.Notifications));
         var buffer = new CellBuffer { ColorMode = ColorMode.TrueColor };
         buffer.Resize(columns, rows);
         CellLayout.Paint(new BufferedViewport(buffer, columns, rows), arranged);
@@ -282,6 +282,10 @@ public sealed class NotificationsPageTests
         var shown = text.ToString();
         shown.ShouldContain("Needs you", Case.Sensitive);
         shown.ShouldContain("History", Case.Sensitive);
+        // The frame takes the toast rule from the page it is given, as Program.cs builds it: the staying cards toast on any other page, and
+        // here none covers the header's counts line.
+        chrome.Notifications.ToastsOnPage.ShouldBeFalse();
+        shown.ShouldContain("you, 2 in the history", Case.Sensitive, "the header's counts line is whole: no toast stands over it");
         shown.IndexOf("Job two failed", StringComparison.Ordinal).ShouldBeLessThan(shown.IndexOf("Job one finished", StringComparison.Ordinal), "newest first");
     }
 }
