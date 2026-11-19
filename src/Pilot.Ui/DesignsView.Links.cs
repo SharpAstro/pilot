@@ -29,7 +29,7 @@ internal sealed partial class DesignsView<TSurface>
     private bool CanLinkIdeas(DesignRow row) => OnLinkIdea is not null && !ReadOnly(row);
 
     /// <summary>The design's ideas on its first row (#1185): "For:" and each idea as a linked thing with its remove, then Link an idea; null when there is nothing to show.</summary>
-    private Layout.Node? ForIdeasRow(DesignRow row)
+    private Layout.Node? ForIdeasRow(DesignRow row, float height = BackRowH)
     {
         var ideas = row.Ideas();
         var can = CanLinkIdeas(row);
@@ -40,7 +40,7 @@ internal sealed partial class DesignsView<TSurface>
         var parts = new List<Layout.Node>();
         if (ideas.Length > 0)
         {
-            parts.Add(Layout.Builder.Text("For:", 12f, Dim, TextAlign.Near, TextAlign.Center).Selectable().WAuto().HFixed(BackRowH));
+            parts.Add(Layout.Builder.Text("For:", 12f, Dim, TextAlign.Near, TextAlign.Center).Selectable().WAuto().HFixed(height));
         }
         foreach (var qualified in ideas)
         {
@@ -49,19 +49,19 @@ internal sealed partial class DesignsView<TSurface>
             var repo = IdeaIds.Parse(q).Ref?.Repo ?? IdeaIds.DefaultRepo;
             parts.Add(LinkedThing.Chip($"designs:for-idea:{repo}", IdeaName(q), idea is null ? null : idea.Title, idea is null ? null : LinkedThing.StateText(idea.State),
                 Bright, ButtonHover, Dim, $"Open the idea {q} on the Ideas page", OnIdea is null ? null : _ => OnIdea(q),
-                can ? () => OnLinkIdea!(row.Id, q, false) : null, $"Take the link of {IdeaName(q)} to this design away").HFixed(BackRowH));
+                can ? () => OnLinkIdea!(row.Id, q, false) : null, $"Take the link of {IdeaName(q)} to this design away").HFixed(height));
         }
         if (can)
         {
-            parts.Add(LinkButton(LinkedThing.LinkIdeaLabel, "designs:link-idea", "Pick an idea this design is for", () => _pickingIdea = !_pickingIdea).WAuto());
+            parts.Add(LinkButton(LinkedThing.LinkIdeaLabel, "designs:link-idea", "Pick an idea this design is for", () => _pickingIdea = !_pickingIdea).WAuto().HFixed(height));
         }
-        return Layout.Builder.HStack([.. parts]).WithGap(8f).WStar().HFixed(BackRowH);
+        return Layout.Builder.HStack([.. parts]).WithGap(8f).WStar().HFixed(height);
     }
 
     /// <summary>The list Link an idea opens under the first row: the ideas that are not linked yet, each a press that links it; empty while it is closed.</summary>
     private IEnumerable<Layout.Node> IdeaPicker(DesignPage? page)
     {
-        if (!ForIdeasOnFirstRow && page is not null && ForIdeasRow(page.Detail.Row) is { } own)
+        if (!ForIdeasOnFirstRow && page is not null && ForIdeasRow(page.Detail.Row, Terminal is null ? BackRowH : PrototypeCells.CellHeight) is { } own)
         {
             yield return own.Pad(Gutter, 0f);
         }
