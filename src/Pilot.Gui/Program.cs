@@ -1278,7 +1278,7 @@ loop.CheckNeedsRedraw = () =>
         return true;
     }
 
-    return renderer.FontAtlasDirty || router.TooltipNeedsFrame;
+    return renderer.FontAtlasDirty || router.TooltipNeedsFrame || chrome.Notifications.Animating;
 };
 #if PILOT_DEBUG_INSPECTOR
 // The live UI inspector (every Debug build: sibling source or the .Debug twin packages): an agent finds this window, reads its regions

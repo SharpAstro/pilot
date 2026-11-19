@@ -500,6 +500,15 @@ internal sealed class PilotChrome<TSurface>
 
     private readonly PilotEventWatch _events = new();
 
+    /// <summary>Posts the events the pages' changes since the last call make (a null page is skipped); the terminal's frame calls it as the window's does.</summary>
+    public void ObserveEvents(JobsScreen? jobs, FlightsScreen? flights, DesignsScreen? designs, DateTimeOffset now)
+    {
+        foreach (var e in _events.Observe(jobs, flights, designs))
+        {
+            Notifications.PostEvent(e, OpenerOf(e), now);
+        }
+    }
+
     // What a click on an event's toast opens: the flight, the job's page, the design.
     private Action OpenerOf(PilotEvent e) => e.Kind switch
     {
@@ -1283,10 +1292,7 @@ internal sealed class PilotChrome<TSurface>
             Notifications.Sync(cards.Open, c => Cards.NodeOf(c)?.Name, screen.AsOf);
         }
         // Events from the pages' changes: while the bar is open they go to the history, collapsed they are fading toasts.
-        foreach (var e in _events.Observe(jobs, flights, designs))
-        {
-            Notifications.PostEvent(e, OpenerOf(e), screen.AsOf);
-        }
+        ObserveEvents(jobs, flights, designs, screen.AsOf);
         if (Pointer is { } over)
         {
             Notifications.Pointer = new System.Numerics.Vector2(over.X, over.Y);

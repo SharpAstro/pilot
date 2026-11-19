@@ -540,6 +540,7 @@ while (!stop.IsCancellationRequested)
         // columns less the strip either way. Every open card is a notification in its feed.
         var bar = chrome.Notifications;
         bar.Sync(pages.Cards.Open, card => cards.NodeOf(card)?.Name, now);
+        chrome.ObserveEvents(pages.Jobs, pages.Flights, null, now);
         var cardsOver = bar.Open && (pages.Cards.HasAny || cards.CanTell && !cards.OnChatPage);
         chat.CellColumns = TerminalFrame.PageColumnsWithBar(columns);
         if (page == PilotPage.Designs)
