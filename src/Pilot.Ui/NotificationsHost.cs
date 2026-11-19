@@ -115,7 +115,8 @@ internal sealed class NotificationsHost
     {
         Fold();
         var colors = Colors();
-        var frame = NotificationsLayout.Build(page, Feed, _lib, colors, Style, Pointer, PageRect);
+        // Open, the bar holds every card, so no toast stands beside it (the stack is wider than the bar and would peek out past its edge).
+        var frame = NotificationsLayout.Build(page, Feed, _lib, colors, Open && panel is not null ? Style with { MaxToasts = 0 } : Style, Pointer, PageRect);
         if (!Open || panel is null)
         {
             return frame;
