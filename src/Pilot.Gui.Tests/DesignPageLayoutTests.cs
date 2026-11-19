@@ -17,7 +17,7 @@ public sealed class DesignPageLayoutTests(ITestOutputHelper output)
     public void Dump(int w, int h)
     {
         PageTime.Zone = TimeZoneInfo.Utc;
-        using var renderer = new RgbaImageRenderer(w, h);
+        using var renderer = new RgbaImageRenderer((uint)w, (uint)h);
         var screen = PageData.DesignsFor("sample", Now);
         var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
         chrome.Autopilot.OnToggle = _ => Task.FromResult<string?>(null);
@@ -26,9 +26,9 @@ public sealed class DesignPageLayoutTests(ITestOutputHelper output)
         var data = PageData.For("sample");
         chrome.Render(data.Sessions, data.Flights, data.Cards, data.Jobs, data.Fleet, data.Repos, data.PullRequests, new RectF32(0, 0, w, h), data.Machines, null, data.Spend, screen);
         var all = Layout.Engine.Arrange(chrome.Designs.Tree(screen), new Rect<float>(0, 0, w, h), new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, 1f)).ToList();
-        foreach (var a in all.Where(a => a.Node.Content is Layout.Content.Fill || a.Bounds.Width > 300))
+        foreach (var a in all.Where(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Fill } || a.Bounds.Width > 300))
         {
-            output.WriteLine($"{a.Node.Content?.GetType().Name} {a.Bounds}");
+            output.WriteLine($"{a.Node.GetType().Name} {a.Bounds}");
         }
     }
 }
