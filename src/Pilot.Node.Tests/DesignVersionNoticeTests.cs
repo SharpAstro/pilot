@@ -34,7 +34,9 @@ public sealed class DesignVersionNoticeTests : OverlapTestsBase
     {
         var draft = _store.Draft(id, replace: number > 1);
         File.WriteAllText(Path.Combine(draft, DesignStore.DocumentFile),
-            $"# Rings\n\n**Objective:** Objective of version {number}.\n\n## Home\n\n**Objective:** Objective of the home screen of version {number}.\n\n```screen id=home\nVersion {number}\n```\n");
+            $"# Rings\n\n**Objective:** Objective of version {number}.\n\n## Home\n\n**Objective:** Objective of the home screen of version {number}.\n\n```screen id=home\nVersion {number}\n```\n"
+            // A version after the first has one more screen, so its prototype (and its hash) differs from the version before.
+            + string.Concat(Enumerable.Range(2, Math.Max(0, number - 1)).Select(n => $"\n## Screen {n}\n\n**Objective:** Objective of screen {n}.\n\n```screen id=s{n}\nScreen {n}\n```\n")));
         _store.Render(id);
         _store.Publish(id, "version " + number);
     }
