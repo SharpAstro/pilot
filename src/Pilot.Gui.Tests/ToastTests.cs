@@ -311,13 +311,17 @@ public sealed class ToastTests
     public void NoToastStandsOverTheNotificationsPage()
     {
         using var w = new Window(1920, 1080);
-        w.Frame(T0, CardsScreen.From([new CardRow { Id = "c1", Bin = CardBin.Ring, Kind = "pr-ready", Subject = "flight/X", Title = "A ringing card", Summary = "s", At = Live.At, State = CardState.Open }]));
-        w.Feed.Toasts.ShouldNotBeEmpty("the card toasts on another page while collapsed");
+        var ringing = CardsScreen.From([new CardRow { Id = "c1", Bin = CardBin.Ring, Kind = "pr-ready", Subject = "flight/X", Title = "A ringing card", Summary = "s", At = Live.At, State = CardState.Open }]);
+        w.Frame(T0, ringing, job: JobState.Running);
+        // A job that ended is a fading toast, the kind that declares a toast region (a staying one is chrome around its buttons).
+        w.Frame(T0.AddSeconds(1), ringing, job: JobState.Succeeded);
+        w.Feed.Toasts.ShouldNotBeEmpty("the card and the event toast on another page while collapsed");
         var before = new List<ClickableRegion>();
         w.Chrome.NotificationsLayer.CollectPaintedRegions(before);
-        before.Any(IsToast).ShouldBeTrue("the toast is painted on the Jobs page");
+        before.Any(IsToast).ShouldBeTrue("the fading toast is painted on the Jobs page");
         w.Chrome.Show(PilotPage.Notifications);
-        w.Frame(T0.AddSeconds(1), CardsScreen.From([new CardRow { Id = "c1", Bin = CardBin.Ring, Kind = "pr-ready", Subject = "flight/X", Title = "A ringing card", Summary = "s", At = Live.At, State = CardState.Open }]));
+        w.Frame(T0.AddSeconds(2), ringing, job: JobState.Succeeded);
+        w.Feed.Toasts.ShouldNotBeEmpty("the toasts are still live in the feed; the page only draws none");
         w.Chrome.Notifications.ToastsOnPage.ShouldBeFalse();
         w.Chrome.Notifications.Animating.ShouldBeFalse();
         // What the layer paints, not only the flags: no toast region on the page.
