@@ -57,6 +57,48 @@ public sealed class NotificationsDockTests
     }
 
     [Fact]
+    public void TheRailsBellShowsTheCardsOfTheFirstFrameThatHasThem()
+    {
+        var renderer = new RgbaImageRenderer(Width, Height);
+        using var _ = renderer;
+        var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
+        chrome.Show(PilotPage.Jobs);
+        Render(chrome);
+        var entry = chrome.RailItems.Single(i => i.Value == PilotPage.Notifications);
+        var (glyph, said) = PilotChrome<RgbaImage>.NotificationsGlyph(chrome.Notifications.Bell);
+        chrome.Notifications.Bell.Count.ShouldBeGreaterThan(0, "the sample has cards that need the person");
+        entry.Icon.ShouldBe(glyph, "the rail was drawn from this frame's cards, not the frame before");
+        entry.Tooltip.ShouldContain(said!);
+    }
+
+    [Theory]
+    [InlineData(1000, 1f, true)]
+    [InlineData(1000, 1.5f, false)]
+    [InlineData(1280, 1.5f, true)]
+    public void ADockedBarThatWouldLeaveTheNarrowPageUnderTheLeastOpensOverIt(int width, float dpi, bool docks)
+    {
+        var renderer = new RgbaImageRenderer((uint)width, 900);
+        using var _ = renderer;
+        var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath, DpiScale = dpi };
+        chrome.Notifications.State = BarStates.Docked;
+        chrome.Show(PilotPage.Jobs);
+        var data = PageData.For("sample");
+        chrome.Render(data.Sessions, data.Flights, data.Cards, data.Jobs, data.Fleet, data.Repos, new RectF32(0, 0, width, 900), data.Machines);
+        chrome.ShowsCards.ShouldBeTrue();
+        chrome.Notifications.Docked.ShouldBeTrue("the choice stays docked; only this window cannot afford it");
+        chrome.Notifications.DockedNow.ShouldBe(docks);
+        var page = chrome.PageBounds!.Value;
+        if (docks)
+        {
+            (page.Width / dpi).ShouldBeLessThan((width / dpi) - 52f - 299f, "docked, the page is the window less the rail and the bar");
+        }
+        else
+        {
+            (page.Width / dpi).ShouldBeGreaterThan((width / dpi) - 53f, "over, the page keeps the whole width beside the rail");
+        }
+    }
+
+    [Fact]
     public void ThePinSwitchesOverAndDocked()
     {
         var (chrome, renderer) = Draw(BarStates.Over);
@@ -168,6 +210,28 @@ public sealed class NotificationsDockTests
                 var host = new NotificationsHost();
                 old.Attach(host);
                 host.State.ShouldBe(BarStates.Collapsed);
+                host.Toggle();
+                host.State.ShouldBe(BarStates.Docked, "an old collapsed: true file opens docked from the handle");
+            }
+
+            // Docked or over, then collapsed, then a restart: the handle opens the bar in the state it was last open in.
+            foreach (var lastOpen in new[] { BarStates.Over, BarStates.Docked })
+            {
+                File.Delete(path);
+                using (var file = GuiSettingsFile.Open(path))
+                {
+                    var host = new NotificationsHost();
+                    file.Attach(host);
+                    host.State = lastOpen;
+                    host.State = BarStates.Collapsed;
+                    file.Flush();
+                }
+                using var again = GuiSettingsFile.Open(path);
+                var back = new NotificationsHost();
+                again.Attach(back);
+                back.State.ShouldBe(BarStates.Collapsed);
+                back.Toggle();
+                back.State.ShouldBe(lastOpen, "the handle after a restart opens the state the bar was last open in");
             }
         }
         finally

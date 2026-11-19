@@ -53,7 +53,7 @@ public static class TerminalWireframeSweepTests
     private static PageData Data(string state) => Datas.GetOrAdd(state, s => new Lazy<PageData>(() => PageData.For(s))).Value;
 
     /// <summary>The frame Program.cs would paint for the case, arranged, cropped and recorded.</summary>
-    internal static async Task<CellWireframeFrame> RecordCase(string name, string state, int columns, int rows, CellBuffer? into = null, Action<PilotChrome<RgbaImage>>? setup = null, IdeasScreen? ideas = null)
+    internal static async Task<CellWireframeFrame> RecordCase(string name, string state, int columns, int rows, CellBuffer? into = null, Action<PilotChrome<RgbaImage>>? setup = null, IdeasScreen? ideas = null, bool docked = false)
     {
         using var vessel = new RgbaImageRenderer(1, 1);
         var data = Data(state);
@@ -83,11 +83,21 @@ public static class TerminalWireframeSweepTests
         var cards = name == "open card" ? data.CardsWithDetail : data.Cards;
         chrome.Cards.OnChatPage = page == PilotPage.Chat;
         var cardsBeside = columns >= TerminalFrame.CardsPanelColumns && (cards.HasAny || chrome.Cards.CanTell && !chrome.Cards.OnChatPage);
-        chrome.Chat.CellColumns = TerminalFrame.PageColumns(columns, cardsBeside);
+        var barShown = docked && page != PilotPage.Notifications && (cards.HasAny || chrome.Cards.CanTell && !chrome.Cards.OnChatPage);
+        if (docked)
+        {
+            // The bar pinned: as Program.cs, the page has the columns less the bar's, unless the window is too narrow and the bar opens over it.
+            chrome.Notifications.State = BarStates.Docked;
+            chrome.Notifications.RoomUnits = columns * 8f;
+            cardsBeside = false;
+        }
+        var dockedBar = barShown && chrome.Notifications.DockedNow;
+        var pageColumns = docked ? TerminalFrame.PageColumnsWithBar(columns, dockedBar) : TerminalFrame.PageColumns(columns, cardsBeside);
+        chrome.Chat.CellColumns = pageColumns;
         if (page == PilotPage.Designs)
         {
             // pilot-tui plays the prototype in its own cells: the page embeds its tree, arranged in the room the page has (the cards panel beside it takes its columns), as Program.cs sets it.
-            chrome.Designs.Terminal = (TerminalFrame.PageColumns(columns, cardsBeside), rows);
+            chrome.Designs.Terminal = (pageColumns, rows);
             if (name is "design page" or PageTextOverlapTests.DesignPageNoVersion)
             {
                 // The chat under the cell view has something said: three turns and two versions, the designer checking. The no-version
@@ -95,7 +105,7 @@ public static class TerminalWireframeSweepTests
                 await PageData.OpenDesignChat(chrome.Designs, PageTextOverlapTests.DesignsOf(data, name).Open!.Detail.Row.Id, PageData.DesignChatPage(lengthen: state is "long" or "many"));
             }
         }
-        var width = columns * 8f;
+        var width = docked ? pageColumns * 8f : columns * 8f;
         if (page == PilotPage.Notifications)
         {
             // As Program.cs has it: the page beside the For you strip, the state's open cards under Needs you and its events in the history.
@@ -152,8 +162,8 @@ public static class TerminalWireframeSweepTests
         var rail = TerminalRail.Tree(page, GlyphMode.Emoji, data.Jobs, null, PageData.Now, _ => { }, null, columns);
         // The Notifications page is framed as pilot-tui frames every page now: beside the For you strip, with no bar over it (the page is the list).
         // The other cases still lay the cards panel beside the page, as the terminal did before the bar (#1184's follow-up brings them over).
-        var bar = page == PilotPage.Notifications ? (chrome.Notifications, page) : ((NotificationsHost, PilotPage)?)null;
-        var cardsTree = cardsBeside && bar is null ? chrome.Cards.Tree(cards) : null;
+        var bar = page == PilotPage.Notifications || docked ? (chrome.Notifications, page) : ((NotificationsHost, PilotPage)?)null;
+        var cardsTree = docked ? (barShown ? chrome.Cards.Tree(cards) : null) : cardsBeside && bar is null ? chrome.Cards.Tree(cards) : null;
         var arranged = TerminalFrame.Build(rail, tree, cardsTree, columns, rows, CellMeasureContext.PixelAuthored, null, bar);
         if (name == "tooltip open")
         {
@@ -225,6 +235,22 @@ public static class TerminalWireframeSweepTests
     /// <summary>A finding as the baseline lists it: the rule and the message it carries.</summary>
     internal static IEnumerable<(string Rule, string What)> Findings(CellWireframeResult result) =>
         result.Findings.Select(f => (f.Rule.ToString(), f.Message)).Concat(result.CellFindings.Select(f => (f.Rule.ToString(), f.Message)));
+
+    /// <summary>
+    /// The page drawn with the For you bar docked, as a window opens it (PIL1205): the page has the columns the bar leaves, and a terminal too narrow for that
+    /// opens the bar over the page. No baseline: a finding fails the case.
+    /// </summary>
+    internal static async Task RunDocked(string page, string state, int columns, int rows)
+    {
+        var key = Key(page, state, columns, rows) + " | docked";
+        var buffer = new CellBuffer { ColorMode = ColorMode.TrueColor };
+        var frame = await RecordCase(page, state, columns, rows, buffer, docked: true);
+        frame.Frame.Texts.IsEmpty.ShouldBeFalse($"{key}: the frame recorded no text");
+        var result = Check(frame);
+        var found = Findings(result).Where(f => !Baseline.Any(b => b.Case == Key(page, state, columns, rows) && b.Rule == f.Rule && f.What.Contains(b.What, StringComparison.Ordinal))).ToList();
+        var capture = CaptureOf(buffer, columns, rows, key, failed: found.Count > 0);
+        found.Count.ShouldBe(0, $"{key}: {string.Join("; ", found.Select(f => $"[{f.Rule}] {f.What}"))}\n{CellWireframe.Describe(result)}\ncapture: {capture}");
+    }
 
     internal static async Task Run(string page, string state, int columns, int rows)
     {
@@ -413,4 +439,19 @@ public sealed class TerminalWireframeRegressionTests
         var result = Judge(Entries().RowH(16f), Layout.Builder.VStack(row, Page()).Bg(Palette.Current.Ground).WStar().HStar());
         TerminalWireframeSweepTests.Findings(result).Any(f => f.Rule == nameof(CellWireframeRules.DoubledRow)).ShouldBeTrue(Describe(result));
     }
+}
+
+/// <summary>
+/// PIL1205: a window opens with the For you bar docked, so the page-wide rules also run on the terminal's narrowest sizes with the bar pinned: the page has the
+/// columns the bar leaves (80 columns is too narrow for that and opens the bar over the page, as the GUI does). Not a RowsOf class: its cases are its own.
+/// </summary>
+public sealed class TerminalDockedBarSweepTests
+{
+    public static IEnumerable<TheoryDataRow<string, string, int, int>> DockedCases() =>
+        from size in new[] { (80, 24), (100, 30) }
+        from page in TerminalWireframeSweepTests.Cases.Where(c => c != "tooltip open")
+        select new TheoryDataRow<string, string, int, int>(page, "long", size.Item1, size.Item2) { TestDisplayName = TerminalWireframeSweepTests.Key(page, "long", size.Item1, size.Item2) + " | docked" };
+
+    [Theory, MemberData(nameof(DockedCases))]
+    public Task Docked(string page, string state, int columns, int rows) => TerminalWireframeSweepTests.RunDocked(page, state, columns, rows);
 }

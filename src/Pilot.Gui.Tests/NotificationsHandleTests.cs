@@ -80,7 +80,7 @@ public sealed class NotificationsHandleTests
     }
 
     [Fact]
-    public void TheHandleTakesNoLayoutRoomAndLeavesTheScrollBarsTrackPressableAboveAndBelow()
+    public void TheHandleIsAShortTabAndTheRailIsTheSameOpenAndCollapsed()
     {
         var (open, openRenderer) = Draw(true, CardsScreen.Empty);
         using var _ = openRenderer;
@@ -102,10 +102,13 @@ public sealed class NotificationsHandleTests
         NotificationsHost.HandleColors(p, HandleTints.Neutral).Fill.ShouldBe(p.HeaderBg);
         NotificationsHost.HandleColors(p, HandleTints.New).Fill.ShouldBe(p.RailAccent);
         NotificationsHost.HandleColors(p, HandleTints.NeedsYou).Fill.ShouldBe(p.Held);
-        foreach (var tint in Enum.GetValues<HandleTints>())
+        foreach (var (name, palette) in new[] { ("day", p), ("night", Palette.Night) })
         {
-            var (fill, chevron) = NotificationsHost.HandleColors(p, tint);
-            Contrast.Ratio(chevron, fill).ShouldBeGreaterThanOrEqualTo(4.5, $"the chevron on the {tint} handle");
+            foreach (var tint in Enum.GetValues<HandleTints>())
+            {
+                var (fill, chevron) = NotificationsHost.HandleColors(palette, tint);
+                Contrast.Ratio(chevron, fill).ShouldBeGreaterThanOrEqualTo(4.5, $"the chevron on the {tint} handle, {name} palette");
+            }
         }
 
         var host = new NotificationsHost { Open = false };

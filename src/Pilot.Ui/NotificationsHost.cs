@@ -6,11 +6,10 @@ using Pilot.Contracts;
 namespace Pilot.Ui;
 
 /// <summary>
-/// The For you side bar, one per window (PIL1184), on DIR.Lib's notifications component: the strip at the right edge with its bell
-/// (the count, amber while a card rings), the toasts and the frame's shortcut are the library's (<see cref="NotificationsLayout"/>);
-/// pilot holds neither the bell nor the strip. What pilot adds is the model (every open card is one staying notification in the
-/// <see cref="Feed"/>) and what the open bar holds: the cards panel, laid over the right of the page in the bar's place, so the page
-/// never changes size when the bar opens or collapses. One declaration for the GUI and for the terminal: no branch on which.
+/// The For you side bar, one per window (PIL1184), on DIR.Lib's notifications component: the toasts are the library's
+/// (<see cref="NotificationsLayout"/>); the bell is the rail's Notifications entry (PIL1205) and the bar opens and collapses from an edge handle. What pilot
+/// adds is the model (every open card is one staying notification in the <see cref="Feed"/>), the three states (collapsed, over the page, docked beside it,
+/// switched by the pin in the header) and what the open bar holds: the cards panel. One declaration for the GUI and for the terminal: no branch on which.
 /// </summary>
 internal sealed class NotificationsHost
 {
@@ -150,8 +149,17 @@ internal sealed class NotificationsHost
         set => State = value ? _lastOpen : BarStates.Collapsed;
     }
 
-    /// <summary>Whether the bar is docked beside the page.</summary>
+    /// <summary>Whether the bar is set to dock beside the page (its state; <see cref="DockedNow"/> is whether the window has room for it).</summary>
     public bool Docked => _state == BarStates.Docked;
+
+    /// <summary>The least width, in design units, a docked bar leaves the page: the flights canvas needs about 370, so a narrower window opens the bar over the page instead.</summary>
+    public const float MinPageUnits = 400f;
+
+    /// <summary>The design-unit width of the area beside the rail, which the page and a docked bar share; null (unknown) lets a docked bar dock.</summary>
+    public float? RoomUnits { get; set; }
+
+    /// <summary>Whether the bar is docked in the window as drawn: set to dock and leaving the page <see cref="MinPageUnits"/>; a narrower window draws it over the page, as the strip used to give way.</summary>
+    public bool DockedNow => Docked && (RoomUnits is not { } room || room - Style.BarWidth >= MinPageUnits);
 
     /// <summary>Raised when the bar is opened or collapsed, so the window can redraw.</summary>
     public event Action<bool>? OpenChanged;
@@ -287,7 +295,7 @@ internal sealed class NotificationsHost
         // The toggle key is declared on the handle tab below (always present); a stretched box here caught every press on the page.
         if (barOpen)
         {
-            if (Docked)
+            if (DockedNow)
             {
                 // Docked: the page and the bar side by side, the page a star and the bar its fixed width, so the page is arranged in what is left.
                 body = Layout.Builder.HStack(body.WStar().HStar(), OpenBar(panel!, colors)).Stretch();

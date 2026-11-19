@@ -79,9 +79,6 @@ public sealed class RenderCostTests
         chrome.ShowsCards.ShouldBeTrue();
         var (firstAsked, firstFitted) = (renderer.Asked, renderer.Fitted);
         var top = string.Join("\n", renderer.Texts.OrderByDescending(t => t.Value).Take(15).Select(t => $"{t.Value} x {t.Key}"));
-        // The rail is built before the frame folds the cards in, so its Notifications bell and count (PIL1205: the rail holds the one bell) show the
-        // new card one frame later: a settling frame, then the steady one that must fit nothing.
-        chrome.Render(sessions, null, screen, new RectF32(0, 0, 1280, 800));
         renderer.Reset();
         chrome.Render(sessions, null, screen, new RectF32(0, 0, 1280, 800));
         TestContext.Current.TestOutputHelper?.WriteLine(

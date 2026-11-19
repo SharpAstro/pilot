@@ -136,7 +136,7 @@ public sealed class NotificationsCaptureTests
         var cards = CardsOf(shot);
         var open = StateOf(shot) != BarStates.Collapsed;
         var page = chrome.Ideas.Tree(PageTextOverlapTests.IdeasFor("sample"));
-        var rail = TerminalRail.Tree(PilotPage.Ideas, GlyphMode.Emoji, null, null, Live.At, _ => { }, null, columns);
+        var rail = TerminalRail.Tree(PilotPage.Ideas, GlyphMode.Emoji, null, null, Live.At, _ => { }, null, columns, null, chrome.Notifications.Bell);
         var arranged = TerminalFrame.Build(rail, page, open ? chrome.Cards.Tree(cards) : null, columns, rows, CellMeasureContext.PixelAuthored, null, (chrome.Notifications, PilotPage.Ideas));
         var buffer = new CellBuffer { ColorMode = ColorMode.TrueColor };
         buffer.Resize(columns, rows);
