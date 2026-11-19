@@ -122,6 +122,7 @@ public static partial class PilotCommand
         }
         text.AppendLine($"folder: {design.Folder}");
         text.AppendLine($"draft: {design.DraftFolder}");
+        text.AppendLine($"pictures: pilot design renders {row.Id} (the design_renders tool over MCP) gives the renders as images, for a session that cannot open these paths");
         if (design.CurrentFolder is { Length: > 0 } current)
         {
             text.AppendLine($"current: {current}");
@@ -263,6 +264,13 @@ public static partial class PilotCommand
                     var answer = await client.SendAsync(new CommandRequest { Verb = Verbs.DesignRenders, Target = Verbs.DesignTarget(p.GetValue(rendersId)!), Args = args, Who = who, Agent = byAgent }, ct);
                     if (answer is { Success: true, Response: { Ok: true, DesignRenders: { } renders } })
                     {
+                        if (pictures is not null)
+                        {
+                            foreach (var picture in renders.Pictures)
+                            {
+                                await pictures("image/png", picture.Png, DesignRenderLine(renders, picture));
+                            }
+                        }
                         await WriteAsync(p.GetValue(outputFormat), () => DesignRendersPlain(renders), () => DesignRendersMarkdown(renders));
                         return 0;
                     }

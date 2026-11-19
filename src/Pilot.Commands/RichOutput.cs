@@ -8,3 +8,9 @@ namespace Pilot.Commands;
 /// <c>System.Console</c> in every project that takes the tree.
 /// </summary>
 public delegate Task<bool> RichOutput(string format, string markdown, TextWriter output, TextWriter error);
+
+/// <summary>
+/// Where a command hands a picture to its host, beside its text: the MCP server turns each into an image content item
+/// (PIL1186). Gets the media type, the bytes and the line that names the picture. Null for the CLI.
+/// </summary>
+public delegate Task PictureSink(string mimeType, byte[] bytes, string line);

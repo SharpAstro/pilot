@@ -739,7 +739,16 @@ designer that is working is never ended, and a designer never stops itself (the 
   from. No screen gives the entry screen and names the others. `DesignRenderCaps` limits a call to 4 pictures, 3 MB and 1600 px on
   the longest side; a larger picture is scaled down with SharpAstro.Png and says "scaled from WxH". A draft whose renders are older
   than its `prototype.json` is answered as stale, not refused. `--output-format markdown` or `rich` writes the bytes under the
-  temp folder (`pilot-renders/<design>/`) and emits `![line](path)` per picture. MCP is the next leg's.
+  temp folder (`pilot-renders/<design>/`) and emits `![line](path)` per picture.
+- **Looking at a design from another machine (PIL1186).** A session on another machine, claude.ai or a phone cannot open the
+  node's paths, so over MCP it calls `design_renders` (`design`, optional `version`, `draft`, `screen`, `size`). The answer is
+  image content (`type: image`, base64 PNG, `mimeType: image/png`), one per picture, each beside its text line, followed by the
+  screens not sent, a stale note and any scaling note; the caps above apply per call, so ask for another `screen` to see more.
+  Add `node` (a name such as DE1, a host or host:port, as the nodes tool lists them) to read another node's designs: the bytes
+  travel from that node over the same connection, not a path. `design_show` ends with a line pointing to `design_renders`.
+  The command tree hands pictures to its host through `PictureSink` (null for the CLI, which prints lines and, with
+  `--output-format rich`, draws them); `McpServer` collects them into `McpContent` items. `DesignRendersMcpTests` covers the
+  in-process server, a granted second node and a real `pilot mcp` process over stdio.
 - **One shared piece.** `src/Pilot.Ui/PrototypeCells.cs` (namespace `Pilot.Cells`, nothing of Pilot.Ui in it) builds a screen's
   tree with `PrototypeTreeBuilder`, arranges it with Console.Lib's `CellMeasureContext.PixelAuthored` and paints it into a
   `CellBuffer`; it exposes the arranged nodes (for `CellLayout.HitTest` and `TextInputs`), the rows as text, the findings, and

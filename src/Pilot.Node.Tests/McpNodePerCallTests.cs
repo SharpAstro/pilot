@@ -30,7 +30,7 @@ public sealed class McpNodePerCallTests : IAsyncLifetime
     private McpServer Server() => new(_node.Folder, node: null, socket: _node.SocketPath);
 
     /// <summary>Starts a second node on a free LAN port and returns it with a granted client token file for it.</summary>
-    private static async Task<(NodeHarness Second, int Port, string Tokens)> GrantedSecondNodeAsync()
+    internal static async Task<(NodeHarness Second, int Port, string Tokens)> GrantedSecondNodeAsync()
     {
         using var probe = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
         probe.Start();
