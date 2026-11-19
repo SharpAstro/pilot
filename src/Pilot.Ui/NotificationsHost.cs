@@ -245,6 +245,12 @@ internal sealed class NotificationsHost
         // on the list itself.
         var pageStyle = Style with { StripWidth = 0f, MaxToasts = barOpen || onList ? 0 : Style.MaxToasts };
         var body = NotificationsLayout.Build(page, Feed, _lib, colors, pageStyle, Pointer, PageRect);
+        // The library docks a strip of no width beside what it builds and lays its bell and count past the edge; the rail's entry is the one
+        // bell, so only the fill (the page and its toasts) is kept, and the toggle key the strip declared is declared here on a node of no size.
+        body = body is Layout.Node.Dock { Fill: var fill } ? fill : body;
+        body = Layout.Builder.Overlay(body, Layout.Builder.Box(0f, 0f)
+            .Clickable(new HitResult.ButtonHit("notifications:toggle-key"), _ => Toggle())
+            .WithShortcut(Style.ToggleKey));
         if (barOpen)
         {
             body = Layout.Builder.Overlay(body, Layout.Builder.HStack(Layout.Builder.Spacer().WStar().HStar(), OpenBar(panel!, colors)).Stretch());

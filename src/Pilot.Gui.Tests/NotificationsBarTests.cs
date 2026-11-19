@@ -97,9 +97,9 @@ public sealed class NotificationsBarTests
 
         var page = open.PageBounds!.Value;
         var panel = open.CardsBounds!.Value;
-        (panel.X + panel.Width).ShouldBe(page.X + page.Width, 0.5f, "the bar ends where the page does, the strip standing beyond it");
+        (panel.X + panel.Width).ShouldBe(page.X + page.Width, 0.5f, "the bar ends where the page does");
         panel.X.ShouldBeGreaterThan(page.X, "the bar covers the page's right side only");
-        (page.X + page.Width + NotificationsHost.Style.StripWidth * dpi).ShouldBe(width, 1f, "the strip takes the right edge in both");
+        (page.X + page.Width).ShouldBe(width, 1f, "no strip: the page runs to the right edge in both");
     }
 
     [Fact]
@@ -109,12 +109,12 @@ public sealed class NotificationsBarTests
         using var _ = renderer;
         chrome.Notifications.Feed.BellCount.ShouldBe(2, "both open cards need the person");
         chrome.Notifications.Feed.WorstSeverity.ShouldBe(DIR.Lib.Notifications.NotificationSeverity.Warn, "a ring is a warning");
-        AmberPixels(renderer, 1920, 1080, 1f).ShouldBeGreaterThan(20, "the strip's bell and count are drawn amber while a card rings");
+        AmberPixels(renderer, 1920, 1080, 1f).ShouldBe(0, "no strip is drawn: the bell is the rail entry");
 
         var (quiet, quietRenderer) = Draw(1920, 1080, false, CardsScreen.Empty);
         using var __ = quietRenderer;
         quiet.Notifications.Feed.BellCount.ShouldBe(0);
-        AmberPixels(quietRenderer, 1920, 1080, 1f).ShouldBe(0, "with nothing waiting the bell is dim, not amber");
+        AmberPixels(quietRenderer, 1920, 1080, 1f).ShouldBe(0);
     }
 
     [Fact]
@@ -165,7 +165,7 @@ public sealed class NotificationsBarTests
         var regions = new List<ClickableRegion>();
         chrome.Rail.CollectPaintedRegions(regions);
         var entry = regions.Where(r => r.Result is HitResult.ListItemHit).Last();
-        chrome.HandleInput(new InputEvent.MouseDown(entry.X + entry.Width / 2f, entry.Y + entry.Height / 2f, MouseButton.Left)).ShouldBeTrue();
+        entry.OnClick!.Invoke(InputModifier.None);
     }
 
     [Fact]
