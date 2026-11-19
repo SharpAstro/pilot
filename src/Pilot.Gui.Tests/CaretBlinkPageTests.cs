@@ -1,7 +1,6 @@
 using DIR.Lib;
 using Pilot.Contracts;
 using Pilot.Ui;
-using SdlVulkan.Renderer;
 using Shouldly;
 using Xunit;
 
@@ -10,7 +9,7 @@ namespace Pilot.Gui.Tests;
 /// <summary>
 /// PIL1192: the caret blinks on every page's focused text field through the libraries' own handover (SharpAstro/.github#13): the loop
 /// takes the phase from the clock and sets it once on the window's shared settings, and no page sets it. Each case focuses one field,
-/// steps the phase the way <c>SdlEventLoop</c> does (<see cref="CaretBlinkPacing.Step"/>, on a <see cref="FakeClock"/>), paints in
+/// sets the phase the way <c>SdlEventLoop</c> does (<see cref="CaretBlink.PhaseAt(TimeProvider)"/>, on a <see cref="FakeClock"/>), paints in
 /// phase N and N+1 and reads the pixels where the caret was drawn: they differ, and only there.
 /// </summary>
 public sealed class CaretBlinkPageTests
@@ -28,12 +27,14 @@ public sealed class CaretBlinkPageTests
 
         byte[] PaintIn(bool even)
         {
-            var phase = CaretBlinkPacing.Step(page.Ui, clock);
+            // What SdlEventLoop does before a frame: the phase from the clock, set once on the window's settings.
+            var phase = CaretBlink.PhaseAt(clock);
             if ((phase % 2 == 0) != even)
             {
                 clock.Advance(TimeSpan.FromMilliseconds(CaretBlink.PhaseMilliseconds));
-                phase = CaretBlinkPacing.Step(page.Ui, clock);
+                phase = CaretBlink.PhaseAt(clock);
             }
+            page.Ui.CaretPhase = phase;
             page.Paint();
             page.Ui.CaretPhase.ShouldBe(phase);
             return page.Pixels();
@@ -42,7 +43,7 @@ public sealed class CaretBlinkPageTests
         // The caret is on in an even phase and off in the odd one after it.
         var on = PaintIn(even: true);
         var caret = page.Ui.CaretRect;
-        caret.Width.ShouldBeGreaterThan(0f, "a focused field painted its caret");
+        (caret.Width > 0).ShouldBeTrue( "a focused field painted its caret");
         var off = PaintIn(even: false);
 
         var changed = Changed(on, off, 1400);
@@ -50,8 +51,8 @@ public sealed class CaretBlinkPageTests
         foreach (var (x, y) in changed)
         {
             // Nothing but the caret changed: every differing pixel is on the caret's rect, give or take a pixel of smoothing.
-            x.ShouldBeInRange((int)caret.X - 2, (int)(caret.X + caret.Width) + 2);
-            y.ShouldBeInRange((int)caret.Y - 2, (int)(caret.Y + caret.Height) + 2);
+            x.ShouldBeInRange(caret.UpperLeft.X - 2, caret.LowerRight.X + 2);
+            y.ShouldBeInRange(caret.UpperLeft.Y - 2, caret.LowerRight.Y + 2);
         }
     }
 
