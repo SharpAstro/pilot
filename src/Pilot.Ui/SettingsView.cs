@@ -133,6 +133,9 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
     /// <summary>The header's Night switch, the same on every page.</summary>
     public NightSwitch? Night { get; set; }
 
+    /// <summary>The For you bar, whose history keep time the page sets; null leaves the section out.</summary>
+    public NotificationsHost? Notifications { get; set; }
+
     /// <summary>The window's node selection, which names this node's owner; the Settings top bar shows no pills.</summary>
     public NodeFilter? Nodes { get; set; }
 
