@@ -128,15 +128,15 @@ public sealed class NotificationsBarTests
     }
 
     [Fact]
-    public void CollapseAndTheExpanderToggleTheBarAndTheBellOpensThePageAndTheKeyToggles()
+    public void TheEdgeHandleTogglesTheBarAndTheBellOpensThePageAndTheKeyToggles()
     {
         var (chrome, renderer) = Draw(1920, 1080, true);
         using var _ = renderer;
         var seen = new List<bool>();
         chrome.Notifications.OpenChanged += seen.Add;
 
-        // Collapse is a button of its own: a press on it collapses the bar and does not open the page.
-        var collapse = ClickOn(chrome, "notifications:collapse");
+        // The edge handle is a button of its own: a press on it collapses the bar and does not open the page.
+        var collapse = ClickOn(chrome, NotificationsHost.HandleAction);
         chrome.Page.ShouldBe(PilotPage.Jobs);
         chrome.Notifications.Open.ShouldBeFalse();
         collapse.ShouldBeTrue();

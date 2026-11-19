@@ -121,6 +121,7 @@ internal sealed class NotificationsHost
             if (_open != value)
             {
                 _open = value;
+                _seenPosted = _posted;
                 OpenChanged?.Invoke(value);
             }
         }
@@ -172,6 +173,7 @@ internal sealed class NotificationsHost
             seen.Add(key);
             if (!_ids.ContainsKey(key))
             {
+                Posted();
                 _ids[key] = Feed.Post(new Notification
                 {
                     Title = card.Title,
@@ -198,6 +200,7 @@ internal sealed class NotificationsHost
     /// </summary>
     public void PostEvent(PilotEvent e, Action? open, DateTimeOffset now)
     {
+        Posted();
         var posted = Feed.Post(new Notification
         {
             Title = e.Title,
@@ -229,7 +232,7 @@ internal sealed class NotificationsHost
 
     /// <summary>
     /// The window's frame: <paramref name="page"/> at the window's full width (no strip), the toasts over it while the bar is collapsed, and, while it is
-    /// open, <paramref name="panel"/> over the page's right side, under a row holding the collapse button. A null <paramref name="panel"/>
+    /// open, <paramref name="panel"/> over the page's right side, under a header row. A null <paramref name="panel"/>
     /// (nothing to show) leaves the page and the strip. <paramref name="shown"/> is the page on screen: the Notifications page is the whole
     /// list, so it gets neither the open bar (it would repeat the list and cover its header) nor toasts.
     /// </summary>
@@ -257,8 +260,58 @@ internal sealed class NotificationsHost
             body = Layout.Builder.Overlay(body, Layout.Builder.HStack(Layout.Builder.Spacer().WStar().HStar(), OpenBar(panel!, colors)).Stretch());
         }
         // No strip and no bell here: the rail's Notifications entry is the one bell (PIL1205), so the page has the window's whole width.
-        // The collapsed bar's way back is the edge handle of the next leg; until then the key (Ctrl+N) opens it.
-        return body.Stretch();
+        // The bar opens and collapses from the edge handle, laid over the page last so a press on it is the first hit; it takes no room.
+        return Layout.Builder.Overlay(body, Handle(barOpen)).Stretch();
+    }
+
+    /// <summary>
+    /// The edge handle (PIL1205), as in the PDF viewer: a tab on the window's right edge, vertically centred, the left chevron while the bar is
+    /// collapsed and the right one on the open bar's left edge. It is an overlay (it takes no layout room) and one declaration for the window
+    /// and the terminal, whose cell host measures its design units as columns and rows. Scroll bar rule: the handle lies over the page's scroll
+    /// bar column but only <see cref="HandleHeight"/> units of it, at the vertical middle, so the bar's track stays pressable above and below
+    /// it and the wheel still moves the thumb while it passes behind the tab.
+    /// </summary>
+    private Layout.Node Handle(bool barOpen)
+    {
+        var (bg, fg) = HandleColors(Palette.Current, HandleTint);
+        var tab = Layout.Builder.VStack(Layout.Builder.Text(barOpen ? "\u00bb" : "\u00ab", 16f, fg, TextAlign.Center).WStar().HAuto())
+            .CrossCenter()
+            .Bg(bg)
+            .Clickable(new HitResult.ButtonHit(HandleAction), _ => Toggle(), CursorKind.Pointer)
+            .WithTooltip($"{(barOpen ? "Collapse" : "Open")} the For you bar ({ChordText()})", Layout.DockSide.Left)
+            .WFixed(HandleWidth).HFixed(HandleHeight);
+        var column = Layout.Builder.VStack(Layout.Builder.Spacer().HStar(), tab, Layout.Builder.Spacer().HStar()).WAuto().HStar();
+        var gap = Layout.Builder.Spacer().WFixed(barOpen ? Style.BarWidth : 0f).HStar();
+        return Layout.Builder.HStack(Layout.Builder.Spacer().WStar().HStar(), column, gap).Stretch();
+    }
+
+    /// <summary>The handle's width and height in design units.</summary>
+    public const float HandleWidth = 26f, HandleHeight = 80f;
+
+    /// <summary>The hit of the edge handle, apart from the rail's bell so a press on it toggles the bar and does not open the page.</summary>
+    public const string HandleAction = "notifications:handle";
+
+    /// <summary>How the handle is tinted: amber while a card rings or needs the person, the accent when something arrived since the bar was last open, neutral otherwise.</summary>
+    public HandleTints HandleTint => Ringing || Feed.BellCount > 0 ? HandleTints.NeedsYou : !_open && _posted != _seenPosted ? HandleTints.New : HandleTints.Neutral;
+
+    /// <summary>The handle's fill and the chevron's colour for <paramref name="tint"/>, from the palette: the chevron is whichever of the palette's bright, ground and black reads best on the fill.</summary>
+    internal static (RGBAColor32 Fill, RGBAColor32 Chevron) HandleColors(Palette p, HandleTints tint)
+    {
+        var fill = tint switch { HandleTints.NeedsYou => p.Held, HandleTints.New => p.RailAccent, _ => p.HeaderBg };
+        var black = new RGBAColor32(0, 0, 0, 0xff);
+        var chevron = new[] { p.Bright, p.Ground, black }.MaxBy(c => Contrast.Ratio(c, fill));
+        return (fill, chevron);
+    }
+
+    private long _posted, _seenPosted;
+
+    private void Posted()
+    {
+        _posted++;
+        if (_open)
+        {
+            _seenPosted = _posted;
+        }
     }
 
     private Layout.Node OpenBar(Layout.Node panel, NotificationsColors colors)
@@ -271,20 +324,11 @@ internal sealed class NotificationsHost
             .WAuto();
         var collapse = Layout.Builder.HStack(
                 Layout.Builder.Text("For you", 12f, colors.Dim).WStar(),
-                all,
-                Layout.Builder.HStack(Layout.Builder.Text("Collapse ▸", 12f, colors.Text, TextAlign.Center).WAuto())
-                    .Pad(6f, 2f)
-                    .Bg(colors.Card)
-                    .Clickable(new HitResult.ButtonHit(CollapseAction), _ => Toggle(), CursorKind.Pointer)
-                    .WithTooltip($"Collapse the For you bar to its strip ({ChordText()})", Layout.DockSide.Bottom)
-                    .WAuto())
+                all)
             .WithGap(6f).CrossCenter().Pad(6f, 2f).WStar();
         return Layout.Builder.VStack(collapse, panel.HStar())
             .Bg(colors.Surface).BorderLeft(colors.Separator).WithCursor(CursorKind.Default).WFixed(Style.BarWidth).HStar();
     }
-
-    /// <summary>The hit of the open bar's Collapse button, apart from the strip's bell so a press on it toggles the bar and does not open the page.</summary>
-    public const string CollapseAction = "notifications:collapse";
 
     /// <summary>The toggle key as a person reads it, for a tooltip.</summary>
     public static string ChordText() => "Ctrl+N";
@@ -301,4 +345,7 @@ internal sealed class NotificationsHost
 }
 
 /// <summary>The rail bell's state: <paramref name="Count"/> is what needs the person, <paramref name="Ringing"/> a card in the Ring bin.</summary>
+/// <summary>The edge handle's tint.</summary>
+internal enum HandleTints { Neutral, New, NeedsYou }
+
 internal readonly record struct BellState(int Count, bool Ringing);
