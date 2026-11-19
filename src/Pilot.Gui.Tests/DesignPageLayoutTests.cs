@@ -23,11 +23,17 @@ public sealed class DesignPageLayoutTests
             (_w, _h) = (w, h);
             PageTime.Zone = TimeZoneInfo.Utc;
             _renderer = new RgbaImageRenderer((uint)w, (uint)h);
-            _screen = PageData.DesignsFor("sample", Now);
+            _screen = PageData.TargetsDesigns(Now, doc =>
+            {
+                // The accepted design's shape: one cell, one 640 x 240 frame.
+                doc.Remove("targets");
+                doc["width"] = 640;
+                doc["height"] = 240;
+            });
             _chrome = new PilotChrome<RgbaImage>(_renderer, new SessionsView<RgbaImage>(_renderer)) { FontPath = SessionsCapture.FontPath };
             _chrome.Autopilot.OnToggle = _ => Task.FromResult<string?>(null);
             _chrome.Show(PilotPage.Designs);
-            _chrome.Designs.Open("DSN-1");
+            _chrome.Designs.Open("DSN-7");
             var data = PageData.For("sample");
             _chrome.Render(data.Sessions, data.Flights, data.Cards, data.Jobs, data.Fleet, data.Repos, data.PullRequests, new RectF32(0, 0, w, h), data.Machines, null, data.Spend, _screen);
         }
