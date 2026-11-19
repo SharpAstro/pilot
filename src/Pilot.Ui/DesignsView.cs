@@ -1061,8 +1061,10 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
         var version = row.Current is { } v ? "v" + v.ToString(CultureInfo.InvariantCulture) : "no version";
         var when = row.At is { } at ? PageTime.Text(at) : "";
         var repo = row.Repo ?? "";
+        // Which version is built (PIL1185): said where the host has the flights to know, so a page with none does not call every design unbuilt.
+        var built = flights is null ? "" : DesignVersionNotice.BuiltText(row, flights);
         // Two lines of one string each: columns of a row squeezed each other's ellipses at a narrow window.
-        var detail = string.Join(" · ", new[] { version, DesignVersionNotice.BuiltText(row, flights), row.Ideas() is { Length: > 0 } ideas ? "for " + string.Join(", ", ideas.Select(IdeaName)) : "", repo, row.MadeOn is { Length: > 0 } node ? $"made on {node}" : "", when }.Where(t => t.Length > 0));
+        var detail = string.Join(" · ", new[] { built.StartsWith(version + " ", StringComparison.Ordinal) ? "" : version, built, row.Ideas() is { Length: > 0 } ideas ? "for " + string.Join(", ", ideas.Select(IdeaName)) : "", repo, row.MadeOn is { Length: > 0 } node ? $"made on {node}" : "", when }.Where(t => t.Length > 0));
         var line = Layout.Builder.VStack(
             WrappedProse.OneLine($"{row.Id}  {title}", 13f, Bright, selectable: false).RowH(22f).Whole($"{row.Id}  {title}"),
             WrappedProse.OneLine(detail, 12f, Dim, selectable: false).RowH(20f).Whole(row.At is { } stamp ? $"{detail} · {PageTime.Utc(stamp)}" : detail)).WithGap(0f).Pad(4f, 2f).RowH(RowH);
