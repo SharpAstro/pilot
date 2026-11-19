@@ -37,6 +37,9 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
     /// <summary>The width, in design units, of the For-you bar laid over the page's right side while it is open. An open design's page stands left of it, so the chat is not under the bar; 0 when the bar is collapsed.</summary>
     public float ClearRight { get; set; }
 
+    // ClearRight as applied to this paint: only where the chat still fits beside the document left of the bar; a narrower window keeps the bar over the page's edge.
+    private float _clearRight;
+
     // Under the document, the chat takes a share of the height (NarrowChatShare to its 1), never under what its status, a line of the feed and the box need,
     // never over NarrowChatHeight. A share, not a scroll around both: the chat's own scroll inside another was painted unclipped over the prototype.
     private const float NarrowChatShare = 0.6f;
@@ -799,7 +802,9 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
         BeginFrame();
         _frameRects.Clear();
         NoteHeight(bounds);
-        _width = Scale.ToDesignX(bounds.Width) - (OpenId is null ? 0f : ClearRight);
+        _width = Scale.ToDesignX(bounds.Width);
+        _clearRight = OpenId is not null && Terminal is null && _width - ClearRight >= MinDocumentColumns + ChatWidth + 3f * Gutter ? ClearRight : 0f;
+        _width -= _clearRight;
         _pageHeight = Scale.ToDesignY(bounds.Height);
         var tree = Tree(screen);
         RenderLayout(tree, bounds, null, null, DrawFill);
@@ -913,9 +918,9 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
             : Layout.Builder.VStack(
                 [DesignBackRow(open), .. IdeaPicker(open),
                  (open is null ? Layout.Builder.Text($"Reading {OpenId}…", 16f, Dim, TextAlign.Center).Selectable().Stretch() : DesignBody(open)).Stretch()]).Stretch();
-        if (OpenId is not null && ClearRight > 0f)
+        if (OpenId is not null && _clearRight > 0f)
         {
-            body = Layout.Builder.HStack(body.Stretch(), Layout.Builder.Spacer().WFixed(ClearRight).HStar()).WithGap(0f).Stretch();
+            body = Layout.Builder.HStack(body.Stretch(), Layout.Builder.Spacer().WFixed(_clearRight).HStar()).WithGap(0f).Stretch();
         }
         var page = Layout.Builder.VStack(header, body.Stretch()).Bg(Ground).Stretch();
         return About?.Over(WhenShort(page)) ?? WhenShort(page);
