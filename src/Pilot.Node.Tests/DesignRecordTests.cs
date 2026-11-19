@@ -63,7 +63,10 @@ public sealed class DesignRecordTests : IDisposable
     private async Task<(string Id, int Issue)> DesignAsync(string title, int version = 1)
     {
         var design = _store.New("pilot", title, "brief");
-        Published(design.Id, version);
+        for (var v = 1; v <= version; v++)
+        {
+            Published(design.Id, v);
+        }
         await _sync.SyncAsync(design.Id, Ct);
         _github.IssueComments.Clear();
         return (design.Id, _store.Find(design.Id)!.IssueNumber!.Value);
@@ -141,14 +144,14 @@ public sealed class DesignRecordTests : IDisposable
     public async Task OnMergeEachDesignIssueIsClosedWithTheCommentAndItsLockLabelsAreGone()
     {
         var (a, issueA) = await DesignAsync("Disk alert");
-        _github.SetIssueLabels(issueA, "pilot: design", "pilot: editing", "pilot: DE1");
+        _github.SetIssueLabels(issueA, "pilot: design", "pilot: editing", "pilot node: DE1");
         var flight = Flight("PIL9", FlightState.Landed, (a, 1));
 
         await _record.LandedAsync(flight, 77, "abc1234", Ct);
 
         _github.ClosedIssues.ToArray().ShouldBe([(issueA, "Built as v1 by PIL9 in #77, merged at abc1234")]);
         _github.IssueLabels[issueA].Keys.ShouldNotContain("pilot: editing");
-        _github.IssueLabels[issueA].Keys.ShouldNotContain("pilot: DE1");
+        _github.IssueLabels[issueA].Keys.ShouldNotContain("pilot node: DE1");
         _store.Find(a)!.Record.Single().Landed.ShouldBe("closed");
     }
 
