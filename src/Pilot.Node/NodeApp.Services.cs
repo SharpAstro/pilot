@@ -382,7 +382,7 @@ public static partial class NodeApp
             legs.Models = services.GetRequiredService<RoleModels>();
             legs.Gate = services.GetRequiredService<StartGate>();
             legs.DesignRecord = services.GetRequiredService<Pilot.Node.Designs.DesignRecord>();
-            legs.DesignFiles =services.GetRequiredService<Pilot.Node.Designs.DesignStore>();
+            legs.DesignFiles = services.GetRequiredService<Pilot.Node.Designs.DesignStore>();
             legs.DropJobs = (owners, why) => services.GetRequiredService<JobRunner>().DropQueuedOf(owners, why);
             legs.Slots = services.GetRequiredService<AdmissionGate>();
             legs.Attachments = services.GetRequiredService<Attachments>();

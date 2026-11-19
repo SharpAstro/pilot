@@ -157,11 +157,11 @@ public static partial class PilotCommand
                 (p, client, ct) => Send(client, Verbs.DesignDiscard, Verbs.DesignTarget(p.GetValue(discardId)!), [], who, ct));
 
             var linkId = Arg("design", "The design's id, DSN-<n>");
-            var linkIdea = Arg("idea", "The idea: I<n> in the design's repo, or the repo and the id (tianwen I1829)");
+            var linkIdea = Arg("idea", "The idea: I<n> in the design's repo, or the repo and the id in quotes ("tianwen I1829")");
             var designLink = Action(new Command("link", "Link the design to an idea it is for; designs and ideas are linked many to many. The design's issue lists the idea, and the idea's issue is told once") { Arguments = { linkId, linkIdea } },
                 (p, client, ct) => Send(client, Verbs.DesignLink, Verbs.DesignTarget(p.GetValue(linkId)!), [p.GetValue(linkIdea)!], who, ct));
             var unlinkId = Arg("design", "The design's id, DSN-<n>");
-            var unlinkIdea = Arg("idea", "The idea: I<n> in the design's repo, or the repo and the id (tianwen I1829)");
+            var unlinkIdea = Arg("idea", "The idea: I<n> in the design's repo, or the repo and the id in quotes ("tianwen I1829")");
             var designUnlink = Action(new Command("unlink", "Take the link of the design to an idea away, on the design and on its issue") { Arguments = { unlinkId, unlinkIdea } },
                 (p, client, ct) => Send(client, Verbs.DesignUnlink, Verbs.DesignTarget(p.GetValue(unlinkId)!), [p.GetValue(unlinkIdea)!], who, ct));
 

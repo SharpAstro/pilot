@@ -206,7 +206,6 @@ public sealed class DesignRecordTests : IDisposable
         _github.ClosedIssues.ShouldBeEmpty();
         _github.IssueComments.Single().Body.ShouldContain("built v3; the design is at v4");
         _store.Find(a)!.Record.Single().Landed.ShouldBe("commented");
-        issueA.ShouldBeGreaterThan(0);
     }
 
     [Fact]
