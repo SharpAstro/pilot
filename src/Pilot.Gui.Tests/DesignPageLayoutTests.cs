@@ -3,7 +3,6 @@ using Layout = DIR.Lib.Layout;
 using Pilot.Contracts;
 using Shouldly;
 using Xunit;
-using Xunit.Abstractions;
 
 namespace Pilot.Gui.Tests;
 
