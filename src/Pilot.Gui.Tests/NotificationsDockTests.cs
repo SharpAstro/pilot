@@ -68,7 +68,7 @@ public sealed class NotificationsDockTests
         var (glyph, said) = PilotChrome<RgbaImage>.NotificationsGlyph(chrome.Notifications.Bell);
         chrome.Notifications.Bell.Count.ShouldBeGreaterThan(0, "the sample has cards that need the person");
         entry.Icon.ShouldBe(glyph, "the rail was drawn from this frame's cards, not the frame before");
-        entry.Tooltip.ShouldContain(said!);
+        entry.Tooltip.ShouldNotBeNull().ShouldContain(said!);
     }
 
     [Theory]
