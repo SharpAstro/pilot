@@ -172,6 +172,7 @@ public sealed class ButtonFeedbackTests
         (@"^settings:[^:]+:(choose$|tracker:)", "a repo list's Choose opens the node's repos and a tracker pill sets which tracker the next Add uses: local state, no command on the node (the Add itself goes through Presses)"),
         (@"^about:(toggle|restart)$", "the About card's fold, and a restart of this window, not a command on the node"),
         (@"^night:toggle$", "the window's palette"),
+        (@"^settings:keep:", "the Notifications page's keep time: the window's own setting, kept in the GUI's settings file, no command on the node"),
         (@"^nodes:", "the node filter of the rail: which nodes the pages show"),
         (@"^play:", "the in-play filter of a list: what the page shows"),
         (@":table:divider:\d+$", "a column divider dragged in a table"),

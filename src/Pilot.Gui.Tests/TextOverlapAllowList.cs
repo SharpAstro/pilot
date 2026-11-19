@@ -38,9 +38,6 @@ internal static class TextOverlapAllowList
             "At 500 wide the LAYERS menu (a fixed 124 units, a dozen rows) is taller than the map body, so its lower rows ('PR states') lie over the "
             + "flight detail's text below the map ('artifacts'); the painter clips the menu at the map body, so the capture shows no overlap, but the arranged "
             + "rows do. The menu should scroll or fold its lower rows when the map is short", PilotFlightPilIssue),
-        new("flights canvas | * | 700 wide | * | 500 high", "overlap: 'PR states' * is drawn over 'artifacts' *",
-            "As at 500 wide: a window 500 high leaves the map body shorter than the LAYERS menu, whose lower rows lie over the flight detail's text below it",
-            PilotFlightPilIssue),
     ];
 
     public static bool Covers(string key, string line) => Entries.Any(e => e.Covers(key, line));
