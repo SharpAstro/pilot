@@ -358,11 +358,24 @@ internal sealed class NotificationsHost
     /// <summary>The handle's fill and the chevron's colour for <paramref name="tint"/>, from the palette: the chevron is whichever of the palette's bright, ground and black reads best on the fill.</summary>
     internal static (RGBAColor32 Fill, RGBAColor32 Chevron) HandleColors(Palette p, HandleTints tint)
     {
-        var fill = tint switch { HandleTints.NeedsYou => p.Held, HandleTints.New => p.RailAccent, _ => p.HeaderBg };
+        // The tint's own colour first; where nothing of the palette's reads on it (the night palette's red accent), the palette's bright instead.
+        var fills = tint switch { HandleTints.NeedsYou => new[] { p.Held, p.Bright }, HandleTints.New => [p.RailAccent, p.Bright], _ => [p.HeaderBg] };
         var black = new RGBAColor32(0, 0, 0, 0xff);
-        var white = new RGBAColor32(0xff, 0xff, 0xff, 0xff);
-        var chevron = new[] { p.Bright, p.Ground, black, white }.MaxBy(c => Contrast.Ratio(c, fill));
-        return (fill, chevron);
+        var best = (Fill: fills[0], Chevron: black, Ratio: -1.0);
+        foreach (var fill in fills)
+        {
+            var chevron = new[] { p.Bright, p.Ground, black }.MaxBy(c => Contrast.Ratio(c, fill));
+            var ratio = Contrast.Ratio(chevron, fill);
+            if (ratio > best.Ratio)
+            {
+                best = (fill, chevron, ratio);
+            }
+            if (ratio >= 4.5)
+            {
+                break;
+            }
+        }
+        return (best.Fill, best.Chevron);
     }
 
     private long _posted, _seenPosted;
