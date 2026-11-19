@@ -16,8 +16,8 @@ internal static class TerminalFrame
     public static int PageColumns(int columns, bool cardsShown)
         => cardsShown ? columns - (int)Math.Ceiling(CardsView<RgbaImage>.Width / 8f) : columns;
 
-    /// <summary>The columns the page has under the For you bar: the terminal's less the strip, open or collapsed alike, as the bar covers the page's right side and never narrows it.</summary>
-    public static int PageColumnsWithBar(int columns) => columns - (int)Math.Ceiling(NotificationsHost.Style.StripWidth / 8f);
+    /// <summary>The columns the page has with the For you bar: all the terminal's while the bar is collapsed or over the page, and the terminal's less the bar's when it is docked.</summary>
+    public static int PageColumnsWithBar(int columns, bool docked = false) => docked ? columns - (int)Math.Ceiling(CardsView<RgbaImage>.Width / 8f) : columns;
 
     /// <summary>
     /// The frame's tree.<paramref name="cards"/> is the cards panel's tree, or null for none (a narrow terminal, nothing to show).
@@ -26,8 +26,8 @@ internal static class TerminalFrame
     {
         if (bar is { } withBar)
         {
-            // The For you bar (PIL1184): the page takes the whole row less the library's strip (for the page shown, which sets the toast rule), and the cards panel is laid over its right side
-            // while the bar is open, so the page is the same size open and collapsed. Nothing here reserves width for the panel.
+            // The For you bar (PIL1184): the page takes the whole row (the page shown sets the toast rule), the edge handle is laid over its right edge, and the cards panel is laid over its right side
+            // while the bar is open over the page, or beside it while docked (the page is then the width that is left).
             return Layout.Builder.VStack(rail, withBar.Host.Frame(page, cards, withBar.Shown).HStar()).Bg(Palette.Current.Ground).Stretch();
         }
         // The panel takes 38 columns (the GUI's 300 units) beside the page.
@@ -46,6 +46,11 @@ internal static class TerminalFrame
     public static ImmutableArray<Layout.ArrangedNode<int>> Build(Layout.Node rail, Layout.Node page, Layout.Node? cards, int columns, int rows, Layout.IMeasureContext<int> measure, TooltipRequest? tooltip = null, (NotificationsHost Host, PilotPage Shown)? bar = null)
     {
         var window = new Rect<int>(0, 0, columns, rows);
+        if (bar is { } sized)
+        {
+            // A cell is 8 design units wide; a docked bar that would leave the page too narrow is drawn over it.
+            sized.Host.RoomUnits = NotificationsHost.TerminalRoom(columns);
+        }
         var frame = Clip(Layout.Engine.Arrange(Tree(rail, page, cards, bar), window, measure));
         return tooltip is { } due ? frame.AddRange(Layout.Engine.Arrange(TooltipLayer<RgbaImage>.Tree(due), window, measure)) : frame;
     }

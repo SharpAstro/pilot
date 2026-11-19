@@ -1339,9 +1339,11 @@ the pixels would, **d** shows **Designs** (a plain key like **q**, since every d
 apart from Ctrl+D in terminals; it is text inside a box), **n** shows **Notifications** (a plain key for the same reason: Ctrl+N
 is the For you bar's own toggle and Ctrl+Shift+N is not told apart from it), **q** and **Ctrl+C** quit (**q** and **n** are
 text inside a box). The watchtower and cards panel is the **For you bar**, as in the window (DIR.Lib's notifications
-component): open, it is laid over the page's right side and never narrows the page; collapsed, it is a strip at the right
-edge with the bell (the count, amber while a card rings) and new cards and events show as toasts. **Ctrl+N**, the bar's
-Collapse button and the strip's expander toggle it, and the bell opens the Notifications page: what needs you, then
+component) and has three states: collapsed (only an edge handle on the right edge, and new cards and events show as toasts), open over
+the page's right side, and docked (a panel beside the page, which is laid out in the columns that are left; a window too narrow for that
+opens the bar over the page). The pin in the bar's header switches over and docked. The handle is tinted amber while a card rings or
+needs you, the accent when something new arrived, and neutral otherwise. **Ctrl+N** and the handle toggle the bar; the rail's
+Notifications entry is the one bell (the count, amber while a card rings) and opens the Notifications page: what needs you, then
 everything that happened, newest first. `--node host:port` flies a node on the LAN, as everywhere.
 
 A **page bar** (`TerminalRail`, built from `PilotChrome.Pages`, so a page added there shows here with no second list) runs

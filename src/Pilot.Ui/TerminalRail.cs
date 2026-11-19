@@ -112,13 +112,14 @@ internal static class TerminalRail
     /// GUI night rail's letters, with ASCII ones of the terminal's own for Flights and Settings, whose night glyphs are the
     /// plane and the cog.
     /// </summary>
-    public static string Glyph(PilotPage page, GlyphMode mode, JobsScreen? jobs, IdeasScreen? ideas, DateTimeOffset now)
+    public static string Glyph(PilotPage page, GlyphMode mode, JobsScreen? jobs, IdeasScreen? ideas, DateTimeOffset now, BellState? bell = null)
     {
         var icon = PilotChrome<DIR.Lib.RgbaImage>.Pages.First(p => p.Page == page).Icon;
         var glyph = page switch
         {
             PilotPage.Jobs => PilotChrome<DIR.Lib.RgbaImage>.JobsGlyph(jobs, now).Glyph,
             PilotPage.Ideas => PilotChrome<DIR.Lib.RgbaImage>.IdeasGlyph(ideas).Glyph,
+            PilotPage.Notifications => PilotChrome<DIR.Lib.RgbaImage>.NotificationsGlyph(bell).Glyph,
             _ => icon,
         };
         if (mode == GlyphMode.Emoji)
@@ -130,14 +131,15 @@ internal static class TerminalRail
             PilotPage.Flights => "Fl",
             PilotPage.Settings => "Se",
             PilotPage.Ideas => (ideas?.Noted ?? 0) is > 0 and var n ? $"I{(n > 99 ? "99+" : n)}" : "I",
+            PilotPage.Notifications => PilotChrome<DIR.Lib.RgbaImage>.NightBell(bell),
             _ => PilotChrome<DIR.Lib.RgbaImage>.NightGlyph(page, glyph),
         };
     }
 
     /// <summary>An entry's text, <see cref="EntryCells"/> chars (one cell each, as a cell holds one UTF-16 char).</summary>
-    public static string EntryText(PilotPage page, GlyphMode mode, JobsScreen? jobs, IdeasScreen? ideas, DateTimeOffset now, bool narrow = false)
+    public static string EntryText(PilotPage page, GlyphMode mode, JobsScreen? jobs, IdeasScreen? ideas, DateTimeOffset now, bool narrow = false, BellState? bell = null)
     {
-        var glyph = Glyph(page, mode, jobs, ideas, now);
+        var glyph = Glyph(page, mode, jobs, ideas, now, bell);
         var cells = narrow ? NarrowGlyphCellsOf(page) : GlyphCells;
         if (glyph.Length > cells)
         {
@@ -145,7 +147,7 @@ internal static class TerminalRail
         }
         // A counted Ideas entry puts a middle dot between its count and the key, so the count never reads as one number with the
         // key. The dot takes the leading space's cell, so the entry keeps its width.
-        if (page == PilotPage.Ideas && glyph.Any(char.IsAsciiDigit))
+        if (page is PilotPage.Ideas or PilotPage.Notifications && glyph.Any(char.IsAsciiDigit))
         {
             return $"{glyph.PadRight(cells)}·{KeyFor(page)} ";
         }
@@ -185,7 +187,7 @@ internal static class TerminalRail
     private static string Remember(Memory? memory, PilotPage page, string text) => memory?.Entry(page, text) ?? text;
 
     /// <summary>The bar's tree: one row of entries, the active page marked with a background, each a button that shows its page and declares the page's Ctrl+digit chord. <paramref name="chords"/> are zero-size nodes that ride in the row (the input's other declared keys).</summary>
-    public static Layout.Node Tree(PilotPage active, GlyphMode mode, JobsScreen? jobs, IdeasScreen? ideas, DateTimeOffset now, Action<PilotPage> show, Memory? memory = null, int columns = FullColumns, IEnumerable<Layout.Node>? chords = null)
+    public static Layout.Node Tree(PilotPage active, GlyphMode mode, JobsScreen? jobs, IdeasScreen? ideas, DateTimeOffset now, Action<PilotPage> show, Memory? memory = null, int columns = FullColumns, IEnumerable<Layout.Node>? chords = null, BellState? bell = null)
     {
         if (memory is not null)
         {
@@ -196,12 +198,12 @@ internal static class TerminalRail
         var entries = Keys.Select(k =>
         {
             var on = k.Page == active;
-            return Layout.Builder.Text(Remember(memory, k.Page, EntryText(k.Page, mode, jobs, ideas, now, narrow)), 12f, on ? palette.Bright : palette.Dim, TextAlign.Near, TextAlign.Center)
+            return Layout.Builder.Text(Remember(memory, k.Page, EntryText(k.Page, mode, jobs, ideas, now, narrow, bell)), 12f, on ? palette.Bright : palette.Dim, TextAlign.Near, TextAlign.Center)
                 .WFixed(WidthOf(k.Page, narrow))
                 .HFixed(16f)
                 .Bg(on ? palette.RowFocusBg : palette.RowAltBg)
                 .BgHover(palette.RowHoverBg)
-                .WithTooltip($"{k.Label} ({k.Key})")
+                .WithTooltip(k.Page == PilotPage.Notifications && PilotChrome<DIR.Lib.RgbaImage>.NotificationsGlyph(bell).Said is { } said ? $"{k.Label}: {said} ({k.Key})" : $"{k.Label} ({k.Key})")
                 .Follows(new HitResult.ButtonHit(Action(k.Page)), _ => show(k.Page))
                 .WithShortcut(ChordFor(k.Page));
         }).ToArray();

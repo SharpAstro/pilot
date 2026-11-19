@@ -382,7 +382,7 @@ public sealed class LinkMenuTests
     public void AReposPrLinkOffersCopyUrlForThatPr()
     {
         // The page a 1280 window gave before the For you strip: room for the Open PRs column, where the PR link is.
-        var wide = StripRoom.Beside(1280);
+        var wide = PageRoom.Beside(1280);
         using var renderer = new RgbaImageRenderer((uint)wide, 800);
         var copied = new List<string>();
         var chrome = NewChrome(renderer);

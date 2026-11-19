@@ -541,17 +541,19 @@ while (!stop.IsCancellationRequested)
         chrome.Home.Today = spendReads.Today;
         // On the Chat page the panel drops its "Chat with the watchtower" foot, as the window's does: the page is that chat.
         cards.OnChatPage = page == PilotPage.Chat;
-        // The For you bar (PIL1184) is the window's too: open it covers the page's right side, collapsed it is a strip with the bell, and the page is the
-        // columns less the strip either way. Every open card is a notification in its feed.
+        // The For you bar (PIL1184) is the window's too: it is collapsed (an edge handle), open over the page's right side, or docked beside the page
+        // (the page is the columns less the bar's), as the pin in its header chooses. The rail's Notifications entry is the one bell. Every open card is a notification in its feed.
         var bar = chrome.Notifications;
         bar.Sync(pages.Cards.Open, card => cards.NodeOf(card)?.Name, now);
         chrome.ObserveEvents(pages.Jobs, pages.Flights, null, now);
         var cardsOver = bar.Open && (pages.Cards.HasAny || cards.CanTell && !cards.OnChatPage);
-        chat.CellColumns = TerminalFrame.PageColumnsWithBar(columns);
+        bar.RoomUnits = NotificationsHost.TerminalRoom(columns);
+        var dockedBar = bar.DockedNow && cardsOver && page != PilotPage.Notifications;
+        chat.CellColumns = TerminalFrame.PageColumnsWithBar(columns, dockedBar);
         if (page == PilotPage.Designs)
         {
-            // The page's own room, as the Chat page's: the strip takes its columns, and the design's chat and cell view are sized to what is left.
-            chrome.Designs.Terminal = (TerminalFrame.PageColumnsWithBar(columns), rows);
+            // The page's own room, as the Chat page's: a docked bar takes its columns, and the design's chat and cell view are sized to what is left.
+            chrome.Designs.Terminal = (TerminalFrame.PageColumnsWithBar(columns, dockedBar), rows);
         }
         var pageTree = page switch
         {
@@ -569,7 +571,7 @@ while (!stop.IsCancellationRequested)
             PilotPage.Settings => settings.Tree(now, width),
             _ => home.Tree(new HomeScreen(pages.Flights, pages.Sessions, pages.Jobs, pages.Cards, pages.Machines)),
         };
-        var railTree = TerminalRail.Tree(page, glyphMode, pages.Jobs, pages.Ideas, now, input.Show, railMemory, columns, input.Chords());
+        var railTree = TerminalRail.Tree(page, glyphMode, pages.Jobs, pages.Ideas, now, input.Show, railMemory, columns, input.Chords(), chrome.Notifications.Bell);
         // A glyph that changed was drawn blank for this frame (see TerminalRail.Memory): draw the next at once.
         if (railMemory.Settling)
         {

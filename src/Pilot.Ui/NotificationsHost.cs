@@ -6,11 +6,10 @@ using Pilot.Contracts;
 namespace Pilot.Ui;
 
 /// <summary>
-/// The For you side bar, one per window (PIL1184), on DIR.Lib's notifications component: the strip at the right edge with its bell
-/// (the count, amber while a card rings), the toasts and the frame's shortcut are the library's (<see cref="NotificationsLayout"/>);
-/// pilot holds neither the bell nor the strip. What pilot adds is the model (every open card is one staying notification in the
-/// <see cref="Feed"/>) and what the open bar holds: the cards panel, laid over the right of the page in the bar's place, so the page
-/// never changes size when the bar opens or collapses. One declaration for the GUI and for the terminal: no branch on which.
+/// The For you side bar, one per window (PIL1184), on DIR.Lib's notifications component: the toasts are the library's
+/// (<see cref="NotificationsLayout"/>); the bell is the rail's Notifications entry (PIL1205) and the bar opens and collapses from an edge handle. What pilot
+/// adds is the model (every open card is one staying notification in the <see cref="Feed"/>), the three states (collapsed, over the page, docked beside it,
+/// switched by the pin in the header) and what the open bar holds: the cards panel. One declaration for the GUI and for the terminal: no branch on which.
 /// </summary>
 internal sealed class NotificationsHost
 {
@@ -18,7 +17,7 @@ internal sealed class NotificationsHost
     // one and the host folds the toggle into Open on the next frame (Fold).
     private readonly NotificationsState _lib = new();
     private readonly Dictionary<(string? Node, string Id), long> _ids = [];
-    private bool _open = true;
+    private BarStates _state = BarStates.Over, _lastOpen = BarStates.Over;
 
     /// <summary>The ids' notifications, one per open card.</summary>
     public NotificationFeed Feed { get; } = new() { KeepFor = DefaultKeepFor };
@@ -70,7 +69,7 @@ internal sealed class NotificationsHost
 
     /// <summary>
     /// The Notifications page's body: the library's list frame (Needs you, then History newest first, with Clear), laid as wide as the page.
-    /// It has no strip and no toasts, so the window's own strip keeps the key.
+    /// It declares no toggle key and no toasts, so the window's edge handle keeps the key.
     /// </summary>
     public Layout.Node ListFrame(float width)
     {
@@ -100,28 +99,84 @@ internal sealed class NotificationsHost
     /// </summary>
     public Func<CardRow, Func<Layout.Node>?>? CardBody { get; set; }
 
+    /// <summary>What the rail's Notifications entry shows: the count of what needs the person and whether a card rings.</summary>
+    public BellState Bell => new(Feed.BellCount, Ringing);
+
+    /// <summary>Whether a card in the Ring bin is open, as of the last <see cref="Sync"/>.</summary>
+    public bool Ringing { get; private set; }
+
     /// <summary>The key that toggles the bar: the library's.</summary>
     public static KeyChord ToggleKey => Style.ToggleKey;
 
     /// <summary>The library's sizes; the open bar is as wide as the cards panel.</summary>
     public static NotificationsStyle Style { get; } = new() { BarWidth = CardsView<RgbaImage>.Width };
 
-    /// <summary>Whether the bar is open over the page's right side; false when only the strip shows.</summary>
-    public bool Open
+    /// <summary>
+    /// The bar's state (PIL1205): collapsed (the handle only, toasts arrive), open over the page, or docked beside it so the page is laid out in
+    /// the width that is left. Setting an open state also makes it the one the handle and the key return to.
+    /// </summary>
+    public BarStates State
     {
-        get => _open;
+        get => _state;
         set
         {
-            if (_open != value)
+            if (value != BarStates.Collapsed)
             {
-                _open = value;
-                OpenChanged?.Invoke(value);
+                _lastOpen = value;
+            }
+            if (_state == value)
+            {
+                return;
+            }
+            var wasOpen = Open;
+            _state = value;
+            _seenPosted = _posted;
+            StateChanged?.Invoke(value);
+            if (wasOpen != Open)
+            {
+                OpenChanged?.Invoke(Open);
             }
         }
     }
 
-    /// <summary>Raised when the bar is opened or collapsed, so the window can keep the choice.</summary>
+    /// <summary>The open state the bar was last in, which the handle and the key open it in again (over until one is chosen).</summary>
+    public BarStates LastOpen => _lastOpen;
+
+    /// <summary>Whether the bar is open, over the page or docked; true opens it in <see cref="LastOpen"/>.</summary>
+    public bool Open
+    {
+        get => _state != BarStates.Collapsed;
+        set => State = value ? _lastOpen : BarStates.Collapsed;
+    }
+
+    /// <summary>Whether the bar is set to dock beside the page (its state; <see cref="DockedNow"/> is whether the window has room for it).</summary>
+    public bool Docked => _state == BarStates.Docked;
+
+    /// <summary>The least width, in design units, a docked bar leaves the page: the pages stand (the page-wide sweeps pass) from about 480, so a narrower window opens the bar over the page instead.</summary>
+    public const float MinPageUnits = 500f;
+
+    /// <summary>The design-unit width of the area beside the rail, which the page and a docked bar share; null (unknown) lets a docked bar dock.</summary>
+    public float? RoomUnits { get; set; }
+
+    /// <summary>Whether the bar is docked in the window as drawn: set to dock and leaving the page <see cref="MinPageUnits"/>; a narrower window draws it over the page.</summary>
+    public bool DockedNow => Docked && (RoomUnits is not { } room || room >= NeededRoom);
+
+    /// <summary>The room in design units a terminal of <paramref name="columns"/> gives the bar and the page: the bar takes whole columns, so the part of a column it does not use is not room.</summary>
+    public static float TerminalRoom(int columns) => columns * 8f - (MathF.Ceiling(Style.BarWidth / 8f) * 8f - Style.BarWidth);
+
+    private float NeededRoom => Style.BarWidth + MinPageUnits;
+
+    /// <summary>Sets <see cref="RoomUnits"/> from the window's size in pixels, the window's scale and the rail's width in design units.</summary>
+    public void SetRoom(float widthPixels, float scale, float railUnits) => RoomUnits = widthPixels / scale - railUnits;
+
+    /// <summary>Raised when the bar is opened or collapsed, so the window can redraw.</summary>
     public event Action<bool>? OpenChanged;
+
+    /// <summary>Raised when the state changes, so the window can keep the choice.</summary>
+    public event Action<BarStates>? StateChanged;
+
+    /// <summary>Switches an open bar between over the page and docked; what the header's pin does.</summary>
+    public void TogglePin() => State = _state == BarStates.Docked ? BarStates.Over : BarStates.Docked;
 
     /// <summary>Where the pointer is, in the space the tree is arranged in (it moves the toasts out from under it); null when unknown.</summary>
     public Vector2? Pointer { get; set; }
@@ -149,7 +204,7 @@ internal sealed class NotificationsHost
     }
 
     /// <summary>Toggles the bar; what the bell, the collapse button and the key all do.</summary>
-    public void Toggle() => Open = !Open;
+    public void Toggle() => State = Open ? BarStates.Collapsed : _lastOpen;
 
     /// <summary>
     /// Keeps the feed to the open cards: a card new to the panel is posted (a ringing one as a warning, any other as information),
@@ -159,12 +214,14 @@ internal sealed class NotificationsHost
     {
         Fold();
         var seen = new HashSet<(string?, string)>();
+        Ringing = open.Any(c => c.Bin == CardBin.Ring);
         foreach (var card in open)
         {
             var key = (nodeOf(card), card.Id);
             seen.Add(key);
             if (!_ids.ContainsKey(key))
             {
+                Posted();
                 _ids[key] = Feed.Post(new Notification
                 {
                     Title = card.Title,
@@ -191,6 +248,7 @@ internal sealed class NotificationsHost
     /// </summary>
     public void PostEvent(PilotEvent e, Action? open, DateTimeOffset now)
     {
+        Posted();
         var posted = Feed.Post(new Notification
         {
             Title = e.Title,
@@ -221,9 +279,9 @@ internal sealed class NotificationsHost
     }
 
     /// <summary>
-    /// The window's frame: <paramref name="page"/> beside the library's strip, the toasts over it while the bar is collapsed, and, while it is
-    /// open, <paramref name="panel"/> over the page's right side, under a row holding the collapse button. A null <paramref name="panel"/>
-    /// (nothing to show) leaves the page and the strip. <paramref name="shown"/> is the page on screen: the Notifications page is the whole
+    /// The window's frame: <paramref name="page"/> at the window's full width (no strip), the toasts over it while the bar is collapsed, and, while it is
+    /// open, <paramref name="panel"/> over the page's right side, under a header row. A null <paramref name="panel"/>
+    /// (nothing to show) leaves the page and the edge handle. <paramref name="shown"/> is the page on screen: the Notifications page is the whole
     /// list, so it gets neither the open bar (it would repeat the list and cover its header) nor toasts.
     /// </summary>
     public Layout.Node Frame(Layout.Node page, Layout.Node? panel, PilotPage shown)
@@ -238,30 +296,120 @@ internal sealed class NotificationsHost
         // on the list itself.
         var pageStyle = Style with { StripWidth = 0f, MaxToasts = barOpen || onList ? 0 : Style.MaxToasts };
         var body = NotificationsLayout.Build(page, Feed, _lib, colors, pageStyle, Pointer, PageRect);
+        // The library docks a strip of no width beside what it builds and lays its bell and count past the edge; the rail's entry is the one
+        // bell, so only the fill (the page and its toasts) is kept, and the toggle key the strip declared is declared here on a node of no size.
+        body = body is Layout.Node.Dock { Fill: var fill } ? fill : body;
+        // It sits under the fill and is fixed at no size: a plain Box(0,0) is a spacer an overlay stretches, and on top it shadowed the toasts.
+        // The toggle key is declared on the handle tab below (always present); a stretched box here caught every press on the page.
         if (barOpen)
         {
-            body = Layout.Builder.Overlay(body, Layout.Builder.HStack(Layout.Builder.Spacer().WStar().HStar(), OpenBar(panel!, colors)).Stretch());
+            if (DockedNow)
+            {
+                // Docked: the page and the bar side by side, the page a star and the bar its fixed width, so the page is arranged in what is left.
+                body = Layout.Builder.HStack(body.WStar().HStar(), OpenBar(panel!, colors)).Stretch();
+            }
+            else
+            {
+                // Over: a press outside the bar collapses it; the layer sits under the bar so a press on the bar is not one.
+                var outside = Layout.Builder.Box(0f, 0f)
+                    .Clickable(new HitResult.ButtonHit(OutsideAction), _ => State = BarStates.Collapsed);
+                body = Layout.Builder.Overlay(Layout.Builder.Overlay(body, outside), Layout.Builder.HStack(Layout.Builder.Spacer().WStar().HStar(), OpenBar(panel!, colors)).Stretch());
+            }
         }
-        // The strip is the library's own, built over an empty page so only the strip shows; collapsed, its foot holds the way back to the open bar
-        // (the bell opens the page).
-        var strip = NotificationsLayout.Build(Layout.Builder.Spacer().Stretch(), Feed, _lib, colors, Style with { MaxToasts = 0 });
-        if (!Open)
+        // No strip and no bell here: the rail's Notifications entry is the one bell (PIL1205), so the page has the window's whole width.
+        // The bar opens and collapses from the edge handle, laid over the page last so a press on it is the first hit; it takes no room.
+        return Layout.Builder.Overlay(body, Handle(barOpen)).Stretch();
+    }
+
+    /// <summary>
+    /// The edge handle (PIL1205), as in the PDF viewer: a tab on the window's right edge, vertically centred, the left chevron while the bar is
+    /// collapsed and the right one on the open bar's left edge. It is an overlay (it takes no layout room) and one declaration for the window
+    /// and the terminal, whose cell host measures its design units as columns and rows. Scroll bar rule: the handle lies over the page's scroll
+    /// bar column but only <see cref="HandleHeight"/> units of it, at the vertical middle, so the bar's track stays pressable above and below
+    /// it and the wheel still moves the thumb while it passes behind the tab.
+    /// </summary>
+    private Layout.Node Handle(bool barOpen)
+    {
+        var (bg, fg, ring) = HandleColors(Palette.Current, HandleTint);
+        Layout.Node tab = Layout.Builder.VStack(Layout.Builder.Spacer().HStar(), Layout.Builder.Text(barOpen ? "\u00bb" : "\u00ab", 16f, fg, TextAlign.Center).WStar().HAuto(), Layout.Builder.Spacer().HStar())
+            .CrossCenter()
+            .Bg(bg);
+        if (ring is { } r)
         {
-            var expand = Layout.Builder.HStack(Layout.Builder.Text("◂", 14f, colors.Text, TextAlign.Center).WStar())
-                .HFixed(ExpanderHeight).Bg(colors.Card)
-                .Clickable(new HitResult.ButtonHit(ExpandAction), _ => Toggle(), CursorKind.Pointer)
-                .WithTooltip($"Open the For you bar ({ChordText()})", Layout.DockSide.Left)
-                .WStar();
-            strip = Layout.Builder.Overlay(strip, Layout.Builder.VStack(Layout.Builder.Spacer().HStar(), expand).Stretch());
+            tab = tab.Border(r, 2f, 0f);
         }
-        // A window too narrow for the page and the strip keeps no strip, by declaration: the strip's column is a star of StripShare, held to the
-        // strip's width, that collapses below it, so the engine drops it once the page would be left under MinPageUnits (the flights canvas needs
-        // about 370 at 700 wide and DPI 1.5). The key still toggles the bar, and the rail's Notifications page lists everything.
-        var stripColumn = Layout.Builder.HStack(strip.WFixed(Style.StripWidth).HStar())
-            .WStar(StripShare, 0f, Style.StripWidth)
-            .CollapseBelow(Style.StripWidth)
-            .HStar();
-        return Layout.Builder.HStack(body.WStar().HStar(), stripColumn).Stretch();
+        tab = tab
+            .Clickable(new HitResult.ButtonHit(HandleAction), _ => Toggle(), CursorKind.Pointer)
+            .WithShortcut(Style.ToggleKey)
+            .WithTooltip($"{(barOpen ? "Collapse" : "Open")} the For you bar ({ChordText()})", Layout.DockSide.Left)
+            .WFixed(HandleWidth).HFixed(HandleHeight);
+        var column = Layout.Builder.VStack(Layout.Builder.Spacer().HStar(), tab, Layout.Builder.Spacer().HStar()).WAuto().HStar();
+        var gap = Layout.Builder.Spacer().WFixed(barOpen ? Style.BarWidth : 0f).HStar();
+        return Layout.Builder.HStack(Layout.Builder.Spacer().WStar().HStar(), column, gap).Stretch();
+    }
+
+    /// <summary>The handle's width and height in design units.</summary>
+    public const float HandleWidth = 26f, HandleHeight = 80f;
+
+    /// <summary>The hit of a press outside the open bar while it is over the page.</summary>
+    public const string OutsideAction = "notifications:outside";
+
+    /// <summary>The hit of the header's pin button.</summary>
+    public const string PinAction = "notifications:pin";
+
+    /// <summary>The hit of the edge handle, apart from the rail's bell so a press on it toggles the bar and does not open the page.</summary>
+    public const string HandleAction = "notifications:handle";
+
+    /// <summary>How the handle is tinted: amber while a card rings or needs the person, the accent when something arrived since the bar was last open, neutral otherwise.</summary>
+    public HandleTints HandleTint => Ringing || Feed.BellCount > 0 ? HandleTints.NeedsYou : !Open && _posted != _seenPosted ? HandleTints.New : HandleTints.Neutral;
+
+    /// <summary>
+    /// The handle's fill, the chevron's colour and a ring for <paramref name="tint"/>, from the palette. The chevron is whichever of the
+    /// palette's bright, ground, black and selection bar reads best on the fill. Each tint takes its own colour as the fill where a chevron
+    /// reads on it at 4.5:1. Where none does (the night palette, red on black, has about two fills that carry a chevron), amber falls back to
+    /// the selection bar, the brightest fill, and the accent to the neutral's dark fill with a ring in the selection bar's colour, so the three
+    /// states still draw three different tabs and the neutral one stays dark. The ring is null where the fill alone tells the state.
+    /// </summary>
+    internal static (RGBAColor32 Fill, RGBAColor32 Chevron, RGBAColor32? Ring) HandleColors(Palette p, HandleTints tint)
+    {
+        var black = new RGBAColor32(0, 0, 0, 0xff);
+        (RGBAColor32 Chevron, double Ratio) Ink(RGBAColor32 fill)
+        {
+            var chevron = new[] { p.Bright, p.Ground, black, p.SelectionBg }.MaxBy(c => Contrast.Ratio(c, fill));
+            return (chevron, Contrast.Ratio(chevron, fill));
+        }
+        var neutral = Ink(p.HeaderBg);
+        switch (tint)
+        {
+            case HandleTints.NeedsYou:
+            {
+                var own = Ink(p.Held);
+                if (own.Ratio >= 4.5)
+                {
+                    return (p.Held, own.Chevron, null);
+                }
+                var bright = Ink(p.SelectionBg);
+                return bright.Ratio > own.Ratio ? (p.SelectionBg, bright.Chevron, null) : (p.Held, own.Chevron, null);
+            }
+            case HandleTints.New:
+            {
+                var own = Ink(p.RailAccent);
+                return own.Ratio >= 4.5 ? (p.RailAccent, own.Chevron, null) : (p.HeaderBg, neutral.Chevron, p.SelectionBg);
+            }
+            default:
+                return (p.HeaderBg, neutral.Chevron, null);
+        }
+    }
+
+    private long _posted, _seenPosted;
+
+    private void Posted()
+    {
+        _posted++;
+        if (Open)
+        {
+            _seenPosted = _posted;
+        }
     }
 
     private Layout.Node OpenBar(Layout.Node panel, NotificationsColors colors)
@@ -272,36 +420,25 @@ internal sealed class NotificationsHost
             .Clickable(new HitResult.ButtonHit("notifications:all"), _ => OpenPage?.Invoke(), CursorKind.Pointer)
             .WithTooltip("Open the Notifications page: everything that needs you and everything that happened", Layout.DockSide.Bottom)
             .WAuto();
+        var pinned = Docked;
+        var pinBg = pinned ? Palette.Current.RailAccent : colors.Card;
+        var pinFg = new[] { colors.Text, Palette.Current.Ground, new RGBAColor32(0, 0, 0, 0xff) }.MaxBy(c => Contrast.Ratio(c, pinBg));
+        var pin = Layout.Builder.HStack(Layout.Builder.Text(pinned ? "Pinned" : "Pin", 12f, pinFg, TextAlign.Center).WAuto())
+            .Pad(6f, 2f)
+            .Bg(pinBg)
+            .Clickable(new HitResult.ButtonHit(PinAction), _ => TogglePin(), CursorKind.Pointer)
+            .WithTooltip(pinned
+                ? DockedNow ? "Pinned beside the page: press to let the bar open over it" : "Pinned, but this window has no room beside the page, so the bar opens over it: press to unpin"
+                : "Open over the page: press to pin the bar beside it", Layout.DockSide.Bottom)
+            .WAuto();
         var collapse = Layout.Builder.HStack(
                 Layout.Builder.Text("For you", 12f, colors.Dim).WStar(),
-                all,
-                Layout.Builder.HStack(Layout.Builder.Text("Collapse ▸", 12f, colors.Text, TextAlign.Center).WAuto())
-                    .Pad(6f, 2f)
-                    .Bg(colors.Card)
-                    .Clickable(new HitResult.ButtonHit(CollapseAction), _ => Toggle(), CursorKind.Pointer)
-                    .WithTooltip($"Collapse the For you bar to its strip ({ChordText()})", Layout.DockSide.Bottom)
-                    .WAuto())
+                pin,
+                all)
             .WithGap(6f).CrossCenter().Pad(6f, 2f).WStar();
         return Layout.Builder.VStack(collapse, panel.HStar())
             .Bg(colors.Surface).BorderLeft(colors.Separator).WithCursor(CursorKind.Default).WFixed(Style.BarWidth).HStar();
     }
-
-    /// <summary>The narrowest page, in design units, the strip may leave beside it; a window narrower than that has no strip.</summary>
-    public const float MinPageUnits = 400f;
-
-    /// <summary>
-    /// The strip column's star weight beside the page's 1: its share of a row of <see cref="MinPageUnits"/> plus the strip is exactly the
-    /// strip's width, so in any narrower row the share falls under the width and the column collapses (in a wider one it is held to it).
-    /// </summary>
-    private static readonly float StripShare = Style.StripWidth / MinPageUnits;
-
-    private const float ExpanderHeight = 28f;
-
-    /// <summary>The hit of the open bar's Collapse button, apart from the strip's bell so a press on it toggles the bar and does not open the page.</summary>
-    public const string CollapseAction = "notifications:collapse";
-
-    /// <summary>The hit of the collapsed strip's expander.</summary>
-    public const string ExpandAction = "notifications:expand";
 
     /// <summary>The toggle key as a person reads it, for a tooltip.</summary>
     public static string ChordText() => "Ctrl+N";
@@ -316,3 +453,12 @@ internal sealed class NotificationsHost
         }
     }
 }
+
+/// <summary>The For you bar's three states.</summary>
+internal enum BarStates { Collapsed, Over, Docked }
+
+/// <summary>The edge handle's tint.</summary>
+internal enum HandleTints { Neutral, New, NeedsYou }
+
+/// <summary>The rail bell's state: <paramref name="Count"/> is what needs the person, <paramref name="Ringing"/> a card in the Ring bin.</summary>
+internal readonly record struct BellState(int Count, bool Ringing);

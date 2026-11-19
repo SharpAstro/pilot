@@ -280,7 +280,7 @@ public sealed class ReposPageTests
     public void TheWindowPaintsTheRowsAndTheirLinks()
     {
         // The page a 1280 window gave before the For you strip: room for the Open PRs column, whose PR links the test reads.
-        var wide = StripRoom.Beside(1280);
+        var wide = PageRoom.Beside(1280);
         using var renderer = new RgbaImageRenderer((uint)wide, 800);
         var (chrome, repos) = Chrome(renderer);
         chrome.Show(PilotPage.Repos);

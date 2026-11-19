@@ -23,12 +23,14 @@ public sealed class RenderCostTests
         public int Fitted;
         public long FittedChars;
         public Dictionary<string, int> Texts { get; } = [];
+        public List<string> FittedTexts { get; } = [];
 
         public void Reset()
         {
             Asked = Fitted = 0;
             FittedChars = 0;
             Texts.Clear();
+            FittedTexts.Clear();
         }
 
         public override (float Width, float Height) MeasureText(ReadOnlySpan<char> text, string fontPath, float fontSize)
@@ -40,6 +42,7 @@ public sealed class RenderCostTests
             {
                 Fitted++;
                 FittedChars += text.Length;
+                FittedTexts.Add($"{text} @{fontSize}");
             }
             return base.MeasureText(text, fontPath, fontSize);
         }
@@ -79,7 +82,7 @@ public sealed class RenderCostTests
         renderer.Reset();
         chrome.Render(sessions, null, screen, new RectF32(0, 0, 1280, 800));
         TestContext.Current.TestOutputHelper?.WriteLine(
-            $"first frame: {firstAsked} asked, {firstFitted} fitted; second: {renderer.Asked} asked, {renderer.Fitted} fitted ({renderer.FittedChars} chars)\n{top}");
+            $"first frame: {firstAsked} asked, {firstFitted} fitted; second: {renderer.Asked} asked, {renderer.Fitted} fitted ({renderer.FittedChars} chars: {string.Join(" | ", renderer.FittedTexts)})\n{top}");
         return new Cost(firstAsked, firstFitted, renderer.Asked, renderer.Fitted, renderer.FittedChars);
     }
 
