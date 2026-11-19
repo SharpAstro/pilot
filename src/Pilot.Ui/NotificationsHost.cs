@@ -362,7 +362,7 @@ internal sealed class NotificationsHost
     internal static (RGBAColor32 Fill, RGBAColor32 Chevron) HandleColors(Palette p, HandleTints tint)
     {
         // The tint's own colour first; where nothing of the palette's reads on it (the night palette's red accent), the palette's selection bar (the brightest it has, with black ink) instead.
-        var fills = tint switch { HandleTints.NeedsYou => new[] { p.Held, p.SelectionBg }, HandleTints.New => [p.RailAccent, p.SelectionBg], _ => [p.HeaderBg] };
+        var fills = tint switch { HandleTints.NeedsYou => new[] { p.Held, p.SelectionBg }, HandleTints.New => [p.RailAccent, p.SelectionBg], _ => [p.HeaderBg, p.SelectionBg] };
         var black = new RGBAColor32(0, 0, 0, 0xff);
         var best = (Fill: fills[0], Chevron: black, Ratio: -1.0);
         foreach (var fill in fills)
