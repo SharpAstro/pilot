@@ -315,7 +315,7 @@ internal sealed class NotificationsHost
     private Layout.Node Handle(bool barOpen)
     {
         var (bg, fg) = HandleColors(Palette.Current, HandleTint);
-        var tab = Layout.Builder.VStack(Layout.Builder.Text(barOpen ? "\u00bb" : "\u00ab", 16f, fg, TextAlign.Center).WStar().HAuto())
+        var tab = Layout.Builder.VStack(Layout.Builder.Spacer().HStar(), Layout.Builder.Text(barOpen ? "\u00bb" : "\u00ab", 16f, fg, TextAlign.Center).WStar().HAuto(), Layout.Builder.Spacer().HStar())
             .CrossCenter()
             .Bg(bg)
             .Clickable(new HitResult.ButtonHit(HandleAction), _ => Toggle(), CursorKind.Pointer)
