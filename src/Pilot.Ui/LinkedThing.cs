@@ -57,6 +57,7 @@ internal static class LinkedThing
         }
         var x = Layout.Builder.Text(RemoveGlyph, size, removeColor, TextAlign.Center, TextAlign.Center).Pad(6f, 0f).WAuto().BgHover(hover)
             .WithTooltip(removeTip).Follows(new HitResult.ButtonHit($"{hit}-remove:{id}"), _ => remove());
-        return Layout.Builder.HStack(shown, x).WithGap(2f).WStar();
+        // The remove stands before its words, so it is beside the link it takes away and not at the far end of a long row.
+        return Layout.Builder.HStack(x, shown).WithGap(2f).WStar();
     }
 }
