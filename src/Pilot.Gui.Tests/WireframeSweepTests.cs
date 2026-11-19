@@ -119,8 +119,24 @@ public static class WireframeSweepTests
 
     private static readonly Lock DumpLock = new();
 
+    /// <summary>DIR.Lib#275: the notifications list cuts a word wider than its line with no ellipsis (and has no list frame without the strip).</summary>
+    internal const int NotificationsWordIssue = 275;
+
+    /// <summary>
+    /// Findings known and not fixed here, each with its reason and the issue that fixes it (a DIR.Lib issue where the fix is DIR.Lib's): the
+    /// case key and the finding's message as patterns, <c>*</c> for any text, as <see cref="TextOverlapAllowList"/> has them.
+    /// <see cref="WireframeSweepKnownTests"/> fails an entry that no longer matches a finding: once its fault is fixed, the entry goes.
+    /// </summary>
+    internal static readonly IReadOnlyList<AllowedTextFault> Known =
+    [
+        new("notifications | long | *", @"text ""C:\Users\ada\src\example-org*",
+            "A history row's text that is one word wider than the row (the long state's folder path; a job's command with a long --filter is the "
+            + "same) is laid out whole, cut by the row with no ellipsis and run under the list's scroll bar: DIR.Lib's notifications list wraps a "
+            + "row's text at its spaces only", NotificationsWordIssue),
+    ];
+
     internal static ImmutableArray<WireframeFinding> Unknown(string key, ImmutableArray<WireframeFinding> findings) =>
-        [.. findings];
+        [.. findings.Where(f => !Known.Any(k => k.Covers(key, f.Message)))];
 
     internal static string Message(string key, ImmutableArray<WireframeFinding> findings) =>
         $"{key} [{findings.Length} findings]" + string.Concat(findings.Select(f => $"{Environment.NewLine}  {key}: [{f.Rule}] {f.Message}"));
@@ -228,6 +244,44 @@ public sealed class WireframeSweepSelfTests
         findings.ShouldNotContain(x => x.Message.Contains("page:go", StringComparison.Ordinal) || x.Message.Contains("the page's text", StringComparison.Ordinal),
             Wireframe.Describe(findings));
         findings.ShouldContain(x => x.Rule == WireframeRules.TextOverRegion && x.Message.Contains("bar text", StringComparison.Ordinal), Wireframe.Describe(findings));
+    }
+}
+
+/// <summary>The sweep's known findings are its to-do: each has a reason and an issue, and none outlives its fault.</summary>
+public sealed class WireframeSweepKnownTests
+{
+    [Fact]
+    public void EveryEntryHasAReasonAndAnIssue()
+    {
+        foreach (var entry in WireframeSweepTests.Known)
+        {
+            entry.Reason.ShouldNotBeNullOrWhiteSpace(entry.Case);
+            entry.Issue.ShouldBeGreaterThan(0, entry.Case);
+        }
+    }
+
+    /// <summary>An entry that matches no finding of the cases it names is stale: its fault was fixed, so it goes.</summary>
+    [Fact]
+    public async Task NoEntryOutlivesItsFault()
+    {
+        foreach (var entry in WireframeSweepTests.Known)
+        {
+            var found = false;
+            foreach (var (page, state, width, dpi, height) in WireframeSweepTests.CaseTuples())
+            {
+                var key = WireframeSweepTests.Key(page, state, width, dpi, height);
+                if (!entry.CoversCase(key))
+                {
+                    continue;
+                }
+                if ((await WireframeSweepTests.FindingsOf(page, state, width, dpi, height)).Any(f => entry.Covers(key, f.Message)))
+                {
+                    found = true;
+                    break;
+                }
+            }
+            found.ShouldBeTrue($"the known finding '{entry.Case}' / '{entry.Fault}' matches no finding any more: remove it");
+        }
     }
 }
 
