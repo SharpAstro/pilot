@@ -168,7 +168,7 @@ internal sealed partial class DesignsView<TSurface>
         }
         if (_buildNote is { } note)
         {
-            yield return WrappedProse.OneLine(note, 12f, Bright).RowH(22f).Whole(note);
+            yield return Layout.Builder.HStack(WrappedProse.OneLine(note, 12f, Bright).Whole(note)).RowH(22f);
         }
     }
 
@@ -217,7 +217,7 @@ internal sealed partial class DesignsView<TSurface>
     {
         if (NeedsRepo(row) && _buildRepo is null)
         {
-            yield return WrappedProse.OneLine("Which repo is it built in?", 12f, Bright, selectable: false).RowH(22f).Whole("Which repo is it built in?");
+            yield return Layout.Builder.HStack(WrappedProse.OneLine("Which repo is it built in?", 12f, Bright, selectable: false).Whole("Which repo is it built in?")).RowH(22f);
             var repos = _buildScreen?.Repos ?? [];
             if (repos.Count == 0)
             {
@@ -234,7 +234,7 @@ internal sealed partial class DesignsView<TSurface>
         }
         else
         {
-            yield return WrappedProse.OneLine("Which milestone is its idea planned into?", 12f, Bright, selectable: false).RowH(22f).Whole("Which milestone is its idea planned into?");
+            yield return Layout.Builder.HStack(WrappedProse.OneLine("Which milestone is its idea planned into?", 12f, Bright, selectable: false).Whole("Which milestone is its idea planned into?")).RowH(22f);
             var milestones = MilestonesFor(_buildScreen, row);
             if (milestones.Length == 0)
             {
