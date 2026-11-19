@@ -89,9 +89,18 @@ public sealed partial class GhCli
 
     public async Task<bool> FileAtAsync(string repoPath, string commit, string path, CancellationToken cancellationToken)
     {
-        var (exit, _, error) = await RunAsync(["api", $"repos/{{owner}}/{{repo}}/contents/{path}?ref={commit}", "--jq", ".path"], repoPath, cancellationToken);
-        return ParseFound(exit, error) ?? throw new FlightException($"gh could not ask GitHub for {path} at {commit}: {error.Trim()}");
+        var (exit, _, error) = await RunAsync(FileAtArgs(commit, path), repoPath, cancellationToken);
+        return FileAtAnswer(exit, error, commit, path);
     }
+
+    /// <summary>
+    /// Asks with <c>--silent</c> and no <c>--jq</c>: a folder answers with an array, which <c>--jq .path</c> exits 1 on, so a placed
+    /// folder could never be found. <c>--silent</c> exits 0 for a file or a folder and 1 with (HTTP 404) for a missing path.
+    /// </summary>
+    internal static string[] FileAtArgs(string commit, string path) => ["api", $"repos/{{owner}}/{{repo}}/contents/{path}?ref={commit}", "--silent"];
+
+    internal static bool FileAtAnswer(int exit, string error, string commit, string path) =>
+        ParseFound(exit, error) ?? throw new FlightException($"gh could not ask GitHub for {path} at {commit}: {error.Trim()}");
 
     public async Task DeleteBranchAsync(string repoPath, string branch, CancellationToken cancellationToken)
     {

@@ -116,6 +116,43 @@ public sealed class DesignLandLinksTests : IDisposable
     }
 
     [Fact]
+    public async Task ReadingTheIssueBackAfterTheLandFindsNoChangeMadeOnGitHub()
+    {
+        var (id, issue) = await DesignAsync();
+        var flight = Flight(id, 1);
+        Placed(id, issue, flight);
+        await _record.LandedAsync(flight, 77, "0123456", Ct, Sha);
+        var before = await IssueBodyAsync(issue);
+        var edits = _github.Edits.Count;
+        var locks = new DesignLock(_store, _catalog, _github, _time, "DE1", _ => null);
+
+        await locks.ReadBackAsync(id, Ct);
+
+        _store.Find(id)!.GitHubIgnored.ShouldBeEmpty();
+        _store.Find(id)!.GitHubEdits.ShouldBeEmpty();
+        (await IssueBodyAsync(issue)).ShouldBe(before);
+        _github.Edits.Count.ShouldBe(edits);
+    }
+
+    [Fact]
+    public void AskingForAFolderAtACommitSendsSilentAndNoJqSoADirectoryAnswersZero()
+    {
+        var args = GhCli.FileAtArgs(Sha, "docs/designs/12");
+
+        args.ShouldContain("--silent");
+        args.ShouldNotContain("--jq");
+        args[1].ShouldBe($"repos/{{owner}}/{{repo}}/contents/docs/designs/12?ref={Sha}");
+    }
+
+    [Fact]
+    public void AFileAtAnswerReadsExitZeroAsFoundA404AsMissingAndAnyOtherRefusalThrows()
+    {
+        GhCli.FileAtAnswer(0, "", Sha, "docs/designs/12").ShouldBeTrue();
+        GhCli.FileAtAnswer(1, "gh: Not Found (HTTP 404)", Sha, "docs/designs/12").ShouldBeFalse();
+        Should.Throw<FlightException>(() => GhCli.FileAtAnswer(1, "gh: Forbidden (HTTP 403)", Sha, "docs/designs/12"));
+    }
+
+    [Fact]
     public async Task ThePrDesignsSectionAndTheCloseCommentLinkTheFolderAtTheCommit()
     {
         var (id, issue) = await DesignAsync();

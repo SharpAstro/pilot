@@ -320,7 +320,9 @@ public sealed class DesignLock(DesignStore store, RepoCatalog repos, IGitHub git
         var published = files.TryGetValue(DesignStore.DocumentFile, out var text) ? DesignDocument.Parse(Encoding.UTF8.GetString(text)) : new DesignDocument(design.Title ?? design.Id, "", []);
         var why = design.History.FirstOrDefault(v => v.Number == current)?.Why ?? design.Why ?? $"v{current.ToString(CultureInfo.InvariantCulture)}";
         var repoFull = info.GitHub!;
-        var expected = DesignIssueDocument.Block(design.Id, published, current, why, node, repoFull, issue, [.. files.Keys.Where(k => k.StartsWith("renders/", StringComparison.Ordinal))]);
+        // After a land the block's frames link the merge commit's files, not the branch: expect the base the issue is at.
+        var linkBase = DesignIssueDocument.Meta(now.Body) is { Commit.Length: > 0, Folder.Length: > 0 } meta ? DesignLinkBase.OfCommit(meta.Commit, meta.Folder) : null;
+        var expected = DesignIssueDocument.Block(design.Id, published, current, why, node, repoFull, issue, [.. files.Keys.Where(k => k.StartsWith("renders/", StringComparison.Ordinal))], at: linkBase);
         if (sha == DesignIssueReader.Sha256Of(expected) || DesignIssueReader.Read(expected, published) is not { } was || DesignIssueReader.Read(block, published) is not { } found)
         {
             store.Update(design.Id, r => r with { GitHubBlockSha256 = sha, GitHubIgnored = [] });
