@@ -109,6 +109,8 @@ public sealed class DesignRecord(DesignStore store, RepoCatalog repos, NodeState
                 {
                     state.RaiseCard(CardBin.ForYou, OversizeKind, Verbs.FlightTarget(flight.Code), $"{flight.Code}: design {d.Id} v{d.Version.ToString(CultureInfo.InvariantCulture)} is not committed to the repo",
                         $"{result.Note}. The files stay on {DesignSyncText.Branch(design.IssueNumber!.Value)}; make the renders smaller and publish a new version to have them placed.",
+                        [new CardChoice { Label = "Place the files again", Verb = Verbs.OpenPr, Target = Verbs.FlightTarget(flight.Code) }],
+                        summary: $"The files of design {d.Id} v{d.Version.ToString(CultureInfo.InvariantCulture)} are over a size limit, so {flight.Code}'s PR does not carry them. Make the renders smaller, publish a new version, then place them again.",
                         cause: $"{flight.Code}/{d.Id}/v{d.Version.ToString(CultureInfo.InvariantCulture)}");
                 }
             }
