@@ -278,7 +278,7 @@ public sealed class ToastTests
         FlightsScreen FlightIn(FlightState state) => data.Flights with { Lines = [line with { Row = line.Row with { State = state } }] };
         DesignsScreen DesignAt(int versions) => new([new DesignRow { Id = "DSN-1", Title = "A design", Versions = versions }], "sample", T0);
 
-        w.Chrome.ObserveEvents(null, FlightIn(FlightState.Running), DesignAt(1), T0);
+        w.Chrome.ObserveEvents(null, FlightIn(FlightState.Flying), DesignAt(1), T0);
         w.Chrome.ObserveEvents(null, FlightIn(FlightState.Landed), DesignAt(2), T0.AddSeconds(1));
         var toasts = Fading(w);
         toasts.Count.ShouldBe(2);

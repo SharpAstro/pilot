@@ -154,16 +154,25 @@ public sealed class NotificationsBarTests
         chrome.Notifications.Open.ShouldBeFalse();
 
         // The bell, pressed where the layer registered it, opens the Notifications page.
-        var bell = chrome.NotificationsLayer.RegionsFor(h => h is NotificationHit { Part: NotificationPart.Bell }).First();
-        chrome.HandleInput(new InputEvent.MouseDown(bell.X, bell.Y, MouseButton.Left)).ShouldBeTrue();
+        var bell = LayerRegions(chrome).First(r => r.Result is NotificationHit { Part: NotificationPart.Bell });
+        chrome.PressNotification(bell.Result).ShouldBeTrue();
         chrome.Page.ShouldBe(PilotPage.Notifications);
+    }
+
+    private static List<ClickableRegion> LayerRegions(PilotChrome<RgbaImage> chrome)
+    {
+        var regions = new List<ClickableRegion>();
+        chrome.NotificationsLayer.CollectPaintedRegions(regions);
+        return regions;
     }
 
     private static bool ClickOn(PilotChrome<RgbaImage> chrome, string action)
     {
-        var at = chrome.NotificationsLayer.RegionsFor(h => h is HitResult.ButtonHit b && b.Action == action).First();
-        chrome.HandleInput(new InputEvent.MouseDown(at.X, at.Y, MouseButton.Left));
-        return chrome.Router.HandleInput(new InputEvent.MouseUp(at.X, at.Y, MouseButton.Left)) || true;
+        var at = LayerRegions(chrome).First(r => r.Result is HitResult.ButtonHit b && b.Action == action);
+        // A button's own press is not the bell's: the chrome leaves it alone, and the region's click runs.
+        chrome.PressNotification(at.Result).ShouldBeFalse();
+        at.OnClick!.Invoke(InputModifier.None);
+        return true;
     }
 
     [Fact]
