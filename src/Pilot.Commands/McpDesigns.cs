@@ -109,8 +109,24 @@ internal static class McpDesigns
                 {
                     var screen = rest[^1];
                     var file = ScreenFile(folder, screen, query, designId, label);
-                    return new ResourceReadResult([new ResourceContents(uri, Png, Blob: Convert.ToBase64String(await File.ReadAllBytesAsync(file, cancellationToken)))]);
+                    return new ResourceReadResult([new ResourceContents(uri, Png, Blob: Convert.ToBase64String(await ReadPngAsync(file, label, designId, cancellationToken)))]);
                 }
+        }
+    }
+
+    /// <summary>A render's bytes; one that cannot be read (locked, vanished) is refused naming the file, not taken for a node that is away.</summary>
+    private static async Task<byte[]> ReadPngAsync(string file, string label, string designId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var stream = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 4096, useAsync: true);
+            using var buffer = new MemoryStream();
+            await stream.CopyToAsync(buffer, cancellationToken);
+            return buffer.ToArray();
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            throw NotFound($"{label} of {designId}: the render {Path.GetFileName(file)} cannot be read ({ex.Message})");
         }
     }
 
@@ -169,7 +185,7 @@ internal static class McpDesigns
         var renders = DesignPaths.RendersOf(folder);
         var names = Directory.Exists(renders) ? Directory.EnumerateFiles(renders, "*.png").Select(Path.GetFileName).OfType<string>().Order(StringComparer.Ordinal).ToArray() : [];
         // One plain file name: no separator, no drive colon (C:x is drive-relative on Windows), nothing the platform refuses in a name.
-        var safe = screen.Length > 0 && screen.IndexOfAny(['/', '\\', ':']) < 0 && screen.IndexOfAny(Path.GetInvalidFileNameChars()) < 0 && screen != "." && screen != "..";
+        var safe = IsPlainFileName(screen);
         string file;
         if (size is not null)
         {
@@ -192,6 +208,10 @@ internal static class McpDesigns
             ? file
             : throw NotFound($"{label} of {id} has no screen {screen}; it has renders of {Screens(names)}");
     }
+
+    /// <summary>True for one plain file name: no separator, no drive colon (<c>C:x</c> is drive-relative on Windows), nothing the platform refuses in a name, not <c>.</c> or <c>..</c>.</summary>
+    internal static bool IsPlainFileName(string name) =>
+        name.Length > 0 && name.IndexOfAny(['/', '\\', ':']) < 0 && name.IndexOfAny(Path.GetInvalidFileNameChars()) < 0 && name != "." && name != "..";
 
     private static string Screens(string[] names) =>
         names.Length == 0 ? "no screen" : string.Join(", ", names.Select(n => n[..n.IndexOf('.')]).Distinct(StringComparer.Ordinal));

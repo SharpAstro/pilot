@@ -201,9 +201,12 @@ public sealed class McpDesignResourcesTests : IAsyncLifetime
     public async Task TheChatIsJson()
     {
         await Published();
+        (await Pilot("design", "say", "DSN-1", "--", "wider please")).Exit.ShouldBe(0);
         var chat = Contents(await ReadOne("pilot://designs/DSN-1/chat"));
         chat.GetProperty("mimeType").GetString().ShouldBe("application/json");
-        JsonDocument.Parse(chat.GetProperty("text").GetString()!).RootElement.ValueKind.ShouldBe(JsonValueKind.Object);
+        var text = chat.GetProperty("text").GetString()!;
+        JsonDocument.Parse(text).RootElement.ValueKind.ShouldBe(JsonValueKind.Object);
+        text.ShouldContain("wider please");
     }
 
     [Fact]
@@ -254,6 +257,8 @@ public sealed class McpDesignResourcesTests : IAsyncLifetime
 
     [Theory]
     [InlineData("""{"targets":["Phone"]}""", "Phone")]
+    [InlineData("""{"targets":["phone"]}""", "Phone")]
+    [InlineData("""{"targets":["Nowhere"]}""", null)]
     [InlineData("""{"targets":[{"name":"Wide","width":10,"height":5}]}""", "Wide")]
     [InlineData("""{"targets":[{"width":390,"height":844}]}""", "390x844")]
     [InlineData("""{"targets":[]}""", null)]
@@ -277,6 +282,20 @@ public sealed class McpDesignResourcesTests : IAsyncLifetime
         }
     }
 
+    [Theory]
+    [InlineData("home", true)]
+    [InlineData("home.Phone", true)]
+    [InlineData("C:home", false)]
+    [InlineData("C:", false)]
+    [InlineData("home:stream", false)]
+    [InlineData("..\\home", false)]
+    [InlineData("a/b", false)]
+    [InlineData("a\0b", false)]
+    [InlineData("", false)]
+    [InlineData(".", false)]
+    [InlineData("..", false)]
+    public void AScreenNameIsOnePlainFileNameOrNone(string name, bool plain) => McpDesigns.IsPlainFileName(name).ShouldBe(plain);
+
     [Fact]
     public async Task AScreenNameThatIsNotOnePlainFileNameIsRefused()
     {
@@ -285,6 +304,17 @@ public sealed class McpDesignResourcesTests : IAsyncLifetime
         {
             (await Refused($"pilot://designs/DSN-1/versions/1/screens/{name}")).ShouldContain("no screen");
         }
+    }
+
+    [Fact]
+    public async Task ARenderThatCannotBeReadIsRefusedNamingTheFileNotTakenForANodeThatIsAway()
+    {
+        await Published();
+        var file = Path.Combine(Version1(), "renders", "home.png");
+        using var hold = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.None);
+        var why = await Refused("pilot://designs/DSN-1/versions/1/screens/home");
+        why.ShouldContain("home.png");
+        why.ShouldContain("cannot be read");
     }
 
     [Fact]
@@ -348,7 +378,18 @@ public sealed class McpDesignResourcesTests : IAsyncLifetime
             Convert.FromBase64String(terminal.GetProperty("blob").GetString()!).ShouldBe([1, 2, 3, 4, 5]);
             Contents(await Ask(Read(11, "pilot://designs/DSN-1/draft/screens/home"))).GetProperty("mimeType").GetString().ShouldBe("image/png");
             JsonDocument.Parse(Contents(await Ask(Read(12, "pilot://designs/DSN-1/chat"))).GetProperty("text").GetString()!).RootElement.ValueKind.ShouldBe(JsonValueKind.Object);
-            (await Ask(Read(14, "pilot://designs/DSN-9"))).GetProperty("error").GetProperty("code").GetInt32().ShouldBe(-32002);
+            var unknown = (await Ask(Read(14, "pilot://designs/DSN-9"))).GetProperty("error");
+            unknown.GetProperty("code").GetInt32().ShouldBe(-32002);
+            unknown.GetProperty("message").GetString()!.ShouldContain("no design DSN-9");
+            var noScreen = (await Ask(Read(15, "pilot://designs/DSN-1/versions/1/screens/nope"))).GetProperty("error");
+            noScreen.GetProperty("code").GetInt32().ShouldBe(-32002);
+            noScreen.GetProperty("message").GetString()!.ShouldContain("no screen nope");
+            var noSize = (await Ask(Read(16, "pilot://designs/DSN-1/versions/1/screens/home?size=5x5"))).GetProperty("error");
+            noSize.GetProperty("code").GetInt32().ShouldBe(-32002);
+            noSize.GetProperty("message").GetString()!.ShouldContain("5x5");
+            var badSize = (await Ask(Read(17, "pilot://designs/DSN-1/versions/1/screens/home?size=huge"))).GetProperty("error");
+            badSize.GetProperty("code").GetInt32().ShouldBe(-32002);
+            badSize.GetProperty("message").GetString()!.ShouldContain("terminal size");
             var refused = await Ask(Read(8, "pilot://designs/DSN-1/versions/9/document"));
             refused.GetProperty("error").GetProperty("code").GetInt32().ShouldBe(-32002);
             refused.GetProperty("error").GetProperty("message").GetString()!.ShouldContain("v1");

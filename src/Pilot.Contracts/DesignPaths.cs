@@ -66,22 +66,21 @@ public static class DesignPaths
             {
                 return null;
             }
+            // Named as DesignTargets.Resolve does, which the Designs page and the node's renders use: a built-in's own spelling, and an entry that is neither a
+            // built-in nor sized is no target (a render of it was never written). Contracts cannot take DIR.Lib's parser, so this mirrors it.
             var first = targets[0];
             if (first.ValueKind == System.Text.Json.JsonValueKind.String)
             {
-                return first.GetString();
+                return DesignTargets.Resolve(first.GetString())?.Name;
             }
             if (first.ValueKind != System.Text.Json.JsonValueKind.Object)
             {
                 return null;
             }
-            if (first.TryGetProperty("name", out var name) && name.ValueKind == System.Text.Json.JsonValueKind.String && name.GetString() is { Length: > 0 } text)
-            {
-                return text;
-            }
-            return first.TryGetProperty("width", out var w) && first.TryGetProperty("height", out var h) && w.TryGetInt32(out var width) && h.TryGetInt32(out var height)
-                ? string.Create(CultureInfo.InvariantCulture, $"{width}x{height}")
-                : null;
+            var label = first.TryGetProperty("name", out var name) && name.ValueKind == System.Text.Json.JsonValueKind.String ? name.GetString() : null;
+            int? width = first.TryGetProperty("width", out var w) && w.TryGetInt32(out var wv) ? wv : null;
+            int? height = first.TryGetProperty("height", out var h) && h.TryGetInt32(out var hv) ? hv : null;
+            return DesignTargets.Resolve(label, width, height)?.Name;
         }
         catch (System.Text.Json.JsonException)
         {

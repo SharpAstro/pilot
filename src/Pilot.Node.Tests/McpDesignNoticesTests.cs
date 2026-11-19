@@ -259,7 +259,7 @@ public sealed class McpDesignNoticesTests : IAsyncLifetime
         }
         folder.ShouldNotBeNull();
         var readme = File.ReadAllText(Path.Combine(folder, "README.md"));
-        var mcp = readme[readme.IndexOf("The MCP server", StringComparison.Ordinal)..];
+        var mcp = readme[readme.IndexOf("### The MCP server", StringComparison.Ordinal)..];
         mcp.ShouldContain("pilot://designs");
         mcp.ShouldContain("resources/templates/list");
         mcp.ShouldContain("resources/subscribe");
