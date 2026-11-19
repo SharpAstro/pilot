@@ -108,7 +108,7 @@ public static class TerminalWireframeSweepTests
         var width = docked ? pageColumns * 8f : columns * 8f;
         if (page == PilotPage.Notifications)
         {
-            // As Program.cs has it: the page beside the For you strip, the state's open cards under Needs you and its events in the history.
+            // As Program.cs has it: the page with the For you bar's edge handle, the state's open cards under Needs you and its events in the history.
             PageData.PostEvents(chrome.Notifications, state);
             chrome.Notifications.Sync(cards.Open, c => chrome.Cards.NodeOf(c)?.Name, PageData.Now);
             width = TerminalFrame.PageColumnsWithBar(columns) * 8f;
@@ -160,7 +160,7 @@ public static class TerminalWireframeSweepTests
             default: tree = chrome.Home.Tree(new HomeScreen(data.Flights, data.Sessions, data.Jobs, cards, data.Machines)); break;
         }
         var rail = TerminalRail.Tree(page, GlyphMode.Emoji, data.Jobs, null, PageData.Now, _ => { }, null, columns);
-        // The Notifications page is framed as pilot-tui frames every page now: beside the For you strip, with no bar over it (the page is the list).
+        // The Notifications page is framed as pilot-tui frames every page now: with the For you bar's edge handle, with no bar over it (the page is the list).
         // The other cases still lay the cards panel beside the page, as the terminal did before the bar (#1184's follow-up brings them over).
         var bar = page == PilotPage.Notifications || docked ? (chrome.Notifications, page) : ((NotificationsHost, PilotPage)?)null;
         var cardsTree = docked ? (barShown ? chrome.Cards.Tree(cards) : null) : cardsBeside && bar is null ? chrome.Cards.Tree(cards) : null;
@@ -443,12 +443,12 @@ public sealed class TerminalWireframeRegressionTests
 
 /// <summary>
 /// PIL1205: a window opens with the For you bar docked, so the page-wide rules also run on the terminal's narrowest sizes with the bar pinned: the page has the
-/// columns the bar leaves (80 columns is too narrow for that and opens the bar over the page, as the GUI does). Not a RowsOf class: its cases are its own.
+/// columns the bar leaves. 80 and 100 columns are too narrow for that and open the bar over the page, as the GUI does; 101 is the narrowest that docks (a page of 63 columns), 120 a common size (82) and 160 the wide one. Not a RowsOf class: its cases are its own.
 /// </summary>
 public sealed class TerminalDockedBarSweepTests
 {
     public static IEnumerable<TheoryDataRow<string, string, int, int>> DockedCases() =>
-        from size in new[] { (80, 24), (100, 30), (160, 44) }
+        from size in new[] { (80, 24), (100, 30), (101, 30), (120, 30), (160, 44) }
         from page in TerminalWireframeSweepTests.Cases.Where(c => c != "tooltip open")
         select new TheoryDataRow<string, string, int, int>(page, "long", size.Item1, size.Item2) { TestDisplayName = TerminalWireframeSweepTests.Key(page, "long", size.Item1, size.Item2) + " | docked" };
 

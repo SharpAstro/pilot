@@ -104,11 +104,18 @@ public sealed class NotificationsHandleTests
         NotificationsHost.HandleColors(p, HandleTints.NeedsYou).Fill.ShouldBe(p.Held);
         foreach (var (name, palette) in new[] { ("day", p), ("night", Palette.Night) })
         {
+            var drawn = new List<(HandleTints Tint, RGBAColor32 Fill, RGBAColor32? Ring)>();
             foreach (var tint in Enum.GetValues<HandleTints>())
             {
-                var (fill, chevron) = NotificationsHost.HandleColors(palette, tint);
+                var (fill, chevron, ring) = NotificationsHost.HandleColors(palette, tint);
                 Contrast.Ratio(chevron, fill).ShouldBeGreaterThanOrEqualTo(4.5, $"the chevron on the {tint} handle, {name} palette");
+                drawn.Add((tint, fill, ring));
             }
+            // The three states draw three different tabs (fill or ring), on every palette: a tint that looks like another tells nothing.
+            drawn.Select(d => (d.Fill, d.Ring)).Distinct().Count().ShouldBe(3,
+                $"the {name} palette draws {string.Join(", ", drawn.Select(d => $"{d.Tint}: fill {d.Fill} ring {d.Ring?.ToString() ?? "none"}"))}");
+            // The neutral handle is the palette's dark header, never the loudest block on screen.
+            NotificationsHost.HandleColors(palette, HandleTints.Neutral).Fill.ShouldBe(palette.HeaderBg, $"the neutral handle stays dark, {name} palette");
         }
 
         var host = new NotificationsHost { Open = false };

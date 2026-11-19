@@ -75,7 +75,7 @@ public sealed class ReposPageLinksTests
     /// The window the tests draw in: the page a 1280 window gave before the For you strip, with room for the Open PRs column whose links
     /// they follow (at 1280 the column gives way).
     /// </summary>
-    private static readonly int Wide = StripRoom.Beside(1280);
+    private static readonly int Wide = PageRoom.Beside(1280);
 
     private static void Draw(PilotChrome<RgbaImage> chrome, ReposScreen screen, float? width = null, float height = 700f)
     {

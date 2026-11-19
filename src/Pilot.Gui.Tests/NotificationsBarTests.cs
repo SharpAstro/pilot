@@ -13,7 +13,7 @@ namespace Pilot.Gui.Tests;
 
 /// <summary>
 /// The For you side bar on DIR.Lib's notifications component (PIL1184): open it covers the page's right side instead of taking width,
-/// collapsed it is the library's strip with the bell. Drawn with no display: the page's rect is the same open and collapsed, a ringing
+/// collapsed it is the edge handle, and the rail's entry carries the bell (PIL1205). Drawn with no display: the page's rect is the same open and collapsed, a ringing
 /// card turns the collapsed bell amber and counts it, and the choice is kept per window in GuiSettings (null reads as open). The captures,
 /// bar open and collapsed at 1920 and 2880 wide (pilot-gui) and 160x44 (pilot-tui), are written to PILOT_JOB_ARTIFACTS.
 /// </summary>
@@ -291,7 +291,7 @@ public sealed class NotificationsBarTests
                 text.AppendLine(string.Concat(Enumerable.Range(0, columns).Select(x => buffer.BackAt(x, y).Glyph)).TrimEnd());
             }
             File.WriteAllText(Path.Combine(ArtifactDir(), $"for-you-bar-{(open ? "open" : "collapsed")}-tui-{columns}x{rows}.txt"), text.ToString());
-            text.ToString().ShouldContain(chrome.Notifications.Feed.BellCount.ToString(), Case.Sensitive, "the strip's bell count is in the terminal frame");
+            text.ToString().ShouldContain(chrome.Notifications.Feed.BellCount.ToString(), Case.Sensitive, "the rail bell's count is in the terminal frame");
         }
         pageRects[1].ShouldBe(pageRects[0], "the terminal's page is the same size open and collapsed");
     }

@@ -30,7 +30,7 @@ internal sealed record GuiSettings
     public Dictionary<string, Dictionary<string, SavedFrameSize>>? FrameSizes { get; init; }
 
     /// <summary>
-    /// Whether the For you side bar is collapsed to its strip at the right edge (PIL1184). Null means open, which is what a file an older
+    /// Whether the For you side bar is collapsed to its edge handle at the right edge (PIL1184, PIL1205). Null means open, which is what a file an older
     /// build wrote reads as; it is written only while the bar is collapsed, so reopening it drops the member again.
     /// </summary>
     public bool? NotificationsCollapsed { get; init; }

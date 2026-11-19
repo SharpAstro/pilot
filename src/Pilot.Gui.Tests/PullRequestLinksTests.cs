@@ -89,7 +89,7 @@ public sealed class PullRequestLinksTests
     /// The window the Repos page's tests draw in: the page a 1280 window gave before the For you strip, with room for the Open PRs column
     /// whose links they follow (at 1280 the column gives way).
     /// </summary>
-    private static readonly RectF32 ReposBounds = new(0, 0, StripRoom.Beside(1280), Height);
+    private static readonly RectF32 ReposBounds = new(0, 0, PageRoom.Beside(1280), Height);
 
     private static void Draw(PilotChrome<RgbaImage> chrome, FlightsScreen? flights = null, CardsScreen? cards = null, PullRequestsScreen? prs = null, ReposScreen? repos = null, RectF32? bounds = null) =>
         chrome.Render(new SessionsScreen([], "test", Now), flights, cards, null, null, repos, prs ?? Prs(), bounds ?? Bounds);

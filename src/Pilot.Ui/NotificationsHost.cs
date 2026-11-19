@@ -69,7 +69,7 @@ internal sealed class NotificationsHost
 
     /// <summary>
     /// The Notifications page's body: the library's list frame (Needs you, then History newest first, with Clear), laid as wide as the page.
-    /// It has no strip and no toasts, so the window's own strip keeps the key.
+    /// It declares no toggle key and no toasts, so the window's edge handle keeps the key.
     /// </summary>
     public Layout.Node ListFrame(float width)
     {
@@ -158,7 +158,7 @@ internal sealed class NotificationsHost
     /// <summary>The design-unit width of the area beside the rail, which the page and a docked bar share; null (unknown) lets a docked bar dock.</summary>
     public float? RoomUnits { get; set; }
 
-    /// <summary>Whether the bar is docked in the window as drawn: set to dock and leaving the page <see cref="MinPageUnits"/>; a narrower window draws it over the page, as the strip used to give way.</summary>
+    /// <summary>Whether the bar is docked in the window as drawn: set to dock and leaving the page <see cref="MinPageUnits"/>; a narrower window draws it over the page.</summary>
     public bool DockedNow => Docked && (RoomUnits is not { } room || room >= NeededRoom);
 
     /// <summary>The room in design units a terminal of <paramref name="columns"/> gives the bar and the page: the bar takes whole columns, so the part of a column it does not use is not room.</summary>
@@ -281,7 +281,7 @@ internal sealed class NotificationsHost
     /// <summary>
     /// The window's frame: <paramref name="page"/> at the window's full width (no strip), the toasts over it while the bar is collapsed, and, while it is
     /// open, <paramref name="panel"/> over the page's right side, under a header row. A null <paramref name="panel"/>
-    /// (nothing to show) leaves the page and the strip. <paramref name="shown"/> is the page on screen: the Notifications page is the whole
+    /// (nothing to show) leaves the page and the edge handle. <paramref name="shown"/> is the page on screen: the Notifications page is the whole
     /// list, so it gets neither the open bar (it would repeat the list and cover its header) nor toasts.
     /// </summary>
     public Layout.Node Frame(Layout.Node page, Layout.Node? panel, PilotPage shown)
@@ -330,10 +330,15 @@ internal sealed class NotificationsHost
     /// </summary>
     private Layout.Node Handle(bool barOpen)
     {
-        var (bg, fg) = HandleColors(Palette.Current, HandleTint);
-        var tab = Layout.Builder.VStack(Layout.Builder.Spacer().HStar(), Layout.Builder.Text(barOpen ? "\u00bb" : "\u00ab", 16f, fg, TextAlign.Center).WStar().HAuto(), Layout.Builder.Spacer().HStar())
+        var (bg, fg, ring) = HandleColors(Palette.Current, HandleTint);
+        Layout.Node tab = Layout.Builder.VStack(Layout.Builder.Spacer().HStar(), Layout.Builder.Text(barOpen ? "\u00bb" : "\u00ab", 16f, fg, TextAlign.Center).WStar().HAuto(), Layout.Builder.Spacer().HStar())
             .CrossCenter()
-            .Bg(bg)
+            .Bg(bg);
+        if (ring is { } r)
+        {
+            tab = tab.Border(r, 2f, 0f);
+        }
+        tab = tab
             .Clickable(new HitResult.ButtonHit(HandleAction), _ => Toggle(), CursorKind.Pointer)
             .WithShortcut(Style.ToggleKey)
             .WithTooltip($"{(barOpen ? "Collapse" : "Open")} the For you bar ({ChordText()})", Layout.DockSide.Left)
@@ -358,27 +363,42 @@ internal sealed class NotificationsHost
     /// <summary>How the handle is tinted: amber while a card rings or needs the person, the accent when something arrived since the bar was last open, neutral otherwise.</summary>
     public HandleTints HandleTint => Ringing || Feed.BellCount > 0 ? HandleTints.NeedsYou : !Open && _posted != _seenPosted ? HandleTints.New : HandleTints.Neutral;
 
-    /// <summary>The handle's fill and the chevron's colour for <paramref name="tint"/>, from the palette: the chevron is whichever of the palette's bright, ground and black reads best on the fill.</summary>
-    internal static (RGBAColor32 Fill, RGBAColor32 Chevron) HandleColors(Palette p, HandleTints tint)
+    /// <summary>
+    /// The handle's fill, the chevron's colour and a ring for <paramref name="tint"/>, from the palette. The chevron is whichever of the
+    /// palette's bright, ground, black and selection bar reads best on the fill. Each tint takes its own colour as the fill where a chevron
+    /// reads on it at 4.5:1. Where none does (the night palette, red on black, has about two fills that carry a chevron), amber falls back to
+    /// the selection bar, the brightest fill, and the accent to the neutral's dark fill with a ring in the selection bar's colour, so the three
+    /// states still draw three different tabs and the neutral one stays dark. The ring is null where the fill alone tells the state.
+    /// </summary>
+    internal static (RGBAColor32 Fill, RGBAColor32 Chevron, RGBAColor32? Ring) HandleColors(Palette p, HandleTints tint)
     {
-        // The tint's own colour first; where nothing of the palette's reads on it (the night palette's red accent), the palette's selection bar (the brightest it has, with black ink) instead.
-        var fills = tint switch { HandleTints.NeedsYou => new[] { p.Held, p.SelectionBg }, HandleTints.New => [p.RailAccent, p.SelectionBg], _ => [p.HeaderBg, p.SelectionBg] };
         var black = new RGBAColor32(0, 0, 0, 0xff);
-        var best = (Fill: fills[0], Chevron: black, Ratio: -1.0);
-        foreach (var fill in fills)
+        (RGBAColor32 Chevron, double Ratio) Ink(RGBAColor32 fill)
         {
-            var chevron = new[] { p.Bright, p.Ground, black }.MaxBy(c => Contrast.Ratio(c, fill));
-            var ratio = Contrast.Ratio(chevron, fill);
-            if (ratio > best.Ratio)
-            {
-                best = (fill, chevron, ratio);
-            }
-            if (ratio >= 4.5)
-            {
-                break;
-            }
+            var chevron = new[] { p.Bright, p.Ground, black, p.SelectionBg }.MaxBy(c => Contrast.Ratio(c, fill));
+            return (chevron, Contrast.Ratio(chevron, fill));
         }
-        return (best.Fill, best.Chevron);
+        var neutral = Ink(p.HeaderBg);
+        switch (tint)
+        {
+            case HandleTints.NeedsYou:
+            {
+                var own = Ink(p.Held);
+                if (own.Ratio >= 4.5)
+                {
+                    return (p.Held, own.Chevron, null);
+                }
+                var bright = Ink(p.SelectionBg);
+                return bright.Ratio > own.Ratio ? (p.SelectionBg, bright.Chevron, null) : (p.Held, own.Chevron, null);
+            }
+            case HandleTints.New:
+            {
+                var own = Ink(p.RailAccent);
+                return own.Ratio >= 4.5 ? (p.RailAccent, own.Chevron, null) : (p.HeaderBg, neutral.Chevron, p.SelectionBg);
+            }
+            default:
+                return (p.HeaderBg, neutral.Chevron, null);
+        }
     }
 
     private long _posted, _seenPosted;
@@ -407,7 +427,9 @@ internal sealed class NotificationsHost
             .Pad(6f, 2f)
             .Bg(pinBg)
             .Clickable(new HitResult.ButtonHit(PinAction), _ => TogglePin(), CursorKind.Pointer)
-            .WithTooltip(pinned ? "Pinned beside the page: press to let the bar open over it" : "Open over the page: press to pin the bar beside it", Layout.DockSide.Bottom)
+            .WithTooltip(pinned
+                ? DockedNow ? "Pinned beside the page: press to let the bar open over it" : "Pinned, but this window has no room beside the page, so the bar opens over it: press to unpin"
+                : "Open over the page: press to pin the bar beside it", Layout.DockSide.Bottom)
             .WAuto();
         var collapse = Layout.Builder.HStack(
                 Layout.Builder.Text("For you", 12f, colors.Dim).WStar(),
