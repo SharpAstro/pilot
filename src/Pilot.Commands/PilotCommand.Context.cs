@@ -22,6 +22,8 @@ public static partial class PilotCommand
         private readonly bool byAgent;
         private readonly string? sessionId;
         private readonly RichOutput? rich;
+        // Where a command hands pictures to its host (the MCP server); null for the CLI, which prints and draws them itself.
+        private readonly PictureSink? pictures;
         private readonly string requestId;
         private readonly TimeSpan deadline;
         // This machine's node socket as given (--node-socket), where a command sent to another node names its sender. Set by the
@@ -33,8 +35,9 @@ public static partial class PilotCommand
         // The flight's code: the flight commands and the leg commands add this one argument to each of theirs.
         private readonly Argument<string> code = new("code") { Description = "The flight's code, as TIA1611" };
 
-        public BuildContext(string cwd, TextWriter output, TextWriter error, string who, bool bySession, bool? agent, string? sessionId, RichOutput? rich, string? requestId, TimeSpan? commandTimeout)
+        public BuildContext(string cwd, TextWriter output, TextWriter error, string who, bool bySession, bool? agent, string? sessionId, RichOutput? rich, string? requestId, TimeSpan? commandTimeout, PictureSink? pictures = null)
         {
+            this.pictures = pictures;
             this.cwd = cwd;
             this.output = output;
             this.error = error;

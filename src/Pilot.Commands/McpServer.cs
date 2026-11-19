@@ -425,7 +425,7 @@ internal sealed class McpServer(string cwd, string? node, string? socket,
             // never the end of the server: the host would have to restart it by hand.
             var said = $"{Restarting} ({ex.GetType().Name}: {ex.Message})";
             return method == "tools/call"
-                ? Reply(answering, new ToolCallResult([new TextContent($"pilot: {said}")], IsError: true), McpJsonContext.Default.ToolCallResult)
+                ? Reply(answering, new ToolCallResult([McpContent.OfText($"pilot: {said}")], IsError: true), McpJsonContext.Default.ToolCallResult)
                 : Reply(answering, InternalError, said);
         }
     }
@@ -467,7 +467,7 @@ internal sealed class McpServer(string cwd, string? node, string? socket,
             }
             else if (nodeValue.ValueKind is not (JsonValueKind.Null or JsonValueKind.String))
             {
-                return new ToolCallResult([new TextContent($"pilot: {NodeKey} takes a node as a string (a name, host or host:port; the nodes tool lists them)")], IsError: true);
+                return new ToolCallResult([McpContent.OfText($"pilot: {NodeKey} takes a node as a string (a name, host or host:port; the nodes tool lists them)")], IsError: true);
             }
         }
         string[] args;
@@ -477,23 +477,39 @@ internal sealed class McpServer(string cwd, string? node, string? socket,
         }
         catch (PilotCommand.UsageException ex)
         {
-            return new ToolCallResult([new TextContent($"pilot: {ex.Message}")], IsError: true);
+            return new ToolCallResult([McpContent.OfText($"pilot: {ex.Message}")], IsError: true);
         }
         var output = new StringWriter();
         var error = new StringWriter();
         var (target, here, unknown) = named is null ? await ResolvedAsync(cancellationToken) : await ResolvedNamedAsync(named, cancellationToken);
         if (unknown is not null)
         {
-            return new ToolCallResult([new TextContent($"pilot: {unknown}")], IsError: true);
+            return new ToolCallResult([McpContent.OfText($"pilot: {unknown}")], IsError: true);
         }
-        var exit = await PilotCommand.InvokeAsync([.. NodeArgs(target, here), .. args], cwd, output, error, Who, bySession: true, console: false, cancellationToken, agent: true);
+        // Pictures a command hands over (design renders) travel as image items: the bytes come from the node asked, a path on
+        // another machine would be no use to this session.
+        List<(byte[] Bytes, string Mime, string Line)> pictures = [];
+        var exit = await PilotCommand.InvokeAsync([.. NodeArgs(target, here), .. args], cwd, output, error, Who, bySession: true, console: false, cancellationToken, agent: true,
+            pictures: (mime, bytes, line) => { pictures.Add((bytes, mime, line)); return Task.CompletedTask; });
         var said = (output.ToString() + error.ToString()).TrimEnd();
         if (exit == 3)
         {
             // The CLI's "no node answers": for a server that stays up, the node is coming back, not to be started by hand.
             said = $"pilot: {Restarting} ({said.Replace("pilot: ", "")})";
         }
-        return new ToolCallResult([new TextContent(said.Length > 0 ? said : exit == 0 ? "ok" : $"exit {exit}")], IsError: exit != 0);
+        // Each picture's line goes beside its image, so the printed text drops it rather than saying it twice.
+        if (pictures.Count > 0)
+        {
+            var lines = pictures.Select(x => x.Line).ToHashSet(StringComparer.Ordinal);
+            said = string.Join('\n', said.Split('\n').Where(l => !lines.Contains(l.TrimEnd('\r')))).Trim();
+        }
+        List<McpContent> content = [McpContent.OfText(said.Length > 0 ? said : exit == 0 ? "ok" : $"exit {exit}")];
+        foreach (var (bytes, mime, line) in pictures)
+        {
+            content.Add(McpContent.OfText(line));
+            content.Add(McpContent.OfImage(bytes, mime));
+        }
+        return new ToolCallResult([.. content], IsError: exit != 0);
     }
 
     /// <summary>One piece of the node's snapshot as JSON, each row as the node's wire writes it.</summary>

@@ -40,6 +40,72 @@ public static partial class PilotCommand
         return text.ToString();
     }
 
+    /// <summary>The line that names a picture: design, version or draft, screen, size, the prototype hash it was drawn from, a scaling note and its path on the node.</summary>
+    internal static string DesignRenderLine(DesignRenders renders, DesignRenderPicture picture) =>
+        $"{renders.Design} {(renders.Version is { } v ? "v" + v.ToString(CultureInfo.InvariantCulture) : "draft")} screen {picture.Screen} size {picture.Size} sha256 {picture.PrototypeSha256 ?? "none"}"
+        + (picture.ScaledFrom is { } from ? $" (scaled from {from} to {picture.Width}x{picture.Height})" : $" ({picture.Width}x{picture.Height})")
+        + (picture.Path is { Length: > 0 } path ? $" {path}" : "");
+
+    /// <summary>The words after the pictures: the screens not sent and what a person should know.</summary>
+    internal static string DesignRendersTail(DesignRenders renders)
+    {
+        var text = new StringBuilder();
+        if (renders.NotSent.Length > 0)
+        {
+            text.AppendLine($"other screens: {string.Join(", ", renders.NotSent)}");
+        }
+        if (renders.Stale)
+        {
+            text.AppendLine("stale: the draft's renders are older than its prototype (or there are none)");
+        }
+        if (renders.Note is { Length: > 0 } note)
+        {
+            text.AppendLine(note);
+        }
+        if (renders.Pictures.Length == 0 && renders.Note is null)
+        {
+            text.AppendLine("no pictures");
+        }
+        return text.ToString();
+    }
+
+    /// <summary>A string the node sent, made fit to be one path segment: only letters, digits, '-', '_' and '.', and never '.' or '..' alone.</summary>
+    internal static string SafeName(string name)
+    {
+        var safe = string.Concat(name.Select(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_' or '.' ? c : '_'));
+        return safe.Trim('.').Length == 0 ? "_" : safe;
+    }
+
+    /// <summary>Plain output: a line per picture, then the tail.</summary>
+    internal static string DesignRendersPlain(DesignRenders renders)
+    {
+        var text = new StringBuilder();
+        foreach (var picture in renders.Pictures)
+        {
+            text.AppendLine(DesignRenderLine(renders, picture));
+        }
+        return text.Append(DesignRendersTail(renders)).ToString();
+    }
+
+    /// <summary>
+    /// Markdown output: each picture's bytes are written under the temp folder (the node may be another machine's, so its path is no help here) and
+    /// shown as <c>![line](path)</c>, then the tail.
+    /// </summary>
+    internal static string DesignRendersMarkdown(DesignRenders renders)
+    {
+        var folder = Path.Combine(Path.GetTempPath(), "pilot-renders", SafeName(renders.Design), renders.Version is { } v ? "v" + v.ToString(CultureInfo.InvariantCulture) : "draft");
+        Directory.CreateDirectory(folder);
+        var text = new StringBuilder();
+        foreach (var picture in renders.Pictures)
+        {
+            var file = Path.Combine(folder, $"{SafeName(picture.Screen)}.{SafeName(picture.Size)}.{(picture.PrototypeSha256 is { Length: >= 8 } h ? h[..8] : "nostamp")}.png");
+            File.WriteAllBytes(file, picture.Png);
+            var label = DesignRenderLine(renders, picture).Replace('[', '(').Replace(']', ')');
+            text.AppendLine($"![{label}](<{file.Replace('\\', '/')}>)").AppendLine();
+        }
+        return text.Append(DesignRendersTail(renders)).ToString();
+    }
+
     /// <summary>One design whole: its record, its brief as written and where its folders are.</summary>
     internal static string DesignShown(DesignDetail design)
     {
@@ -63,6 +129,7 @@ public static partial class PilotCommand
         }
         text.AppendLine($"folder: {design.Folder}");
         text.AppendLine($"draft: {design.DraftFolder}");
+        text.AppendLine($"pictures: pilot design renders {row.Id} (the design_renders tool over MCP) gives the renders as images, for a session that cannot open these paths");
         if (design.CurrentFolder is { Length: > 0 } current)
         {
             text.AppendLine($"current: {current}");
@@ -192,7 +259,33 @@ public static partial class PilotCommand
                     return 1;
                 });
 
-            var design = new Command("design", "Designs: a prototype of DIR.Lib screens, briefed by the owner and kept in versions on the node. new, brief, say, chat, draft, check, render, edit, title, discard, link, unlink, publish, issue, build, show, terminals") { Subcommands = { designNew, designTerminals, designBrief, designSay, designChat, designDraft, designEdit, designTitle, designDiscard, designLink, designUnlink, designCheck, designRender, designPublish, designIssue, designBuild, designShow } };
+            var rendersId = Arg("design", "The design's id, DSN-<n>");
+            var rendersVersion = new Option<int?>("--version") { Description = "The version; the current one when left out" };
+            var rendersDraft = new Option<bool>("--draft") { Description = "The draft's renders; the answer says when they are older than the draft's prototype" };
+            var rendersScreen = new Option<string?>("--screen") { Description = "The screen's id; the entry screen when left out, naming the others" };
+            var rendersSize = new Option<string?>("--size") { Description = "One size: design, a target's name or <cols>x<rows>; every size of the screen when left out" };
+            var designRenders = Action(new Command("renders", $"Show a design's render pictures: a line each (design, version, screen, size, prototype hash, path) and, with --output-format rich, the pictures drawn. At most {DesignRenderCaps.Pictures} pictures, {DesignRenderCaps.Bytes / 1024 / 1024} MB and {DesignRenderCaps.LongestSide} px on the longest side per call; a larger one is scaled down and says so") { Arguments = { rendersId }, Options = { rendersVersion, rendersDraft, rendersScreen, rendersSize } },
+                async (p, client, ct) =>
+                {
+                    string[] args = [p.GetValue(rendersVersion)?.ToString(CultureInfo.InvariantCulture) ?? "", p.GetValue(rendersDraft) ? "draft" : "", p.GetValue(rendersScreen) ?? "", p.GetValue(rendersSize) ?? ""];
+                    var answer = await client.SendAsync(new CommandRequest { Verb = Verbs.DesignRenders, Target = Verbs.DesignTarget(p.GetValue(rendersId)!), Args = args, Who = who, Agent = byAgent }, ct);
+                    if (answer is { Success: true, Response: { Ok: true, DesignRenders: { } renders } })
+                    {
+                        if (pictures is not null)
+                        {
+                            foreach (var picture in renders.Pictures)
+                            {
+                                await pictures("image/png", picture.Png, DesignRenderLine(renders, picture));
+                            }
+                        }
+                        await WriteAsync(p.GetValue(outputFormat), () => DesignRendersPlain(renders), () => DesignRendersMarkdown(renders));
+                        return 0;
+                    }
+                    await output.WriteLineAsync($"refused: design renders {p.GetValue(rendersId)}: {answer.Response?.Error ?? answer.Error}");
+                    return 1;
+                });
+
+            var design = new Command("design", "Designs: a prototype of DIR.Lib screens, briefed by the owner and kept in versions on the node. new, brief, say, chat, draft, check, render, edit, title, discard, link, unlink, publish, issue, build, show, renders, terminals") { Subcommands = { designNew, designTerminals, designBrief, designSay, designChat, designDraft, designEdit, designTitle, designDiscard, designLink, designUnlink, designCheck, designRender, designPublish, designIssue, designBuild, designShow, designRenders } };
 
             var designs = Action(new Command("designs", "Every design, newest first"),
                 async (p, client, ct) =>

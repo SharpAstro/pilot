@@ -61,9 +61,9 @@ public static partial class PilotCommand
     /// the MCP server's are), before <paramref name="who"/>.</param>
     /// <param name="agent">Whether the commands are a Claude session's, where the host knows; null reads it from the environment (<see cref="IsAgent(bool, bool?)"/>).</param>
     /// <param name="sessionId">The Claude session running the commands, where the caller knows; null reads <c>CLAUDE_CODE_SESSION_ID</c> from the environment.</param>
-    internal static async Task<int> InvokeAsync(string[] args, string cwd, TextWriter output, TextWriter error, string who, bool bySession, bool console, CancellationToken cancellationToken, bool? agent = null, string? sessionId = null, RichOutput? rich = null, string? requestId = null, TimeSpan? commandTimeout = null)
+    internal static async Task<int> InvokeAsync(string[] args, string cwd, TextWriter output, TextWriter error, string who, bool bySession, bool console, CancellationToken cancellationToken, bool? agent = null, string? sessionId = null, RichOutput? rich = null, string? requestId = null, TimeSpan? commandTimeout = null, PictureSink? pictures = null)
     {
-        var root = Build(cwd, output, error, who, bySession, console, agent, sessionId, rich, requestId, commandTimeout);
+        var root = Build(cwd, output, error, who, bySession, console, agent, sessionId, rich, requestId, commandTimeout, pictures);
         var parsed = root.Parse(args);
         if (args.Length == 0)
         {
@@ -84,9 +84,9 @@ public static partial class PilotCommand
     }
 
     /// <summary>The command tree; actions write to <paramref name="output"/> and <paramref name="error"/>, and resolve folders against <paramref name="cwd"/>.</summary>
-    internal static RootCommand Build(string cwd, TextWriter output, TextWriter error, string who = "cli", bool bySession = true, bool console = false, bool? agent = null, string? sessionId = null, RichOutput? rich = null, string? requestId = null, TimeSpan? commandTimeout = null)
+    internal static RootCommand Build(string cwd, TextWriter output, TextWriter error, string who = "cli", bool bySession = true, bool console = false, bool? agent = null, string? sessionId = null, RichOutput? rich = null, string? requestId = null, TimeSpan? commandTimeout = null, PictureSink? pictures = null)
     {
-        var tree = new BuildContext(cwd, output, error, who, bySession, agent, sessionId, rich, requestId, commandTimeout);
+        var tree = new BuildContext(cwd, output, error, who, bySession, agent, sessionId, rich, requestId, commandTimeout, pictures);
 
         var (status, attachments, sessions) = tree.StatusCommands();
         var (summarise, reviewCost, summary) = tree.SummaryCommands();
