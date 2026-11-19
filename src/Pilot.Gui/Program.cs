@@ -313,6 +313,9 @@ chrome.Clock = () => DateTimeOffset.UtcNow;
 chrome.Notifications.OpenChanged += _ => loop.RequestRedraw();
 // The Flights page asks for frames of its own: the map's layer menu while it fades, and the links' "Copied" notice.
 chrome.Flights.Changed = loop.RequestRedraw;
+// The caret blinks through the loop: it owns the phase on the window's shared settings and wakes at each change while a
+// field has the keyboard (SharpAstro/.github#13), so no widget and no redraw check here knows of it.
+loop.Ui = view.Ui;
 var router = new InputRouter(view.Ui, tracker, loop.RequestRedraw)
 {
     Widgets = () => chrome.Widgets,
@@ -1385,7 +1388,7 @@ if (options.ExitAfter is { } after)
 }
 
 loop.Run(cts.Token);
-ShutdownDrain.PumpUntilComplete(loop, ShutDownAsync(), LogLine);
+Pilot.Gui.ShutdownDrain.PumpUntilComplete(loop, ShutDownAsync(), LogLine);
 if (restarting && Environment.ProcessPath is { } self)
 {
     // The gate first: held, the new window would hand off to this one and leave. The binary at this path is the new one,
