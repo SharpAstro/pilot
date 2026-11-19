@@ -42,7 +42,9 @@ public sealed class DesignsViewTests
         public void Paint()
         {
             var data = PageData.For("sample");
-            Chrome.Render(data.Sessions, data.Flights, data.Cards, data.Jobs, data.Fleet, data.Repos, data.PullRequests, _bounds, data.Machines, null, data.Spend, Screen);
+            // No cards: they open the For you bar over the page's right side (#1184), over the version chip and Start these tests press,
+            // and the tests are about the page. Collapsed, the cards would stand as toasts at its top right instead.
+            Chrome.Render(data.Sessions, data.Flights, null, data.Jobs, data.Fleet, data.Repos, data.PullRequests, _bounds, data.Machines, null, data.Spend, Screen);
         }
 
         public ClickableRegion Region(IEnumerable<ClickableRegion> regions, Func<HitResult, bool> match) =>

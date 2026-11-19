@@ -71,9 +71,15 @@ public sealed class ReposPageLinksTests
         return chrome;
     }
 
-    private static void Draw(PilotChrome<RgbaImage> chrome, ReposScreen screen, float width = 1280f, float height = 700f)
+    /// <summary>
+    /// The window the tests draw in: the page a 1280 window gave before the For you strip, with room for the Open PRs column whose links
+    /// they follow (at 1280 the column gives way).
+    /// </summary>
+    private static readonly int Wide = StripRoom.Beside(1280);
+
+    private static void Draw(PilotChrome<RgbaImage> chrome, ReposScreen screen, float? width = null, float height = 700f)
     {
-        var bounds = new RectF32(0, 0, width, height);
+        var bounds = new RectF32(0, 0, width ?? Wide, height);
         chrome.Render(new SessionsScreen([], "test", Now), null, null, null, null, screen, Prs(), bounds);
         chrome.Render(new SessionsScreen([], "test", Now), null, null, null, null, screen, Prs(), bounds);
     }
@@ -104,7 +110,7 @@ public sealed class ReposPageLinksTests
     [Fact]
     public void APRWithAFlightOpensTheFlightsPageOnItAndBackReturnsToTheReposPage()
     {
-        using var renderer = new RgbaImageRenderer(1280, 700);
+        using var renderer = new RgbaImageRenderer((uint)Wide, 700);
         var (chrome, _, opened) = Open(renderer);
 
         Click(chrome, "pr:101");
@@ -119,7 +125,7 @@ public sealed class ReposPageLinksTests
     [Fact]
     public void AListedPRWithNoFlightOpensItsRowAndBackReturnsToTheReposPage()
     {
-        using var renderer = new RgbaImageRenderer(1280, 700);
+        using var renderer = new RgbaImageRenderer((uint)Wide, 700);
         var (chrome, screen, opened) = Open(renderer);
 
         Click(chrome, "pr:102");
@@ -135,7 +141,7 @@ public sealed class ReposPageLinksTests
     [Fact]
     public void AnUnlistedPRGoesToTheBrowserAndIsTheOnlyLinkWithTheAwayMark()
     {
-        using var renderer = new RgbaImageRenderer(1280, 700);
+        using var renderer = new RgbaImageRenderer((uint)Wide, 700);
         var (chrome, screen, opened) = Open(renderer);
 
         Click(chrome, "pr:7");
@@ -164,7 +170,7 @@ public sealed class ReposPageLinksTests
     [Fact]
     public void AWorktreesPRNumberOpensTheRowOfAListedPRElseTheBrowserWithTheAwayMark()
     {
-        using var renderer = new RgbaImageRenderer(1280, 700);
+        using var renderer = new RgbaImageRenderer((uint)Wide, 700);
         var (chrome, screen, opened) = Open(renderer);
         var orbit = screen.Lines.Single(l => l.Name == "orbit").Key;
         var gadget = screen.Lines.Single(l => l.Name == "gadget").Key;
@@ -188,7 +194,7 @@ public sealed class ReposPageLinksTests
     [Fact]
     public void AHostWithNoRouteKeepsTheBrowserLinkWithTheAwayMark()
     {
-        using var renderer = new RgbaImageRenderer(1280, 700);
+        using var renderer = new RgbaImageRenderer((uint)Wide, 700);
         // The page on its own, as a host with neither page to open has it: the node lists both PRs, and no route is set.
         var repos = new ReposView<RgbaImage>(renderer) { FontPath = SessionsCapture.FontPath, OnOpen = _ => { }, PullRequests = Prs().Row };
         var screen = Screen();
@@ -202,7 +208,7 @@ public sealed class ReposPageLinksTests
     [Fact]
     public void EveryLinkKeepsTheCopyURLMenuAndACutTitleShowsItsWholeTextOnHover()
     {
-        using var renderer = new RgbaImageRenderer(1280, 700);
+        using var renderer = new RgbaImageRenderer((uint)Wide, 700);
         var (chrome, screen, _) = Open(renderer, LongTitle);
         chrome.Repos.CopyText = _ => { };
         Draw(chrome, screen);
