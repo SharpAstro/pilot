@@ -40,7 +40,7 @@ public sealed partial class LegCommander(
     public Designs.DesignRecord? DesignRecord { get; set; }
 
     /// <summary>The designs, so a flight can be moved to a design's newer version (design-replan, PIL1185); null where none is wired.</summary>
-    public Designs.DesignStore? Designs { get; set; }
+    public Designs.DesignStore? DesignFiles { get; set; }
 
     /// <summary>Takes the queued jobs owned by any of the given session ids off the queue, told (owners, why); null where there is no job runner (#327).</summary>
     public Func<IReadOnlyCollection<string>, string, int>? DropJobs { get; set; }

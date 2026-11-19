@@ -27,14 +27,14 @@ public sealed partial class LegCommander
         var id = DesignStore.Normalise(given);
         var recorded = flight.Designs.FirstOrDefault(d => string.Equals(d.Id, id, StringComparison.OrdinalIgnoreCase))
             ?? throw new FlightException($"{flight.Code} does not build {id}: it builds {(flight.Designs.Length == 0 ? "no design" : string.Join(", ", flight.Designs.Select(d => d.Id)))}");
-        var design = Designs?.Find(id) ?? throw new FlightException($"There is no design {id} on this node");
+        var design = DesignFiles?.Find(id) ?? throw new FlightException($"There is no design {id} on this node");
         if (design.Current is not { } now || now <= recorded.Version)
         {
             throw new FlightException($"{id} has no version newer than v{recorded.Version.ToString(CultureInfo.InvariantCulture)}, the one {flight.Code} builds");
         }
         RefuseIfOnHold(flight.Code);
 
-        var prototype = Path.Combine(Designs.FolderOf(id), DesignStore.VersionsFolderName, "v" + now.ToString(CultureInfo.InvariantCulture), DesignStore.PrototypeFile);
+        var prototype = Path.Combine(DesignFiles!.FolderOf(id), DesignStore.VersionsFolderName, "v" + now.ToString(CultureInfo.InvariantCulture), DesignStore.PrototypeFile);
         var sha = File.Exists(prototype) ? DesignStore.Sha256Of(prototype) : null;
         flight = flight with
         {

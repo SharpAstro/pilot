@@ -281,6 +281,7 @@ internal sealed partial class IdeasView<TSurface>
         if (idea is not null)
         {
             parts.AddRange(IdeaDesignMark<TSurface>.Links(idea, "ideas:design", P, Link, Tint.Hover, OnDesign, Send is null ? null : link => Run(() => UnlinkDesignAsync(idea, link.Id), $"unlink {link.Id} from {idea.Id}")));
+            parts.AddRange(DesignNotices(idea));
         }
         var meta = string.Join(" · ", new[] { item.Repo.Length > 0 ? item.Repo : null, item.Age.Length > 0 ? $"{item.Age} ago" : null, item.Who.Length > 0 ? $"by {item.Who}" : null }.OfType<string>());
         if (meta.Length > 0)

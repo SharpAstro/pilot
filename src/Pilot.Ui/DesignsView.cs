@@ -1010,7 +1010,7 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
         {
             items.Add(Layout.Builder.Text("No designs yet. Start one from an idea above, or type what it is for and press Start a design.", 13f, Dim).Selectable().RowH(24f));
         }
-        items.AddRange(screen.Rows.Select((row, i) => ListRow(row, i)));
+        items.AddRange(screen.Rows.Select((row, i) => ListRow(row, i, screen.Flights)));
         return Layout.Builder.VStack(StartBox(), Layout.Builder.VStack([.. items]).WithGap(2f).WithScroll(_listScroll).Stretch()).WithGap(8f).Pad(Gutter, 8f).Stretch();
     }
 
@@ -1055,14 +1055,14 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
             WrappedProse.OneLine(caption, 12f, _startNote is null ? Dim : Bright).RowH(22f).Whole(caption)).WithGap(2f).RowH(50f);
     }
 
-    private Layout.Node ListRow(DesignRow row, int index)
+    private Layout.Node ListRow(DesignRow row, int index, IReadOnlyList<FlightRow>? flights = null)
     {
         var title = DesignTitle.Shown(row.Title) ?? row.Id;
         var version = row.Current is { } v ? "v" + v.ToString(CultureInfo.InvariantCulture) : "no version";
         var when = row.At is { } at ? PageTime.Text(at) : "";
         var repo = row.Repo ?? "";
         // Two lines of one string each: columns of a row squeezed each other's ellipses at a narrow window.
-        var detail = string.Join(" · ", new[] { version, row.Ideas() is { Length: > 0 } ideas ? "for " + string.Join(", ", ideas.Select(IdeaName)) : "", repo, row.MadeOn is { Length: > 0 } node ? $"made on {node}" : "", when }.Where(t => t.Length > 0));
+        var detail = string.Join(" · ", new[] { version, DesignVersionNotice.BuiltText(row, flights), row.Ideas() is { Length: > 0 } ideas ? "for " + string.Join(", ", ideas.Select(IdeaName)) : "", repo, row.MadeOn is { Length: > 0 } node ? $"made on {node}" : "", when }.Where(t => t.Length > 0));
         var line = Layout.Builder.VStack(
             WrappedProse.OneLine($"{row.Id}  {title}", 13f, Bright, selectable: false).RowH(22f).Whole($"{row.Id}  {title}"),
             WrappedProse.OneLine(detail, 12f, Dim, selectable: false).RowH(20f).Whole(row.At is { } stamp ? $"{detail} · {PageTime.Utc(stamp)}" : detail)).WithGap(0f).Pad(4f, 2f).RowH(RowH);

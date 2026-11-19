@@ -1335,6 +1335,7 @@ internal sealed class PilotChrome<TSurface>
                     PullRequests.Render((pullRequests ?? new PullRequestsScreen(null, screen.Source, screen.AsOf)) with { OpenCards = cards?.Open ?? [] }, rect);
                     break;
                 case PageKey when Page == PilotPage.Flights:
+                    Flights.Designs = designs?.Rows ?? [];
                     Flights.Render(flights ?? new FlightsScreen([], screen.Source, screen.AsOf), rect);
                     break;
                 case PageKey when Page == PilotPage.Sessions:

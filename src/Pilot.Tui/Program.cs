@@ -507,7 +507,7 @@ while (!stop.IsCancellationRequested)
         {
             spendReads.Ask(chrome.Spend.Window, pages.Sessions.Source);
         }
-        if (page is PilotPage.Designs or PilotPage.Ideas)
+        if (page is PilotPage.Designs or PilotPage.Ideas or PilotPage.Flights)
         {
             // The Ideas page's Link a design picks from the same list of designs.
             designReads.AskList();
@@ -551,7 +551,7 @@ while (!stop.IsCancellationRequested)
         {
             PilotPage.Chat => chat.Tree(),
             PilotPage.Sessions => sessions.Tree(pages.Sessions),
-            PilotPage.Flights => flights.Tree(pages.Flights),
+            PilotPage.Flights => flights.WithDesigns(designReads.Screen(pages.Sessions.Source, now, null)?.Rows).Tree(pages.Flights),
             PilotPage.Repos => repos.Tree(pages.Repos ?? new ReposScreen([], pages.Sessions.Source, now)),
             PilotPage.PullRequests => pullRequests.Tree(pages.PullRequests ?? new PullRequestsScreen(null, pages.Sessions.Source, now), width),
             PilotPage.Jobs => jobs.Tree(pages.Jobs),
