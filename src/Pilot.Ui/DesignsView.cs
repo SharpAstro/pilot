@@ -29,13 +29,10 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
 
     private int? _chatVersion;
 
-    // The page's width in design units as the last Render had it, and the width from which the chat stands beside the document: the document keeps at least 500, the chat 300 to 460.
+    // The page's width in design units as the last Render had it, and the width from which the chat stands beside the document: the document keeps at least 500 and the chat is 420.
     // Narrower, the chat sits under the document.
     private float _width = 10_000f;
     private float _pageHeight = 900f;
-    private const float WideColumns = 900f;
-    private const float ChatWidthMin = 300f;
-    private const float ChatWidthMax = 460f;
 
     // Under the document, the chat takes a share of the height (NarrowChatShare to its 1), never under what its status, a line of the feed and the box need,
     // never over NarrowChatHeight. A share, not a scroll around both: the chat's own scroll inside another was painted unclipped over the prototype.
@@ -1074,9 +1071,11 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
             .Follows(new HitResult.ButtonHit($"designs:open:{id}"), _ => Open(id));
     }
     // The room the document has: where the chat stands beside it (a window wide enough), the chat's width; else the document has the page's.
-    private bool ChatBeside => Terminal is null && _width >= WideColumns;
+    private bool ChatBeside => Terminal is null && _width >= MinDocumentWidth + ChatWidth + 3f * Gutter;
 
-    private float ChatWidth => Math.Clamp(_width * 0.26f, ChatWidthMin, ChatWidthMax);
+    // The chat is one fixed width at the right edge; the document is the star beside it and takes every unit left.
+    private const float ChatWidth = 420f;
+    private const float MinDocumentWidth = 500f;
 
     // The width the played screen has inside its well: the document's column less its scroll bar and the well's own padding. In a terminal, the columns the page has.
     private float WellInnerWidth()
@@ -1084,7 +1083,7 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
         const float scrollRoom = 16f;
         var column = Terminal is { } terminal
             ? terminal.Columns * PrototypeCells.CellWidth - 2f * Gutter
-            : ChatBeside ? _width - 3f * Gutter - ChatWidth : _width - 2f * Gutter;
+            : ChatBeside ? _width - ChatWidth - 2f * Gutter : _width - 2f * Gutter;
         return Math.Max(120f, (column - scrollRoom - (_across - 1) * WellGap) / _across - 2f * WellPadX);
     }
 
@@ -1093,14 +1092,22 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
     private const float WellGap = 12f;
 
     // The height of a frame's rectangle in the window: the screen's size scaled to the well's width, never taller than MaxFrameH, with a margin the frame's border draws in.
+    // A frame is played at a whole factor of its own size: the largest that fits the well's width (and MaxFrameH), at least 1x. One wider than the well is fitted below 1x.
+    private static float FrameScale(float width, float height, float innerWidth)
+    {
+        var fit = (innerWidth - 2f * FrameMargin) / width;
+        var scale = fit >= 1f ? MathF.Floor(fit) : fit;
+        var cap = MaxFrameH / height;
+        return scale <= cap ? scale : cap >= 1f ? MathF.Floor(cap) : cap;
+    }
+
     private static float FrameHeight(float width, float height, float innerWidth)
     {
         if (width <= 0f || height <= 0f)
         {
             return 120f;
         }
-        var scale = MathF.Min((innerWidth - 2f * FrameMargin) / width, MaxFrameH / height);
-        return height * scale + 2f * FrameMargin;
+        return height * FrameScale(width, height, innerWidth) + 2f * FrameMargin;
     }
 
     private Layout.Node DesignBody(DesignPage page)
@@ -1121,7 +1128,7 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
         }
         // In pixels the chat is a column of its own beside the document, where what the designer changes is in view. A window with no width for both puts it under the document.
         return ChatBeside
-            ? Layout.Builder.HStack(document, ChatPane(page).WFixed(ChatWidth).HStar()).WithGap(Gutter).Pad(Gutter, 8f).WStar().HStar()
+            ? Layout.Builder.HStack(document.Pad(Gutter, 0f).WStar().HStar(), ChatPane(page).WFixed(ChatWidth).HStar()).WithGap(0f).Pad(0f, 8f).WStar().HStar()
             : Layout.Builder.VStack(document, ChatPane(page).HStar(NarrowChatShare, NarrowChatFloor, NarrowChatHeight)).WithGap(8f).Pad(Gutter, 8f).WStar().HStar();
     }
 
@@ -1184,7 +1191,7 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
         {
             items.Add(CellNode(page, version, i, notebook!.Cells[i]));
         }
-        return Layout.Builder.VStack([.. items]).WithGap(10f);
+        return Layout.Builder.VStack([.. items]).WithGap(10f).WStar();
     }
 
     // Where the design is kept on GitHub (PIL1171), under its title: a design read from another node says so, the failed write is in the error colour, a write in the air or done is plain.
@@ -1356,7 +1363,7 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
         {
             items.AddRange(TypingPanel(page));
         }
-        return Layout.Builder.VStack([.. items]).WithGap(6f);
+        return Layout.Builder.VStack([.. items]).WithGap(6f).WStar();
     }
 
     // A frame in its well: the caption above, the screen in a 2 px light-grey frame (a Fill the player draws into, or in a terminal the screen's own cells), and the place under it
