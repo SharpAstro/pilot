@@ -72,7 +72,8 @@ public sealed class DesignBuildTests : IDisposable
         text.ShouldContain(design.PrototypeSha256!);
         var flight = _state.Flights().ShouldHaveSingleItem();
         flight.Code.ShouldBe(built.Made);
-        (flight.FromDesign, flight.FromDesignVersion, flight.FromDesignSha256).ShouldBe((design.Id, 1, design.PrototypeSha256));
+        var recorded = flight.Designs.ShouldHaveSingleItem();
+        (recorded.Id, recorded.Version, recorded.Sha256).ShouldBe((design.Id, 1, design.PrototypeSha256));
         var build = _store.Find(design.Id)!.Builds.ShouldHaveSingleItem();
         (build.Version, build.Flight, build.Repo).ShouldBe((1, flight.Code, "pilot"));
     }
@@ -143,7 +144,8 @@ public sealed class DesignBuildTests : IDisposable
         _github.IssuesCreated.Count.ShouldBe(issuesBefore);
         _github.Moves.ShouldBe([(1, "v1")]);
         var flight = _state.Flights().ShouldHaveSingleItem();
-        (flight.FromIdea, flight.FromDesign, flight.FromDesignVersion, flight.FromDesignSha256).ShouldBe(("I1", design.Id, 1, design.PrototypeSha256));
+        var recorded = flight.Designs.ShouldHaveSingleItem();
+        (flight.FromIdea, recorded.Id, recorded.Version, recorded.Sha256).ShouldBe(("I1", design.Id, 1, design.PrototypeSha256));
         _github.IssueComments.Any(c => c.Number == 1 && c.Body.Contains(design.PrototypeSha256!)).ShouldBeTrue();
         _store.Find(design.Id)!.Builds.ShouldHaveSingleItem().Issue.ShouldBe(1);
     }
@@ -171,7 +173,8 @@ public sealed class DesignBuildTests : IDisposable
         _github.IssuesCreated.Count.ShouldBe(issuesBefore + 1);
         second.Made.ShouldNotBe(first.Made);
         var flight = _state.Flights().Single(f => f.Code == second.Made);
-        (flight.FromDesign, flight.FromDesignVersion).ShouldBe((design.Id, 2));
+        var recorded = flight.Designs.ShouldHaveSingleItem();
+        (recorded.Id, recorded.Version).ShouldBe((design.Id, 2));
         flight.Repo.ShouldBe("pilot");
         flight.FromIdea.ShouldBeNull();
         var latest = _store.Find(design.Id)!.Builds.Last();

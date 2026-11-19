@@ -161,13 +161,13 @@ internal sealed partial class PageData
             ? [new FlightRow
             {
                 Code = "PIL1153", Repo = "pilot", RepoPath = "C:/repos/pilot", Issue = 1153, Branch = "flight/pil1153", Worktree = "C:/repos/pilot/.claude/worktrees/pil1153", Base = "origin/main",
-                State = state, CreatedAt = now.AddHours(-2), FromDesign = row.Id, FromDesignVersion = 2, FromDesignSha256 = "ab",
+                State = state, CreatedAt = now.AddHours(-2), Designs = [new FlightDesignRow { Id = row.Id, Version = 2, Sha256 = "ab" }],
                 PullRequest = state == FlightState.Landed ? 1160 : 1170, PullRequestUrl = "https://github.com/SharpAstro/pilot/pull/1170",
             },
             new FlightRow
             {
                 Code = "PIL9", Repo = "pilot", RepoPath = "C:/repos/pilot", Issue = 9, Branch = "flight/pil9", Worktree = "C:/repos/pilot/.claude/worktrees/pil9", Base = "origin/main",
-                State = FlightState.Flying, CreatedAt = now.AddHours(-1), FromDesign = row.Id, FromDesignVersion = 1,
+                State = FlightState.Flying, CreatedAt = now.AddHours(-1), Designs = [new FlightDesignRow { Id = row.Id, Version = 1 }],
             }]
             : [];
         string[] repos = longNames ? ["pilot", "tianwen", LongWord] : ["pilot", "tianwen"];

@@ -139,7 +139,7 @@ internal sealed class DesignReads(NodeClient client, string who, Action redraw)
 
     /// <summary>The flights built from version <paramref name="version"/> of design <paramref name="id"/> among <paramref name="flights"/>, oldest first: the snapshot's <c>FromDesign</c> and <c>FromDesignVersion</c>.</summary>
     public static FlightRow[] BuiltOf(IEnumerable<FlightRow>? flights, string id, int version) =>
-        [.. (flights ?? []).Where(f => string.Equals(f.FromDesign, id, StringComparison.OrdinalIgnoreCase) && f.FromDesignVersion == version).OrderBy(f => f.CreatedAt)];
+        [.. (flights ?? []).Where(f => f.Designs.Any(d => string.Equals(d.Id, id, StringComparison.OrdinalIgnoreCase) && d.Version == version)).OrderBy(f => f.CreatedAt)];
 
     /// <summary>
     /// Reads design <paramref name="id"/>'s chat after entry <paramref name="after"/> (all of it for a negative one): the node's <c>design-chat</c>, which the chat

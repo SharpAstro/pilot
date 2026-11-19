@@ -148,7 +148,7 @@ public sealed class IdeaDesignLinkTests : IDisposable
 
         await Start(1);
         var unpublished = await Run(Verbs.PlanIdea, Idea(1), "v1");
-        unpublished.Error.ShouldNotBeNull().ShouldContain("I1 needs a design and has none yet");
+        unpublished.Error.ShouldNotBeNull().ShouldContain($"{_store.List().Single().Id} has no published version");
         State.Flights().ShouldBeEmpty();
 
         var anyway = await Run(Verbs.PlanIdea, Idea(1), "v1", Verbs.AnywayFlag);
