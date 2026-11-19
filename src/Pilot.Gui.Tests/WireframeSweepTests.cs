@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using DIR.Lib;
+using Pilot.Ui;
 using Shouldly;
 using Xunit;
 
@@ -70,11 +71,12 @@ public static class WireframeSweepTests
             ? frame.Regions.Where(r => r.Result is HitResult.ButtonHit { Action: ZoomAction or PalettePanelAction }).ToArray()
             : [];
         var bar = OpenBar(frame, panel);
+        var handles = frame.Regions.Where(r => r.Result is HitResult.ButtonHit { Action: NotificationsHost.HandleAction }).ToArray();
         return new()
         {
             IgnoreRegion = r => (r.Result is HitResult.ButtonHit { Action: var a } && a.StartsWith("map:", StringComparison.Ordinal) && a != ZoomAction)
-                || Under(bar, r.Order, r.Visible),
-            IgnoreText = t => overlays.Any(o => o.Order > t.Order && Overlaps(o.Visible, t.Visible)) || Under(bar, t.Order, t.Visible),
+                || Under(bar, r.Order, r.Visible) || IsHandle(r) || UnderHandle(handles, r.Order, r.Visible),
+            IgnoreText = t => overlays.Any(o => o.Order > t.Order && Overlaps(o.Visible, t.Visible)) || Under(bar, t.Order, t.Visible) || UnderHandle(handles, t.Order, t.Visible),
         };
     }
 
@@ -92,6 +94,13 @@ public static class WireframeSweepTests
                 .Select(r => (WireframeRegion?)r)
                 .FirstOrDefault()
             : null;
+
+    private static bool IsHandle(WireframeRegion r) => r.Result is HitResult.ButtonHit { Action: NotificationsHost.HandleAction };
+
+    // The collapsed bar's edge handle (PIL1205) floats over the page's right edge, one tab at the window's middle and no column reserved, so
+    // what the page painted under it is covered by design, as under the open bar. The handle's own place and tint are judged by
+    // NotificationsCaptureTests and NotificationsHandleTests.
+    private static bool UnderHandle(WireframeRegion[] handles, int order, RectF32 visible) => handles.Any(h => order < h.Order && Overlaps(h.Visible, visible));
 
     // Painted before the bar and under it: covered.
     private static bool Under(WireframeRegion? bar, int order, RectF32 visible) => bar is { } b && order < b.Order && Overlaps(b.Visible, visible);
