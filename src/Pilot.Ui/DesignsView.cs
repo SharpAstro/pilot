@@ -939,7 +939,7 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
                         .Follows(new HitResult.ButtonHit("designs:edit:-1:title"), _ => BeginEdit(-1, "title")));
             }
             parts.AddRange(VersionChip(page).Select(c => c.HFixed(BackRowH)));
-            if (BuildButton(page) is { } build)
+            if (BuildOnFirstRow && BuildButton(page) is { } build)
             {
                 parts.Add(build);
             }

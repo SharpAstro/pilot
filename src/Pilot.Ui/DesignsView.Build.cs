@@ -150,6 +150,11 @@ internal sealed partial class DesignsView<TSurface>
             yield break;
         }
         var row = page.Detail.Row;
+        if (!BuildOnFirstRow && !(_buildAsking && !Building) && BuildButton(page) is { } button)
+        {
+            // A page too narrow for the button beside the title and the chip has it as the document's first line instead (PIL1191).
+            yield return Layout.Builder.HStack(button).WithGap(6f).RowH(26f);
+        }
         var built = BuiltFrom(_buildScreen, row.Id, version);
         foreach (var flight in built.OrderByDescending(f => f.CreatedAt).Take(3))
         {
@@ -193,6 +198,9 @@ internal sealed partial class DesignsView<TSurface>
         }
         return Layout.Builder.HStack([.. parts]).WithGap(6f).RowH(26f);
     }
+
+    /// <summary>Whether the page is wide enough for Build this version on the back row: below it the title would have no room left and its ellipsis would run onto the version chip.</summary>
+    private bool BuildOnFirstRow => (Terminal is { } cells ? cells.Columns * PrototypeCells.CellWidth : _width) >= 600f;
 
     /// <summary>The Build this version button for the back row (PIL1191), after the version chip: one height, the same Presses feedback. Null with no version, or while a flight of it flies.</summary>
     private Layout.Node? BuildButton(DesignPage page)
