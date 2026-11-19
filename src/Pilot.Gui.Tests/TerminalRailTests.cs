@@ -20,7 +20,7 @@ public sealed class TerminalRailTests
     [
         (PilotPage.Home, '1'), (PilotPage.Chat, '2'), (PilotPage.Sessions, '3'), (PilotPage.Flights, '4'), (PilotPage.Repos, '5'),
         (PilotPage.PullRequests, '9'), (PilotPage.Jobs, '6'), (PilotPage.Fleet, '7'), (PilotPage.Settings, '8'), (PilotPage.Ideas, '0'),
-        (PilotPage.Spend, '$'), (PilotPage.Designs, 'd'),
+        (PilotPage.Spend, '$'), (PilotPage.Designs, 'd'), (PilotPage.Notifications, 'n'),
     ];
 
     private static JobsScreen JobsOf(params JobState[] states) =>
