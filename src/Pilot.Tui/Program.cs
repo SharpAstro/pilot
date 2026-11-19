@@ -542,7 +542,7 @@ while (!stop.IsCancellationRequested)
         bar.ToastsOnPage = page != PilotPage.Notifications;
         bar.Sync(pages.Cards.Open, card => cards.NodeOf(card)?.Name, now);
         chrome.ObserveEvents(pages.Jobs, pages.Flights, null, now);
-        var cardsOver = bar.Open && (pages.Cards.HasAny || cards.CanTell && !cards.OnChatPage);
+        var cardsOver = bar.Open && page != PilotPage.Notifications && (pages.Cards.HasAny || cards.CanTell && !cards.OnChatPage);
         chat.CellColumns = TerminalFrame.PageColumnsWithBar(columns);
         if (page == PilotPage.Designs)
         {

@@ -1309,7 +1309,8 @@ internal sealed class PilotChrome<TSurface>
         Cards.IdeaLinks = (ideas ?? IdeasScreen.Empty).LinksIn;
         // The bar has a panel when there is something to show (the sessions table needs the width more than an empty "nothing waits on you"),
         // and shows it while it is open; collapsed, the strip and its bell are all there is.
-        var hasPanel = cards is { HasAny: true } || (cards is not null && Cards.CanTell && !Cards.OnChatPage);
+        // The Notifications page is the whole list, so the open bar over its right side would only repeat it and cover its header.
+        var hasPanel = Page != PilotPage.Notifications && (cards is { HasAny: true } || (cards is not null && Cards.CanTell && !Cards.OnChatPage));
         ShowsCards = hasPanel && Notifications.Open;
         // The page's flight lights its cards in the panel, and the flight's own page offers the merge its card does.
         Flights.Cards = cards is null ? null : Cards.Visible(cards);
