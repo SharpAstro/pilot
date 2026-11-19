@@ -109,6 +109,7 @@ public sealed class CaretBlinkPageTests
         var chrome = Chrome(renderer, PilotPage.Designs);
         var data = PageData.For("sample");
         var screen = PageData.DesignsFor("sample", PageData.Now);
+        chrome.Designs.OnEdit = (_, _, _, _) => { };
         chrome.Designs.Open("DSN-1");
         Paint(chrome, data, screen);
         chrome.Designs.BeginEdit(1, "objective").ShouldBeTrue();
