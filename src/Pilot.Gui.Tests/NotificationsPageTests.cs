@@ -148,7 +148,7 @@ public sealed class NotificationsPageTests
         using var w = new Window(1920, 1080);
         Fill(w);
         Enumerable.Range(0, 200).Select(y => w.Chrome.NotificationsLayer.HitTest(w.Width - 24f, y))
-            .ShouldNotContain(h => h is NotificationHit { Part: NotificationPart.Bell }, "the rail's entry is the one bell");
+            .Any(h => h is NotificationHit { Part: NotificationPart.Bell }).ShouldBeFalse("the rail entry is the one bell");
 
         w.Chrome.Show(PilotPage.Notifications);
         w.Chrome.Page.ShouldBe(PilotPage.Notifications);

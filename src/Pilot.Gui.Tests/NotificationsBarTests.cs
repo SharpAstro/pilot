@@ -181,8 +181,8 @@ public sealed class NotificationsBarTests
         PilotChrome<RgbaImage>.NotificationsGlyph(null).ShouldBe(("\U0001F514", null));
         PilotChrome<RgbaImage>.NightBell(new BellState(3, true)).ShouldBe("N!3");
 
-        LayerRegions(chrome).ShouldNotContain(r => r.Result is NotificationHit { Part: NotificationPart.Bell });
-        Enumerable.Range(0, 1080).Select(y => chrome.NotificationsLayer.HitTest(1919f, y)).ShouldNotContain(h => h is NotificationHit { Part: NotificationPart.Bell });
+        LayerRegions(chrome).Any(r => r.Result is NotificationHit { Part: NotificationPart.Bell }).ShouldBeFalse();
+        Enumerable.Range(0, 1080).Select(y => chrome.NotificationsLayer.HitTest(1919f, y)).Any(h => h is NotificationHit { Part: NotificationPart.Bell }).ShouldBeFalse();
         PressRailEntry(chrome, 1920, 1080);
         chrome.Page.ShouldBe(PilotPage.Notifications);
     }
