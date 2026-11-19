@@ -189,6 +189,7 @@ public sealed class DesignRepoFilesTests : IDisposable
         _store.Find(id)!.Record.Single().Folder.ShouldBeNull();
         _record.Section(flight).ShouldContain("not committed: render big.png is 600 KB, over 500 KB");
         _state.Cards(openOnly: true).Count(c => c.Kind == DesignRecord.OversizeKind).ShouldBe(1);
+        _state.Cards(openOnly: true).Single(c => c.Kind == DesignRecord.OversizeKind).Title.ShouldBe($"PIL9: design {id} v1 is not committed to the repo");
     }
 
     [Fact]
