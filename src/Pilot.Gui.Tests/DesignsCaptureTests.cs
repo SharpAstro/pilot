@@ -454,9 +454,13 @@ public sealed class DesignsCaptureTests
             var key = $"design-frame:{cell}:0";
             var frame = arranged.Single(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Fill f } && f.Key == key).Bounds;
             var surface = chrome.Designs.FrameSurfaceOf(cell, 0).ShouldNotBeNull();
-            var factor = (frame.Height - 8f) / surface.Height;
+            var drawn = chrome.Designs.FrameRectOf(cell, 0).ShouldNotBeNull();
+            var factor = drawn.Height / surface.Height;
             factor.ShouldBeGreaterThanOrEqualTo(1f);
             Math.Abs(factor - MathF.Round(factor)).ShouldBeLessThan(0.001f, $"{name} cell {cell}: a whole factor");
+            (drawn.Width / surface.Width).ShouldBe(factor, 0.001f, $"{name} cell {cell}: the same factor across");
+            ((factor + 1f) * surface.Width + 8f).ShouldBeGreaterThan(frame.Width, $"{name} cell {cell}: the next whole factor would not fit the well");
+            drawn.X.ShouldBe(frame.X, 0.5f, $"{name} cell {cell}: at the well's left edge");
             if (cell == 0 && width == 1920)
             {
                 factor.ShouldBe(2f, 0.001f, "640 x 240 at 1920 x 1080 is 2x");
@@ -464,5 +468,33 @@ public sealed class DesignsCaptureTests
         }
         TextOverlap.Faults([.. arranged]).Select(f => f.Line).ShouldBeEmpty($"{name} at {width}");
         Keep($"after-design-page-{name}-pilot-gui-{width}.png", SharpAstro.Png.PngWriter.Encode([.. renderer.Surface.Pixels], width, height));
+    }
+
+    /// <summary>With the For-you bar open and a card in it (how the window opens), the design page stands left of the bar: the 420 chat ends where the bar starts and no text overlaps.</summary>
+    [Fact]
+    public void TheDesignPageWithTheForYouBarOpenKeepsTheChatClearOfTheBar()
+    {
+        PageTime.Zone = TimeZoneInfo.Utc;
+        const int width = 1920, height = 1080;
+        var screen = AcceptedDesign(false);
+        using var renderer = new RgbaImageRenderer(width, height);
+        using var accent = Pilot.Ui.Palette.StandardForCapture(null);
+        var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
+        chrome.Autopilot.OnToggle = _ => Task.FromResult<string?>(null);
+        chrome.Show(PilotPage.Designs);
+        chrome.Designs.OnEdit = (_, _, _, _) => { };
+        chrome.Designs.Open("DSN-7");
+        var data = PageData.For("sample");
+        chrome.Render(data.Sessions, data.Flights, data.Cards, data.Jobs, data.Fleet, data.Repos, data.PullRequests, new RectF32(0, 0, width, height), data.Machines, null, data.Spend, screen);
+
+        chrome.ShowsCards.ShouldBeTrue("the bar is open with a card present");
+        var bar = chrome.CardsBounds.ShouldNotBeNull();
+        var page = chrome.PageBounds.ShouldNotBeNull();
+        var arranged = Layout.Engine.Arrange(chrome.Designs.Tree(screen), new Rect<float>(page.X, page.Y, page.Width, page.Height), new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, 1f)).ToList();
+        var chat = arranged.Where(a => a.Bounds.Width == 420f && a.Bounds.Height > page.Height / 2f).ToList();
+        chat.ShouldNotBeEmpty("a 420 chat");
+        chat.ShouldAllBe(a => a.Bounds.Right <= bar.X + 0.5f, "the chat ends where the open bar starts");
+        TextOverlap.Faults([.. arranged]).Select(f => f.Line).ShouldBeEmpty();
+        Keep("after-design-page-bar-open-pilot-gui-1920.png", SharpAstro.Png.PngWriter.Encode([.. renderer.Surface.Pixels], width, height));
     }
 }

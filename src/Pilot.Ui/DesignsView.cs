@@ -34,6 +34,9 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
     private float _width = 10_000f;
     private float _pageHeight = 900f;
 
+    /// <summary>The width, in design units, of the For-you bar laid over the page's right side while it is open. An open design's page stands left of it, so the chat is not under the bar; 0 when the bar is collapsed.</summary>
+    public float ClearRight { get; set; }
+
     // Under the document, the chat takes a share of the height (NarrowChatShare to its 1), never under what its status, a line of the feed and the box need,
     // never over NarrowChatHeight. A share, not a scroll around both: the chat's own scroll inside another was painted unclipped over the prototype.
     private const float NarrowChatShare = 0.6f;
@@ -796,7 +799,7 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
         BeginFrame();
         _frameRects.Clear();
         NoteHeight(bounds);
-        _width = Scale.ToDesignX(bounds.Width);
+        _width = Scale.ToDesignX(bounds.Width) - (OpenId is null ? 0f : ClearRight);
         _pageHeight = Scale.ToDesignY(bounds.Height);
         var tree = Tree(screen);
         RenderLayout(tree, bounds, null, null, DrawFill);
@@ -855,17 +858,20 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
         new(new PointInt((int)MathF.Ceiling(f.X + f.Width), (int)MathF.Ceiling(f.Y + f.Height)), new PointInt((int)MathF.Floor(f.X), (int)MathF.Floor(f.Y)));
 
     // The design size scaled to fit and centred in rect: where the player draws and where the frame goes. Null for a size with no area.
-    private static RectF32? FittedFrame(RectF32 rect, (float Width, float Height) size)
+    private RectF32? FittedFrame(RectF32 rect, (float Width, float Height) size)
     {
         if (size.Width <= 0 || size.Height <= 0)
         {
             return null;
         }
-        var s = MathF.Min(rect.Width / size.Width, rect.Height / size.Height);
-        var w = size.Width * s;
-        var h = size.Height * s;
+        // The leaf is height * factor + 2 * FrameMargin tall (FrameHeight), so the frame is the leaf less its margin: its own size times the whole factor FrameScale chose.
+        var perPixelX = Scale.ToDesignX(1f);
+        var perPixelY = Scale.ToDesignY(1f);
+        var factor = (Scale.ToDesignY(rect.Height) - 2f * FrameMargin) / size.Height;
+        var w = size.Width * factor / perPixelX;
+        var h = size.Height * factor / perPixelY;
         // Anchored at the well's left edge, so the caption above it and the toolbar under it start where the frame does.
-        return new RectF32(rect.X, rect.Y + (rect.Height - h) / 2f, w, h);
+        return new RectF32(rect.X, rect.Y + FrameMargin / perPixelY, w, h);
     }
 
     // A plain 2 px light-grey frame of the target's shape around where the player drew it: no device chrome, notch or status bar, so it is never mistaken for the app.
@@ -907,6 +913,10 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
             : Layout.Builder.VStack(
                 [DesignBackRow(open), .. IdeaPicker(open),
                  (open is null ? Layout.Builder.Text($"Reading {OpenId}…", 16f, Dim, TextAlign.Center).Selectable().Stretch() : DesignBody(open)).Stretch()]).Stretch();
+        if (OpenId is not null && ClearRight > 0f)
+        {
+            body = Layout.Builder.HStack(body.Stretch(), Layout.Builder.Spacer().WFixed(ClearRight).HStar()).WithGap(0f).Stretch();
+        }
         var page = Layout.Builder.VStack(header, body.Stretch()).Bg(Ground).Stretch();
         return About?.Over(WhenShort(page)) ?? WhenShort(page);
     }
@@ -1098,15 +1108,16 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
 
     // The height of a frame's rectangle in the window: the screen's size scaled to the well's width, never taller than MaxFrameH, with a margin the frame's border draws in.
     // A frame is played at a whole factor of its own size: the largest that fits the well's width (and MaxFrameH), at least 1x. One wider than the well is fitted below 1x.
-    private static float FrameScale(float width, float height, float innerWidth)
+    private float FrameScale(float width, float height, float innerWidth)
     {
         var fit = (innerWidth - 2f * FrameMargin) / width;
         var scale = fit >= 1f ? MathF.Floor(fit) : fit;
-        var cap = MaxFrameH / height;
+        // The height cap keeps a frame tall at 1x from running off the page; a short one is limited by half the page's height, so a larger window plays it larger.
+        var cap = Math.Max(MaxFrameH, _pageHeight * 0.5f) / height;
         return scale <= cap ? scale : cap >= 1f ? MathF.Floor(cap) : cap;
     }
 
-    private static float FrameHeight(float width, float height, float innerWidth)
+    private float FrameHeight(float width, float height, float innerWidth)
     {
         if (width <= 0f || height <= 0f)
         {

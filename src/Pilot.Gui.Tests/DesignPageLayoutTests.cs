@@ -40,8 +40,10 @@ public sealed class DesignPageLayoutTests
 
         public DesignsView<RgbaImage> View => _chrome.Designs;
 
+        private RectF32 Page => _chrome.PageBounds.ShouldNotBeNull();
+
         public List<Layout.ArrangedNode<float>> Arranged() =>
-            Layout.Engine.Arrange(View.Tree(_screen), new Rect<float>(0, 0, _w, _h), new PixelMeasureContext<RgbaImage>(_renderer, SessionsCapture.FontPath, 1f)).ToList();
+            Layout.Engine.Arrange(View.Tree(_screen), new Rect<float>(Page.X, Page.Y, Page.Width, Page.Height), new PixelMeasureContext<RgbaImage>(_renderer, SessionsCapture.FontPath, 1f)).ToList();
 
         public void Dispose() => _renderer.Dispose();
     }
@@ -88,7 +90,11 @@ public sealed class DesignPageLayoutTests
         var frame = FrameOf(all);
         var well = WellOf(all, out var toolbar);
         var surface = rig.View.FrameSurfaceOf(0, 0)!;
-        var factor = (frame.Height - 8f) / surface.Height;
+        var drawn = rig.View.FrameRectOf(0, 0).ShouldNotBeNull();
+        var factor = drawn.Height / surface.Height;
+        (drawn.Width / surface.Width).ShouldBe(factor, 0.001f, "the same factor across");
+        ((factor + 1f) * surface.Width + 8f).ShouldBeGreaterThan(frame.Width, "the next whole factor would not fit the well");
+        drawn.X.ShouldBe(frame.X, 0.5f, "at the well's left edge");
         factor.ShouldBeGreaterThanOrEqualTo(1f);
         Math.Abs(factor - MathF.Round(factor)).ShouldBeLessThan(0.001f, "a whole factor");
         if (w == 1920)
