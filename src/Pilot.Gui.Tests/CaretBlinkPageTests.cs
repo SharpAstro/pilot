@@ -112,7 +112,9 @@ public sealed class CaretBlinkPageTests
         chrome.Designs.OnEdit = (_, _, _, _) => { };
         chrome.Designs.Open("DSN-1");
         Paint(chrome, data, screen);
-        chrome.Designs.BeginEdit(1, "objective").ShouldBeTrue();
+        // The first cell: it is on the page at this size, where a later one can lie below the fold and paint nothing.
+        chrome.Designs.BeginEdit(0, "objective").ShouldBeTrue();
+        Paint(chrome, data, screen);
         chrome.Designs.Ui.Focus.Focus(chrome.Designs.Editor);
         return new Page(chrome.Designs.Ui, () => Paint(chrome, data, screen), () => [.. renderer.Surface.Pixels]);
     });
