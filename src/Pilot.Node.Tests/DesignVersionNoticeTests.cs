@@ -37,6 +37,12 @@ public sealed class DesignVersionNoticeTests : OverlapTestsBase
             $"# Rings\n\n**Objective:** Objective of version {number}.\n\n## Home\n\n**Objective:** Objective of the home screen of version {number}.\n\n```screen id=home\nVersion {number}\n```\n"
             // A version after the first has one more screen, so its prototype (and its hash) differs from the version before.
             + string.Concat(Enumerable.Range(2, Math.Max(0, number - 1)).Select(n => $"\n## Screen {n}\n\n**Objective:** Objective of screen {n}.\n\n```screen id=s{n}\nScreen {n}\n```\n")));
+        // Each extra screen is a file of its own under screens/, made from the starter's home screen with its own id.
+        var home = File.ReadAllText(Path.Combine(draft, DesignStore.ScreensFolderName, "home.json"));
+        foreach (var n in Enumerable.Range(2, Math.Max(0, number - 1)))
+        {
+            File.WriteAllText(Path.Combine(draft, DesignStore.ScreensFolderName, $"s{n}.json"), home.Replace("\"home\"", $"\"s{n}\"", StringComparison.Ordinal));
+        }
         _store.Render(id);
         _store.Publish(id, "version " + number);
     }
