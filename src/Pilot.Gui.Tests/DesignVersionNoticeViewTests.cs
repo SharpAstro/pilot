@@ -122,7 +122,7 @@ public sealed class DesignVersionNoticeViewTests
         var (screen, regions) = FlightPage(chrome, 1280, 900, FlightState.Landed);
 
         Spoken(renderer, chrome.Flights.Tree(screen), 1280).ShouldNotContain("is now v2");
-        regions.ShouldNotContain(r => r.Result is HitResult.ButtonHit { Action: var a } && a.Contains(":replan:", StringComparison.Ordinal));
+        regions.Any(r => r.Result is HitResult.ButtonHit { Action: var a } && a.Contains(":replan:", StringComparison.Ordinal)).ShouldBeFalse();
     }
 
     [Fact]
@@ -134,7 +134,7 @@ public sealed class DesignVersionNoticeViewTests
         var (screen, regions) = FlightPage(chrome, 1280, 900);
 
         Spoken(renderer, chrome.Flights.Tree(screen), 1280).ShouldContain(Notice);
-        regions.ShouldNotContain(r => r.Result is HitResult.ButtonHit { Action: var a } && a.Contains(":replan:", StringComparison.Ordinal));
+        regions.Any(r => r.Result is HitResult.ButtonHit { Action: var a } && a.Contains(":replan:", StringComparison.Ordinal)).ShouldBeFalse();
     }
 
     [Theory]
@@ -177,7 +177,7 @@ public sealed class DesignVersionNoticeViewTests
 
         var regions = new List<ClickableRegion>();
         chrome.Ideas.CollectPaintedRegions(regions);
-        regions.ShouldNotContain(r => r.Result is HitResult.ButtonHit { Action: var a } && a.StartsWith("ideas:replan:", StringComparison.Ordinal));
+        regions.Any(r => r.Result is HitResult.ButtonHit { Action: var a } && a.StartsWith("ideas:replan:", StringComparison.Ordinal)).ShouldBeFalse();
     }
 
     /// <summary>The flight's page in pilot-gui at the owner's two window sizes: PNGs for the PR, the notice whole and no text over text.</summary>
