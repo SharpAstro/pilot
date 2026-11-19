@@ -35,7 +35,7 @@ public static class DesignRenderReader
             {
                 throw new DesignException($"{detail.Row.Id} has no version {number}; it has {string.Join(", ", detail.Versions.Select(v => "v" + v.Number.ToString(CultureInfo.InvariantCulture)))}");
             }
-            folder = Path.Combine(detail.Folder, DesignStore.VersionsFolderName, "v" + number.Value.ToString(CultureInfo.InvariantCulture));
+            folder = Path.Combine(detail.Folder!, DesignStore.VersionsFolderName, "v" + number.Value.ToString(CultureInfo.InvariantCulture));
         }
         var prototype = Path.Combine(folder, DesignStore.PrototypeFile);
         var renders = Path.Combine(folder, DesignChecker.RendersFolderName);
