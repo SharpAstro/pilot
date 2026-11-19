@@ -59,9 +59,39 @@ public sealed class McpDesignNoticesTests : IAsyncLifetime
         var draft = Path.Combine(DesignFolder(), "draft");
         File.Copy(Fixture("sample.prototype.json"), Path.Combine(draft, "prototype.json"), overwrite: true);
         Directory.Delete(Path.Combine(draft, "screens"), recursive: true);
-        File.WriteAllText(Path.Combine(draft, "DESIGN.md"), "# A fleet screen\n\n**Objective:** Shows the sample.\n\n## Home\n\n**Objective:** Shows the fleet.\n\n```screen id=home\n```\n");
-        (await Pilot("design", "render", "DSN-1")).Exit.ShouldBe(0);
+        File.WriteAllText(Path.Combine(draft, "DESIGN.md"), SampleDocument);
+        File.WriteAllText(Path.Combine(draft, "NOTES.md"), "The sample: a home screen, settings and a confirm modal.");
+        var (exit, said) = await Pilot("design", "render", "DSN-1");
+        exit.ShouldBe(0, said);
     }
+
+    private const string SampleDocument = """
+        # A fleet screen
+
+        **Objective:** Shows the sample: a home screen, its settings and a confirm modal.
+
+        ## Home
+
+        **Objective:** Shows the fleet at a glance.
+
+        ```screen id=home
+        ```
+
+        ## Settings
+
+        **Objective:** Shows what can be changed.
+
+        ```screen id=settings size=Phone
+        ```
+
+        ## Confirm
+
+        **Objective:** Shows the question asked before a change.
+
+        ```screen id=confirm
+        ```
+
+        """;
 
     private async Task<JsonElement> Request(string method, string uri)
     {
@@ -95,7 +125,8 @@ public sealed class McpDesignNoticesTests : IAsyncLifetime
     {
         await Drafted();
         await Subscribe("pilot://designs/DSN-1/document");
-        (await Pilot("design", "publish", "DSN-1", "--why", "brief")).Exit.ShouldBe(0);
+        var (exit, said) = await Pilot("design", "publish", "DSN-1", "--why", "brief");
+        exit.ShouldBe(0, said);
 
         await ExpectUpdated("pilot://designs/DSN-1/document");
         await Quiet();
