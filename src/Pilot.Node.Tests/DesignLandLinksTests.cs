@@ -293,7 +293,7 @@ public sealed class DesignLandLinksTests : IDisposable
     {
         // The repo is the plane and main at once: the flight branch places the files, a squash merge puts them on main.
         foreach (var args in new[] { new[] { "init", "-q", "-b", "main" }, ["config", "user.email", "t@example.com"], ["config", "user.name", "T"], ["config", "commit.gpgsign", "false"],
-            ["remote", "add", "origin", "https://github.com/SharpAstro/pilot.git"], ["add", "-A"], ["commit", "-q", "-m", "start"] })
+            ["remote", "set-url", "origin", "https://github.com/SharpAstro/pilot.git"],["add", "-A"], ["commit", "-q", "-m", "start"] })
         {
             await GitAsync(args);
         }
