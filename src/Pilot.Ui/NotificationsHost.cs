@@ -284,9 +284,7 @@ internal sealed class NotificationsHost
         // bell, so only the fill (the page and its toasts) is kept, and the toggle key the strip declared is declared here on a node of no size.
         body = body is Layout.Node.Dock { Fill: var fill } ? fill : body;
         // It sits under the fill and is fixed at no size: a plain Box(0,0) is a spacer an overlay stretches, and on top it shadowed the toasts.
-        body = Layout.Builder.Overlay(Layout.Builder.Box(0f, 0f).WFixed(0f).HFixed(0f)
-            .Clickable(new HitResult.ButtonHit("notifications:toggle-key"), _ => Toggle())
-            .WithShortcut(Style.ToggleKey), body);
+        // The toggle key is declared on the handle tab below (always present); a stretched box here caught every press on the page.
         if (barOpen)
         {
             if (Docked)
@@ -321,6 +319,7 @@ internal sealed class NotificationsHost
             .CrossCenter()
             .Bg(bg)
             .Clickable(new HitResult.ButtonHit(HandleAction), _ => Toggle(), CursorKind.Pointer)
+            .WithShortcut(Style.ToggleKey)
             .WithTooltip($"{(barOpen ? "Collapse" : "Open")} the For you bar ({ChordText()})", Layout.DockSide.Left)
             .WFixed(HandleWidth).HFixed(HandleHeight);
         var column = Layout.Builder.VStack(Layout.Builder.Spacer().HStar(), tab, Layout.Builder.Spacer().HStar()).WAuto().HStar();
