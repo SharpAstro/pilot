@@ -520,6 +520,18 @@ public interface IGitHub
     /// <exception cref="FlightException">gh could not read it.</exception>
     Task<IReadOnlyDictionary<string, byte[]>?> BranchFilesAsync(string repoPath, string branch, CancellationToken cancellationToken);
 
+    /// <summary>Whether <paramref name="path"/> (a file or a folder) is there at <paramref name="commit"/>: true when GitHub answers for it, false when it has none (PIL1208).</summary>
+    /// <exception cref="FlightException">gh could not ask.</exception>
+    Task<bool> FileAtAsync(string repoPath, string commit, string path, CancellationToken cancellationToken);
+
+    /// <summary>Deletes branch <paramref name="branch"/>; a branch that is not there is success (PIL1208).</summary>
+    /// <exception cref="FlightException">GitHub refused it.</exception>
+    Task DeleteBranchAsync(string repoPath, string branch, CancellationToken cancellationToken);
+
+    /// <summary>The files under <paramref name="folder"/> at <paramref name="commit"/> (path relative to the folder, bytes); null when the commit has no such folder (PIL1208).</summary>
+    /// <exception cref="FlightException">gh could not read it.</exception>
+    Task<IReadOnlyDictionary<string, byte[]>?> FolderFilesAtAsync(string repoPath, string commit, string folder, CancellationToken cancellationToken);
+
     /// <summary>The repo's open issues that carry <paramref name="label"/>, newest first, with their bodies (PIL1171).</summary>
     /// <exception cref="FlightException">gh could not list them.</exception>
     Task<MilestoneIssue[]> LabelledIssuesAsync(string repoPath, string label, CancellationToken cancellationToken);

@@ -1,4 +1,6 @@
 using Pilot.Commands;
+using Pilot.Contracts;
+using Pilot.Node.Designs;
 using Shouldly;
 using Xunit;
 
@@ -47,6 +49,25 @@ public sealed class DesignCliTests : IAsyncLifetime
         var (exit, said) = await Pilot("design", "new", "--title", new string('t', 41), "--", "brief");
         exit.ShouldNotBe(0);
         said.ShouldContain("41 characters, over the limit of 40");
+    }
+
+    [Fact]
+    public async Task ShowPrintsTheBuiltPlaceOfALandedPlacedBuildAndNothingForOneWithout()
+    {
+        await Pilot("design", "new", "--repo", "SharpAstro/pilot", "--", "brief");
+        var (_, before) = await Pilot("design", "show", "DSN-1");
+        before.ShouldNotContain("built:");
+
+        // A landed row with no folder (not placed) adds nothing either.
+        new DesignStore(_node.Options.DataFolder).Update("DSN-1", r => r with { Record = [new DesignRecordRow { Flight = "PIL1", Version = 1, Landed = "closed", MergeCommit = new string('a', 40) }] });
+        (await Pilot("design", "show", "DSN-1")).Output.ShouldNotContain("built:");
+
+        new DesignStore(_node.Options.DataFolder).Update("DSN-1", r => r with
+        {
+            Record = [.. r.Record, new DesignRecordRow { Flight = "PIL2", Version = 2, Landed = "closed", Folder = "docs/designs/1208", MergeCommit = "0123456789abcdef0123456789abcdef01234567" }],
+        });
+        var (_, after) = await Pilot("design", "show", "DSN-1");
+        after.ShouldContain("built: SharpAstro/pilot docs/designs/1208 at 0123456, v2");
     }
 
     [Fact]

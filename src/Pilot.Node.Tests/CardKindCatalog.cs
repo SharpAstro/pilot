@@ -159,6 +159,7 @@ internal static class CardKindCatalog
         new("second-flight-made", "Handled", [FlightCommanderCreate], "DuplicateFlightTests.AnywayWithAWhyMakesTheSecondAndKeepsTheWhyOnAHandledCard"),
         new("duplicate-flights", "ForYou", [FlightCommanderCreate], "WithdrawFlightTests.ADuplicateMadeAnywayRaisesOneCardOfferingToWithdrawTheNewer"),
         new("withdrawn", "Handled", ["Flights/FlightCommander.Withdraw.cs"], "WithdrawFlightTests.AFreshFlightIsWithdrawnItsRowIsGoneItsCodeIsFreeAndAHandledCardSaysWhoAndWhy"),
+        new("design-oversize", "ForYou", ["Designs/DesignRecord.cs"], "DesignRepoFilesTests.AnOversizedRenderIsNotCommittedTheSectionSaysSoAndOneCardIsRaisedNotOnePerPush"),
         new("design-mirror-failed", "Handled", ["Flights/DesignDecisionMirror.cs"], "DesignDecisionMirrorTests.DesignDecisionMirrorNotesAFailedCommentOnARingCardNamingThePrAndKeepsTheDecision"),
         new("repo-setup", "Handled", ["Flights/RepoSetup.cs"], "RepoSetupTests.SetupAgainstAnOrgWithNoFieldAndNoLabelsMakesTheFieldAndTheReadLabelsOnceAndASecondRunMakesNothing"),
         new("landed", "Handled", [FlightCommanderLand], "CliTests.ADirectFlightIsFlownFromTheCliAloneUpToItsLanding"),
