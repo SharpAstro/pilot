@@ -57,19 +57,44 @@ public static class WireframeSweepTests
     /// <item>on the flights canvas, a label the map drew (a flight code, a leg's name, a state) that lies under the zoom pill or the LAYERS panel,
     /// both painted over the map after it: a label sits where its flight is, and the overlay floats over whatever the pan put there. The overlays'
     /// own text, and a label on any other page, stay judged.</item>
+    /// <item>what the page painted under the open For you bar (#1184): the bar lies over the page's right side rather than taking its width,
+    /// so the page's controls and text there are covered, not on show. The bar is an opaque surface and also the region that keeps a click
+    /// on it from the page beneath, and the check counts a surface's own region as a control, not as a cover, so every page control under
+    /// it read as one the bar collides with. The bar's own rows and the cards panel in it, painted after it, stay judged, as does all of
+    /// the page beside it.</item>
     /// </list>
     /// </summary>
-    internal static WireframeOptions OptionsFor(string page, WireframeFrame frame)
+    internal static WireframeOptions OptionsFor(string page, WireframeFrame frame, RectF32? panel = null)
     {
         var overlays = page == "flights canvas"
             ? frame.Regions.Where(r => r.Result is HitResult.ButtonHit { Action: ZoomAction or PalettePanelAction }).ToArray()
             : [];
+        var bar = OpenBar(frame, panel);
         return new()
         {
-            IgnoreRegion = r => r.Result is HitResult.ButtonHit { Action: var a } && a.StartsWith("map:", StringComparison.Ordinal) && a != ZoomAction,
-            IgnoreText = t => overlays.Any(o => o.Order > t.Order && Overlaps(o.Visible, t.Visible)),
+            IgnoreRegion = r => (r.Result is HitResult.ButtonHit { Action: var a } && a.StartsWith("map:", StringComparison.Ordinal) && a != ZoomAction)
+                || Under(bar, r.Order, r.Visible),
+            IgnoreText = t => overlays.Any(o => o.Order > t.Order && Overlaps(o.Visible, t.Visible)) || Under(bar, t.Order, t.Visible),
         };
     }
+
+    /// <summary>
+    /// The open bar's own region, from the cards panel it holds (<paramref name="panel"/>, the chrome's <c>CardsBounds</c>): the region with the
+    /// panel's left and right edges that reaches above it (the bar's Collapse row), the latest painted. Null while the bar is collapsed.
+    /// </summary>
+    internal static WireframeRegion? OpenBar(WireframeFrame frame, RectF32? panel) =>
+        panel is { } p
+            ? frame.Regions
+                .Where(r => r.Result is HitResult.ChromeHit
+                    && MathF.Abs(r.Visible.X - p.X) <= 1.5f && MathF.Abs(r.Visible.X + r.Visible.Width - (p.X + p.Width)) <= 1.5f
+                    && r.Visible.Y < p.Y - 1.5f && r.Visible.Y + r.Visible.Height >= p.Y + p.Height - 1.5f)
+                .OrderByDescending(r => r.Order)
+                .Select(r => (WireframeRegion?)r)
+                .FirstOrDefault()
+            : null;
+
+    // Painted before the bar and under it: covered.
+    private static bool Under(WireframeRegion? bar, int order, RectF32 visible) => bar is { } b && order < b.Order && Overlaps(b.Visible, visible);
 
     private static bool Overlaps(RectF32 a, RectF32 b) =>
         a.X < b.X + b.Width && b.X < a.X + a.Width && a.Y < b.Y + b.Height && b.Y < a.Y + a.Height;
@@ -109,7 +134,7 @@ public static class WireframeSweepTests
         renderer.Begin();
         prepared.Chrome.Render(data.Sessions, data.Flights, PageTextOverlapTests.CardsOf(data, page), data.Jobs, data.Fleet, data.Repos, data.PullRequests,
             new RectF32(0, 0, width, height), data.Machines, null, data.Spend, PageTextOverlapTests.DesignsOf(data, page));
-        return Wireframe.Check(renderer.Frame, OptionsFor(page, renderer.Frame));
+        return Wireframe.Check(renderer.Frame, OptionsFor(page, renderer.Frame, prepared.Chrome.CardsBounds));
     }
 }
 
@@ -175,6 +200,35 @@ public sealed class WireframeSweepSelfTests
             Text(r, f, "a path that a clip cuts off…", 0, 5, 200, 20);
             r.PopClip();
         }).Where(x => x.Rule == WireframeRules.CutText).ShouldBeEmpty();
+
+    [Fact]
+    public void ThePageUnderTheOpenBarIsCoveredAndTheBarsOwnRowsStayJudged()
+    {
+        using var renderer = new WireframeRenderer(200, 100);
+        renderer.Begin();
+        var font = SessionsCapture.FontPath;
+        // The page: a button and a line of text at its right side.
+        renderer.NoteRegion(new ClickableRegion(150, 10, 40, 20, new HitResult.ButtonHit("page:go")));
+        Text(renderer, font, "the page's text", 100, 40, 90, 16);
+        // The open bar over it, as the chrome paints it: its surface and the region that keeps a click from the page, the panel below its row,
+        // and a button of the bar's own with its label half off it.
+        renderer.FillRectangle(new RectInt(new PointInt(200, 100), new PointInt(140, 0)), Ink);
+        renderer.NoteRegion(new ClickableRegion(140, 0, 60, 100, new HitResult.ChromeHit()));
+        renderer.NoteRegion(new ClickableRegion(145, 60, 20, 20, new HitResult.ButtonHit("bar:go")));
+        Text(renderer, font, "bar text", 145, 62, 50, 16);
+        var panel = new RectF32(140, 20, 60, 80);
+
+        // Without the bar named, the page's button and text collide with its region.
+        Wireframe.Check(renderer.Frame, WireframeSweepTests.OptionsFor("home", renderer.Frame))
+            .ShouldContain(x => x.Message.Contains("page:go", StringComparison.Ordinal) || x.Message.Contains("the page's text", StringComparison.Ordinal));
+
+        WireframeSweepTests.OpenBar(renderer.Frame, panel).ShouldNotBeNull().Visible.ShouldBe(new RectF32(140, 0, 60, 100));
+        var findings = Wireframe.Check(renderer.Frame, WireframeSweepTests.OptionsFor("home", renderer.Frame, panel));
+        // What the page painted under the bar is covered; the bar's own label half off its button is still a finding.
+        findings.ShouldNotContain(x => x.Message.Contains("page:go", StringComparison.Ordinal) || x.Message.Contains("the page's text", StringComparison.Ordinal),
+            Wireframe.Describe(findings));
+        findings.ShouldContain(x => x.Rule == WireframeRules.TextOverRegion && x.Message.Contains("bar text", StringComparison.Ordinal), Wireframe.Describe(findings));
+    }
 }
 
 // The sweep runs as six classes, one a state, height and scale, so xunit's own class-level parallelism shares the 320 cases.
