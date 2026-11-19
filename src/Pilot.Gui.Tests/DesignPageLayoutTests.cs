@@ -42,7 +42,7 @@ public sealed class DesignPageLayoutTests
 
         public DesignsView<RgbaImage> View => _chrome.Designs;
 
-        private RectF32 Page => _chrome.PageBounds.ShouldNotBeNull();
+        public RectF32 Page => _chrome.PageBounds.ShouldNotBeNull();
 
         public List<Layout.ArrangedNode<float>> Arranged() =>
             Layout.Engine.Arrange(View.Tree(_screen), new Rect<float>(Page.X, Page.Y, Page.Width, Page.Height), new PixelMeasureContext<RgbaImage>(_renderer, SessionsCapture.FontPath, 1f)).ToList();
@@ -74,12 +74,12 @@ public sealed class DesignPageLayoutTests
     {
         using var rig = new Rig(w, h);
         var all = rig.Arranged();
-        var chat = all.Where(a => a.Bounds.Width == 420f && a.Bounds.Right == w && a.Bounds.Height > h / 2f).ToList();
+        var chat = all.Where(a => a.Bounds.Width == 420f && Math.Abs(a.Bounds.Right - rig.Page.Right) < 0.01f && a.Bounds.Height > h / 2f).ToList();
         chat.ShouldNotBeEmpty("the chat is 420 wide and touches the content's right edge");
-        var document = all.Where(a => a.Bounds.X == 0f && Math.Abs(a.Bounds.Width - (w - 420f)) < 0.01f && a.Bounds.Height > h / 2f).ToList();
+        var document = all.Where(a => Math.Abs(a.Bounds.X - rig.Page.X) < 0.01f && Math.Abs(a.Bounds.Width - (rig.Page.Width - 420f)) < 0.01f && a.Bounds.Height > h / 2f).ToList();
         document.ShouldNotBeEmpty("the document is the content width less the chat, from the left edge");
         // The frame's well takes the document's column, less its gutters and scroll bar, not a 540 column.
-        WellOf(all, out _).Width.ShouldBeGreaterThan(w - 420f - 64f - 16f - 1f);
+        WellOf(all, out _).Width.ShouldBeGreaterThan(rig.Page.Width - 420f - 64f - 16f - 1f);
     }
 
     [Theory]
