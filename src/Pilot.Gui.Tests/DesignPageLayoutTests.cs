@@ -91,6 +91,10 @@ public sealed class DesignPageLayoutTests
         var factor = (frame.Height - 8f) / surface.Height;
         factor.ShouldBeGreaterThanOrEqualTo(1f);
         Math.Abs(factor - MathF.Round(factor)).ShouldBeLessThan(0.001f, "a whole factor");
+        if (w == 1920)
+        {
+            factor.ShouldBe(2f, 0.001f, "640 x 240 at 1920 x 1080 is played at 2x");
+        }
         // Inside the well: the toolbar under the frame, nothing blank above the caption or below the toolbar (padding 12, caption 20, gap 4).
         Contains(well, toolbar).ShouldBeTrue("the toolbar is inside its well");
         toolbar.Y.ShouldBeGreaterThanOrEqualTo(frame.Bottom);
