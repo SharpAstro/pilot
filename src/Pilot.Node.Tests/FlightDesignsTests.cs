@@ -67,7 +67,7 @@ public sealed class FlightDesignsTests : IDisposable
         {
             var draft = _store.Draft(row.Id, replace: false);
             File.WriteAllText(Path.Combine(draft, DesignStore.DocumentFile),
-                $"# {title}\n\n**Objective:** Objective of {title}.\n\n## {screen}\n\n**Objective:** Objective of screen {screen}.\n\n```screen id={screen}\n```\n");
+                $"# {title}\n\n**Objective:** Objective of {title}.\n\n## {screen}\n\n**Objective:** Objective of screen {screen}.\n\n```screen id=home\n```\n");
             _store.Render(row.Id);
             _store.Publish(row.Id, "first look");
         }
