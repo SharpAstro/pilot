@@ -233,7 +233,8 @@ internal sealed class PilotChrome<TSurface>
         Home = new HomeView<TSurface>(renderer);
         Home.Arranged = nodes => TextCheck.Observe("home", nodes, DpiScale);
         // The Designs page's fields (the brief box, the chat with the designer) take text through the same router, as the chat's box does.
-        sessions.ShareWith(Flights, Repos, PullRequests, Jobs, Fleet, Settings, Cards, Chat, Designs, Designs.Chat, More);
+        sessions.ShareWith(Flights, Repos, PullRequests, Jobs, Fleet, Settings, Cards, Chat, Designs, Designs.Chat, More, Ideas);
+        // PrototypeCellGrid is not shared: its fields are cells painted through CellLayout, not a widget's own text input, and it is built per played frame.
         // The panel's watchtower foot is the way into the chat.
         Cards.OnChat = () => Show(PilotPage.Chat);
         // A card's Chat about this, on the panel or the flight page: the Chat page with the card quoted above the box, in the

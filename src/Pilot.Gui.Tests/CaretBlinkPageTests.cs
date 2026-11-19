@@ -16,8 +16,8 @@ public sealed class CaretBlinkPageTests
 {
     private static readonly RectF32 Bounds = new(0, 0, 1400, 900);
 
-    /// <summary>What a case sets up: the window's settings, a paint of its page, and the pixels the paint left.</summary>
-    private sealed record Page(WindowUiSettings Ui, Action Paint, Func<byte[]> Pixels);
+    /// <summary>What a case sets up: the window's settings (the one the loop gets, where the phase is set), the page's own settings (where the caret is read), a paint of its page, and the pixels the paint left.</summary>
+    private sealed record Page(WindowUiSettings Window, WindowUiSettings Ui, Action Paint, Func<byte[]> Pixels);
 
     private static void ShowsABlink(Func<RgbaImageRenderer, Page> open)
     {
@@ -34,7 +34,7 @@ public sealed class CaretBlinkPageTests
                 clock.Advance(TimeSpan.FromMilliseconds(CaretBlink.PhaseMilliseconds));
                 phase = CaretBlink.PhaseAt(clock);
             }
-            page.Ui.CaretPhase = phase;
+            page.Window.CaretPhase = phase;
             page.Paint();
             page.Ui.CaretPhase.ShouldBe(phase);
             return page.Pixels();
@@ -43,7 +43,7 @@ public sealed class CaretBlinkPageTests
         // The caret is on in an even phase and off in the odd one after it.
         var on = PaintIn(even: true);
         var caret = page.Ui.CaretRect;
-        (caret.Width > 0).ShouldBeTrue( "a focused field painted its caret");
+        (caret.Width > 0).ShouldBeTrue("a focused field painted its caret");
         var off = PaintIn(even: false);
 
         var changed = Changed(on, off, 1400);
@@ -86,11 +86,23 @@ public sealed class CaretBlinkPageTests
     [Fact]
     public void TheFleetChatComposerBlinks() => ShowsABlink(renderer =>
     {
-        var chat = new ChatView<RgbaImage>(renderer) { FontPath = SessionsCapture.FontPath };
-        chat.Load = (_, _) => Task.FromResult(new ChatPage { Entries = [], Total = 0 });
-        chat.OnSend = _ => Task.FromResult<string?>(null);
-        chat.Ui.Focus.Focus(chat.Input);
-        return new Page(chat.Ui, () => chat.Render(Bounds), () => [.. renderer.Surface.Pixels]);
+        var chrome = Chrome(renderer, PilotPage.Chat);
+        chrome.Chat.Load = (_, _) => Task.FromResult(new ChatPage { Entries = [], Total = 0 });
+        chrome.Chat.OnSend = _ => Task.FromResult<string?>(null);
+        var data = PageData.For("sample");
+        Paint(chrome, data);
+        chrome.Chat.Ui.Focus.Focus(chrome.Chat.Input);
+        return new Page(chrome.Sessions.Ui, chrome.Chat.Ui, () => Paint(chrome, data), () => [.. renderer.Surface.Pixels]);
+    });
+
+    [Fact]
+    public void TheIdeasNoteBoxBlinks() => ShowsABlink(renderer =>
+    {
+        var chrome = Chrome(renderer, PilotPage.Ideas);
+        var data = PageData.For("sample");
+        Paint(chrome, data);
+        chrome.Ideas.Ui.Focus.Focus(chrome.Ideas.NoteInput);
+        return new Page(chrome.Sessions.Ui, chrome.Ideas.Ui, () => Paint(chrome, data), () => [.. renderer.Surface.Pixels]);
     });
 
     [Fact]
@@ -100,7 +112,7 @@ public sealed class CaretBlinkPageTests
         var data = PageData.For("sample");
         Paint(chrome, data);
         chrome.Designs.Ui.Focus.Focus(chrome.Designs.BriefInput);
-        return new Page(chrome.Designs.Ui, () => Paint(chrome, data), () => [.. renderer.Surface.Pixels]);
+        return new Page(chrome.Sessions.Ui, chrome.Designs.Ui, () => Paint(chrome, data), () => [.. renderer.Surface.Pixels]);
     });
 
     [Fact]
@@ -116,7 +128,7 @@ public sealed class CaretBlinkPageTests
         chrome.Designs.BeginEdit(0, "objective").ShouldBeTrue();
         Paint(chrome, data, screen);
         chrome.Designs.Ui.Focus.Focus(chrome.Designs.Editor);
-        return new Page(chrome.Designs.Ui, () => Paint(chrome, data, screen), () => [.. renderer.Surface.Pixels]);
+        return new Page(chrome.Sessions.Ui, chrome.Designs.Ui, () => Paint(chrome, data, screen), () => [.. renderer.Surface.Pixels]);
     });
 
     [Fact]
@@ -126,6 +138,6 @@ public sealed class CaretBlinkPageTests
         var data = PageData.For("sample");
         Paint(chrome, data);
         chrome.PullRequests.Ui.Focus.Focus(chrome.PullRequests.Search);
-        return new Page(chrome.PullRequests.Ui, () => Paint(chrome, data), () => [.. renderer.Surface.Pixels]);
+        return new Page(chrome.Sessions.Ui, chrome.PullRequests.Ui, () => Paint(chrome, data), () => [.. renderer.Surface.Pixels]);
     });
 }
