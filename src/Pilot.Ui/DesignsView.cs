@@ -821,7 +821,7 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
             framed = PrototypeCellGrid<TSurface>.Fit(rect, grid.Columns, grid.Rows);
             _frameRects[(cell, frame)] = framed.Value;
             Renderer.PushClip(ClipOf(framed.Value));
-            grid.Render(rect);
+            grid.Render(framed.Value);
             Renderer.PopClip();
         }
         else
@@ -832,7 +832,7 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
                 // The prototype is drawn only inside its frame: a screen made wider than the frame (a fixed-width row, a label near the right edge) is cut, not painted over the chat and notes.
                 _frameRects[(cell, frame)] = fitted;
                 Renderer.PushClip(ClipOf(fitted));
-                play.Shown.Render(rect);
+                play.Shown.Render(fitted);
                 Renderer.PopClip();
             }
         }
