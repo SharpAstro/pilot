@@ -248,9 +248,10 @@ internal sealed class NotificationsHost
         // The library docks a strip of no width beside what it builds and lays its bell and count past the edge; the rail's entry is the one
         // bell, so only the fill (the page and its toasts) is kept, and the toggle key the strip declared is declared here on a node of no size.
         body = body is Layout.Node.Dock { Fill: var fill } ? fill : body;
-        body = Layout.Builder.Overlay(body, Layout.Builder.Box(0f, 0f)
+        // It sits under the fill and is fixed at no size: a plain Box(0,0) is a spacer an overlay stretches, and on top it shadowed the toasts.
+        body = Layout.Builder.Overlay(Layout.Builder.Box(0f, 0f).WFixed(0f).HFixed(0f)
             .Clickable(new HitResult.ButtonHit("notifications:toggle-key"), _ => Toggle())
-            .WithShortcut(Style.ToggleKey));
+            .WithShortcut(Style.ToggleKey), body);
         if (barOpen)
         {
             body = Layout.Builder.Overlay(body, Layout.Builder.HStack(Layout.Builder.Spacer().WStar().HStar(), OpenBar(panel!, colors)).Stretch());
