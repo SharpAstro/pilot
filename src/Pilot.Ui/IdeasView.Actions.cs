@@ -4,7 +4,7 @@ using Pilot.Contracts;
 
 namespace Pilot.Ui;
 
-// The Ideas page's verbs on the node: noting an idea, Plan, Drop, Edit, Tidy and Move to repo, and the milestone picker an action opens.
+// The Ideas page's verbs on the node: noting an idea, Plan (with its first question), Start its design, Drop, Edit, Tidy, Break up, Move to repo, Link and Unlink a design, and the milestone picker an action opens.
 internal sealed partial class IdeasView<TSurface>
 {
     /// <summary>Notes what is in the box as an idea, as Enter does. The box is emptied at once; Claude picks the repo.</summary>
@@ -183,7 +183,7 @@ internal sealed partial class IdeasView<TSurface>
     }
 
     /// <summary>
-    /// Plan's first question for a marked idea whose design has no version: Start its design makes the design from the idea and opens its page; Plan anyway
+    /// Plan's first question for a marked idea whose design has no version: Start its design opens the idea's oldest design with no published version (the draft the question names), or makes the design from the idea, and opens its page; Plan anyway
     /// goes on to the milestone list, and the plan is sent with <see cref="Verbs.AnywayFlag"/>.
     /// </summary>
     internal async Task StartDesignAsync(IdeaRow idea)

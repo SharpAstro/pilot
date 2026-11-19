@@ -832,7 +832,7 @@ public sealed partial class IdeaCommander(NodeState state, Planes planes, RepoCa
     /// <summary>
     /// <c>design-from-idea idea/&lt;repo&gt;/I&lt;n&gt;</c>: a design for the idea's repo whose first brief is the idea's title and text; each picture the node holds a copy
     /// of is kept in the design's pictures folder and named in a second piece of the brief (any other is named by its URL); the design remembers the idea
-    /// (<see cref="DesignRow.ForIdeas"/>) and its designer is woken. An idea that has a design already answers that one: never a second.
+    /// (<see cref="DesignRow.ForIdeas"/>) and its designer is woken. An idea that has a design already answers that one, the oldest with no published version first (the draft Plan's question names): never a second.
     /// </summary>
     private async Task<CommandResult> DesignFromIdeaAsync(CommandRequest command, CancellationToken cancellationToken)
     {
@@ -840,7 +840,8 @@ public sealed partial class IdeaCommander(NodeState state, Planes planes, RepoCa
         var (name, _, issue) = await IdeaOfAsync(command, cancellationToken);
         var id = IdeaIds.Id(issue.Number);
         var key = NodeState.IdeaKey(name, id);
-        if (store.FindByIdea(key, state.IdeaMoves()) is { } existing)
+        // The question that sent Start its design names the linked designs with no published version: the oldest of those is answered, else the design the idea is satisfied by.
+        if ((store.ForIdea(key, state.IdeaMoves()).FirstOrDefault(d => d.Current is null) ?? store.FindByIdea(key, state.IdeaMoves())) is { } existing)
         {
             return state.Complete(command, null, made: existing.Id);
         }
