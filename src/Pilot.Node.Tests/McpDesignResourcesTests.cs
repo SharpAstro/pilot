@@ -249,7 +249,7 @@ public sealed class McpDesignResourcesTests : IAsyncLifetime
 
         var png = Contents(await ReadOne("pilot://designs/DSN-1/versions/1/screens/home"));
         Convert.FromBase64String(png.GetProperty("blob").GetString()!).ShouldBe(await File.ReadAllBytesAsync(Path.Combine(renders, "home.Phone.png"), Ct));
-        (await Refused("pilot://designs/DSN-1/versions/1/screens/settings")).ShouldContain("no screen settings");
+        (await Refused("pilot://designs/DSN-1/versions/1/screens/nope")).ShouldContain("no screen nope");
     }
 
     [Theory]
