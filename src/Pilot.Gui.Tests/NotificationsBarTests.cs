@@ -1,6 +1,7 @@
 using System.Text;
 using Console.Lib;
 using DIR.Lib;
+using DIR.Lib.Notifications;
 using Layout = DIR.Lib.Layout;
 using Pilot.Contracts;
 using Pilot.Ui;
