@@ -111,9 +111,10 @@ public sealed class DesignPageLayoutTests
     {
         using var rig = new Rig(1920, 1080);
         var all = rig.Arranged();
-        var chip = all.First(a => a.Node.Hit is HitResult.ButtonHit { Action: "designs:versions" }).Bounds;
+        var chip = all.Where(a => a.Node.Hit is HitResult.ButtonHit { Action: "designs:versions" }).OrderBy(a => a.Bounds.Y).First().Bounds;
         var build = all.Single(a => a.Node.Hit is HitResult.ButtonHit { Action: "designs:build" }).Bounds;
-        build.X.ShouldBeGreaterThanOrEqualTo(chip.Right, "after the chip");
+        var top = string.Join("; ", all.Where(a => a.Node.Hit is HitResult.ButtonHit && a.Bounds.Y < 200f).Select(a => $"{((HitResult.ButtonHit)a.Node.Hit!).Action} {a.Bounds}"));
+        build.X.ShouldBeGreaterThanOrEqualTo(chip.Right, $"after the chip; chip {chip}, build {build}; {top}");
         build.Y.ShouldBe(chip.Y, 0.5f, "one row");
         build.Height.ShouldBe(chip.Height, 0.5f, "one height");
         Texts(all).ShouldNotContain(t => t.Text == "Build", "no Build heading");
