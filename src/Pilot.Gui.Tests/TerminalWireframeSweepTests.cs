@@ -196,7 +196,31 @@ public static class TerminalWireframeSweepTests
         return path;
     }
 
-    internal static CellWireframeResult Check(CellWireframeFrame frame) => CellWireframe.CheckCells(frame, new CellWireframeOptions());
+    /// <summary>
+    /// The collapsed bar's edge handle (PIL1205) floats over the page's right edge and takes no room: what the page painted under it is covered
+    /// by design (as under the open bar), and the handle's own tab is one chevron on a filled column, so its EmptyRows is the design. Its place
+    /// and tint are judged by NotificationsCaptureTests and NotificationsHandleTests.
+    /// </summary>
+    internal static CellWireframeResult Check(CellWireframeFrame frame)
+    {
+        var handles = frame.Frame.Regions.Where(r => r.Result is HitResult.ButtonHit { Action: Pilot.Ui.NotificationsHost.HandleAction }).ToArray();
+        var options = new CellWireframeOptions
+        {
+            Pixel = new WireframeOptions
+            {
+                IgnoreRegion = r => r.Result is HitResult.ButtonHit { Action: Pilot.Ui.NotificationsHost.HandleAction } || handles.Any(h => r.Order < h.Order && Covers(h.Visible, r.Visible)),
+                IgnoreText = t => handles.Any(h => t.Order < h.Order && Covers(h.Visible, t.Visible)),
+            },
+        };
+        var result = CellWireframe.CheckCells(frame, options);
+        return result with
+        {
+            CellFindings = [.. result.CellFindings.Where(f => !handles.Any(h => Math.Abs(h.Visible.X - f.Where.X) < 0.5f && Math.Abs(h.Visible.Y - f.Where.Y) < 0.5f))],
+        };
+    }
+
+    private static bool Covers(RectF32 a, RectF32 b) =>
+        a.X < b.X + b.Width && b.X < a.X + a.Width && a.Y < b.Y + b.Height && b.Y < a.Y + a.Height;
 
     /// <summary>A finding as the baseline lists it: the rule and the message it carries.</summary>
     internal static IEnumerable<(string Rule, string What)> Findings(CellWireframeResult result) =>
