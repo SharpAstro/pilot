@@ -327,6 +327,18 @@ public interface IGitHub
     /// <exception cref="FlightException">gh could not close it.</exception>
     Task CloseIssueAsync(string repoPath, int number, string comment, CancellationToken cancellationToken);
 
+    /// <summary>Reopens closed issue <paramref name="number"/> with <paramref name="comment"/>; one open already only gets the comment. Nothing by default.</summary>
+    /// <exception cref="FlightException">gh could not reopen it.</exception>
+    Task ReopenIssueAsync(string repoPath, int number, string comment, CancellationToken cancellationToken) => Task.CompletedTask;
+
+    /// <summary>The body of PR <paramref name="number"/>; null when it cannot be read (and by default).</summary>
+    /// <exception cref="FlightException">gh could not read it.</exception>
+    Task<string?> PullRequestBodyAsync(string repoPath, int number, CancellationToken cancellationToken) => Task.FromResult<string?>(null);
+
+    /// <summary>Saves the body of PR <paramref name="number"/>. Nothing by default.</summary>
+    /// <exception cref="FlightException">gh could not save it.</exception>
+    Task EditPullRequestBodyAsync(string repoPath, int number, string body, CancellationToken cancellationToken) => Task.CompletedTask;
+
     /// <summary>Issue <paramref name="number"/>'s title, or null when gh cannot say.</summary>
     Task<string?> IssueTitleAsync(string repoPath, int number, CancellationToken cancellationToken);
 

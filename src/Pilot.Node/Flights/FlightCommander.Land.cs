@@ -373,17 +373,25 @@ public sealed partial class FlightCommander
 
         // Its issue is closed with it once its PR merged: GitHub links a PR's "Closes #n" only sometimes (#302, #267 and #238
         // merged and left #285, #254 and #207 open), and an issue open after its work landed looks like work still to do.
-        if (foldedInto is null && github is not null && flight.Item.Tracker == TrackerKind.GitHub && flight.PullRequest is { } merged
-            && await MergedAsync(flight, merged, cancellationToken))
+        if (foldedInto is null && github is not null && flight.PullRequest is { } merged && await MergedAsync(flight, merged, cancellationToken))
         {
-            try
+            if (flight.Item.Tracker == TrackerKind.GitHub)
             {
-                await github.CloseIssueAsync(flight.RepoPath, flight.Issue, $"Landed in #{merged} ({flight.Code}).", cancellationToken);
+                try
+                {
+                    await github.CloseIssueAsync(flight.RepoPath, flight.Issue, $"Landed in #{merged} ({flight.Code}).", cancellationToken);
+                }
+                catch (FlightException ex)
+                {
+                    state.RaiseCard(CardBin.ForYou, "issue-left-open", Verbs.FlightTarget(flight.Code), $"{flight.Code} landed, but issue #{flight.Issue} is still open",
+                        $"{ex.Message}. Close it by hand: its work is in PR #{merged}.", link: flight.PullRequestUrl);
+                }
             }
-            catch (FlightException ex)
+            // The designs it built are closed on GitHub with the flight, PR and commit named (PIL1185); a failure is the record's to retry, never the land's.
+            if (DesignRecord is { } record && flight.Designs.Length > 0)
             {
-                state.RaiseCard(CardBin.ForYou, "issue-left-open", Verbs.FlightTarget(flight.Code), $"{flight.Code} landed, but issue #{flight.Issue} is still open",
-                    $"{ex.Message}. Close it by hand: its work is in PR #{merged}.", link: flight.PullRequestUrl);
+                var (commit, _) = await MergeOfAsync(flight, cancellationToken);
+                await record.LandedAsync(flight, merged, commit is { Length: > 0 } ? CommitRefs.Short(commit) : CommitRefs.Short(landedHead ?? mergedHead ?? ""), cancellationToken);
             }
         }
 

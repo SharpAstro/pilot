@@ -128,7 +128,8 @@ public static partial class NodeApp
         builder.Services.AddSingleton(services => new Pilot.Node.Designs.DesignerGuard(services.GetRequiredService<NodeState>(), services.GetRequiredService<Pilot.Node.Designs.DesignStore>()));
         builder.Services.AddSingleton(services => new Pilot.Node.Designs.DesignChat(services.GetRequiredService<Pilot.Node.Designs.DesignStore>(), services.GetRequiredService<TranscriptBook>(), () => services.GetRequiredService<NodeState>().Sessions()));
         builder.Services.AddSingleton(services => new Pilot.Node.Designs.DesignBuilds(services.GetRequiredService<NodeState>(), services.GetRequiredService<Pilot.Node.Designs.DesignStore>(), services.GetRequiredService<RepoCatalog>(), services.GetRequiredService<Planes>(), services.GetRequiredService<IGitHub>(), services.GetRequiredService<FlightCommander>(), services.GetRequiredService<IdeaCommander>(), services.GetRequiredService<TimeProvider>()) { Error = logWriter });
-        builder.Services.AddSingleton(services => new Pilot.Node.Designs.DesignSync(services.GetRequiredService<Pilot.Node.Designs.DesignStore>(), services.GetRequiredService<RepoCatalog>(), services.GetRequiredService<IGitHub>(), services.GetRequiredService<TimeProvider>(), options.Machine) { Error = logWriter, Lock = services.GetRequiredService<Pilot.Node.Designs.DesignLock>() });
+        builder.Services.AddSingleton(services => new Pilot.Node.Designs.DesignRecord(services.GetRequiredService<Pilot.Node.Designs.DesignStore>(), services.GetRequiredService<RepoCatalog>(), services.GetRequiredService<NodeState>(), services.GetRequiredService<IGitHub>()) { Error = logWriter });
+        builder.Services.AddSingleton(services => new Pilot.Node.Designs.DesignSync(services.GetRequiredService<Pilot.Node.Designs.DesignStore>(), services.GetRequiredService<RepoCatalog>(), services.GetRequiredService<IGitHub>(), services.GetRequiredService<TimeProvider>(), options.Machine) { Error = logWriter, Lock = services.GetRequiredService<Pilot.Node.Designs.DesignLock>(), Record = services.GetRequiredService<Pilot.Node.Designs.DesignRecord>() });
         builder.Services.AddHostedService(services => new Pilot.Node.Designs.DesignSyncSweep(services.GetRequiredService<Pilot.Node.Designs.DesignSync>()));
         builder.Services.AddSingleton(services => new Pilot.Node.Designs.DesignCommands(services.GetRequiredService<NodeState>(), services.GetRequiredService<Pilot.Node.Designs.DesignStore>(), services.GetRequiredService<Pilot.Node.Designs.Designers>(), services.GetRequiredService<Pilot.Node.Designs.DesignChat>(), services.GetRequiredService<Pilot.Node.Designs.DesignSync>(), services.GetRequiredService<Pilot.Node.Designs.DesignLock>()));
         builder.Services.AddSingleton(services => new RemovalQueue(RemovalQueue.FileIn(options.DataFolder), services.GetRequiredService<TimeProvider>()) { Error = logWriter });
@@ -230,6 +231,7 @@ public static partial class NodeApp
             flights.Machine = options.Machine;
             flights.Attachments = services.GetRequiredService<Attachments>();
             flights.Repos = services.GetRequiredService<RepoCatalog>();
+            flights.DesignRecord = services.GetRequiredService<Pilot.Node.Designs.DesignRecord>();
             flights.Ledger = services.GetRequiredService<SessionLedger>();
             // A landing tells each live session of the flight to finish and report, then cancels the jobs of the flight and its sessions.
             flights.Say = async (id, text, ct) =>
@@ -303,27 +305,6 @@ public static partial class NodeApp
             return sync;
         });
         builder.Services.AddSingleton<RepoCommander>();
-    }
-
-    /// <summary>The ideas, and the models that merge, tidy and sort them.</summary>
-    private static void AddIdeas(WebApplicationBuilder builder, LogWriter logWriter)
-    {
-        builder.Services.AddSingleton<IIdeaMerger, ClaudeIdeaMerger>();
-        builder.Services.AddSingleton<IIdeaTidier, ClaudeIdeaTidier>();
-        builder.Services.AddSingleton<IIdeaMilestoner, ClaudeIdeaMilestoner>();
-        builder.Services.AddSingleton<IIssueReadinessChecker, ClaudeIssueReadinessChecker>();
-        builder.Services.AddSingleton<IMilestoneSuggester, ClaudeMilestoneSuggester>();
-        builder.Services.AddSingleton<IIssueSplitter>(services => new ClaudeIssueSplitter(services.GetService<Attachments>()));
-        builder.Services.AddSingleton<IIdeaRepoChooser, ClaudeIdeaRepoChooser>();
-        builder.Services.AddSingleton(services =>
-        {
-            var ideas = ActivatorUtilities.CreateInstance<IdeaCommander>(services);
-            ideas.Error = logWriter;
-            ideas.Attachments = services.GetRequiredService<Attachments>();
-            ideas.Designs = services.GetRequiredService<Pilot.Node.Designs.DesignStore>();
-            ideas.Designer = services.GetRequiredService<Pilot.Node.Designs.Designers>();
-            return ideas;
-        });
     }
 
     /// <summary>Starting workers: the trust, the ledgers, the launcher, GitHub, the models and the start gate.</summary>
@@ -400,6 +381,8 @@ public static partial class NodeApp
             var legs = ActivatorUtilities.CreateInstance<LegCommander>(services);
             legs.Models = services.GetRequiredService<RoleModels>();
             legs.Gate = services.GetRequiredService<StartGate>();
+            legs.DesignRecord = services.GetRequiredService<Pilot.Node.Designs.DesignRecord>();
+            legs.DesignFiles = services.GetRequiredService<Pilot.Node.Designs.DesignStore>();
             legs.DropJobs = (owners, why) => services.GetRequiredService<JobRunner>().DropQueuedOf(owners, why);
             legs.Slots = services.GetRequiredService<AdmissionGate>();
             legs.Attachments = services.GetRequiredService<Attachments>();

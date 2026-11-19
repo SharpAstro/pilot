@@ -507,9 +507,13 @@ while (!stop.IsCancellationRequested)
         {
             spendReads.Ask(chrome.Spend.Window, pages.Sessions.Source);
         }
+        if (page is PilotPage.Designs or PilotPage.Ideas or PilotPage.Flights)
+        {
+            // The Ideas page's Link a design picks from the same list of designs.
+            designReads.AskList();
+        }
         if (page == PilotPage.Designs)
         {
-            designReads.AskList();
             if (chrome.Designs.OpenId is { } openDesign)
             {
                 designReads.AskDesign(openDesign, designReads.Page?.Detail.Row.Id == openDesign ? designReads.Page.Version : null);
@@ -552,12 +556,12 @@ while (!stop.IsCancellationRequested)
         {
             PilotPage.Chat => chat.Tree(),
             PilotPage.Sessions => sessions.Tree(pages.Sessions),
-            PilotPage.Flights => flights.Tree(pages.Flights),
+            PilotPage.Flights => flights.WithDesigns(designReads.Screen(pages.Sessions.Source, now, null)?.Rows).Tree(pages.Flights),
             PilotPage.Repos => repos.Tree(pages.Repos ?? new ReposScreen([], pages.Sessions.Source, now)),
             PilotPage.PullRequests => pullRequests.Tree(pages.PullRequests ?? new PullRequestsScreen(null, pages.Sessions.Source, now), width),
             PilotPage.Jobs => jobs.Tree(pages.Jobs),
             PilotPage.Fleet => fleet.Tree(fleetWatch.Screen(nodeWhere, feed.Summary(now), CanCommand, held.Entries, now)),
-            PilotPage.Ideas => chrome.Ideas.Tree(pages.Ideas ?? new IdeasScreen([], [], [], pages.Sessions.Source, now)),
+            PilotPage.Ideas => chrome.Ideas.WithDesigns(designReads.Screen(pages.Sessions.Source, now, null)?.Rows).Tree(pages.Ideas ?? new IdeasScreen([], [], [], pages.Sessions.Source, now)),
             PilotPage.Spend => chrome.Spend.Tree(spendReads.Screen ?? new SpendScreen(chrome.Spend.Window, null, null, pages.Sessions.Source, now)),
             PilotPage.Designs => chrome.Designs.Tree(PilotChrome<DIR.Lib.RgbaImage>.WithIdeas(designReads.Screen(pages.Sessions.Source, now, chrome.Designs.OpenId) ?? DesignsScreen.Empty(pages.Sessions.Source, now), pages.Ideas)),
             PilotPage.Notifications => chrome.NotificationsPage.Tree(pages.Sessions.Source, now, width),

@@ -26,6 +26,7 @@ internal sealed partial class IdeasView<TSurface>(Renderer<TSurface> renderer) :
         Tidy,
         Move,
         BreakUp,
+        LinkDesign,
     }
 
     private sealed record Open(string Key, Mode Mode);
@@ -86,6 +87,19 @@ internal sealed partial class IdeasView<TSurface>(Renderer<TSurface> renderer) :
     
     /// <summary>Whether only the ideas marked as needing a design are listed (the filter 'Needs a design').</summary>
     public bool OnlyNeedsDesign { get; set; }
+
+    /// <summary>Whether only the ideas that have a design are listed (the filter 'Has a design', #1185).</summary>
+    public bool OnlyHasDesign { get; set; }
+
+    /// <summary>The node's designs (#1185): what Link a design picks from. The host sets them from the Designs page's read; empty where it has none.</summary>
+    public IReadOnlyList<DesignRow> Designs { get; set; } = [];
+
+    /// <summary>Sets <see cref="Designs"/> (null leaves it empty) and returns the view, for a host that builds the page's tree in one expression.</summary>
+    public IdeasView<TSurface> WithDesigns(IReadOnlyList<DesignRow>? designs)
+    {
+        Designs = designs ?? [];
+        return this;
+    }
 
     /// <summary>Whether the planned and dropped ideas, folded below by default, are listed.</summary>
     public bool ShowFolded { get; set; }

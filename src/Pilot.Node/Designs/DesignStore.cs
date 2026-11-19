@@ -125,7 +125,7 @@ public sealed class DesignStore(string dataFolder, TimeProvider? time = null)
                 At = _time.GetUtcNow(),
                 Versions = 0,
                 Terminals = sizes,
-                FromIdea = fromIdea,
+                ForIdeas = fromIdea is { Length: > 0 } ? [fromIdea] : [],
             };
             Directory.CreateDirectory(Path.Combine(Root, id));
             File.WriteAllText(Path.Combine(Root, id, BriefFile), Piece(brief, row.At!.Value));
@@ -188,9 +188,73 @@ public sealed class DesignStore(string dataFolder, TimeProvider? time = null)
         }
     }
 
-    /// <summary>The design started from the idea <paramref name="fromIdea"/> (qualified, <c>pilot I381</c>; any case), the oldest when there are several; null when there is none.</summary>
-    public DesignRow? FindByIdea(string fromIdea) =>
-        List().Where(d => d.MadeOn is null && string.Equals(d.FromIdea, fromIdea, StringComparison.OrdinalIgnoreCase)).OrderBy(d => int.Parse(d.Id.AsSpan(4), NumberStyles.None, CultureInfo.InvariantCulture)).FirstOrDefault();
+    /// <summary>
+    /// Every design made here that is for the idea <paramref name="idea"/> (qualified, <c>pilot I381</c>; any case), oldest first (#1185). With the
+    /// idea moves (<paramref name="moves"/>) a link and the idea asked for are both followed to where the idea is now (<see cref="IdeaIds.Follow"/>),
+    /// the one rule the idea rows use too.
+    /// </summary>
+    public DesignRow[] ForIdea(string idea, IEnumerable<IdeaMoveRow>? moves = null)
+    {
+        var all = moves?.ToArray() ?? [];
+        var wanted = Followed(idea, all);
+        return [.. List().Where(d => d.MadeOn is null && d.Ideas().Any(k => string.Equals(Followed(k, all), wanted, StringComparison.OrdinalIgnoreCase)))
+            .OrderBy(d => int.Parse(d.Id.AsSpan(4), NumberStyles.None, CultureInfo.InvariantCulture))];
+    }
+
+    /// <summary>The idea key <paramref name="key"/> at the place its idea is now, after the moves; a key that is no idea reference stays as it is.</summary>
+    public static string Followed(string key, IReadOnlyCollection<IdeaMoveRow> moves)
+    {
+        if (moves.Count > 0 && IdeaIds.Parse(key).Ref is { Repo: { } repo } parsed)
+        {
+            var at = IdeaIds.Follow(moves, repo, parsed.Number);
+            return NodeState.IdeaKey(at.Repo, IdeaIds.Id(at.Number));
+        }
+        return key;
+    }
+
+    /// <summary>The design for the idea <paramref name="fromIdea"/> to answer with: the oldest one with a published version, else the oldest; null when there is none.</summary>
+    public DesignRow? FindByIdea(string fromIdea, IEnumerable<IdeaMoveRow>? moves = null) =>
+        ForIdea(fromIdea, moves) is { Length: > 0 } all ? all.FirstOrDefault(d => d.Current is not null) ?? all[0] : null;
+
+    /// <summary>Links design <paramref name="id"/> to the idea <paramref name="idea"/> (qualified); a link there already is no change. Returns the record and whether it changed.</summary>
+    public (DesignRow Row, bool Changed) Link(string id, string idea)
+    {
+        lock (_lock)
+        {
+            var row = Find(id) ?? throw new DesignException($"There is no design {id}");
+            if (row.MadeOn is { Length: > 0 } node)
+            {
+                throw new DesignException($"{row.Id} is read from {row.IssueRepo}#{row.IssueNumber}, made on {node}: its ideas are linked there, not here");
+            }
+            if (row.Ideas().Contains(idea, StringComparer.OrdinalIgnoreCase))
+            {
+                return (row, false);
+            }
+            var updated = row with { FromIdea = null, ForIdeas = [.. row.Ideas(), idea] };
+            WriteRecord(updated);
+            return (updated, true);
+        }
+    }
+
+    /// <summary>Takes the link of design <paramref name="id"/> to <paramref name="idea"/> away; no such link is no change. Returns the record and whether it changed.</summary>
+    public (DesignRow Row, bool Changed) Unlink(string id, string idea)
+    {
+        lock (_lock)
+        {
+            var row = Find(id) ?? throw new DesignException($"There is no design {id}");
+            if (row.MadeOn is { Length: > 0 } node)
+            {
+                throw new DesignException($"{row.Id} is read from {row.IssueRepo}#{row.IssueNumber}, made on {node}: its ideas are unlinked there, not here");
+            }
+            if (!row.Ideas().Contains(idea, StringComparer.OrdinalIgnoreCase))
+            {
+                return (row, false);
+            }
+            var updated = row with { FromIdea = null, ForIdeas = [.. row.Ideas().Where(i => !string.Equals(i, idea, StringComparison.OrdinalIgnoreCase))] };
+            WriteRecord(updated);
+            return (updated, true);
+        }
+    }
 
     /// <summary>What the owner has said in the chat of <paramref name="id"/>, oldest first; lines that cannot be read are left out.</summary>
     public DesignChatLine[] Says(string id)

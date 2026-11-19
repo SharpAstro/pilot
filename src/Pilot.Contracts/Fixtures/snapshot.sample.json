@@ -460,6 +460,7 @@
       "age": "1h",
       "origin": "ada",
       "url": "https://github.com/example-org/pilot/issues/412",
+      "designs": [],
       "images": []
     },
     {
@@ -472,6 +473,7 @@
       "age": "3d",
       "origin": "ada",
       "url": "https://github.com/example-org/orbit/issues/398",
+      "designs": [],
       "images": []
     }
   ],

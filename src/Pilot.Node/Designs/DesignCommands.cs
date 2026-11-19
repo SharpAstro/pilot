@@ -11,7 +11,7 @@ public sealed class DesignCommands(NodeState state, DesignStore store, Designers
 {
     /// <summary>Whether <paramref name="verb"/> is one of these.</summary>
     public static bool Handles(string verb) => verb is Verbs.DesignNew or Verbs.DesignBrief or Verbs.DesignSay or Verbs.DesignChat or Verbs.DesignDraft or Verbs.DesignShow or Verbs.Designs
-        or Verbs.DesignTerminals or Verbs.DesignCheck or Verbs.DesignRender or Verbs.DesignPublish or Verbs.DesignEdit or Verbs.DesignSetTitle or Verbs.DesignDiscard or Verbs.DesignIssue or Verbs.DesignGitHub;
+        or Verbs.DesignTerminals or Verbs.DesignCheck or Verbs.DesignRender or Verbs.DesignPublish or Verbs.DesignEdit or Verbs.DesignSetTitle or Verbs.DesignDiscard or Verbs.DesignIssue or Verbs.DesignGitHub or Verbs.DesignLink or Verbs.DesignUnlink;
 
     public CommandResult Run(CommandRequest command)
     {
@@ -136,6 +136,50 @@ public sealed class DesignCommands(NodeState state, DesignStore store, Designers
             }
             var told = await linker.LinkAsync(DesignStore.Normalise(IdOf(command)), reference[..hash], number, cancellationToken);
             return state.Complete(command, null, made: told);
+        }
+        catch (DesignException ex)
+        {
+            return state.Complete(command, ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// <c>design-link</c> and <c>design-unlink</c> (#1185): the design is for the idea, or no longer is. The idea is <c>I381</c> (in the design's repo, else the default repo) or <c>repo I381</c>;
+    /// it must be an idea the node reads to be linked, and follows a move or fold to where it is now. A change tells GitHub (the design's issue lists its ideas, the idea's issue is told once).
+    /// </summary>
+    public async Task<CommandResult> LinkAsync(CommandRequest command, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var id = DesignStore.Normalise(IdOf(command));
+            var link = command.Verb == Verbs.DesignLink;
+            var text = (command.Args ?? []).FirstOrDefault() ?? "";
+            var parsed = IdeaIds.Parse(text);
+            if (parsed.Ref is not { } idea)
+            {
+                throw new DesignException(parsed.Error!);
+            }
+            var design = store.Find(id) ?? throw new DesignException($"There is no design {id}");
+            var repo = idea.Repo ?? design.Repo ?? IdeaIds.DefaultRepo;
+            var (now, number) = IdeaIds.Follow(state.IdeaMoves(), repo, idea.Number);
+            if (link && !state.Ideas().Any(i => string.Equals(i.Repo, now, StringComparison.OrdinalIgnoreCase) && i.Number == number))
+            {
+                throw new DesignException($"{IdeaIds.Id(number)} is no idea of {now} that the node reads: a design is linked to an open idea");
+            }
+            var key = NodeState.IdeaKey(now, IdeaIds.Id(number));
+            // An unlink names the link as it was written: the key it was made under, or where the idea is now.
+            if (!link && !design.Ideas().Contains(key, StringComparer.OrdinalIgnoreCase))
+            {
+                key = NodeState.IdeaKey(repo, IdeaIds.Id(idea.Number));
+            }
+            var (row, changed) = link ? store.Link(id, key) : store.Unlink(id, key);
+            state.RefreshIdeaDesigns();
+            if (changed && sync is not null)
+            {
+                await sync.IdeaLinkChangedAsync(row.Id, key, link, cancellationToken);
+            }
+            var word = link ? (changed ? "linked to" : "is linked to already:") : (changed ? "unlinked from" : "was not linked to");
+            return state.Complete(command, null, made: $"{row.Id} {word} {key}");
         }
         catch (DesignException ex)
         {
