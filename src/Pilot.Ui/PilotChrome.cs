@@ -1327,7 +1327,7 @@ internal sealed class PilotChrome<TSurface>
         var hasPanel = Page != PilotPage.Notifications && (cards is { HasAny: true } || (cards is not null && Cards.CanTell && !Cards.OnChatPage));
         ShowsCards = hasPanel && Notifications.Open;
         // An open design's page stands left of the open bar, so the 420-unit chat is not under it.
-        Designs.ClearRight = ShowsCards ? CardsView<TSurface>.Width : 0f;
+        Designs.ClearRight = ShowsCards && !Notifications.Docked ? CardsView<TSurface>.Width : 0f;
         // The page's flight lights its cards in the panel, and the flight's own page offers the merge its card does.
         Flights.Cards = cards is null ? null : Cards.Visible(cards);
         // A flight with a PR says where it stands in the chip the Pull requests page has, and a click on it opens that row.

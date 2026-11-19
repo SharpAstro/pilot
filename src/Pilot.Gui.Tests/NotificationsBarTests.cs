@@ -221,7 +221,7 @@ public sealed class NotificationsBarTests
                 host.Open = false;
                 older.Flush();
             }
-            File.ReadAllText(path).ShouldContain("notificationsCollapsed");
+            File.ReadAllText(path).ShouldContain("collapsed");
 
             using (var collapsed = GuiSettingsFile.Open(path))
             {
@@ -232,7 +232,7 @@ public sealed class NotificationsBarTests
                 host.Open = true;
                 collapsed.Flush();
             }
-            File.ReadAllText(path).ShouldNotContain("notificationsCollapsed", Case.Insensitive, "open is null, and null is not written");
+            File.ReadAllText(path).ShouldNotContain("notificationsBar", Case.Insensitive, "docked is the default, and null is not written");
 
             // Another window has a file of its own.
             var other = Path.Combine(dir, "other.json");

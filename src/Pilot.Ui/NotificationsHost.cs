@@ -18,7 +18,7 @@ internal sealed class NotificationsHost
     // one and the host folds the toggle into Open on the next frame (Fold).
     private readonly NotificationsState _lib = new();
     private readonly Dictionary<(string? Node, string Id), long> _ids = [];
-    private bool _open = true;
+    private BarStates _state = BarStates.Over, _lastOpen = BarStates.Over;
 
     /// <summary>The ids' notifications, one per open card.</summary>
     public NotificationFeed Feed { get; } = new() { KeepFor = DefaultKeepFor };
@@ -112,23 +112,55 @@ internal sealed class NotificationsHost
     /// <summary>The library's sizes; the open bar is as wide as the cards panel.</summary>
     public static NotificationsStyle Style { get; } = new() { BarWidth = CardsView<RgbaImage>.Width };
 
-    /// <summary>Whether the bar is open over the page's right side; false when only the strip shows.</summary>
-    public bool Open
+    /// <summary>
+    /// The bar's state (PIL1205): collapsed (the handle only, toasts arrive), open over the page, or docked beside it so the page is laid out in
+    /// the width that is left. Setting an open state also makes it the one the handle and the key return to.
+    /// </summary>
+    public BarStates State
     {
-        get => _open;
+        get => _state;
         set
         {
-            if (_open != value)
+            if (value != BarStates.Collapsed)
             {
-                _open = value;
-                _seenPosted = _posted;
-                OpenChanged?.Invoke(value);
+                _lastOpen = value;
+            }
+            if (_state == value)
+            {
+                return;
+            }
+            var wasOpen = Open;
+            _state = value;
+            _seenPosted = _posted;
+            StateChanged?.Invoke(value);
+            if (wasOpen != Open)
+            {
+                OpenChanged?.Invoke(Open);
             }
         }
     }
 
-    /// <summary>Raised when the bar is opened or collapsed, so the window can keep the choice.</summary>
+    /// <summary>The open state the bar was last in, which the handle and the key open it in again (over until one is chosen).</summary>
+    public BarStates LastOpen => _lastOpen;
+
+    /// <summary>Whether the bar is open, over the page or docked; true opens it in <see cref="LastOpen"/>.</summary>
+    public bool Open
+    {
+        get => _state != BarStates.Collapsed;
+        set => State = value ? _lastOpen : BarStates.Collapsed;
+    }
+
+    /// <summary>Whether the bar is docked beside the page.</summary>
+    public bool Docked => _state == BarStates.Docked;
+
+    /// <summary>Raised when the bar is opened or collapsed, so the window can redraw.</summary>
     public event Action<bool>? OpenChanged;
+
+    /// <summary>Raised when the state changes, so the window can keep the choice.</summary>
+    public event Action<BarStates>? StateChanged;
+
+    /// <summary>Switches an open bar between over the page and docked; what the header's pin does.</summary>
+    public void TogglePin() => State = _state == BarStates.Docked ? BarStates.Over : BarStates.Docked;
 
     /// <summary>Where the pointer is, in the space the tree is arranged in (it moves the toasts out from under it); null when unknown.</summary>
     public Vector2? Pointer { get; set; }
@@ -156,7 +188,7 @@ internal sealed class NotificationsHost
     }
 
     /// <summary>Toggles the bar; what the bell, the collapse button and the key all do.</summary>
-    public void Toggle() => Open = !Open;
+    public void Toggle() => State = Open ? BarStates.Collapsed : _lastOpen;
 
     /// <summary>
     /// Keeps the feed to the open cards: a card new to the panel is posted (a ringing one as a warning, any other as information),
@@ -257,7 +289,18 @@ internal sealed class NotificationsHost
             .WithShortcut(Style.ToggleKey), body);
         if (barOpen)
         {
-            body = Layout.Builder.Overlay(body, Layout.Builder.HStack(Layout.Builder.Spacer().WStar().HStar(), OpenBar(panel!, colors)).Stretch());
+            if (Docked)
+            {
+                // Docked: the page and the bar side by side, the page a star and the bar its fixed width, so the page is arranged in what is left.
+                body = Layout.Builder.HStack(body.WStar().HStar(), OpenBar(panel!, colors)).Stretch();
+            }
+            else
+            {
+                // Over: a press outside the bar collapses it; the layer sits under the bar so a press on the bar is not one.
+                var outside = Layout.Builder.Box(0f, 0f)
+                    .Clickable(new HitResult.ButtonHit(OutsideAction), _ => State = BarStates.Collapsed);
+                body = Layout.Builder.Overlay(body, outside, Layout.Builder.HStack(Layout.Builder.Spacer().WStar().HStar(), OpenBar(panel!, colors)).Stretch());
+            }
         }
         // No strip and no bell here: the rail's Notifications entry is the one bell (PIL1205), so the page has the window's whole width.
         // The bar opens and collapses from the edge handle, laid over the page last so a press on it is the first hit; it takes no room.
@@ -288,11 +331,17 @@ internal sealed class NotificationsHost
     /// <summary>The handle's width and height in design units.</summary>
     public const float HandleWidth = 26f, HandleHeight = 80f;
 
+    /// <summary>The hit of a press outside the open bar while it is over the page.</summary>
+    public const string OutsideAction = "notifications:outside";
+
+    /// <summary>The hit of the header's pin button.</summary>
+    public const string PinAction = "notifications:pin";
+
     /// <summary>The hit of the edge handle, apart from the rail's bell so a press on it toggles the bar and does not open the page.</summary>
     public const string HandleAction = "notifications:handle";
 
     /// <summary>How the handle is tinted: amber while a card rings or needs the person, the accent when something arrived since the bar was last open, neutral otherwise.</summary>
-    public HandleTints HandleTint => Ringing || Feed.BellCount > 0 ? HandleTints.NeedsYou : !_open && _posted != _seenPosted ? HandleTints.New : HandleTints.Neutral;
+    public HandleTints HandleTint => Ringing || Feed.BellCount > 0 ? HandleTints.NeedsYou : !Open && _posted != _seenPosted ? HandleTints.New : HandleTints.Neutral;
 
     /// <summary>The handle's fill and the chevron's colour for <paramref name="tint"/>, from the palette: the chevron is whichever of the palette's bright, ground and black reads best on the fill.</summary>
     internal static (RGBAColor32 Fill, RGBAColor32 Chevron) HandleColors(Palette p, HandleTints tint)
@@ -308,7 +357,7 @@ internal sealed class NotificationsHost
     private void Posted()
     {
         _posted++;
-        if (_open)
+        if (Open)
         {
             _seenPosted = _posted;
         }
@@ -322,8 +371,18 @@ internal sealed class NotificationsHost
             .Clickable(new HitResult.ButtonHit("notifications:all"), _ => OpenPage?.Invoke(), CursorKind.Pointer)
             .WithTooltip("Open the Notifications page: everything that needs you and everything that happened", Layout.DockSide.Bottom)
             .WAuto();
+        var pinned = Docked;
+        var pinBg = pinned ? Palette.Current.RailAccent : colors.Card;
+        var pinFg = new[] { colors.Text, Palette.Current.Ground, new RGBAColor32(0, 0, 0, 0xff) }.MaxBy(c => Contrast.Ratio(c, pinBg));
+        var pin = Layout.Builder.HStack(Layout.Builder.Text(pinned ? "Pinned" : "Pin", 12f, pinFg, TextAlign.Center).WAuto())
+            .Pad(6f, 2f)
+            .Bg(pinBg)
+            .Clickable(new HitResult.ButtonHit(PinAction), _ => TogglePin(), CursorKind.Pointer)
+            .WithTooltip(pinned ? "Pinned beside the page: press to let the bar open over it" : "Open over the page: press to pin the bar beside it", Layout.DockSide.Bottom)
+            .WAuto();
         var collapse = Layout.Builder.HStack(
                 Layout.Builder.Text("For you", 12f, colors.Dim).WStar(),
+                pin,
                 all)
             .WithGap(6f).CrossCenter().Pad(6f, 2f).WStar();
         return Layout.Builder.VStack(collapse, panel.HStar())
@@ -343,6 +402,9 @@ internal sealed class NotificationsHost
         }
     }
 }
+
+/// <summary>The For you bar's three states.</summary>
+internal enum BarStates { Collapsed, Over, Docked }
 
 /// <summary>The edge handle's tint.</summary>
 internal enum HandleTints { Neutral, New, NeedsYou }

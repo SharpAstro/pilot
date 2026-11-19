@@ -547,11 +547,12 @@ while (!stop.IsCancellationRequested)
         bar.Sync(pages.Cards.Open, card => cards.NodeOf(card)?.Name, now);
         chrome.ObserveEvents(pages.Jobs, pages.Flights, null, now);
         var cardsOver = bar.Open && (pages.Cards.HasAny || cards.CanTell && !cards.OnChatPage);
-        chat.CellColumns = TerminalFrame.PageColumnsWithBar(columns);
+        var dockedBar = bar.Docked && cardsOver && page != PilotPage.Notifications;
+        chat.CellColumns = TerminalFrame.PageColumnsWithBar(columns, dockedBar);
         if (page == PilotPage.Designs)
         {
             // The page's own room, as the Chat page's: the strip takes its columns, and the design's chat and cell view are sized to what is left.
-            chrome.Designs.Terminal = (TerminalFrame.PageColumnsWithBar(columns), rows);
+            chrome.Designs.Terminal = (TerminalFrame.PageColumnsWithBar(columns, dockedBar), rows);
         }
         var pageTree = page switch
         {

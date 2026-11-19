@@ -36,6 +36,12 @@ internal sealed record GuiSettings
     public bool? NotificationsCollapsed { get; init; }
 
     /// <summary>
+    /// The For you bar's state (PIL1205): "collapsed", "over" or "docked"; null means docked (the default) and is how that is written. Read first when
+    /// present; else the older <see cref="NotificationsCollapsed"/>: true is collapsed, false or missing is docked. Only this member is written.
+    /// </summary>
+    public string? NotificationsBar { get; init; }
+
+    /// <summary>
     /// How many hours the Notifications page keeps what happened (PIL1184). Null means 24 hours, which is what a file an older build wrote reads as;
     /// it is written only while the choice is not 24.
     /// </summary>
@@ -75,16 +81,16 @@ internal sealed class GuiSettingsFile : IDisposable
     private ImmutableDictionary<string, SavedDesignTarget> _designTargets = ImmutableDictionary<string, SavedDesignTarget>.Empty.WithComparers(StringComparer.Ordinal);
 
     private Dictionary<string, Dictionary<string, SavedFrameSize>> _frameSizes = [];
-    private volatile bool _notificationsCollapsed;
+    private volatile int _barState = (int)BarStates.Docked;
     // Written on the render thread (the host's event) and read by Flush on the timer thread. A double? cannot be volatile; each write is
     // followed by Touch(), whose Interlocked is a full fence, so the timer's later read sees it.
     private double? _keepHours;
 
     private GuiSettingsFile(string path, Dictionary<string, Dictionary<string, float>> tables, Dictionary<string, SavedSort> sorts, bool night, MapLayerSettings? layers, List<string> folds, Dictionary<string, SavedDesignTarget> designTargets,
-        Dictionary<string, Dictionary<string, SavedFrameSize>> frameSizes, bool notificationsCollapsed, double? keepHours)
+        Dictionary<string, Dictionary<string, SavedFrameSize>> frameSizes, BarStates barState, double? keepHours)
     {
         _keepHours = keepHours;
-        _notificationsCollapsed = notificationsCollapsed;
+        _barState = (int)barState;
         _frameSizes = frameSizes;
         _designTargets = designTargets.ToImmutableDictionary(StringComparer.Ordinal);
         _folds = [.. folds];
@@ -109,7 +115,7 @@ internal sealed class GuiSettingsFile : IDisposable
         var tables = new Dictionary<string, Dictionary<string, float>>(StringComparer.Ordinal);
         var sorts = new Dictionary<string, SavedSort>(StringComparer.Ordinal);
         var night = false;
-        var collapsed = false;
+        var barState = BarStates.Docked;
         double? keepHours = null;
         var folds = new List<string>();
         MapLayerSettings? layers = null;
@@ -120,7 +126,13 @@ internal sealed class GuiSettingsFile : IDisposable
             if (File.Exists(path) && JsonSerializer.Deserialize(File.ReadAllText(path), GuiSettingsJsonContext.Default.GuiSettings) is { } settings)
             {
                 night = settings.Night;
-                collapsed = settings.NotificationsCollapsed == true;
+                barState = settings.NotificationsBar?.ToLowerInvariant() switch
+                {
+                    "collapsed" => BarStates.Collapsed,
+                    "over" => BarStates.Over,
+                    "docked" => BarStates.Docked,
+                    _ => settings.NotificationsCollapsed == true ? BarStates.Collapsed : BarStates.Docked,
+                };
                 keepHours = settings.NotificationKeepHours is > 0 and var hours ? hours : null;
                 folds.AddRange(settings.PullRequestFolds?.Where(f => !string.IsNullOrEmpty(f)) ?? []);
                 layers = settings.MapLayers;
@@ -159,14 +171,14 @@ internal sealed class GuiSettingsFile : IDisposable
             tables.Clear();
             sorts.Clear();
             night = false;
-            collapsed = false;
+            barState = BarStates.Docked;
             keepHours = null;
             folds.Clear();
             layers = null;
             designTargets.Clear();
             frameSizes.Clear();
         }
-        return new GuiSettingsFile(path, tables, sorts, night, layers, folds, designTargets, frameSizes, collapsed, keepHours);
+        return new GuiSettingsFile(path, tables, sorts, night, layers, folds, designTargets, frameSizes, barState, keepHours);
     }
 
     /// <summary>Whether the file says Night is on.</summary>
@@ -195,22 +207,25 @@ internal sealed class GuiSettingsFile : IDisposable
         table.Changed += Touch;
     }
 
-    /// <summary>Whether the file says the For you side bar is collapsed; false (open) when it says nothing.</summary>
-    public bool NotificationsCollapsed => _notificationsCollapsed;
+    /// <summary>The For you bar's state the file holds; docked when it says nothing (an older file's collapsed: false reads so).</summary>
+    public BarStates NotificationsBarState => (BarStates)_barState;
+
+    /// <summary>Whether the file says the For you bar is collapsed.</summary>
+    public bool NotificationsCollapsed => NotificationsBarState == BarStates.Collapsed;
 
     /// <summary>Gives <paramref name="host"/> the choice this file holds, and keeps the file current: a collapse or an open writes it, a moment later.</summary>
     public void Attach(NotificationsHost host)
     {
-        host.Open = !_notificationsCollapsed;
+        host.State = NotificationsBarState;
         host.KeepFor = _keepHours is { } hours ? TimeSpan.FromHours(hours) : NotificationsHost.DefaultKeepFor;
         host.KeepChanged += keep =>
         {
             _keepHours = keep == NotificationsHost.DefaultKeepFor ? null : keep.TotalHours;
             Touch();
         };
-        host.OpenChanged += open =>
+        host.StateChanged += state =>
         {
-            _notificationsCollapsed = !open;
+            _barState = (int)state;
             Touch();
         };
     }
@@ -288,7 +303,7 @@ internal sealed class GuiSettingsFile : IDisposable
                 PullRequestFolds = [.. _folds],
                 DesignTargets = _designTargets.Count > 0 ? new Dictionary<string, SavedDesignTarget>(_designTargets, StringComparer.Ordinal) : null,
                 FrameSizes = _frameSizes.Count > 0 ? _frameSizes : null,
-                NotificationsCollapsed = _notificationsCollapsed ? true : null,
+                NotificationsBar = NotificationsBarState == BarStates.Docked ? null : NotificationsBarState.ToString().ToLowerInvariant(),
                 NotificationKeepHours = _keepHours,
             },
             GuiSettingsJsonContext.Default.GuiSettings);
