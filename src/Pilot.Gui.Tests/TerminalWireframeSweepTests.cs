@@ -249,8 +249,6 @@ public static class TerminalWireframeSweepTests
     internal static readonly (string Case, string Rule, string What)[] Baseline =
     [
         // #1185: the design's ideas moved from a section of the document to the page's first row, so the document is shorter and the scroll viewport's clip falls on the played frame's well in these two states.
-        // PIL1191: Build this version moved from a Build part of the document to the first row, so the document is shorter again and the clip falls on the played frame's well in the long state at 100x30.
-        ("design page | long | 100x30", "EmptyRows", "a filled container is arranged 2 rows tall but its content sits on row 16 only; 1 row(s) are empty inside its fill (own vertical padding 0 row(s), visible border 0 row(s))"), // Console.Lib #78
         ("design page | many | 100x30", "EmptyRows", "a filled container is arranged 3 rows tall but its content sits on row 15 only; 2 row(s) are empty inside its fill (own vertical padding 0 row(s), visible border 0 row(s))"), // Console.Lib #78
         ("design page | many | 250x60", "EmptyRows", "a filled container is arranged 2 rows tall but its content sits on row 46 only; 1 row(s) are empty inside its fill (own vertical padding 0 row(s), visible border 0 row(s))"), // Console.Lib #78
         ("pull requests | long | 100x30", "EmptyRows", "a filled container is arranged 2 rows tall but its content sits on row 11 only; 1 row(s) are empty inside its fill (own vertical padding 0 row(s), visible border 0 row(s))"), // pilot #1077
