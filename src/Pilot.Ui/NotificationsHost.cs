@@ -29,11 +29,54 @@ internal sealed class NotificationsHost
     /// <summary>The history, newest first: every toast that left and every card handled or gone, with severity, time and node (<see cref="Notification.Source"/>).</summary>
     public IReadOnlyList<Notification> History => Feed.History;
 
-    /// <summary>How long the history keeps a line; the next leg passes the setting in here.</summary>
+    /// <summary>How long the history keeps a line: the setting on the Settings page (24 h until one is chosen).</summary>
     public TimeSpan KeepFor
     {
         get => Feed.KeepFor;
-        set => Feed.KeepFor = value;
+        set
+        {
+            if (Feed.KeepFor != value)
+            {
+                Feed.KeepFor = value;
+                KeepChanged?.Invoke(value);
+            }
+        }
+    }
+
+    /// <summary>Raised when the keep time is changed, so the window can keep the choice.</summary>
+    public event Action<TimeSpan>? KeepChanged;
+
+    /// <summary>The keep times the Settings page offers, shortest first.</summary>
+    public static readonly (string Label, TimeSpan Keep)[] KeepChoices =
+    [
+        ("1 hour", TimeSpan.FromHours(1)),
+        ("6 hours", TimeSpan.FromHours(6)),
+        ("24 hours", DefaultKeepFor),
+        ("3 days", TimeSpan.FromDays(3)),
+        ("7 days", TimeSpan.FromDays(7)),
+    ];
+
+    /// <summary>Empties the history (Clear on the page); the cards that need you stay.</summary>
+    public void Clear() => Feed.Clear();
+
+    /// <summary>Opens the Notifications page; set by the chrome. What the open bar's "All" button does.</summary>
+    public Action? OpenPage { get; set; }
+
+    // The page's own library state, always open, so its list scrolls on its own and the bar's is untouched.
+    private readonly NotificationsState _page = new() { Open = true };
+
+    /// <summary>The page's list scroll, which a terminal takes the scroll bar away from.</summary>
+    internal ListScrollController PageScroll => _page.ListScroll;
+
+    /// <summary>
+    /// The Notifications page's body: the library's list frame (Needs you, then History newest first, with Clear), laid as wide as the page.
+    /// It has no strip, no toasts, and a toggle chord nothing presses, so the window's own strip keeps the key.
+    /// </summary>
+    public Layout.Node ListFrame(float width)
+    {
+        _page.Open = true;
+        var style = Style with { BarWidth = width, StripWidth = 0f, MaxToasts = 0, ToggleKey = new KeyChord(InputKey.F12, InputModifier.Ctrl | InputModifier.Alt | InputModifier.Shift) };
+        return NotificationsLayout.Build(Layout.Builder.Spacer().Stretch(), Feed, _page, Colors(), style);
     }
 
     /// <summary>Whether a fading toast is on screen, so the window draws a frame each tick for its countdown.</summary>
@@ -179,8 +222,15 @@ internal sealed class NotificationsHost
         {
             return frame;
         }
+        var all = Layout.Builder.HStack(Layout.Builder.Text("All ▸", 12f, colors.Text, TextAlign.Center).WAuto())
+            .Pad(6f, 2f)
+            .Bg(colors.Card)
+            .Clickable(new HitResult.ButtonHit("notifications:all"), _ => OpenPage?.Invoke(), CursorKind.Pointer)
+            .WithTooltip("Open the Notifications page: everything that needs you and everything that happened", Layout.DockSide.Bottom)
+            .WAuto();
         var collapse = Layout.Builder.HStack(
                 Layout.Builder.Text("For you", 12f, colors.Dim).WStar(),
+                all,
                 Layout.Builder.HStack(Layout.Builder.Text("Collapse ▸", 12f, colors.Text, TextAlign.Center).WAuto())
                     .Pad(6f, 2f)
                     .Bg(colors.Card)

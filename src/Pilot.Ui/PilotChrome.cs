@@ -1,4 +1,5 @@
 using DIR.Lib;
+using DIR.Lib.Notifications;
 using Pilot.Contracts;
 
 namespace Pilot.Ui;
@@ -30,6 +31,9 @@ internal enum PilotPage
 
     /// <summary>Last in the enum for the same reason; the rail lists it after Spend.</summary>
     Designs,
+
+    /// <summary>The full list of what happened and what needs you (PIL1184); last in the enum for the same reason, the rail lists it after Designs.</summary>
+    Notifications,
 }
 
 /// <summary>
@@ -78,6 +82,8 @@ internal sealed class PilotChrome<TSurface>
         (PilotPage.Spend, "\U0001FA99", "Spend", new KeyChord(InputKey.S, InputModifier.Ctrl | InputModifier.Shift), null),
         // Every digit, Ctrl+S and Ctrl+Shift+S are taken; Ctrl+Shift+D is free. pilot-tui's bar reaches it by the plain key d.
         (PilotPage.Designs, "🎨", "Designs", new KeyChord(InputKey.D, InputModifier.Ctrl | InputModifier.Shift), null),
+        // Ctrl+N is the For you bar's own toggle, so the page has Ctrl+Shift+N; pilot-tui's bar reaches it by the plain key n.
+        (PilotPage.Notifications, "🔔", "Notifications", new KeyChord(InputKey.N, InputModifier.Ctrl | InputModifier.Shift), null),
     ];
 
     /// <summary>A rail entry's chord as its tooltip says it: <c>Ctrl+4</c>, <c>Ctrl+Shift+S</c>.</summary>
@@ -92,7 +98,7 @@ internal sealed class PilotChrome<TSurface>
     private static readonly Dictionary<PilotPage, string> NightGlyphs = new()
     {
         [PilotPage.Home] = "H", [PilotPage.Chat] = "C", [PilotPage.Sessions] = "S", [PilotPage.Repos] = "R",
-        [PilotPage.Jobs] = "B", [PilotPage.Fleet] = "F", [PilotPage.PullRequests] = "P", [PilotPage.Ideas] = "I", [PilotPage.Spend] = "$", [PilotPage.Designs] = "D",
+        [PilotPage.Jobs] = "B", [PilotPage.Fleet] = "F", [PilotPage.PullRequests] = "P", [PilotPage.Ideas] = "I", [PilotPage.Spend] = "$", [PilotPage.Designs] = "D", [PilotPage.Notifications] = "N",
     };
 
     /// <summary>
@@ -204,6 +210,9 @@ internal sealed class PilotChrome<TSurface>
         Ideas.Arranged = nodes => TextCheck.Observe("ideas", nodes, DpiScale);
         Spend.Arranged = nodes => TextCheck.Observe("spend", nodes, DpiScale);
         Designs.Arranged = nodes => TextCheck.Observe(Designs.OpenId is null ? "designs" : "design page", nodes, DpiScale);
+        Notifications.OpenPage = () => Show(PilotPage.Notifications);
+        NotificationsPage = new NotificationsView<TSurface>(renderer) { Host = Notifications };
+        NotificationsPage.Arranged = nodes => TextCheck.Observe("notifications", nodes, DpiScale);
         Tooltips = new TooltipLayer<TSurface>(renderer);
         NotificationsLayer = new NotificationsLayer<TSurface>(renderer);
         More = new RailMoreMenu<TSurface>(renderer);
@@ -299,7 +308,9 @@ internal sealed class PilotChrome<TSurface>
         Ideas.About = About;
         Ideas.Nodes = Nodes;
         Spend.About = About;
+        NotificationsPage.About = About;
         Spend.Nodes = Nodes;
+        NotificationsPage.Nodes = Nodes;
         Designs.About = About;
         Designs.Nodes = Nodes;
         // The Autopilot switch, in every page's header, for the node the window shows.
@@ -314,9 +325,11 @@ internal sealed class PilotChrome<TSurface>
         Chat.Autopilot = Autopilot;
         Ideas.Autopilot = Autopilot;
         Spend.Autopilot = Autopilot;
+        NotificationsPage.Autopilot = Autopilot;
         Designs.Autopilot = Autopilot;
         // And the Night switch beside it, one state every page reads.
-        sessions.Night = Flights.Night = Repos.Night = Jobs.Night = Fleet.Night = Settings.Night = Home.Night = Chat.Night = PullRequests.Night = Ideas.Night = Spend.Night = Designs.Night = Night;
+        sessions.Night = Flights.Night = Repos.Night = Jobs.Night = Fleet.Night = Settings.Night = Home.Night = Chat.Night = PullRequests.Night = Ideas.Night = Spend.Night = Designs.Night = NotificationsPage.Night = Night;
+        Settings.Notifications = Notifications;
         // A transcript or a flight's page opened from inside a page (Enter, a click on a row) is a move too.
         sessions.Transcript.Opening = RecordOpening;
         Flights.Opening = RecordOpening;
@@ -435,6 +448,7 @@ internal sealed class PilotChrome<TSurface>
         Repos.WithoutScrollBars();
         Ideas.WithoutScrollBars();
         Spend.WithoutScrollBars();
+        NotificationsPage.WithoutScrollBars();
         Designs.WithoutScrollBars();
         PullRequests.WithoutScrollBars();
         Jobs.WithoutScrollBars();
@@ -476,6 +490,7 @@ internal sealed class PilotChrome<TSurface>
         PilotPage.Spend => [Nav, Rail, Spend, NotificationsLayer, Cards],
         // The player is a widget of its own, over the page, so a click in it is the prototype's: the page's own controls lie outside its rectangle.
         PilotPage.Designs => [Nav, Rail, Designs, .. Designs.FrameWidgets(), NotificationsLayer, Cards],
+        PilotPage.Notifications => [Nav, Rail, NotificationsPage, NotificationsLayer, Cards],
         PilotPage.Sessions => [Nav, Rail, Sessions, NotificationsLayer, Cards],
         PilotPage.Flights => [Nav, Rail, Flights, NotificationsLayer, Cards],
         PilotPage.Repos => [Nav, Rail, Repos, NotificationsLayer, Cards],
@@ -490,10 +505,13 @@ internal sealed class PilotChrome<TSurface>
     public IPixelWidget PageWidget => PageViewOf(Page);
 
     // The widget a page is drawn by, which hosts the page's text selection.
-    private PilotWidgetBase<TSurface> PageViewOf(PilotPage page) => page switch { PilotPage.Chat => Chat, PilotPage.Ideas => Ideas, PilotPage.Spend => Spend, PilotPage.Designs => Designs, PilotPage.Sessions => Sessions, PilotPage.Flights => Flights, PilotPage.Repos => Repos, PilotPage.PullRequests => PullRequests, PilotPage.Jobs => Jobs, PilotPage.Fleet => Fleet, PilotPage.Settings => Settings, _ => Home };
+    private PilotWidgetBase<TSurface> PageViewOf(PilotPage page) => page switch { PilotPage.Chat => Chat, PilotPage.Ideas => Ideas, PilotPage.Spend => Spend, PilotPage.Designs => Designs, PilotPage.Notifications => NotificationsPage, PilotPage.Sessions => Sessions, PilotPage.Flights => Flights, PilotPage.Repos => Repos, PilotPage.PullRequests => PullRequests, PilotPage.Jobs => Jobs, PilotPage.Fleet => Fleet, PilotPage.Settings => Settings, _ => Home };
 
     /// <summary>Whether the last frame drew the cards panel: the For you bar is open and has something to show.</summary>
     public bool ShowsCards { get; private set; }
+
+    /// <summary>The Notifications page: the library's list frame over the bar's feed.</summary>
+    public NotificationsView<TSurface> NotificationsPage { get; }
 
     /// <summary>The For you side bar: open over the page's right side, or collapsed to the strip with the bell (PIL1184). One per window.</summary>
     public NotificationsHost Notifications { get; } = new();
@@ -714,6 +732,13 @@ internal sealed class PilotChrome<TSurface>
     /// </summary>
     public bool HandleInput(InputEvent evt)
     {
+        // A press on the strip's bell opens the Notifications page (the key still toggles the bar).
+        if (evt is InputEvent.MouseDown { Button: MouseButton.Left } bell && NotificationsLayer.HitTest(bell.X, bell.Y) is NotificationHit { Part: NotificationPart.Bell })
+        {
+            Show(PilotPage.Notifications);
+            return true;
+        }
+
         // A press on a fading toast opens what it is about, ahead of the page beneath it.
         if (evt is InputEvent.MouseDown { Button: MouseButton.Left } press && Notifications.Press(NotificationsLayer.HitTest(press.X, press.Y)))
         {
@@ -1132,6 +1157,7 @@ internal sealed class PilotChrome<TSurface>
             Chat.DpiScale = value;
             Ideas.DpiScale = value;
             Spend.DpiScale = value;
+            NotificationsPage.DpiScale = value;
             Designs.DpiScale = value;
             Tooltips.DpiScale = value;
             NotificationsLayer.DpiScale = value;
@@ -1158,6 +1184,7 @@ internal sealed class PilotChrome<TSurface>
             Chat.FontPath = value;
             Ideas.FontPath = value;
             Spend.FontPath = value;
+            NotificationsPage.FontPath = value;
             Designs.FontPath = value;
             Tooltips.FontPath = value;
             NotificationsLayer.FontPath = value;
@@ -1345,6 +1372,9 @@ internal sealed class PilotChrome<TSurface>
                     break;
                 case PageKey when Page == PilotPage.Designs:
                     Designs.Render(WithIdeas(designs ?? DesignsScreen.Empty(screen.Source, screen.AsOf), ideas), rect);
+                    break;
+                case PageKey when Page == PilotPage.Notifications:
+                    NotificationsPage.Render(rect, screen.Source, screen.AsOf);
                     break;
                 case PageKey when Page == PilotPage.Settings:
                     Settings.Render(DateTimeOffset.UtcNow, rect);

@@ -9,7 +9,7 @@ using Pilot.Contracts;
 // Console.Lib rather than painted on pixels: every page of the bar, and the watchtower's panel with its cards, all live from
 // this machine's node or one on the LAN. A bar of pages runs along the top, each with its key: the GUI's Ctrl+digit order as
 // plain digits, 1 Home, 2 Chat, 3 Sessions, 4 Flights, 5 Repos, 6 Background tasks, 7 Fleet, 8 Settings, 9 Pull requests,
-// 0 Ideas, $ Spend and d Designs.
+// 0 Ideas, $ Spend, d Designs and n Notifications.
 var nodeOption = new Option<string?>("--node") { Description = "A node on the LAN: host:port, or its name (SE1) or host; else PILOT_NODE, else this machine's" };
 var socketOption = new Option<string?>("--node-socket") { Description = "This machine's node's socket; else PILOT_NODE_SOCKET, else this user's default" };
 var glyphsOption = new Option<string?>("--glyphs") { Description = $"The bar's glyphs: auto (emoji where the terminal draws them two cells wide), emoji or initials; else {TerminalRail.GlyphsVariable}, else auto" };
@@ -560,6 +560,7 @@ while (!stop.IsCancellationRequested)
             PilotPage.Ideas => chrome.Ideas.Tree(pages.Ideas ?? new IdeasScreen([], [], [], pages.Sessions.Source, now)),
             PilotPage.Spend => chrome.Spend.Tree(spendReads.Screen ?? new SpendScreen(chrome.Spend.Window, null, null, pages.Sessions.Source, now)),
             PilotPage.Designs => chrome.Designs.Tree(PilotChrome<DIR.Lib.RgbaImage>.WithIdeas(designReads.Screen(pages.Sessions.Source, now, chrome.Designs.OpenId) ?? DesignsScreen.Empty(pages.Sessions.Source, now), pages.Ideas)),
+            PilotPage.Notifications => chrome.NotificationsPage.Tree(pages.Sessions.Source, now, width),
             PilotPage.Settings => settings.Tree(now, width),
             _ => home.Tree(new HomeScreen(pages.Flights, pages.Sessions, pages.Jobs, pages.Cards, pages.Machines)),
         };

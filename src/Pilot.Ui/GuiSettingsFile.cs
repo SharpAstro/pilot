@@ -34,6 +34,12 @@ internal sealed record GuiSettings
     /// build wrote reads as; it is written only while the bar is collapsed, so reopening it drops the member again.
     /// </summary>
     public bool? NotificationsCollapsed { get; init; }
+
+    /// <summary>
+    /// How many hours the Notifications page keeps what happened (PIL1184). Null means 24 hours, which is what a file an older build wrote reads as;
+    /// it is written only while the choice is not 24.
+    /// </summary>
+    public double? NotificationKeepHours { get; init; }
 }
 
 /// <summary>A page's saved sort: the column's title and whether it runs descending.</summary>
@@ -70,10 +76,12 @@ internal sealed class GuiSettingsFile : IDisposable
 
     private Dictionary<string, Dictionary<string, SavedFrameSize>> _frameSizes = [];
     private volatile bool _notificationsCollapsed;
+    private double? _keepHours;
 
     private GuiSettingsFile(string path, Dictionary<string, Dictionary<string, float>> tables, Dictionary<string, SavedSort> sorts, bool night, MapLayerSettings? layers, List<string> folds, Dictionary<string, SavedDesignTarget> designTargets,
-        Dictionary<string, Dictionary<string, SavedFrameSize>> frameSizes, bool notificationsCollapsed)
+        Dictionary<string, Dictionary<string, SavedFrameSize>> frameSizes, bool notificationsCollapsed, double? keepHours)
     {
+        _keepHours = keepHours;
         _notificationsCollapsed = notificationsCollapsed;
         _frameSizes = frameSizes;
         _designTargets = designTargets.ToImmutableDictionary(StringComparer.Ordinal);
@@ -100,6 +108,7 @@ internal sealed class GuiSettingsFile : IDisposable
         var sorts = new Dictionary<string, SavedSort>(StringComparer.Ordinal);
         var night = false;
         var collapsed = false;
+        double? keepHours = null;
         var folds = new List<string>();
         MapLayerSettings? layers = null;
         var designTargets = new Dictionary<string, SavedDesignTarget>(StringComparer.Ordinal);
@@ -110,6 +119,7 @@ internal sealed class GuiSettingsFile : IDisposable
             {
                 night = settings.Night;
                 collapsed = settings.NotificationsCollapsed == true;
+                keepHours = settings.NotificationKeepHours is > 0 and var hours ? hours : null;
                 folds.AddRange(settings.PullRequestFolds?.Where(f => !string.IsNullOrEmpty(f)) ?? []);
                 layers = settings.MapLayers;
                 foreach (var (id, saved) in settings.DesignTargets ?? [])
@@ -153,7 +163,7 @@ internal sealed class GuiSettingsFile : IDisposable
             designTargets.Clear();
             frameSizes.Clear();
         }
-        return new GuiSettingsFile(path, tables, sorts, night, layers, folds, designTargets, frameSizes, collapsed);
+        return new GuiSettingsFile(path, tables, sorts, night, layers, folds, designTargets, frameSizes, collapsed, keepHours);
     }
 
     /// <summary>Whether the file says Night is on.</summary>
@@ -189,6 +199,12 @@ internal sealed class GuiSettingsFile : IDisposable
     public void Attach(NotificationsHost host)
     {
         host.Open = !_notificationsCollapsed;
+        host.KeepFor = _keepHours is { } hours ? TimeSpan.FromHours(hours) : NotificationsHost.DefaultKeepFor;
+        host.KeepChanged += keep =>
+        {
+            _keepHours = keep == NotificationsHost.DefaultKeepFor ? null : keep.TotalHours;
+            Touch();
+        };
         host.OpenChanged += open =>
         {
             _notificationsCollapsed = !open;
@@ -270,6 +286,7 @@ internal sealed class GuiSettingsFile : IDisposable
                 DesignTargets = _designTargets.Count > 0 ? new Dictionary<string, SavedDesignTarget>(_designTargets, StringComparer.Ordinal) : null,
                 FrameSizes = _frameSizes.Count > 0 ? _frameSizes : null,
                 NotificationsCollapsed = _notificationsCollapsed ? true : null,
+                NotificationKeepHours = _keepHours,
             },
             GuiSettingsJsonContext.Default.GuiSettings);
 

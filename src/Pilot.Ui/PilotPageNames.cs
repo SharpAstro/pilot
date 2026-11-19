@@ -21,6 +21,7 @@ internal static class PilotPageNames
         (PilotPage.Ideas, "ideas"),
         (PilotPage.Spend, "spend"),
         (PilotPage.Designs, "designs"),
+        (PilotPage.Notifications, "notifications"),
     ];
 
     /// <summary>Every page's name, in the rail's order.</summary>
