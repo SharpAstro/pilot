@@ -72,7 +72,7 @@ internal static class DesignVersionNotice
         }
         var carried = (flights ?? []).Where(f => f.Designs.Any(d => string.Equals(d.Id, row.Id, StringComparison.OrdinalIgnoreCase)))
             .Select(f => (Version: f.Designs.First(d => string.Equals(d.Id, row.Id, StringComparison.OrdinalIgnoreCase)).Version, Flight: f.Code, At: f.CreatedAt));
-        var recorded = row.Builds.Where(b => b.Flight is { Length: > 0 }).Select(b => (b.Version, Flight: b.Flight!, b.At));
+        var recorded = row.Builds.Where(b => b.Flight is { Length: > 0 }).Select(b => (b.Version, Flight: b.Flight!, At: b.At ?? DateTimeOffset.MinValue));
         var best = carried.Concat(recorded).OrderByDescending(b => b.Version).ThenByDescending(b => b.At).Cast<(int Version, string Flight, DateTimeOffset At)?>().FirstOrDefault();
         var now = current.ToString(CultureInfo.InvariantCulture);
         if (best is not { } built)
