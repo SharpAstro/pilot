@@ -52,8 +52,7 @@ public sealed partial class GhCli
     public async Task<string?> PullRequestBodyAsync(string repoPath, int number, CancellationToken cancellationToken)
     {
         var (exit, output, error) = await RunAsync(["pr", "view", number.ToString(System.Globalization.CultureInfo.InvariantCulture), "--json", "body", "--jq", ".body"], repoPath, cancellationToken);
-        return exit == 0 ? output.TrimEnd('', '
-') : throw new FlightException($"gh could not read PR #{number}: {(error.Trim().Length > 0 ? error : output).Trim()}");
+        return exit == 0 ? output.TrimEnd((char)13, (char)10) : throw new FlightException($"gh could not read PR #{number}: {(error.Trim().Length > 0 ? error : output).Trim()}");
     }
 
     public async Task EditPullRequestBodyAsync(string repoPath, int number, string body, CancellationToken cancellationToken)
