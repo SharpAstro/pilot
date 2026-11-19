@@ -238,6 +238,54 @@ public sealed class McpDesignResourcesTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task ADesignThatNamesTargetsServesTheFirstTargetsPngForAScreen()
+    {
+        await Published();
+        var renders = Path.Combine(Version1(), "renders");
+        File.Move(Path.Combine(renders, "home.png"), Path.Combine(renders, "home.Phone.png"));
+        File.WriteAllText(DesignPaths.PrototypeFile(Version1()), """{"targets":["Phone","Tablet"]}""");
+
+        var png = Contents(await ReadOne("pilot://designs/DSN-1/versions/1/screens/home"));
+        Convert.FromBase64String(png.GetProperty("blob").GetString()!).ShouldBe(await File.ReadAllBytesAsync(Path.Combine(renders, "home.Phone.png"), Ct));
+        (await Refused("pilot://designs/DSN-1/versions/1/screens/settings")).ShouldContain("no screen settings");
+    }
+
+    [Theory]
+    [InlineData("""{"targets":["Phone"]}""", "Phone")]
+    [InlineData("""{"targets":[{"name":"Wide","width":10,"height":5}]}""", "Wide")]
+    [InlineData("""{"targets":[{"width":390,"height":844}]}""", "390x844")]
+    [InlineData("""{"targets":[]}""", null)]
+    [InlineData("""{"targets":[3]}""", null)]
+    [InlineData("""{"other":1}""", null)]
+    [InlineData("[1]", null)]
+    [InlineData("{not json", null)]
+    public void TheFirstTargetIsNamedFromThePrototype(string json, string? expected)
+    {
+        var folder = Path.Combine(Path.GetTempPath(), "mcpdt-" + Guid.NewGuid().ToString("N")[..8]);
+        try
+        {
+            Directory.CreateDirectory(folder);
+            File.WriteAllText(DesignPaths.PrototypeFile(folder), json);
+            DesignPaths.FirstTarget(folder).ShouldBe(expected);
+            DesignPaths.FirstTarget(Path.Combine(folder, "absent")).ShouldBeNull();
+        }
+        finally
+        {
+            TestDirs.DeleteTree(folder);
+        }
+    }
+
+    [Fact]
+    public async Task AScreenNameThatIsNotOnePlainFileNameIsRefused()
+    {
+        await Published();
+        foreach (var name in new[] { "C%3Ahome", "C%3A", "home%3Astream", "..%5Chome", "a%00b" })
+        {
+            (await Refused($"pilot://designs/DSN-1/versions/1/screens/{name}")).ShouldContain("no screen");
+        }
+    }
+
+    [Fact]
     [Trait("Category", "Slow")]
     public async Task ThePilotCliServesTheDesignsOverStdio()
     {
@@ -293,6 +341,12 @@ public sealed class McpDesignResourcesTests : IAsyncLifetime
             var png = Contents(await Ask(Read(6, "pilot://designs/DSN-1/versions/1/screens/home")));
             Convert.FromBase64String(png.GetProperty("blob").GetString()!).ShouldBe(await File.ReadAllBytesAsync(Path.Combine(Version1(), "renders", "home.png"), Ct));
             Contents(await Ask(Read(7, "pilot://designs/DSN-1/draft/document"))).GetProperty("text").GetString()!.ShouldContain("draft/screens/home");
+            Contents(await Ask(Read(9, "pilot://designs/DSN-1/versions/1/document"))).GetProperty("text").GetString()!.ShouldContain("versions/1/screens/home");
+            var terminal = Contents(await Ask(Read(10, "pilot://designs/DSN-1/versions/1/screens/home?size=80x24")));
+            Convert.FromBase64String(terminal.GetProperty("blob").GetString()!).ShouldBe([1, 2, 3, 4, 5]);
+            Contents(await Ask(Read(11, "pilot://designs/DSN-1/draft/screens/home"))).GetProperty("mimeType").GetString().ShouldBe("image/png");
+            JsonDocument.Parse(Contents(await Ask(Read(12, "pilot://designs/DSN-1/chat"))).GetProperty("text").GetString()!).RootElement.ValueKind.ShouldBe(JsonValueKind.Object);
+            (await Ask(Read(14, "pilot://designs/DSN-9"))).GetProperty("error").GetProperty("code").GetInt32().ShouldBe(-32002);
             var refused = await Ask(Read(8, "pilot://designs/DSN-1/versions/9/document"));
             refused.GetProperty("error").GetProperty("code").GetInt32().ShouldBe(-32002);
             refused.GetProperty("error").GetProperty("message").GetString()!.ShouldContain("v1");

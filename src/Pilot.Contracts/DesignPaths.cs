@@ -94,7 +94,12 @@ public static class DesignPaths
     {
         try
         {
-            return File.Exists(file) ? File.ReadAllText(file) : null;
+            if (!File.Exists(file))
+            {
+                return null;
+            }
+            using var reader = new StreamReader(new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete));
+            return reader.ReadToEnd();
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {

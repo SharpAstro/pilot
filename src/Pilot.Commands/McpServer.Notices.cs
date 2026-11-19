@@ -32,6 +32,12 @@ internal sealed partial class McpServer
     /// <summary>How long the notice loop waits between reads; tests pass milliseconds.</summary>
     internal TimeSpan Poll { get; init; } = DefaultPoll;
 
+    /// <summary>Tests only: replaces the wait between reads, so a test lets one read run at a time instead of waiting on the clock.</summary>
+    internal Func<CancellationToken, Task>? Pause { get; init; }
+
+    /// <summary>Tests only: called after each round of reads (and its notices) has finished.</summary>
+    internal Action? Ticked { get; init; }
+
     /// <summary>Writes a line to the client: replies and notices share the lock, so a notice never lands inside a reply.</summary>
     private async Task WriteAsync(TextWriter output, string line, CancellationToken cancellationToken)
     {
@@ -86,7 +92,8 @@ internal sealed partial class McpServer
             uris.Add(uri!);
             if (seen is not null)
             {
-                _seen[bucket] = seen;
+                // A design already watched keeps what was seen first, so a change since the last poll is still told; a second subscribe must not absorb it.
+                _seen.TryAdd(bucket, seen);
             }
             _listed ??= list;
         }
@@ -156,73 +163,89 @@ internal sealed partial class McpServer
     {
         while (!cancellationToken.IsCancellationRequested)
         {
-            string[] keys;
-            lock (_noticeLock)
-            {
-                if (_subscribed.Count == 0)
-                {
-                    return;
-                }
-            }
-            await Task.Delay(Poll, cancellationToken);
-            lock (_noticeLock)
-            {
-                keys = [.. _subscribed.Keys.Where(k => k.Length > 0)];
-            }
+            await (Pause?.Invoke(cancellationToken) ?? Task.Delay(Poll, cancellationToken));
+            bool more;
             try
             {
-                var (target, here, unknown) = await ResolvedAsync(cancellationToken);
-                if (unknown is not null)
+                more = await PollOnceAsync(output, cancellationToken);
+            }
+            finally
+            {
+                Ticked?.Invoke();
+            }
+            if (!more)
+            {
+                return;
+            }
+        }
+    }
+
+    /// <summary>One round of reads and notices; false when nothing is subscribed any more, which ends the loop.</summary>
+    private async Task<bool> PollOnceAsync(TextWriter output, CancellationToken cancellationToken)
+    {
+        string[] keys;
+        lock (_noticeLock)
+        {
+            if (_subscribed.Count == 0)
+            {
+                return false;
+            }
+            keys = [.. _subscribed.Keys.Where(k => k.Length > 0)];
+        }
+        try
+        {
+            var (target, here, unknown) = await ResolvedAsync(cancellationToken);
+            if (unknown is not null)
+            {
+                return true;
+            }
+            using var client = await NodeTargets.ConnectAsync(target, socket, cancellationToken, here: here);
+            var changed = new List<string>();
+            foreach (var key in keys)
+            {
+                Seen now;
+                try
+                {
+                    now = await ObserveAsync(client, key, cancellationToken);
+                }
+                catch (McpException)
                 {
                     continue;
                 }
-                using var client = await NodeTargets.ConnectAsync(target, socket, cancellationToken, here: here);
-                var changed = new List<string>();
-                foreach (var key in keys)
-                {
-                    Seen now;
-                    try
-                    {
-                        now = await ObserveAsync(client, key, cancellationToken);
-                    }
-                    catch (McpException)
-                    {
-                        continue;
-                    }
-                    lock (_noticeLock)
-                    {
-                        if (_subscribed.TryGetValue(key, out var uris) && _seen.TryGetValue(key, out var before) && before != now)
-                        {
-                            _seen[key] = now;
-                            changed.AddRange(uris);
-                        }
-                    }
-                }
-                var ids = await ListIdsAsync(client, cancellationToken);
-                var listChanged = false;
                 lock (_noticeLock)
                 {
-                    if (ids is not null)
+                    if (_subscribed.TryGetValue(key, out var uris) && _seen.TryGetValue(key, out var before) && before != now)
                     {
-                        listChanged = _listed is not null && !_listed.SetEquals(ids);
-                        _listed = ids;
+                        _seen[key] = now;
+                        changed.AddRange(uris);
                     }
                 }
-                foreach (var uri in changed)
+            }
+            var ids = await ListIdsAsync(client, cancellationToken);
+            var listChanged = false;
+            lock (_noticeLock)
+            {
+                if (ids is not null)
                 {
-                    await WriteAsync(output, $$$"""{"jsonrpc":"2.0","method":"notifications/resources/updated","params":{"uri":"{{{JavaScriptEncoder.UnsafeRelaxedJsonEscaping.Encode(uri)}}}"}}""", cancellationToken);
-                }
-                if (listChanged)
-                {
-                    await WriteAsync(output, """{"jsonrpc":"2.0","method":"notifications/resources/list_changed"}""", cancellationToken);
+                    listChanged = _listed is not null && !_listed.SetEquals(ids);
+                    _listed = ids;
                 }
             }
-            catch (Exception ex) when (ex is HttpRequestException or SocketException or IOException or WebSocketException or ObjectDisposedException or JsonException
-                || (ex is OperationCanceledException && !cancellationToken.IsCancellationRequested))
+            foreach (var uri in changed)
             {
-                // The node is away or answered oddly: try again at the next tick.
+                await WriteAsync(output, $$$"""{"jsonrpc":"2.0","method":"notifications/resources/updated","params":{"uri":"{{{JavaScriptEncoder.UnsafeRelaxedJsonEscaping.Encode(uri)}}}"}}""", cancellationToken);
+            }
+            if (listChanged)
+            {
+                await WriteAsync(output, """{"jsonrpc":"2.0","method":"notifications/resources/list_changed"}""", cancellationToken);
             }
         }
+        catch (Exception ex) when (ex is HttpRequestException or SocketException or IOException or WebSocketException or ObjectDisposedException or JsonException
+            || (ex is OperationCanceledException && !cancellationToken.IsCancellationRequested))
+        {
+            // The node is away or answered oddly: try again at the next tick.
+        }
+        return true;
     }
 
     private async Task<HashSet<string>?> ListIdsAsync(NodeClient client, CancellationToken cancellationToken) =>
@@ -250,7 +273,14 @@ internal sealed partial class McpServer
         {
             try
             {
-                hash.AppendData(await File.ReadAllBytesAsync(file, cancellationToken));
+                // Shared with a writer (and a rename or delete under it), so the read neither blocks the designer nor fails it.
+                await using var stream = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 4096, useAsync: true);
+                var buffer = new byte[8192];
+                int read;
+                while ((read = await stream.ReadAsync(buffer, cancellationToken)) > 0)
+                {
+                    hash.AppendData(buffer.AsSpan(0, read));
+                }
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {

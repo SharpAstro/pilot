@@ -14,7 +14,9 @@ public sealed class McpDesignNoticesTests : IAsyncLifetime
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-    private static readonly TimeSpan Poll = TimeSpan.FromMilliseconds(25);
+    // The server's reads run only when the test lets one go, and each says when it finished: no test waits on the clock to prove anything.
+    private readonly SemaphoreSlim _release = new(0);
+    private readonly Channel<bool> _ticks = Channel.CreateUnbounded<bool>();
 
     private NodeHarness _node = null!;
     private Feed _input = null!;
@@ -27,7 +29,7 @@ public sealed class McpDesignNoticesTests : IAsyncLifetime
         _node = await NodeHarness.StartAsync(Ct);
         _input = new Feed();
         _output = new Lines();
-        _running = new McpServer(_node.Folder, node: null, socket: _node.SocketPath) { Poll = Poll }.RunAsync(_input, _output, Ct);
+        _running = new McpServer(_node.Folder, node: null, socket: _node.SocketPath) { Pause = ct => _release.WaitAsync(ct), Ticked = () => _ticks.Writer.TryWrite(true) }.RunAsync(_input, _output, Ct);
         _input.Write(McpTests.Initialize);
         (await _output.NextAsync()).GetProperty("id").GetInt32().ShouldBe(1);
     }
@@ -111,10 +113,23 @@ public sealed class McpDesignNoticesTests : IAsyncLifetime
         line.GetProperty("params").GetProperty("uri").GetString().ShouldBe(uri);
     }
 
-    /// <summary>Nothing more arrives for a few polls: the next line is the reply to a ping sent now.</summary>
-    private async Task Quiet()
+    /// <summary>Lets one round of reads run and waits for it to finish (its notices are written by then).</summary>
+    private async Task Tick()
     {
-        (await _output.NextOrNoneAsync(Poll * 12)).ShouldBeNull();
+        _release.Release();
+        await _ticks.Reader.ReadAsync(Ct).AsTask().WaitAsync(TimeSpan.FromSeconds(25), Ct);
+    }
+
+    /// <summary>
+    /// Nothing more arrives: two whole rounds run after the change (the first may have begun before it), then the next line is the reply to a ping sent now.
+    /// Lines already written (a list change, say) are for the caller to have read first.
+    /// </summary>
+    private async Task Quiet(int rounds = 2)
+    {
+        for (var i = 0; i < rounds; i++)
+        {
+            await Tick();
+        }
         var id = _next++;
         _input.Write($$"""{"jsonrpc":"2.0","id":{{id}},"method":"ping"}""");
         (await _output.NextAsync()).GetProperty("id").GetInt32().ShouldBe(id);
@@ -128,6 +143,7 @@ public sealed class McpDesignNoticesTests : IAsyncLifetime
         var (exit, said) = await Pilot("design", "publish", "DSN-1", "--why", "brief");
         exit.ShouldBe(0, said);
 
+        await Tick();
         await ExpectUpdated("pilot://designs/DSN-1/document");
         await Quiet();
     }
@@ -139,6 +155,7 @@ public sealed class McpDesignNoticesTests : IAsyncLifetime
         await Subscribe("pilot://designs/DSN-1");
         (await Pilot("design", "edit", "DSN-1", "title", "--", "Fleet list")).Exit.ShouldBe(0);
 
+        await Tick();
         await ExpectUpdated("pilot://designs/DSN-1");
         await Quiet();
     }
@@ -150,7 +167,16 @@ public sealed class McpDesignNoticesTests : IAsyncLifetime
         await Subscribe("pilot://designs/DSN-1/chat");
         (await Pilot("design", "say", "DSN-1", "--", "wider please")).Exit.ShouldBe(0);
 
+        await Tick();
         await ExpectUpdated("pilot://designs/DSN-1/chat");
+        await Quiet();
+
+        // A second subscribe for the same design, with a change before it, must not hide the change: both URIs are told.
+        (await Pilot("design", "say", "DSN-1", "--", "and taller")).Exit.ShouldBe(0);
+        await Subscribe("pilot://designs/DSN-1");
+        await Tick();
+        var told = new[] { (await _output.NextAsync()).GetProperty("params").GetProperty("uri").GetString(), (await _output.NextAsync()).GetProperty("params").GetProperty("uri").GetString() };
+        told.Order().ShouldBe(["pilot://designs/DSN-1", "pilot://designs/DSN-1/chat"]);
         await Quiet();
     }
 
@@ -163,7 +189,8 @@ public sealed class McpDesignNoticesTests : IAsyncLifetime
         (await Pilot("design", "say", "DSN-1", "--", "wider please")).Exit.ShouldBe(0);
         (await Pilot("design", "edit", "DSN-1", "title", "--", "Fleet list")).Exit.ShouldBe(0);
 
-        await Quiet();
+        // The loop's one round finds nothing subscribed and ends; nothing is read, nothing sent.
+        await Quiet(rounds: 1);
     }
 
     [Fact]
@@ -175,12 +202,20 @@ public sealed class McpDesignNoticesTests : IAsyncLifetime
         (await Pilot("design", "say", "DSN-1", "--", "wider please")).Exit.ShouldBe(0);
         (await Pilot("design", "edit", "DSN-1", "title", "--", "Fleet list")).Exit.ShouldBe(0);
 
-        // The new design list is not what DSN-2's subscriber heard of either: only list_changed may come, none for DSN-1.
-        while (await _output.NextOrNoneAsync(Poll * 12) is { } line)
+        // Two whole rounds, then a ping: whatever comes before its reply may be a list change, never an update for DSN-1 or DSN-2.
+        await Tick();
+        await Tick();
+        var ping = _next++;
+        _input.Write($$"""{"jsonrpc":"2.0","id":{{ping}},"method":"ping"}""");
+        while (true)
         {
-            line.GetProperty("method").GetString().ShouldNotBe("notifications/resources/updated");
+            var line = await _output.NextAsync();
+            if (line.TryGetProperty("id", out var id) && id.GetInt32() == ping)
+            {
+                break;
+            }
+            line.GetProperty("method").GetString().ShouldBe("notifications/resources/list_changed");
         }
-        await Quiet();
     }
 
     [Fact]
@@ -201,6 +236,7 @@ public sealed class McpDesignNoticesTests : IAsyncLifetime
         await Subscribe("pilot://designs");
         (await Pilot("design", "new", "--", "A fleet screen")).Exit.ShouldBe(0);
 
+        await Tick();
         (await _output.NextAsync()).GetProperty("method").GetString().ShouldBe("notifications/resources/list_changed");
     }
 
@@ -258,21 +294,5 @@ public sealed class McpDesignNoticesTests : IAsyncLifetime
 
         public async Task<JsonElement> NextAsync() =>
             JsonDocument.Parse(await _lines.Reader.ReadAsync(Ct).AsTask().WaitAsync(TimeSpan.FromSeconds(25), Ct)).RootElement.Clone();
-
-        /// <summary>The next line, or null when none comes within <paramref name="wait"/>.</summary>
-        public async Task<JsonElement?> NextOrNoneAsync(TimeSpan wait)
-        {
-            // The read itself is cancelled at the deadline, so a timed-out read cannot swallow the next line.
-            using var deadline = CancellationTokenSource.CreateLinkedTokenSource(Ct);
-            deadline.CancelAfter(wait);
-            try
-            {
-                return JsonDocument.Parse(await _lines.Reader.ReadAsync(deadline.Token)).RootElement.Clone();
-            }
-            catch (OperationCanceledException) when (!Ct.IsCancellationRequested)
-            {
-                return null;
-            }
-        }
     }
 }

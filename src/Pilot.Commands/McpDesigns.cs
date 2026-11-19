@@ -168,7 +168,8 @@ internal static class McpDesigns
     {
         var renders = DesignPaths.RendersOf(folder);
         var names = Directory.Exists(renders) ? Directory.EnumerateFiles(renders, "*.png").Select(Path.GetFileName).OfType<string>().Order(StringComparer.Ordinal).ToArray() : [];
-        var safe = screen.Length > 0 && screen.IndexOfAny(['/', '\\']) < 0 && screen != "." && screen != "..";
+        // One plain file name: no separator, no drive colon (C:x is drive-relative on Windows), nothing the platform refuses in a name.
+        var safe = screen.Length > 0 && screen.IndexOfAny(['/', '\\', ':']) < 0 && screen.IndexOfAny(Path.GetInvalidFileNameChars()) < 0 && screen != "." && screen != "..";
         string file;
         if (size is not null)
         {
