@@ -118,8 +118,14 @@ public sealed class NotificationsDockTests
         using var _ = renderer;
         PressOn(chrome, NotificationsHost.HandleAction);
         chrome.Notifications.State.ShouldBe(BarStates.Collapsed);
+        var h = Region(chrome, NotificationsHost.HandleAction);
+        var all = new List<ClickableRegion>();
+        chrome.NotificationsLayer.CollectPaintedRegions(all);
+        var cx = h.X + h.Width / 2f;
+        var cy = h.Y + h.Height / 2f;
+        var there = string.Join("; ", all.Where(r => r.X <= cx && cx <= r.X + r.Width && r.Y <= cy && cy <= r.Y + r.Height).Select(r => $"{r.Result} {r.X},{r.Y} {r.Width}x{r.Height}"));
         PressOn(chrome, NotificationsHost.HandleAction);
-        chrome.Notifications.State.ShouldBe(last);
+        chrome.Notifications.State.ShouldBe(last, "regions at the handle: " + there);
     }
 
     [Fact]

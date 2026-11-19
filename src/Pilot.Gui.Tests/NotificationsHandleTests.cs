@@ -210,7 +210,8 @@ public sealed class NotificationsHandleTests
         first.Column.ShouldBeGreaterThanOrEqualTo(columns - 4, "a few cells at the right edge");
         Click();
         chrome.Notifications.Open.ShouldBeTrue();
+        var again = Find(Frame());
         Click();
-        chrome.Notifications.Open.ShouldBeFalse();
+        chrome.Notifications.Open.ShouldBeFalse($"first {first}, second {again}, hit there {CellLayout.HitTest(input.Arranged, again.Column, again.Row)}, state {chrome.Notifications.State}");
     }
 }
