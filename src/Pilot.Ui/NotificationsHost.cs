@@ -248,7 +248,7 @@ internal sealed class NotificationsHost
     }
 
     /// <summary>The narrowest page, in design units, the strip may leave beside it; a window narrower than that has no strip.</summary>
-    public const float MinPageWidth = 280f;
+    public const float MinPageWidth = 400f;
 
     /// <summary>The toggle key as a person reads it, for a tooltip.</summary>
     public static string ChordText() => "Ctrl+N";
