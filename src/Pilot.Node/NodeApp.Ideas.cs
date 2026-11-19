@@ -1,3 +1,4 @@
+using Pilot.Contracts;
 using Pilot.Node.Flights;
 
 namespace Pilot.Node;
