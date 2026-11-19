@@ -80,10 +80,11 @@ public sealed class IdeasDesignMarkTests
 
         var said = Spoken(renderer, chrome, screen);
         said.ShouldContain("◆ needs design");
-        said.ShouldContain("DSN-1 v2");
-        said.ShouldContain("DSN-2, no version yet");
+        // #1185: every design of an idea is a link, with its title where the view has the room for one (not in the tree grid's row).
+        said.ShouldContain(mode == IdeasViewMode.Tree ? "DSN-1 · v2" : "DSN-1 Design 0 · v2");
+        said.ShouldContain("DSN-2 · no version yet");
         var actions = Actions(Regions(chrome, screen)).ToList();
-        actions.ShouldContain(mode == IdeasViewMode.Tree ? "ideas:tree-design:pilot I381" : "ideas:design:pilot I381");
+        actions.ShouldContain(mode == IdeasViewMode.Tree ? "ideas:tree-design:pilot I381:DSN-1" : "ideas:design:pilot I381:DSN-1");
         if (mode == IdeasViewMode.Tree)
         {
             // The grid's detail is of the picked row: I381 is marked, so its button unmarks.
@@ -119,7 +120,7 @@ public sealed class IdeasDesignMarkTests
         }, PageData.DesignIdeas());
         var text = string.Join("\n", Enumerable.Range(0, 60).Select(y => string.Concat(Enumerable.Range(0, 200).Select(x => buffer.BackAt(x, y).Glyph)).TrimEnd()));
         text.ShouldContain("needs design");
-        text.ShouldContain("DSN-1 v2");
+        text.ShouldContain(mode == IdeasViewMode.Tree ? "DSN-1 · v2" : "DSN-1 Design 0 · v2");
         text.ShouldContain(mode == IdeasViewMode.Tree ? IdeaDesignMark<RgbaImage>.UnmarkLabel : IdeaDesignMark<RgbaImage>.MarkLabel);
     }
 
@@ -167,7 +168,7 @@ public sealed class IdeasDesignMarkTests
     {
         using var renderer = new RgbaImageRenderer(1280, 900);
         var (chrome, _, _) = Chrome(renderer);
-        Click(Regions(chrome, PageData.DesignIdeas()), "ideas:design:pilot I381");
+        Click(Regions(chrome, PageData.DesignIdeas()), "ideas:design:pilot I381:DSN-1");
         chrome.Page.ShouldBe(PilotPage.Designs);
         chrome.Designs.OpenId.ShouldBe("DSN-1");
     }
@@ -183,7 +184,7 @@ public sealed class IdeasDesignMarkTests
         Click(Regions(chrome, screen), $"ideas:plan:pilot I{number}");
 
         var said = Spoken(renderer, chrome, screen);
-        said.ShouldContain($"I{number} needs a design and has none yet");
+        said.ShouldContain(number == 382 ? "I382 needs a design and has none yet" : "DSN-2 has no published version yet");
         var actions = Actions(Regions(chrome, screen)).ToList();
         actions.ShouldContain($"ideas:design-start:pilot I{number}");
         actions.ShouldContain($"ideas:plan-anyway:pilot I{number}");
@@ -204,6 +205,42 @@ public sealed class IdeasDesignMarkTests
         Click(Regions(chrome, screen), $"ideas:plan:pilot I{number}");
         Spoken(renderer, chrome, screen).ShouldNotContain("needs a design and has none yet");
         Actions(Regions(chrome, screen)).ShouldNotContain($"ideas:plan-anyway:pilot I{number}");
+    }
+
+    // The node refuses any linked design with no published version, so Plan asks first for these as well, naming the design.
+    [Theory]
+    [InlineData(383, "DSN-5")]
+    [InlineData(381, "DSN-3")]
+    public async Task PlanOnAnIdeaWithADraftDesignAsksFirstAndPlanAnywaySendsTheAnywayArgument(int number, string draft)
+    {
+        using var renderer = new RgbaImageRenderer(1280, 900);
+        var (chrome, sent, tasks) = Chrome(renderer);
+        var sample = PageData.DesignIdeas();
+        // I383 is unmarked and linked to one draft design; I381 is marked and linked to DSN-1 (published) plus DSN-3 (draft).
+        var screen = sample with
+        {
+            Ideas = [.. sample.Ideas.Select(i => i.Id switch
+            {
+                "I383" => i with { Designs = [new IdeaDesignLink("DSN-5", "Draft", null)] },
+                "I381" => i with { Designs = [new IdeaDesignLink("DSN-1", "Design 0", 2), new IdeaDesignLink("DSN-3", "Design 2", null)] },
+                _ => i,
+            })],
+        };
+        Click(Regions(chrome, screen), $"ideas:plan:pilot I{number}");
+
+        Spoken(renderer, chrome, screen).ShouldContain($"{draft} has no published version yet");
+        Actions(Regions(chrome, screen)).ShouldContain($"ideas:plan-anyway:pilot I{number}");
+        sent.ShouldBeEmpty();
+
+        Click(Regions(chrome, screen), $"ideas:plan-anyway:pilot I{number}");
+        await Task.WhenAll(tasks);
+        chrome.Ideas.RowInput.Text = "Designs";
+        Click(Regions(chrome, screen), $"ideas:plan-go:pilot I{number}");
+        await Task.WhenAll(tasks);
+
+        var plan = sent.Single(s => s.Verb == Verbs.PlanIdea);
+        plan.Target.ShouldBe(IdeaIds.Target("pilot", number));
+        plan.Args.ShouldBe([Verbs.NewMilestoneArg, "Designs", Verbs.AnywayFlag]);
     }
 
     [Fact]

@@ -45,10 +45,10 @@ internal sealed partial class DesignsView<TSurface>
     private bool Building => StartPresses.PendingOf(BuildKey) is not null;
 
     // A design with a repo of its own, or one from an idea (whose repo is the idea's), asks for no repo.
-    internal static bool NeedsRepo(DesignRow row) => string.IsNullOrWhiteSpace(row.Repo) && string.IsNullOrWhiteSpace(row.FromIdea);
+    internal static bool NeedsRepo(DesignRow row) => string.IsNullOrWhiteSpace(row.Repo) && row.Ideas().Length == 0;
 
     // Only the first build plans the idea; a later one files a fresh issue in the idea's repo and asks for no milestone.
-    internal static bool NeedsMilestone(DesignRow row) => !string.IsNullOrWhiteSpace(row.FromIdea) && row.Builds.Length == 0;
+    internal static bool NeedsMilestone(DesignRow row) => row.Ideas().Length > 0 && row.Builds.Length == 0;
 
     /// <summary>The flights built from the version <paramref name="version"/> of the design <paramref name="id"/> on the screen, oldest first.</summary>
     internal static FlightRow[] BuiltFrom(DesignsScreen? screen, string id, int version) => DesignReads.BuiltOf(screen?.Flights, id, version);
@@ -59,7 +59,7 @@ internal sealed partial class DesignsView<TSurface>
     /// <summary>The open milestones the idea of <paramref name="row"/> can be planned into: those of its repo, newest first.</summary>
     internal static MilestoneRow[] MilestonesFor(DesignsScreen? screen, DesignRow row)
     {
-        var repo = IdeaIds.Parse(row.FromIdea ?? "").Ref?.Repo ?? RepoName(row.Repo) ?? IdeaIds.DefaultRepo;
+        var repo = IdeaIds.Parse(row.Ideas().FirstOrDefault() ?? "").Ref?.Repo ?? RepoName(row.Repo) ?? IdeaIds.DefaultRepo;
         return [.. (screen?.Milestones ?? []).Where(m => string.Equals(m.Repo, repo, StringComparison.OrdinalIgnoreCase)).OrderByDescending(m => m.Number)];
     }
 
@@ -202,7 +202,7 @@ internal sealed partial class DesignsView<TSurface>
     private Layout.Node BuildButtonRow(DesignRow row, int version)
     {
         Layout.Node Label(string text, RGBAColor32 color) => Layout.Builder.Text(text, 12f, color, TextAlign.Center, TextAlign.Center).Pad(10f, 0f).WAuto().Bg(Button);
-        var target = NeedsRepo(row) ? "in the repo you pick" : NeedsMilestone(row) ? $"its idea {row.FromIdea}, in the milestone you pick" : $"in {row.Repo}";
+        var target = NeedsRepo(row) ? "in the repo you pick" : NeedsMilestone(row) ? $"its idea {row.Ideas()[0]}, in the milestone you pick" : $"in {row.Repo}";
         var button = StartPresses.Button(BuildKey, BuildKey,
             () => Label(BuildLabel, Bright)
                 .BgHover(ButtonHover)

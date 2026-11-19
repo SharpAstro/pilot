@@ -41,6 +41,9 @@ public sealed partial class FlightCommander(NodeState state, Planes planes, Time
     /// <summary>The node's ledger of launched sessions, whose live entries of a flight are wound down with it; null in a test with none.</summary>
     public Sessions.SessionLedger? Ledger { get; set; }
 
+    /// <summary>What GitHub is told of the designs a landed flight built (PIL1185); null where none is wired.</summary>
+    public Designs.DesignRecord? DesignRecord { get; set; }
+
     /// <summary>How long the sessions of a landing flight are given to finish and report after being told, before they are stopped.</summary>
     public TimeSpan FinishGrace { get; set; } = TimeSpan.FromSeconds(10);
 

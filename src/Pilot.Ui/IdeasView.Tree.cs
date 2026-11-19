@@ -101,10 +101,10 @@ internal sealed partial class IdeasView<TSurface>
         var dropped = folded.Count - planned;
         var counts = $"{noted.Count} noted · {planned} planned · {dropped} dropped";
         var shown = board.Rest.Where(s => s.Kind != BoardSectionKind.NoMilestone || s.Items.Count > 0 || board.Rest.Count() > 1).ToList();
-        if (OnlyNeedsDesign)
+        if (OnlyNeedsDesign || OnlyHasDesign)
         {
-            // The filter leaves the ideas marked as needing a design, in the pinned section, and nothing else.
-            board = _board = board.OnlyNeedingDesign();
+            // The filters leave the ideas marked as needing a design, or those that have one, in the pinned section, and nothing else.
+            board = _board = OnlyNeedsDesign ? board.OnlyNeedingDesign() : board.OnlyWithDesign();
             noted = board.Unsorted.Items;
             shown = [];
             folded = [];
@@ -113,7 +113,7 @@ internal sealed partial class IdeasView<TSurface>
         var top = TopBar.Build(new PageHeader(TopBar.ThisNodeTitle(Nodes, "ideas"))
         {
             Counts = counts,
-            Buttons = [DesignFilterPill(), .. FoldAllPill(shown), ViewSwitch.Build(ViewChoices, ViewMode, mode =>
+            Buttons = [DesignFilterPill(), HasDesignFilterPill(), .. FoldAllPill(shown), ViewSwitch.Build(ViewChoices, ViewMode, mode =>
             {
                 ViewMode = mode;
                 Changed?.Invoke();
@@ -140,7 +140,8 @@ internal sealed partial class IdeasView<TSurface>
             head.Add(Ask(ask));
         }
         var ideating = Volatile.Read(ref _noting);
-        var empty = OnlyNeedsDesign && noted.Count == 0 ? WrappedProse.Of("No idea needs a design. Mark one with Mark for design.", 13f, P.Dim).Pad(0f, 8f) : UnsortedEmpty(ideas.Count, noted.Count, !ideating.IsEmpty);
+        var empty = OnlyHasDesign && noted.Count == 0 ? WrappedProse.Of("No idea has a design. Link one with Link a design.", 13f, P.Dim).Pad(0f, 8f)
+            : OnlyNeedsDesign && noted.Count == 0 ? WrappedProse.Of("No idea needs a design. Mark one with Mark for design.", 13f, P.Dim).Pad(0f, 8f) : UnsortedEmpty(ideas.Count, noted.Count, !ideating.IsEmpty);
 
         Layout.Node body;
         switch (ViewMode)
@@ -165,8 +166,18 @@ internal sealed partial class IdeasView<TSurface>
         CardsView<TSurface>.Pill(IdeaDesignMark<TSurface>.FilterLabel, "ideas:filter-design", () =>
         {
             OnlyNeedsDesign = !OnlyNeedsDesign;
+            OnlyHasDesign = false;
             Changed?.Invoke();
         }, OnlyNeedsDesign ? Lit : Tint, P.Bright);
+
+    // Beside it, the filter of #1185: only the ideas that have a design. One filter at a time, so a pressed pill is always what is shown.
+    private Layout.Node HasDesignFilterPill() =>
+        CardsView<TSurface>.Pill(LinkedThing.HasDesignFilterLabel, "ideas:filter-has-design", () =>
+        {
+            OnlyHasDesign = !OnlyHasDesign;
+            OnlyNeedsDesign = false;
+            Changed?.Invoke();
+        }, OnlyHasDesign ? Lit : Tint, P.Bright);
 
     // What the pinned section says while it holds nothing, or null once it holds something.
     private Layout.Node? UnsortedEmpty(int ideas, int noted, bool ideating) =>

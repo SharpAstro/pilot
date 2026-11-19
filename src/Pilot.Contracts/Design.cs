@@ -42,6 +42,16 @@ public sealed record DesignRow
     /// <summary>The idea this design was started from (PIL1152), qualified by its repo, e.g. <c>pilot I381</c>; null for a design not started from one. Kept when the idea is dropped or folded.</summary>
     public string? FromIdea { get; init; }
 
+    /// <summary>
+    /// Every idea this design is for (#1185), each qualified by its repo, e.g. <c>pilot I381</c>, in the order they were linked; empty while it is for none, and in a record an older
+    /// release wrote. New links are written here only: <see cref="FromIdea"/> stays readable as the first link of a record that has no list (<see cref="Ideas"/>).
+    /// </summary>
+    public string[] ForIdeas { get; init => field = value ?? []; } = [];
+
+    /// <summary>The ideas the design is for: <see cref="ForIdeas"/>, with <see cref="FromIdea"/> of an older record read as the first link when the list does not name it.</summary>
+    public string[] Ideas() =>
+        FromIdea is { Length: > 0 } from && !ForIdeas.Contains(from, StringComparer.OrdinalIgnoreCase) ? [from, .. ForIdeas] : ForIdeas;
+
     /// <summary>The design's designer session (PIL1151), as <see cref="DesignerState"/> and the members after it say; null for a design that never had one, and in a record an older release wrote.</summary>
     public string? DesignerName { get; init; }
 
@@ -137,6 +147,34 @@ public sealed record DesignRow
 
     /// <summary>Every build of a version of this design (<c>design-build</c>, PIL1153), oldest first. Empty while there is none, and in a record an older release wrote.</summary>
     public DesignBuildRow[] Builds { get; init => field = value ?? []; } = [];
+
+    /// <summary>What GitHub was told of each flight that built this design (PIL1185): one row per flight and version, oldest first. Empty while there is none, and in a record an older release wrote.</summary>
+    public DesignRecordRow[] Record { get; init => field = value ?? []; } = [];
+}
+
+/// <summary>
+/// What a flight's PR did on one design's issue (PIL1185): the opening comment, remembered so a push or a retry never comments twice, and how the merge was recorded.
+/// <see cref="Landed"/> is null until the flight merged and its result was written to GitHub.
+/// </summary>
+public sealed record DesignRecordRow
+{
+    /// <summary>The flight's code.</summary>
+    public required string Flight { get; init; }
+
+    /// <summary>The version the flight built.</summary>
+    public required int Version { get; init; }
+
+    /// <summary>The flight's PR number.</summary>
+    public int? Pr { get; init; }
+
+    /// <summary>Whether the issue got its comment when the PR opened.</summary>
+    public bool? Opened { get; init; }
+
+    /// <summary>The commit the PR merged as, once it did.</summary>
+    public string? MergedAt { get; init; }
+
+    /// <summary>How the merge was recorded: <c>closed</c> (issue closed, lock labels off) or <c>commented</c> (a comment only); null while not yet written.</summary>
+    public string? Landed { get; init; }
 }
 
 /// <summary>A prose part the issue's text says differently from the published version (PIL1171): <see cref="Part"/> is objective, heading or notes, <see cref="Cell"/> the cell's number (empty for the design itself).</summary>

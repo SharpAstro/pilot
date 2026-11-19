@@ -751,7 +751,7 @@ public static class Verbs
 
     /// <summary>
     /// <c>design-from-idea idea/&lt;repo&gt;/I&lt;n&gt;</c> (PIL1152): makes a design for the idea's repo whose first brief is the idea's title and text, its pictures kept in the
-    /// design's pictures folder, remembers the idea on the design (<see cref="DesignRow.FromIdea"/>), wakes the designer and says the design's id. A second call for the same idea says the existing one.
+    /// design's pictures folder, remembers the idea on the design (<see cref="DesignRow.ForIdeas"/>), wakes the designer and says the design's id. A second call for the same idea says the existing one.
     /// </summary>
     public const string DesignFromIdea = "design-from-idea";
 
@@ -818,6 +818,13 @@ public static class Verbs
     /// it reads the issue and the code and plans the legs (<c>plan-leg</c>), then says <c>planned</c>.
     /// </summary>
     public const string PlanFlight = "plan-flight";
+
+    /// <summary>
+    /// <c>design-replan flight/&lt;code&gt; &lt;design&gt;</c> (PIL1185): the controller's answer to "DSN-3 is now v4; this flight builds v3". Moves the flight's entry for the design to the
+    /// design's current published version and prototype hash, says so on the flight's issue, and has a fresh planner re-plan the flight. Refused for a landed flight, a design the
+    /// flight does not build and a design with no newer version than the flight's. Publishing a design never changes a flight's recorded version.
+    /// </summary>
+    public const string DesignReplan = "design-replan";
 
     /// <summary>
     /// <c>planned flight/&lt;code&gt; &lt;summary…&gt;</c>: the planner is done; a card offers the first leg's start.
@@ -1006,6 +1013,15 @@ public static class Verbs
 
     /// <summary><c>design-title design/DSN-&lt;n&gt; title</c> (#1183): sets the design's title (at most <see cref="Pilot.Contracts.DesignTitle.MaxLength"/> characters) on its row and in the draft's DESIGN.md heading.</summary>
     public const string DesignSetTitle = "design-title";
+
+    /// <summary>
+    /// <c>design-link design/DSN-&lt;n&gt; &lt;idea&gt;</c> (#1185): the design is for the idea (<c>I381</c> in the design's repo, or <c>tianwen I1829</c>); designs and ideas are linked many to many. A link there already is no change.
+    /// The design's issue lists the idea and the idea's issue is told once.
+    /// </summary>
+    public const string DesignLink = "design-link";
+
+    /// <summary><c>design-unlink design/DSN-&lt;n&gt; &lt;idea&gt;</c> (#1185): takes the link of the design to the idea away, on the design and on its issue.</summary>
+    public const string DesignUnlink = "design-unlink";
 
     /// <summary><c>design-discard design/DSN-&lt;n&gt;</c> (PIL1171): removes the draft.</summary>
     public const string DesignDiscard = "design-discard";

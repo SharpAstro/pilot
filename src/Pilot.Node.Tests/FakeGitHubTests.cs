@@ -152,6 +152,15 @@ public sealed class FakeGitHubTests
         [nameof(FakeGitHub.MilestonesOf)] = Of(
             (g, i) => g.CreateMilestoneAsync(Repo, $"m{i}", "d", CancellationToken.None),
             g => g.MilestonesOf.SelectMany(r => r.Value.Keys.Select(n => (r.Key, n)))),
+        [nameof(FakeGitHub.PrBodyEdits)] = Of(
+            (g, i) => g.EditPullRequestBodyAsync(Repo, i, "b", CancellationToken.None),
+            g => g.PrBodyEdits.Select(e => e.Number)),
+        [nameof(FakeGitHub.PrBodies)] = Of(
+            (g, i) => g.EditPullRequestBodyAsync(Repo, i, "b", CancellationToken.None),
+            g => g.PrBodies.Keys),
+        [nameof(FakeGitHub.Reopened)] = Of(
+            (g, i) => g.ReopenIssueAsync(Repo, i, "c", CancellationToken.None),
+            g => g.Reopened.Select(e => e.Number)),
         [nameof(FakeGitHub.MilestoneIssuesOf)] = Of(
             (g, i) => g.CreateIssueInMilestoneAsync(Repo, $"t{i}", null, "m", CancellationToken.None),
             g => g.MilestoneIssuesOf.SelectMany(r => r.Value.Keys.Select(n => (r.Key, n)))),

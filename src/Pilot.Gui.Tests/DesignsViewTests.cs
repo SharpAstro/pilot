@@ -190,7 +190,7 @@ public sealed class DesignsViewTests
 
         var texts = TextsOf(rig);
         texts.ShouldContain("DSN-1  Design 0");
-        texts.ShouldContain("v2 · SharpAstro/pilot · 2026-11-16 09:00");
+        texts.ShouldContain("v2 · for I381, I383 · SharpAstro/pilot · 2026-11-16 09:00");
         texts.ShouldContain(t => t.StartsWith("3 designs", StringComparison.Ordinal));
     }
 
@@ -266,7 +266,7 @@ public sealed class DesignsViewTests
             PageTime.Zone = TimeZoneInfo.CreateCustomTimeZone("test+5:30", TimeSpan.FromHours(5.5), "test", "test");
             rig.Paint();
             var list = ArrangedAt(rig, 1400, 900).ToList();
-            SentenceRuns.Texts(list.Select(a => a.Node)).ShouldContain("v2 · SharpAstro/pilot · 2026-11-16 14:30");
+            SentenceRuns.Texts(list.Select(a => a.Node)).ShouldContain("v2 · for I381, I383 · SharpAstro/pilot · 2026-11-16 14:30");
             list.Select(a => a.Node.Tooltip).OfType<string>().ShouldContain(t => t.EndsWith("2026-11-16 09:00:00 UTC", StringComparison.Ordinal));
 
             rig.View.Open("DSN-1");

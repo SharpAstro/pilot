@@ -65,13 +65,13 @@ public sealed class DesignBuilds(NodeState state, DesignStore store, RepoCatalog
         var flying = design.Builds.Where(b => b.Version == version && b.Flight is { Length: > 0 })
             .Select(b => state.Flights().FirstOrDefault(f => string.Equals(f.Code, b.Flight, StringComparison.OrdinalIgnoreCase)))
             .FirstOrDefault(f => f is { State: not FlightState.Landed })
-            ?? state.Flights().FirstOrDefault(f => string.Equals(f.FromDesign, id, StringComparison.OrdinalIgnoreCase) && f.FromDesignVersion == version && f.State != FlightState.Landed);
+            ?? state.Flights().FirstOrDefault(f => f.Designs.Any(d => string.Equals(d.Id, id, StringComparison.OrdinalIgnoreCase) && d.Version == version) && f.State != FlightState.Landed);
         if (flying is not null)
         {
             throw new DesignException($"{id} v{version} is being built already: flight {flying.Code} is {flying.State.ToString().ToLowerInvariant()}; build it again once that flight has landed or been withdrawn");
         }
 
-        var idea = design.FromIdea is { Length: > 0 } key ? IdeaIds.Parse(key).Ref : null;
+        var idea = design.Ideas().FirstOrDefault() is { Length: > 0 } key ? IdeaIds.Parse(key).Ref : null;
         var text = IssueText(design, version, folder, prototype);
         var title = $"Build {design.Title ?? id} ({id} v{version.ToString(CultureInfo.InvariantCulture)})";
         var sha = DesignStore.Sha256Of(prototype);
@@ -80,7 +80,7 @@ public sealed class DesignBuilds(NodeState state, DesignStore store, RepoCatalog
         string repoName;
         int issue;
         string? way;
-        if (idea is { } from && design.Builds.Length == 0 && !state.Flights().Any(f => string.Equals(f.FromDesign, id, StringComparison.OrdinalIgnoreCase)))
+        if (idea is { } from && design.Builds.Length == 0 && !state.Flights().Any(f => f.Designs.Any(d => string.Equals(d.Id, id, StringComparison.OrdinalIgnoreCase))))
         {
             // The first build of an idea-born design: the idea's own issue is the build's: plan-idea makes its flight (and refuses with the open milestones when none is named); no second issue is filed.
             var repoOfIdea = from.Repo ?? (Arg(1).Length > 0 ? Arg(1) : design.Repo) ?? IdeaIds.DefaultRepo;
@@ -94,7 +94,7 @@ public sealed class DesignBuilds(NodeState state, DesignStore store, RepoCatalog
             }, cancellationToken);
             if (planned is not { Ok: true, Made: { Length: > 0 } plannedCode })
             {
-                throw new FlightException(planned.Error ?? $"{design.FromIdea} was not planned");
+                throw new FlightException(planned.Error ?? $"{design.Ideas().FirstOrDefault()} was not planned");
             }
             code = plannedCode;
             repoName = name;
@@ -140,7 +140,7 @@ public sealed class DesignBuilds(NodeState state, DesignStore store, RepoCatalog
         // A flight made on another node (maintenance) is not in these rows: that node holds the flight, and the build is recorded here all the same.
         if (state.Flights().FirstOrDefault(f => f.Code == code) is { } flight)
         {
-            state.PutFlight(flight with { FromDesign = id, FromDesignVersion = version, FromDesignSha256 = sha });
+            state.PutFlight(flight with { Designs = [.. flight.Designs.Where(d => !string.Equals(d.Id, id, StringComparison.OrdinalIgnoreCase)), new FlightDesignRow { Id = id, Version = version, Sha256 = sha }] });
         }
         store.Update(id, row => row with
         {

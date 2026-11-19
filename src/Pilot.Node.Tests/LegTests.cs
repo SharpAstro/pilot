@@ -1208,6 +1208,35 @@ internal sealed class FakeGitHub : IGitHub
         return Task.CompletedTask;
     }
 
+    /// <summary>The body of each PR by number, as PullRequestBodyAsync reads it; EditPullRequestBodyAsync writes it.</summary>
+    public ConcurrentDictionary<int, string> PrBodies { get; } = [];
+
+    /// <summary>Every PR body saved, as (PR number, body), in order.</summary>
+    public ConcurrentQueue<(int Number, string Body)> PrBodyEdits { get; } = [];
+
+    /// <summary>Every issue reopened, as (issue number, comment), in order.</summary>
+    public ConcurrentQueue<(int Number, string Comment)> Reopened { get; } = [];
+
+    public Task<string?> PullRequestBodyAsync(string repoPath, int number, CancellationToken cancellationToken) =>
+        Task.FromResult<string?>(PrBodies.TryGetValue(number, out var body) ? body : "");
+
+    public Task EditPullRequestBodyAsync(string repoPath, int number, string body, CancellationToken cancellationToken)
+    {
+        PrBodies[number] = body;
+        PrBodyEdits.Enqueue((number, body));
+        return Task.CompletedTask;
+    }
+
+    public Task ReopenIssueAsync(string repoPath, int number, string comment, CancellationToken cancellationToken)
+    {
+        if (MilestoneIssuesOf.TryGetValue(RepoKey(repoPath), out var list) && list.TryGetValue(number, out var issue))
+        {
+            list[number] = issue with { Open = true };
+        }
+        Reopened.Enqueue((number, comment));
+        return Task.CompletedTask;
+    }
+
     /// <summary>When set, CommentIssueAsync fails with it, as a GitHub that refused the comment.</summary>
     public string? CommentFails { get; set; }
 

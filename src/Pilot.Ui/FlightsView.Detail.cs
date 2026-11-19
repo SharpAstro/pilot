@@ -268,6 +268,7 @@ internal sealed partial class FlightsView<TSurface>
         {
             page.Add(address);
         }
+        page.AddRange(DesignNotices(line));
         page.AddRange(ReviewAsks(detail));
         // The node's copies of the images the legs recorded, above the legs: the links in each leg stay as they were.
         // The facts and who is working lead what scrolls, as the summary does: they wrap onto as many lines as the page needs, and

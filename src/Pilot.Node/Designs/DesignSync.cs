@@ -27,6 +27,9 @@ public sealed class DesignSync(DesignStore store, RepoCatalog repos, IGitHub git
     /// <summary>The label lock and the read-back of the issue's text (PIL1171), settled after each design's versions are sent and at every sweep; null where none is wired.</summary>
     public DesignLock? Lock { get; init; }
 
+    /// <summary>What GitHub is told of the flights that built a design (PIL1185); its unwritten results are retried at every sweep. Null where none is wired.</summary>
+    public DesignRecord? Record { get; set; }
+
     private readonly SemaphoreSlim _one = new(1, 1);
     private readonly Lock _kicks = new();
     private readonly List<Task> _running = [];
@@ -80,6 +83,10 @@ public sealed class DesignSync(DesignStore store, RepoCatalog repos, IGitHub git
         if (Lock is { } locks)
         {
             await locks.SweepAsync(cancellationToken).ConfigureAwait(false);
+        }
+        if (Record is { } record)
+        {
+            await record.SweepAsync(cancellationToken).ConfigureAwait(false);
         }
         if (time.GetUtcNow() - _mirrored >= MirrorEvery)
         {
@@ -142,6 +149,63 @@ public sealed class DesignSync(DesignStore store, RepoCatalog repos, IGitHub git
             Kick(linked.Id);
         }
         return $"{linked.Id} is kept in {info.GitHub}#{number.ToString(CultureInfo.InvariantCulture)}";
+    }
+
+    /// <summary>The ideas of <paramref name="design"/> as GitHub shows them, <c>owner/repo#n</c> each; an idea of a repo this node does not list is left out.</summary>
+    private string[] IdeaRefs(DesignRow design) =>
+        [.. design.Ideas().Select(key => IdeaIds.Parse(key).Ref is { Repo: { } name } r && Resolve(name) is { GitHub: { } gh } ? $"{gh}#{r.Number.ToString(CultureInfo.InvariantCulture)}" : null).OfType<string>()];
+
+    /// <summary>The idea key (<c>pilot I381</c>) of an <c>owner/repo#n</c> reference, by the repo this node lists under that GitHub name; null when it reads as none.</summary>
+    private string? KeyOfRef(string reference)
+    {
+        var hash = reference.LastIndexOf('#');
+        if (hash <= 0 || !int.TryParse(reference.AsSpan(hash + 1), NumberStyles.None, CultureInfo.InvariantCulture, out var number) || number < 1)
+        {
+            return null;
+        }
+        var gh = reference[..hash];
+        var name = repos.Repos().FirstOrDefault(r => string.Equals(r.GitHub, gh, StringComparison.OrdinalIgnoreCase))?.Name ?? gh[(gh.LastIndexOf('/') + 1)..];
+        return NodeState.IdeaKey(name, IdeaIds.Id(number));
+    }
+
+    /// <summary>
+    /// A link of design <paramref name="id"/> to <paramref name="idea"/> was made (<paramref name="linked"/>) or taken away (#1185): the ideas the design's issue lists are written again, and the idea's issue is told once.
+    /// Best effort: the link is on the design's record whatever GitHub does, so a failure is in the node's log and never undoes it.
+    /// </summary>
+    public async Task IdeaLinkChangedAsync(string id, string idea, bool linked, CancellationToken cancellationToken)
+    {
+        var design = store.Find(id);
+        if (design is null || design.MadeOn is not null)
+        {
+            return;
+        }
+        string? issueRef = null;
+        try
+        {
+            using var deadline = Deadlined(cancellationToken);
+            var token = deadline.Token;
+            if (design.IssueNumber is { } issue && Resolve(design.IssueRepo ?? design.Repo) is { } info)
+            {
+                issueRef = $"{info.GitHub}#{issue.ToString(CultureInfo.InvariantCulture)}";
+                if (await github.IssueNowAsync(info.Path, issue, token).ConfigureAwait(false) is { } now && now.Body is { Length: > 0 } body)
+                {
+                    var next = DesignIssueDocument.WithIdeas(body, IdeaRefs(design));
+                    if (next != body)
+                    {
+                        await github.EditIssueAsync(info.Path, issue, now.Title, next, now.UpdatedAt, token).ConfigureAwait(false);
+                    }
+                }
+            }
+            if (IdeaIds.Parse(idea).Ref is { Repo: { } name } r && Resolve(name) is { } ideaRepo)
+            {
+                var where = issueRef is null ? design.Id : $"{design.Id} ({issueRef})";
+                await github.CommentIssueAsync(ideaRepo.Path, r.Number, linked ? $"Design {where} is linked to this idea." : $"Design {where} is no longer linked to this idea.", token).ConfigureAwait(false);
+            }
+        }
+        catch (Exception ex) when (ex is FlightException or OperationCanceledException && !cancellationToken.IsCancellationRequested)
+        {
+            await Error.WriteLineAsync($"design: the link of {design.Id} to {idea} was kept, but GitHub was not told: {(ex is OperationCanceledException ? "it took longer than " + Deadline : ex.Message)}").ConfigureAwait(false);
+        }
     }
 
     private Try Deadlined(CancellationToken cancellationToken) => new(cancellationToken, Deadline, time);
@@ -246,7 +310,7 @@ public sealed class DesignSync(DesignStore store, RepoCatalog repos, IGitHub git
             var repoFull = info.GitHub!;
             // The files, as one commit whose message is the why.
             await github.CommitFilesAsync(info.Path, DesignSyncText.Branch(issue), why, files, token).ConfigureAwait(false);
-            var block = DesignIssueDocument.Block(row.Id, document, version, why, node, repoFull, issue, [.. files.Keys.Where(k => k.StartsWith("renders/", StringComparison.Ordinal))]);
+            var block = DesignIssueDocument.Block(row.Id, document, version, why, node, repoFull, issue, [.. files.Keys.Where(k => k.StartsWith("renders/", StringComparison.Ordinal))], IdeaRefs(row));
             var now = await github.IssueNowAsync(info.Path, issue, token).ConfigureAwait(false)
                 ?? throw new FlightException($"{repoFull} has no issue #{issue.ToString(CultureInfo.InvariantCulture)}");
             var body = DesignIssueDocument.Splice(now.Body, block);
@@ -254,7 +318,16 @@ public sealed class DesignSync(DesignStore store, RepoCatalog repos, IGitHub git
             {
                 throw new FlightException($"{repoFull}#{issue.ToString(CultureInfo.InvariantCulture)} changed while its body was written");
             }
-            await github.CommentIssueAsync(info.Path, issue, $"v{version.ToString(CultureInfo.InvariantCulture)}: {why}", token).ConfigureAwait(false);
+            var sent = $"v{version.ToString(CultureInfo.InvariantCulture)}: {why}";
+            if (now.Open)
+            {
+                await github.CommentIssueAsync(info.Path, issue, sent, token).ConfigureAwait(false);
+            }
+            else
+            {
+                // A design closed because a flight built it has a version again that nothing built (PIL1185).
+                await github.ReopenIssueAsync(info.Path, issue, $"{sent}\n\nv{version.ToString(CultureInfo.InvariantCulture)} is published and is not built yet, so the issue is open again.", token).ConfigureAwait(false);
+            }
             var at = time.GetUtcNow();
             store.Update(row.Id, r => r with
             {
@@ -330,8 +403,14 @@ public sealed class DesignSync(DesignStore store, RepoCatalog repos, IGitHub git
         }
         var id = DesignStore.MirrorId(gitHub, issue.Number);
         var have = store.Find(id);
+        var ideas = meta.Ideas is { } listed ? listed.Select(KeyOfRef).OfType<string>().ToArray() : [];
         if (have?.SyncedVersion is { } kept && kept >= meta.Version)
         {
+            // The ideas of a design change without a new version: the links are read again.
+            if (!have.ForIdeas.SequenceEqual(ideas, StringComparer.OrdinalIgnoreCase))
+            {
+                store.Update(id, r => r with { ForIdeas = ideas });
+            }
             return;
         }
         var files = await github.BranchFilesAsync(info.Path, DesignSyncText.Branch(issue.Number), token).ConfigureAwait(false);
@@ -347,6 +426,7 @@ public sealed class DesignSync(DesignStore store, RepoCatalog repos, IGitHub git
             IssueRepo = gitHub,
             IssueNumber = issue.Number,
             MadeOn = meta.Node,
+            ForIdeas = ideas,
         }, meta.Version, meta.Why, files);
     }
 }
