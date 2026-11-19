@@ -1,4 +1,6 @@
 using Pilot.Commands;
+using Pilot.Contracts;
+using Pilot.Node.Designs;
 using Shouldly;
 using Xunit;
 
