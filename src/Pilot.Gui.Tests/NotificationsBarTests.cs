@@ -18,6 +18,20 @@ namespace Pilot.Gui.Tests;
 /// </summary>
 public sealed class NotificationsBarTests
 {
+    private sealed class BufferedViewport(CellBuffer buffer, int width, int height) : ITerminalViewport
+    {
+        public (int Column, int Row) Offset => (0, 0);
+        public (int Width, int Height) Size => (width, height);
+        public TermCell CellSize => new(10, 20);
+        public ColorMode ColorMode => ColorMode.TrueColor;
+        public void SetCaret(int column, int row, CaretStyle style) { }
+        public void SetCursorPosition(int left, int top) => buffer.MoveTo(left, top);
+        public void Write(string text) => buffer.Write(text);
+        public void WriteLine(string? text = null) { }
+        public void Flush() { }
+        public Stream OutputStream => Stream.Null;
+    }
+
     private static CardRow Card(string id, CardBin bin, string title) => new()
     {
         Id = id, Bin = bin, Kind = "pr-ready", Subject = "flight/ORB" + id, Title = title, Summary = "A short line on what happened.", At = Live.At, State = CardState.Open,
