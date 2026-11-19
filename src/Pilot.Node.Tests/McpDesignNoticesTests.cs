@@ -159,7 +159,7 @@ public sealed class McpDesignNoticesTests : IAsyncLifetime
         var reply = await Request("resources/subscribe", "pilot://designs/DSN-9/chat");
 
         reply.GetProperty("error").GetProperty("code").GetInt32().ShouldBe(-32002);
-        reply.GetProperty("error").GetProperty("message").GetString().ShouldContain("DSN-1");
+        reply.GetProperty("error").GetProperty("message").GetString()!.ShouldContain("DSN-1");
         var other = await Request("resources/subscribe", "pilot://flights");
         other.GetProperty("error").GetProperty("code").GetInt32().ShouldBe(-32002);
     }
