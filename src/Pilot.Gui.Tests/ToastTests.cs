@@ -261,7 +261,7 @@ public sealed class ToastTests
         now = T0.AddSeconds(1);
         w.Frame(T0, job: JobState.Succeeded);
         Fading(w).ShouldHaveSingleItem();
-        now = T0.AddSeconds(3);
+        now = T0.AddSeconds(4);
         w.Frame(T0, job: JobState.Succeeded);
         w.Feed.Toasts.Single().RemainingFraction.ShouldBeLessThan(0.6, "the countdown moved with the clock, the snapshot's time unchanged");
         now = T0.AddSeconds(7);

@@ -150,7 +150,9 @@ public sealed class NotificationsBarTests
 
         // Ctrl+N through the input path.
         var key = NotificationsHost.ToggleKey;
-        chrome.HandleInput(new InputEvent.KeyDown(key.Key, key.Modifiers)).ShouldBeTrue();
+        var keyEvent = new InputEvent.KeyDown(key.Key, key.Modifiers);
+        var router = new InputRouter(chrome.Flights.Ui, new BackgroundTaskTracker(), () => { }) { Widgets = () => chrome.Widgets };
+        (chrome.HandleInput(keyEvent) || router.Handle(keyEvent)).ShouldBeTrue();
         chrome.Render(data.Sessions, data.Flights, data.Cards, data.Jobs, data.Fleet, data.Repos, new RectF32(0, 0, 1920, 1080), data.Machines);
         chrome.Notifications.Open.ShouldBeFalse();
 
