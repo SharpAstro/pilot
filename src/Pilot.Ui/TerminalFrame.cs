@@ -16,8 +16,8 @@ internal static class TerminalFrame
     public static int PageColumns(int columns, bool cardsShown)
         => cardsShown ? columns - (int)Math.Ceiling(CardsView<RgbaImage>.Width / 8f) : columns;
 
-    /// <summary>The columns the page has under the For you bar: the terminal's less the strip, open or collapsed alike, as the bar covers the page's right side and never narrows it.</summary>
-    public static int PageColumnsWithBar(int columns) => columns - (int)Math.Ceiling(NotificationsHost.Style.StripWidth / 8f);
+    /// <summary>The columns the page has under the For you bar: all the terminal's, as the bar covers the page's right side, has no strip and never narrows it.</summary>
+    public static int PageColumnsWithBar(int columns) => columns;
 
     /// <summary>
     /// The frame's tree.<paramref name="cards"/> is the cards panel's tree, or null for none (a narrow terminal, nothing to show).

@@ -95,6 +95,10 @@ internal sealed class PilotChrome<TSurface>
         ? glyph switch { "🔴" => "B!", "🔄" => "B~", "🕓" => "B…", _ => "B" }
         : NightGlyphs.GetValueOrDefault(page, glyph);
 
+    /// <summary>The night rail's Notifications entry: N, then the count (99+ past two digits), with ! while a card rings.</summary>
+    internal static string NightBell(BellState? bell) =>
+        $"N{(bell is { Ringing: true } ? "!" : "")}{(bell is { Count: > 0 } b ? (b.Count > 99 ? "99+" : b.Count) : "")}";
+
     private static readonly Dictionary<PilotPage, string> NightGlyphs = new()
     {
         [PilotPage.Home] = "H", [PilotPage.Chat] = "C", [PilotPage.Sessions] = "S", [PilotPage.Repos] = "R",
@@ -129,6 +133,20 @@ internal sealed class PilotChrome<TSurface>
         var noted = ideas?.Noted ?? 0;
         // The cell holds two digits; past that the glyph says 99+ and the tooltip the count.
         return noted == 0 ? ("\U0001F4A1", null) : ($"\U0001F4A1{(noted > 99 ? "99+" : noted)}", $"{noted} noted");
+    }
+
+    /// <summary>
+    /// The Notifications page's glyph on the rail, and what it says on hover: the bell with the count of what needs the person after it
+    /// (99+ past two digits). A ringing card (one in the Ring bin) changes the glyph to the alarm and is named in the tooltip. The rail's
+    /// cells have no colour of their own, so the amber a ringing bell should carry on the cell itself is a DIR.Lib change (TabItem has no
+    /// colour), left to that repo.
+    /// </summary>
+    internal static (string Glyph, string? Said) NotificationsGlyph(BellState? bell)
+    {
+        var (count, ringing) = bell is { } b ? (b.Count, b.Ringing) : (0, false);
+        var icon = ringing ? "🚨" : "🔔";
+        var said = new[] { count > 0 ? $"{count} need you" : null, ringing ? "a card is ringing" : null }.OfType<string>().ToList();
+        return (count == 0 ? icon : $"{icon}{(count > 99 ? "99+" : count)}", said.Count == 0 ? null : string.Join(", ", said));
     }
 
     private readonly List<TabItem<PilotPage>> _items = [];
@@ -564,17 +582,12 @@ internal sealed class PilotChrome<TSurface>
     }
 
     /// <summary>
-    /// A left press on <paramref name="hit"/> as the For you bar's frame answers it, the same for the window and the terminal: the bell opens
-    /// the Notifications page, a toast opens what it is about. False when the hit is neither (the collapse and expand buttons are plain
+    /// A left press on <paramref name="hit"/> as the For you bar's frame answers it, the same for the window and the terminal: a toast opens
+    /// what it is about (the bell is the rail's Notifications entry). False when the hit is neither (the collapse and expand buttons are plain
     /// clickables the router runs).
     /// </summary>
     public bool PressNotification(HitResult? hit)
     {
-        if (hit is NotificationHit { Part: NotificationPart.Bell })
-        {
-            Show(PilotPage.Notifications);
-            return true;
-        }
         return Notifications.Press(hit);
     }
 
@@ -1265,9 +1278,9 @@ internal sealed class PilotChrome<TSurface>
         var tasks = JobsGlyph(jobs, screen.AsOf);
         foreach (var (page, icon, label, shortcut, locked) in Pages)
         {
-            var (glyph, said) = page == PilotPage.Jobs ? tasks : page == PilotPage.Ideas ? IdeasGlyph(ideas) : (icon, null);
+            var (glyph, said) = page == PilotPage.Jobs ? tasks : page == PilotPage.Ideas ? IdeasGlyph(ideas) : page == PilotPage.Notifications ? NotificationsGlyph(Notifications.Bell) : (icon, null);
             // Night has no colour emoji face, and the UI face has none of these: the page's initial, in the rail's ink.
-            glyph = Night.On ? NightGlyph(page, glyph) : glyph;
+            glyph = Night.On ? (page == PilotPage.Notifications ? NightBell(Notifications.Bell) : NightGlyph(page, glyph)) : glyph;
             _items.Add(new TabItem<PilotPage>(label, page)
             {
                 Icon = glyph,

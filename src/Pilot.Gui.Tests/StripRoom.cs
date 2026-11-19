@@ -10,8 +10,8 @@ namespace Pilot.Gui.Tests;
 /// </summary>
 internal static class StripRoom
 {
-    /// <summary>The strip's width in design units, the library's as pilot sets it.</summary>
-    public static readonly int Width = (int)NotificationsHost.Style.StripWidth;
+    /// <summary>The strip's width in design units: none since PIL1205 (the bell is on the rail), so Beside is the window.</summary>
+    public static readonly int Width = 0;
 
     /// <summary>A window <paramref name="window"/> wide with the strip's room added.</summary>
     public static int Beside(int window) => window + Width;

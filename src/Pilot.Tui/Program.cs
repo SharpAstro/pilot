@@ -569,7 +569,7 @@ while (!stop.IsCancellationRequested)
             PilotPage.Settings => settings.Tree(now, width),
             _ => home.Tree(new HomeScreen(pages.Flights, pages.Sessions, pages.Jobs, pages.Cards, pages.Machines)),
         };
-        var railTree = TerminalRail.Tree(page, glyphMode, pages.Jobs, pages.Ideas, now, input.Show, railMemory, columns, input.Chords());
+        var railTree = TerminalRail.Tree(page, glyphMode, pages.Jobs, pages.Ideas, now, input.Show, railMemory, columns, input.Chords(), chrome.Notifications.Bell);
         // A glyph that changed was drawn blank for this frame (see TerminalRail.Memory): draw the next at once.
         if (railMemory.Settling)
         {

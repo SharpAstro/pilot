@@ -100,6 +100,12 @@ internal sealed class NotificationsHost
     /// </summary>
     public Func<CardRow, Func<Layout.Node>?>? CardBody { get; set; }
 
+    /// <summary>What the rail's Notifications entry shows: the count of what needs the person and whether a card rings.</summary>
+    public BellState Bell => new(Feed.BellCount, Ringing);
+
+    /// <summary>Whether a card in the Ring bin is open, as of the last <see cref="Sync"/>.</summary>
+    public bool Ringing { get; private set; }
+
     /// <summary>The key that toggles the bar: the library's.</summary>
     public static KeyChord ToggleKey => Style.ToggleKey;
 
@@ -159,6 +165,7 @@ internal sealed class NotificationsHost
     {
         Fold();
         var seen = new HashSet<(string?, string)>();
+        Ringing = open.Any(c => c.Bin == CardBin.Ring);
         foreach (var card in open)
         {
             var key = (nodeOf(card), card.Id);
@@ -221,7 +228,7 @@ internal sealed class NotificationsHost
     }
 
     /// <summary>
-    /// The window's frame: <paramref name="page"/> beside the library's strip, the toasts over it while the bar is collapsed, and, while it is
+    /// The window's frame: <paramref name="page"/> at the window's full width (no strip), the toasts over it while the bar is collapsed, and, while it is
     /// open, <paramref name="panel"/> over the page's right side, under a row holding the collapse button. A null <paramref name="panel"/>
     /// (nothing to show) leaves the page and the strip. <paramref name="shown"/> is the page on screen: the Notifications page is the whole
     /// list, so it gets neither the open bar (it would repeat the list and cover its header) nor toasts.
@@ -242,26 +249,9 @@ internal sealed class NotificationsHost
         {
             body = Layout.Builder.Overlay(body, Layout.Builder.HStack(Layout.Builder.Spacer().WStar().HStar(), OpenBar(panel!, colors)).Stretch());
         }
-        // The strip is the library's own, built over an empty page so only the strip shows; collapsed, its foot holds the way back to the open bar
-        // (the bell opens the page).
-        var strip = NotificationsLayout.Build(Layout.Builder.Spacer().Stretch(), Feed, _lib, colors, Style with { MaxToasts = 0 });
-        if (!Open)
-        {
-            var expand = Layout.Builder.HStack(Layout.Builder.Text("◂", 14f, colors.Text, TextAlign.Center).WStar())
-                .HFixed(ExpanderHeight).Bg(colors.Card)
-                .Clickable(new HitResult.ButtonHit(ExpandAction), _ => Toggle(), CursorKind.Pointer)
-                .WithTooltip($"Open the For you bar ({ChordText()})", Layout.DockSide.Left)
-                .WStar();
-            strip = Layout.Builder.Overlay(strip, Layout.Builder.VStack(Layout.Builder.Spacer().HStar(), expand).Stretch());
-        }
-        // A window too narrow for the page and the strip keeps no strip, by declaration: the strip's column is a star of StripShare, held to the
-        // strip's width, that collapses below it, so the engine drops it once the page would be left under MinPageUnits (the flights canvas needs
-        // about 370 at 700 wide and DPI 1.5). The key still toggles the bar, and the rail's Notifications page lists everything.
-        var stripColumn = Layout.Builder.HStack(strip.WFixed(Style.StripWidth).HStar())
-            .WStar(StripShare, 0f, Style.StripWidth)
-            .CollapseBelow(Style.StripWidth)
-            .HStar();
-        return Layout.Builder.HStack(body.WStar().HStar(), stripColumn).Stretch();
+        // No strip and no bell here: the rail's Notifications entry is the one bell (PIL1205), so the page has the window's whole width.
+        // The collapsed bar's way back is the edge handle of the next leg; until then the key (Ctrl+N) opens it.
+        return body.Stretch();
     }
 
     private Layout.Node OpenBar(Layout.Node panel, NotificationsColors colors)
@@ -286,22 +276,8 @@ internal sealed class NotificationsHost
             .Bg(colors.Surface).BorderLeft(colors.Separator).WithCursor(CursorKind.Default).WFixed(Style.BarWidth).HStar();
     }
 
-    /// <summary>The narrowest page, in design units, the strip may leave beside it; a window narrower than that has no strip.</summary>
-    public const float MinPageUnits = 400f;
-
-    /// <summary>
-    /// The strip column's star weight beside the page's 1: its share of a row of <see cref="MinPageUnits"/> plus the strip is exactly the
-    /// strip's width, so in any narrower row the share falls under the width and the column collapses (in a wider one it is held to it).
-    /// </summary>
-    private static readonly float StripShare = Style.StripWidth / MinPageUnits;
-
-    private const float ExpanderHeight = 28f;
-
     /// <summary>The hit of the open bar's Collapse button, apart from the strip's bell so a press on it toggles the bar and does not open the page.</summary>
     public const string CollapseAction = "notifications:collapse";
-
-    /// <summary>The hit of the collapsed strip's expander.</summary>
-    public const string ExpandAction = "notifications:expand";
 
     /// <summary>The toggle key as a person reads it, for a tooltip.</summary>
     public static string ChordText() => "Ctrl+N";
@@ -316,3 +292,6 @@ internal sealed class NotificationsHost
         }
     }
 }
+
+/// <summary>The rail bell's state: <paramref name="Count"/> is what needs the person, <paramref name="Ringing"/> a card in the Ring bin.</summary>
+internal readonly record struct BellState(int Count, bool Ringing);
