@@ -95,6 +95,10 @@ internal sealed class PilotChrome<TSurface>
         ? glyph switch { "🔴" => "B!", "🔄" => "B~", "🕓" => "B…", _ => "B" }
         : NightGlyphs.GetValueOrDefault(page, glyph);
 
+    /// <summary>The night rail's Notifications entry: N, then the count (99+ past two digits), with ! while a card rings.</summary>
+    internal static string NightBell(BellState? bell) =>
+        $"N{(bell is { Ringing: true } ? "!" : "")}{(bell is { Count: > 0 } b ? (b.Count > 99 ? "99+" : b.Count) : "")}";
+
     private static readonly Dictionary<PilotPage, string> NightGlyphs = new()
     {
         [PilotPage.Home] = "H", [PilotPage.Chat] = "C", [PilotPage.Sessions] = "S", [PilotPage.Repos] = "R",
@@ -131,7 +135,24 @@ internal sealed class PilotChrome<TSurface>
         return noted == 0 ? ("\U0001F4A1", null) : ($"\U0001F4A1{(noted > 99 ? "99+" : noted)}", $"{noted} noted");
     }
 
+    /// <summary>
+    /// The Notifications page's glyph on the rail, and what it says on hover: the bell with the count of what needs the person after it
+    /// (99+ past two digits). A ringing card (one in the Ring bin) changes the glyph to the alarm and is named in the tooltip. The rail's
+    /// cells have no colour of their own, so the amber a ringing bell should carry on the cell itself is a DIR.Lib change (TabItem has no
+    /// colour), left to that repo.
+    /// </summary>
+    internal static (string Glyph, string? Said) NotificationsGlyph(BellState? bell)
+    {
+        var (count, ringing) = bell is { } b ? (b.Count, b.Ringing) : (0, false);
+        var icon = ringing ? "🚨" : "🔔";
+        var said = new[] { count > 0 ? $"{count} need you" : null, ringing ? "a card is ringing" : null }.OfType<string>().ToList();
+        return (count == 0 ? icon : $"{icon}{(count > 99 ? "99+" : count)}", said.Count == 0 ? null : string.Join(", ", said));
+    }
+
     private readonly List<TabItem<PilotPage>> _items = [];
+
+    /// <summary>The rail entries as the last frame built them (for tests that read what the rail drew).</summary>
+    internal IReadOnlyList<TabItem<PilotPage>> RailItems => _items;
     private Action<PilotPage>? _select;
 
     // The window's moves, and how deep in one the chrome is (its own restore and its links open things without a record each).
@@ -514,7 +535,7 @@ internal sealed class PilotChrome<TSurface>
     /// <summary>The Notifications page: the library's list frame over the bar's feed.</summary>
     public NotificationsView<TSurface> NotificationsPage { get; }
 
-    /// <summary>The For you side bar: open over the page's right side, or collapsed to the strip with the bell (PIL1184). One per window.</summary>
+    /// <summary>The For you side bar: collapsed to an edge handle, open over the page's right side, or docked beside the page (PIL1184, PIL1205). One per window.</summary>
     public NotificationsHost Notifications { get; } = new();
 
     /// <summary>The wall clock the toasts count down on; null reads the snapshot's time (what tests step). The window sets it.</summary>
@@ -565,21 +586,16 @@ internal sealed class PilotChrome<TSurface>
     }
 
     /// <summary>
-    /// A left press on <paramref name="hit"/> as the For you bar's frame answers it, the same for the window and the terminal: the bell opens
-    /// the Notifications page, a toast opens what it is about. False when the hit is neither (the collapse and expand buttons are plain
+    /// A left press on <paramref name="hit"/> as the For you bar's frame answers it, the same for the window and the terminal: a toast opens
+    /// what it is about (the bell is the rail's Notifications entry). False when the hit is neither (the collapse and expand buttons are plain
     /// clickables the router runs).
     /// </summary>
     public bool PressNotification(HitResult? hit)
     {
-        if (hit is NotificationHit { Part: NotificationPart.Bell })
-        {
-            Show(PilotPage.Notifications);
-            return true;
-        }
         return Notifications.Press(hit);
     }
 
-    /// <summary>The strip, the bell and the toasts, painted by DIR.Lib's component over the page.</summary>
+    /// <summary>The toasts, the edge handle and the open bar's header, painted over the page.</summary>
     public NotificationsLayer<TSurface> NotificationsLayer { get; }
 
     /// <summary>Where the last frame put the page (in surface pixels), as the chrome's own layout arranged it; null before a frame or where the cards panel stands in its place.</summary>
@@ -751,7 +767,7 @@ internal sealed class PilotChrome<TSurface>
     /// </summary>
     public bool HandleInput(InputEvent evt)
     {
-        // A press on the strip's bell opens the Notifications page, and a press on a toast opens what it is about, ahead of the page beneath.
+        // A press on the rail's bell opens the Notifications page, and a press on a toast opens what it is about, ahead of the page beneath.
         if (evt is InputEvent.MouseDown { Button: MouseButton.Left } down && PressNotification(NotificationsLayer.HitTest(down.X, down.Y)))
         {
             return true;
@@ -1263,12 +1279,21 @@ internal sealed class PilotChrome<TSurface>
         ApplyEmojiFont();
         TextCheck.Window = ((int)MathF.Round(bounds.Width), (int)MathF.Round(bounds.Height));
         _items.Clear();
+        // The feed's clock: the window's own when one is set (the pages are built only when something changed, so their AsOf can stand still
+        // while a toast counts down), else the snapshot's.
+        var feedNow = Clock?.Invoke() ?? screen.AsOf;
+        // The feed is brought up to date before the rail is built, so the rail's bell shows this frame's count and ringing state.
+        // Every open card is a notification in the bar's feed; its bell counts them and goes amber while one rings.
+        if (cards is not null)
+        {
+            Notifications.Sync(cards.Open, c => Cards.NodeOf(c)?.Name, feedNow);
+        }
         var tasks = JobsGlyph(jobs, screen.AsOf);
         foreach (var (page, icon, label, shortcut, locked) in Pages)
         {
-            var (glyph, said) = page == PilotPage.Jobs ? tasks : page == PilotPage.Ideas ? IdeasGlyph(ideas) : (icon, null);
+            var (glyph, said) = page == PilotPage.Jobs ? tasks : page == PilotPage.Ideas ? IdeasGlyph(ideas) : page == PilotPage.Notifications ? NotificationsGlyph(Notifications.Bell) : (icon, null);
             // Night has no colour emoji face, and the UI face has none of these: the page's initial, in the rail's ink.
-            glyph = Night.On ? NightGlyph(page, glyph) : glyph;
+            glyph = Night.On ? (page == PilotPage.Notifications ? NightBell(Notifications.Bell) : NightGlyph(page, glyph)) : glyph;
             _items.Add(new TabItem<PilotPage>(label, page)
             {
                 Icon = glyph,
@@ -1309,12 +1334,12 @@ internal sealed class PilotChrome<TSurface>
         // An idea's id in a card or a Handled line leads to the idea, or to its flight once planned.
         Cards.IdeaLinks = (ideas ?? IdeasScreen.Empty).LinksIn;
         // The bar has a panel when there is something to show (the sessions table needs the width more than an empty "nothing waits on you"),
-        // and shows it while it is open; collapsed, the strip and its bell are all there is.
+        // and shows it while it is open; collapsed, the edge handle is all there is.
         // The Notifications page is the whole list, so the open bar over its right side would only repeat it and cover its header.
         var hasPanel = Page != PilotPage.Notifications && (cards is { HasAny: true } || (cards is not null && Cards.CanTell && !Cards.OnChatPage));
         ShowsCards = hasPanel && Notifications.Open;
         // An open design's page stands left of the open bar, so the 420-unit chat is not under it.
-        Designs.ClearRight = ShowsCards ? CardsView<TSurface>.Width : 0f;
+        Designs.ClearRight = ShowsCards && !Notifications.DockedNow ? CardsView<TSurface>.Width : 0f;
         // The page's flight lights its cards in the panel, and the flight's own page offers the merge its card does.
         Flights.Cards = cards is null ? null : Cards.Visible(cards);
         // A flight with a PR says where it stands in the chip the Pull requests page has, and a click on it opens that row.
@@ -1328,14 +1353,6 @@ internal sealed class PilotChrome<TSurface>
             PilotPage.PullRequests => PullRequests.FocusFlight,
             _ => null,
         };
-        // The feed's clock: the window's own when one is set (the pages are built only when something changed, so their AsOf can stand still
-        // while a toast counts down), else the snapshot's.
-        var feedNow = Clock?.Invoke() ?? screen.AsOf;
-        // Every open card is a notification in the bar's feed; its bell counts them and goes amber while one rings.
-        if (cards is not null)
-        {
-            Notifications.Sync(cards.Open, c => Cards.NodeOf(c)?.Name, feedNow);
-        }
         // Events from the pages' changes: while the bar is open they go to the history, collapsed they are fading toasts.
         ObserveEvents(jobs, flights, designs, feedNow);
         if (Pointer is { } over)
@@ -1343,8 +1360,9 @@ internal sealed class PilotChrome<TSurface>
             Notifications.Pointer = new System.Numerics.Vector2(over.X, over.Y);
         }
         Notifications.PageRect = PageBounds ?? default;
-        // The page is laid out over the whole content, less the library's strip; the open bar is laid over its right side (an overlay), so the
-        // page is the same size open and collapsed. The frame gives way to the page in a narrow window, and takes the toast rule from the page.
+        Notifications.SetRoom(bounds.Width, DpiScale, RailWidth);
+        // The page is laid out over the whole content; an open bar is laid over its right side, or docked beside it (the page then has what is left), so the
+        // page is the same size collapsed and over. A docked bar a narrow window cannot afford opens over the page; the frame takes the toast rule from the page.
         Layout.Node Frame() => Notifications.Frame(Layout.Builder.Fill(key: PageKey).Stretch(), hasPanel ? Layout.Builder.Fill(key: CardsKey).Stretch() : null, Page);
         var tree = Layout.Builder.HStack(Layout.Builder.Fill(key: RailKey).ColW(RailWidth), Frame().Stretch());
         var measure = new PixelMeasureContext<TSurface>(_renderer, FontPath, DpiScale);
@@ -1376,7 +1394,7 @@ internal sealed class PilotChrome<TSurface>
                     RenderRail(new RectF32(rect.X, rect.Y + navHeight, rect.Width, rect.Height - navHeight), Page);
                     break;
                 case CardsKey:
-                    // Painted last, over the strip's layer and the toasts: the open bar covers them.
+                    // Painted last, over the layer's toasts: the open bar covers them.
                     cardsRect = rect;
                     break;
                 case PageKey when Page == PilotPage.Chat:
@@ -1424,7 +1442,7 @@ internal sealed class PilotChrome<TSurface>
                     break;
             }
         }
-        // The library's strip, bell and toasts over the page; the open bar's panel over them, so it covers a toast.
+        // The toasts and the edge handle over the page; the open bar's panel over them, so it covers a toast.
         var side = PageBounds is { } pageRect ? new RectF32(pageRect.X, bounds.Y, bounds.X + bounds.Width - pageRect.X, bounds.Height) : default;
         if (side.Width > 0f)
         {

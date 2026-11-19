@@ -270,6 +270,8 @@ public sealed class PageTextOverlapTests
         chrome.Autopilot.OnToggle = _ => Task.FromResult<string?>(null);
         chrome.About.Newer = () => "2.0.9-beta.1";
         chrome.About.Restart = () => { };
+        // A window opens with the For you bar docked; a case that wants it over the page says so in its setup.
+        chrome.Notifications.State = BarStates.Docked;
         setup?.Invoke(chrome);
         // The Settings page reads its rows from the node: the sample page (the role ranges among them) answers, so the sweep sees a range row (#770).
         if (page == "settings" && chrome.Settings.Load is null && PageData.SettingsFor(state) is { } settingsPage)

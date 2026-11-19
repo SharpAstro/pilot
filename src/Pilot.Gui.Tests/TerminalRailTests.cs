@@ -124,6 +124,23 @@ public sealed class TerminalRailTests
     }
 
     [Fact]
+    public void TheNotificationsEntryShowsTheCountAndTheRingingState()
+    {
+        var calm = new BellState(3, false);
+        var ringing = new BellState(120, true);
+        TerminalRail.Glyph(PilotPage.Notifications, GlyphMode.Emoji, null, null, Now).ShouldBe("\U0001F514");
+        TerminalRail.Glyph(PilotPage.Notifications, GlyphMode.Emoji, null, null, Now, calm).ShouldBe("\U0001F5143");
+        TerminalRail.Glyph(PilotPage.Notifications, GlyphMode.Emoji, null, null, Now, ringing).ShouldBe("\U0001F6A899+");
+        TerminalRail.Glyph(PilotPage.Notifications, GlyphMode.Initials, null, null, Now, calm).ShouldBe("N3");
+        TerminalRail.Glyph(PilotPage.Notifications, GlyphMode.Initials, null, null, Now, ringing).ShouldBe("N!99+");
+        TerminalRail.EntryText(PilotPage.Notifications, GlyphMode.Emoji, null, null, Now, bell: ringing).Length.ShouldBe(TerminalRail.EntryCells);
+
+        var shown = new List<PilotPage>();
+        EntryOf(Arrange(TerminalRail.Tree(PilotPage.Home, GlyphMode.Emoji, null, null, Now, shown.Add, bell: ringing)), PilotPage.Notifications).Node.OnClick!(InputModifier.None);
+        shown.ShouldBe([PilotPage.Notifications]);
+    }
+
+    [Fact]
     public void TheActivePageIsMarkedWithABackgroundAndOnlyThatOne()
     {
         var arranged = Arrange(TerminalRail.Tree(PilotPage.Fleet, GlyphMode.Initials, null, null, Now, _ => { }));

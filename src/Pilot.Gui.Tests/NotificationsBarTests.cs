@@ -13,7 +13,7 @@ namespace Pilot.Gui.Tests;
 
 /// <summary>
 /// The For you side bar on DIR.Lib's notifications component (PIL1184): open it covers the page's right side instead of taking width,
-/// collapsed it is the library's strip with the bell. Drawn with no display: the page's rect is the same open and collapsed, a ringing
+/// collapsed it is the edge handle, and the rail's entry carries the bell (PIL1205). Drawn with no display: the page's rect is the same open and collapsed, a ringing
 /// card turns the collapsed bell amber and counts it, and the choice is kept per window in GuiSettings (null reads as open). The captures,
 /// bar open and collapsed at 1920 and 2880 wide (pilot-gui) and 160x44 (pilot-tui), are written to PILOT_JOB_ARTIFACTS.
 /// </summary>
@@ -97,9 +97,9 @@ public sealed class NotificationsBarTests
 
         var page = open.PageBounds!.Value;
         var panel = open.CardsBounds!.Value;
-        (panel.X + panel.Width).ShouldBe(page.X + page.Width, 0.5f, "the bar ends where the page does, the strip standing beyond it");
+        (panel.X + panel.Width).ShouldBe(page.X + page.Width, 0.5f, "the bar ends where the page does");
         panel.X.ShouldBeGreaterThan(page.X, "the bar covers the page's right side only");
-        (page.X + page.Width + NotificationsHost.Style.StripWidth * dpi).ShouldBe(width, 1f, "the strip takes the right edge in both");
+        (page.X + page.Width).ShouldBe(width, 1f, "no strip: the page runs to the right edge in both");
     }
 
     [Fact]
@@ -109,12 +109,13 @@ public sealed class NotificationsBarTests
         using var _ = renderer;
         chrome.Notifications.Feed.BellCount.ShouldBe(2, "both open cards need the person");
         chrome.Notifications.Feed.WorstSeverity.ShouldBe(DIR.Lib.Notifications.NotificationSeverity.Warn, "a ring is a warning");
-        AmberPixels(renderer, 1920, 1080, 1f).ShouldBeGreaterThan(20, "the strip's bell and count are drawn amber while a card rings");
+        // No strip is drawn: the only amber on the page is the edge handle's tab (26 by 80 units) and the rail entry's bell.
+        AmberPixels(renderer, 1920, 1080, 1f).ShouldBeLessThan(6000, "no strip: the handle's tab is the only amber block");
 
         var (quiet, quietRenderer) = Draw(1920, 1080, false, CardsScreen.Empty);
         using var __ = quietRenderer;
         quiet.Notifications.Feed.BellCount.ShouldBe(0);
-        AmberPixels(quietRenderer, 1920, 1080, 1f).ShouldBe(0, "with nothing waiting the bell is dim, not amber");
+        AmberPixels(quietRenderer, 1920, 1080, 1f).ShouldBe(0);
     }
 
     [Fact]
@@ -128,24 +129,21 @@ public sealed class NotificationsBarTests
     }
 
     [Fact]
-    public void CollapseAndTheExpanderToggleTheBarAndTheBellOpensThePageAndTheKeyToggles()
+    public void TheEdgeHandleTogglesTheBarAndTheBellOpensThePageAndTheKeyToggles()
     {
         var (chrome, renderer) = Draw(1920, 1080, true);
         using var _ = renderer;
         var seen = new List<bool>();
         chrome.Notifications.OpenChanged += seen.Add;
 
-        // Collapse is a button of its own: a press on it collapses the bar and does not open the page.
-        var collapse = ClickOn(chrome, "notifications:collapse");
+        // The edge handle is a button of its own: a press on it collapses the bar and does not open the page.
+        var collapse = ClickOn(chrome, NotificationsHost.HandleAction);
         chrome.Page.ShouldBe(PilotPage.Jobs);
         chrome.Notifications.Open.ShouldBeFalse();
         collapse.ShouldBeTrue();
 
-        // The collapsed strip has a button that opens it again.
         var data = PageData.For("sample");
-        chrome.Render(data.Sessions, data.Flights, data.Cards, data.Jobs, data.Fleet, data.Repos, new RectF32(0, 0, 1920, 1080), data.Machines);
-        ClickOn(chrome, "notifications:expand").ShouldBeTrue();
-        chrome.Notifications.Open.ShouldBeTrue();
+        chrome.Notifications.Toggle();
         seen.ShouldBe([false, true]);
 
         // Ctrl+N through the input path.
@@ -156,9 +154,37 @@ public sealed class NotificationsBarTests
         chrome.Render(data.Sessions, data.Flights, data.Cards, data.Jobs, data.Fleet, data.Repos, new RectF32(0, 0, 1920, 1080), data.Machines);
         chrome.Notifications.Open.ShouldBeFalse();
 
-        // The bell, pressed where the layer registered it, opens the Notifications page.
-        var bell = LayerRegions(chrome).First(r => r.Result is NotificationHit { Part: NotificationPart.Bell });
-        chrome.PressNotification(bell.Result).ShouldBeTrue();
+        // The bell is the rail's Notifications entry: a press on it opens the page.
+        PressRailEntry(chrome, 1920, 1080);
+        chrome.Page.ShouldBe(PilotPage.Notifications);
+    }
+
+    private static void PressRailEntry(PilotChrome<RgbaImage> chrome, int width, int height)
+    {
+        var data = PageData.For("sample");
+        chrome.Render(data.Sessions, data.Flights, data.Cards, data.Jobs, data.Fleet, data.Repos, new RectF32(0, 0, width, height), data.Machines);
+        var regions = new List<ClickableRegion>();
+        chrome.Rail.CollectPaintedRegions(regions);
+        var entry = regions.Where(r => r.Result is HitResult.ListItemHit).Last();
+        entry.OnClick!.Invoke(InputModifier.None);
+    }
+
+    [Fact]
+    public void TheRailEntryShowsTheCountAndTheRingingStateAndNoStripBellIsLaid()
+    {
+        var (chrome, renderer) = Draw(1920, 1080, false, Ringing());
+        using var _ = renderer;
+        chrome.Notifications.Sync([Card("c1", CardBin.Ring, "ringing"), Card("c2", CardBin.ForYou, "for you")], _ => null, Live.At);
+        chrome.Notifications.Bell.ShouldBe(new BellState(2, true));
+        PilotChrome<RgbaImage>.NotificationsGlyph(chrome.Notifications.Bell).ShouldBe(("\U0001F6A82", "2 need you, a card is ringing"));
+        PilotChrome<RgbaImage>.NotificationsGlyph(new BellState(3, false)).ShouldBe(("\U0001F5143", "3 need you"));
+        PilotChrome<RgbaImage>.NotificationsGlyph(new BellState(120, false)).Glyph.ShouldBe("\U0001F51499+");
+        PilotChrome<RgbaImage>.NotificationsGlyph(null).ShouldBe(("\U0001F514", null));
+        PilotChrome<RgbaImage>.NightBell(new BellState(3, true)).ShouldBe("N!3");
+
+        LayerRegions(chrome).Any(r => r.Result is NotificationHit { Part: NotificationPart.Bell }).ShouldBeFalse();
+        Enumerable.Range(0, 1080).Select(y => chrome.NotificationsLayer.HitTest(1919f, y)).Any(h => h is NotificationHit { Part: NotificationPart.Bell }).ShouldBeFalse();
+        PressRailEntry(chrome, 1920, 1080);
         chrome.Page.ShouldBe(PilotPage.Notifications);
     }
 
@@ -195,7 +221,7 @@ public sealed class NotificationsBarTests
                 host.Open = false;
                 older.Flush();
             }
-            File.ReadAllText(path).ShouldContain("notificationsCollapsed");
+            File.ReadAllText(path).ShouldContain("collapsed");
 
             using (var collapsed = GuiSettingsFile.Open(path))
             {
@@ -203,10 +229,10 @@ public sealed class NotificationsBarTests
                 var host = new NotificationsHost();
                 collapsed.Attach(host);
                 host.Open.ShouldBeFalse("the window comes back collapsed");
-                host.Open = true;
+                host.State = BarStates.Docked;
                 collapsed.Flush();
             }
-            File.ReadAllText(path).ShouldNotContain("notificationsCollapsed", Case.Insensitive, "open is null, and null is not written");
+            File.ReadAllText(path).ShouldNotContain("notificationsBar", Case.Insensitive, "docked is the default, and null is not written");
 
             // Another window has a file of its own.
             var other = Path.Combine(dir, "other.json");
@@ -265,7 +291,7 @@ public sealed class NotificationsBarTests
                 text.AppendLine(string.Concat(Enumerable.Range(0, columns).Select(x => buffer.BackAt(x, y).Glyph)).TrimEnd());
             }
             File.WriteAllText(Path.Combine(ArtifactDir(), $"for-you-bar-{(open ? "open" : "collapsed")}-tui-{columns}x{rows}.txt"), text.ToString());
-            text.ToString().ShouldContain(chrome.Notifications.Feed.BellCount.ToString(), Case.Sensitive, "the strip's bell count is in the terminal frame");
+            text.ToString().ShouldContain(chrome.Notifications.Feed.BellCount.ToString(), Case.Sensitive, "the rail bell's count is in the terminal frame");
         }
         pageRects[1].ShouldBe(pageRects[0], "the terminal's page is the same size open and collapsed");
     }

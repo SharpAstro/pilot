@@ -71,7 +71,7 @@ public sealed class IdeasPaneTests
     /// A window as wide as the page a 1280 window gave before the For you strip: the tests that need every canvas column on one line, or the
     /// last row of the list whole, draw in it (at 1280 the fourth column wraps and the last row's buttons fall below the window).
     /// </summary>
-    private static readonly int Wide = StripRoom.Beside(1280);
+    private static readonly int Wide = PageRoom.Beside(1280);
 
     private static List<ClickableRegion> Regions(PilotChrome<RgbaImage> chrome, IdeasScreen screen, float width = 1280)
     {
