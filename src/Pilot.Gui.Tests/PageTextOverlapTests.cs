@@ -44,12 +44,19 @@ public sealed class PageTextOverlapTests
     /// <summary>A design's page with a long title, a long brief and no version (#1160): the title line and the no-version text are wrapped or end in an ellipsis with the whole on hover.</summary>
     internal const string DesignPageNoVersion = "design page no version";
 
+    /// <summary>
+    /// The Notifications page (#1184): the state's open cards under Needs you and its events in the history (<see cref="PageData.EventsFor"/>).
+    /// Not in <see cref="Pages"/>, whose other walkers (the buttons' Presses, popovers, selectable content) it adds nothing to: its rows are
+    /// the cards panel's own; this sweep and the wireframe sweeps add it.
+    /// </summary>
+    internal const string NotificationsPage = "notifications";
+
     /// <summary>The Designs data a page is drawn from: the targets fixture for the two target pages, the sample's otherwise.</summary>
     internal static DesignsScreen DesignsOf(PageData data, string page) =>
         page is DesignPagePhone or DesignPageDesktop ? PageData.TargetsDesigns(PageData.Now) : page == DesignPageNoVersion ? PageData.NoVersionDesigns(PageData.Now) : data.Designs;
 
-    /// <summary>Every page the sweep walks: <see cref="Pages"/> and the two the issue adds.</summary>
-    internal static readonly string[] SweptPages = [.. Pages, IdeasPage, CardDetailPage, DesignPageNoVersion];
+    /// <summary>Every page the sweep walks: <see cref="Pages"/> and the ones their issues add.</summary>
+    internal static readonly string[] SweptPages = [.. Pages, IdeasPage, CardDetailPage, DesignPageNoVersion, NotificationsPage];
 
     internal static readonly string[] States = ["sample", "long", "many", "empty"];
 
@@ -210,6 +217,7 @@ public sealed class PageTextOverlapTests
         "ideas" => PilotPage.Ideas,
         "spend" => PilotPage.Spend,
         "designs" or "design page" or DesignPagePhone or DesignPageDesktop or DesignPageNoVersion => PilotPage.Designs,
+        NotificationsPage => PilotPage.Notifications,
         _ => PilotPage.Home,
     };
 
@@ -284,6 +292,10 @@ public sealed class PageTextOverlapTests
         // it shows beside the page, drops for want of room, or cues on the rail) and says where each leaf went.
         var cards = CardsOf(data, page);
         var panelPage = page is "cards panel" or CardDetailPage;
+        if (page == NotificationsPage)
+        {
+            PageData.PostEvents(chrome.Notifications, state);
+        }
         void Frame() => chrome.Render(data.Sessions, data.Flights, cards, data.Jobs, data.Fleet, data.Repos, data.PullRequests, new RectF32(0, 0, width, height), data.Machines, null, data.Spend, DesignsOf(data, page));
         Frame();
         // Where the chrome draws no panel (none waiting, so nothing for the rail to cue either) there is nothing to check.
@@ -369,6 +381,9 @@ public sealed class PageTextOverlapTests
                 break;
             case "transcript":
                 tree = await OpenTranscript(chrome, data);
+                break;
+            case NotificationsPage:
+                tree = chrome.NotificationsPage.Tree(data.Sessions.Source, data.Sessions.AsOf, pageWidth / dpi);
                 break;
             case "wizard repos":
                 tree = await OpenWizard(chrome, data, toIssues: false);

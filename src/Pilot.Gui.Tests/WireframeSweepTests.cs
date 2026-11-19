@@ -32,7 +32,7 @@ public static class WireframeSweepTests
     internal static readonly string[] Pages =
     [
         "home", "sessions", "flights table", "flights canvas", "flight page", "jobs", "fleet", "settings", "repos", "pull requests", "chat", "spend", "designs", "design page", PageTextOverlapTests.DesignPagePhone, PageTextOverlapTests.DesignPageDesktop, PageTextOverlapTests.DesignPageNoVersion,
-        PageTextOverlapTests.IdeasPage, "transcript", "cards panel", PageTextOverlapTests.CardDetailPage,
+        PageTextOverlapTests.IdeasPage, "transcript", "cards panel", PageTextOverlapTests.CardDetailPage, PageTextOverlapTests.NotificationsPage,
     ];
 
     internal static IEnumerable<(string Page, string State, int Width, float Dpi, int Height)> CaseTuples() =>
