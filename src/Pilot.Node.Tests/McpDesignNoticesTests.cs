@@ -231,11 +231,14 @@ public sealed class McpDesignNoticesTests : IAsyncLifetime
         /// <summary>The next line, or null when none comes within <paramref name="wait"/>.</summary>
         public async Task<JsonElement?> NextOrNoneAsync(TimeSpan wait)
         {
+            // The read itself is cancelled at the deadline, so a timed-out read cannot swallow the next line.
+            using var deadline = CancellationTokenSource.CreateLinkedTokenSource(Ct);
+            deadline.CancelAfter(wait);
             try
             {
-                return JsonDocument.Parse(await _lines.Reader.ReadAsync(Ct).AsTask().WaitAsync(wait, Ct)).RootElement.Clone();
+                return JsonDocument.Parse(await _lines.Reader.ReadAsync(deadline.Token)).RootElement.Clone();
             }
-            catch (TimeoutException)
+            catch (OperationCanceledException) when (!Ct.IsCancellationRequested)
             {
                 return null;
             }
