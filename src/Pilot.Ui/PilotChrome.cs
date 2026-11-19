@@ -207,6 +207,7 @@ internal sealed class PilotChrome<TSurface>
         Tooltips = new TooltipLayer<TSurface>(renderer);
         NotificationsLayer = new NotificationsLayer<TSurface>(renderer);
         More = new RailMoreMenu<TSurface>(renderer);
+        Notifications.CardBody = ToastBody;
         // A flight page's Merge is its card's own choice, run as the panel runs it.
         Flights.OnAnswerCard = (card, number) => Cards.OnAnswer?.Invoke(card, number);
         // The pages read a card's press state by the card, so its node is part of the key, as in the panel (#922).
@@ -497,6 +498,41 @@ internal sealed class PilotChrome<TSurface>
     /// <summary>The For you side bar: open over the page's right side, or collapsed to the strip with the bell (PIL1184). One per window.</summary>
     public NotificationsHost Notifications { get; } = new();
 
+    private readonly PilotEventWatch _events = new();
+
+    // What a click on an event's toast opens: the flight, the job's page, the design.
+    private Action OpenerOf(PilotEvent e) => e.Kind switch
+    {
+        PilotEventKind.FlightLanded => () => { Show(PilotPage.Flights); Flights.OpenDetail(e.Subject); },
+        PilotEventKind.DesignPublished => () => { Show(PilotPage.Designs); Designs.Open(e.Subject); },
+        _ => () => Show(PilotPage.Jobs),
+    };
+
+    // A staying card's toast keeps its words and carries the card's own plain choices, answered as the panel answers them (Cards.OnAnswer).
+    private Func<Layout.Node>? ToastBody(CardRow card)
+    {
+        var plain = card.Choices.Select((choice, i) => (choice, number: i + 1))
+            .Where(c => c.choice.AsksFor is null && c.choice.Status != ChoiceStatus.Unavailable && !ChoiceStatus.IsChip(c.choice.Status)).Take(2).ToArray();
+        if (plain.Length == 0)
+        {
+            return null;
+        }
+        return () =>
+        {
+            var p = Palette.Current;
+            var parts = new List<Layout.Node> { Layout.Builder.Text(card.Title, 14f, p.Bright).WStar().WithTooltip(card.Title) };
+            if (card.Summary is { Length: > 0 } summary)
+            {
+                parts.Add(WrappedProse.Of(summary, 12f, p.Dim, 3, selectable: false));
+            }
+            foreach (var (choice, number) in plain)
+            {
+                parts.Add(CardsView<TSurface>.ChoicePill(choice.Label, false, $"toast:{card.Id}:{number}", () => Cards.OnAnswer?.Invoke(card, number), null, p.Bright, wrap: true));
+            }
+            return Layout.Builder.VStack([.. parts]).WithGap(4f).WStar();
+        };
+    }
+
     /// <summary>The strip, the bell and the toasts, painted by DIR.Lib's component over the page.</summary>
     public NotificationsLayer<TSurface> NotificationsLayer { get; }
 
@@ -669,6 +705,12 @@ internal sealed class PilotChrome<TSurface>
     /// </summary>
     public bool HandleInput(InputEvent evt)
     {
+        // A press on a fading toast opens what it is about, ahead of the page beneath it.
+        if (evt is InputEvent.MouseDown { Button: MouseButton.Left } press && Notifications.Press(NotificationsLayer.HitTest(press.X, press.Y)))
+        {
+            return true;
+        }
+
         // A card's image open over the panel is shut by Escape wherever the page is: the page's own views only close what a page opened.
         if (evt is InputEvent.KeyDown { Key: InputKey.Escape } && Gallery.InPanel && Gallery.HandleKey(InputKey.Escape))
         {
@@ -1240,6 +1282,11 @@ internal sealed class PilotChrome<TSurface>
         {
             Notifications.Sync(cards.Open, c => Cards.NodeOf(c)?.Name, screen.AsOf);
         }
+        // Events from the pages' changes: while the bar is open they go to the history, collapsed they are fading toasts.
+        foreach (var e in _events.Observe(jobs, flights, designs))
+        {
+            Notifications.PostEvent(e, OpenerOf(e), screen.AsOf);
+        }
         if (Pointer is { } over)
         {
             Notifications.Pointer = new System.Numerics.Vector2(over.X, over.Y);
@@ -1326,6 +1373,8 @@ internal sealed class PilotChrome<TSurface>
         if (side.Width > 0f)
         {
             NotificationsLayer.Render(Frame(), side);
+            // The pointer on a fading toast stops its countdown (the library's rule; the layer has just registered the toasts).
+            Notifications.Hover(Pointer is { } at ? NotificationsLayer.HitTest(at.X, at.Y) : null);
         }
         if (ShowsCards && cardsRect is { } panelRect && cards is not null)
         {

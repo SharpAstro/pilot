@@ -21,7 +21,29 @@ internal sealed class NotificationsHost
     private bool _open = true;
 
     /// <summary>The ids' notifications, one per open card.</summary>
-    public NotificationFeed Feed { get; } = new();
+    public NotificationFeed Feed { get; } = new() { KeepFor = DefaultKeepFor };
+
+    /// <summary>How long a toast that left and a card that was handled are kept in the history, until the setting for it is passed in.</summary>
+    public static readonly TimeSpan DefaultKeepFor = TimeSpan.FromHours(24);
+
+    /// <summary>The history, newest first: every toast that left and every card handled or gone, with severity, time and node (<see cref="Notification.Source"/>).</summary>
+    public IReadOnlyList<Notification> History => Feed.History;
+
+    /// <summary>How long the history keeps a line; the next leg passes the setting in here.</summary>
+    public TimeSpan KeepFor
+    {
+        get => Feed.KeepFor;
+        set => Feed.KeepFor = value;
+    }
+
+    /// <summary>Whether a fading toast is on screen, so the window draws a frame each tick for its countdown.</summary>
+    public bool Animating => !Open && Feed.Toasts.Any(t => t.Notification.Kind == NotificationKind.Fading);
+
+    /// <summary>
+    /// The buttons a staying card's toast carries, as the card's own panel answers them (null for a card with none); set by the chrome,
+    /// which owns the answer path. The row replaces the toast's body, so the card keeps its look.
+    /// </summary>
+    public Func<CardRow, Func<Layout.Node>?>? CardBody { get; set; }
 
     /// <summary>The key that toggles the bar: the library's.</summary>
     public static KeyChord ToggleKey => Style.ToggleKey;
@@ -95,6 +117,7 @@ internal sealed class NotificationsHost
                     Severity = card.Bin == CardBin.Ring ? NotificationSeverity.Warn : NotificationSeverity.Info,
                     Kind = NotificationKind.Staying,
                     Source = key.Item1,
+                    Row = CardBody?.Invoke(card),
                 }, now).Id;
             }
         }
@@ -104,6 +127,41 @@ internal sealed class NotificationsHost
             _ids.Remove(gone);
         }
         Feed.Advance(now);
+    }
+
+    /// <summary>
+    /// Posts a pilot event as a fading toast whose click runs <paramref name="open"/>. While the bar is open nothing toasts: the event goes
+    /// straight into the history, so the list still has it.
+    /// </summary>
+    public void PostEvent(PilotEvent e, Action? open, DateTimeOffset now)
+    {
+        var posted = Feed.Post(new Notification
+        {
+            Title = e.Title,
+            Text = e.Text,
+            Severity = e.Severity,
+            Kind = NotificationKind.Fading,
+            Source = e.Node,
+            Action = open,
+        }, now);
+        if (Open)
+        {
+            Feed.Dismiss(posted.Id);
+        }
+    }
+
+    /// <summary>The toast under the pointer, from the layer's hit test: its countdown stops while the pointer rests on it.</summary>
+    public void Hover(HitResult? hit) => Feed.PointerOver(NotificationsLayout.ToastIdOf(hit));
+
+    /// <summary>A press on a fading toast opens what it is about and closes it as handled; false when the hit is not one.</summary>
+    public bool Press(HitResult? hit)
+    {
+        if (NotificationsLayout.ToastIdOf(hit) is not { } id)
+        {
+            return false;
+        }
+        Feed.Handle(id);
+        return true;
     }
 
     /// <summary>
