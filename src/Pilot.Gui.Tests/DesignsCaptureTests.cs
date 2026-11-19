@@ -442,7 +442,7 @@ public sealed class DesignsCaptureTests
         chrome.Notifications.Open = false;
         chrome.Designs.Open("DSN-7");
         var data = PageData.For("sample");
-        chrome.Render(data.Sessions, data.Flights, data.Cards, data.Jobs, data.Fleet, data.Repos, data.PullRequests, new RectF32(0, 0, width, height), data.Machines, null, data.Spend, screen);
+        chrome.Render(data.Sessions, data.Flights, null, data.Jobs, data.Fleet, data.Repos, data.PullRequests, new RectF32(0, 0, width, height), data.Machines, null, data.Spend, screen);
 
         var page = chrome.PageBounds.ShouldNotBeNull();
         var arranged = Layout.Engine.Arrange(chrome.Designs.Tree(screen), new Rect<float>(page.X, page.Y, page.Width, page.Height), new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, 1f)).ToList();

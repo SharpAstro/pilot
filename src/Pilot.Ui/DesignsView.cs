@@ -864,7 +864,8 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
         var s = MathF.Min(rect.Width / size.Width, rect.Height / size.Height);
         var w = size.Width * s;
         var h = size.Height * s;
-        return new RectF32(rect.X + (rect.Width - w) / 2f, rect.Y + (rect.Height - h) / 2f, w, h);
+        // Anchored at the well's left edge, so the caption above it and the toolbar under it start where the frame does.
+        return new RectF32(rect.X, rect.Y + (rect.Height - h) / 2f, w, h);
     }
 
     // A plain 2 px light-grey frame of the target's shape around where the player drew it: no device chrome, notch or status bar, so it is never mistaken for the app.
