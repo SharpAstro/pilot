@@ -16,31 +16,31 @@ public sealed class NotificationsDockTests
 {
     private const int Width = 1920, Height = 1080;
 
-    private static (PilotChrome<RgbaImage> Chrome, RgbaImageRenderer Renderer) Draw(BarStates state)
+    private static (PilotChrome<RgbaImage> Chrome, RgbaImageRenderer Renderer) Draw(BarStates state, CardsScreen? cards = null)
     {
         var renderer = new RgbaImageRenderer(Width, Height);
         var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
         chrome.Notifications.State = state;
         chrome.Show(PilotPage.Jobs);
-        Render(chrome);
+        Render(chrome, cards);
         return (chrome, renderer);
     }
 
-    private static void Render(PilotChrome<RgbaImage> chrome)
+    private static void Render(PilotChrome<RgbaImage> chrome, CardsScreen? cards = null)
     {
         var data = PageData.For("sample");
-        chrome.Render(data.Sessions, data.Flights, data.Cards, data.Jobs, data.Fleet, data.Repos, new RectF32(0, 0, Width, Height), data.Machines);
+        chrome.Render(data.Sessions, data.Flights, cards ?? data.Cards, data.Jobs, data.Fleet, data.Repos, new RectF32(0, 0, Width, Height), data.Machines);
     }
 
-    private static void Press(PilotChrome<RgbaImage> chrome, float x, float y)
+    private static void Press(PilotChrome<RgbaImage> chrome, float x, float y, CardsScreen? cards = null)
     {
         var router = new InputRouter(chrome.Flights.Ui, new BackgroundTaskTracker(), () => { }) { Widgets = () => chrome.Widgets };
         chrome.HandleInput(new InputEvent.MouseDown(x, y));
         router.Handle(new InputEvent.MouseDown(x, y));
         router.Handle(new InputEvent.MouseUp(x, y));
         // Two frames, as a window draws them: a node that has just come into the tree is pressable from the second one.
-        Render(chrome);
-        Render(chrome);
+        Render(chrome, cards);
+        Render(chrome, cards);
     }
 
     private static ClickableRegion Region(PilotChrome<RgbaImage> chrome, string action)
@@ -50,10 +50,10 @@ public sealed class NotificationsDockTests
         return regions.Single(r => r.Result is HitResult.ButtonHit b && b.Action == action);
     }
 
-    private static void PressOn(PilotChrome<RgbaImage> chrome, string action)
+    private static void PressOn(PilotChrome<RgbaImage> chrome, string action, CardsScreen? cards = null)
     {
         var at = Region(chrome, action);
-        Press(chrome, at.X + at.Width / 2f, at.Y + at.Height / 2f);
+        Press(chrome, at.X + at.Width / 2f, at.Y + at.Height / 2f, cards);
     }
 
     [Fact]
@@ -116,9 +116,9 @@ public sealed class NotificationsDockTests
         host.Toggle();
         host.State.ShouldBe(last);
 
-        var (chrome, renderer) = Draw(last);
+        var (chrome, renderer) = Draw(last, CardsScreen.Empty);
         using var _ = renderer;
-        PressOn(chrome, NotificationsHost.HandleAction);
+        PressOn(chrome, NotificationsHost.HandleAction, CardsScreen.Empty);
         chrome.Notifications.State.ShouldBe(BarStates.Collapsed);
         var h = Region(chrome, NotificationsHost.HandleAction);
         var all = new List<ClickableRegion>();
@@ -126,7 +126,7 @@ public sealed class NotificationsDockTests
         var cx = h.X + h.Width / 2f;
         var cy = h.Y + h.Height / 2f;
         var there = string.Join("; ", all.Where(r => r.X <= cx && cx <= r.X + r.Width && r.Y <= cy && cy <= r.Y + r.Height).Select(r => $"{r.Result} {r.X},{r.Y} {r.Width}x{r.Height}"));
-        PressOn(chrome, NotificationsHost.HandleAction);
+        PressOn(chrome, NotificationsHost.HandleAction, CardsScreen.Empty);
         chrome.Notifications.State.ShouldBe(last, "regions at the handle: " + there);
     }
 
