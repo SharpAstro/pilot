@@ -733,6 +733,13 @@ designer that is working is never ended, and a designer never stops itself (the 
   `<screen>.<cols>x<rows>.png` (the same cells drawn as a grid, every cell 8 by 16 pixels, in DejaVu Sans Mono). A render clears
   the earlier `.png` and `.txt` files first and rewrites `render.json`, the stamp publish compares with the draft; publish still
   copies the `<screen>.png` of each screen into the version.
+- **Renders as bytes (PIL1186).** The `design-renders` verb (`pilot design renders <design> [--version N] [--draft] [--screen id]
+  [--size s]`) answers with the render PNGs themselves, not paths, so a session on another machine sees them: one picture per
+  screen and size asked for, each with a line naming design, version (or draft), screen, size and the prototype hash it was drawn
+  from. No screen gives the entry screen and names the others. `DesignRenderCaps` limits a call to 4 pictures, 3 MB and 1600 px on
+  the longest side; a larger picture is scaled down with SharpAstro.Png and says "scaled from WxH". A draft whose renders are older
+  than its `prototype.json` is answered as stale, not refused. `--output-format markdown` or `rich` writes the bytes under the
+  temp folder (`pilot-renders/<design>/`) and emits `![line](path)` per picture. MCP is the next leg's.
 - **One shared piece.** `src/Pilot.Ui/PrototypeCells.cs` (namespace `Pilot.Cells`, nothing of Pilot.Ui in it) builds a screen's
   tree with `PrototypeTreeBuilder`, arranges it with Console.Lib's `CellMeasureContext.PixelAuthored` and paints it into a
   `CellBuffer`; it exposes the arranged nodes (for `CellLayout.HitTest` and `TextInputs`), the rows as text, the findings, and
