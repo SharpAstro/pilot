@@ -536,12 +536,16 @@ while (!stop.IsCancellationRequested)
         chrome.Home.Today = spendReads.Today;
         // On the Chat page the panel drops its "Chat with the watchtower" foot, as the window's does: the page is that chat.
         cards.OnChatPage = page == PilotPage.Chat;
-        var cardsBeside = columns >= TerminalFrame.CardsPanelColumns && (pages.Cards.HasAny || cards.CanTell && !cards.OnChatPage);
-        chat.CellColumns = TerminalFrame.PageColumns(columns, cardsBeside);
+        // The For you bar (PIL1184) is the window's too: open it covers the page's right side, collapsed it is a strip with the bell, and the page is the
+        // columns less the strip either way. Every open card is a notification in its feed.
+        var bar = chrome.Notifications;
+        bar.Sync(pages.Cards.Open, card => cards.NodeOf(card)?.Name, now);
+        var cardsOver = bar.Open && (pages.Cards.HasAny || cards.CanTell && !cards.OnChatPage);
+        chat.CellColumns = TerminalFrame.PageColumnsWithBar(columns);
         if (page == PilotPage.Designs)
         {
-            // The page's own room, as the Chat page's: the cards panel beside it takes its columns, and the design's chat and cell view are sized to what is left.
-            chrome.Designs.Terminal = (TerminalFrame.PageColumns(columns, cardsBeside), rows);
+            // The page's own room, as the Chat page's: the strip takes its columns, and the design's chat and cell view are sized to what is left.
+            chrome.Designs.Terminal = (TerminalFrame.PageColumnsWithBar(columns), rows);
         }
         var pageTree = page switch
         {
@@ -571,7 +575,7 @@ while (!stop.IsCancellationRequested)
         // The cards panel stands beside the page when there is room beside a usable page, and something to show.
         // Arranged and cropped to each scroll container and page rect (Console.Lib's painter has no clip); the hit test reads the same tree.
         // No clear: the cell buffer diffs each frame against the last, and the tree's backgrounds cover every cell.
-        arranged = TerminalFrame.Build(railTree, pageTree, cardsBeside ? cards.Tree(cardsScreen) : null, columns, rows, CellMeasureContext.PixelAuthored, input.Router.Tooltip);
+        arranged = TerminalFrame.Build(railTree, pageTree, cardsOver ? cards.Tree(cardsScreen) : null, columns, rows, CellMeasureContext.PixelAuthored, input.Router.Tooltip, bar);
         TerminalFrame.Paint(terminal.HideCaret, () => CellLayout.Paint(terminal, arranged, surface));
         input.Painted();
         if ((chat.ParkedCaret(page, focus, arranged) ?? (page == PilotPage.Designs ? chrome.Designs.Chat.ParkedCaretEmbedded(focus, arranged) : null)) is var (caretColumn, caretRow))

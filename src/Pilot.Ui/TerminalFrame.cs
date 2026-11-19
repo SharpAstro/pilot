@@ -16,11 +16,20 @@ internal static class TerminalFrame
     public static int PageColumns(int columns, bool cardsShown)
         => cardsShown ? columns - (int)Math.Ceiling(CardsView<RgbaImage>.Width / 8f) : columns;
 
+    /// <summary>The columns the page has under the For you bar: the terminal's less the strip, open or collapsed alike, as the bar covers the page's right side and never narrows it.</summary>
+    public static int PageColumnsWithBar(int columns) => columns - (int)Math.Ceiling(NotificationsHost.Style.StripWidth / 8f);
+
     /// <summary>
     /// The frame's tree.<paramref name="cards"/> is the cards panel's tree, or null for none (a narrow terminal, nothing to show).
     /// </summary>
-    public static Layout.Node Tree(Layout.Node rail, Layout.Node page, Layout.Node? cards)
+    public static Layout.Node Tree(Layout.Node rail, Layout.Node page, Layout.Node? cards, NotificationsHost? bar = null)
     {
+        if (bar is not null)
+        {
+            // The For you bar (PIL1184): the page takes the whole row less the library's strip, and the cards panel is laid over its right side
+            // while the bar is open, so the page is the same size open and collapsed. Nothing here reserves width for the panel.
+            return Layout.Builder.VStack(rail, bar.Frame(page, cards).HStar()).Bg(Palette.Current.Ground).Stretch();
+        }
         // The panel takes 38 columns (the GUI's 300 units) beside the page.
         var beside = cards is not null
             ? Layout.Builder.HStack(page.WStar(), cards.WFixed(CardsView<RgbaImage>.Width)).Stretch()
@@ -34,10 +43,10 @@ internal static class TerminalFrame
     /// cropped by <see cref="Clip"/>, and the router's due <paramref name="tooltip"/> (cell coordinates) arranged last, so it paints over the page and the panel, as the GUI's tooltip layer does. It is added after the crop and registers no region, so the hit test is unchanged. Program.cs paints this result and the wireframe sweep judges it, so a test arranges exactly what the
     /// terminal draws. <paramref name="measure"/> is Console.Lib's CellMeasureContext.PixelAuthored, which Pilot.Ui does not hold.
     /// </summary>
-    public static ImmutableArray<Layout.ArrangedNode<int>> Build(Layout.Node rail, Layout.Node page, Layout.Node? cards, int columns, int rows, Layout.IMeasureContext<int> measure, TooltipRequest? tooltip = null)
+    public static ImmutableArray<Layout.ArrangedNode<int>> Build(Layout.Node rail, Layout.Node page, Layout.Node? cards, int columns, int rows, Layout.IMeasureContext<int> measure, TooltipRequest? tooltip = null, NotificationsHost? bar = null)
     {
         var window = new Rect<int>(0, 0, columns, rows);
-        var frame = Clip(Layout.Engine.Arrange(Tree(rail, page, cards), window, measure));
+        var frame = Clip(Layout.Engine.Arrange(Tree(rail, page, cards, bar), window, measure));
         return tooltip is { } due ? frame.AddRange(Layout.Engine.Arrange(TooltipLayer<RgbaImage>.Tree(due), window, measure)) : frame;
     }
 

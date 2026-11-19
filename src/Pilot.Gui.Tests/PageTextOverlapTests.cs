@@ -286,12 +286,6 @@ public sealed class PageTextOverlapTests
         var panelPage = page is "cards panel" or CardDetailPage;
         void Frame() => chrome.Render(data.Sessions, data.Flights, cards, data.Jobs, data.Fleet, data.Repos, data.PullRequests, new RectF32(0, 0, width, height), data.Machines, null, data.Spend, DesignsOf(data, page));
         Frame();
-        if (panelPage && chrome.CardsDropped)
-        {
-            // A window too narrow for the panel beside the page shows it through the rail's cue, in the page's place.
-            chrome.ToggleCards();
-            Frame();
-        }
         // Where the chrome draws no panel (none waiting, so nothing for the rail to cue either) there is nothing to check.
         var panelDrawn = chrome.CardsBounds is not null;
         if (page == CardDetailPage && panelDrawn)

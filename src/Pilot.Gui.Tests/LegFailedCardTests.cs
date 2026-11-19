@@ -134,12 +134,6 @@ public sealed class LegFailedCardTests
                 var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
                 void Draw() => chrome.Render(new SessionsScreen([], "test", Live.At), null, CardsScreen.From([card]), new RectF32(0, 0, width, height));
                 Draw();
-                // A window too narrow for the panel beside the page cues the cards on the rail; open them in the page's place, as a click on the cue does.
-                if (chrome.CardsDropped)
-                {
-                    chrome.ToggleCards();
-                    Draw();
-                }
                 chrome.ShowsCards.ShouldBeTrue($"the cards panel is drawn in the {name} capture at {width}");
                 File.WriteAllBytes(Path.Combine(dir, $"leg-failed-{name}-{width}.png"), PngWriter.Encode(renderer.Surface.Pixels, width, height));
             }

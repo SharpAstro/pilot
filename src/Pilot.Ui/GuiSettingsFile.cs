@@ -28,6 +28,12 @@ internal sealed record GuiSettings
 
     /// <summary>The size each frame of each design is shown at (PIL1171), by design id and then <c>cell.frame</c>; nullable, so a file an older build wrote reads as before.</summary>
     public Dictionary<string, Dictionary<string, SavedFrameSize>>? FrameSizes { get; init; }
+
+    /// <summary>
+    /// Whether the For you side bar is collapsed to its strip at the right edge (PIL1184). Null means open, which is what a file an older
+    /// build wrote reads as; it is written only while the bar is collapsed, so reopening it drops the member again.
+    /// </summary>
+    public bool? NotificationsCollapsed { get; init; }
 }
 
 /// <summary>A page's saved sort: the column's title and whether it runs descending.</summary>
@@ -63,10 +69,12 @@ internal sealed class GuiSettingsFile : IDisposable
     private ImmutableDictionary<string, SavedDesignTarget> _designTargets = ImmutableDictionary<string, SavedDesignTarget>.Empty.WithComparers(StringComparer.Ordinal);
 
     private Dictionary<string, Dictionary<string, SavedFrameSize>> _frameSizes = [];
+    private volatile bool _notificationsCollapsed;
 
     private GuiSettingsFile(string path, Dictionary<string, Dictionary<string, float>> tables, Dictionary<string, SavedSort> sorts, bool night, MapLayerSettings? layers, List<string> folds, Dictionary<string, SavedDesignTarget> designTargets,
-        Dictionary<string, Dictionary<string, SavedFrameSize>> frameSizes)
+        Dictionary<string, Dictionary<string, SavedFrameSize>> frameSizes, bool notificationsCollapsed)
     {
+        _notificationsCollapsed = notificationsCollapsed;
         _frameSizes = frameSizes;
         _designTargets = designTargets.ToImmutableDictionary(StringComparer.Ordinal);
         _folds = [.. folds];
@@ -91,6 +99,7 @@ internal sealed class GuiSettingsFile : IDisposable
         var tables = new Dictionary<string, Dictionary<string, float>>(StringComparer.Ordinal);
         var sorts = new Dictionary<string, SavedSort>(StringComparer.Ordinal);
         var night = false;
+        var collapsed = false;
         var folds = new List<string>();
         MapLayerSettings? layers = null;
         var designTargets = new Dictionary<string, SavedDesignTarget>(StringComparer.Ordinal);
@@ -100,6 +109,7 @@ internal sealed class GuiSettingsFile : IDisposable
             if (File.Exists(path) && JsonSerializer.Deserialize(File.ReadAllText(path), GuiSettingsJsonContext.Default.GuiSettings) is { } settings)
             {
                 night = settings.Night;
+                collapsed = settings.NotificationsCollapsed == true;
                 folds.AddRange(settings.PullRequestFolds?.Where(f => !string.IsNullOrEmpty(f)) ?? []);
                 layers = settings.MapLayers;
                 foreach (var (id, saved) in settings.DesignTargets ?? [])
@@ -137,12 +147,13 @@ internal sealed class GuiSettingsFile : IDisposable
             tables.Clear();
             sorts.Clear();
             night = false;
+            collapsed = false;
             folds.Clear();
             layers = null;
             designTargets.Clear();
             frameSizes.Clear();
         }
-        return new GuiSettingsFile(path, tables, sorts, night, layers, folds, designTargets, frameSizes);
+        return new GuiSettingsFile(path, tables, sorts, night, layers, folds, designTargets, frameSizes, collapsed);
     }
 
     /// <summary>Whether the file says Night is on.</summary>
@@ -169,6 +180,20 @@ internal sealed class GuiSettingsFile : IDisposable
         table.Restore(Volatile.Read(ref _tables).GetValueOrDefault(table.Page));
         table.RestoreSort(Volatile.Read(ref _sorts).TryGetValue(table.Page, out var saved) && saved.Column is { } column ? new ListTable.SortState(column, saved.Descending) : null);
         table.Changed += Touch;
+    }
+
+    /// <summary>Whether the file says the For you side bar is collapsed; false (open) when it says nothing.</summary>
+    public bool NotificationsCollapsed => _notificationsCollapsed;
+
+    /// <summary>Gives <paramref name="host"/> the choice this file holds, and keeps the file current: a collapse or an open writes it, a moment later.</summary>
+    public void Attach(NotificationsHost host)
+    {
+        host.Open = !_notificationsCollapsed;
+        host.OpenChanged += open =>
+        {
+            _notificationsCollapsed = !open;
+            Touch();
+        };
     }
 
     /// <summary>The folds the file holds for the Pull requests page.</summary>
@@ -244,6 +269,7 @@ internal sealed class GuiSettingsFile : IDisposable
                 PullRequestFolds = [.. _folds],
                 DesignTargets = _designTargets.Count > 0 ? new Dictionary<string, SavedDesignTarget>(_designTargets, StringComparer.Ordinal) : null,
                 FrameSizes = _frameSizes.Count > 0 ? _frameSizes : null,
+                NotificationsCollapsed = _notificationsCollapsed ? true : null,
             },
             GuiSettingsJsonContext.Default.GuiSettings);
 
