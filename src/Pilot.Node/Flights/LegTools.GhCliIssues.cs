@@ -40,6 +40,31 @@ public sealed partial class GhCli
         }
     }
 
+    public async Task ReopenIssueAsync(string repoPath, int number, string comment, CancellationToken cancellationToken)
+    {
+        var (exit, output, error) = await RunAsync(["issue", "reopen", number.ToString(System.Globalization.CultureInfo.InvariantCulture), "--comment", comment], repoPath, cancellationToken);
+        if (exit != 0)
+        {
+            throw new FlightException($"gh could not reopen issue #{number}: {(error.Trim().Length > 0 ? error : output).Trim()}");
+        }
+    }
+
+    public async Task<string?> PullRequestBodyAsync(string repoPath, int number, CancellationToken cancellationToken)
+    {
+        var (exit, output, error) = await RunAsync(["pr", "view", number.ToString(System.Globalization.CultureInfo.InvariantCulture), "--json", "body", "--jq", ".body"], repoPath, cancellationToken);
+        return exit == 0 ? output.TrimEnd('', '
+') : throw new FlightException($"gh could not read PR #{number}: {(error.Trim().Length > 0 ? error : output).Trim()}");
+    }
+
+    public async Task EditPullRequestBodyAsync(string repoPath, int number, string body, CancellationToken cancellationToken)
+    {
+        var (exit, output, error) = await RunAsync(["pr", "edit", number.ToString(System.Globalization.CultureInfo.InvariantCulture), "--body", body], repoPath, cancellationToken);
+        if (exit != 0)
+        {
+            throw new FlightException($"gh could not save PR #{number}'s body: {(error.Trim().Length > 0 ? error : output).Trim()}");
+        }
+    }
+
     public async Task<IssueInfo> CreateIssueAsync(string repoPath, string title, string? body, CancellationToken cancellationToken)
     {
         // An empty body is given explicitly: without one gh would ask for it, and the node has no terminal.

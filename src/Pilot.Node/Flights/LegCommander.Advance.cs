@@ -382,6 +382,7 @@ public sealed partial class LegCommander
         await StartReviewAsync(FlightOf(Verbs.FlightTarget(flight.Code)), cancellationToken, quiet: true);
         if (needsPush)
         {
+            await TellDesignsAsync(FlightOf(Verbs.FlightTarget(flight.Code)), cancellationToken);
             // What the push added may share a file with another flight; last, as it lets the lock go and the review is already started.
             await CheckAfterPushAsync(flight, cancellationToken);
         }

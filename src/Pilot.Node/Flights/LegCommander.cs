@@ -36,6 +36,9 @@ public sealed partial class LegCommander(
     /// <summary>The model and effort each kind of session starts on; a test's commander passes none.</summary>
     public RoleModels Models { get; set; } = RoleModels.Unset;
 
+    /// <summary>The Designs section of a PR and the comments on the design issues (PIL1185); null where none is wired.</summary>
+    public Designs.DesignRecord? DesignRecord { get; set; }
+
     /// <summary>Takes the queued jobs owned by any of the given session ids off the queue, told (owners, why); null where there is no job runner (#327).</summary>
     public Func<IReadOnlyCollection<string>, string, int>? DropJobs { get; set; }
 

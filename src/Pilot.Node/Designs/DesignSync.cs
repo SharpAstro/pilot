@@ -27,6 +27,9 @@ public sealed class DesignSync(DesignStore store, RepoCatalog repos, IGitHub git
     /// <summary>The label lock and the read-back of the issue's text (PIL1171), settled after each design's versions are sent and at every sweep; null where none is wired.</summary>
     public DesignLock? Lock { get; init; }
 
+    /// <summary>What GitHub is told of the flights that built a design (PIL1185); its unwritten results are retried at every sweep. Null where none is wired.</summary>
+    public DesignRecord? Record { get; set; }
+
     private readonly SemaphoreSlim _one = new(1, 1);
     private readonly Lock _kicks = new();
     private readonly List<Task> _running = [];
@@ -80,6 +83,10 @@ public sealed class DesignSync(DesignStore store, RepoCatalog repos, IGitHub git
         if (Lock is { } locks)
         {
             await locks.SweepAsync(cancellationToken).ConfigureAwait(false);
+        }
+        if (Record is { } record)
+        {
+            await record.SweepAsync(cancellationToken).ConfigureAwait(false);
         }
         if (time.GetUtcNow() - _mirrored >= MirrorEvery)
         {
@@ -311,7 +318,18 @@ public sealed class DesignSync(DesignStore store, RepoCatalog repos, IGitHub git
             {
                 throw new FlightException($"{repoFull}#{issue.ToString(CultureInfo.InvariantCulture)} changed while its body was written");
             }
-            await github.CommentIssueAsync(info.Path, issue, $"v{version.ToString(CultureInfo.InvariantCulture)}: {why}", token).ConfigureAwait(false);
+            var sent = $"v{version.ToString(CultureInfo.InvariantCulture)}: {why}";
+            if (now.Open)
+            {
+                await github.CommentIssueAsync(info.Path, issue, sent, token).ConfigureAwait(false);
+            }
+            else
+            {
+                // A design closed because a flight built it has a version again that nothing built (PIL1185).
+                await github.ReopenIssueAsync(info.Path, issue, $"{sent}
+
+v{version.ToString(CultureInfo.InvariantCulture)} is published and is not built yet, so the issue is open again.", token).ConfigureAwait(false);
+            }
             var at = time.GetUtcNow();
             store.Update(row.Id, r => r with
             {

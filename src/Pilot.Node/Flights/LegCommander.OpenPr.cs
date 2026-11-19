@@ -70,7 +70,7 @@ public sealed partial class LegCommander
             var pr = await github.PullRequestAsync(repaired.RepoPath, repaired.Branch, cancellationToken);
             if (pr is null || !string.Equals(pr.State, "OPEN", StringComparison.OrdinalIgnoreCase))
             {
-                pr = await github.CreateAsync(repaired.RepoPath, repaired.Branch, BaseBranch(repaired), PrTitle(repaired, title), PrBody(repaired, legs), cancellationToken);
+                pr = await github.CreateAsync(repaired.RepoPath, repaired.Branch, BaseBranch(repaired), PrTitle(repaired, title), PrBody(repaired, legs, DesignRecord?.Section(repaired)), cancellationToken);
                 // The node label rides the PR as an issue's label (a PR is one on GitHub), not through SetPilotLabelAsync, which
                 // would swap out the PR's state labels. A refusal is noted, not fatal to the PR.
                 try
@@ -102,6 +102,7 @@ public sealed partial class LegCommander
         var beforeOpen = FlightOf(Verbs.FlightTarget(flight.Code));
         Record(flight.Code, f => f with { Base = repaired.Base, PullRequest = pr.Number, PullRequestUrl = pr.Url, MergedHead = mergedBase ? null : f.MergedHead });
         EndHoldPastReview(beforeOpen, pr.Head, "flight pr");
+        await TellDesignsAsync(FlightOf(Verbs.FlightTarget(flight.Code)), cancellationToken);
         // The PR opened, so a conflict that held its opening is resolved.
         _conflictOpenTried.TryRemove(flight.Code, out _);
         if (mergedBase)
@@ -295,6 +296,15 @@ public sealed partial class LegCommander
         return flight with { Base = remoteBase };
     }
 
+    /// <summary>The PR's Designs section is current and each design issue knows the PR (PIL1185); GitHub's refusal is logged by the record and never fails the PR.</summary>
+    private async Task TellDesignsAsync(FlightRow flight, CancellationToken cancellationToken)
+    {
+        if (DesignRecord is { } record && flight.PullRequest is { } number && flight.Designs.Length > 0)
+        {
+            await OffLockAsync(null, () => record.OpenedAsync(flight, number, flight.PullRequestUrl, cancellationToken));
+        }
+    }
+
     /// <summary>The branch a PR goes into: its base without the remote (<c>origin/main</c> is <c>main</c>).</summary>
     private static string BaseBranch(FlightRow flight) =>
         flight.Base.StartsWith("origin/", StringComparison.Ordinal) ? flight.Base["origin/".Length..] : flight.Base;
@@ -306,7 +316,7 @@ public sealed partial class LegCommander
         return flight.Tracker == TrackerKind.Shortcut && !title.Contains(flight.Item.Display, StringComparison.OrdinalIgnoreCase) ? $"{title} [{flight.Item.Display}]" : title;
     }
 
-    internal static string PrBody(FlightRow flight, IReadOnlyList<LegRow> legs)
+    internal static string PrBody(FlightRow flight, IReadOnlyList<LegRow> legs, string? designs = null)
     {
         var body = new System.Text.StringBuilder();
         body.AppendLine($"Flight {flight.Code}{(flight.Title is { Length: > 0 } t ? $": {t}" : "")}.");
@@ -327,6 +337,11 @@ public sealed partial class LegCommander
             body.AppendLine(shortcut
                 ? $"Shortcut story sc-{folded.Number} (folded in from {folded.From})."
                 : $"Closes #{folded.Number} (folded in from {folded.From}).");
+        }
+        if (designs is { Length: > 0 })
+        {
+            body.AppendLine();
+            body.Append(designs);
         }
         return body.ToString();
     }
