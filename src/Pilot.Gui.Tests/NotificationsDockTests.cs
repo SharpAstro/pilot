@@ -124,8 +124,10 @@ public sealed class NotificationsDockTests
         var cx = h.X + h.Width / 2f;
         var cy = h.Y + h.Height / 2f;
         var there = string.Join("; ", all.Where(r => r.X <= cx && cx <= r.X + r.Width && r.Y <= cy && cy <= r.Y + r.Height).Select(r => $"{r.Result} {r.X},{r.Y} {r.Width}x{r.Height}"));
+        var seen = new List<BarStates>();
+        chrome.Notifications.StateChanged += seen.Add;
         PressOn(chrome, NotificationsHost.HandleAction);
-        chrome.Notifications.State.ShouldBe(last, "regions at the handle: " + there);
+        chrome.Notifications.State.ShouldBe(last, "regions at the handle: " + there + "; changes during the press: " + string.Join(",", seen));
     }
 
     [Fact]
