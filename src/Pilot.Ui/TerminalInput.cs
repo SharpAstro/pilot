@@ -158,13 +158,13 @@ internal sealed class TerminalInput<TSurface>(
 
         // The For you bar's bell and toasts act as the window's do (the library declares them with no click action of their own), and the
         // pointer on a toast stops its countdown.
-        if (evt is InputEvent.MouseDown(var px, var py, MouseButton.Left) && chrome.PressNotification(HitTest(Arranged, (int)px, (int)py)))
+        if (evt is InputEvent.MouseDown { Button: MouseButton.Left } down && chrome.PressNotification(HitTest(Arranged, (int)down.X, (int)down.Y)))
         {
             return;
         }
-        if (evt is InputEvent.MouseMove(var mx, var my))
+        if (evt is InputEvent.MouseMove moved)
         {
-            chrome.Notifications.Hover(HitTest(Arranged, (int)mx, (int)my));
+            chrome.Notifications.Hover(HitTest(Arranged, (int)moved.X, (int)moved.Y));
         }
 
         Router.Handle(evt);
