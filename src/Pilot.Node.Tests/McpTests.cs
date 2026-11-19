@@ -248,7 +248,7 @@ public sealed class McpTests : IAsyncLifetime
             """{"jsonrpc":"2.0","id":5,"method":"resources/read","params":{"uri":"pilot://nowhere"}}""");
 
         replies[1].GetProperty("result").GetProperty("resources").EnumerateArray().Select(r => r.GetProperty("uri").GetString())
-            .ShouldBe(["pilot://flights", "pilot://legs", "pilot://cards", "pilot://sessions"]);
+            .ShouldBe(["pilot://flights", "pilot://legs", "pilot://cards", "pilot://sessions", "pilot://designs"]);
 
         var contents = replies[2].GetProperty("result").GetProperty("contents")[0];
         contents.GetProperty("mimeType").GetString().ShouldBe("application/json");

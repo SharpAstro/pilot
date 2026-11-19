@@ -86,7 +86,7 @@ internal static class DesignPages
 {
     /// <summary>The folder of version <paramref name="number"/> of the design <paramref name="detail"/> describes, or null when the folder is not given.</summary>
     public static string? VersionFolder(DesignDetail detail, int number) =>
-        detail.Folder is { Length: > 0 } folder ? Path.Combine(folder, "versions", "v" + number.ToString(CultureInfo.InvariantCulture)) : null;
+        DesignPaths.VersionFolder(detail, number);
 
     /// <summary>The page of <paramref name="detail"/> at <paramref name="version"/> (null: the current one, or none).</summary>
     public static DesignPage Load(DesignDetail detail, int? version = null)
@@ -97,9 +97,9 @@ internal static class DesignPages
             return new DesignPage(detail, null, null, null, []);
         }
         // The document of the version (PIL1171) and, beside it, the notes an older version has instead of one.
-        var notes = Read(Path.Combine(folder, "NOTES.md"));
-        var doc = Read(Path.Combine(folder, DesignDocument.FileName)) is { } text ? DesignDocument.Parse(text) : null;
-        var prototypeFile = Path.Combine(folder, "prototype.json");
+        var notes = DesignPaths.ReadText(DesignPaths.NotesFile(folder));
+        var doc = DesignPaths.ReadText(DesignPaths.DocumentFile(folder)) is { } text ? DesignDocument.Parse(text) : null;
+        var prototypeFile = DesignPaths.PrototypeFile(folder);
         var json = File.Exists(prototypeFile) ? DesignFiles.AssembledJson(prototypeFile, out _) : null;
         if (json is null)
         {
@@ -112,15 +112,11 @@ internal static class DesignPages
         }
         var renders = document.Screens.Select(s =>
         {
-            var file = Path.Combine(folder, "renders", s.Id + ".png");
-            if (!File.Exists(file) && document.Targets.Length > 0)
-            {
-                // A design that names targets has a PNG per target and none at the design size: the first target's stands for the screen.
-                file = Path.Combine(folder, "renders", DesignTargets.RenderFile(s.Id, document.Targets[0].Name));
-            }
+            // A design that names targets has a PNG per target and none at the design size: the first target's stands for the screen.
+            var file = DesignPaths.ScreenRender(folder, s.Id, DesignPaths.FirstTargetName(document.Targets.Select(t => t.Name)));
             // Each target's own PNG, where the node rendered one: the strip follows the target the page is shown at.
             var byTarget = document.Targets
-                .Select(t => (t.Name, File: Path.Combine(folder, "renders", DesignTargets.RenderFile(s.Id, t.Name))))
+                .Select(t => (t.Name, File: DesignPaths.TargetRender(folder, s.Id, t.Name)))
                 .Where(t => File.Exists(t.File))
                 .ToDictionary(t => t.Name, t => t.File, StringComparer.OrdinalIgnoreCase);
             return new DesignRender(s.Id, string.IsNullOrEmpty(s.Title) ? s.Id : s.Title, File.Exists(file) ? file : null, byTarget.Count > 0 ? byTarget : null);
@@ -130,17 +126,5 @@ internal static class DesignPages
 
     // The draft's document, for the version that is the current one only: a draft is the next version's, laid over the one before it.
     private static DesignDocument? DraftOf(DesignDetail detail, int shown) =>
-        shown == detail.Row.Current && detail.DraftFolder is { Length: > 0 } draft && Read(Path.Combine(draft, DesignDocument.FileName)) is { } text ? DesignDocument.Parse(text) : null;
-
-    private static string? Read(string file)
-    {
-        try
-        {
-            return File.Exists(file) ? File.ReadAllText(file) : null;
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            return null;
-        }
-    }
+        shown == detail.Row.Current && DesignPaths.DraftFolder(detail) is { } draft && DesignPaths.ReadText(DesignPaths.DocumentFile(draft)) is { } text ? DesignDocument.Parse(text) : null;
 }
