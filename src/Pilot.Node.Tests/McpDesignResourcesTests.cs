@@ -240,27 +240,35 @@ public sealed class McpDesignResourcesTests : IAsyncLifetime
         uris.ShouldContain("pilot://designs/DSN-1/chat");
     }
 
-    [Fact]
-    public async Task ADesignThatNamesTargetsServesTheFirstTargetsPngForAScreen()
+    // The node writes a target's render as <screen>.<name as written>.png (DesignChecker.RenderFiles, the name from DIR.Lib's Prototype), so MCP finds it by that name:
+    // a lower-case built-in's name is not respelled (home.Phone.png would not exist on Linux), and a width that is not whole still names the target.
+    [Theory]
+    [InlineData("""[{"name":"phone","width":390,"height":844}]""", "home.phone.png")]
+    [InlineData("""[{"name":"Wide","width":390.5,"height":844}]""", "home.Wide.png")]
+    public async Task ADesignThatNamesTargetsServesTheFirstTargetsPngForAScreen(string targets, string render)
     {
         await Published();
         var renders = Path.Combine(Version1(), "renders");
-        File.Move(Path.Combine(renders, "home.png"), Path.Combine(renders, "home.Phone.png"));
+        File.Move(Path.Combine(renders, "home.png"), Path.Combine(renders, render));
         // A published version's files are read-only.
-        File.SetAttributes(DesignPaths.PrototypeFile(Version1()), FileAttributes.Normal);
-        File.WriteAllText(DesignPaths.PrototypeFile(Version1()), """{"targets":["Phone","Tablet"]}""");
+        var prototypeFile = DesignPaths.PrototypeFile(Version1());
+        File.SetAttributes(prototypeFile, FileAttributes.Normal);
+        var prototype = System.Text.Json.Nodes.JsonNode.Parse(await File.ReadAllTextAsync(prototypeFile, Ct))!.AsObject();
+        prototype["targets"] = System.Text.Json.Nodes.JsonNode.Parse(targets);
+        await File.WriteAllTextAsync(prototypeFile, prototype.ToJsonString(), Ct);
 
         var png = Contents(await ReadOne("pilot://designs/DSN-1/versions/1/screens/home"));
-        Convert.FromBase64String(png.GetProperty("blob").GetString()!).ShouldBe(await File.ReadAllBytesAsync(Path.Combine(renders, "home.Phone.png"), Ct));
+        Convert.FromBase64String(png.GetProperty("blob").GetString()!).ShouldBe(await File.ReadAllBytesAsync(Path.Combine(renders, render), Ct));
         (await Refused("pilot://designs/DSN-1/versions/1/screens/nope")).ShouldContain("no screen nope");
     }
 
     [Theory]
-    [InlineData("""{"targets":["Phone"]}""", "Phone")]
-    [InlineData("""{"targets":["phone"]}""", "Phone")]
-    [InlineData("""{"targets":["Nowhere"]}""", null)]
-    [InlineData("""{"targets":[{"name":"Wide","width":10,"height":5}]}""", "Wide")]
-    [InlineData("""{"targets":[{"width":390,"height":844}]}""", "390x844")]
+    [InlineData("""{"targets":[{"name":"phone","width":390,"height":844}]}""", "phone")]
+    [InlineData("""{"targets":[{"name":"Wide","width":390.5,"height":844}]}""", "Wide")]
+    [InlineData("""{"targets":[{"name":"Wide","width":10,"height":5},{"name":"Tall","width":5,"height":10}]}""", "Wide")]
+    [InlineData("""{"targets":[{"name":"","width":390,"height":844}]}""", null)]
+    [InlineData("""{"targets":[{"width":390,"height":844}]}""", null)]
+    [InlineData("""{"targets":["Phone"]}""", null)]
     [InlineData("""{"targets":[]}""", null)]
     [InlineData("""{"targets":[3]}""", null)]
     [InlineData("""{"other":1}""", null)]

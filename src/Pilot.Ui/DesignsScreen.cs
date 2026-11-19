@@ -113,7 +113,7 @@ internal static class DesignPages
         var renders = document.Screens.Select(s =>
         {
             // A design that names targets has a PNG per target and none at the design size: the first target's stands for the screen.
-            var file = DesignPaths.ScreenRender(folder, s.Id, document.Targets.Length > 0 ? document.Targets[0].Name : null);
+            var file = DesignPaths.ScreenRender(folder, s.Id, DesignPaths.FirstTargetName(document.Targets.Select(t => t.Name)));
             // Each target's own PNG, where the node rendered one: the strip follows the target the page is shown at.
             var byTarget = document.Targets
                 .Select(t => (t.Name, File: DesignPaths.TargetRender(folder, s.Id, t.Name)))

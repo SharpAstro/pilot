@@ -49,9 +49,15 @@ public static class DesignPaths
         Path.Combine(RendersOf(folder), string.Create(CultureInfo.InvariantCulture, $"{screen}.{columns}x{rows}.png"));
 
     /// <summary>
-    /// The name of the first target of the <c>prototype.json</c> in <paramref name="folder"/> (a string entry as it is, an object by its <c>name</c>, else <c>&lt;width&gt;x&lt;height&gt;</c>), or null
-    /// when it names none or cannot be read: the target whose PNG stands for a screen when the design has none at its design size.
+    /// The name of the first target of the <c>prototype.json</c> in <paramref name="folder"/>, exactly as written: the <c>name</c> of the first entry of <c>targets</c> when that
+    /// entry is an object whose <c>name</c> is a non-empty string, else null (no targets, another shape, or a file that cannot be read). It is the target whose PNG stands for a
+    /// screen when the design has none at its design size.
     /// </summary>
+    /// <remarks>
+    /// The node names a target's render <c>&lt;screen&gt;.&lt;name&gt;.png</c> from the name DIR.Lib's <c>Prototype</c> reads, which is the entry's <c>name</c> as written (no case
+    /// change, no built-in lookup, any positive width and height), and the Designs page reads the same <c>Targets[0].Name</c>. Contracts cannot take DIR.Lib, so this reads that one
+    /// member the same way, and <see cref="FirstTargetName"/> is the rule the page and this share.
+    /// </remarks>
     public static string? FirstTarget(string folder)
     {
         if (ReadText(PrototypeFile(folder)) is not { } json)
@@ -66,27 +72,19 @@ public static class DesignPaths
             {
                 return null;
             }
-            // Named as DesignTargets.Resolve does, which the Designs page and the node's renders use: a built-in's own spelling, and an entry that is neither a
-            // built-in nor sized is no target (a render of it was never written). Contracts cannot take DIR.Lib's parser, so this mirrors it.
             var first = targets[0];
-            if (first.ValueKind == System.Text.Json.JsonValueKind.String)
-            {
-                return DesignTargets.Resolve(first.GetString())?.Name;
-            }
-            if (first.ValueKind != System.Text.Json.JsonValueKind.Object)
-            {
-                return null;
-            }
-            var label = first.TryGetProperty("name", out var name) && name.ValueKind == System.Text.Json.JsonValueKind.String ? name.GetString() : null;
-            int? width = first.TryGetProperty("width", out var w) && w.TryGetInt32(out var wv) ? wv : null;
-            int? height = first.TryGetProperty("height", out var h) && h.TryGetInt32(out var hv) ? hv : null;
-            return DesignTargets.Resolve(label, width, height)?.Name;
+            return first.ValueKind == System.Text.Json.JsonValueKind.Object && first.TryGetProperty("name", out var name) && name.ValueKind == System.Text.Json.JsonValueKind.String
+                ? FirstTargetName([name.GetString()])
+                : null;
         }
         catch (System.Text.Json.JsonException)
         {
             return null;
         }
     }
+
+    /// <summary>The first of a prototype's target names as written, or null when there is none or it is empty: the one rule the Designs page and MCP name the first target by.</summary>
+    public static string? FirstTargetName(IEnumerable<string?> names) => names.FirstOrDefault() is { Length: > 0 } first ? first : null;
 
     /// <summary>Reads a text file, or null when it is not there or cannot be read.</summary>
     public static string? ReadText(string file)
