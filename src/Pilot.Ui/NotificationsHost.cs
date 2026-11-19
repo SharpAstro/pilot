@@ -159,7 +159,12 @@ internal sealed class NotificationsHost
     public float? RoomUnits { get; set; }
 
     /// <summary>Whether the bar is docked in the window as drawn: set to dock and leaving the page <see cref="MinPageUnits"/>; a narrower window draws it over the page, as the strip used to give way.</summary>
-    public bool DockedNow => Docked && (RoomUnits is not { } room || room - Style.BarWidth >= MinPageUnits);
+    public bool DockedNow => Docked && (RoomUnits is not { } room || room >= NeededRoom);
+
+    private float NeededRoom => Style.BarWidth + MinPageUnits;
+
+    /// <summary>Sets <see cref="RoomUnits"/> from the window's size in pixels, the window's scale and the rail's width in design units.</summary>
+    public void SetRoom(float widthPixels, float scale, float railUnits) => RoomUnits = widthPixels / scale - railUnits;
 
     /// <summary>Raised when the bar is opened or collapsed, so the window can redraw.</summary>
     public event Action<bool>? OpenChanged;
@@ -355,7 +360,8 @@ internal sealed class NotificationsHost
     {
         var fill = tint switch { HandleTints.NeedsYou => p.Held, HandleTints.New => p.RailAccent, _ => p.HeaderBg };
         var black = new RGBAColor32(0, 0, 0, 0xff);
-        var chevron = new[] { p.Bright, p.Ground, black }.MaxBy(c => Contrast.Ratio(c, fill));
+        var white = new RGBAColor32(0xff, 0xff, 0xff, 0xff);
+        var chevron = new[] { p.Bright, p.Ground, black, white }.MaxBy(c => Contrast.Ratio(c, fill));
         return (fill, chevron);
     }
 

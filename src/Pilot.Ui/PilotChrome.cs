@@ -1360,7 +1360,7 @@ internal sealed class PilotChrome<TSurface>
             Notifications.Pointer = new System.Numerics.Vector2(over.X, over.Y);
         }
         Notifications.PageRect = PageBounds ?? default;
-        Notifications.RoomUnits = bounds.Width / DpiScale - RailWidth;
+        Notifications.SetRoom(bounds.Width, DpiScale, RailWidth);
         // The page is laid out over the whole content; an open bar is laid over its right side, or docked beside it (the page then has what is left), so the
         // page is the same size collapsed and over. A docked bar a narrow window cannot afford opens over the page; the frame takes the toast rule from the page.
         Layout.Node Frame() => Notifications.Frame(Layout.Builder.Fill(key: PageKey).Stretch(), hasPanel ? Layout.Builder.Fill(key: CardsKey).Stretch() : null, Page);
