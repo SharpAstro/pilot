@@ -210,7 +210,7 @@ internal sealed partial class McpServer
                 }
                 foreach (var uri in changed)
                 {
-                    await WriteAsync(output, $$"""{"jsonrpc":"2.0","method":"notifications/resources/updated","params":{"uri":"{{JavaScriptEncoder.UnsafeRelaxedJsonEscaping.Encode(uri)}}"}}""", cancellationToken);
+                    await WriteAsync(output, $$$"""{"jsonrpc":"2.0","method":"notifications/resources/updated","params":{"uri":"{{{JavaScriptEncoder.UnsafeRelaxedJsonEscaping.Encode(uri)}}}"}}""", cancellationToken);
                 }
                 if (listChanged)
                 {
