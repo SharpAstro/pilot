@@ -299,7 +299,7 @@ internal sealed class NotificationsHost
                 // Over: a press outside the bar collapses it; the layer sits under the bar so a press on the bar is not one.
                 var outside = Layout.Builder.Box(0f, 0f)
                     .Clickable(new HitResult.ButtonHit(OutsideAction), _ => State = BarStates.Collapsed);
-                body = Layout.Builder.Overlay(body, outside, Layout.Builder.HStack(Layout.Builder.Spacer().WStar().HStar(), OpenBar(panel!, colors)).Stretch());
+                body = Layout.Builder.Overlay(Layout.Builder.Overlay(body, outside), Layout.Builder.HStack(Layout.Builder.Spacer().WStar().HStar(), OpenBar(panel!, colors)).Stretch());
             }
         }
         // No strip and no bell here: the rail's Notifications entry is the one bell (PIL1205), so the page has the window's whole width.
