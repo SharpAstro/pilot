@@ -179,7 +179,7 @@ public sealed class DesignStoreTests : IDisposable
         (back with { History = row.History, Terminals = row.Terminals, DesignerPending = row.DesignerPending, DesignerTyped = row.DesignerTyped, DesignerSessions = row.DesignerSessions, Builds = row.Builds, GitHubEdits = row.GitHubEdits, GitHubIgnored = row.GitHubIgnored, ForIdeas = row.ForIdeas, Record = row.Record }).ShouldBe(row);
 
         var made = store.New("pilot", "T", "brief");
-        (store.Find("DSN-1").ShouldNotBeNull() with { History = made.History, Terminals = made.Terminals, DesignerPending = made.DesignerPending, DesignerTyped = made.DesignerTyped, DesignerSessions = made.DesignerSessions, Builds = made.Builds, GitHubEdits = made.GitHubEdits, GitHubIgnored = made.GitHubIgnored }).ShouldBe(made);
+        (store.Find("DSN-1").ShouldNotBeNull() with { History = made.History, Terminals = made.Terminals, DesignerPending = made.DesignerPending, DesignerTyped = made.DesignerTyped, DesignerSessions = made.DesignerSessions, Builds = made.Builds, GitHubEdits = made.GitHubEdits, GitHubIgnored = made.GitHubIgnored, ForIdeas = made.ForIdeas, Record = made.Record }).ShouldBe(made);
         made.Current.ShouldBeNull();
         made.Versions.ShouldBe(0);
 
