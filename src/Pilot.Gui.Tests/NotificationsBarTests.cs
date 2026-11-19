@@ -109,7 +109,8 @@ public sealed class NotificationsBarTests
         using var _ = renderer;
         chrome.Notifications.Feed.BellCount.ShouldBe(2, "both open cards need the person");
         chrome.Notifications.Feed.WorstSeverity.ShouldBe(DIR.Lib.Notifications.NotificationSeverity.Warn, "a ring is a warning");
-        AmberPixels(renderer, 1920, 1080, 1f).ShouldBe(0, "no strip is drawn: the bell is the rail entry");
+        // No strip is drawn: the only amber on the page is the edge handle's tab (26 by 80 units) and the rail entry's bell.
+        AmberPixels(renderer, 1920, 1080, 1f).ShouldBeLessThan(6000, "no strip: the handle's tab is the only amber block");
 
         var (quiet, quietRenderer) = Draw(1920, 1080, false, CardsScreen.Empty);
         using var __ = quietRenderer;

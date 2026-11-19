@@ -201,6 +201,7 @@ public sealed class NotificationsHandleTests
         void Click()
         {
             var (c, r) = Find(Frame());
+            input.Handle(new InputEvent.MouseMove(c, r), null);
             input.Handle(new InputEvent.MouseDown(c, r, MouseButton.Left, InputModifier.None), null);
             input.Handle(new InputEvent.MouseUp(c, r, MouseButton.Left), null);
         }
