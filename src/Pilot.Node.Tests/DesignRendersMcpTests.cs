@@ -204,7 +204,7 @@ public sealed class DesignRendersMcpTests : IAsyncLifetime
                     answer = message;
                 }
             }
-            answer.ShouldNotBeNull($"the server answered tools/call before its stdout closed; stderr: {(stderr.IsCompleted ? stderr.Result : "")}");
+            answer.ShouldNotBeNull($"the server answered tools/call before its stdout closed; stderr: {(stderr.IsCompleted ? await stderr : "")}");
             var content = ContentOf(answer.Value);
             var image = ImagesOf(content).ShouldHaveSingleItem();
             image.GetProperty("mimeType").GetString().ShouldBe("image/png");
