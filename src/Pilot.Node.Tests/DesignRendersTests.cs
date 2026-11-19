@@ -112,9 +112,9 @@ public sealed class DesignRendersTests : IAsyncLifetime
 
         var answer = await _node.Client.SendAsync(new CommandRequest { Verb = Verbs.DesignRenders, Target = Verbs.DesignTarget("DSN-1"), Args = ["", "", "nowhere", ""], Who = "test" }, Ct);
         answer.Response!.Ok.ShouldBeFalse();
-        answer.Response.Error.ShouldContain("the screens are");
+        answer.Response.Error!.ShouldContain("the screens are");
         var size = await _node.Client.SendAsync(new CommandRequest { Verb = Verbs.DesignRenders, Target = Verbs.DesignTarget("DSN-1"), Args = ["", "", "home", "99x99"], Who = "test" }, Ct);
-        size.Response!.Error.ShouldContain("the sizes are");
+        size.Response!.Error!.ShouldContain("the sizes are");
     }
 
     [Fact]
