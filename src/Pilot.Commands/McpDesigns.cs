@@ -34,6 +34,9 @@ internal static class McpDesigns
     internal static bool Is(string? uri) =>
         uri is not null && (uri == Root || uri.StartsWith(Root + "/", StringComparison.Ordinal) || uri.StartsWith(Root + "?", StringComparison.Ordinal));
 
+    /// <summary>The design a design resource URI names (its first path segment); null for the list itself.</summary>
+    internal static string? DesignOf(string uri) => Split(uri).Path is [var id, ..] ? id : null;
+
     /// <summary>The resources the list shows for the designs: the list, then each design's record, current document and chat.</summary>
     internal static McpResource[] Listed(DesignRow[] rows) =>
     [
@@ -116,7 +119,7 @@ internal static class McpDesigns
     private static McpServer.McpException NotFound(string why) => new(McpServer.ResourceNotFound, why);
 
     /// <summary>Design <paramref name="id"/> as <c>design show</c> reads it; a design the node does not have is refused naming the ones it has.</summary>
-    private static async Task<DesignDetail> ShowAsync(NodeClient client, string who, string id, CancellationToken cancellationToken)
+    internal static async Task<DesignDetail> ShowAsync(NodeClient client, string who, string id, CancellationToken cancellationToken)
     {
         var answer = await client.SendAsync(new CommandRequest { Verb = Verbs.DesignShow, Target = Verbs.DesignTarget(id), Who = who }, cancellationToken);
         if (answer is { Success: true, Response: { Ok: true, Design: { } design } })

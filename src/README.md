@@ -1105,8 +1105,19 @@ client is a Claude session), so it is an assistant's unless a session the node k
 (**Who may do what**).
 
 The **resources** are the snapshot's pieces as JSON, each row as the node's wire writes it: `pilot://flights`,
-`pilot://legs`, `pilot://cards`, `pilot://sessions`. The server is a hand-written JSON-RPC 2.0 loop (`initialize`,
-`ping`, `tools/list`, `tools/call`, `resources/list`, `resources/read`) on source-generated JSON, AOT like the rest.
+`pilot://legs`, `pilot://cards`, `pilot://sessions`. The designs are resources too: `pilot://designs` (the list) and, per
+design, its record, its DESIGN.md (current, a named version, the draft) with each frame linked to its render, each screen's
+render as `image/png` (at the design size, or a terminal size with `?size=<cols>x<rows>`) and its chat;
+`resources/templates/list` has the URI templates. A client that sent `resources/subscribe` for any URI of a design is
+told with `notifications/resources/updated` (that URI) when a version is published, the draft changes or the chat gets an
+entry, and every subscriber with `notifications/resources/list_changed` when a design is added or removed;
+`resources/unsubscribe` ends it. The node has no design event and the designer writes draft files directly, so the server
+itself watches: while anything is subscribed, one loop (every 15 s, the Designs page's own interval) reads each subscribed
+design's record and chat and compares the version count, a hash of the draft's `DESIGN.md` and `prototype.json` and the
+chat's last entry with what it saw last; a read that fails waits for the next tick. Replies and notices are written under
+one lock, so a notice never lands inside a reply line. The server is a hand-written JSON-RPC 2.0 loop (`initialize`,
+`ping`, `tools/list`, `tools/call`, `resources/list`, `resources/templates/list`, `resources/read`, `resources/subscribe`,
+`resources/unsubscribe`) on source-generated JSON, AOT like the rest.
 
 **Updates.** A server lives as long as its session and a host does not restart a stdio server it lost, so the server the
 client started watches the installed version (after each message and on a quiet timer) and, on a newer one, starts the
