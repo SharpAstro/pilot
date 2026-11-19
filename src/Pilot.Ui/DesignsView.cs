@@ -1313,7 +1313,6 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
             : WrappedProse.Of(cell.Heading, 16f, Bright, maxLines: 1).WStar()).HFixed(26f).Whole(cell.Heading);
         var tag = StateTag(page.CellIsDraft(index) ? "draft" : $"published in v{version}", page.CellIsDraft(index));
         List<Layout.Node> items = [];
-        _cellContentWidth = page.Document is not null && cell.Frames.Count > 0 ? WellInnerWidth() + 2f * WellPadX : null;
         items.AddRange(GitHubEditsAbove(page.Detail.Row, (index + 1).ToString(CultureInfo.InvariantCulture)));
         if (_edit == (index, "heading"))
         {
