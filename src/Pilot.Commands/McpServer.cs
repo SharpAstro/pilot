@@ -497,6 +497,12 @@ internal sealed class McpServer(string cwd, string? node, string? socket,
             // The CLI's "no node answers": for a server that stays up, the node is coming back, not to be started by hand.
             said = $"pilot: {Restarting} ({said.Replace("pilot: ", "")})";
         }
+        // Each picture's line goes beside its image, so the printed text drops it rather than saying it twice.
+        if (pictures.Count > 0)
+        {
+            var lines = pictures.Select(x => x.Line).ToHashSet(StringComparer.Ordinal);
+            said = string.Join('\n', said.Split('\n').Where(l => !lines.Contains(l.TrimEnd('\r')))).Trim();
+        }
         List<McpContent> content = [McpContent.OfText(said.Length > 0 ? said : exit == 0 ? "ok" : $"exit {exit}")];
         foreach (var (bytes, mime, line) in pictures)
         {

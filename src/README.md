@@ -738,12 +738,12 @@ designer that is working is never ended, and a designer never stops itself (the 
   screen and size asked for, each with a line naming design, version (or draft), screen, size and the prototype hash it was drawn
   from. No screen gives the entry screen and names the others. `DesignRenderCaps` limits a call to 4 pictures, 3 MB and 1600 px on
   the longest side; a larger picture is scaled down with SharpAstro.Png and says "scaled from WxH". A draft whose renders are older
-  than its `prototype.json` is answered as stale, not refused. `--output-format markdown` or `rich` writes the bytes under the
-  temp folder (`pilot-renders/<design>/`) and emits `![line](path)` per picture.
+  than its `prototype.json` is answered as stale, not refused. `--output-format rich` draws the pictures in the terminal;
+  `markdown` writes the bytes under the temp folder (`pilot-renders/<design>/`, names made path-safe) and emits `![line](path)` per picture.
 - **Looking at a design from another machine (PIL1186).** A session on another machine, claude.ai or a phone cannot open the
   node's paths, so over MCP it calls `design_renders` (`design`, optional `version`, `draft`, `screen`, `size`). The answer is
-  image content (`type: image`, base64 PNG, `mimeType: image/png`), one per picture, each beside its text line, followed by the
-  screens not sent, a stale note and any scaling note; the caps above apply per call, so ask for another `screen` to see more.
+  image content (`type: image`, base64 PNG, `mimeType: image/png`), one per picture, each beside its text line (the text part then holds only
+  what those lines do not: the screens not sent, a stale note and any cap note); the caps above apply per call, so ask for another `screen` to see more.
   Add `node` (a name such as DE1, a host or host:port, as the nodes tool lists them) to read another node's designs: the bytes
   travel from that node over the same connection, not a path. `design_show` ends with a line pointing to `design_renders`.
   The command tree hands pictures to its host through `PictureSink` (null for the CLI, which prints lines and, with

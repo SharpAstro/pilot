@@ -186,10 +186,10 @@ public sealed class DesignRendersMcpTests : IAsyncLifetime
         using var process = Process.Start(start)!;
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(Ct);
         deadline.CancelAfter(TimeSpan.FromSeconds(25));
+        // Drain stderr so a chatty child cannot block on a full pipe; awaited in the finally, so a timeout leaves no unobserved task.
+        var stderr = process.StandardError.ReadToEndAsync(CancellationToken.None);
         try
         {
-            // Drain stderr so a chatty child cannot block on a full pipe.
-            var stderr = process.StandardError.ReadToEndAsync(deadline.Token);
             await process.StandardInput.WriteLineAsync(McpTests.Initialize.AsMemory(), deadline.Token);
             await process.StandardInput.WriteLineAsync("""{"jsonrpc":"2.0","method":"notifications/initialized"}""".AsMemory(), deadline.Token);
             await process.StandardInput.WriteLineAsync(McpTests.Call(2, "design_renders", """{"design":"DSN-1"}""").AsMemory(), deadline.Token);
@@ -215,6 +215,7 @@ public sealed class DesignRendersMcpTests : IAsyncLifetime
         {
             process.Kill(entireProcessTree: true);
             await process.WaitForExitAsync(CancellationToken.None);
+            await stderr;
         }
     }
 }

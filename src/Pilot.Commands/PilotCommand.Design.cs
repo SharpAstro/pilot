@@ -69,6 +69,13 @@ public static partial class PilotCommand
         return text.ToString();
     }
 
+    /// <summary>A string the node sent, made fit to be one path segment: only letters, digits, '-', '_' and '.', and never '.' or '..' alone.</summary>
+    internal static string SafeName(string name)
+    {
+        var safe = string.Concat(name.Select(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_' or '.' ? c : '_'));
+        return safe.Trim('.').Length == 0 ? "_" : safe;
+    }
+
     /// <summary>Plain output: a line per picture, then the tail.</summary>
     internal static string DesignRendersPlain(DesignRenders renders)
     {
@@ -86,12 +93,12 @@ public static partial class PilotCommand
     /// </summary>
     internal static string DesignRendersMarkdown(DesignRenders renders)
     {
-        var folder = Path.Combine(Path.GetTempPath(), "pilot-renders", renders.Design, renders.Version is { } v ? "v" + v.ToString(CultureInfo.InvariantCulture) : "draft");
+        var folder = Path.Combine(Path.GetTempPath(), "pilot-renders", SafeName(renders.Design), renders.Version is { } v ? "v" + v.ToString(CultureInfo.InvariantCulture) : "draft");
         Directory.CreateDirectory(folder);
         var text = new StringBuilder();
         foreach (var picture in renders.Pictures)
         {
-            var file = Path.Combine(folder, $"{picture.Screen}.{picture.Size}.{(picture.PrototypeSha256 is { Length: >= 8 } h ? h[..8] : "nostamp")}.png");
+            var file = Path.Combine(folder, $"{SafeName(picture.Screen)}.{SafeName(picture.Size)}.{(picture.PrototypeSha256 is { Length: >= 8 } h ? h[..8] : "nostamp")}.png");
             File.WriteAllBytes(file, picture.Png);
             var label = DesignRenderLine(renders, picture).Replace('[', '(').Replace(']', ')');
             text.AppendLine($"![{label}](<{file.Replace('\\', '/')}>)").AppendLine();

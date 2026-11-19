@@ -97,7 +97,13 @@ public static class DesignRenderReader
             }
             var bytes = File.ReadAllBytes(e.File);
             var share = Math.Max(1, budget / (DesignRenderCaps.Pictures - pictures.Count));
-            var (png, width, height, scaledFrom) = Fit(bytes, share);
+            var fitted = Fit(bytes, share);
+            if (fitted is null)
+            {
+                notSent.Add($"{e.Screen} ({e.Size}): too large to send and could not be scaled down");
+                continue;
+            }
+            var (png, width, height, scaledFrom) = fitted.Value;
             budget -= png.Length;
             pictures.Add(new DesignRenderPicture { Screen = e.Screen, Size = e.Size, PrototypeSha256 = stamp, Png = png, Width = width, Height = height, ScaledFrom = scaledFrom, Path = e.File });
         }
@@ -131,12 +137,13 @@ public static class DesignRenderReader
         return dot < 0 ? (stem, "design", file) : (stem[..dot], stem[(dot + 1)..], file);
     }
 
-    /// <summary>The picture itself when it is within the side and byte caps, else decoded, scaled down (nearest neighbour) and encoded again.</summary>
-    private static (byte[] Png, int Width, int Height, string? ScaledFrom) Fit(byte[] encoded, int byteShare)
+    /// <summary>The picture itself when it is within the side and byte caps, else decoded, scaled down (box average, so text stays legible) and encoded again; null when it is over a cap and cannot be read or decoded.</summary>
+    private static (byte[] Png, int Width, int Height, string? ScaledFrom)? Fit(byte[] encoded, int byteShare)
     {
         if (!ImageCodecs.TryReadInfo(encoded, out var info))
         {
-            return (encoded, 0, 0, null);
+            // Unreadable: sent as it is only when it is within the byte cap, never an oversize file unscaled.
+            return encoded.Length <= byteShare ? (encoded, 0, 0, null) : null;
         }
         var side = Math.Max(info.Width, info.Height);
         if (side <= DesignRenderCaps.LongestSide && encoded.Length <= byteShare)
@@ -146,7 +153,7 @@ public static class DesignRenderReader
         var rgba = new byte[info.Width * info.Height * 4];
         if (!ImageCodecs.TryDecodeIntoRgba8(encoded, rgba))
         {
-            return (encoded, info.Width, info.Height, null);
+            return null;
         }
         var factor = Math.Min(1.0, (double)DesignRenderCaps.LongestSide / side);
         var width = info.Width;
@@ -160,11 +167,36 @@ public static class DesignRenderReader
             var dst = new byte[dstW * dstH * 4];
             for (var y = 0; y < dstH; y++)
             {
-                var sy = Math.Min(info.Height - 1, (int)((long)y * info.Height / dstH));
+                var y0 = (int)((long)y * info.Height / dstH);
+                var y1 = Math.Min(info.Height, Math.Max(y0 + 1, (int)((long)(y + 1) * info.Height / dstH)));
                 for (var x = 0; x < dstW; x++)
                 {
-                    var sx = Math.Min(info.Width - 1, (int)((long)x * info.Width / dstW));
-                    rgba.AsSpan((sy * info.Width + sx) * 4, 4).CopyTo(dst.AsSpan((y * dstW + x) * 4, 4));
+                    var x0 = (int)((long)x * info.Width / dstW);
+                    var x1 = Math.Min(info.Width, Math.Max(x0 + 1, (int)((long)(x + 1) * info.Width / dstW)));
+                    // Box average of the source block, alpha-weighted so a transparent pixel adds no colour.
+                    long r = 0, g = 0, b = 0, a = 0;
+                    var count = 0;
+                    for (var sy = y0; sy < y1; sy++)
+                    {
+                        for (var sx = x0; sx < x1; sx++)
+                        {
+                            var i = (sy * info.Width + sx) * 4;
+                            var al = rgba[i + 3];
+                            r += rgba[i] * al;
+                            g += rgba[i + 1] * al;
+                            b += rgba[i + 2] * al;
+                            a += al;
+                            count++;
+                        }
+                    }
+                    var o = (y * dstW + x) * 4;
+                    if (a > 0)
+                    {
+                        dst[o] = (byte)(r / a);
+                        dst[o + 1] = (byte)(g / a);
+                        dst[o + 2] = (byte)(b / a);
+                    }
+                    dst[o + 3] = count > 0 ? (byte)(a / count) : (byte)0;
                 }
             }
             current = PngWriter.Encode(dst, dstW, dstH);

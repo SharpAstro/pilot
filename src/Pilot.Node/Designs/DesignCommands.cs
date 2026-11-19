@@ -107,7 +107,16 @@ public sealed class DesignCommands(NodeState state, DesignStore store, Designers
                     return state.Complete(command, null, made: $"{ghId} GitHub edit of the {ghWhere}: {ghAction}");
                 case Verbs.DesignRenders:
                     // args: version (empty for the current one), "draft" or empty, screen, size.
-                    int? asked = args.Length > 0 && args[0].Length > 0 ? int.Parse(args[0].TrimStart('v', 'V'), System.Globalization.CultureInfo.InvariantCulture) : null;
+                    int? asked = null;
+                    if (args.Length > 0 && args[0].Length > 0)
+                    {
+                        // A version that is not a number, or too large for an int, is a refusal naming it, never an unhandled OverflowException.
+                        if (!int.TryParse(args[0].TrimStart('v', 'V'), System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var parsed))
+                        {
+                            throw new DesignException($"'{args[0]}' is not a version number");
+                        }
+                        asked = parsed;
+                    }
                     var renders = DesignRenderReader.Read(store, IdOf(command), asked, args.Length > 1 && args[1] == "draft", args.Length > 2 ? args[2] : null, args.Length > 3 ? args[3] : null);
                     return state.Complete(command, null) with { DesignRenders = renders };
                 case Verbs.DesignShow:
