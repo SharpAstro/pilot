@@ -49,7 +49,7 @@ internal static class TerminalFrame
         if (bar is { } sized)
         {
             // A cell is 8 design units wide; a docked bar that would leave the page too narrow is drawn over it.
-            sized.Host.RoomUnits = columns * 8f;
+            sized.Host.RoomUnits = NotificationsHost.TerminalRoom(columns);
         }
         var frame = Clip(Layout.Engine.Arrange(Tree(rail, page, cards, bar), window, measure));
         return tooltip is { } due ? frame.AddRange(Layout.Engine.Arrange(TooltipLayer<RgbaImage>.Tree(due), window, measure)) : frame;

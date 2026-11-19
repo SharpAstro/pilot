@@ -547,7 +547,7 @@ while (!stop.IsCancellationRequested)
         bar.Sync(pages.Cards.Open, card => cards.NodeOf(card)?.Name, now);
         chrome.ObserveEvents(pages.Jobs, pages.Flights, null, now);
         var cardsOver = bar.Open && (pages.Cards.HasAny || cards.CanTell && !cards.OnChatPage);
-        bar.RoomUnits = columns * 8f;
+        bar.RoomUnits = NotificationsHost.TerminalRoom(columns);
         var dockedBar = bar.DockedNow && cardsOver && page != PilotPage.Notifications;
         chat.CellColumns = TerminalFrame.PageColumnsWithBar(columns, dockedBar);
         if (page == PilotPage.Designs)

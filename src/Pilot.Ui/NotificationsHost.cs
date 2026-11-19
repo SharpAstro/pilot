@@ -161,6 +161,9 @@ internal sealed class NotificationsHost
     /// <summary>Whether the bar is docked in the window as drawn: set to dock and leaving the page <see cref="MinPageUnits"/>; a narrower window draws it over the page, as the strip used to give way.</summary>
     public bool DockedNow => Docked && (RoomUnits is not { } room || room >= NeededRoom);
 
+    /// <summary>The room in design units a terminal of <paramref name="columns"/> gives the bar and the page: the bar takes whole columns, so the part of a column it does not use is not room.</summary>
+    public static float TerminalRoom(int columns) => columns * 8f - (MathF.Ceiling(Style.BarWidth / 8f) * 8f - Style.BarWidth);
+
     private float NeededRoom => Style.BarWidth + MinPageUnits;
 
     /// <summary>Sets <see cref="RoomUnits"/> from the window's size in pixels, the window's scale and the rail's width in design units.</summary>

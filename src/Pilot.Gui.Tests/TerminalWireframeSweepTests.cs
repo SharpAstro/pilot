@@ -88,7 +88,7 @@ public static class TerminalWireframeSweepTests
         {
             // The bar pinned: as Program.cs, the page has the columns less the bar's, unless the window is too narrow and the bar opens over it.
             chrome.Notifications.State = BarStates.Docked;
-            chrome.Notifications.RoomUnits = columns * 8f;
+            chrome.Notifications.RoomUnits = NotificationsHost.TerminalRoom(columns);
             cardsBeside = false;
         }
         var dockedBar = barShown && chrome.Notifications.DockedNow;
@@ -448,7 +448,7 @@ public sealed class TerminalWireframeRegressionTests
 public sealed class TerminalDockedBarSweepTests
 {
     public static IEnumerable<TheoryDataRow<string, string, int, int>> DockedCases() =>
-        from size in new[] { (80, 24), (100, 30), (120, 30) }
+        from size in new[] { (80, 24), (100, 30), (160, 44) }
         from page in TerminalWireframeSweepTests.Cases.Where(c => c != "tooltip open")
         select new TheoryDataRow<string, string, int, int>(page, "long", size.Item1, size.Item2) { TestDisplayName = TerminalWireframeSweepTests.Key(page, "long", size.Item1, size.Item2) + " | docked" };
 
