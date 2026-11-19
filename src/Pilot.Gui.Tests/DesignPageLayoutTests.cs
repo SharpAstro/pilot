@@ -102,4 +102,41 @@ public sealed class DesignPageLayoutTests
         (well.Bottom - toolbar.Bottom).ShouldBe(12f, 0.5f);
         (toolbar.Y - frame.Bottom).ShouldBe(4f, 0.5f);
     }
+
+    private static List<(string Text, Rect<float> Bounds)> Texts(List<Layout.ArrangedNode<float>> all) =>
+        all.Where(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text }).Select(a => (((Layout.Content.Text)((Layout.Node.Leaf)a.Node).Content).Value, a.Bounds)).ToList();
+
+    [Fact]
+    public void BuildThisVersionIsOnTheBackRowAfterTheVersionChipAndNoBuildHeadingIsInTheDocument()
+    {
+        using var rig = new Rig(1920, 1080);
+        var all = rig.Arranged();
+        var chip = all.First(a => a.Node.Hit is HitResult.ButtonHit { Action: "designs:versions" }).Bounds;
+        var build = all.Single(a => a.Node.Hit is HitResult.ButtonHit { Action: "designs:build" }).Bounds;
+        build.X.ShouldBeGreaterThanOrEqualTo(chip.Right, "after the chip");
+        build.Y.ShouldBe(chip.Y, 0.5f, "one row");
+        build.Height.ShouldBe(chip.Height, 0.5f, "one height");
+        Texts(all).ShouldNotContain(t => t.Text == "Build", "no Build heading");
+        // The first cell is not pushed down by a Build part: its number box is the first thing under the back row, with nothing between.
+        var number = Texts(all).First(t => t.Text == "1").Bounds;
+        number.Y.ShouldBeLessThan(build.Bottom + 80f);
+    }
+
+    [Fact]
+    public void ACellsStateTagFollowsItsHeadingNotTheCellsRightEdge()
+    {
+        using var rig = new Rig(1920, 1080);
+        var all = rig.Arranged();
+        var tag = Texts(all).First(t => t.Text.StartsWith("published in", StringComparison.Ordinal) || t.Text == "draft" && t.Bounds.Y > 100f);
+        var heading = Texts(all).Where(t => t.Bounds.Y < tag.Bounds.Bottom && t.Bounds.Bottom > tag.Bounds.Y && t.Bounds.Right <= tag.Bounds.X && t.Text != "1").OrderByDescending(t => t.Bounds.Right).First();
+        (tag.Bounds.X - heading.Bounds.Right).ShouldBeLessThan(40f, "the tag follows the heading by a gap");
+    }
+
+    [Fact]
+    public void AnEditableCurrentDesignWithNoObjectiveOffersAddObjective()
+    {
+        using var rig = new Rig(1920, 1080);
+        rig.View.OnEdit = (_, _, _, _) => { };
+        Texts(rig.Arranged()).ShouldContain(t => t.Text == DesignsView<RgbaImage>.AddObjective);
+    }
 }

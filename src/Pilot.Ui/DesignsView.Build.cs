@@ -141,8 +141,8 @@ internal sealed partial class DesignsView<TSurface>
         }
     }
 
-    // The right column's Build part: the flights built from the version on show, one line each (code linking to the flight, its state, its PR linking to GitHub),
-    // then the button, or the question it asks first. Each line is one height with its middle, and what does not fit is cut with an ellipsis and whole on hover.
+    // The document's short line under the first row (PIL1191): the flights built from the version on show, one line each (code linking to the flight, its state, its PR linking
+    // to GitHub), the question the build asks first, and what the node answered. No heading, and nothing at all while there is nothing to show. The button itself is on the back row.
     private IEnumerable<Layout.Node> BuildPart(DesignPage page)
     {
         if (page.Version is not { } version)
@@ -150,7 +150,6 @@ internal sealed partial class DesignsView<TSurface>
             yield break;
         }
         var row = page.Detail.Row;
-        yield return Heading("Build");
         var built = BuiltFrom(_buildScreen, row.Id, version);
         foreach (var flight in built.OrderByDescending(f => f.CreatedAt).Take(3))
         {
@@ -166,10 +165,6 @@ internal sealed partial class DesignsView<TSurface>
             {
                 yield return node;
             }
-        }
-        else
-        {
-            yield return BuildButtonRow(row, version);
         }
         if (_buildNote is { } note)
         {
@@ -199,17 +194,22 @@ internal sealed partial class DesignsView<TSurface>
         return Layout.Builder.HStack([.. parts]).WithGap(6f).RowH(26f);
     }
 
-    private Layout.Node BuildButtonRow(DesignRow row, int version)
+    /// <summary>The Build this version button for the back row (PIL1191), after the version chip: one height, the same Presses feedback. Null with no version, or while a flight of it flies.</summary>
+    private Layout.Node? BuildButton(DesignPage page)
     {
+        if (page.Version is not { } version || InTheAir(_buildScreen, page.Detail.Row.Id, version) is not null)
+        {
+            return null;
+        }
+        var row = page.Detail.Row;
         Layout.Node Label(string text, RGBAColor32 color) => Layout.Builder.Text(text, 12f, color, TextAlign.Center, TextAlign.Center).Pad(10f, 0f).WAuto().Bg(Button);
         var target = NeedsRepo(row) ? "in the repo you pick" : NeedsMilestone(row) ? $"its idea {row.Ideas()[0]}, in the milestone you pick" : $"in {row.Repo}";
-        var button = StartPresses.Button(BuildKey, BuildKey,
+        return StartPresses.Button(BuildKey, BuildKey,
             () => Label(BuildLabel, Bright)
                 .BgHover(ButtonHover)
                 .WithTooltip($"Files an issue with v{version} of {row.Id} and flies it {target}; the review holds the build to this version")
                 .Follows(new HitResult.ButtonHit(BuildKey), _ => Build()),
-            _ => Label("Building…", Dim).WithTooltip($"Building v{version} of {row.Id}"));
-        return Layout.Builder.HStack(button.WAuto().HFixed(26f)).WithGap(6f).RowH(26f);
+            _ => Label("Building…", Dim).WithTooltip($"Building v{version} of {row.Id}")).WAuto().HFixed(BackRowH);
     }
 
     // The question before the send: the repos of the node (a design with no repo), then the open milestones of the idea's repo, as chips of one row height.
