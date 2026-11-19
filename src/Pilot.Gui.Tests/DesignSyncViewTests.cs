@@ -97,6 +97,22 @@ public sealed class DesignSyncViewTests
     }
 
     [Fact]
+    public void ALandedPlacedBuildShowsItsBuiltPlaceWholeAtNarrowAndWideSizes()
+    {
+        var record = new DesignRecordRow { Flight = "PIL2", Version = 2, Landed = "closed", Folder = "docs/designs/1208", MergeCommit = "0123456789abcdef0123456789abcdef01234567" };
+        const string line = "Built: SharpAstro/pilot docs/designs/1208 at 0123456, v2";
+        foreach (var (w, h) in new[] { (1920, 1080), (640, 800) })
+        {
+            using var rig = new Rig(With(r => r with { IssueRepo = Repo, IssueNumber = 1208, SyncedVersion = 2, Record = [record] }), w, h);
+
+            Says(rig, line).ShouldBeTrue();
+            TextOverlap.Faults([.. rig.Arranged()]).Select(f => f.Line).ShouldBeEmpty();
+        }
+        using var without = new Rig(With(r => r with { IssueRepo = Repo, IssueNumber = 1208, SyncedVersion = 2 }));
+        Says(without, "Built:").ShouldBeFalse();
+    }
+
+    [Fact]
     public void OnceTheVersionIsOnTheIssueTheLineSaysSo()
     {
         using var rig = new Rig(With(r => r with { IssueRepo = Repo, IssueNumber = 1171, SyncedVersion = 2 }));

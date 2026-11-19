@@ -127,6 +127,10 @@ public static partial class PilotCommand
         {
             text.AppendLine($"terminals: {string.Join(' ', row.Terminals)}");
         }
+        if (DesignSyncText.BuiltPlace(row) is { } built)
+        {
+            text.AppendLine($"built: {built}");
+        }
         text.AppendLine($"folder: {design.Folder}");
         text.AppendLine($"draft: {design.DraftFolder}");
         text.AppendLine($"pictures: pilot design renders {row.Id} (the design_renders tool over MCP) gives the renders as images, for a session that cannot open these paths");

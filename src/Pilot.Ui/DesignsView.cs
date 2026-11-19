@@ -1179,6 +1179,11 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
         }
         var notebook = page.Notebook;
         // The title and the sync state are on the back row above (PIL1183): the document starts with what the design is for.
+        if (DesignSyncText.BuiltPlace(row) is { } place)
+        {
+            var built = "Built: " + place;
+            items.Add(WrappedProse.OneLine(built, 12f, Dim).RowH(22f).Whole(built));
+        }
         items.AddRange(LockLines(row));
         if (OnEdit is not null && !ReadOnly(row) && !OnCurrent(page) && row.Current is { } now)
         {

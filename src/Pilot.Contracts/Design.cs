@@ -397,6 +397,27 @@ public static class DesignSyncText
     /// <summary>The Designs line of a built design whose files are on the default branch: the folder at the merge commit.</summary>
     public static string PlacedAt(string repo, string commit, string folder) => $"files in [{folder}]({FolderLink(repo, commit, folder)})";
 
+    /// <summary>
+    /// Where a design's built version lives in its repo (PIL1208): the latest landed record row with a folder and a merge commit, as
+    /// <c>&lt;owner/repo&gt; docs/designs/&lt;n&gt; at &lt;short sha&gt;, v&lt;k&gt;</c>. Null while no placed build has landed. One source for
+    /// <c>pilot design show</c> and the Designs page.
+    /// </summary>
+    public static string? BuiltPlace(DesignRow row)
+    {
+        if ((row.IssueRepo ?? row.Repo) is not { Length: > 0 } repo)
+        {
+            return null;
+        }
+        var landed = row.Record.LastOrDefault(r => r.Landed is { Length: > 0 } && r.Folder is { Length: > 0 } && r.MergeCommit is { Length: > 0 });
+        if (landed is null)
+        {
+            return null;
+        }
+        var commit = landed.MergeCommit!;
+        var shortSha = commit.Length > 7 ? commit[..7] : commit;
+        return $"{repo} {landed.Folder} at {shortSha}, v{N(landed.Version)}";
+    }
+
     /// <summary>The Designs line of a design whose files stay on its branch because its issue is in another repo.</summary>
     public static string Elsewhere(int issue, string repo) => $"files stay on {Branch(issue)} of {repo}";
 
