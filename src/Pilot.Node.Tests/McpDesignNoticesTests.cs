@@ -66,7 +66,7 @@ public sealed class McpDesignNoticesTests : IAsyncLifetime
     private async Task<JsonElement> Request(string method, string uri)
     {
         var id = _next++;
-        _input.Write($$"""{"jsonrpc":"2.0","id":{{id}},"method":"{{method}}","params":{"uri":"{{uri}}"}}""");
+        _input.Write($$$"""{"jsonrpc":"2.0","id":{{{id}}},"method":"{{{method}}}","params":{"uri":"{{{uri}}}"}}""");
         var reply = await _output.NextAsync();
         reply.GetProperty("id").GetInt32().ShouldBe(id);
         return reply;
