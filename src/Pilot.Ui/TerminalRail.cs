@@ -31,10 +31,13 @@ internal static class TerminalRail
     /// <summary>An entry's width in the layout's units, where one terminal cell is 8 wide: declared once, so the tree holds no sum.</summary>
     private const float EntryWidth = EntryCells * 8f;
 
-    private const float NarrowEntryWidth = NarrowEntryCells * 8f;
+    /// <summary>
+    /// The cells an entry takes in a narrow terminal: only Ideas carries a count after its glyph, so it keeps <see cref="NarrowEntryCells"/>
+    /// and every other entry is one cell less (13 pages fit 72 columns, as 12 did at 6 each).
+    /// </summary>
+    public static int NarrowCellsOf(PilotPage page) => page == PilotPage.Ideas ? NarrowEntryCells : NarrowEntryCells - 1;
 
-    /// <summary>The glyph's cells in a narrow entry.</summary>
-    private const int NarrowGlyphCells = 3;
+    private static int NarrowGlyphCellsOf(PilotPage page) => NarrowCellsOf(page) - 3;
 
     /// <summary>Whether a terminal this many columns wide gets narrow entries.</summary>
     public static bool IsNarrow(int columns) => columns < FullColumns;
@@ -128,7 +131,7 @@ internal static class TerminalRail
     public static string EntryText(PilotPage page, GlyphMode mode, JobsScreen? jobs, IdeasScreen? ideas, DateTimeOffset now, bool narrow = false)
     {
         var glyph = Glyph(page, mode, jobs, ideas, now);
-        var cells = narrow ? NarrowGlyphCells : GlyphCells;
+        var cells = narrow ? NarrowGlyphCellsOf(page) : GlyphCells;
         if (glyph.Length > cells)
         {
             glyph = glyph[..cells];
@@ -187,7 +190,7 @@ internal static class TerminalRail
         {
             var on = k.Page == active;
             return Layout.Builder.Text(Remember(memory, k.Page, EntryText(k.Page, mode, jobs, ideas, now, narrow)), 12f, on ? palette.Bright : palette.Dim, TextAlign.Near, TextAlign.Center)
-                .WFixed(narrow ? NarrowEntryWidth : EntryWidth)
+                .WFixed(narrow ? NarrowCellsOf(k.Page) * 8f : EntryWidth)
                 .HFixed(16f)
                 .Bg(on ? palette.RowFocusBg : palette.RowAltBg)
                 .BgHover(palette.RowHoverBg)
