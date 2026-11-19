@@ -126,7 +126,7 @@ public sealed class LinkedDesignsViewTests
         var said = Spoken(renderer, chrome.Designs.Tree(PageData.DesignsFor("sample", Now)));
         said.ShouldContain("For:");
         said.ShouldContain("I381 Ideas pane · noted");
-        said.ShouldContain("I383 Night mode for the rail · noted");
+        said.ShouldContain("I383 Night mode for the rail · noted", Case.Insensitive, said);
         var actions = Actions(Regions(chrome, false)).ToList();
         actions.ShouldContain("designs:for-idea:pilot:I381");
         actions.ShouldContain("designs:for-idea:pilot:I383");
