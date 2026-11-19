@@ -111,7 +111,8 @@ public sealed class DesignVersionNoticeViewTests
         regions.Single(r => r.Result is HitResult.ButtonHit { Action: "flight:PIL1185:replan:DSN-1" }).OnClick!.Invoke(InputModifier.None);
 
         var sent = acted.ShouldHaveSingleItem();
-        (sent.Verb, sent.Target, sent.Args).ShouldBe((Verbs.DesignReplan, "flight/PIL1185", new[] { "DSN-1" }));
+        (sent.Verb, sent.Target).ShouldBe((Verbs.DesignReplan, "flight/PIL1185"));
+        sent.Args.ShouldBe(["DSN-1"]);
     }
 
     [Fact]
@@ -162,7 +163,8 @@ public sealed class DesignVersionNoticeViewTests
         button.OnClick!.Invoke(InputModifier.None);
 
         var request = sent.ShouldHaveSingleItem();
-        (request.Verb, request.Target, request.Args).ShouldBe((Verbs.DesignReplan, "flight/PIL1185", new[] { "DSN-1" }));
+        (request.Verb, request.Target).ShouldBe((Verbs.DesignReplan, "flight/PIL1185"));
+        request.Args.ShouldBe(["DSN-1"]);
     }
 
     [Fact]
