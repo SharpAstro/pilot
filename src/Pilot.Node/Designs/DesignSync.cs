@@ -326,9 +326,7 @@ public sealed class DesignSync(DesignStore store, RepoCatalog repos, IGitHub git
             else
             {
                 // A design closed because a flight built it has a version again that nothing built (PIL1185).
-                await github.ReopenIssueAsync(info.Path, issue, $"{sent}
-
-v{version.ToString(CultureInfo.InvariantCulture)} is published and is not built yet, so the issue is open again.", token).ConfigureAwait(false);
+                await github.ReopenIssueAsync(info.Path, issue, $"{sent}\n\nv{version.ToString(CultureInfo.InvariantCulture)} is published and is not built yet, so the issue is open again.", token).ConfigureAwait(false);
             }
             var at = time.GetUtcNow();
             store.Update(row.Id, r => r with
