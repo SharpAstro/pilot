@@ -229,7 +229,7 @@ public sealed class NotificationsBarTests
                 var host = new NotificationsHost();
                 collapsed.Attach(host);
                 host.Open.ShouldBeFalse("the window comes back collapsed");
-                host.Open = true;
+                host.State = BarStates.Docked;
                 collapsed.Flush();
             }
             File.ReadAllText(path).ShouldNotContain("notificationsBar", Case.Insensitive, "docked is the default, and null is not written");

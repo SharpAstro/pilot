@@ -94,8 +94,12 @@ public sealed class NotificationsDockTests
         var (docked, dockedRenderer) = Draw(BarStates.Docked);
         using var __ = dockedRenderer;
         var dockedPage = docked.PageBounds!.Value;
+        var under = new List<ClickableRegion>();
+        docked.NotificationsLayer.CollectPaintedRegions(under);
+        var here = string.Join("; ", under.Where(r => r.X <= dockedPage.X + 200f && dockedPage.X + 200f <= r.X + r.Width && r.Y <= dockedPage.Y + 200f && dockedPage.Y + 200f <= r.Y + r.Height)
+            .Select(r => $"{r.Result} {r.X},{r.Y} {r.Width}x{r.Height}"));
         Press(docked, dockedPage.X + 200f, dockedPage.Y + 200f);
-        docked.Notifications.State.ShouldBe(BarStates.Docked, "a docked bar stays while the page is used");
+        docked.Notifications.State.ShouldBe(BarStates.Docked, "a docked bar stays while the page is used; regions there: " + here);
     }
 
     [Theory]
