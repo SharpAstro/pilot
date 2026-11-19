@@ -99,6 +99,36 @@ public sealed class FlightDesignsTests : IDisposable
         comment.Body.ShouldContain("v1");
     }
 
+    // A link is written as pilot I1; the idea moved to pilot I2, so plan-idea and design-from-idea find the design whichever id they are asked with.
+    [Theory]
+    [InlineData(1)]
+    [InlineData(2)]
+    public async Task AMovedIdeaIsPlannedWithItsDesignAndAsksForNoSecondDesignWhicheverIdIsUsed(int asked)
+    {
+        var design = Design("Shadows", "shadows", 1);
+        State.PutIdeaMove(new IdeaMoveRow("pilot", "I1", "pilot", "I2"));
+
+        var existing = await Commander.RunAsync(new CommandRequest { Verb = Verbs.DesignFromIdea, Target = Idea(asked), Who = "tests" }, Ct);
+        existing.Made.ShouldBe(design.Id);
+        _store.List().ShouldHaveSingleItem();
+
+        var planned = await Plan(asked);
+
+        planned.Ok.ShouldBeTrue(planned.Error);
+        State.Flights().ShouldHaveSingleItem().Designs.Select(d => (d.Id, d.Version)).ShouldBe([(design.Id, design.Current!.Value)]);
+    }
+
+    [Fact]
+    public async Task AMovedIdeaWhoseDesignHasNoVersionIsRefusedWhicheverIdIsUsed()
+    {
+        var draft = Design("Shadows", "shadows", 1, publish: false);
+        State.PutIdeaMove(new IdeaMoveRow("pilot", "I1", "pilot", "I2"));
+
+        (await Plan(2)).Error.ShouldNotBeNull().ShouldContain($"{draft.Id} has no published version");
+        (await Plan(1)).Error.ShouldNotBeNull().ShouldContain($"{draft.Id} has no published version");
+        State.Flights().ShouldBeEmpty();
+    }
+
     [Fact]
     public async Task AFlightFromAnIdeaWithNoDesignHoldsNone()
     {

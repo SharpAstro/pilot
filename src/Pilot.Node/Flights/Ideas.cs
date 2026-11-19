@@ -611,7 +611,7 @@ public sealed partial class IdeaCommander(NodeState state, Planes planes, RepoCa
         var target = existing?.Title ?? wanted;
 
         // An idea marked as needing a design waits for one (PIL1152): its design must have a published version, or the person plans anyway.
-        var linked = Designs?.ForIdea(NodeState.IdeaKey(name, id)) ?? [];
+        var linked = Designs?.ForIdea(NodeState.IdeaKey(name, id), state.IdeaMoves()) ?? [];
         var published = linked.Where(d => d.Current is not null).ToArray();
         if (!anyway && linked.FirstOrDefault(d => d.Current is null) is { } unpublished)
         {
@@ -840,7 +840,7 @@ public sealed partial class IdeaCommander(NodeState state, Planes planes, RepoCa
         var (name, _, issue) = await IdeaOfAsync(command, cancellationToken);
         var id = IdeaIds.Id(issue.Number);
         var key = NodeState.IdeaKey(name, id);
-        if (store.FindByIdea(key) is { } existing)
+        if (store.FindByIdea(key, state.IdeaMoves()) is { } existing)
         {
             return state.Complete(command, null, made: existing.Id);
         }

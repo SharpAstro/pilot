@@ -34,11 +34,18 @@ internal static class IdeaDesignMark<TSurface>
     internal static IdeaDesignLink[] DesignsOf(IdeaRow idea) =>
         idea.Designs.Length > 0 ? idea.Designs : idea.Design is { } id ? [new IdeaDesignLink(id, null, idea.DesignVersion)] : [];
 
-    /// <summary>Whether Plan must ask first: the idea is marked and its design has no published version (or it has no design at all).</summary>
-    internal static bool PlanAsksFirst(IdeaRow idea) => idea.NeedsDesign && DesignsOf(idea).All(d => d.Version is null);
+    /// <summary>
+    /// Whether Plan must ask first, as the node refuses otherwise: any linked design has no published version, or the idea is marked and none of its
+    /// designs has one (or it has no design at all).
+    /// </summary>
+    internal static bool PlanAsksFirst(IdeaRow idea) =>
+        DesignsOf(idea) is var designs && (designs.Any(d => d.Version is null) || idea.NeedsDesign && designs.Length == 0);
 
-    /// <summary>The question Plan asks first, in words.</summary>
-    internal static string Question(string name) => $"{name} needs a design and has none yet. Start its design, or plan it anyway.";
+    /// <summary>The question Plan asks first, in words; it names each linked design that has no published version.</summary>
+    internal static string Question(IdeaRow idea, string name) =>
+        DesignsOf(idea).Where(d => d.Version is null).Select(d => d.Id).ToArray() is { Length: > 0 } unpublished
+            ? $"{string.Join(", ", unpublished)} {(unpublished.Length == 1 ? "has" : "have")} no published version yet. Start its design, or plan {name} anyway."
+            : $"{name} needs a design and has none yet. Start its design, or plan it anyway.";
 
     /// <summary>
     /// The mark and the design link on one line, or null when the idea has neither. <paramref name="hit"/> names the link in the view (a hit id is

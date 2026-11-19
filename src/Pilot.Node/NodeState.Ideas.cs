@@ -179,12 +179,7 @@ public sealed partial class NodeState
         {
             foreach (var key in d.Ideas())
             {
-                var followed = key;
-                if (IdeaIds.Parse(key).Ref is { Repo: { } repo } parsed)
-                {
-                    var at = IdeaIds.Follow(moves, repo, parsed.Number);
-                    followed = IdeaKey(at.Repo, IdeaIds.Id(at.Number));
-                }
+                var followed = Pilot.Node.Designs.DesignStore.Followed(key, moves);
                 if (!byIdea.TryGetValue(followed, out var list))
                 {
                     byIdea[followed] = list = [];

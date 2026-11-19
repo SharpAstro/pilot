@@ -12,7 +12,7 @@ internal sealed partial class IdeasView<TSurface>
         switch (mode)
         {
             case Mode.Plan when _designAsk == KeyOf(idea):
-                yield return WrappedProse.Of(IdeaDesignMark<TSurface>.Question(Name(idea)), 13f, P.Body).WStar();
+                yield return WrappedProse.Of(IdeaDesignMark<TSurface>.Question(idea, Name(idea)), 13f, P.Body).WStar();
                 yield return Layout.Builder.WrapH(
                         NodeButton(idea, IdeaDesignMark<TSurface>.StartLabel, "design-start", "starting its design", () => Run(() => StartDesignAsync(idea), $"start the design of {idea.Id}"), Lit),
                         CardsView<TSurface>.Pill(IdeaDesignMark<TSurface>.PlanAnywayLabel, $"ideas:plan-anyway:{KeyOf(idea)}", () => PlanAnyway(idea), Tint, P.Bright),

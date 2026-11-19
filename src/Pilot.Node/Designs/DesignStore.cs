@@ -188,13 +188,33 @@ public sealed class DesignStore(string dataFolder, TimeProvider? time = null)
         }
     }
 
-    /// <summary>Every design made here that is for the idea <paramref name="idea"/> (qualified, <c>pilot I381</c>; any case), oldest first (#1185).</summary>
-    public DesignRow[] ForIdea(string idea) =>
-        [.. List().Where(d => d.MadeOn is null && d.Ideas().Contains(idea, StringComparer.OrdinalIgnoreCase)).OrderBy(d => int.Parse(d.Id.AsSpan(4), NumberStyles.None, CultureInfo.InvariantCulture))];
+    /// <summary>
+    /// Every design made here that is for the idea <paramref name="idea"/> (qualified, <c>pilot I381</c>; any case), oldest first (#1185). With the
+    /// idea moves (<paramref name="moves"/>) a link and the idea asked for are both followed to where the idea is now (<see cref="IdeaIds.Follow"/>),
+    /// the one rule the idea rows use too.
+    /// </summary>
+    public DesignRow[] ForIdea(string idea, IEnumerable<IdeaMoveRow>? moves = null)
+    {
+        var all = moves?.ToArray() ?? [];
+        var wanted = Followed(idea, all);
+        return [.. List().Where(d => d.MadeOn is null && d.Ideas().Any(k => string.Equals(Followed(k, all), wanted, StringComparison.OrdinalIgnoreCase)))
+            .OrderBy(d => int.Parse(d.Id.AsSpan(4), NumberStyles.None, CultureInfo.InvariantCulture))];
+    }
+
+    /// <summary>The idea key <paramref name="key"/> at the place its idea is now, after the moves; a key that is no idea reference stays as it is.</summary>
+    public static string Followed(string key, IReadOnlyCollection<IdeaMoveRow> moves)
+    {
+        if (moves.Count > 0 && IdeaIds.Parse(key).Ref is { Repo: { } repo } parsed)
+        {
+            var at = IdeaIds.Follow(moves, repo, parsed.Number);
+            return NodeState.IdeaKey(at.Repo, IdeaIds.Id(at.Number));
+        }
+        return key;
+    }
 
     /// <summary>The design for the idea <paramref name="fromIdea"/> to answer with: the oldest one with a published version, else the oldest; null when there is none.</summary>
-    public DesignRow? FindByIdea(string fromIdea) =>
-        ForIdea(fromIdea) is { Length: > 0 } all ? all.FirstOrDefault(d => d.Current is not null) ?? all[0] : null;
+    public DesignRow? FindByIdea(string fromIdea, IEnumerable<IdeaMoveRow>? moves = null) =>
+        ForIdea(fromIdea, moves) is { Length: > 0 } all ? all.FirstOrDefault(d => d.Current is not null) ?? all[0] : null;
 
     /// <summary>Links design <paramref name="id"/> to the idea <paramref name="idea"/> (qualified); a link there already is no change. Returns the record and whether it changed.</summary>
     public (DesignRow Row, bool Changed) Link(string id, string idea)
