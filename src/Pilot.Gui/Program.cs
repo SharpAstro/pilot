@@ -1210,6 +1210,7 @@ void RenderFrame()
     if (designReads is not null && chrome.Page is PilotPage.Flights or PilotPage.Ideas)
     {
         // The Flights page's notice (a design has a newer version than the flight builds) and the Ideas page's Link a design read the same list.
+        // So a design version published raises its toast only on the Designs, Flights and Ideas pages (the off-page read is carried by #1196, R1.1(i)).
         designReads.AskList();
     }
     if (designReads is not null && chrome.Page == PilotPage.Designs)

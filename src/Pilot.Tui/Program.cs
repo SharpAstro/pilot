@@ -509,7 +509,8 @@ while (!stop.IsCancellationRequested)
         }
         if (page is PilotPage.Designs or PilotPage.Ideas or PilotPage.Flights)
         {
-            // The Ideas page's Link a design picks from the same list of designs.
+            // The Ideas page's Link a design picks from the same list of designs. A design version published raises its toast only while the
+            // Designs, Flights or Ideas page is shown, because only these read the list (the off-page read is carried by #1196, R1.1(i)).
             designReads.AskList();
         }
         if (page == PilotPage.Designs)
