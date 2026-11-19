@@ -371,8 +371,11 @@ public sealed class DesignLandLinksTests : IDisposable
         await _record.LandedAsync(second, 78, secondCommit[..7], Ct, secondCommit);
 
         (await GitAsync("show", $"{firstCommit}:{folder}/DESIGN.md")).ShouldContain("Version 1.");
-        (await _github.FileAtAsync(_repo, firstCommit, $"{folder}/renders/home.png", Ct)).ShouldBeTrue();
-        (await _github.FileAtAsync(_repo, firstCommit, $"{folder}/renders/extra.png", Ct)).ShouldBeFalse();
+        // The first commit's tree, read by git itself: the second build's extra render is not in it. (GhCli.FileAtAsync is pinned by
+        // its two helpers, FileAtArgs and FileAtAnswer, in the tests above; the fake is not a stand-in for the call.)
+        (await FilesAtAsync(firstCommit, folder)).ShouldContain($"{folder}/renders/home.png");
+        (await FilesAtAsync(firstCommit, folder)).ShouldNotContain($"{folder}/renders/extra.png");
+        _github.LandCalls.ShouldContain(c => c.StartsWith($"fileat {firstCommit} {folder}", StringComparison.Ordinal));
         _github.ClosedIssues.First().Comment.ShouldBe(firstComment);
         _github.ClosedIssues.Last().Comment.ShouldContain($"/tree/{secondCommit}/{folder}");
         _store.Find(id)!.Record.Single(r => r.Flight == "PIL10").BranchGone.ShouldBe(true);
