@@ -99,10 +99,11 @@ public sealed class NotificationsDockTests
     }
 
     [Theory]
-    [InlineData(BarStates.Over)]
-    [InlineData(BarStates.Docked)]
-    public void TheKeyAndTheHandleReturnToTheLastOpenState(BarStates last)
+    [InlineData(false)]
+    [InlineData(true)]
+    public void TheKeyAndTheHandleReturnToTheLastOpenState(bool docked)
     {
+        var last = docked ? BarStates.Docked : BarStates.Over;
         var host = new NotificationsHost { State = last };
         host.Toggle();
         host.State.ShouldBe(BarStates.Collapsed);
