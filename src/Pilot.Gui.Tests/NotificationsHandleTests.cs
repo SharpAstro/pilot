@@ -115,7 +115,7 @@ public sealed class NotificationsHandleTests
         host.HandleTint.ShouldBe(HandleTints.NeedsYou, "a card that needs the person");
 
         var quiet = new NotificationsHost { Open = false };
-        quiet.PostEvent(new PilotEvent { Title = "Landed", Text = "x", Severity = DIR.Lib.Notifications.NotificationSeverity.Info }, null, now);
+        quiet.PostEvent(new PilotEvent(PilotEventKind.FlightLanded, "PIL1", "Landed", "x", DIR.Lib.Notifications.NotificationSeverity.Info, null), null, now);
         quiet.HandleTint.ShouldBe(HandleTints.New, "something arrived while the bar was shut");
         quiet.Open = true;
         quiet.Open = false;
