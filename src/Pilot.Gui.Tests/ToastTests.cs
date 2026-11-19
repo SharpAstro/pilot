@@ -95,6 +95,8 @@ public sealed class ToastTests
         public void Dispose() => Renderer.Dispose();
     }
 
+    private static bool IsToast(ClickableRegion region) => region.Result is NotificationHit { Part: NotificationPart.Toast };
+
     private static List<Notification> Fading(Window w) => [.. w.Feed.Toasts.Where(t => t.Notification.Kind == NotificationKind.Fading).Select(t => t.Notification)];
 
     [Fact]
@@ -313,7 +315,7 @@ public sealed class ToastTests
         w.Feed.Toasts.ShouldNotBeEmpty("the card toasts on another page while collapsed");
         var before = new List<ClickableRegion>();
         w.Chrome.NotificationsLayer.CollectPaintedRegions(before);
-        before.ShouldContain(r => r.Result is NotificationHit { Part: NotificationPart.Toast }, "the toast is painted on the Jobs page");
+        before.Any(IsToast).ShouldBeTrue("the toast is painted on the Jobs page");
         w.Chrome.Show(PilotPage.Notifications);
         w.Frame(T0.AddSeconds(1), CardsScreen.From([new CardRow { Id = "c1", Bin = CardBin.Ring, Kind = "pr-ready", Subject = "flight/X", Title = "A ringing card", Summary = "s", At = Live.At, State = CardState.Open }]));
         w.Chrome.Notifications.ToastsOnPage.ShouldBeFalse();
@@ -321,7 +323,7 @@ public sealed class ToastTests
         // What the layer paints, not only the flags: no toast region on the page.
         var regions = new List<ClickableRegion>();
         w.Chrome.NotificationsLayer.CollectPaintedRegions(regions);
-        regions.ShouldNotContain(r => r.Result is NotificationHit { Part: NotificationPart.Toast }, "a toast is painted over the Notifications page");
+        regions.Any(IsToast).ShouldBeFalse("a toast is painted over the Notifications page");
     }
 
     [Fact]
