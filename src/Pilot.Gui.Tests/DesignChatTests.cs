@@ -38,7 +38,9 @@ public sealed class DesignChatTests
         public void Paint()
         {
             var data = PageData.For("sample");
-            Chrome.Render(data.Sessions, data.Flights, data.Cards, data.Jobs, data.Fleet, data.Repos, data.PullRequests, _bounds, data.Machines, null, data.Spend, _screen);
+            // No cards: they open the For you bar over the page's right side (#1184), which is the chat column these tests press in,
+            // and the tests are about the chat. Collapsed, the cards would stand as toasts at its top right instead.
+            Chrome.Render(data.Sessions, data.Flights, null, data.Jobs, data.Fleet, data.Repos, data.PullRequests, _bounds, data.Machines, null, data.Spend, _screen);
         }
 
         public async Task OpenAsync(int entries)

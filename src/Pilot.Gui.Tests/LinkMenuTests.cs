@@ -381,15 +381,17 @@ public sealed class LinkMenuTests
     [Fact]
     public void AReposPrLinkOffersCopyUrlForThatPr()
     {
-        using var renderer = new RgbaImageRenderer(1280, 800);
+        // The page a 1280 window gave before the For you strip: room for the Open PRs column, where the PR link is.
+        var wide = StripRoom.Beside(1280);
+        using var renderer = new RgbaImageRenderer((uint)wide, 800);
         var copied = new List<string>();
         var chrome = NewChrome(renderer);
         chrome.Repos.CopyText = copied.Add;
         var screen = ReposScreenOf();
         chrome.Show(PilotPage.Repos);
-        chrome.Render(new SessionsScreen([], "test", Live.At), null, null, null, null, screen, new RectF32(0, 0, 1280, 800));
+        chrome.Render(new SessionsScreen([], "test", Live.At), null, null, null, null, screen, new RectF32(0, 0, wide, 800));
         chrome.Repos.HandleInput(new InputEvent.KeyDown(InputKey.Right, InputModifier.None)).ShouldBeTrue();
-        chrome.Render(new SessionsScreen([], "test", Live.At), null, null, null, null, screen, new RectF32(0, 0, 1280, 800));
+        chrome.Render(new SessionsScreen([], "test", Live.At), null, null, null, null, screen, new RectF32(0, 0, wide, 800));
 
         var pr = RegionsOf(chrome.Repos).First(r => r.Result is HitResult.ButtonHit { Action: "pr:205" });
         pr.OnContextMenu.ShouldNotBeNull().Invoke(PressIn(pr));

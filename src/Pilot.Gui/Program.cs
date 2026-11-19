@@ -306,6 +306,11 @@ var loop = new SdlEventLoop(window, renderer) { BackgroundColor = new RGBAColor3
 // moment after the pointer is still (and when the window closes), and a drag asks for a frame.
 using var guiSettings = GuiSettingsFile.Open();
 chrome.KeepColumnWidths(guiSettings, loop.RequestRedraw);
+// The For you bar's open or collapsed choice is the window's: kept in its settings file, and a change repaints.
+guiSettings.Attach(chrome.Notifications);
+// The toasts count down on the wall clock: the pages are built only when something changed, so their time can stand still.
+chrome.Clock = () => DateTimeOffset.UtcNow;
+chrome.Notifications.OpenChanged += _ => loop.RequestRedraw();
 // The Flights page asks for frames of its own: the map's layer menu while it fades, and the links' "Copied" notice.
 chrome.Flights.Changed = loop.RequestRedraw;
 var router = new InputRouter(view.Ui, tracker, loop.RequestRedraw)
@@ -1205,6 +1210,7 @@ void RenderFrame()
     if (designReads is not null && chrome.Page is PilotPage.Flights or PilotPage.Ideas)
     {
         // The Flights page's notice (a design has a newer version than the flight builds) and the Ideas page's Link a design read the same list.
+        // So a design version published raises its toast only on the Designs, Flights and Ideas pages (the off-page read is carried by #1196, R1.1(i)).
         designReads.AskList();
     }
     if (designReads is not null && chrome.Page == PilotPage.Designs)
@@ -1280,7 +1286,7 @@ loop.CheckNeedsRedraw = () =>
         return true;
     }
 
-    return renderer.FontAtlasDirty || router.TooltipNeedsFrame;
+    return renderer.FontAtlasDirty || router.TooltipNeedsFrame || chrome.Notifications.Animating;
 };
 #if PILOT_DEBUG_INSPECTOR
 // The live UI inspector (every Debug build: sibling source or the .Debug twin packages): an agent finds this window, reads its regions

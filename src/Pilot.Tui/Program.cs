@@ -9,7 +9,7 @@ using Pilot.Contracts;
 // Console.Lib rather than painted on pixels: every page of the bar, and the watchtower's panel with its cards, all live from
 // this machine's node or one on the LAN. A bar of pages runs along the top, each with its key: the GUI's Ctrl+digit order as
 // plain digits, 1 Home, 2 Chat, 3 Sessions, 4 Flights, 5 Repos, 6 Background tasks, 7 Fleet, 8 Settings, 9 Pull requests,
-// 0 Ideas, $ Spend and d Designs.
+// 0 Ideas, $ Spend, d Designs and n Notifications.
 var nodeOption = new Option<string?>("--node") { Description = "A node on the LAN: host:port, or its name (SE1) or host; else PILOT_NODE, else this machine's" };
 var socketOption = new Option<string?>("--node-socket") { Description = "This machine's node's socket; else PILOT_NODE_SOCKET, else this user's default" };
 var glyphsOption = new Option<string?>("--glyphs") { Description = $"The bar's glyphs: auto (emoji where the terminal draws them two cells wide), emoji or initials; else {TerminalRail.GlyphsVariable}, else auto" };
@@ -509,7 +509,8 @@ while (!stop.IsCancellationRequested)
         }
         if (page is PilotPage.Designs or PilotPage.Ideas or PilotPage.Flights)
         {
-            // The Ideas page's Link a design picks from the same list of designs.
+            // The Ideas page's Link a design picks from the same list of designs. A design version published raises its toast only while the
+            // Designs, Flights or Ideas page is shown, because only these read the list (the off-page read is carried by #1196, R1.1(i)).
             designReads.AskList();
         }
         if (page == PilotPage.Designs)
@@ -540,12 +541,17 @@ while (!stop.IsCancellationRequested)
         chrome.Home.Today = spendReads.Today;
         // On the Chat page the panel drops its "Chat with the watchtower" foot, as the window's does: the page is that chat.
         cards.OnChatPage = page == PilotPage.Chat;
-        var cardsBeside = columns >= TerminalFrame.CardsPanelColumns && (pages.Cards.HasAny || cards.CanTell && !cards.OnChatPage);
-        chat.CellColumns = TerminalFrame.PageColumns(columns, cardsBeside);
+        // The For you bar (PIL1184) is the window's too: open it covers the page's right side, collapsed it is a strip with the bell, and the page is the
+        // columns less the strip either way. Every open card is a notification in its feed.
+        var bar = chrome.Notifications;
+        bar.Sync(pages.Cards.Open, card => cards.NodeOf(card)?.Name, now);
+        chrome.ObserveEvents(pages.Jobs, pages.Flights, null, now);
+        var cardsOver = bar.Open && (pages.Cards.HasAny || cards.CanTell && !cards.OnChatPage);
+        chat.CellColumns = TerminalFrame.PageColumnsWithBar(columns);
         if (page == PilotPage.Designs)
         {
-            // The page's own room, as the Chat page's: the cards panel beside it takes its columns, and the design's chat and cell view are sized to what is left.
-            chrome.Designs.Terminal = (TerminalFrame.PageColumns(columns, cardsBeside), rows);
+            // The page's own room, as the Chat page's: the strip takes its columns, and the design's chat and cell view are sized to what is left.
+            chrome.Designs.Terminal = (TerminalFrame.PageColumnsWithBar(columns), rows);
         }
         var pageTree = page switch
         {
@@ -559,6 +565,7 @@ while (!stop.IsCancellationRequested)
             PilotPage.Ideas => chrome.Ideas.WithDesigns(designReads.Screen(pages.Sessions.Source, now, null)?.Rows).Tree(pages.Ideas ?? new IdeasScreen([], [], [], pages.Sessions.Source, now)),
             PilotPage.Spend => chrome.Spend.Tree(spendReads.Screen ?? new SpendScreen(chrome.Spend.Window, null, null, pages.Sessions.Source, now)),
             PilotPage.Designs => chrome.Designs.Tree(PilotChrome<DIR.Lib.RgbaImage>.WithIdeas(designReads.Screen(pages.Sessions.Source, now, chrome.Designs.OpenId) ?? DesignsScreen.Empty(pages.Sessions.Source, now), pages.Ideas)),
+            PilotPage.Notifications => chrome.NotificationsPage.Tree(pages.Sessions.Source, now, width),
             PilotPage.Settings => settings.Tree(now, width),
             _ => home.Tree(new HomeScreen(pages.Flights, pages.Sessions, pages.Jobs, pages.Cards, pages.Machines)),
         };
@@ -575,7 +582,7 @@ while (!stop.IsCancellationRequested)
         // The cards panel stands beside the page when there is room beside a usable page, and something to show.
         // Arranged and cropped to each scroll container and page rect (Console.Lib's painter has no clip); the hit test reads the same tree.
         // No clear: the cell buffer diffs each frame against the last, and the tree's backgrounds cover every cell.
-        arranged = TerminalFrame.Build(railTree, pageTree, cardsBeside ? cards.Tree(cardsScreen) : null, columns, rows, CellMeasureContext.PixelAuthored, input.Router.Tooltip);
+        arranged = TerminalFrame.Build(railTree, pageTree, cardsOver ? cards.Tree(cardsScreen) : null, columns, rows, CellMeasureContext.PixelAuthored, input.Router.Tooltip, (bar, page));
         TerminalFrame.Paint(terminal.HideCaret, () => CellLayout.Paint(terminal, arranged, surface));
         input.Painted();
         if ((chat.ParkedCaret(page, focus, arranged) ?? (page == PilotPage.Designs ? chrome.Designs.Chat.ParkedCaretEmbedded(focus, arranged) : null)) is var (caretColumn, caretRow))

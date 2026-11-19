@@ -263,7 +263,7 @@ public partial class FrameWatchTests
 
     public static TheoryData<string> Pages() =>
     [
-        .. Enum.GetValues<PilotPage>().Where(p => p != PilotPage.Cards).Select(p => p.ToString()),
+        .. Enum.GetValues<PilotPage>().Select(p => p.ToString()),
         "flight page",
         "Flights with the LAN row",
     ];

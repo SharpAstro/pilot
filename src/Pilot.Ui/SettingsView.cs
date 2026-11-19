@@ -133,6 +133,9 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
     /// <summary>The header's Night switch, the same on every page.</summary>
     public NightSwitch? Night { get; set; }
 
+    /// <summary>The For you bar, whose history keep time the page sets; null leaves the section out.</summary>
+    public NotificationsHost? Notifications { get; set; }
+
     /// <summary>The window's node selection, which names this node's owner; the Settings top bar shows no pills.</summary>
     public NodeFilter? Nodes { get; set; }
 
@@ -462,6 +465,14 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
         for (var i = 0; i < page.Settings.Length; i++)
         {
             rows.Add(SettingRowNode(page.Settings[i], i));
+        }
+        if (Notifications is { } bar)
+        {
+            rows.Add(Section("Notifications", "how long the Notifications page keeps what happened; what needs you stays until it is answered"));
+            rows.Add(Layout.Builder.HStack([
+                    Layout.Builder.Text("Keep history for", 13f, Body).Selectable().WAuto(),
+                    .. NotificationsHost.KeepChoices.Select(c => Pill(c.Label, $"settings:keep:{c.Label}", () => bar.KeepFor = c.Keep, bar.KeepFor == c.Keep))])
+                .WithGap(8f).CrossCenter().Pad(Gutter, 4f).RowH(34f));
         }
         var given = read.Given;
         var held = read.Held;

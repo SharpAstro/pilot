@@ -22,19 +22,29 @@ internal static class TerminalRail
     /// <summary>The cells one entry takes: a space, the glyph's area, its key and a space.</summary>
     public const int EntryCells = 8;
 
-    /// <summary>The cells one entry takes in a narrow terminal: the glyph's area is one cell less, so 12 entries fit 80 columns.</summary>
+    /// <summary>The cells one entry takes in a narrow terminal: the glyph's area is one cell less, so 13 entries fit 80 columns.</summary>
     public const int NarrowEntryCells = 6;
 
-    /// <summary>The columns the 12 full entries need; a terminal with fewer gets narrow entries.</summary>
-    public const int FullColumns = 96;
+    /// <summary>The columns the 13 full entries need; a terminal with fewer gets narrow entries.</summary>
+    public const int FullColumns = 104;
 
     /// <summary>An entry's width in the layout's units, where one terminal cell is 8 wide: declared once, so the tree holds no sum.</summary>
     private const float EntryWidth = EntryCells * 8f;
 
-    private const float NarrowEntryWidth = NarrowEntryCells * 8f;
+    /// <summary>
+    /// The cells an entry takes in a narrow terminal: only Ideas carries a count after its glyph, so it keeps <see cref="NarrowEntryCells"/>
+    /// and every other entry is one cell less (13 pages fit 72 columns, as 12 did at 6 each).
+    /// </summary>
+    public static int NarrowCellsOf(PilotPage page) => page == PilotPage.Ideas ? NarrowEntryCells : NarrowEntryCells - 1;
 
-    /// <summary>The glyph's cells in a narrow entry.</summary>
-    private const int NarrowGlyphCells = 3;
+    /// <summary>A narrow entry's width in the layout's units: Ideas keeps <see cref="NarrowEntryCells"/>, every other entry is a cell less. Declared, so the tree holds no sum.</summary>
+    private const float NarrowIdeasWidth = NarrowEntryCells * 8f;
+
+    private const float NarrowEntryWidth = (NarrowEntryCells - 1) * 8f;
+
+    private static float WidthOf(PilotPage page, bool narrow) => !narrow ? EntryWidth : page == PilotPage.Ideas ? NarrowIdeasWidth : NarrowEntryWidth;
+
+    private static int NarrowGlyphCellsOf(PilotPage page) => NarrowCellsOf(page) - 3;
 
     /// <summary>Whether a terminal this many columns wide gets narrow entries.</summary>
     public static bool IsNarrow(int columns) => columns < FullColumns;
@@ -48,6 +58,9 @@ internal static class TerminalRail
     /// <summary>The key of Designs: every digit is taken and Ctrl+Shift+D is not told apart from Ctrl+D in most terminals, so it has a plain letter, which a field that has the keyboard types instead.</summary>
     public const char DesignsKey = 'd';
 
+    /// <summary>The key of Notifications: Ctrl+N is the For you bar's own toggle and Ctrl+Shift+N is not told apart from it in most terminals, so it has a plain letter.</summary>
+    public const char NotificationsKey = 'n';
+
     /// <summary>The environment variable with the same meaning as the <c>--glyphs</c> option.</summary>
     public const string GlyphsVariable = "PILOT_TUI_GLYPHS";
 
@@ -59,14 +72,14 @@ internal static class TerminalRail
         [.. PilotChrome<DIR.Lib.RgbaImage>.Pages.Select(p => (p.Page, p.Label, KeyOf(p.Shortcut)))];
 
     private static char KeyOf(KeyChord chord) =>
-        chord.Key is >= InputKey.D0 and <= InputKey.D9 ? (char)('0' + (chord.Key - InputKey.D0)) : chord.Key == InputKey.D ? DesignsKey : SpendKey;
+        chord.Key is >= InputKey.D0 and <= InputKey.D9 ? (char)('0' + (chord.Key - InputKey.D0)) : chord.Key == InputKey.D ? DesignsKey : chord.Key == InputKey.N ? NotificationsKey : SpendKey;
 
     /// <summary>The key a page has on the bar.</summary>
     public static char KeyFor(PilotPage page) => Keys.First(k => k.Page == page).Key;
 
     /// <summary>The plain key of a page's bar key, as a declared chord: the digit, or Shift+4 for '$' (a terminal that reports only the character is mapped to it by the input).</summary>
     public static KeyChord PlainChord(char key) =>
-        key == SpendKey ? new KeyChord(InputKey.D4, InputModifier.Shift) : key == DesignsKey ? new KeyChord(InputKey.D, InputModifier.None) : new KeyChord(InputKey.D0 + (key - '0'), InputModifier.None);
+        key == SpendKey ? new KeyChord(InputKey.D4, InputModifier.Shift) : key == DesignsKey ? new KeyChord(InputKey.D, InputModifier.None) : key == NotificationsKey ? new KeyChord(InputKey.N, InputModifier.None) : new KeyChord(InputKey.D0 + (key - '0'), InputModifier.None);
 
     /// <summary>The chord the GUI's rail gives a page (Ctrl+digit), declared on the page's bar entry.</summary>
     public static KeyChord ChordFor(PilotPage page) => PilotChrome<DIR.Lib.RgbaImage>.Pages.First(p => p.Page == page).Shortcut;
@@ -125,7 +138,7 @@ internal static class TerminalRail
     public static string EntryText(PilotPage page, GlyphMode mode, JobsScreen? jobs, IdeasScreen? ideas, DateTimeOffset now, bool narrow = false)
     {
         var glyph = Glyph(page, mode, jobs, ideas, now);
-        var cells = narrow ? NarrowGlyphCells : GlyphCells;
+        var cells = narrow ? NarrowGlyphCellsOf(page) : GlyphCells;
         if (glyph.Length > cells)
         {
             glyph = glyph[..cells];
@@ -184,7 +197,7 @@ internal static class TerminalRail
         {
             var on = k.Page == active;
             return Layout.Builder.Text(Remember(memory, k.Page, EntryText(k.Page, mode, jobs, ideas, now, narrow)), 12f, on ? palette.Bright : palette.Dim, TextAlign.Near, TextAlign.Center)
-                .WFixed(narrow ? NarrowEntryWidth : EntryWidth)
+                .WFixed(WidthOf(k.Page, narrow))
                 .HFixed(16f)
                 .Bg(on ? palette.RowFocusBg : palette.RowAltBg)
                 .BgHover(palette.RowHoverBg)

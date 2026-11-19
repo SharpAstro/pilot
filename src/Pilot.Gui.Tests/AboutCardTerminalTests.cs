@@ -421,7 +421,7 @@ public sealed class AboutCardTerminalTests
         {
             // The listed key is a declared chord: the plain digit (Shift+4 for '$', d for Designs), and the page's Ctrl+digit on its bar entry.
             var plain = TerminalRail.PlainChord(key);
-            (key == TerminalRail.SpendKey ? InputKey.D4 : key == TerminalRail.DesignsKey ? InputKey.D : InputKey.D0 + (key - '0')).ShouldBe(plain.Key, $"{key}");
+            (key == TerminalRail.SpendKey ? InputKey.D4 : key == TerminalRail.DesignsKey ? InputKey.D : key == TerminalRail.NotificationsKey ? InputKey.N : InputKey.D0 + (key - '0')).ShouldBe(plain.Key, $"{key}");
             TerminalRail.ChordFor(page).Key.ShouldNotBe(InputKey.None, $"{page}");
         }
     }

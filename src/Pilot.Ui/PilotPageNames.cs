@@ -21,12 +21,13 @@ internal static class PilotPageNames
         (PilotPage.Ideas, "ideas"),
         (PilotPage.Spend, "spend"),
         (PilotPage.Designs, "designs"),
+        (PilotPage.Notifications, "notifications"),
     ];
 
     /// <summary>Every page's name, in the rail's order.</summary>
     public static IReadOnlyList<string> Names { get; } = [.. All.Select(a => a.Name)];
 
-    /// <summary>The name of <paramref name="page"/>; for <see cref="PilotPage.Cards"/>, which is never a page shown, its enum name in lower case.</summary>
+    /// <summary>The name of <paramref name="page"/>.</summary>
     public static string Of(PilotPage page) =>
         All.FirstOrDefault(a => a.Page == page).Name ?? page.ToString().ToLowerInvariant();
 

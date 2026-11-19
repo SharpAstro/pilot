@@ -110,7 +110,7 @@ public sealed class InspectorPageFaultsTests
             page.ShouldBe(entry.Page);
         }
         // The names the sweep's tests use.
-        PilotPageNames.Names.ShouldBe(["home", "chat", "sessions", "flights", "repos", "pull requests", "jobs", "fleet", "settings", "ideas", "spend", "designs"]);
+        PilotPageNames.Names.ShouldBe(["home", "chat", "sessions", "flights", "repos", "pull requests", "jobs", "fleet", "settings", "ideas", "spend", "designs", "notifications"]);
     }
 
     [Theory]

@@ -85,8 +85,14 @@ public sealed class PullRequestLinksTests
 
     private static readonly RectF32 Bounds = new(0, 0, 1280, Height);
 
-    private static void Draw(PilotChrome<RgbaImage> chrome, FlightsScreen? flights = null, CardsScreen? cards = null, PullRequestsScreen? prs = null, ReposScreen? repos = null) =>
-        chrome.Render(new SessionsScreen([], "test", Now), flights, cards, null, null, repos, prs ?? Prs(), Bounds);
+    /// <summary>
+    /// The window the Repos page's tests draw in: the page a 1280 window gave before the For you strip, with room for the Open PRs column
+    /// whose links they follow (at 1280 the column gives way).
+    /// </summary>
+    private static readonly RectF32 ReposBounds = new(0, 0, StripRoom.Beside(1280), Height);
+
+    private static void Draw(PilotChrome<RgbaImage> chrome, FlightsScreen? flights = null, CardsScreen? cards = null, PullRequestsScreen? prs = null, ReposScreen? repos = null, RectF32? bounds = null) =>
+        chrome.Render(new SessionsScreen([], "test", Now), flights, cards, null, null, repos, prs ?? Prs(), bounds ?? Bounds);
 
     private static List<ClickableRegion> Regions(PixelWidgetBase<RgbaImage> widget)
     {
@@ -565,21 +571,21 @@ public sealed class PullRequestLinksTests
     [Fact]
     public void TheReposPagesOpenPRsLineListsThatReposPRsOnThePullRequestsPageAndBackReturns()
     {
-        using var renderer = new RgbaImageRenderer(1280, (uint)Height);
+        using var renderer = new RgbaImageRenderer((uint)ReposBounds.Width, (uint)Height);
         var chrome = Window(renderer);
         var repos = new ReposScreen(RepoLine.Build(SessionsCapture.LoadRepos(SessionsCapture.ReposSamplePath), [], [], [], [], Now), "live", Now);
         var orbit = repos.Lines.Single(l => l.Name == "orbit");
         orbit.Status.GitHub.ShouldBe("example-org/orbit");
         var screen = Prs();
         chrome.Show(PilotPage.Repos);
-        Draw(chrome, null, null, screen, repos);
+        Draw(chrome, null, null, screen, repos, ReposBounds);
 
         // "2 open PRs" says the count the line used to carry as "+N more", as a link.
         var link = Regions(chrome.Repos).Single(r => r.Result is HitResult.ButtonHit b && b.Action == $"repo:{orbit.Key}:prs");
         link.OnClick.ShouldNotBeNull().Invoke(InputModifier.None);
 
         chrome.Page.ShouldBe(PilotPage.PullRequests);
-        Draw(chrome, null, null, screen, repos);
+        Draw(chrome, null, null, screen, repos, ReposBounds);
         var page = chrome.PullRequests;
         page.Search.Text.ShouldBe("example-org/orbit");
         page.Filter.ShouldBeNull();
@@ -639,11 +645,11 @@ public sealed class PullRequestLinksTests
     [Fact]
     public void ARepoWithNoOpenPRsHasNoLinkAndOneWithManyKeepsItsRowTheSameHeight()
     {
-        using var renderer = new RgbaImageRenderer(1280, (uint)Height);
+        using var renderer = new RgbaImageRenderer((uint)ReposBounds.Width, (uint)Height);
         var chrome = Window(renderer);
         var repos = new ReposScreen(RepoLine.Build(SessionsCapture.LoadRepos(SessionsCapture.ReposSamplePath), [], [], [], [], Now), "live", Now);
         chrome.Show(PilotPage.Repos);
-        Draw(chrome, null, null, null, repos);
+        Draw(chrome, null, null, null, repos, ReposBounds);
 
         var buttons = Regions(chrome.Repos).Select(r => r.Result).OfType<HitResult.ButtonHit>().Select(b => b.Action).Where(a => a.EndsWith(":prs", StringComparison.Ordinal)).ToList();
         var withPrs = repos.Lines.Where(l => l.Pulls.Count > 0 && l.Status.GitHub is not null).Select(l => $"repo:{l.Key}:prs");

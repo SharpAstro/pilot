@@ -1309,11 +1309,16 @@ apart from Ctrl+S in most terminals). **Ctrl+S** is the say bar, **Ctrl+T** the 
 focused), Alt+Left, Alt+Right and Backspace walk the history (Backspace is an edit key inside a box), Up/Down select a
 row on a list page and Enter opens it (a session's transcript; Escape goes up), a click on a cell runs what a click on
 the pixels would, **d** shows **Designs** (a plain key like **q**, since every digit is taken and Ctrl+Shift+D is not told
-apart from Ctrl+D in terminals; it is text inside a box), **q** and **Ctrl+C** quit (**q** is text inside a box). The watchtower and cards panel shows beside the page from 120 columns. `--node host:port`
-flies a node on the LAN, as everywhere.
+apart from Ctrl+D in terminals; it is text inside a box), **n** shows **Notifications** (a plain key for the same reason: Ctrl+N
+is the For you bar's own toggle and Ctrl+Shift+N is not told apart from it), **q** and **Ctrl+C** quit (**q** and **n** are
+text inside a box). The watchtower and cards panel is the **For you bar**, as in the window (DIR.Lib's notifications
+component): open, it is laid over the page's right side and never narrows the page; collapsed, it is a strip at the right
+edge with the bell (the count, amber while a card rings) and new cards and events show as toasts. **Ctrl+N**, the bar's
+Collapse button and the strip's expander toggle it, and the bell opens the Notifications page: what needs you, then
+everything that happened, newest first. `--node host:port` flies a node on the LAN, as everywhere.
 
 A **page bar** (`TerminalRail`, built from `PilotChrome.Pages`, so a page added there shows here with no second list) runs
-along the top: one entry per page, each 8 cells wide, its glyph and its key, the open page on the selected-row background, and a
+along the top: one entry per page (13 of them), each 8 cells wide, its glyph and its key, the open page on the selected-row background, and a
 click on an entry shows the page. The glyph is the page's emoji where the terminal draws it two cells wide, and the page's
 initials otherwise (**B!** for a failed job, **I3** for three noted ideas, **Fl** and **Se** for Flights and Settings, which the
 GUI's night rail draws as the plane and the cog). `--glyphs auto|emoji|initials`, or `PILOT_TUI_GLYPHS`, picks the mode; auto
@@ -1321,8 +1326,9 @@ chooses emoji under Windows Terminal (`WT_SESSION`), VS Code, WezTerm, iTerm2 an
 changes is drawn blank for one frame, because Console.Lib's cell buffer would flush only the changed half of two emoji sharing
 a high surrogate (SharpAstro/Console.Lib#47).
 
-In a terminal under 96 columns, which 12 full entries need, every entry is 6 cells wide instead (the glyph's area two cells
-shorter, so a long glyph such as the ideas count is cut), which keeps all 12 on screen and clickable down to 72 columns (`TerminalRailTests.UnderNinetySixColumnsAllTwelveEntriesStayOnScreenAndClickable`); the
+In a terminal under 104 columns, which 13 full entries need, every entry is 5 cells wide instead, and Ideas, the one with a
+count after its glyph, 6 (the glyph's area shorter, so a long glyph such as the ideas count is cut), which keeps all 13 on screen
+and clickable down to 72 columns (`TerminalRailTests.UnderOneHundredFourColumnsAllThirteenEntriesStayOnScreenAndClickable`); the
 width is fixed for a given terminal width, so the bar does not shift.
 
 The **Designs** page (list and a design's page) is shown in pilot-tui too. A design's page embeds the prototype's own tree
