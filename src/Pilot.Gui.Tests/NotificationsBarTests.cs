@@ -1,4 +1,5 @@
 using System.Text;
+using Console.Lib;
 using DIR.Lib;
 using Layout = DIR.Lib.Layout;
 using Pilot.Contracts;
