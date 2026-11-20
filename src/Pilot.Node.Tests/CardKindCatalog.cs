@@ -131,6 +131,7 @@ internal static class CardKindCatalog
         new("stray-session", "Ring", ["Flights/LegWatch.cs"], "WindDownTests.TheSweepRingsOnceForALiveSessionOfALandedFlightAndOnceForOneTheLedgerDoesNotKnow", "a live session's flight has landed (read from the flight row), or the session ledger does not know it", [nameof(Verbs.Stop)]),
 
         // Flights: landing, moving, PRs.
+        new("review-fix-round", "Handled", ["Flights/LegCommander.ReviewChanges.cs"], "NodeFixRoundTests.OnAutopilotAChangesVerdictSendsTheLastLegRoundAsTheNodeWithTheFindingsAsItsBrief"),
         new("review-changes", "Ring", ["Flights/LegCommander.ReviewChanges.cs"], "CardSummaryRaiserTests.AReviewThatAsksForChangesSaysWhichLegsFindingsAreFixedNotRedone", "the reviewer's verdict at the PR's current head asks for changes", [nameof(Verbs.GoAround)]),
         new("rebased-on-base", "Handled", [Shape], "BranchShapeTests.ABranchHoldingAMergeOfItsBaseIsPushedLinearOnARebaseBaseWithItsReviewCarried"),
         new("laid-on-base", "Handled", [Shape], "RebaseLayFlightTests.ABranchThatMergesCleanlyButDoesNotRebaseIsLaidOnItsBaseAsOneCommitAndQueuedOnce"),
