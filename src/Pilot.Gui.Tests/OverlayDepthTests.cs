@@ -75,7 +75,7 @@ public sealed class OverlayDepthTests
         }
 
         /// <summary>A point on the page's own selectable text that something painted after the page also covers.</summary>
-        public (float X, float Y) CoveredPageText(PilotWidgetBase<RgbaImage> page)
+        public (float X, float Y)? FindCoveredPageText(PilotWidgetBase<RgbaImage> page)
         {
             foreach (var text in page.SelectableTextRegions.ToArray())
             {
@@ -88,8 +88,11 @@ public sealed class OverlayDepthTests
                     }
                 }
             }
-            throw new Xunit.Sdk.XunitException("no page text lies under anything painted after the page");
+            return null;
         }
+
+        public (float X, float Y) CoveredPageText(PilotWidgetBase<RgbaImage> page) =>
+            FindCoveredPageText(page) ?? throw new Xunit.Sdk.XunitException("no page text lies under anything painted after the page");
 
         public void Dispose() => _renderer.Dispose();
     }
@@ -97,10 +100,23 @@ public sealed class OverlayDepthTests
     [Fact]
     public void APressAndDragOnAToastOverPageTextSelectsNoPageText()
     {
-        using var rig = new Rig(PilotPage.Jobs, BarStates.Collapsed, CardsScreen.From([Card("c1")]));
-        var at = rig.CoveredPageText(rig.Chrome.Jobs);
-        rig.Drag(at, (at.X + 40f, at.Y));
-        rig.Chrome.Jobs.PageSelection.HasSelection.ShouldBeFalse("the toast is above the text");
+        // The toast sits over text on some list page at this size; the first page with text under it is the one judged.
+        var tried = new List<string>();
+        foreach (var page in new[] { PilotPage.Jobs, PilotPage.Home })
+        {
+            using var rig = new Rig(page, BarStates.Collapsed, CardsScreen.From([Card("c1")]));
+            PilotWidgetBase<RgbaImage> view = page == PilotPage.Jobs ? rig.Chrome.Jobs : rig.Chrome.Home;
+            var at = rig.FindCoveredPageText(view);
+            if (at is null)
+            {
+                tried.Add(page.ToString());
+                continue;
+            }
+            rig.Drag(at.Value, (at.Value.X + 40f, at.Value.Y));
+            view.PageSelection.HasSelection.ShouldBeFalse($"the toast is above the text of {page}");
+            return;
+        }
+        throw new Xunit.Sdk.XunitException("no page text lies under the toast on " + string.Join(", ", tried));
     }
 
     [Fact]
