@@ -40,7 +40,9 @@ public sealed class PrReviewPointsTests : PrReviewTestsBase
         brief.ShouldContain("R1.1 (blocking): README.md:1 says hello to no one");
         brief.ShouldContain("R1.2 (blocking): README.md:1 the greeting is never tested");
         brief.ShouldContain("`addressed`");
-        brief.ShouldContain("`left`");
+        brief.ShouldContain("`deferred: owner decision`");
+        brief.ShouldContain("`not work: <why>`");
+        brief.ShouldContain("`node's own`");
         brief.ShouldContain("`not addressed`");
         brief.ShouldContain(ReviewPoints.MustBlockMarker);
         // A first review has no list to answer.
@@ -87,7 +89,7 @@ public sealed class PrReviewPointsTests : PrReviewTestsBase
         var reviewer = await ReReview();
         _github.Queue = GhAnswers.MergeQueue("idle", _widgetHead);
         _github.Summary = GhAnswers.ChecksOf(ChoiceStatus.Passing, 1, 1);
-        var table = Table + "| R1.1 | addressed | README.md:1 |\n| R1.2 | left | a test of the greeting needs the harness of another PR, out of this PR's scope |";
+        var table = Table + "| R1.1 | addressed | README.md:1 |\n| R1.2 | deferred: owner decision | a test of the greeting needs the harness of another PR, out of this PR's scope |";
 
         (await Run(Verbs.PrVerdict, Pr7, reviewer, "approve", table)).Error.ShouldBeNull();
         await _reviews.SweepAsync(Ct);
@@ -113,7 +115,7 @@ public sealed class PrReviewPointsTests : PrReviewTestsBase
         var reviewer = await ReReview();
         _github.Queue = GhAnswers.MergeQueue("idle", _widgetHead);
         _github.Summary = GhAnswers.ChecksOf(ChoiceStatus.Passing, 1, 1);
-        var table = Table + "| R1.1 | addressed | README.md:1 |\n| R1.2 | left | out of this PR's scope |\n\n## Not blocking\n- the title could be shorter in README.md:2\n";
+        var table = Table + "| R1.1 | addressed | README.md:1 |\n| R1.2 | deferred: owner decision | out of this PR's scope |\n\n## Not blocking\n- the title could be shorter in README.md:2\n";
 
         (await Run(Verbs.PrVerdict, Pr7, reviewer, "approve", table)).Error.ShouldBeNull();
         await _reviews.SweepAsync(Ct);
@@ -147,7 +149,7 @@ public sealed class PrReviewPointsTests : PrReviewTestsBase
         _github.Queue = GhAnswers.MergeQueue("idle", _widgetHead);
         _github.Summary = GhAnswers.ChecksOf(ChoiceStatus.Passing, 1, 1);
         _github.CreateIssueFails = "gh is down";
-        var table = Table + "| R1.1 | left | the greeting is meant that way, safe as it is | \n| R1.2 | addressed | README.md:1 |";
+        var table = Table + "| R1.1 | deferred: owner decision | the greeting is meant that way, safe as it is | \n| R1.2 | addressed | README.md:1 |";
 
         (await Run(Verbs.PrVerdict, Pr7, reviewer, "approve", table)).Error.ShouldBeNull();
         await _reviews.SweepAsync(Ct);

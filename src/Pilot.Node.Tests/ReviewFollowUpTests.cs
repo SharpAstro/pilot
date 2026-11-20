@@ -34,7 +34,7 @@ public sealed class ReviewFollowUpTests : ReviewTestsBase
     private const string Answers =
         "## Earlier points\n| Point | Answer | Where or why |\n|---|---|---|\n"
         + "| R1.1 | addressed | fix.txt:1 |\n| R1.2 | addressed | fix.txt:1 |\n| R1.3 | addressed | fix.txt:1 |\n"
-        + "| R1.4 | left | a rename of Parser.cs touches every caller, out of this flight's scope |\n";
+        + "| R1.4 | deferred: owner decision | a rename of Parser.cs touches every caller, out of this flight's scope |\n";
 
     [Fact]
     public async Task APointLeftWithAReasonIsFiledAsOneIssueTheMergeLinksAndTheMergeGoesAhead()
@@ -299,5 +299,76 @@ public sealed class ReviewFollowUpTests : ReviewTestsBase
         var standing = TwoLeft("Parser.cs: the guard is missing", "wider", "Other thing", "later");
 
         standing.Items[0].Settle.ShouldContain("the guard is missing");
+    }
+
+    private static ReviewFollowUp.Standing WithAnswers(params ReviewPointAnswer[] answers) => ReviewFollowUp.Read(
+    [
+        new ReviewRound { Round = 1, Verdict = ReviewState.Changes, Findings = "## Blocking\n- A in Parser.cs:1\n- B in Parser.cs:2\n- C in Parser.cs:3\n- D in Parser.cs:4\n- E in Parser.cs:5\n" },
+        new ReviewRound { Round = 2, Verdict = ReviewState.Passed, Findings = "", Answers = answers },
+    ]);
+
+    [Fact]
+    public void NotWorkAndNodesOwnPointsFileNothingAndAMadeOneNeitherButADeferredOneIsAnItemWithItsReason()
+    {
+        var standing = WithAnswers(
+            new("R1.1", "addressed", "Parser.cs:9"),
+            new("R1.2", "not work", "praise"),
+            new("R1.3", "node's own", ""),
+            new("R1.4", "deferred", "needs the other package") { Reason = "another repo" },
+            new("R1.5", "deferred", "") { Reason = "larger than the flight" });
+
+        standing.NotAddressed.ShouldBeEmpty();
+        standing.Items.Select(i => i.Key).ShouldBe(["R1.4", "R1.5"]);
+        standing.Items.Select(i => i.Kind).ShouldBe([ReviewPoints.DeferReason.OtherRepo, ReviewPoints.DeferReason.LargerThanFlight]);
+        standing.Items[0].Why.ShouldContain("another repo");
+        standing.Items[0].Why.ShouldContain("needs the other package");
+    }
+
+    [Fact]
+    public void AnOldStoredLeftAnswerReadsAsDeferredWithNoReason()
+    {
+        var standing = WithAnswers(new("R1.1", "left", "out of scope, Parser.cs is wider"));
+
+        var item = standing.Items.ShouldHaveSingleItem();
+        item.Key.ShouldBe("R1.1");
+        item.Kind.ShouldBeNull();
+        item.Why.ShouldBe("out of scope, Parser.cs is wider");
+    }
+
+    [Fact]
+    public void AnAnswerStoredBeforeTheReasonExistedStillLoads()
+    {
+        var old = System.Text.Json.JsonSerializer.Deserialize<ReviewPointAnswer>("""{"Id":"R1.1","Answer":"left","Detail":"why"}""");
+
+        old.ShouldNotBeNull().Reason.ShouldBeNull();
+    }
+
+    [Theory]
+    [InlineData("All notes are made in the review-notes round", true)]
+    [InlineData("This is already answered by the issue", true)]
+    [InlineData("The text no longer exists after the rewrite", true)]
+    [InlineData("The commit title is removed by the squash", true)]
+    [InlineData("The guard in Parser.cs:3 is missing", false)]
+    [InlineData("", false)]
+    public void TextThatSaysItIsSettledIsRecognised(string text, bool settled)
+    {
+        ReviewFollowUp.IsSettledText(text).ShouldBe(settled);
+    }
+
+    [Fact]
+    public void ASettledLeftPointOrNoteIsNeverFiled()
+    {
+        var rounds = new[]
+        {
+            new ReviewRound
+            {
+                Round = 1, Verdict = ReviewState.Passed, Findings = "## Not blocking\n- all notes are made in Parser.cs\n- the guard in Lexer.cs:3 is missing\n",
+                LeftPoints = ["already answered by the issue", "a gap in Parser.cs:9"],
+            },
+        };
+
+        ReviewFollowUp.Read(rounds).Items.Select(i => i.Found).ShouldBe(["a gap in Parser.cs:9"]);
+        ReviewFollowUp.LastRoundNotes(rounds).Select(i => i.Found).ShouldBe(["the guard in Lexer.cs:3 is missing"]);
+        ReviewFollowUp.NotesItems(1, ["the text no longer exists", "Parser.cs:1 is wrong"]).Select(i => i.Found).ShouldBe(["Parser.cs:1 is wrong"]);
     }
 }

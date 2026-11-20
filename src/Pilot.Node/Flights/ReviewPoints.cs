@@ -28,16 +28,55 @@ public static partial class ReviewPoints
     {
         /// <summary>Fixed, with where (file and line, or a commit).</summary>
         Addressed,
-        /// <summary>Left on purpose, with a reason; goes into the follow-up issue.</summary>
+        /// <summary>The old free-text "left" (pilot #1226): parsed only so <see cref="Refusal"/> can refuse it, and read as deferred with no reason in a stored round.</summary>
         Left,
+        /// <summary>Not work: the point asks for nothing to be done (a question, praise, a restatement), with why. Files nothing.</summary>
+        NotWork,
+        /// <summary>The node's own: the node does it (the PR body, title or a label), not the fixer. Files nothing.</summary>
+        NodesOwn,
+        /// <summary>Deferred, with one of three <see cref="DeferReason"/>s. Goes into the follow-up issue.</summary>
         /// <summary>No fix and no reason; blocks.</summary>
         NotAddressed,
     }
 
+    /// <summary>The three reasons a point may be deferred (pilot #1226); any other is no end.</summary>
+    public enum DeferReason
+    {
+        OtherRepo,
+        OwnerDecision,
+        LargerThanFlight,
+    }
+
+    /// <summary>The words each deferral reason is written and stored as.</summary>
+    public static string Words(DeferReason reason) => reason switch
+    {
+        DeferReason.OtherRepo => "another repo",
+        DeferReason.OwnerDecision => "owner decision",
+        _ => "larger than the flight",
+    };
+
+    /// <summary>The reason a stored or written word names, or null when it names none of the three.</summary>
+    public static DeferReason? ReasonOf(string? text)
+    {
+        var word = (text ?? "").ToLowerInvariant();
+        if (word.Contains("repo", StringComparison.Ordinal))
+        {
+            return DeferReason.OtherRepo;
+        }
+        if (word.Contains("owner", StringComparison.Ordinal) || word.Contains("decision", StringComparison.Ordinal))
+        {
+            return DeferReason.OwnerDecision;
+        }
+        return word.Contains("larger", StringComparison.Ordinal) || word.Contains("bigger", StringComparison.Ordinal) ? DeferReason.LargerThanFlight : null;
+    }
+
+    /// <summary>The four ends a point may have, as the refusal and the briefs name them.</summary>
+    public const string FourEnds = "`addressed` (with where), `not work: <why>`, `node's own`, or `deferred: another repo`, `deferred: owner decision` or `deferred: larger than the flight`";
+
     public sealed record Point(string Id, int Round, int Index, bool Blocking, string Text);
 
     /// <summary>One row of the reviewer's table: the answer, and the where or the reason after it (empty when none was given).</summary>
-    public sealed record Reply(string Id, Answer Answer, string Detail, string RawAnswer);
+    public sealed record Reply(string Id, Answer Answer, string Detail, string RawAnswer, DeferReason? Reason = null);
 
     /// <summary>The tail the node appends to a controller's pass anyway: <c> (passed by &lt;who&gt; over: </c>, then the reviewer's report and <c>)</c>.</summary>
     public static string Tail(string who) => $"{PassedTail}{who} over: ";
@@ -127,16 +166,40 @@ public static partial class ReviewPoints
             }
             var id = match.Value.ToUpperInvariant();
             var answer = cells[1].Trim('*', '`', ' ');
-            replies[id] = new Reply(id, Classify(answer), string.Join(" | ", cells.Skip(2)).Trim(), answer);
+            var detail = string.Join(" | ", cells.Skip(2)).Trim();
+            var kind = Classify(answer, out var reason, out var inCell);
+            // "not work: why" keeps its why in the answer cell: it joins the detail.
+            if (kind == Answer.NotWork && inCell.Length > 0)
+            {
+                detail = detail.Length == 0 ? inCell : inCell + " " + detail;
+            }
+            replies[id] = new Reply(id, kind, detail, answer, reason);
         }
         return [.. replies.Values];
     }
 
-    // Addressed and left are the two settled answers. Everything else (still open, unchanged, for later, to do, not addressed,
-    // a word nobody knows) is NotAddressed: the reviewer is asked again rather than guessed at.
-    private static Answer Classify(string answer)
+    // The four ends are addressed, not work, node's own and deferred (with a reason). Free-text left is read only to be refused.
+    // Everything else (still open, unchanged, for later, to do, not addressed, a word nobody knows) is NotAddressed:
+    // the reviewer is asked again rather than guessed at.
+    private static Answer Classify(string answer, out DeferReason? reason, out string inCell)
     {
-        var word = answer.ToLowerInvariant();
+        reason = null;
+        inCell = "";
+        var word = answer.ToLowerInvariant().Replace('’', '\'');
+        if (word.StartsWith("not work", StringComparison.Ordinal))
+        {
+            inCell = answer.IndexOf(':') is var colon and >= 0 ? answer[(colon + 1)..].Trim() : "";
+            return Answer.NotWork;
+        }
+        if (word.StartsWith("node's own", StringComparison.Ordinal) || word.StartsWith("nodes own", StringComparison.Ordinal) || word.StartsWith("node own", StringComparison.Ordinal))
+        {
+            return Answer.NodesOwn;
+        }
+        if (word.StartsWith("deferred", StringComparison.Ordinal))
+        {
+            reason = ReasonOf(word["deferred".Length..]);
+            return Answer.Deferred;
+        }
         if (word.StartsWith("not ", StringComparison.Ordinal))
         {
             return Answer.NotAddressed;
@@ -147,6 +210,20 @@ public static partial class ReviewPoints
         }
         return word.StartsWith("left", StringComparison.Ordinal) ? Answer.Left : Answer.NotAddressed;
     }
+
+    /// <summary>The word a reply is stored under on a <see cref="ReviewPointAnswer"/>.</summary>
+    public static string StoredAnswer(Answer answer) => answer switch
+    {
+        Answer.Addressed => "addressed",
+        Answer.Left => "left",
+        Answer.NotWork => "not work",
+        Answer.NodesOwn => "node's own",
+        Answer.Deferred => "deferred",
+        _ => "not addressed",
+    };
+
+    /// <summary>The stored form of a table row: the end, the detail and, for a deferral, its reason.</summary>
+    public static ReviewPointAnswer ToStored(Reply r) => new(r.Id, StoredAnswer(r.Answer), r.Detail) { Reason = r.Reason is { } d ? Words(d) : null };
 
     private static readonly string[] Vague = ["still open", "unchanged", "for later", "to do", "todo", "open", "stands", "same"];
 
@@ -180,7 +257,7 @@ public static partial class ReviewPoints
         {
             if (!replies.TryGetValue(point.Id, out var reply))
             {
-                faults.Add($"{point.Id} is not mentioned: answer it addressed (with where), left (with a reason) or not addressed ({Short(point.Text)})");
+                faults.Add($"{point.Id} is not mentioned: answer it with one of the four ends, {FourEnds}, or `not addressed` ({Short(point.Text)})");
                 continue;
             }
             switch (reply.Answer)
@@ -188,11 +265,17 @@ public static partial class ReviewPoints
                 case Answer.Addressed when !HasWhere(reply.Detail):
                     faults.Add($"{point.Id} is addressed with no where: name the file and line, or the commit that fixed it");
                     break;
-                case Answer.Left when !HasReason(reply.Detail):
-                    faults.Add($"{point.Id} is left with no reason: say why (out of this flight's scope, needs a decision, safe as it is and why)");
+                case Answer.Left:
+                    faults.Add($"{point.Id} is answered left, which is no end: a point ends as {FourEnds}");
+                    break;
+                case Answer.NotWork when !HasReason(reply.Detail):
+                    faults.Add($"{point.Id} is not work with no why: say why nothing is to be done");
+                    break;
+                case Answer.Deferred when reply.Reason is null:
+                    faults.Add($"{point.Id} is deferred with no allowed reason: write `deferred: another repo`, `deferred: owner decision` or `deferred: larger than the flight`");
                     break;
                 case Answer.NotAddressed when Vague.Contains(reply.RawAnswer.ToLowerInvariant()) && !HasReason(reply.Detail):
-                    faults.Add($"{point.Id} is answered '{reply.RawAnswer}' with no reason: answer it addressed (with where), left (with a reason) or not addressed");
+                    faults.Add($"{point.Id} is answered '{reply.RawAnswer}' with no reason: answer it with one of the four ends, {FourEnds}, or `not addressed`");
                     break;
             }
         }

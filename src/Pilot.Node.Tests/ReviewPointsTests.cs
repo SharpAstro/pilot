@@ -39,7 +39,7 @@ public class ReviewPointsTests
         | R1.1 | addressed | src/A.cs:10 |
         | R1.2 | addressed | commit 1a2b3c4d |
         | R1.3 | addressed | src/C.cs:5 |
-        | R1.4 | left | out of this flight's scope, needs a decision |
+        | R1.4 | deferred: owner decision | needs a decision |
         | R2.1 | addressed | src/E.cs:7 |
         | R2.2 | not addressed | |
         """;
@@ -66,7 +66,8 @@ public class ReviewPointsTests
         var replies = ReviewPoints.ParseAnswers(Table).ToDictionary(r => r.Id);
         replies["R1.1"].Answer.ShouldBe(ReviewPoints.Answer.Addressed);
         replies["R1.1"].Detail.ShouldBe("src/A.cs:10");
-        replies["R1.4"].Answer.ShouldBe(ReviewPoints.Answer.Left);
+        replies["R1.4"].Answer.ShouldBe(ReviewPoints.Answer.Deferred);
+        replies["R1.4"].Reason.ShouldBe(ReviewPoints.DeferReason.OwnerDecision);
         replies["R2.2"].Answer.ShouldBe(ReviewPoints.Answer.NotAddressed);
     }
 
@@ -81,13 +82,13 @@ public class ReviewPointsTests
     {
         ReviewPoints.Refusal(Both, Table).ShouldBeNull();
         ReviewPoints.AnyNotAddressed(Both, Table).ShouldBeTrue();
-        ReviewPoints.AnyNotAddressed(Both, Table.Replace("| R2.2 | not addressed | |", "| R2.2 | left | a note, safe as it is |")).ShouldBeFalse();
+        ReviewPoints.AnyNotAddressed(Both, Table.Replace("| R2.2 | not addressed | |", "| R2.2 | not work: a note, safe as it is | |")).ShouldBeFalse();
     }
 
     [Fact]
     public void APointNotMentionedIsNamed()
     {
-        var refusal = ReviewPoints.Refusal(Both, Table.Replace("| R1.4 | left | out of this flight's scope, needs a decision |\n", ""));
+        var refusal = ReviewPoints.Refusal(Both, Table.Replace("| R1.4 | deferred: owner decision | needs a decision |\n", ""));
         refusal.ShouldNotBeNull().ShouldContain("R1.4 is not mentioned");
         refusal.ShouldContain("D is a gap");
         refusal.ShouldNotContain("R1.1");
@@ -100,14 +101,71 @@ public class ReviewPointsTests
     [InlineData("to do")]
     public void StillOpenAndItsKinWithNoReasonAreRefused(string word)
     {
-        var refusal = ReviewPoints.Refusal(Both, Table.Replace("| R1.4 | left | out of this flight's scope, needs a decision |", $"| R1.4 | {word} | |"));
+        var refusal = ReviewPoints.Refusal(Both, Table.Replace("| R1.4 | deferred: owner decision | needs a decision |", $"| R1.4 | {word} | |"));
         refusal.ShouldNotBeNull().ShouldContain($"R1.4 is answered '{word}' with no reason");
     }
 
-    [Fact]
-    public void LeftWithNoReasonIsRefused()
+    private const string Row14 = "| R1.4 | deferred: owner decision | needs a decision |";
+
+    private static string? RefusalWith(string row14) => ReviewPoints.Refusal(Both, Table.Replace(Row14, row14));
+
+    [Theory]
+    [InlineData("| R1.4 | left | out of this flight's scope, needs a decision |")]
+    [InlineData("| R1.4 | left | |")]
+    public void AFreeTextLeftIsRefusedNamingTheFourEndsAndTheThreeReasons(string row)
     {
-        ReviewPoints.Refusal(Both, Table.Replace("out of this flight's scope, needs a decision", "later")).ShouldNotBeNull().ShouldContain("R1.4 is left with no reason");
+        var refusal = RefusalWith(row).ShouldNotBeNull();
+        refusal.ShouldContain("R1.4 is answered left, which is no end");
+        refusal.ShouldContain("`not work: <why>`");
+        refusal.ShouldContain("`node's own`");
+        refusal.ShouldContain("deferred: another repo");
+        refusal.ShouldContain("deferred: owner decision");
+        refusal.ShouldContain("deferred: larger than the flight");
+    }
+
+    [Fact]
+    public void NotWorkIsAnEndWithItsWhyAndNeedsOne()
+    {
+        RefusalWith("| R1.4 | not work: it is praise | |").ShouldBeNull();
+        RefusalWith("| R1.4 | not work | the point asks nothing |").ShouldBeNull();
+        RefusalWith("| R1.4 | not work | |").ShouldNotBeNull().ShouldContain("R1.4 is not work with no why");
+        var reply = ReviewPoints.ParseAnswers(Table.Replace(Row14, "| R1.4 | not work: it is praise | |")).Single(r => r.Id == "R1.4");
+        (reply.Answer, reply.Detail).ShouldBe((ReviewPoints.Answer.NotWork, "it is praise"));
+        ReviewPoints.ToStored(reply).Answer.ShouldBe("not work");
+    }
+
+    [Theory]
+    [InlineData("node's own")]
+    [InlineData("Node’s own")]
+    public void NodesOwnIsItsOwnEnd(string word)
+    {
+        RefusalWith($"| R1.4 | {word} | |").ShouldBeNull();
+        var reply = ReviewPoints.ParseAnswers(Table.Replace(Row14, $"| R1.4 | {word} | |")).Single(r => r.Id == "R1.4");
+        reply.Answer.ShouldBe(ReviewPoints.Answer.NodesOwn);
+        ReviewPoints.ToStored(reply).Answer.ShouldBe("node's own");
+        ReviewPoints.AnyNotAddressed(Both, Table.Replace(Row14, $"| R1.4 | {word} | |")).ShouldBeFalse();
+    }
+
+    [Theory]
+    [InlineData("deferred: another repo", ReviewPoints.DeferReason.OtherRepo, "another repo")]
+    [InlineData("deferred: owner decision", ReviewPoints.DeferReason.OwnerDecision, "owner decision")]
+    [InlineData("deferred: larger than the flight", ReviewPoints.DeferReason.LargerThanFlight, "larger than the flight")]
+    public void EachDeferralReasonIsAcceptedAndCarried(string word, ReviewPoints.DeferReason reason, string stored)
+    {
+        RefusalWith($"| R1.4 | {word} | |").ShouldBeNull();
+        var reply = ReviewPoints.ParseAnswers(Table.Replace(Row14, $"| R1.4 | {word} | |")).Single(r => r.Id == "R1.4");
+        (reply.Answer, reply.Reason).ShouldBe((ReviewPoints.Answer.Deferred, reason));
+        var kept = ReviewPoints.ToStored(reply);
+        (kept.Answer, kept.Reason).ShouldBe(("deferred", stored));
+    }
+
+    [Theory]
+    [InlineData("deferred")]
+    [InlineData("deferred: later")]
+    [InlineData("deferred: it is hard")]
+    public void ADeferralWithNoAllowedReasonIsRefused(string word)
+    {
+        RefusalWith($"| R1.4 | {word} | it is hard |").ShouldNotBeNull().ShouldContain("R1.4 is deferred with no allowed reason");
     }
 
     [Fact]

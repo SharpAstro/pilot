@@ -15,6 +15,27 @@ public static partial class ReviewFollowUp
     {
         /// <summary>The file and line the finding names (<c>Parser.cs:20</c>), or null when it names none.</summary>
         public string? Where => FirstLocation(Found, Why);
+
+        /// <summary>For a deferred point (pilot #1226), why it was deferred; null for the other items and for an old stored "left".</summary>
+        public ReviewPoints.DeferReason? Kind { get; init; }
+    }
+
+    private static readonly string[] SettledPhrases =
+    [
+        "all notes are made", "all notes were made", "all notes made", "every note is made", "all of the notes are made", "all notes are answered",
+        "already answered", "answered by the issue", "answered in the issue", "already settled", "already made", "already done",
+        "no longer exists", "no longer exist", "no longer present", "no longer in the", "does not exist any more", "removed by the squash",
+        "the squash removes", "the squash drops", "squash removes", "squash drops",
+    ];
+
+    /// <summary>
+    /// Whether a point's text says it is settled (pilot #1226): every note made or answered, already answered by the issue, text that no
+    /// longer exists, or a commit title the squash removes. Such a point is never filed as a follow-up.
+    /// </summary>
+    public static bool IsSettledText(string? text)
+    {
+        var t = (text ?? "").ReplaceLineEndings(" ").Replace('’', '\'').ToLowerInvariant();
+        return SettledPhrases.Any(p => t.Contains(p, StringComparison.Ordinal));
     }
 
     /// <summary>The first file (and line) named in the texts, in order: what was found, then why it was left.</summary>
@@ -92,9 +113,14 @@ public static partial class ReviewFollowUp
             {
                 switch (answer.Answer)
                 {
-                    case "left":
-                        items.Add(new Item(point.Id, point.Text, answer.Detail, SettleFor("the decision or change the reason names", point.Text, answer.Detail)));
+                    // Deferred is an end with one of three reasons; an old stored "left" reads as deferred with no reason (the backlog's case).
+                    case "left" or "deferred":
+                    {
+                        var reason = ReviewPoints.ReasonOf(answer.Reason);
+                        var why = reason is { } r ? $"deferred, {ReviewPoints.Words(r)}{(string.IsNullOrWhiteSpace(answer.Detail) ? "" : ": " + answer.Detail)}" : answer.Detail;
+                        items.Add(new Item(point.Id, point.Text, why, SettleFor("the decision or change the reason names", point.Text, answer.Detail)) { Kind = reason });
                         break;
+                    }
                     case "not addressed" when passedAnyway:
                         items.Add(PassedOver(point.Id, point.Text, $"pass anyway{by}: not addressed"));
                         break;
@@ -115,13 +141,13 @@ public static partial class ReviewFollowUp
         foreach (var round in ordered)
         {
             var n = 0;
-            foreach (var text in round.LeftPoints ?? [])
+            foreach (var text in (round.LeftPoints ?? []).Where(t => !IsSettledText(t)))
             {
                 items.Add(new Item($"L{round.Round}.{++n}", text.Trim(), "a new finding in text the fix round did not touch, not marked must-block", SettleFor("a decision on whether the finding stands, then its fix", text.Trim(), "")));
             }
         }
         // A point of a later round supersedes the one an earlier round left (the same key is never twice).
-        return new Standing([.. items.GroupBy(i => i.Key, StringComparer.OrdinalIgnoreCase).Select(g => g.Last())], notAddressed);
+        return new Standing([.. items.Where(i => !IsSettledText(i.Found)).GroupBy(i => i.Key, StringComparer.OrdinalIgnoreCase).Select(g => g.Last())], notAddressed);
     }
 
     private static Item PassedOver(string key, string found, string why) => new(key, found, why, SettleFor("a fix of the point, or a decision to leave it", found, why));
@@ -133,7 +159,7 @@ public static partial class ReviewFollowUp
     private static IReadOnlyList<Item> NotesItems(int round, IEnumerable<string> notes, string why)
     {
         var n = 0;
-        return [.. notes.Select(t => t.Trim().TrimStart('-', '*', ' ').ReplaceLineEndings(" ")).Where(t => t.Length > 0)
+        return [.. notes.Select(t => t.Trim().TrimStart('-', '*', ' ').ReplaceLineEndings(" ")).Where(t => t.Length > 0 && !IsSettledText(t))
             .Select(t => new Item($"N{round}.{++n}", t, why, SettleFor("making the note, or a decision to leave it", t, why)))];
     }
 

@@ -46,9 +46,9 @@ public sealed partial class PrReviews
             }
             if (verdict != "changes" && ReviewPoints.AnyNotAddressed(earlier, report))
             {
-                throw new FlightException("an earlier point is answered not addressed, which keeps the review at changes: give `changes`, or answer it addressed (with where) or left (with a reason)");
+                throw new FlightException("an earlier point is answered not addressed, which keeps the review at changes: give `changes`, or answer it with one of the four ends: addressed (with where), not work, node's own, or deferred (with a reason)");
             }
-            answers = [.. ReviewPoints.ParseAnswers(report).Select(r => new ReviewPointAnswer(r.Id, r.Answer switch { ReviewPoints.Answer.Addressed => "addressed", ReviewPoints.Answer.Left => "left", _ => "not addressed" }, r.Detail))];
+            answers = [.. ReviewPoints.ParseAnswers(report).Select(ReviewPoints.ToStored)];
         }
         // The verdict is kept as given, on one's own PR too: only the GitHub event is forced to COMMENT there (see Event).
         var login = await github.LoginAsync(cancellationToken);

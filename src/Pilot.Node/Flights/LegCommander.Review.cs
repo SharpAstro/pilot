@@ -326,9 +326,9 @@ public sealed partial class LegCommander
             var blockedBy = ReviewPoints.AnyNotAddressed(earlier, report);
             if (verdict == "pass" && blockedBy)
             {
-                throw new FlightException("a pass cannot leave an earlier point not addressed: give changes, with it under `## Blocking`, or answer it addressed (with where) or left (with a reason)");
+                throw new FlightException("a pass cannot leave an earlier point not addressed: give changes, with it under `## Blocking`, or answer it with one of the four ends: addressed (with where), not work, node's own, or deferred (with a reason)");
             }
-            answers = [.. ReviewPoints.ParseAnswers(report).Select(r => new ReviewPointAnswer(r.Id, r.Answer switch { ReviewPoints.Answer.Addressed => "addressed", ReviewPoints.Answer.Left => "left", _ => "not addressed" }, r.Detail))];
+            answers = [.. ReviewPoints.ParseAnswers(report).Select(ReviewPoints.ToStored)];
             // A new blocking finding in text the fix did not touch, and not marked must-block, is left for the follow-up and blocks nothing.
             if (verdict == "changes" && await UntouchedNewFindingsAsync(flight, review, ReviewPoints.NewBlocking(findings), cancellationToken) is { Count: > 0 } outside)
             {

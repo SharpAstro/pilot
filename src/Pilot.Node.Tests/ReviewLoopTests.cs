@@ -58,7 +58,7 @@ public sealed class ReviewLoopTests : ReviewTestsBase
     public async Task TheLoopCardTitlesTheRoundsInAllAndListsThePointsInThreeGroups()
     {
         var table = "## Earlier points\n| Point | Answer | Where or reason |\n|---|---|---|\n"
-            + "| R1.1 | addressed | Parser.cs:20 |\n| R2.1 | left | the decision belongs to the owner |\n\n";
+            + "| R1.1 | addressed | Parser.cs:20 |\n| R2.1 | deferred: owner decision | the decision belongs to the owner |\n\n";
         var code = await Looping("1", 3, table);
 
         var card = Open().Single(c => c.Kind == LegCommander.ReviewLoopKind);

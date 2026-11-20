@@ -74,7 +74,9 @@ public sealed class ReReviewTests : ReviewTestsBase
         brief.ShouldContain("- R2.1 (blocking): E is new");
         brief.ShouldContain("## Earlier points");
         brief.ShouldContain("`addressed`");
-        brief.ShouldContain("`left`");
+        brief.ShouldContain("`deferred: owner decision`");
+        brief.ShouldContain("`not work: <why>`");
+        brief.ShouldContain("`node's own`");
         brief.ShouldContain("`not addressed`");
         brief.ShouldContain("follow-up issue");
         brief.ShouldContain("\"Still open\", \"unchanged\", \"for later\" and \"to do\" with no reason are refused");
