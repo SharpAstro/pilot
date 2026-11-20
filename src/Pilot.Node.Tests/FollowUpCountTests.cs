@@ -68,6 +68,8 @@ public sealed class FollowUpCountTests : ReviewTestsBase
         var number = FollowUp(TimeSpan.FromHours(2));
         FlightOn(900, "SWP1");
         await _github.CloseIssueAsync(Repo, number, "done", Ct);
+        var key = Path.TrimEndingDirectorySeparator(Path.GetFullPath(Repo));
+        _github.MilestoneIssuesOf[key][number] = _github.MilestoneIssuesOf[key][number] with { Open = false };
 
         var row = (await Sweep().SweepAsync(Ct)).ShouldNotBeNull();
 
@@ -162,7 +164,7 @@ public sealed class FollowUpCountTests : ReviewTestsBase
             new ReviewFollowUp.Item("R1.4", "the rename touches every caller", "larger than the flight", "a flight on it"),
         };
 
-        var lines = ReviewFollowUp.Points(items).Split('\n');
+        var lines = ReviewFollowUp.Points(items).ReplaceLineEndings("\n").Split('\n');
 
         lines.Count(l => l.StartsWith("- [ ] ", StringComparison.Ordinal)).ShouldBe(2);
         var first = Array.FindIndex(lines, l => l.StartsWith("### R1.3: Lexer.cs:3", StringComparison.Ordinal));

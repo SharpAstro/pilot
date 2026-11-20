@@ -268,7 +268,7 @@ public static partial class ReviewFollowUp
                 boxes = true;
                 if (wanted.Contains(t[6..].Trim()))
                 {
-                    lines[i] = "- [x] " + t[6..];
+                    lines[i] = "- [x] " + lines[i][6..];
                     ticked++;
                 }
                 else
