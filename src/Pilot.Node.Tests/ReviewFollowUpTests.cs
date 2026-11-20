@@ -327,7 +327,7 @@ public sealed class ReviewFollowUpTests : ReviewTestsBase
     [Fact]
     public void AnOldStoredLeftAnswerReadsAsDeferredWithNoReason()
     {
-        var standing = WithAnswers(new("R1.1", "left", "out of scope, Parser.cs is wider"));
+        var standing = WithAnswers(new ReviewPointAnswer("R1.1", "left","out of scope, Parser.cs is wider"));
 
         var item = standing.Items.ShouldHaveSingleItem();
         item.Key.ShouldBe("R1.1");
