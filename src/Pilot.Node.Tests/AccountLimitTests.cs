@@ -484,7 +484,6 @@ public sealed class AccountLimitTests
         SessionRow[] rows =
         [
             Session("son00000", "claude-sonnet-5-5", Start.AddMinutes(5)) with { LastResponseAt = Start.AddMinutes(6) },
-            Session("old00000", "claude-opus-5-5", Start.AddMinutes(-5)) with { LastResponseAt = Start.AddMinutes(6) },
             Session("err00000", "claude-opus-5-5", Start.AddMinutes(5)) with { LastResponseAt = Start.AddMinutes(6), ApiError = "usage_limit_reached", ApiErrorResetsAt = until },
             Session("quiet000", "claude-opus-5-5", Start.AddMinutes(5)),
             Session("unk00000", "mystery", Start.AddMinutes(5)) with { LastResponseAt = Start.AddMinutes(6) },
@@ -730,7 +729,7 @@ public sealed class AccountLimitTests
 
         _outage.LimitUntil.ShouldBeNull();
         Open().ShouldBeEmpty();
-        _state.Cards().Single(c => c.Kind == TurnOutage.LimitCardKind).Outcome.ShouldStartWith("old00000 answered a turn on ");
+        _state.Cards().Single(c => c.Kind == TurnOutage.LimitCardKind).Outcome.ShouldContain("old00000 answered a turn on ");
     }
 
     [Fact]

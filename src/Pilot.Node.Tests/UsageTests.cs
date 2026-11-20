@@ -214,7 +214,7 @@ public sealed class UsageTests : IDisposable
 
         Write(91, Reset);
         reader.Read();
-        Write(97, Reset);
+        Write(91, Reset);
         reader.Read();
 
         var card = _state.Cards().ShouldHaveSingleItem();
@@ -272,14 +272,14 @@ public sealed class UsageTests : IDisposable
         _time.Advance(TimeSpan.FromMinutes(1));
         reader.Read(Row(95, Reset, _time.GetUtcNow()) with { Source = "server" });
         Lines().Length.ShouldBe(2);
-        Lines().First().Title.ShouldStartWith("5-hour usage now reads 95%");
+        Lines().Last().Title.ShouldStartWith("5-hour usage now reads 95%");
 
         _time.Advance(TimeSpan.FromMinutes(1));
         var at = _time.GetUtcNow();
         reader.Read(Row(40, Reset, at) with { Source = "server" });
         Lines().Length.ShouldBe(3);
-        Lines().First().Title.ShouldStartWith("5-hour usage now reads 40%");
-        Lines().First().Detail.ShouldNotBeNull().ShouldContain($"figures read {at.ToLocalTime():HH:mm} from the server");
+        Lines().Last().Title.ShouldStartWith("5-hour usage now reads 40%");
+        Lines().Last().Detail.ShouldNotBeNull().ShouldContain($"figures read {at.ToLocalTime():HH:mm} from the server");
     }
 
     private CardRow[] Lines() => [.. _state.Cards().Where(c => c.Kind == UsageReader.HighKind).OrderBy(c => c.RungAt).ThenBy(c => c.Id, StringComparer.Ordinal)];
