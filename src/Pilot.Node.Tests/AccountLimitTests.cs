@@ -763,9 +763,10 @@ public sealed class AccountLimitTests
         _state.RefreshHold();
         var held = _state.Usage().ShouldNotBeNull().Hold.ShouldNotBeNull();
         held.Kind.ShouldBe(StartGate.GateHoldKind);
-        var seq = _state.Snapshot().Seq;
 
         _gate.Hold("normal", 90, 100, "worker-start", "flight/TIA1", "TIA1 waits").ShouldBeTrue();
+        // The first ask raises its card; what follows must publish nothing more.
+        var seq = _state.Snapshot().Seq;
         _gate.Hold("priority", 98, 100, "worker-start", "flight/TIA1", "TIA1 waits").ShouldBeFalse();
         _gate.Hold("normal", 90, 100, "worker-start", "flight/TIA1", "TIA1 waits").ShouldBeTrue();
 
