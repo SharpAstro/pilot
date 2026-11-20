@@ -839,13 +839,13 @@ internal sealed class PilotChrome<TSurface>
     internal bool CoveredAfterPage(float x, float y) => CoveredAfter(PageViewOf(Page), x, y);
 
     /// <summary>As <see cref="CoveredAfterPage"/>, but the open bar's press-outside layer, which spans the page, is looked through: only what is drawn counts.</summary>
-    internal bool DrawnAfterPage(float x, float y) => CoveredAfter(PageViewOf(Page), x, y, includeSurfaces: false);
+    internal bool DrawnAfterPage(float x, float y) => CoveredAfter(PageViewOf(Page), x, y, includeOutsideLayer: false);
 
     // Reused by every CoveredAfter call (a MouseMove asks each frame); the input thread is the only caller.
     private readonly List<ClickableRegion> _coverRegions = [];
 
     /// <summary>Whether a point is covered by a widget painted after <paramref name="target"/> (the page, or the cards panel, which is itself above the page).</summary>
-    private bool CoveredAfter(IPixelWidget target, float x, float y, bool includeSurfaces = true)
+    private bool CoveredAfter(IPixelWidget target, float x, float y, bool includeOutsideLayer = true)
     {
         // Plain loops over the page's list, no LINQ iterators: a MouseMove asks this every frame.
         var widgets = PageWidgets;
@@ -860,23 +860,23 @@ internal sealed class PilotChrome<TSurface>
         }
         for (var i = start; i < widgets.Count; i++)
         {
-            if (Covers(widgets[i], x, y, includeSurfaces))
+            if (Covers(widgets[i], x, y, includeOutsideLayer))
             {
                 return true;
             }
         }
-        return More.Menu.IsOpen && Covers(More, x, y, includeSurfaces);
+        return More.Menu.IsOpen && Covers(More, x, y, includeOutsideLayer);
     }
 
-    // Whether one widget's painted regions hold the point; the open bar's press-outside layer counts only with includeSurfaces.
-    private bool Covers(IPixelWidget widget, float x, float y, bool includeSurfaces)
+    // Whether one widget's painted regions hold the point; the open bar's press-outside layer counts only with includeOutsideLayer.
+    private bool Covers(IPixelWidget widget, float x, float y, bool includeOutsideLayer)
     {
         var regions = _coverRegions;
         regions.Clear();
         widget.CollectPaintedRegions(regions);
         foreach (var r in regions)
         {
-            if ((includeSurfaces || r is not { Result: HitResult.ButtonHit { Action: NotificationsHost.OutsideAction } }) && x >= r.X && x < r.X + r.Width && y >= r.Y && y < r.Y + r.Height)
+            if ((includeOutsideLayer || r is not { Result: HitResult.ButtonHit { Action: NotificationsHost.OutsideAction } }) && x >= r.X && x < r.X + r.Width && y >= r.Y && y < r.Y + r.Height)
             {
                 return true;
             }
@@ -918,7 +918,7 @@ internal sealed class PilotChrome<TSurface>
         }
         // A press on a point covered by a widget painted after the target (a toast, the edge handle, the open bar over the page) is that widget's,
         // not a selection's: none begins and the router gives it the press. A drag or release of a selection already begun is unchanged.
-        if (evt is InputEvent.MouseDown { Button: MouseButton.Left } pressed && CoveredAfter(target, pressed.X, pressed.Y, includeSurfaces: false))
+        if (evt is InputEvent.MouseDown { Button: MouseButton.Left } pressed && CoveredAfter(target, pressed.X, pressed.Y, includeOutsideLayer: false))
         {
             return false;
         }
