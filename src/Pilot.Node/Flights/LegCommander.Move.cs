@@ -461,6 +461,8 @@ public sealed partial class LegCommander
         _rung.TryRemove(flight.Code, out _);
         var text = $"{flight.Code} {movedTo.Text}";
         state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), text);
+        // A moved flight is landed here as a merged one is: the 7-day card's Hold button for it has nothing left to hold on this node.
+        state.DropHoldChoiceOfLanded(flight.Code);
         state.RaiseCard(CardBin.Handled, MovedAwayKind, Verbs.FlightTarget(flight.Code), text,
             $"{options.Machine} handed {flight.Code} over to {to}{(Models.Maintenance ? $", as {options.Machine} is in maintenance" : "")}: {to} flies it from here, and {options.Machine} no longer does");
         return text;
