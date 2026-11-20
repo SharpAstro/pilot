@@ -13,7 +13,7 @@ namespace Pilot.Gui.Tests;
 /// </summary>
 public sealed class ViewsCaptureTests
 {
-    private static string Tag => Environment.GetEnvironmentVariable("PILOT_CAPTURE_TAG") ?? "before";
+    private static string Tag => Environment.GetEnvironmentVariable("PILOT_CAPTURE_TAG") ?? "after";
 
     public static IEnumerable<TheoryDataRow<string, int, bool>> Cases() =>
         from shot in new[] { "flights-canvas", "flights-grid", "flights-list", "jobs-play" }
