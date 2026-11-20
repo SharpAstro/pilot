@@ -177,7 +177,7 @@ public sealed class RowTextPressTests
         Drag(window, id.X + 1f, id.Y + id.Height / 2f, id.X + id.Width - 1f, id.Y + id.Height / 2f);
         ctrlC();
 
-        copied.Count.ShouldBe(1, diag);
+        copied.Count.ShouldBe(1, diag + $" has={window.Chrome.Jobs.PageSelection.HasSelection} drag={window.Chrome.Jobs.PageSelection.Dragging}");
         copied[0].ShouldContain("j1");
     }
 

@@ -36,7 +36,7 @@ internal sealed class TextSelection<TSurface>(Renderer<TSurface> renderer)
     private bool _dragging;
 
     // A press on a clickable row's text, armed but not taken: it becomes the anchor of a drag once the pointer moves DragThreshold.
-    private Spot? _pending;
+    private bool _pending;
     private (float X, float Y) _pendingAt;
 
     /// <summary>How far, in pixels, the pointer moves with the button held before a drag begun on a row's text takes over from the row's click.</summary>
@@ -383,7 +383,7 @@ internal sealed class TextSelection<TSurface>(Renderer<TSurface> renderer)
         {
             case InputEvent.MouseMove { X: var mx, Y: var my }:
                 Pointer = (mx, my);
-                if (!_dragging && _pending is { } armed)
+                if (!_dragging && _pending)
                 {
                     // The press on a row's text was the router's (it selected the row); the drag takes over only once the
                     // pointer has moved a few pixels with the button held. No timer: the move itself is the trigger.
@@ -393,13 +393,14 @@ internal sealed class TextSelection<TSurface>(Renderer<TSurface> renderer)
                     {
                         return false;
                     }
-                    _pending = null;
-                    if (armed.Region >= _frame.Count)
+                    _pending = false;
+                    // The spot is found now, in this frame: the row's click redrew the page since the press.
+                    if (RegionAt(_pendingAt.X, _pendingAt.Y) is not (var at and >= 0))
                     {
                         return false;
                     }
-                    _anchor = _caret = armed;
-                    _anchorText = _caretText = _frame[armed.Region].Text;
+                    _anchor = _caret = new Spot(at, CharAt(_frame[at], _pendingAt.X));
+                    _anchorText = _caretText = _frame[at].Text;
                     _dragging = true;
                 }
                 if (!_dragging)
@@ -414,11 +415,11 @@ internal sealed class TextSelection<TSurface>(Renderer<TSurface> renderer)
             case InputEvent.MouseDown { Button: MouseButton.Left, X: var x, Y: var y, ClickCount: var clicks }:
                 Pointer = (x, y);
                 Clear();
-                _pending = null;
+                _pending = false;
                 if (RegionAt(x, y) is var rowAt and >= 0 && row is not null && !inert(x, y) && row(x, y) && clicks < 2)
                 {
                     // A clickable row's text: the press stays the router's, the selection only arms.
-                    _pending = new Spot(rowAt, CharAt(_frame[rowAt], x));
+                    _pending = true;
                     _pendingAt = (x, y);
                     return false;
                 }
@@ -439,9 +440,9 @@ internal sealed class TextSelection<TSurface>(Renderer<TSurface> renderer)
                     return true;
                 }
                 return false;
-            case InputEvent.MouseUp { Button: MouseButton.Left } when !_dragging && _pending is not null:
+            case InputEvent.MouseUp { Button: MouseButton.Left } when !_dragging && _pending:
                 // A press and release with no drag: the row's, and nothing is selected.
-                _pending = null;
+                _pending = false;
                 return false;
             case InputEvent.MouseUp { Button: MouseButton.Left } when _dragging:
                 _dragging = false;
