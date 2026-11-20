@@ -17,6 +17,7 @@ public sealed class UsageStatusTests
         Seq = 1,
         At = Now,
         Stream = "s",
+        Sessions = [],
         Notes = [],
         Usage = usage,
     };
