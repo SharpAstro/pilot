@@ -1508,7 +1508,7 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
         var pointing = _pointing && _pointAt == (cell, index);
         List<(float Width, Layout.Node Item)> items = [];
         var sizesWidth = (DesignTargets.BuiltIn.Sum(t => t.Name.Length) + "Terminal".Length) * 7f + 5 * 24f;
-        items.Add((sizesWidth, SizeChoice(cell, index, size)));
+        items.Add((sizesWidth, SizeChoice(cell, index, size ?? "")));
         items.Add(("Rotate".Length * 7f + 20f, ToolButton("Rotate", "Swap this frame's width and height", $"designs:frame-rotate:{cell}:{index}", () => RotateFrame(cell, index))));
         items.Add(("Point at this".Length * 7f + 20f, ToolButton("Point at this", pointing ? "Pointing: a click on this screen puts that node's key in your message. Click again to play it." : "Click a part of this screen to put its key in your message instead of playing the click", $"designs:frame-point:{cell}:{index}", () => Point(!pointing, cell, index), pointing: pointing)));
         var room = WellInnerWidth();
