@@ -174,10 +174,20 @@ public sealed class RowTextPressTests
         var py = id.Y + id.Height / 2f;
         var diag = string.Join(" | ", all.Where(r => px >= r.X && px < r.X + r.Width && py >= r.Y && py < r.Y + r.Height)
             .Select(r => $"{r.Result?.GetType().Name} press={r.OnPress is not null} act={r.OnActivate is not null} dbl={r.OnDoubleClick is not null} opens={r.Opens is not null} dis={r.Dismisses is not null} ctx={r.OnContextMenu is not null}"));
-        Drag(window, id.X + 1f, id.Y + id.Height / 2f, id.X + id.Width - 1f, id.Y + id.Height / 2f);
+        var sel = window.Chrome.Jobs.PageSelection;
+        var steps = new List<string>();
+        window.Send(new InputEvent.MouseDown(px, py));
+        steps.Add($"down armed={sel.Armed} drag={sel.Dragging}");
+        window.Send(new InputEvent.MouseMove(px + 10f, py));
+        steps.Add($"move1 armed={sel.Armed} drag={sel.Dragging}");
+        window.Send(new InputEvent.MouseMove(id.X + id.Width - 1f, py));
+        steps.Add($"move2 armed={sel.Armed} drag={sel.Dragging} has={sel.HasSelection} w={id.Width}");
+        window.Send(new InputEvent.MouseUp(id.X + id.Width - 1f, py));
+        steps.Add($"up has={sel.HasSelection}");
+        diag += " :: " + string.Join("; ", steps);
         ctrlC();
 
-        copied.Count.ShouldBe(1, diag + $" has={window.Chrome.Jobs.PageSelection.HasSelection} drag={window.Chrome.Jobs.PageSelection.Dragging}");
+        copied.Count.ShouldBe(1, diag +$" has={window.Chrome.Jobs.PageSelection.HasSelection} drag={window.Chrome.Jobs.PageSelection.Dragging}");
         copied[0].ShouldContain("j1");
     }
 
