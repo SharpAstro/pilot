@@ -12,7 +12,7 @@ public sealed partial class LegCommander
     /// files the last passed round's not-blocking notes that no review-notes round made.
     /// </summary>
     /// <exception cref="MergeBlockedException">An earlier point stands not addressed, or the issue could not be filed: the points are never dropped, the merge holds with this said.</exception>
-    private async Task<int?> EnsureFollowUpAsync(FlightRow flight, IReadOnlyList<ReviewFollowUp.Item>? extra, CancellationToken cancellationToken, bool lastRoundNotes = false)
+    private async Task<int?> EnsureFollowUpAsync(FlightRow flight, IReadOnlyList<ReviewFollowUp.Item>? extra, CancellationToken cancellationToken, bool lastRoundNotes = false, bool ownersWord = false)
     {
         var standing = ReviewFollowUp.Read(flight.ReviewRounds);
         if (standing.NotAddressed.Count > 0)
@@ -20,8 +20,16 @@ public sealed partial class LegCommander
             throw new MergeBlockedException(MergeRefusals.Unclassified,
                 $"{flight.Code} has earlier review points still not addressed ({string.Join(", ", standing.NotAddressed)}): they are fixed or left with a reason before it merges");
         }
+        // Pilot #1226: a note of the passing round is made, not work, the node's own or deferred with a reason before the merge, never
+        // filed as it is. Only the owner's word (the person's as-is merge) lets one through, and then it is filed as the follow-up it is.
+        var unmade = ReviewFollowUp.UnmadeNotes(flight.ReviewRounds, state.Legs(flight.Code).Where(l => l.Name.StartsWith(ReviewNotesLeg, StringComparison.Ordinal) && l.State == LegState.Done).Select(l => l.Report));
+        if (lastRoundNotes && !ownersWord && unmade.Count > 0)
+        {
+            throw new MergeBlockedException(MergeRefusals.Unclassified,
+                $"{flight.Code} has review notes with no end ({string.Join("; ", unmade.Select(p => $"{p.Id}: {(p.Text.Length <= 80 ? p.Text : p.Text[..77] + "...")}"))}): each is made, not work, the node's own, or deferred (another repo, owner decision, larger than the flight) before it merges");
+        }
         var captured = flight.FollowUpPoints ?? [];
-        var wanted = standing.Items.Concat(extra ?? []).Concat(lastRoundNotes ? ReviewFollowUp.LastRoundNotes(flight.ReviewRounds) : []).GroupBy(i => i.Key, StringComparer.OrdinalIgnoreCase).Select(g => g.Last()).ToList();
+        var wanted = standing.Items.Concat(extra ?? []).Concat(lastRoundNotes && ownersWord ?ReviewFollowUp.LastRoundNotes(flight.ReviewRounds) : []).GroupBy(i => i.Key, StringComparer.OrdinalIgnoreCase).Select(g => g.Last()).ToList();
         var fresh = wanted.Where(i => !captured.Contains(i.Key, StringComparer.OrdinalIgnoreCase)).ToList();
         if (fresh.Count == 0)
         {

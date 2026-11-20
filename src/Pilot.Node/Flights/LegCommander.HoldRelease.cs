@@ -9,7 +9,7 @@ namespace Pilot.Node.Flights;
 public sealed partial class LegCommander
 {
     /// <summary>Why a flight whose review passed with notes holds its merge.</summary>
-    public const string HoldingReason = "the watchtower is making the review's small fixes (with none running, the node posts the notes on the PR and releases the hold)";
+    public const string HoldingReason = "the watchtower is making the review's small fixes (with none running, the node plans the review-notes leg or rings the owner)";
 
     /// <summary>The Handled card kind that says the node released a hold nobody was making the fixes of.</summary>
     public const string HoldReleasedKind = "hold-released";
@@ -63,6 +63,13 @@ public sealed partial class LegCommander
             if (state.Flights().FirstOrDefault(f => f.Code == code) is not { State: FlightState.Flying, Holding: not null, PullRequest: { } number, Review: { State: ReviewState.Passed } review } flight
                 || OnHoldRefusal(flight) is not null)
             {
+                return false;
+            }
+            // Pilot #1226: a hold is never released into a merge with notes that have no end: the leg is planned, or the owner is rung.
+            if (UnmadeNotesOf(flight) is { Count: > 0 } unmade)
+            {
+                call.Dispose();
+                await PlanOrRingForNotesAsync(flight, unmade, "no watchtower was running", cancellationToken);
                 return false;
             }
             var report = flight.ReviewRounds is { Length: > 0 } rounds && !string.IsNullOrWhiteSpace(rounds[^1].Findings) ? rounds[^1].Findings : review.Report ?? "";

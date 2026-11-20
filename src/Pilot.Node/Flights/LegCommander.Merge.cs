@@ -58,7 +58,9 @@ public sealed partial class LegCommander
             // Nothing lands open (pilot #1107): the points its reviews left are filed as the flight's one follow-up issue before any merge, a hand's,
             // the autopilot's, an armed one's or the queue's. Done once the flight is under way (Enqueue put it in _active), so two asks for one
             // flight cannot both see no issue and file two: the second is refused above until this one ends.
-            await EnsureFollowUpAsync(Mergeable(command).Item1, null, cancellationToken, lastRoundNotes: true); // pilot #1148: unmade notes of the passing round
+            // Pilot #1148, #1226: a note of the passing round with no end refuses the merge; only the owner's word (the person's as-is merge) lets it by.
+            var ownersWord = command.PersonsWord is not null || (command.Args is { Length: > 2 } mergeArgs && mergeArgs[2] == MergeAsIs && IsPerson(asked, command.Who));
+            await EnsureFollowUpAsync(Mergeable(command).Item1, null, cancellationToken, lastRoundNotes: true, ownersWord: ownersWord);
             await OffLockAsync(null, () => WaitTurnAsync(asked.Code, asked.Repo, cancellationToken));
             if (Models.MergeBatch)
             {
@@ -336,7 +338,7 @@ public sealed partial class LegCommander
         }
         if (flight.Holding is { } holding)
         {
-            throw new MergeBlockedException(MergeRefusals.NodeWait, $"{flight.Code} is in a holding pattern since {holding.Since.ToLocalTime():HH:mm}: {holding.Reason}; the watchtower clears it (`flight clear {flight.Code}`) or pushes its fixes (`flight pr {flight.Code}`); a hold the watchtower does not take (`flight hold {flight.Code}`, or a commit in the plane) is released by the node and merges with its notes");
+            throw new MergeBlockedException(MergeRefusals.NodeWait, $"{flight.Code} is in a holding pattern since {holding.Since.ToLocalTime():HH:mm}: {holding.Reason}; the watchtower clears it (`flight clear {flight.Code}`) or pushes its fixes (`flight pr {flight.Code}`); a hold the watchtower does not take (`flight hold {flight.Code}`, or a commit in the plane) is never merged with its notes: the node plans the review-notes leg or rings the owner, and only the owner's word clears it");
         }
         // A question of design the review asked of this PR and nobody has answered holds the merge: answer it or dismiss it first.
         if (PrRef.Parse(flight.PullRequestUrl) is { } own

@@ -186,6 +186,40 @@ public static partial class ReviewFollowUp
             : [];
     }
 
+    /// <summary>
+    /// The not-blocking notes of the last passed round that have no end yet (pilot #1226): none is answered made (addressed), not work,
+    /// the node's own or deferred with one of the three reasons, by a later round's table or by a finished review-notes leg's report
+    /// (<paramref name="legReports"/>). A note whose text says it is settled is no note. Pure.
+    /// </summary>
+    public static IReadOnlyList<ReviewPoints.Point> UnmadeNotes(IReadOnlyList<ReviewRound>? rounds, IEnumerable<string?>? legReports = null)
+    {
+        if (rounds is not { Count: > 0 } || rounds.OrderBy(r => r.Round).Last() is not { Verdict: ReviewState.Passed } last)
+        {
+            return [];
+        }
+        var ended = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var answer in rounds.OrderBy(r => r.Round).SelectMany(r => r.Answers ?? []))
+        {
+            if (answer.Answer is "addressed" or "not work" or "node's own" || (answer.Answer is "deferred" && ReviewPoints.ReasonOf(answer.Reason) is not null))
+            {
+                ended.Add(answer.Id);
+            }
+            else
+            {
+                ended.Remove(answer.Id);
+            }
+        }
+        foreach (var reply in (legReports ?? []).Where(r => !string.IsNullOrWhiteSpace(r)).SelectMany(r => ReviewPoints.ParseAnswers(r!)))
+        {
+            if (reply.Answer is ReviewPoints.Answer.NotWork or ReviewPoints.Answer.NodesOwn || (reply.Answer == ReviewPoints.Answer.Addressed && ReviewPoints.HasWhere(reply.Detail))
+                || (reply.Answer == ReviewPoints.Answer.Deferred && reply.Reason is not null))
+            {
+                ended.Add(reply.Id);
+            }
+        }
+        return [.. ReviewPoints.Number(rounds).Where(p => p.Round == last.Round && !p.Blocking && !IsSettledText(p.Text) && !ended.Contains(p.Id))];
+    }
+
     /// <summary>The title of the flight's one follow-up issue.</summary>
     public static string Title(FlightRow flight) => $"Follow-up of {flight.Code}: points its review left for later (PR #{flight.PullRequest})";
 
