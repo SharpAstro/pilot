@@ -27,18 +27,10 @@ public sealed class RowTextPressTests
         EndedAt = ended,
     };
 
-    private static FlightRow Flight(string code, int issue, string title) => new()
+    private static NodeSummary Node(string stream, string account) => new()
     {
-        Code = code,
-        Repo = "tianwen",
-        RepoPath = "/r/tianwen",
-        Issue = issue,
-        Title = title,
-        Branch = $"flight/{code.ToLowerInvariant()}",
-        Worktree = $"/r/tianwen/.claude/worktrees/{code.ToLowerInvariant()}",
-        Base = "origin/main",
-        State = FlightState.Flying,
-        CreatedAt = Live.At,
+        Connected = true, Status = "live", Stream = stream, Account = account, LiveSessions = 3,
+        Node = new NodeInfo { WireVersion = 1, Version = "2.0.9", MachineName = "DESKTOP-7", MachinePrefix = "SE2", ProcessId = 1, StartedAt = Live.At, DataFolder = "/d", SocketPath = "/s", Stream = stream },
     };
 
     private sealed class Window : IDisposable
@@ -67,12 +59,16 @@ public sealed class RowTextPressTests
             Job("j14", JobState.Succeeded, Live.At.AddMinutes(-30), Live.At.AddMinutes(-29)),
         ], Live.At), "live", Live.At);
 
-        // Three flights, so the Flights table is a second list page whose rows carry text (the Sessions rows carry none).
-        public FlightsScreen Flights { get; } = new(FlightLine.Build(
-            [Flight("TIA1611", 1611, "Planets on the GPU"), Flight("TIA1612", 1612, "Moons in the sky map"), Flight("TIA1613", 1613, "Comets from the MPC")],
-            [], Live.At), "test", Live.At);
+        // Three nodes, so the Fleet table is a second list page whose rows carry selectable text, some of it with a tooltip
+        // (the Sessions rows carry no selectable text, and the Flights page opens on its canvas, not its table).
+        public FleetScreen Fleet { get; } = new(
+        [
+            FleetLine.From("node.sock", here: true, canCommand: true, null, Node("laptop", "ada@example.org")),
+            FleetLine.From("10.0.0.9:47731", here: false, canCommand: true, null, Node("desktop", "bo@example.org")),
+            FleetLine.From("10.0.0.7:47731", here: false, canCommand: true, null, Node("nas", "ci@example.org")),
+        ], Live.At);
 
-        public void Render() => Chrome.Render(_sessions, Flights, null, Jobs, _size);
+        public void Render() => Chrome.Render(_sessions, null, null, Jobs, Fleet, _size);
 
         public bool Send(InputEvent evt)
         {
@@ -129,21 +125,21 @@ public sealed class RowTextPressTests
     public void APressOnAnotherListPageRowTextSelectsItAndNeverSwallowsTheClickBeneath()
     {
         using var window = new Window();
-        // The Flights table: its rows carry their code, title, branch and the rest as text (the Sessions rows carry none, so a
-        // press there never meets the text selection).
-        window.Chrome.Show(PilotPage.Flights);
+        // The Fleet table: its rows carry the machine, account, usage and the rest as selectable text, the machine and account
+        // with a tooltip. (The Sessions rows carry no selectable text, so a press there never meets the text selection.)
+        window.Chrome.Show(PilotPage.Fleet);
         window.Render();
         // Each row's index from its own hit region, so a text is matched to the row it sits in, not to the order of the texts.
         var regions = new List<ClickableRegion>();
-        window.Chrome.Flights.CollectPaintedRegions(regions);
-        var rows = regions.Where(r => r.Result is HitResult.ListItemHit { ListId: FlightsView<RgbaImage>.ListId }).ToArray();
+        window.Chrome.Fleet.CollectPaintedRegions(regions);
+        var rows = regions.Where(r => r.Result is HitResult.ListItemHit { ListId: FleetView<RgbaImage>.ListId }).ToArray();
         int RowOf(float x, float y) => rows.Where(r => x >= r.X && x < r.X + r.Width && y >= r.Y && y < r.Y + r.Height)
             .Select(r => ((HitResult.ListItemHit)r.Result).Index).DefaultIfEmpty(-1).First();
-        var byRow = window.Chrome.Flights.SelectableTextRegions.ToArray().Where(r => r.Text.Trim().Length > 0)
+        var byRow = window.Chrome.Fleet.SelectableTextRegions.ToArray().Where(r => r.Text.Trim().Length > 0)
             .Select(r => (Region: r, Row: RowOf(Middle(r).X, Middle(r).Y))).Where(t => t.Row >= 0)
             .GroupBy(t => t.Row).OrderBy(g => g.Key).Select(g => g.Select(t => t.Region).ToArray()).ToArray();
         byRow.Length.ShouldBe(3, $"{rows.Length} rows painted; texts: "
-            + string.Join(" | ", window.Chrome.Flights.SelectableTextRegions.ToArray().Take(30).Select(r => $"'{r.Text.Trim()}' {r.X:0},{r.Y:0}")));
+            + string.Join(" | ", window.Chrome.Fleet.SelectableTextRegions.ToArray().Take(30).Select(r => $"'{r.Text.Trim()}' {r.X:0},{r.Y:0}")));
 
         // Every text of the rows, tooltip or not, round the rows in turn: each press lands on a row other than the one selected,
         // so a press that went nowhere leaves the previous row selected and fails.
@@ -156,7 +152,7 @@ public sealed class RowTextPressTests
                 var (x, y) = Middle(region);
                 var row = RowOf(x, y);
                 window.Click(x, y);
-                window.Chrome.Flights.Selected.ShouldBe(row, $"press on '{region.Text.Trim()}' in row {row}");
+                window.Chrome.Fleet.Selected.ShouldBe(row, $"press on '{region.Text.Trim()}' in row {row}");
                 rowsPressed.Add(row);
             }
         }
