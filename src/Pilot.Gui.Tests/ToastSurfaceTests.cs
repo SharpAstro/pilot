@@ -80,10 +80,17 @@ public sealed class ToastSurfaceTests
         {
             var cards = _kind == Kind.Staying && withToast ? Ringing() : CardsScreen.Empty;
             var jobs = _kind == Kind.Fading && withToast ? Jobs(JobState.Succeeded) : Jobs(JobState.Running);
-            Chrome.Render(_data.Sessions with { AsOf = _at }, _data.Flights, cards, jobs, _data.Fleet, _data.Repos, new RectF32(0, 0, _width, _height), _data.Machines);
+            Chrome.Render(Sessions(), _data.Flights, cards, jobs, _data.Fleet, _data.Repos, new RectF32(0, 0, _width, _height), _data.Machines);
             Chrome.Tooltips.Render(Router.Tooltip, new RectF32(0, 0, _width, _height));
             Router.AfterPaint();
         }
+
+        /// <summary>The sample sessions repeated until the list runs past the card at the bottom, so rows lie under it and the list can scroll.</summary>
+        private SessionsScreen Sessions() => _data.Sessions with
+        {
+            AsOf = _at,
+            Lines = [.. Enumerable.Range(0, 8).SelectMany(n => _data.Sessions.Lines.Select(l => n == 0 ? l : l with { Name = l.Name + "-" + n, Row = l.Row with { Name = l.Row.Name + "-" + n, Id = l.Row.Id + "-" + n } }))],
+        };
 
         private JobsScreen Jobs(JobState state) => _data.Jobs with
         {
