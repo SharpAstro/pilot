@@ -790,7 +790,7 @@ internal sealed class PilotChrome<TSurface>
         if (evt is InputEvent.MouseMove move && Page == PilotPage.Flights)
         {
             // A point covered by something painted after the page (a toast, the bar) is not over the map: its menu and rows see the pointer leave.
-            if (CoveredAfterPage(move.X, move.Y))
+            if (DrawnAfterPage(move.X, move.Y))
             {
                 Flights.NotePointer(float.NegativeInfinity, float.NegativeInfinity);
             }
@@ -835,8 +835,11 @@ internal sealed class PilotChrome<TSurface>
     /// </summary>
     internal bool CoveredAfterPage(float x, float y) => CoveredAfter(PageViewOf(Page), x, y);
 
+    /// <summary>As <see cref="CoveredAfterPage"/>, but a surface (the open bar's press-outside layer, which spans the page) is looked through: only what is drawn counts.</summary>
+    internal bool DrawnAfterPage(float x, float y) => CoveredAfter(PageViewOf(Page), x, y, includeSurfaces: false);
+
     /// <summary>Whether a point is covered by a widget painted after <paramref name="target"/> (the page, or the cards panel, which is itself above the page).</summary>
-    private bool CoveredAfter(IPixelWidget target, float x, float y)
+    private bool CoveredAfter(IPixelWidget target, float x, float y, bool includeSurfaces = true)
     {
         var widgets = PageWidgets;
         var after = widgets.SkipWhile(w => !ReferenceEquals(w, target)).Skip(1);
@@ -851,7 +854,7 @@ internal sealed class PilotChrome<TSurface>
             w.CollectPaintedRegions(regions);
             foreach (var r in regions)
             {
-                if (x >= r.X && x < r.X + r.Width && y >= r.Y && y < r.Y + r.Height)
+                if ((includeSurfaces || !r.IsSurface) && x >= r.X && x < r.X + r.Width && y >= r.Y && y < r.Y + r.Height)
                 {
                     return true;
                 }
@@ -894,7 +897,7 @@ internal sealed class PilotChrome<TSurface>
         }
         // A press on a point covered by a widget painted after the target (a toast, the edge handle, the open bar over the page) is that widget's,
         // not a selection's: none begins and the router gives it the press. A drag or release of a selection already begun is unchanged.
-        if (evt is InputEvent.MouseDown { Button: MouseButton.Left } pressed && CoveredAfter(target, pressed.X, pressed.Y))
+        if (evt is InputEvent.MouseDown { Button: MouseButton.Left } pressed && CoveredAfter(target, pressed.X, pressed.Y, includeSurfaces: false))
         {
             return false;
         }

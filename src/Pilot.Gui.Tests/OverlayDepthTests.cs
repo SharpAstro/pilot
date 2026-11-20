@@ -82,7 +82,7 @@ public sealed class OverlayDepthTests
                 for (var x = text.X + 1f; x < text.X + text.Width; x += 4f)
                 {
                     var y = text.Y + text.Height / 2f;
-                    if (Chrome.CoveredAfterPage(x, y))
+                    if (Chrome.DrawnAfterPage(x, y))
                     {
                         return (x, y);
                     }
@@ -168,7 +168,7 @@ public sealed class OverlayDepthTests
         {
             for (var x = palette.X + 2f; x < palette.X + palette.Width; x += 4f)
             {
-                if (rig.Chrome.CoveredAfterPage(x, y))
+                if (rig.Chrome.DrawnAfterPage(x, y))
                 {
                     covered = (x, y);
                     break;
