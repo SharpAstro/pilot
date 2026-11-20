@@ -15,8 +15,8 @@ namespace Pilot.Gui.Tests;
 /// <summary>
 /// The toasts of the collapsed For you bar (PIL1184), on DIR.Lib's notifications component and a stepped clock (every render is given its
 /// time, nothing waits): a ringing card is a staying toast until pressed or dismissed; a job that ended is a fading toast of 5 s that
-/// pauses under the pointer and is kept in the history afterwards; no toast is placed under the pointer; at most three; none while
-/// the bar is open. The captures (a staying toast, a fading toast, the toasts dodging the pointer) at 1920 and 2880 wide in pilot-gui and
+/// pauses under the pointer and is kept in the history afterwards; the toast sits at the bottom right whether or not the pointer is on it (a surface takes the pointer instead of dodging); at most three; none while
+/// the bar is open. The captures (a staying toast, a fading toast, the toasts at the bottom right) at 1920 and 2880 wide in pilot-gui and
 /// 160x44 in pilot-tui go to PILOT_JOB_ARTIFACTS.
 /// </summary>
 public sealed class ToastTests
@@ -178,19 +178,18 @@ public sealed class ToastTests
         w.Frame(T0, job: JobState.Running);
         w.Frame(T0.AddSeconds(1), job: JobState.Succeeded);
 
-        // A point in the toast the placement rule's estimate does not cover (the real card is taller than it): there the toast stays put under the pointer.
+        // A point in the toast at the bottom right, scanned upward from the page's bottom (the card's height is not assumed).
         var page = w.Chrome.PageBounds!.Value;
         var x = page.Right - NotificationsHost.Style.Margin * dpi - NotificationsHost.Style.ToastWidth * dpi / 2;
         (float X, float Y)? over = null;
-        for (var y = page.Y + 40f; y < page.Y + 400f && over is null; y += 4f)
+        for (var y = page.Bottom - 2f; y > page.Bottom - 400f && over is null; y -= 4f)
         {
-            if (NotificationsLayout.ToastIdOf(w.Chrome.NotificationsLayer.HitTest(x, y)) is not null
-                && !NotificationsLayout.TopRightRegion(page, 1, NotificationsHost.Style).Contains(new Vector2(x, y)))
+            if (NotificationsLayout.ToastIdOf(w.Chrome.NotificationsLayer.HitTest(x, y)) is not null)
             {
                 over = (x, y);
             }
         }
-        over.ShouldNotBeNull("the fading toast declares its hover region below the placement estimate");
+        over.ShouldNotBeNull("the fading toast sits at the bottom right");
 
         w.Frame(T0.AddSeconds(1.5), job: JobState.Succeeded, pointer: over);
         var before = w.Feed.Toasts.Single().RemainingFraction;
@@ -206,24 +205,32 @@ public sealed class ToastTests
     [Theory]
     [InlineData(1920, 1080, 1f)]
     [InlineData(2880, 1620, 1.5f)]
-    public void NoToastIsPlacedUnderThePointerAndNoMoreThanThreeShow(int width, int height, float dpi)
+    public void TheToastSitsAtTheBottomRightWhereverThePointerIsAndNoMoreThanThreeShow(int width, int height, float dpi)
     {
         using var w = new Window(width, height, dpi);
         w.Frame(T0, job: JobState.Running);
         w.Frame(T0.AddSeconds(1), job: JobState.Succeeded);
         var page = w.Chrome.PageBounds!.Value;
-        var corner = new Vector2(page.Right - NotificationsHost.Style.Margin - NotificationsHost.Style.ToastWidth / 2f, page.Y + NotificationsHost.Style.Margin + 10f);
+        var column = page.Right - NotificationsHost.Style.Margin * dpi - NotificationsHost.Style.ToastWidth * dpi / 2f;
+        var top = page.Y + NotificationsHost.Style.Margin + 10f;
 
-        w.Frame(T0.AddSeconds(1.1), job: JobState.Succeeded, pointer: (corner.X, corner.Y));
-        NotificationsLayout.ToastIdOf(w.Chrome.NotificationsLayer.HitTest(corner.X, corner.Y)).ShouldBeNull("the toast is not under the pointer");
-        // It moved: the lower half of the content, at the toast's column, now holds a toast (scanned, so the test does not depend on the card's height).
-        var moved = false;
-        for (var y = page.Bottom - 2f; y > page.Y + page.Height / 2f && !moved; y -= 4f)
+        // The pointer at the top right, where the toast used to dodge to the bottom from: it stays at the bottom right.
+        w.Frame(T0.AddSeconds(1.1), job: JobState.Succeeded, pointer: (column, top));
+        NotificationsLayout.ToastIdOf(w.Chrome.NotificationsLayer.HitTest(column, top)).ShouldBeNull("nothing at the top right");
+        float? toastY = null;
+        for (var y = page.Bottom - 2f; y > page.Y + page.Height / 2f && toastY is null; y -= 4f)
         {
-            moved = NotificationsLayout.ToastIdOf(w.Chrome.NotificationsLayer.HitTest(corner.X, y)) is not null;
+            if (NotificationsLayout.ToastIdOf(w.Chrome.NotificationsLayer.HitTest(column, y)) is not null)
+            {
+                toastY = y;
+            }
         }
-        moved.ShouldBeTrue("it moved to the bottom right");
-        w.Save($"toasts-dodging-the-pointer-{width}");
+        toastY.ShouldNotBeNull("it is at the bottom right");
+
+        // And with the pointer on it, it does not move away: a surface takes the pointer instead of dodging.
+        w.Frame(T0.AddSeconds(1.2), job: JobState.Succeeded, pointer: (column, toastY.Value));
+        NotificationsLayout.ToastIdOf(w.Chrome.NotificationsLayer.HitTest(column, toastY.Value)).ShouldNotBeNull("the toast stays under the pointer");
+        w.Save($"toasts-bottom-right-{width}");
 
         // Five at once: three show.
         var more = w.Feed;
@@ -234,7 +241,7 @@ public sealed class ToastTests
         more.Toasts.Count.ShouldBe(3);
         w.Frame(T0.AddSeconds(2.1), job: JobState.Succeeded);
         more.Toasts.Count.ShouldBeLessThanOrEqualTo(3);
-        more.Toasts[0].Notification.Title.ShouldBe("Event 4", "newest on top");
+        more.Toasts[0].Notification.Title.ShouldBe("Event 4", "newest first in the feed");
     }
 
     [Fact]

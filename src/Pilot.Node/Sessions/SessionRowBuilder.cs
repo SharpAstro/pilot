@@ -126,6 +126,7 @@ public static class SessionRowBuilder
             ContextTokens = transcripts.ContextTokens,
             ContextWindow = ContextWindows.For(transcripts.Model, transcripts.RequestedModel, transcripts.ContextTokens),
             LastResponseAt = transcripts.LastResponseAt,
+            LastRequestAt = transcripts.LastRequestAt,
             State = state,
             WaitingFor = waiting
                 ? hookWaiting ?? agent.WaitingFor ?? record?.WaitingFor ?? transcripts.PendingQuestion ?? (agent.State == "blocked" ? SessionStates.BlockedWaitingFor : null)
@@ -139,6 +140,7 @@ public static class SessionRowBuilder
             SpendWeighted = transcripts.SpendWeighted,
             Subagents = transcripts.Subagents is { Count: > 0 } subagents ? [.. subagents] : null,
             ApiError = apiError,
+            LastTurnEnd = apiError ?? transcripts.StopReason ?? (hook?.EndReason is { Length: > 0 } hookEnd ? hookEnd : hook is { Event: { Length: > 0 } hookEvent, State: SessionState.Idle or SessionState.Ended } ? $"the {hookEvent} hook" : null),
             ApiErrorResetsAt = transcripts.Stop?.ResetsAt,
             Budget = role.Budget,
             EndedBecause = endedBecause,

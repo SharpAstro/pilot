@@ -77,6 +77,65 @@ public sealed class TranscriptTests : IDisposable
         facts.LastResponseAt.ShouldBe(DateTimeOffset.Parse("2026-10-18T09:05:00Z"));
     }
 
+    private static string Turn(string id, string? stopReason, string model = "claude-opus-5-5", bool sidechain = false) =>
+        "{\"type\":\"assistant\"" + (sidechain ? ",\"isSidechain\":true" : "") + ",\"uuid\":\"u-" + id + "\",\"timestamp\":\"2026-10-18T09:00:00.000Z\",\"message\":{\"id\":\"" + id
+        + "\",\"model\":\"" + model + "\",\"stop_reason\":" + (stopReason is null ? "null" : $"\"{stopReason}\"")
+        + ",\"usage\":{\"input_tokens\":1,\"output_tokens\":1},\"content\":[{\"type\":\"text\",\"text\":\"x\"}]}}\n";
+
+    [Fact]
+    public void TheLastRealMessagesStopReasonIsRead()
+    {
+        _profile.Append(_profile.TranscriptPath(AgentRows.SessionA),
+            Turn("m1", "end_turn"),
+            // A streamed message's first line has no reason yet; a subagent's turn is not this session's.
+            Turn("m2", null),
+            Turn("m2", "max_tokens"),
+            Turn("m3", "tool_use", sidechain: true));
+
+        Read().StopReason.ShouldBe("max_tokens");
+    }
+
+    [Fact]
+    public void TheRequestBehindTheLastResponseIsTheUserLineBeforeItAndAStreamedMessageKeepsIt()
+    {
+        static string User(string at) => "{\"type\":\"user\",\"uuid\":\"q-" + at + "\",\"timestamp\":\"2026-10-18T" + at + ".000Z\",\"message\":{\"role\":\"user\",\"content\":\"go\"}}\n";
+        _profile.Append(_profile.TranscriptPath(AgentRows.SessionA), User("08:00:00"), Turn("m1", null));
+        // A later user line (the next request) arrives while m1 still streams its last lines: m1's request stays the 08:00 one.
+        _profile.Append(_profile.TranscriptPath(AgentRows.SessionA), User("08:30:00"), Turn("m1", "end_turn"));
+
+        Read().LastRequestAt.ShouldBe(DateTimeOffset.Parse("2026-10-18T08:00:00Z"));
+
+        _profile.Append(_profile.TranscriptPath(AgentRows.SessionA), Turn("m2", "end_turn"));
+        Read().LastRequestAt.ShouldBe(DateTimeOffset.Parse("2026-10-18T08:30:00Z"));
+    }
+
+    [Fact]
+    public void AUserLineIsReadByItsTopLevelFieldsWhateverItsNestedValuesHold()
+    {
+        var path = _profile.TranscriptPath(AgentRows.SessionA);
+        // A tool result: a large nested message before the line's own timestamp, whose members carry a type, a timestamp and an
+        // isSidechain of their own.
+        var result = "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"timestamp\":\"2026-10-18T07:00:00.000Z\","
+            + "\"isSidechain\":true,\"content\":\"" + new string('x', 20_000) + "\"}]},\"isSidechain\":false,\"timestamp\":\"2026-10-18T08:10:00.000Z\"}\n";
+        _profile.Append(path, result, Turn("m1", "end_turn"));
+        Read().LastRequestAt.ShouldBe(DateTimeOffset.Parse("2026-10-18T08:10:00Z"));
+
+        // An isSidechain that is no boolean is skipped whole: its members are not read as the line's.
+        var odd = "{\"type\":\"user\",\"isSidechain\":{\"type\":\"summary\",\"timestamp\":\"2026-10-18T09:00:00.000Z\"},\"timestamp\":\"2026-10-18T08:20:00.000Z\"}\n";
+        _profile.Append(path, odd, Turn("m2", "end_turn"));
+        Read().LastRequestAt.ShouldBe(DateTimeOffset.Parse("2026-10-18T08:20:00Z"));
+    }
+
+    [Fact]
+    public void AMessageStillStreamingHasNoStopReasonYetAndAnApiErrorLineIsNoReply()
+    {
+        _profile.Append(_profile.TranscriptPath(AgentRows.SessionA), Turn("m1", "end_turn"), Turn("m2", null));
+        Read().StopReason.ShouldBeNull();
+
+        _profile.Append(_profile.TranscriptPath(AgentRows.SessionA), Turn("m2", "tool_use"), Turn("m3", "stop_sequence", model: "<synthetic>"));
+        Read().StopReason.ShouldBe("tool_use");
+    }
+
     [Fact]
     public void ASessionBeforeItsFirstResponseHasNoModelAndNoContext()
     {

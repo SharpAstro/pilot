@@ -234,16 +234,18 @@ public sealed class TurnOutage(NodeState state)
                     state.PutLoginChanged(now);
                     return true;
                 }
-                // Evidence ends it (#1123): a session that began after the limit was seen, on the family of the one that reported it, and
-                // answered a turn with no limit error. A row of unknown family, or one that began before, proves nothing.
+                // Evidence ends it (#1123): a session of the limit's account and family whose turn was answered after the limit was seen,
+                // with no limit error, whose request was sent after the limit was seen (an answer already streaming at the stop proves nothing). Another login's row proves nothing; a row with no account is
+                // taken only when it began after the limit was seen. A row of unknown family proves nothing either.
                 if (_limitFamily is { } family && _limitSeenAt is { } seen
-                    && sessions.FirstOrDefault(s => s.StartedAt > seen && s.ApiError is null && s.LastResponseAt is { } r && r > s.StartedAt
+                    && sessions.FirstOrDefault(s => s.ApiError is null && s.LastResponseAt is { } r && r > seen && s.LastRequestAt is { } q && q > seen
+                        && (_limitAccount is null || (s.Account is { } who ? string.Equals(who, _limitAccount, StringComparison.OrdinalIgnoreCase) : s.StartedAt > seen))
                         && string.Equals(Verbs.ModelFamily(s.Model), family, StringComparison.Ordinal)) is { } proof)
                 {
                     // The end moves the cut as a lift does (PutLoginChanged), so the rows that opened the limit do not reopen it.
                     _loginChangedAt = now;
                     _evidenceEndedAt = now;
-                    Close(since, now, $"{proof.Name} began after the limit was seen and answered a turn on {family}, so the usage limit no longer holds");
+                    Close(since, now, $"{proof.Name} answered a turn on {family} after the limit was seen, so the usage limit no longer holds");
                     state.PutLoginChanged(now);
                     return true;
                 }
@@ -324,12 +326,16 @@ public sealed class TurnOutage(NodeState state)
         _stalled.Clear();
         _waiting.Clear();
         _probeKey = null;
+        state.RefreshHold();
         if (_cardId is { } id)
         {
             state.CloseCard(id, why, LegWatch.Who);
             _cardId = null;
         }
     }
+
+    /// <summary>The <see cref="HoldRow.Kind"/> of the hold an open account limit puts on the snapshot.</summary>
+    public const string LimitHoldKind = "usage limit";
 
     /// <summary>The kind of the one card an account limit raises.</summary>
     public const string LimitCardKind = "account-limit";
@@ -425,15 +431,21 @@ public sealed class TurnOutage(NodeState state)
         {
             state.CloseCard(prior, $"the limit now lasts until {until.ToLocalTime():HH:mm}", LegWatch.Who);
         }
+        state.RefreshHold();
         var card = state.RaiseCard(CardBin.ForYou, LimitCardKind, Verbs.NodeTarget, $"On the usage limit until {until.ToLocalTime():HH:mm}",
             $"limit seen at {at:O}: {why}; resets {until:O}; the node starts no session of its own and rings nothing for a session that took no turn until then",
             [
                 new CardChoice { Label = "Mark it read", Verb = Verbs.Dismiss, Target = "" },
                 new CardChoice { Label = "Lift the limit", Verb = Verbs.LiftLimit, Target = Verbs.NodeTarget },
             ],
-            summary: $"The account is on its usage limit until {until.ToLocalTime():HH:mm} ({why}). The node starts nothing and rings nothing for a session that took no turn; what waited starts then (or sooner, when the account's figures show the window was reset), and this card closes by itself. Marking it read leaves the hold. If the limit is another login's (you logged in again and sessions take turns), lift it.");
+            summary: $"The account is on its usage limit until {until.ToLocalTime():HH:mm} ({why}). {FiguresSay(at)} The node starts nothing and rings nothing for a session that took no turn; what waited starts at the reset, or sooner when a session of the account takes a turn or fresh figures show the window was reset, and this card closes then. Marking it read leaves the hold. If the limit is another login's (you logged in again and sessions take turns), lift it.");
         _cardId = card.Id;
     }
+
+    // When the figures the node holds were last read and where from, for a card's summary: in the start gate's words, so the limit card
+    // and the 5-hour and 7-day cards say an old reading alike (as of an age once past the gate's fresh time, in hours past one).
+    private string FiguresSay(DateTimeOffset now) =>
+        state.Usage() is { HasFigures: true } usage ? $"Usage: {StartGate.ReadSay(usage, now)}." : "The node holds no usage figures.";
 
     private void Open(DateTimeOffset at, string why)
     {

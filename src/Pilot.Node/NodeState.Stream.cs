@@ -310,7 +310,7 @@ public sealed partial class NodeState
         Flights = WithTokens([.. _flights.Values]),
         Legs = [.. _legs.Values],
         Cards = [.. _cards.Values],
-        Usage = _usage,
+        Usage = WithHold(_usage),
         Machine = _machine,
         Admission = _admission,
         PullRequests = _pullRequests,
