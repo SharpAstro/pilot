@@ -33,7 +33,7 @@ public sealed class DeferredPointTests : ReviewTestsBase
         return flight.Code;
     }
 
-    private async Task<string> Passed(string rows)
+    private async Task<string> PassedWith(string rows)
     {
         var code = await SecondRound();
         (await Run(Verbs.Review, Verbs.FlightTarget(code), Reviewer(code), "pass", Head + rows)).Error.ShouldBeNull();
@@ -45,7 +45,7 @@ public sealed class DeferredPointTests : ReviewTestsBase
     [Fact]
     public async Task ANodesOwnPointEditsThePrBodyAndCreatesNoIssue()
     {
-        var code = await Passed("| R1.3 | node's own | add the follow-up note to the PR body |\n| R1.4 | not work | the rename is a taste |\n");
+        var code = await PassedWith("| R1.3 | node's own | add the follow-up note to the PR body |\n| R1.4 | not work | the rename is a taste |\n");
 
         (await Merge(code)).Error.ShouldBeNull();
 
@@ -61,7 +61,7 @@ public sealed class DeferredPointTests : ReviewTestsBase
     [Fact]
     public async Task ALargerThanTheFlightPointIsOneLabelledIssueWithAFlightOnItNamedInItsBody()
     {
-        var code = await Passed("| R1.3 | addressed | fix.txt:1 |\n| R1.4 | deferred: larger than the flight | the rename touches every caller |\n");
+        var code = await PassedWith("| R1.3 | addressed | fix.txt:1 |\n| R1.4 | deferred: larger than the flight | the rename touches every caller |\n");
 
         (await Merge(code)).Error.ShouldBeNull();
 
@@ -71,7 +71,7 @@ public sealed class DeferredPointTests : ReviewTestsBase
         _github.IssueLabels[number].Keys.ShouldContain(DeferredRoutes.FollowUpLabel);
         var made = flight.FollowUpFlight.ShouldNotBeNull();
         var onIssue = _state.Flights().Single(f => f.Code == made);
-        onIssue.Issue.ShouldBe(number.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        onIssue.Issue.ShouldBe(number);
         _github.IssueBodies[number].ShouldContain(made);
         _github.Merged.ShouldHaveSingleItem();
     }
@@ -79,7 +79,7 @@ public sealed class DeferredPointTests : ReviewTestsBase
     [Fact]
     public async Task TwoLargerThanTheFlightPointsOfOneFlightMakeOneIssueAndOneFlight()
     {
-        var code = await Passed("| R1.3 | deferred: larger than the flight | the lexer wants a rewrite |\n| R1.4 | deferred: larger than the flight | the rename touches every caller |\n");
+        var code = await PassedWith("| R1.3 | deferred: larger than the flight | the lexer wants a rewrite |\n| R1.4 | deferred: larger than the flight | the rename touches every caller |\n");
 
         (await Merge(code)).Error.ShouldBeNull();
 
@@ -93,7 +93,7 @@ public sealed class DeferredPointTests : ReviewTestsBase
     [Fact]
     public async Task AnAnotherRepoPointIsAFrameworkIssueInThatRepoLinkedFromThePr()
     {
-        var code = await Passed("| R1.3 | addressed | fix.txt:1 |\n| R1.4 | deferred: another repo | the rename belongs in acme/widget |\n");
+        var code = await PassedWith("| R1.3 | addressed | fix.txt:1 |\n| R1.4 | deferred: another repo | the rename belongs in acme/widget |\n");
 
         (await Merge(code)).Error.ShouldBeNull();
 
@@ -112,7 +112,7 @@ public sealed class DeferredPointTests : ReviewTestsBase
     [Fact]
     public async Task AnOwnerDecisionPointRaisesACardWithTheQuestionAndCreatesNoIssue()
     {
-        var code = await Passed("| R1.3 | addressed | fix.txt:1 |\n| R1.4 | deferred: owner decision | whether the rename is wanted at all |\n");
+        var code = await PassedWith("| R1.3 | addressed | fix.txt:1 |\n| R1.4 | deferred: owner decision | whether the rename is wanted at all |\n");
 
         (await Merge(code)).Error.ShouldBeNull();
 
@@ -129,7 +129,7 @@ public sealed class DeferredPointTests : ReviewTestsBase
     [Fact]
     public async Task AFailureToFileHoldsTheMergeAndTheNextAskFilesTheSamePoint()
     {
-        var code = await Passed("| R1.3 | addressed | fix.txt:1 |\n| R1.4 | deferred: another repo | the rename belongs in acme/widget |\n");
+        var code = await PassedWith("| R1.3 | addressed | fix.txt:1 |\n| R1.4 | deferred: another repo | the rename belongs in acme/widget |\n");
         _github.CreateIssueFails = "gh could not reach GitHub";
 
         var held = await Merge(code);
@@ -148,7 +148,7 @@ public sealed class DeferredPointTests : ReviewTestsBase
     [Fact]
     public async Task AnAnotherRepoPointThatNamesNoRepoHoldsTheMergeSayingSo()
     {
-        var code = await Passed("| R1.3 | addressed | fix.txt:1 |\n| R1.4 | deferred: another repo | belongs elsewhere |\n");
+        var code = await PassedWith("| R1.3 | addressed | fix.txt:1 |\n| R1.4 | deferred: another repo | belongs elsewhere |\n");
 
         var held = await Merge(code);
 
