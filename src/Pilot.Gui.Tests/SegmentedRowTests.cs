@@ -104,11 +104,12 @@ public sealed class SegmentedRowTests
     }
 
     [Theory]
-    [InlineData(InputKey.D1, FlightsViewMode.Canvas)]
-    [InlineData(InputKey.D2, FlightsViewMode.Grid)]
-    [InlineData(InputKey.D3, FlightsViewMode.List)]
-    public void AltAndTheSegmentsDigitPicksAFlightsView(InputKey key, FlightsViewMode expected)
+    [InlineData(InputKey.D1, 0)]
+    [InlineData(InputKey.D2, 1)]
+    [InlineData(InputKey.D3, 2)]
+    public void AltAndTheSegmentsDigitPicksAFlightsView(InputKey key, int segment)
     {
+        var expected = new[] { FlightsViewMode.Canvas, FlightsViewMode.Grid, FlightsViewMode.List }[segment];
         using var rig = new Rig(PilotPage.Flights);
         rig.Chrome.Flights.Mode = expected == FlightsViewMode.List ? FlightsViewMode.Canvas : FlightsViewMode.List;
         rig.Frame();
