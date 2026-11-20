@@ -142,7 +142,8 @@ public sealed class FlightsViewsTests
         // by its content the segments got no height, the words drew at the top and the marks not at all (SE1, 2026-10-25).
         foreach (var mode in new[] { "canvas", "grid", "list" })
         {
-            Of($"flights:view:{mode}").Height.ShouldBe(help.Height, mode);
+            // The library's segment sits inside its container by SegmentedInset on each side, the container being the header buttons' height.
+            (Of($"flights:view:{mode}").Height + 2f * Layout.Builder.SegmentedInset).ShouldBe(help.Height, mode);
         }
         arranged.Where(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Icon }).Where(a => a.Bounds.Y < help.Y + help.Height)
             .ShouldAllBe(a => a.Bounds.Height > 0f && a.Bounds.Width > 0f);

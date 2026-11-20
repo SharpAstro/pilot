@@ -131,8 +131,9 @@ public sealed class IconButtonTests
             named.ShouldContain(mark, $"the help card does not name the {mark} icon button");
         }
 
-        all["Flights (Canvas)"].Select(b => b.Action).ShouldBe(["flights:view:grid", "flights:view:list", "flights:new"]);
-        all["Flights (Canvas)"].Select(b => b.Tooltip).ShouldBe(["Grid", "List", "New flight"]);
+        // The view switch is the library's segmented control, icon and word, so its segments are no icon-only buttons now (PIL1232).
+        all["Flights (Canvas)"].Select(b => b.Action).ShouldBe(["flights:new"]);
+        all["Flights (Canvas)"].Select(b => b.Tooltip).ShouldBe(["New flight"]);
         all["Repos"].ShouldContain(b => b.Action.EndsWith(":worktrees", StringComparison.Ordinal));
     }
 

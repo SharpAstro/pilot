@@ -1112,7 +1112,7 @@ public sealed class IdeasPaneTests
         var regions = Regions(chrome, screen);
         Actions(regions).Where(a => a.StartsWith("ideas:view:", StringComparison.Ordinal)).ShouldBe(["ideas:view:list", "ideas:view:tree", "ideas:view:canvas"]);
         // One height and one middle with the Flights page's switch: the same component, so the same segments.
-        Region(regions, "ideas:view:list").Height.ShouldBe(AboutCard.HeaderButton);
+        (Region(regions, "ideas:view:list").Height + 2f * Layout.Builder.SegmentedInset).ShouldBe(AboutCard.HeaderButton);
         Spoken(renderer, chrome, screen, 1280).ShouldNotContain("not built yet");
 
         Click(regions, "ideas:view:tree");

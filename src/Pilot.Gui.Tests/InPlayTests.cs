@@ -66,7 +66,8 @@ public sealed partial class InPlayTests
     {
         var arranged = Arrange(tree);
         var target = arranged.First(a => a.Node.Hit is HitResult.ButtonHit b && b.Action == action);
-        CellLayout.HitTest(arranged, target.Bounds.X + 1, target.Bounds.Y);
+        // The middle of the segment: a segmented control insets its segments inside its edge, so the first cell of the box is not the segment (PIL1232).
+        CellLayout.HitTest(arranged, target.Bounds.X + target.Bounds.Width / 2f, target.Bounds.Y + target.Bounds.Height / 2f);
     }
 
     private static RgbaImageRenderer NewRenderer() => new(1280, 800);

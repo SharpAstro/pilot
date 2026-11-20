@@ -224,7 +224,7 @@ internal sealed class PlayFilter
 
     /// <summary>
     /// The header's In play / Everything pair (PIL1232): one DIR.Lib segmented control, the shown one chosen from <see cref="InPlay"/> (the state, not the
-    /// click), the words only (the library has no mark for either yet, SharpAstro/DIR.Lib#296), the hit ids play:in-play and play:everything, picked by
+    /// click), the words only (the library has no mark for either yet, SharpAstro/DIR.Lib#299), the hit ids play:in-play and play:everything, picked by
     /// Alt+I and Alt+E, drawn from <paramref name="night"/>'s palette when given.
     /// </summary>
     public IEnumerable<Layout.Node> Pills(Palette? night = null)

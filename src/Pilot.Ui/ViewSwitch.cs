@@ -5,7 +5,7 @@ namespace Pilot.Ui;
 /// <summary>
 /// One segment of a <see cref="ViewSwitch"/>: the mode it picks, the id its hit region has (<c>flights:view:grid</c>), its word (also its tooltip
 /// when the words drop), and one of DIR.Lib's marks where the library has one (null: the word alone, as Canvas, until DIR.Lib draws one,
-/// SharpAstro/DIR.Lib#296).
+/// SharpAstro/DIR.Lib#299).
 /// </summary>
 internal readonly record struct ViewChoice<T>(T Mode, string Action, string Name, Layout.IconKind? Icon = null);
 
