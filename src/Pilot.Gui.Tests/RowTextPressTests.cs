@@ -112,25 +112,33 @@ public sealed class RowTextPressTests
         using var window = new Window();
         window.Chrome.Show(PilotPage.Sessions);
         window.Render();
-        var texts = window.Chrome.Sessions.SelectableTextRegions.ToArray().Where(r => r.Text.Trim().Length > 0).ToArray();
-        texts.Length.ShouldBeGreaterThan(0);
+        // Each row's index from its own hit region, so a text is matched to the row it sits in, not to the order of the texts.
+        var regions = new List<ClickableRegion>();
+        window.Chrome.Sessions.CollectPaintedRegions(regions);
+        var rows = regions.Where(r => r.Result is HitResult.ListItemHit { ListId: SessionsView<RgbaImage>.ListId }).ToArray();
+        int RowOf(float x, float y) => rows.Where(r => x >= r.X && x < r.X + r.Width && y >= r.Y && y < r.Y + r.Height)
+            .Select(r => ((HitResult.ListItemHit)r.Result).Index).DefaultIfEmpty(-1).First();
+        var byRow = window.Chrome.Sessions.SelectableTextRegions.ToArray().Where(r => r.Text.Trim().Length > 0)
+            .Select(r => (Region: r, Row: RowOf(Middle(r).X, Middle(r).Y))).Where(t => t.Row >= 0)
+            .GroupBy(t => t.Row).OrderBy(g => g.Key).Select(g => g.Select(t => t.Region).ToArray()).ToArray();
+        byRow.Length.ShouldBeGreaterThanOrEqualTo(3, $"rows painted: {rows.Length}, sessions selected: {window.Chrome.Sessions.Selected}");
 
-        // Every text of the page, tooltip or not: a press that went nowhere must leave the row beneath to select itself.
-        // Press each text, move the cursor off with a key, press it again: a press that selects the row lands on the same row both
-        // times, a swallowed one leaves the cursor where the key put it.
+        // Every text of the rows, tooltip or not, round the rows in turn: each press lands on a row other than the one selected,
+        // so a press that went nowhere leaves the previous row selected and fails.
         var rowsPressed = new HashSet<int>();
-        foreach (var region in texts.Take(40))
+        for (var turn = 0; turn < byRow.Max(texts => texts.Length); turn++)
         {
-            var (x, y) = Middle(region);
-            window.Click(x, y);
-            var first = window.Chrome.Sessions.Selected;
-            first.ShouldBeGreaterThanOrEqualTo(0);
-            window.Send(new InputEvent.KeyDown(InputKey.Up, InputModifier.None));
-            window.Click(x, y);
-            window.Chrome.Sessions.Selected.ShouldBe(first);
-            rowsPressed.Add(first);
+            foreach (var texts in byRow.Where(texts => texts.Length > turn))
+            {
+                var region = texts[turn];
+                var (x, y) = Middle(region);
+                var row = RowOf(x, y);
+                window.Click(x, y);
+                window.Chrome.Sessions.Selected.ShouldBe(row, $"press on '{region.Text.Trim()}' in row {row}");
+                rowsPressed.Add(row);
+            }
         }
-        rowsPressed.Count.ShouldBeGreaterThan(0);
+        rowsPressed.Count.ShouldBeGreaterThan(1);
     }
 
     [Fact]
