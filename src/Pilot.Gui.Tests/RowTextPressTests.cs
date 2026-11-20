@@ -121,7 +121,7 @@ public sealed class RowTextPressTests
         window.Chrome.Sessions.CollectPaintedRegions(rows);
         var rowRegions = rows.Where(r => r is { Result: HitResult.ListItemHit }).OrderBy(r => r.Y).ToList();
         var checkedClicks = 0;
-        foreach (var region in texts.Reverse().Take(12))
+        foreach (var region in texts)
         {
             var (x, y) = Middle(region);
             var expected = rowRegions.FindIndex(r => x >= r.X && x < r.X + r.Width && y >= r.Y && y < r.Y + r.Height);
