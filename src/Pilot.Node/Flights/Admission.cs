@@ -220,7 +220,13 @@ public static class Admission
             if (FindCycle(flight.Key, edges) is { } cycle)
             {
                 var wanting = cycle.Select(e => byKey[e.From]).Where(f => WantsRepo(f) && !f.Priority).ToArray();
-                var breaker = wanting.OrderBy(f => f, Ranking(dependents)).First();
+                // A held (not Ready) asking flight is not in the wanting set, and the set can be empty: nobody breaks it here. (A priority
+                // asking flight never gets here, Decide admits it first; the priority flights missing from the set are the others.)
+                var breaker = wanting.OrderBy(f => f, Ranking(dependents)).FirstOrDefault();
+                if (breaker is null)
+                {
+                    return new AdmissionDecision.Wait($"waiting for the repo {flight.Repo}: {Name(holders[0], flight)} holds it");
+                }
                 if (breaker.Key == flight.Key)
                 {
                     return new AdmissionDecision.AdmitToBreakCycle(CardText(cycle, byKey, flight));
@@ -232,8 +238,10 @@ public static class Admission
         }
         // Nobody holds it: the ones others depend on go first, so a flight a held flight waits for is never behind it.
         var first = live.Where(f => SameRepo(f, flight) && WantsRepo(f) && !f.Priority && !f.HoldsRepo)
-            .OrderBy(f => f, Ranking(dependents)).First();
-        if (first.Key != flight.Key && Ranking(dependents).Compare(first, flight) < 0)
+            .OrderBy(f => f, Ranking(dependents)).FirstOrDefault();
+        // Nobody wants the repo (a held, not Ready, asking flight is not one, and a Ready priority flight is left out of the set): nobody
+        // goes first, so there is no wait.
+        if (first is not null && first.Key != flight.Key && Ranking(dependents).Compare(first, flight) < 0)
         {
             var count = dependents.GetValueOrDefault(first.Key);
             return new AdmissionDecision.Wait($"waiting for its turn on {flight.Repo}: {Name(first, flight)} goes first"

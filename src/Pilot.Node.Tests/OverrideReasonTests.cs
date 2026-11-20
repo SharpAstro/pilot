@@ -69,8 +69,16 @@ public sealed class OverrideReasonTests
 
             result.Ok.ShouldBeFalse();
             var error = result.Error.ShouldNotBeNull();
-            error.ShouldContain("--why");
-            error.ShouldContain("job id");
+            if (who == Assistant)
+            {
+                error.ShouldContain("--why");
+                error.ShouldContain("job id");
+            }
+            else
+            {
+                // The watchtower's override is the person's (PIL1229): refused whatever it says.
+                error.ShouldContain("is the person's call");
+            }
             node.State.Legs("TIA1").Single().State.ShouldBe(LegState.Failed);
         }
         node.State.Decisions().ShouldBeEmpty();

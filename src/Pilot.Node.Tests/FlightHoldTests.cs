@@ -19,7 +19,7 @@ public sealed class FlightHoldTests : ReviewTestsBase
     private void SweepsAdvance(bool autopilot = false) =>
         _legs.Models = new RoleModels(autopilot
             ? NodeSettings.With(new NodeSettings(), NodeSettings.AutopilotKey, ["on"]).Settings!
-            : new NodeSettings());
+            : new NodeSettings { Autopilot = false });
 
     private PrChecks Checks() => new(_state, _github, TimeProvider.System, _flights, _legs);
 

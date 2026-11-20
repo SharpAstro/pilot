@@ -1662,7 +1662,7 @@ take a flight another node of the fleet routes to it. Both are in `GET /api/v1/n
 `AcceptsFleetFlights`), and `pilot status` prints a `maintenance` line while it is on. `set node maintenance on|off` is
 the one setting a LAN grant may change (the Fleet row menu's way); every other `set` and `setup` stays this machine's.
 
-`autopilot` (#208, `on` or `off`, off unless saved on) is in force at once too, in `GET /api/v1/node` as `Autopilot`, and
+`autopilot` (#208, `on` or `off`, on unless saved off) is in force at once too, in `GET /api/v1/node` as `Autopilot`, and
 `pilot status` prints an `autopilot` line, on or off. Only the person changes it (see **Who may do what**): a `set` of it
 from an assistant, the lookout, a flight's session or a grant is refused, taking it out (`set autopilot` with no value)
 included.

@@ -494,14 +494,14 @@ public sealed partial class RoleModels
         }
     }
 
-    /// <summary>Whether the autopilot is on (<see cref="NodeSettings.AutopilotKey"/>): in force at once, and off unless the person saved it on.</summary>
+    /// <summary>Whether the autopilot is on (<see cref="NodeSettings.AutopilotKey"/>): in force at once, and on unless the person saved it off. A set not wired to a node (<see cref="Unset"/>) reads off, as its other defaults are absent.</summary>
     public bool Autopilot
     {
         get
         {
             lock (_lock)
             {
-                return _settings.Autopilot ?? false;
+                return _settings.Autopilot ?? _defaults;
             }
         }
     }

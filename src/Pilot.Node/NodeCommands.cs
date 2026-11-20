@@ -243,6 +243,16 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
                 command = command with { Autopilot = true };
             }
         }
+        // An override is the person's (PIL1229): the watchtower on its own, with no word of the person's on the command, is refused
+        // it before it runs, whatever --why it gives, and with the line that says whose it is (ahead of the standing's own refusal,
+        // which says only that the verb is the controller's). It is refused on a card's answer too (the choice runs again as this
+        // verb). An assistant acting on the person's message keeps the --why rule below.
+        if (command.PersonsWord is null && command.Who == watchtower.Name && !watchtower.ActingForPerson
+            && DecisionSources.IsOverride(command, ReviewerOfTarget(command))
+            && command.Verb != Verbs.CreateFlight)
+        {
+            return state.Complete(command, DecisionSources.OverrideIsThePersons(command));
+        }
         if (standing.Refusal(command, state) is { } refused)
         {
             return state.Complete(command, refused);

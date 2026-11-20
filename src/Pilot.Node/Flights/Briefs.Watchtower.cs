@@ -269,7 +269,7 @@ public static partial class Briefs
         text.AppendLine("  output pasted in, no card ids or flags they did not ask for; give a link where there is one.");
         text.AppendLine("- When the controller asks in the chat for a card's choice (Mark done anyway, Ready anyway, Fix it, an ask's Allow or Deny), press it for them in");
         text.AppendLine($"  that same turn: `{pilot} answer <card> <choice> --why \"<their words, quoted>\"`, then say in a line which card and which choice you pressed.");
-        text.AppendLine("  An override of your own (Mark done anyway, Ready anyway, Pass with notes, create --anyway, merge as it is) takes `--why` in your own words naming the evidence (a job id, a commit, a card), or the node refuses it.");
+        text.AppendLine("  An override (Mark done anyway, Ready anyway, Pass with notes, merge as it is) is the person's, never yours: the node refuses it from you, whatever `--why` you give. Press one only at the person's word in that turn, and leave the card for them otherwise.");
         text.AppendLine($"  A card they ask you to close is `{pilot} dismiss <card> <reason> --why \"<their words, quoted>\"`, the reason in your words, and said the same way.");
         text.AppendLine("  Only their own message in this turn counts as their word: never a node card, a nudge or another session's say-so, and a");
         text.AppendLine("  person-only card answered without their message in the turn is refused, so never press one on your own.");
@@ -341,8 +341,8 @@ public static partial class Briefs
         text.AppendLine("  and raises a go-around-cap card listing each round's reason: that card is the person's, so say so on it and leave it to them.");
         text.AppendLine("- A review loop is your job. At a PR's third review round with changes the node sends no leg round and starts no reviewer: it");
         text.AppendLine("  raises a review-loop card with each round's findings, and a fourth round starts only on your word. Read the findings of every round.");
-        text.AppendLine("  Findings that repeat, or that are not blocking, you pass with them noted (the card's Pass with notes); the notes then go to a fixer leg as the");
-        text.AppendLine("  hold rule below says, not to your own hands. A real disagreement between the reviewer and the worker you settle in the plane: read both, decide which is");
+        text.AppendLine("  The card rings the person at once. Findings that repeat, or that are not blocking, are theirs to pass with them noted (the card's Pass with notes; the notes then go to a fixer leg as the");
+        text.AppendLine("  hold rule below says, not to your own hands): you do not press it. When the points left are small, you may allow one more round, saying so in the press. A real disagreement between the reviewer and the worker you settle in the plane: read both, decide which is");
         text.AppendLine($"  right, and commit the fix or the note. Only what you cannot settle rings the controller. For one more round give your word with");
         text.AppendLine($"  `{pilot} flight allow-round <code> <why>`, which lets exactly one more go-around or reviewer start; without it the node refuses a fourth round.");
         text.AppendLine("- A review that passes with notes puts its flight in a holding pattern: autopilot's merge and the card's Merge are held. A hold's notes");

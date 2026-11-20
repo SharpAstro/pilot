@@ -87,6 +87,12 @@ public sealed partial class LegCommander
         foreach (var code in Slots.Order(_plannersWaiting.Keys).ToList())
         {
             _plannersWaiting.TryRemove(code, out _);
+            if (state.Flights().FirstOrDefault(f => f.Code == code) is { State: FlightState.Held })
+            {
+                // Waiting for a connected flight: kept quietly, with no plan-flight asked every minute; the release to Flying starts it.
+                _plannersWaiting[code] = true;
+                continue;
+            }
             if (state.Flights().FirstOrDefault(f => f.Code == code) is { OnHold: not null })
             {
                 // The owner's hold (#771): no planner starts; the sweep asks again once it is released.

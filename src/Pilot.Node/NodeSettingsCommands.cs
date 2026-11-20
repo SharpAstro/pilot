@@ -345,7 +345,7 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         NodeSettings.OpusCapKey => "3",
         NodeSettings.ReviewLimitKey => "2",
         NodeSettings.AcceptFleetFlightsKey => "off",
-        NodeSettings.AutopilotKey => "off",
+        NodeSettings.AutopilotKey => "on",
         NodeSettings.ReviewDeepFirstKey => "on",
         NodeSettings.DeleteLandedBranchesKey => "on",
         NodeSettings.UserSkillsKey => "on",

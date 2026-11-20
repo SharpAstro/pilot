@@ -120,6 +120,7 @@ public static partial class CardSummaries
             LegCommander.SiblingBehindKind => $"{what} compiles against a sibling clone that is behind origin and the node could not pull it. Pull it by hand, or let the leg run on the clone it has.",
             Designs.DesignRecord.OversizeKind => $"A built design's files for {what} are over a size limit, so they are not committed to the PR. Make the renders smaller and publish a new version, and the next push to the PR carries them.",
             LegCommander.SiblingPulledKind => $"The node pulled a sibling clone that was behind origin before it started {what}. Nothing to do.",
+            LegCommander.NodeFixRoundKind => "On autopilot the node had a fresh worker go around the flight's last leg to fix what its review asked for. The detail lists the findings. Nothing to do.",
             LegCommander.SelfFinishedKind => $"The node finished {what} itself: its work was pushed and its check passed. Nothing to do.",
             LegCommander.RetiredKind => $"{what} was stopped on the word of the controller or the owner, so it ends retired, not failed. The flight goes on with its next leg; nothing to do.",
             LegCommander.PushDivergedKind => $"{what} was not pushed because the remote branch holds commits the plane lacks. Merge origin's branch into the plane by hand, then push again.",
