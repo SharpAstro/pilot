@@ -36,7 +36,7 @@ public sealed class MapDepthTests
         {
             _cards = cards;
             _height = height;
-            _renderer = new RgbaImageRenderer(Width, height);
+            _renderer = new RgbaImageRenderer(Width, (uint)height);
             Chrome = new PilotChrome<RgbaImage>(_renderer, new SessionsView<RgbaImage>(_renderer)) { FontPath = SessionsCapture.FontPath };
             Chrome.Flights.Mode = FlightsViewMode.Canvas;
             Chrome.Cards.OnAnswer = (card, number) => Answered = (card, number);
