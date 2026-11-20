@@ -120,6 +120,9 @@ public sealed class FlightsViewsTests
         FlightCanvas.GridCardHeight.ShouldBeGreaterThan(FlightCanvas.CardHeight);
     }
 
+    // DIR.Lib's space between a segmented control's edge and its segments (Layout.Builder.SegmentedInset, not public).
+    private const float SegmentedInset = 3f;
+
     [Fact]
     public void TheHeadersButtonsShareAHeightAndTheViewSwitchIsDrawnFull()
     {
@@ -143,7 +146,7 @@ public sealed class FlightsViewsTests
         foreach (var mode in new[] { "canvas", "grid", "list" })
         {
             // The library's segment sits inside its container by SegmentedInset on each side, the container being the header buttons' height.
-            (Of($"flights:view:{mode}").Height + 2f * Layout.Builder.SegmentedInset).ShouldBe(help.Height, mode);
+            (Of($"flights:view:{mode}").Height + 2f * SegmentedInset).ShouldBe(help.Height, mode);
         }
         arranged.Where(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Icon }).Where(a => a.Bounds.Y < help.Y + help.Height)
             .ShouldAllBe(a => a.Bounds.Height > 0f && a.Bounds.Width > 0f);

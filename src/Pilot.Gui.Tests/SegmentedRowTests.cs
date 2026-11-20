@@ -141,13 +141,13 @@ public sealed class SegmentedRowTests
         IsAccent(rig.FillOf("play:in-play")).ShouldBeTrue();
     }
 
-    private static List<Layout.ArrangedNode<float>> Arranged(Layout.Node node, float width)
+    private static IReadOnlyList<Layout.ArrangedNode<float>> Arranged(Layout.Node node, float width)
     {
         using var renderer = new RgbaImageRenderer(1400, 100);
         return Layout.Engine.Arrange(node, new Rect<float>(0, 0, width, 40), new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, 1f));
     }
 
-    private static string[] Words(List<Layout.ArrangedNode<float>> arranged) =>
+    private static string[] Words(IReadOnlyList<Layout.ArrangedNode<float>> arranged) =>
         [.. arranged.Where(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text }).Select(a => ((Layout.Content.Text)((Layout.Node.Leaf)a.Node).Content).Value)];
 
     [Theory]
