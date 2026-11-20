@@ -180,8 +180,8 @@ public class ReviewPointsTests
     [InlineData("deferred: larger than the flight", ReviewPoints.DeferReason.LargerThanFlight, "larger than the flight")]
     public void EachDeferralReasonIsAcceptedAndCarried(string word, ReviewPoints.DeferReason reason, string stored)
     {
-        RefusalWith($"| R1.4 | {word} | |").ShouldBeNull();
-        var reply = ReviewPoints.ParseAnswers(Table.Replace(Row14, $"| R1.4 | {word} | |")).Single(r => r.Id == "R1.4");
+        RefusalWith($"| R1.4 | {word} | SharpAstro/widget |").ShouldBeNull();
+        var reply = ReviewPoints.ParseAnswers(Table.Replace(Row14, $"| R1.4 | {word} | SharpAstro/widget |")).Single(r => r.Id == "R1.4");
         (reply.Answer, reply.Reason).ShouldBe((ReviewPoints.Answer.Deferred, reason));
         var kept = ReviewPoints.ToStored(reply);
         (kept.Answer, kept.Reason).ShouldBe(("deferred", stored));

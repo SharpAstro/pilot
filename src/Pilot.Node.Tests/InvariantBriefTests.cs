@@ -58,6 +58,6 @@ public sealed class InvariantBriefTests
         brief.ShouldContain("the owner's decision");
         brief.ShouldContain("larger than the PR");
         brief.ShouldContain("Left");
-        brief.ShouldContain("refused");
+        brief.ShouldContain("the reviewer refuses it");
     }
 }

@@ -124,8 +124,8 @@ public sealed class DeferredPointTests : ReviewTestsBase
     [Fact]
     public async Task AnAnotherRepoPointWhoseRepoIsNotClonedHoldsTheMergeNamingTheRepo()
     {
-        var code = await PassedWith("| R1.3 | addressed | fix.txt:1 |\n| R1.4 | deferred: another repo | the rename belongs in SharpAstro/widget |\n");
         _github.UnclonedRepos.Add("widget");
+        var code = await PassedWith("| R1.3 | addressed | fix.txt:1 |\n| R1.4 | deferred: another repo | the rename belongs in SharpAstro/widget |\n");
 
         var held = await Merge(code);
 
@@ -175,11 +175,11 @@ public sealed class DeferredPointTests : ReviewTestsBase
     [Fact]
     public async Task AnAnotherRepoPointThatNamesNoRepoHoldsTheMergeSayingSo()
     {
-        var code = await PassedWith("| R1.3 | addressed | fix.txt:1 |\n| R1.4 | deferred: another repo | belongs elsewhere |\n");
+        var code = await SecondRound();
 
-        var held = await Merge(code);
+        var refused = await Run(Verbs.Review, Verbs.FlightTarget(code), Reviewer(code), "pass", Head + "| R1.3 | addressed | fix.txt:1 |\n| R1.4 | deferred: another repo | belongs elsewhere |\n");
 
-        held.Error.ShouldNotBeNull().ShouldContain("names none");
+        refused.Error.ShouldNotBeNull().ShouldContain("names none");
         _github.IssuesCreated.ShouldBeEmpty();
         _github.Merged.ShouldBeEmpty();
     }
