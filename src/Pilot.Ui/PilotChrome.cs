@@ -840,10 +840,10 @@ internal sealed class PilotChrome<TSurface>
     /// <summary>As <see cref="CoveredAfterPage"/>, but the open bar's press-outside layer, which spans the page, is looked through: only what is drawn counts.</summary>
     internal bool DrawnAfterPage(float x, float y) => CoveredAfter(PageViewOf(Page), x, y, includeSurfaces: false);
 
-    /// <summary>Whether a point is covered by a widget painted after <paramref name="target"/> (the page, or the cards panel, which is itself above the page).</summary>
     // Reused by every CoveredAfter call (a MouseMove asks each frame); the input thread is the only caller.
     private readonly List<ClickableRegion> _coverRegions = [];
 
+    /// <summary>Whether a point is covered by a widget painted after <paramref name="target"/> (the page, or the cards panel, which is itself above the page).</summary>
     private bool CoveredAfter(IPixelWidget target, float x, float y, bool includeSurfaces = true)
     {
         var widgets = PageWidgets;
