@@ -93,9 +93,7 @@ public sealed class DeferredPointTests : ReviewTestsBase
     [Fact]
     public async Task ANodesOwnPointWithNoDetailIsRecordedHereNotSaidToBeMadeByTheNode()
     {
-        var code = await PassedWith("| R1.3 | node's own | |
-| R1.4 | not work | the rename is a taste |
-");
+        var code = await PassedWith("| R1.3 | node's own | |\n| R1.4 | not work | the rename is a taste |\n");
 
         (await Merge(code)).Error.ShouldBeNull();
 
@@ -126,9 +124,7 @@ public sealed class DeferredPointTests : ReviewTestsBase
     [Fact]
     public async Task AnAnotherRepoPointWhoseRepoIsNotClonedHoldsTheMergeNamingTheRepo()
     {
-        var code = await PassedWith("| R1.3 | addressed | fix.txt:1 |
-| R1.4 | deferred: another repo | the rename belongs in SharpAstro/widget |
-");
+        var code = await PassedWith("| R1.3 | addressed | fix.txt:1 |\n| R1.4 | deferred: another repo | the rename belongs in SharpAstro/widget |\n");
         _github.UnclonedRepos.Add("widget");
 
         var held = await Merge(code);
