@@ -270,8 +270,9 @@ public sealed class OverlayDepthTests
         var toast = rig.Toast("c1");
         var rows = rig.Regions(rig.Chrome.Flights).Where(r => r.Result is HitResult.ButtonHit b && b.Action.StartsWith("FlightMapLayer:", StringComparison.Ordinal)).ToList();
         rows.ShouldNotBeEmpty("the layers menu is open with its rows");
-        var row = rows.FirstOrDefault(r => r.Y + 2f < toast.Y && r.Y + r.Height > toast.Y + 2f && r.X >= toast.X && r.X + r.Width <= toast.X + toast.Width)
-            ?? throw new Xunit.Sdk.XunitException($"no row of the layers menu runs under the top edge of the toast {toast}");
+        var at = rows.FindIndex(r => r.Y + 2f < toast.Y && r.Y + r.Height > toast.Y + 2f && r.X >= toast.X && r.X + r.Width <= toast.X + toast.Width);
+        at.ShouldBeGreaterThanOrEqualTo(0, $"a row of the layers menu runs under the top edge of the toast {toast}");
+        var row = rows[at];
         var strip = new RectF32(row.X, row.Y, row.Width, toast.Y - row.Y);
         var x = row.X + row.Width / 2f;
 
