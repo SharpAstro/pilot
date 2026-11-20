@@ -835,7 +835,7 @@ internal sealed class PilotChrome<TSurface>
     /// </summary>
     internal bool CoveredAfterPage(float x, float y) => CoveredAfter(PageViewOf(Page), x, y);
 
-    /// <summary>As <see cref="CoveredAfterPage"/>, but a surface (the open bar's press-outside layer, which spans the page) is looked through: only what is drawn counts.</summary>
+    /// <summary>As <see cref="CoveredAfterPage"/>, but the open bar's press-outside layer, which spans the page, is looked through: only what is drawn counts.</summary>
     internal bool DrawnAfterPage(float x, float y) => CoveredAfter(PageViewOf(Page), x, y, includeSurfaces: false);
 
     /// <summary>Whether a point is covered by a widget painted after <paramref name="target"/> (the page, or the cards panel, which is itself above the page).</summary>
@@ -854,7 +854,7 @@ internal sealed class PilotChrome<TSurface>
             w.CollectPaintedRegions(regions);
             foreach (var r in regions)
             {
-                if ((includeSurfaces || !r.IsSurface) && x >= r.X && x < r.X + r.Width && y >= r.Y && y < r.Y + r.Height)
+                if ((includeSurfaces || r.Result is not HitResult.ButtonHit { Action: NotificationsHost.OutsideAction }) && x >= r.X && x < r.X + r.Width && y >= r.Y && y < r.Y + r.Height)
                 {
                     return true;
                 }
