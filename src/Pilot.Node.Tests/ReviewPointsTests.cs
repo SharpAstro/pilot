@@ -88,7 +88,7 @@ public class ReviewPointsTests
     [Fact]
     public void APointNotMentionedIsNamed()
     {
-        var refusal = ReviewPoints.Refusal(Both, Table.Replace("| R1.4 | deferred: owner decision | needs a decision |\n", ""));
+        var refusal = ReviewPoints.Refusal(Both, Table.Replace(Row14, ""));
         refusal.ShouldNotBeNull().ShouldContain("R1.4 is not mentioned");
         refusal.ShouldContain("D is a gap");
         refusal.ShouldNotContain("R1.1");
