@@ -78,7 +78,8 @@ public sealed class DesignFrameToolbarTests
         var own = new System.Text.RegularExpressions.Regex(@"^designs:frame-(size|rotate|terminal|point):0:0(:|$)");
         var buttons = all.Where(a => a.Node.Hit is HitResult.ButtonHit { Action: { } act } && own.IsMatch(act)).ToList();
         buttons.Count.ShouldBe(7);
-        buttons.Select(b => b.Bounds.Y).Distinct().Count().ShouldBe(1, "one row");
+        // One vertical middle (the segments are inset inside their control, so their tops differ from the buttons').
+        buttons.Select(b => (int)Math.Round(b.Bounds.Y + b.Bounds.Height / 2f)).Distinct().Count().ShouldBe(1, "one row");
         // The five sizes are the library's segments (each inset inside the control, so a little less tall than it); Rotate and Point at this are buttons of the control's height.
         var plain = buttons.Where(b => b.Node.Hit is HitResult.ButtonHit { Action: { } a } && (a.Contains("rotate") || a.Contains("point"))).ToList();
         plain.Select(b => b.Bounds.Height).Distinct().Count().ShouldBe(1, "one height");
@@ -109,7 +110,7 @@ public sealed class DesignFrameToolbarTests
     [Theory]
     [InlineData(InputKey.D1, "Desktop")]
     [InlineData(InputKey.D3, "Tablet")]
-    [InlineData(InputKey.D4, "Phone")]
+    [InlineData(InputKey.D2, "Laptop")]
     public void AltAndTheSegmentsDigitPicksTheFramesSize(InputKey key, string size)
     {
         using var rig = new Rig();
