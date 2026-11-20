@@ -362,7 +362,8 @@ public sealed partial class FlightCommander
         else
         {
             state.RaiseCard(CardBin.Handled, FoldedKind, Verbs.FlightTarget(flight.Code), $"{flight.Code} folded into {foldedInto}",
-                $"{flight.Title ?? flight.Item.Noun} ({flight.Item.Display}) is now {foldedInto}'s: its PR closes it, and {foldedInto}'s planner plans its points{(labelNote is null ? "" : $"; {labelNote}")}");
+                // The number follows a title only: an untitled flight's noun already holds it (the review of #1129).
+                $"{(flight.Title is { } title ? $"{title} ({flight.Item.Display})" : flight.Item.Noun)} is now {foldedInto}'s: its PR closes it, and {foldedInto}'s planner plans its points{(labelNote is null ? "" : $"; {labelNote}")}");
         }
 
         // Its branch goes once its plane has, and so do those of the flights folded into it (PIL1101).
