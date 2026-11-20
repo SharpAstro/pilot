@@ -785,7 +785,8 @@ A node's first sweep waits for a look (#1114). While `maintenance-every` has nev
 nothing: once idle, the node runs a dry run and raises one For-you card (`maintenance-first-run`) with its totals and the five
 largest items per step. **Run on schedule** saves `maintenance-every` as `1d`, so the schedule applies from then on; **Keep off**
 saves it as `off`. The card is looked up by kind among the open cards, so a later tick or a restart raises no second, and the
-the node's own sweep never presses either choice, and an assistant's press is asked on a card for the person unless the autopilot is on. A node where a person has set `maintenance-every` (either value) never gets the card.
+node's own sweep never presses either choice, and an assistant's press is asked on a card for the person unless the autopilot
+is on. A node where a person has set `maintenance-every` (either value) never gets the card.
 
 The steps:
 
