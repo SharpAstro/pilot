@@ -280,8 +280,10 @@ public sealed class FollowUpCountTests : ReviewTestsBase
         (await Run(Verbs.OpenPr, Verbs.FlightTarget(flight.Code), "controller")).Error.ShouldBeNull();
         (await Run(Verbs.Review, Verbs.FlightTarget(flight.Code), Reviewer(flight.Code), "changes", "## Blocking\n- the guard is missing in Parser.cs:20\n")).Error.ShouldBeNull();
         var round = F(flight.Code).ReviewRounds!.Last();
-        _state.PutFlight(F(flight.Code) with { ReviewRounds = [.. F(flight.Code).ReviewRounds!.SkipLast(1), round with { Answers = [new ReviewPointAnswer("R1.3", "addressed", "Lexer.cs:3")] }] });
-        (await Run(Verbs.Review, Verbs.FlightTarget(flight.Code), Reviewer(flight.Code), "pass", "fine")).Ok.ShouldBeTrue();
+        _state.PutFlight(F(flight.Code) with { ReviewRounds = [.. F(flight.Code).ReviewRounds!.SkipLast(1), round with { Answers = [new ReviewPointAnswer("R1.1", "addressed", "Parser.cs:20"), new ReviewPointAnswer("R1.3", "addressed", "Lexer.cs:3")] }] });
+        var passed = await Run(Verbs.Review, Verbs.FlightTarget(flight.Code), Reviewer(flight.Code), "pass", "fine");
+        passed.Error.ShouldBeNull();
+        passed.Ok.ShouldBeTrue();
         _github.Pr = _github.Pr! with { State = "MERGED" };
         await new PrChecks(_state, _github, TimeProvider.System, _flights).LookAsync(Ct);
 
