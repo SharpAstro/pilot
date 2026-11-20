@@ -81,8 +81,9 @@ public sealed class FileJournal : INodeJournal, IDisposable
     /// 7: <c>fromDesign</c>, <c>fromDesignVersion</c> and <c>fromDesignSha256</c> on a flight (PIL1153). An older node would lose them when it compacts the snapshot,
     /// and the review would then no longer hold the flight to its design.
     /// 8: <c>designs</c> on a flight (PIL1185), every design it is built to. An older node would lose all but the first when it compacts the snapshot.
+    /// 9: the <c>followUpsChanged</c> event in the journal (PIL1226). An older node would fail on that kind in <c>journal.jsonl</c>.
     /// </remarks>
-    public const int StoreContract = 8;
+    public const int StoreContract = 9;
 
     private static readonly byte[] NewLine = "\n"u8.ToArray();
 

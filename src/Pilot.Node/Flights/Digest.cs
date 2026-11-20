@@ -118,7 +118,8 @@ public sealed class Digest(NodeState state, TimeProvider time) : BackgroundServi
         {
             text.AppendLine($"- and {handled.Count - MaxLines} more (pilot cards --all)");
         }
-        if (onHold.Count + held.Count + failed.Count + open.Count > 0)
+        var followUps = state.FollowUps()?.Lines().ToList() ?? [];
+        if (onHold.Count + held.Count + failed.Count + open.Count + followUps.Count > 0)
         {
             text.AppendLine("Parked:");
             foreach (var flight in onHold)
@@ -136,6 +137,10 @@ public sealed class Digest(NodeState state, TimeProvider time) : BackgroundServi
             foreach (var card in open)
             {
                 text.AppendLine($"- {card.Id} open: {card.Title}");
+            }
+            foreach (var line in followUps)
+            {
+                text.AppendLine($"- {line}");
             }
         }
         return (title, text.ToString().TrimEnd());

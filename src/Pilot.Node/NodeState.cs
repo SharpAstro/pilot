@@ -34,6 +34,7 @@ public sealed partial class NodeState
     private UsageRow? _usage;
     private MachineRow? _machine;
     private AdmissionRow? _admission;
+    private FollowUpsRow? _followUps;
     private PullRequestsRow? _pullRequests;
     private ReposRow? _repos;
     private NodeRow? _node;

@@ -31,6 +31,7 @@ namespace Pilot.Contracts;
 [JsonDerivedType(typeof(UsageChangedEvent), "usageChanged")]
 [JsonDerivedType(typeof(MachineChangedEvent), "machineChanged")]
 [JsonDerivedType(typeof(AdmissionChangedEvent), "admissionChanged")]
+[JsonDerivedType(typeof(FollowUpsChangedEvent), "followUpsChanged")]
 [JsonDerivedType(typeof(JobAddedEvent), "jobAdded")]
 [JsonDerivedType(typeof(JobChangedEvent), "jobChanged")]
 [JsonDerivedType(typeof(MergeAddedEvent), "mergeAdded")]
@@ -117,6 +118,9 @@ public sealed record SnapshotEvent : NodeEvent
 
     /// <summary>The Opus count, cap and priority flights as last said; null before the node has said, and from an older node.</summary>
     public AdmissionRow? Admission { get; init; }
+
+    /// <summary>How many follow-up issues each repo has open, and how many of them have no flight (pilot #1226); null before the node has read, and from an older node.</summary>
+    public FollowUpsRow? FollowUps { get; init; }
 
     /// <summary>Every job, ended ones included. Not required, for the same reason as <see cref="Flights"/>.</summary>
     public JobRow[] Jobs

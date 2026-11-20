@@ -246,6 +246,44 @@ public static partial class ReviewFollowUp
         return text.ToString();
     }
 
+    /// <summary>The key as a checkbox line names it: in backticks.</summary>
+    public static string Box(string key) => $"`{key}`";
+
+    /// <summary>
+    /// Ticks the <c>- [ ] `key`</c> lines of <paramref name="body"/> that <paramref name="keys"/> name and returns the new body, how many it ticked and how many
+    /// lines are left unticked. An older issue with no checkbox line comes back as it is (left is 0 only when it has lines and all are ticked: see <paramref name="hasBoxes"/>).
+    /// </summary>
+    public static (string Body, int Ticked, int Left, bool HasBoxes) Tick(string body, IEnumerable<string> keys)
+    {
+        var wanted = keys.Select(Box).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var lines = body.Split('\n');
+        var ticked = 0;
+        var left = 0;
+        var boxes = false;
+        for (var i = 0; i < lines.Length; i++)
+        {
+            var t = lines[i].TrimEnd('\r');
+            if (t.StartsWith("- [ ] ", StringComparison.Ordinal))
+            {
+                boxes = true;
+                if (wanted.Contains(t[6..].Trim()))
+                {
+                    lines[i] = "- [x] " + t[6..];
+                    ticked++;
+                }
+                else
+                {
+                    left++;
+                }
+            }
+            else if (t.StartsWith("- [x] ", StringComparison.OrdinalIgnoreCase))
+            {
+                boxes = true;
+            }
+        }
+        return (string.Join('\n', lines), ticked, left, boxes);
+    }
+
     /// <summary>The points alone, as a body and a later comment on the same issue share them.</summary>
     public static string Points(IReadOnlyList<Item> items)
     {
@@ -253,6 +291,8 @@ public static partial class ReviewFollowUp
         foreach (var item in items)
         {
             text.AppendLine($"### {item.Key}: {item.Where ?? "no file named"}");
+            // The one line a later flight ticks when the point is made (pilot #1226); the issue closes when none is left unticked.
+            text.AppendLine($"- [ ] {Box(item.Key)}");
             text.AppendLine($"- Found: {item.Found.ReplaceLineEndings(" ")}");
             text.AppendLine($"- Why it was left: {item.Why.ReplaceLineEndings(" ")}");
             text.AppendLine($"- What would settle it: {item.Settle}");

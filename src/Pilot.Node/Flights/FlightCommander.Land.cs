@@ -375,7 +375,9 @@ public sealed partial class FlightCommander
         // merged and left #285, #254 and #207 open), and an issue open after its work landed looks like work still to do.
         if (foldedInto is null && github is not null && flight.PullRequest is { } merged && await MergedAsync(flight, merged, cancellationToken))
         {
-            if (flight.Item.Tracker == TrackerKind.GitHub)
+            // A follow-up issue is ticked line by line and closes only when its last line is ticked (pilot #1226).
+            var keepOpen = flight.Item.Tracker == TrackerKind.GitHub && await TickFollowUpAsync(flight, cancellationToken);
+            if (flight.Item.Tracker == TrackerKind.GitHub && !keepOpen)
             {
                 try
                 {

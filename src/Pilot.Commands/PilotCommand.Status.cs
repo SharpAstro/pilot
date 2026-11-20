@@ -107,6 +107,13 @@ public static partial class PilotCommand
         {
             text.AppendLine(prRead.Replace("PR read: ", "pr read  "));
         }
+        if (!newestOnly && code is null)
+        {
+            foreach (var line in snapshot.FollowUps?.Lines() ?? [])
+            {
+                text.AppendLine(line);
+            }
+        }
         if (!newestOnly && code is null && heap is not null)
         {
             text.AppendLine($"heap  {heap.Line()}");
