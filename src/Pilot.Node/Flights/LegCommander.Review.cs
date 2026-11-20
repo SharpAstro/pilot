@@ -430,7 +430,12 @@ public sealed partial class LegCommander
         }
         else
         {
-            RaiseReviewChanges(flight, report);
+            // On autopilot the node sends the last leg round itself, as the card's button would (PIL1229, Decision 2); the card is the fallback.
+            call.Dispose();
+            if (!await TrySendFindingsRoundAsync(flight, report, cancellationToken))
+            {
+                RaiseReviewChanges(FlightOf(command.Target), report);
+            }
         }
 
         // A reviewer that gave its verdict is done with, after a grace to end its turn, as a worker that finished its own leg.
