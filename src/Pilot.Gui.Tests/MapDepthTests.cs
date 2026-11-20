@@ -82,6 +82,15 @@ public sealed class MapDepthTests
             return (r.X + r.Width / 2f, r.Y + r.Height / 2f);
         }
 
+        /// <summary>Guards a test against passing for nothing: the point is on the map's bare canvas, where a left press would pan were nothing painted over it.</summary>
+        public (float X, float Y) OnBareMap((float X, float Y) at)
+        {
+            var body = Chrome.Flights.MapBody!.Value;
+            body.Contains(at.X, at.Y).ShouldBeTrue($"{at} lies in the map body {body}");
+            Chrome.Flights.IsEmptyCanvas(body, at.X, at.Y).ShouldBeTrue($"{at} is bare canvas");
+            return at;
+        }
+
         public static bool Action(ClickableRegion r, string action) => r.Result is HitResult.ButtonHit b && b.Action == action;
 
         public void Dispose() => _renderer.Dispose();
@@ -98,7 +107,7 @@ public sealed class MapDepthTests
     {
         using var rig = new Rig(BarStates.Collapsed, None);
         var before = rig.View;
-        rig.Click(rig.CentreOf(r => Rig.Action(r, NotificationsHost.HandleAction)));
+        rig.Click(rig.OnBareMap(rig.CentreOf(r => Rig.Action(r, NotificationsHost.HandleAction))));
         rig.Chrome.Notifications.Open.ShouldBeTrue();
         ViewShouldNotMove(rig, before);
     }
@@ -109,7 +118,7 @@ public sealed class MapDepthTests
         using var rig = new Rig(BarStates.Over, Ringing);
         var before = rig.View;
         var state = rig.Chrome.Notifications.State;
-        rig.Click(rig.CentreOf(r => Rig.Action(r, NotificationsHost.PinAction)));
+        rig.Click(rig.OnBareMap(rig.CentreOf(r => Rig.Action(r, NotificationsHost.PinAction))));
         rig.Chrome.Notifications.State.ShouldNotBe(state);
         ViewShouldNotMove(rig, before);
     }
@@ -119,7 +128,7 @@ public sealed class MapDepthTests
     {
         using var rig = new Rig(BarStates.Over, Ringing);
         var before = rig.View;
-        rig.Click(rig.CentreOf(r => r.Result is HitResult.ButtonHit b && b.Action.StartsWith("card:c1:choice", StringComparison.Ordinal)));
+        rig.Click(rig.OnBareMap(rig.CentreOf(r => r.Result is HitResult.ButtonHit b && b.Action.StartsWith("card:c1:choice", StringComparison.Ordinal))));
         rig.Answered.ShouldNotBeNull("the panel's button answers the card");
         ViewShouldNotMove(rig, before);
     }
@@ -143,7 +152,7 @@ public sealed class MapDepthTests
     {
         using var rig = new Rig(BarStates.Collapsed, Ringing);
         var before = rig.View;
-        rig.Click(rig.CentreOf(r => r.Result is HitResult.ButtonHit b && b.Action.StartsWith("toast:c1:", StringComparison.Ordinal)));
+        rig.Click(rig.OnBareMap(rig.CentreOf(r => r.Result is HitResult.ButtonHit b && b.Action.StartsWith("toast:c1:", StringComparison.Ordinal))));
         rig.Answered.ShouldNotBeNull("the toast's button answers the card");
         ViewShouldNotMove(rig, before);
     }
@@ -154,7 +163,7 @@ public sealed class MapDepthTests
         using var rig = new Rig(BarStates.Over, Ringing);
         var before = rig.View;
         var panel = rig.Chrome.CardsBounds!.Value;
-        var at = (X: panel.X + panel.Width / 2f, Y: panel.Y + panel.Height / 2f);
+        var at = rig.OnBareMap((X: panel.X + panel.Width / 2f, Y: panel.Y + panel.Height / 2f));
         rig.Send(new InputEvent.Scroll(-3f, at.X, at.Y, InputModifier.None));
         rig.Send(new InputEvent.Scroll(-3f, at.X, at.Y, InputModifier.Ctrl));
         ViewShouldNotMove(rig, before);

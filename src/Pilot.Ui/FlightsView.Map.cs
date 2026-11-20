@@ -122,9 +122,12 @@ internal sealed partial class FlightsView<TSurface>
     private const float ArrowStep = 40f;
     private const float ArrowStepBig = 160f;
 
+    /// <summary>Whether a point is covered by something painted after this page (the chrome's rule): the map takes no wheel turn there.</summary>
+    internal Func<float, float, bool>? CoveredAt { get; set; }
+
     private bool HandleMapScroll(InputEvent.Scroll scroll)
     {
-        if (!MapShown || _mapBodySeen is null || _mapBody is not { } body || !body.Contains(scroll.X, scroll.Y))
+        if (!MapShown || _mapBodySeen is null || _mapBody is not { } body || !body.Contains(scroll.X, scroll.Y) || CoveredAt?.Invoke(scroll.X, scroll.Y) == true)
         {
             return false;
         }

@@ -239,7 +239,8 @@ internal sealed class PilotChrome<TSurface>
         More = new RailMoreMenu<TSurface>(renderer);
         Notifications.CardBody = ToastBody;
         // A flight page's Merge is its card's own choice, run as the panel runs it.
-        Flights.OnAnswerCard = (card, number) => Cards.OnAnswer?.Invoke(card, number);
+        Flights.CoveredAt = CoveredAfterPage;
+        Flights.OnAnswerCard =(card, number) => Cards.OnAnswer?.Invoke(card, number);
         // The pages read a card's press state by the card, so its node is part of the key, as in the panel (#922).
         Flights.CardWorking = card => Cards.WorkingOn(card);
         // So is a PR row's Merge or Go around: the same card button, so the node is told what the card's button tells it.
@@ -793,10 +794,11 @@ internal sealed class PilotChrome<TSurface>
 
         // The Flights map's own zoom and pan: a pinch, a middle or Space drag, and Ctrl+0 / Ctrl+1 (the Ideas and Home chords,
         // which the map has only while it is shown), ahead of the router and of the page chords.
-        // A press while the rail's More menu is open belongs to the menu (a left press on empty canvas would pan otherwise).
-        var moreOpen = More.Menu.IsOpen && evt is InputEvent.MouseDown { Button: MouseButton.Left };
+        // A press on anything painted after the page (the For you bar's handle, a toast, the open bar, the rail's open More menu) belongs to it,
+        // not to the map beneath: one rule, CoveredAfterPage, so a new overlay needs no new line. A pan already in flight still gets its moves and release.
+        var covered = evt is InputEvent.MouseDown down2 && CoveredAfterPage(down2.X, down2.Y);
         if (Page == PilotPage.Flights
-            && !moreOpen
+            && !covered
             && (Flights.HandleMapPointer(evt) || evt is InputEvent.KeyDown { Key: InputKey.D0 or InputKey.D1, Modifiers: InputModifier.Ctrl } chord && Flights.HandleMapKey(chord)))
         {
             return true;
@@ -817,6 +819,35 @@ internal sealed class PilotChrome<TSurface>
                 // The text selection of the page or the cards panel (a drag over its text, Ctrl+C, a right-click on it), ahead of the router.
                 return HandleSelection(evt);
         }
+    }
+
+    /// <summary>
+    /// Whether a point is covered by a widget painted after the page (every widget of <see cref="PageWidgets"/> listed after it, and the rail's More
+    /// while its menu is open), read from the regions each registered. Any region counts, a surface (<see cref="ClickableRegion.IsSurface"/>) included.
+    /// </summary>
+    internal bool CoveredAfterPage(float x, float y)
+    {
+        var widgets = PageWidgets;
+        var page = PageViewOf(Page);
+        var after = widgets.SkipWhile(w => !ReferenceEquals(w, page)).Skip(1);
+        if (More.Menu.IsOpen)
+        {
+            after = after.Append(More);
+        }
+        var regions = new List<ClickableRegion>();
+        foreach (var w in after)
+        {
+            regions.Clear();
+            w.CollectPaintedRegions(regions);
+            foreach (var r in regions)
+            {
+                if (x >= r.X && x < r.X + r.Width && y >= r.Y && y < r.Y + r.Height)
+                {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     // The selection input goes to the widget under the pointer: the page or the cards panel beside it. A drag stays with the widget
