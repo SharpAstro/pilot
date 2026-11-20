@@ -79,7 +79,9 @@ public sealed class RowTextPressTests
         using var window = new Window();
         window.Chrome.Show(PilotPage.Jobs);
         window.Render();
-        var commands = window.Chrome.Jobs.SelectableTextRegions.ToArray().Where(r => r.Text.Contains("dotnet test", StringComparison.Ordinal)).ToArray();
+        // The selected job's detail below the list repeats its command: the three rows' own are the topmost ones.
+        var commands = window.Chrome.Jobs.SelectableTextRegions.ToArray().Where(r => r.Text.Contains("dotnet test", StringComparison.Ordinal))
+            .OrderBy(r => r.Y).Take(3).ToArray();
         commands.Length.ShouldBe(3);
 
         for (var row = 0; row < commands.Length; row++)
