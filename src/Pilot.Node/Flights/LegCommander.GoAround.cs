@@ -155,10 +155,6 @@ public sealed partial class LegCommander
         // Counted apart when it answers the review, as that is the count the watchtower is capped by.
         var by = command.PersonsWord is not null ? "the person" : command.Who ?? "unknown";
         var next = leg with { GoArounds = leg.GoArounds + 1, GoAroundReasons = [.. leg.GoAroundReasons, new GoAroundReason { Why = why, By = by, At = time.GetUtcNow() }], ReviewGoArounds = leg.ReviewGoArounds + (leg.State == LegState.Done && !forConflict ? 1 : 0) };
-        if (forConflict)
-        {
-            _conflictGoArounds[RoundKey(flight, next)] = 0;
-        }
         // What the waste rules need: the new worker flies this round, for this reason.
         Ledger?.Mark(new WasteMark(WasteKinds.Round, flight.Code, leg.Name, null, null, next.GoArounds, WasteReasons.OfGoAround(why), time.GetUtcNow()));
         RingSpendAlert(flight, leg, next.GoArounds);
@@ -188,6 +184,12 @@ public sealed partial class LegCommander
                 if (Unchanged(flight.Code, leg) is null)
                 {
                     return $"{flight.Code}/{leg.Name} changed while {worker} was being started";
+                }
+                // Marked only once the conflict worker started, beside the leg's new count: a start that fails leaves the count as it
+                // was, and a mark set before it would let the next (review) go-around, under the same round key, past the gate (the review of #1033).
+                if (forConflict)
+                {
+                    _conflictGoArounds[RoundKey(flight, next)] = 0;
                 }
                 state.PutLeg(next with { State = LegState.Flying, AttemptModel = attemptModel, AttemptEffort = attemptEffort, Worker = worker, WorkerJob = started, StartedAt = time.GetUtcNow(), StartHead = startHead, TickerJob = null, FinishedAt = null, Report = $"go-around: {why}", Wait = null, Recheck = leg.Recheck is { Outcome: not null } ? null : leg.Recheck });
                 // Every card about the leg was about its last worker: failed, stopped, idle, waiting.
