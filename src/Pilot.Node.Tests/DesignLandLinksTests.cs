@@ -339,7 +339,7 @@ public sealed class DesignLandLinksTests : IDisposable
         _github.FileAt = (_, commit, path) =>
         {
             using var deadline = CancellationTokenSource.CreateLinkedTokenSource(Ct);
-            deadline.CancelAfter(TimeSpan.FromSeconds(30));
+            deadline.CancelAfter(TimeSpan.FromSeconds(20));
             return new GitCli().RunAsync(["cat-file", "-e", $"{commit}:{path}"], _repo, deadline.Token).GetAwaiter().GetResult().Ok;
         };
 
