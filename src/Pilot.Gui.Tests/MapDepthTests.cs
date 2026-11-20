@@ -121,7 +121,8 @@ public sealed class MapDepthTests
         using var rig = new Rig(BarStates.Over, Ringing);
         var before = rig.View;
         var state = rig.Chrome.Notifications.State;
-        rig.Click(rig.OnBareMap(rig.CentreOf(r => Rig.Action(r, NotificationsHost.PinAction))));
+        // The pin sits in the header above the map body, so there is no bare-canvas guard: the press must reach the pin and nothing else.
+        rig.Click(rig.CentreOf(r => Rig.Action(r, NotificationsHost.PinAction)));
         rig.Chrome.Notifications.State.ShouldNotBe(state);
         ViewShouldNotMove(rig, before);
     }
@@ -131,7 +132,7 @@ public sealed class MapDepthTests
     {
         using var rig = new Rig(BarStates.Over, Ringing);
         var before = rig.View;
-        rig.Click(rig.OnBareMap(rig.CentreOf(r => r.Result is HitResult.ButtonHit b && b.Action.StartsWith("card:c1:choice", StringComparison.Ordinal))));
+        rig.Click(rig.OnBareMap(rig.CentreOf(r => r.Result is HitResult.ButtonHit b && b.Action == "card:c1:1")));
         rig.Answered.ShouldNotBeNull("the panel's button answers the card");
         ViewShouldNotMove(rig, before);
     }
@@ -155,7 +156,8 @@ public sealed class MapDepthTests
     {
         using var rig = new Rig(BarStates.Collapsed, Ringing);
         var before = rig.View;
-        rig.Click(rig.OnBareMap(rig.CentreOf(r => r.Result is HitResult.ButtonHit b && b.Action.StartsWith("toast:c1:", StringComparison.Ordinal))));
+        // A toast sits below the map body on this surface, so there is no bare-canvas guard.
+        rig.Click(rig.CentreOf(r => r.Result is HitResult.ButtonHit b && b.Action.StartsWith("toast:c1:", StringComparison.Ordinal)));
         rig.Answered.ShouldNotBeNull("the toast's button answers the card");
         ViewShouldNotMove(rig, before);
     }
