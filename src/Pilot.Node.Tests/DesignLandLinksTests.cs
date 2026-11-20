@@ -335,7 +335,13 @@ public sealed class DesignLandLinksTests : IDisposable
             await GitAsync(args);
         }
         _record.Git = new GitCli();
-        _github.FileAt = (_, commit, path) => new GitCli().RunAsync(["cat-file", "-e", $"{commit}:{path}"], _repo, CancellationToken.None).GetAwaiter().GetResult().Ok;
+        // The hook is synchronous, so its git gets a deadline of its own (the review of #1218).
+        _github.FileAt = (_, commit, path) =>
+        {
+            using var deadline = CancellationTokenSource.CreateLinkedTokenSource(Ct);
+            deadline.CancelAfter(TimeSpan.FromSeconds(30));
+            return new GitCli().RunAsync(["cat-file", "-e", $"{commit}:{path}"], _repo, deadline.Token).GetAwaiter().GetResult().Ok;
+        };
 
         var (id, issue) = await DesignAsync();
         var folder = DesignSyncText.RepoFolder(issue);

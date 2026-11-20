@@ -110,13 +110,15 @@ public sealed partial class DesignRecord(DesignStore store, RepoCatalog repos, N
                 if (result.Kind == DesignPlacement.Oversized)
                 {
                     state.RaiseCard(CardBin.ForYou, OversizeKind, Verbs.FlightTarget(flight.Code), $"{flight.Code}: design {d.Id} v{d.Version.ToString(CultureInfo.InvariantCulture)} is not committed to the repo",
-                        $"{result.Note}. The files stay on {DesignSyncText.Branch(design.IssueNumber!.Value)}; make the renders smaller and publish a new version to have them placed.",
+                        // The flight is built to the version it recorded, so a smaller one is placed only once the flight moves to it (the review of #1218).
+                        $"{result.Note}. The files stay on {DesignSyncText.Branch(design.IssueNumber!.Value)}; make the renders smaller, publish a new version, and move the flight to it with pilot flight replan-design {flight.Code} {d.Id} to have it placed.",
                         [new CardChoice { Label = "Place the files again", Verb = Verbs.OpenPr, Target = Verbs.FlightTarget(flight.Code) }],
-                        summary: $"The files of design {d.Id} v{d.Version.ToString(CultureInfo.InvariantCulture)} are over a size limit, so {flight.Code}'s PR does not carry them. Make the renders smaller, publish a new version, then place them again.",
+                        summary: $"The files of design {d.Id} v{d.Version.ToString(CultureInfo.InvariantCulture)} are over a size limit, so {flight.Code}'s PR does not carry them. Make the renders smaller, publish a new version, then move the flight to it with pilot flight replan-design.",
                         cause: $"{flight.Code}/{d.Id}/v{d.Version.ToString(CultureInfo.InvariantCulture)}");
                 }
             }
-            catch (Exception ex) when (ex is DesignException or FlightException or IOException)
+            // A locked path in the plane (UnauthorizedAccessException) is logged and skipped as any other, never failing the PR (the review of #1218).
+            catch (Exception ex) when (ex is DesignException or FlightException or IOException or UnauthorizedAccessException)
             {
                 await Error.WriteLineAsync($"design: {d.Id}'s files were not placed in {flight.Code}'s plane: {ex.Message}");
             }

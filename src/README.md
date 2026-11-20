@@ -717,7 +717,7 @@ published version: its recorded version and prototype hash change, the issue is 
 **Where a built design lives (PIL1208).** When a flight builds a version, the node commits that version's files under
 `docs/designs/<issue>/` in the flight's repo (the issue is the design's own, since a DSN id repeats across nodes), so they land
 with the flight. A render over 500 KB, or a version over 3 MB in all, is not committed; the PR says so and one card offers
-placing again. Once the flight merges, the design issue and the PR's Designs section link the folder at the merge commit (a
+placing again, which places a smaller version once the flight is moved to it with `pilot flight replan-design`. Once the flight merges, the design issue and the PR's Designs section link the folder at the merge commit (a
 permalink), each link is checked, and the branch `design/<issue>` is deleted, unless a newer version that has not been built is
 on it (an unbuilt design keeps its branch). `pilot design show` prints `built: <owner/repo> docs/designs/<n> at <short sha>, v<k>`
 and the Designs page shows the same text as its `Built:` line, both from `DesignSyncText.BuiltPlace`; a design with no landed
