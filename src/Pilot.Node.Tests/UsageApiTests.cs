@@ -27,7 +27,7 @@ public sealed class UsageApiTests : IDisposable
     private string Credentials => Path.Combine(_folder, ".credentials.json");
 
     private void WriteCredentials(DateTimeOffset expires) =>
-        File.WriteAllText(Credentials, $$"""{"claudeAiOauth":{"accessToken":"{{Token}}","refreshToken":"r-secret","expiresAt":{{expires.ToUnixTimeMilliseconds()}}}}""");
+        File.WriteAllText(Credentials, $$$"""{"claudeAiOauth":{"accessToken":"{{{Token}}}","refreshToken":"r-secret","expiresAt":{{{expires.ToUnixTimeMilliseconds()}}}}}""");
 
     private UsageApi Api() => new(new HttpClient(_handler), Credentials, _time, _log);
 
@@ -141,7 +141,7 @@ public sealed class UsageApiTests : IDisposable
         var api = Api();
         await api.ReadAsync(default);
 
-        File.WriteAllText(Credentials, $$"""{"claudeAiOauth":{"accessToken":"second-token","expiresAt":{{Now.AddHours(1).ToUnixTimeMilliseconds()}}}}""");
+        File.WriteAllText(Credentials, $$$"""{"claudeAiOauth":{"accessToken":"second-token","expiresAt":{{{Now.AddHours(1).ToUnixTimeMilliseconds()}}}}}""");
         _time.Advance(UsageApi.Every);
         await api.ReadAsync(default);
 
@@ -155,7 +155,7 @@ public sealed class UsageApiTests : IDisposable
     {
         var state = new NodeState(new InMemoryJournal(), _time);
         var file = Path.Combine(_folder, "rate-limits.json");
-        File.WriteAllText(file, $$"""{"rate_limits":{"five_hour":{"used_percentage":33,"resets_at":{{Now.AddHours(2).ToUnixTimeSeconds()}}}},"written_at":{{Now.ToUnixTimeSeconds()}}}""");
+        File.WriteAllText(file, $$$"""{"rate_limits":{"five_hour":{"used_percentage":33,"resets_at":{{{Now.AddHours(2).ToUnixTimeSeconds()}}}}},"written_at":{{{Now.ToUnixTimeSeconds()}}}}""");
         WriteCredentials(Now.AddHours(1));
         _handler.Reply(System.Net.HttpStatusCode.InternalServerError, "");
         var api = Api();
