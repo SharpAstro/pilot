@@ -239,6 +239,7 @@ internal sealed class PilotChrome<TSurface>
         More = new RailMoreMenu<TSurface>(renderer);
         Notifications.CardBody = ToastBody;
         // A flight page's Merge is its card's own choice, run as the panel runs it.
+        Flights.CoveredAt = DrawnAfterPage;
         Flights.OnAnswerCard = (card, number) => Cards.OnAnswer?.Invoke(card, number);
         // The pages read a card's press state by the card, so its node is part of the key, as in the panel (#922).
         Flights.CardWorking = card => Cards.WorkingOn(card);
@@ -788,15 +789,26 @@ internal sealed class PilotChrome<TSurface>
         // The map's layer menu notes where the pointer is (over it, it holds itself opaque); the move goes on to the router.
         if (evt is InputEvent.MouseMove move && Page == PilotPage.Flights)
         {
-            Flights.NotePointer(move.X, move.Y);
+            // A point covered by something painted after the page (a toast, the bar) is not over the map: its menu and rows see the pointer leave.
+            if (DrawnAfterPage(move.X, move.Y))
+            {
+                Flights.NotePointer(float.NegativeInfinity, float.NegativeInfinity);
+            }
+            else
+            {
+                Flights.NotePointer(move.X, move.Y);
+            }
         }
 
         // The Flights map's own zoom and pan: a pinch, a middle or Space drag, and Ctrl+0 / Ctrl+1 (the Ideas and Home chords,
         // which the map has only while it is shown), ahead of the router and of the page chords.
-        // A press while the rail's More menu is open belongs to the menu (a left press on empty canvas would pan otherwise).
-        var moreOpen = More.Menu.IsOpen && evt is InputEvent.MouseDown { Button: MouseButton.Left };
+        // A press on anything painted after the page (the For you bar's handle, a toast, the open bar, the rail's open More menu) belongs to it,
+        // not to the map beneath: one rule, CoveredAfterPage, so a new overlay needs no new line. A pan already in flight still gets its moves and release.
+        // A plain left press also counts the open bar's press-outside layer (the router collapses the bar with it); a middle or Space press looks through it, so a pan still starts.
+        var covered = evt is InputEvent.MouseDown down2
+            && (down2.Button == MouseButton.Left && !Flights.SpaceHeld ? CoveredAfterPage(down2.X, down2.Y) : DrawnAfterPage(down2.X, down2.Y));
         if (Page == PilotPage.Flights
-            && !moreOpen
+            && !covered
             && (Flights.HandleMapPointer(evt) || evt is InputEvent.KeyDown { Key: InputKey.D0 or InputKey.D1, Modifiers: InputModifier.Ctrl } chord && Flights.HandleMapKey(chord)))
         {
             return true;
@@ -817,6 +829,59 @@ internal sealed class PilotChrome<TSurface>
                 // The text selection of the page or the cards panel (a drag over its text, Ctrl+C, a right-click on it), ahead of the router.
                 return HandleSelection(evt);
         }
+    }
+
+    /// <summary>
+    /// Whether a point is covered by a widget painted after the page (every widget of <see cref="PageWidgets"/> listed after it, and the rail's More
+    /// while its menu is open), read from the regions each registered. Every region counts, the open bar's press-outside layer
+    /// (<see cref="NotificationsHost.OutsideAction"/>, which spans the page) included; <see cref="DrawnAfterPage"/> leaves that layer out.
+    /// </summary>
+    internal bool CoveredAfterPage(float x, float y) => CoveredAfter(PageViewOf(Page), x, y);
+
+    /// <summary>As <see cref="CoveredAfterPage"/>, but the open bar's press-outside layer, which spans the page, is looked through: only what is drawn counts.</summary>
+    internal bool DrawnAfterPage(float x, float y) => CoveredAfter(PageViewOf(Page), x, y, includeOutsideLayer: false);
+
+    // Reused by every CoveredAfter call (a MouseMove asks each frame); the input thread is the only caller.
+    private readonly List<ClickableRegion> _coverRegions = [];
+
+    /// <summary>Whether a point is covered by a widget painted after <paramref name="target"/> (the page, or the cards panel, which is itself above the page).</summary>
+    private bool CoveredAfter(IPixelWidget target, float x, float y, bool includeOutsideLayer = true)
+    {
+        // Plain loops over the page's list, no LINQ iterators: a MouseMove asks this every frame.
+        var widgets = PageWidgets;
+        var start = widgets.Count;
+        for (var i = 0; i < widgets.Count; i++)
+        {
+            if (ReferenceEquals(widgets[i], target))
+            {
+                start = i + 1;
+                break;
+            }
+        }
+        for (var i = start; i < widgets.Count; i++)
+        {
+            if (Covers(widgets[i], x, y, includeOutsideLayer))
+            {
+                return true;
+            }
+        }
+        return More.Menu.IsOpen && Covers(More, x, y, includeOutsideLayer);
+    }
+
+    // Whether one widget's painted regions hold the point; the open bar's press-outside layer counts only with includeOutsideLayer.
+    private bool Covers(IPixelWidget widget, float x, float y, bool includeOutsideLayer)
+    {
+        var regions = _coverRegions;
+        regions.Clear();
+        widget.CollectPaintedRegions(regions);
+        foreach (var r in regions)
+        {
+            if ((includeOutsideLayer || r is not { Result: HitResult.ButtonHit { Action: NotificationsHost.OutsideAction } }) && x >= r.X && x < r.X + r.Width && y >= r.Y && y < r.Y + r.Height)
+            {
+                return true;
+            }
+        }
+        return false;
     }
 
     // The selection input goes to the widget under the pointer: the page or the cards panel beside it. A drag stays with the widget
@@ -850,6 +915,12 @@ internal sealed class PilotChrome<TSurface>
             {
                 target = panel;
             }
+        }
+        // A press on a point covered by a widget painted after the target (a toast, the edge handle, the open bar over the page) is that widget's,
+        // not a selection's: none begins and the router gives it the press. A drag or release of a selection already begun is unchanged.
+        if (evt is InputEvent.MouseDown { Button: MouseButton.Left } pressed && CoveredAfter(target, pressed.X, pressed.Y, includeOutsideLayer: false))
+        {
+            return false;
         }
         if (evt is InputEvent.MouseDown { Button: MouseButton.Left })
         {

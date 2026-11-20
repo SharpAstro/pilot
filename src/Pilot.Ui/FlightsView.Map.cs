@@ -111,6 +111,9 @@ internal sealed partial class FlightsView<TSurface>
     // Whether Space is held (a left drag then moves the map); cleared by its release, or when the map goes away.
     private bool _space;
 
+    /// <summary>Whether Space is held, so a left press pans instead of picking.</summary>
+    internal bool SpaceHeld => _space;
+
     // The button that began the drag in flight, so only its release ends it.
     private MouseButton _panButton;
 
@@ -122,9 +125,12 @@ internal sealed partial class FlightsView<TSurface>
     private const float ArrowStep = 40f;
     private const float ArrowStepBig = 160f;
 
+    /// <summary>Whether a point is covered by something painted after this page (the chrome's rule): the map takes no wheel turn or pinch there.</summary>
+    internal Func<float, float, bool>? CoveredAt { get; set; }
+
     private bool HandleMapScroll(InputEvent.Scroll scroll)
     {
-        if (!MapShown || _mapBodySeen is null || _mapBody is not { } body || !body.Contains(scroll.X, scroll.Y))
+        if (!MapShown || _mapBodySeen is null || _mapBody is not { } body || !body.Contains(scroll.X, scroll.Y) || CoveredAt?.Invoke(scroll.X, scroll.Y) == true)
         {
             return false;
         }
@@ -157,7 +163,8 @@ internal sealed partial class FlightsView<TSurface>
                 _space = false;
                 Changed?.Invoke();
                 return false;
-            case InputEvent.Pinch pinch when MapLive && _mapBody is { } pinchBody && pinchBody.Contains(pinch.X, pinch.Y):
+            // A pinch over a toast, the edge handle or the open bar is theirs, as the wheel is: the same CoveredAt rule as HandleMapScroll.
+            case InputEvent.Pinch pinch when MapLive && _mapBody is { } pinchBody && pinchBody.Contains(pinch.X, pinch.Y) && CoveredAt?.Invoke(pinch.X, pinch.Y) != true:
                 var (px, py) = ToView(pinchBody, pinch.X, pinch.Y);
                 if (_vp.ZoomAt(pinch.Scale, px, py))
                 {
