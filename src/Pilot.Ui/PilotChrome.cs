@@ -789,7 +789,15 @@ internal sealed class PilotChrome<TSurface>
         // The map's layer menu notes where the pointer is (over it, it holds itself opaque); the move goes on to the router.
         if (evt is InputEvent.MouseMove move && Page == PilotPage.Flights)
         {
-            Flights.NotePointer(move.X, move.Y);
+            // A point covered by something painted after the page (a toast, the bar) is not over the map: its menu and rows see the pointer leave.
+            if (CoveredAfterPage(move.X, move.Y))
+            {
+                Flights.NotePointer(float.NegativeInfinity, float.NegativeInfinity);
+            }
+            else
+            {
+                Flights.NotePointer(move.X, move.Y);
+            }
         }
 
         // The Flights map's own zoom and pan: a pinch, a middle or Space drag, and Ctrl+0 / Ctrl+1 (the Ideas and Home chords,
@@ -825,11 +833,13 @@ internal sealed class PilotChrome<TSurface>
     /// Whether a point is covered by a widget painted after the page (every widget of <see cref="PageWidgets"/> listed after it, and the rail's More
     /// while its menu is open), read from the regions each registered. Any region counts, a surface (<see cref="ClickableRegion.IsSurface"/>) included.
     /// </summary>
-    internal bool CoveredAfterPage(float x, float y)
+    internal bool CoveredAfterPage(float x, float y) => CoveredAfter(PageViewOf(Page), x, y);
+
+    /// <summary>Whether a point is covered by a widget painted after <paramref name="target"/> (the page, or the cards panel, which is itself above the page).</summary>
+    private bool CoveredAfter(IPixelWidget target, float x, float y)
     {
         var widgets = PageWidgets;
-        var page = PageViewOf(Page);
-        var after = widgets.SkipWhile(w => !ReferenceEquals(w, page)).Skip(1);
+        var after = widgets.SkipWhile(w => !ReferenceEquals(w, target)).Skip(1);
         if (More.Menu.IsOpen)
         {
             after = after.Append(More);
@@ -881,6 +891,12 @@ internal sealed class PilotChrome<TSurface>
             {
                 target = panel;
             }
+        }
+        // A press on a point covered by a widget painted after the target (a toast, the edge handle, the open bar over the page) is that widget's,
+        // not a selection's: none begins and the router gives it the press. A drag or release of a selection already begun is unchanged.
+        if (evt is InputEvent.MouseDown { Button: MouseButton.Left } pressed && CoveredAfter(target, pressed.X, pressed.Y))
+        {
+            return false;
         }
         if (evt is InputEvent.MouseDown { Button: MouseButton.Left })
         {
