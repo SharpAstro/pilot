@@ -167,12 +167,13 @@ public sealed class SegmentedRowTests
         var wide = Arranged(node, 1000f);
         Words(wide).ShouldBe(words, "all the words are drawn when the row has room");
 
+        // Where a segment has a mark the word drops, all of them together; one with no mark in the library (Canvas, In play, Everything: DIR.Lib#299) keeps its word.
         var narrow = Arranged(node, 90f);
-        Words(narrow).ShouldBeEmpty("the words drop together, not one by one");
+        Words(narrow).ShouldBe(flights ? ["Canvas"] : words, "the words drop together where a mark stands for them");
         for (var i = 0; i < actions.Length; i++)
         {
             var segment = narrow.First(a => a.Node.Hit is HitResult.ButtonHit b && b.Action == actions[i]);
-            segment.Node.Tooltip.ShouldBe(words[i], $"{actions[i]}'s word is its tooltip");
+            segment.Node.Tooltip.ShouldBe(words[i], $"{actions[i]}'s word is its tooltip in the narrow form");
         }
     }
 }

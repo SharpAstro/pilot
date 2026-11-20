@@ -231,8 +231,8 @@ internal sealed class PlayFilter
     {
         var options = new Layout.ButtonGroupOption<bool>[]
         {
-            new(true, "In play") { Hit = new HitResult.ButtonHit("play:in-play"), Tooltip = "In play", Shortcut = new KeyChord(InputKey.I, InputModifier.Alt) },
-            new(false, "Everything") { Hit = new HitResult.ButtonHit("play:everything"), Tooltip = "Everything", Shortcut = new KeyChord(InputKey.E, InputModifier.Alt) },
+            new(true, "In play") { Hit = new HitResult.ButtonHit("play:in-play"), Shortcut = new KeyChord(InputKey.I, InputModifier.Alt) },
+            new(false, "Everything") { Hit = new HitResult.ButtonHit("play:everything"), Shortcut = new KeyChord(InputKey.E, InputModifier.Alt) },
         };
         yield return Layout.Builder.Segmented<bool>(options, InPlay, inPlay => { if (inPlay) ShowInPlay(); else ShowEverything(); },
             UiThemes.For(night ?? Palette.Current), ViewSwitch.CursorOf(ListId), ListId, 12f).WithCursor(CursorKind.Pointer);

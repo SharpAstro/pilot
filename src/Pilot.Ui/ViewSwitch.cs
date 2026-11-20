@@ -35,7 +35,6 @@ internal static class ViewSwitch
             options[i] = new Layout.ButtonGroupOption<T>(choice.Mode, choice.Name, choice.Icon)
             {
                 Hit = new HitResult.ButtonHit(choice.Action),
-                Tooltip = choice.Name,
                 Shortcut = new KeyChord(InputKey.D1 + i, InputModifier.Alt),
             };
         }
