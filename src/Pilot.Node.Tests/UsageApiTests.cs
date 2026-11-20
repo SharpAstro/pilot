@@ -147,7 +147,8 @@ public sealed class UsageApiTests : IDisposable
 
         _handler.Requests[1].Authorization.ShouldBe("Bearer second-token");
         typeof(UsageApi).GetFields(System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public)
-            .Where(f => f.FieldType == typeof(string)).ShouldBeEmpty();
+            // The credentials file's path is held (a path, not a token); no other string is.
+            .Where(f => f.FieldType == typeof(string) && !f.Name.Contains("credentialsFile")).ShouldBeEmpty();
     }
 
     [Fact]
