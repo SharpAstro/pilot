@@ -34,8 +34,8 @@
     <!-- Console.Lib is exact: 5.26.2761 is the first release with CON84 (EmptyRows skips a declared border row), and stays at 5.26.2761. The DIR.Lib and SdlVulkan.Renderer pins below are exact at the versions that bring the inspector opt-in (DIR_INSPECTOR) into Release builds; DIR.Lib and DIR.Lib.Debug are on 11.86.8251 (SharpAstro/DIR.Lib#282: toasts at the bottom right, a surface takes the pointer from what it covers) and SdlVulkan.Renderer and its Debug twin on 7.106.5581, the first releases with the caret blink handover (SharpAstro/.github#13: the phase lives on WindowUiSettings, SdlEventLoop sets it and wakes at each change). -->
     <PackageVersion Include="Console.Lib" Version="5.26.2761" />
     <PackageVersion Include="Console.Lib.Debug" Version="5.26.2761" />
-    <PackageVersion Include="DIR.Lib" Version="11.84.7971" />
-    <PackageVersion Include="DIR.Lib.Debug" Version="11.84.7971" />
+    <PackageVersion Include="DIR.Lib" Version="11.86.8251" />
+    <PackageVersion Include="DIR.Lib.Debug" Version="11.86.8251" />
     <PackageVersion Include="LAN.Lib" Version="2.4.*" />
     <!-- The per-user node's socket location, lock, Kestrel hosting, event queue and ring buffer (SharpAstro/Node.Lib), shared with tianwen. -->
     <PackageVersion Include="Node.Lib" Version="1.2.*" />
