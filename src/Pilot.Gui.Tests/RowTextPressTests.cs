@@ -121,7 +121,9 @@ public sealed class RowTextPressTests
         var byRow = window.Chrome.Sessions.SelectableTextRegions.ToArray().Where(r => r.Text.Trim().Length > 0)
             .Select(r => (Region: r, Row: RowOf(Middle(r).X, Middle(r).Y))).Where(t => t.Row >= 0)
             .GroupBy(t => t.Row).OrderBy(g => g.Key).Select(g => g.Select(t => t.Region).ToArray()).ToArray();
-        byRow.Length.ShouldBeGreaterThanOrEqualTo(3, $"rows painted: {rows.Length}, sessions selected: {window.Chrome.Sessions.Selected}");
+        byRow.Length.ShouldBeGreaterThanOrEqualTo(3, $"rows painted: {rows.Length}, sessions selected: {window.Chrome.Sessions.Selected}; rows: "
+            + string.Join(" | ", rows.Select(r => $"{r.X:0},{r.Y:0} {r.Width:0}x{r.Height:0}")) + "; texts: "
+            + string.Join(" | ", window.Chrome.Sessions.SelectableTextRegions.ToArray().Take(40).Select(r => $"'{r.Text.Trim()}' {r.X:0},{r.Y:0} {r.Width:0}x{r.Height:0}")));
 
         // Every text of the rows, tooltip or not, round the rows in turn: each press lands on a row other than the one selected,
         // so a press that went nowhere leaves the previous row selected and fails.
