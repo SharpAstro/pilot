@@ -91,9 +91,23 @@ public sealed class DeferredPointTests : ReviewTestsBase
     }
 
     [Fact]
+    public async Task ANodesOwnPointWithNoDetailIsRecordedHereNotSaidToBeMadeByTheNode()
+    {
+        var code = await PassedWith("| R1.3 | node's own | |
+| R1.4 | not work | the rename is a taste |
+");
+
+        (await Merge(code)).Error.ShouldBeNull();
+
+        var body = _github.PrBodyEdits.ShouldHaveSingleItem().Body;
+        body.ShouldContain("recorded here by the node");
+        body.ShouldNotContain("made by the node");
+    }
+
+    [Fact]
     public async Task AnAnotherRepoPointIsAFrameworkIssueInThatRepoLinkedFromThePr()
     {
-        var code = await PassedWith("| R1.3 | addressed | fix.txt:1 |\n| R1.4 | deferred: another repo | the rename belongs in acme/widget |\n");
+        var code = await PassedWith("| R1.3 | addressed | fix.txt:1 |\n| R1.4 | deferred: another repo | the rename belongs in SharpAstro/widget |\n");
 
         (await Merge(code)).Error.ShouldBeNull();
 
@@ -102,11 +116,27 @@ public sealed class DeferredPointTests : ReviewTestsBase
         issue.Body.ShouldNotBeNull().ShouldContain("R1.4");
         var number = _github.IssueRepos.Single(r => r.Value == issue.Repo).Key;
         _github.IssueLabels[number].Keys.ShouldContain(DeferredRoutes.FrameworkLabel);
-        _github.IssueComments.ShouldContain(c => c.Number == F(code).PullRequest && c.Body.Contains($"acme/widget#{number}"));
+        _github.IssueComments.ShouldContain(c => c.Number == F(code).PullRequest && c.Body.Contains($"SharpAstro/widget#{number}"));
         // It is no flight's follow-up: this flight made no issue of its own and no flight.
         F(code).FollowUpIssue.ShouldBeNull();
         F(code).FollowUpFlight.ShouldBeNull();
         _github.Merged.ShouldHaveSingleItem();
+    }
+
+    [Fact]
+    public async Task AnAnotherRepoPointWhoseRepoIsNotClonedHoldsTheMergeNamingTheRepo()
+    {
+        var code = await PassedWith("| R1.3 | addressed | fix.txt:1 |
+| R1.4 | deferred: another repo | the rename belongs in SharpAstro/widget |
+");
+        _github.UnclonedRepos.Add("widget");
+
+        var held = await Merge(code);
+
+        held.Error.ShouldNotBeNull().ShouldContain("SharpAstro/widget");
+        held.Error.ShouldContain("not cloned");
+        _github.IssuesCreated.ShouldBeEmpty();
+        _github.Merged.ShouldBeEmpty();
     }
 
     [Fact]
@@ -131,7 +161,7 @@ public sealed class DeferredPointTests : ReviewTestsBase
     {
         // gh is down from the pass on: the pass-time filing fails quietly, so it is the merge that has to file the point, and holds.
         _github.CreateIssueFails = "gh could not reach GitHub";
-        var code = await PassedWith("| R1.3 | addressed | fix.txt:1 |\n| R1.4 | deferred: another repo | the rename belongs in acme/widget |\n");
+        var code = await PassedWith("| R1.3 | addressed | fix.txt:1 |\n| R1.4 | deferred: another repo | the rename belongs in SharpAstro/widget |\n");
 
         var held = await Merge(code);
 

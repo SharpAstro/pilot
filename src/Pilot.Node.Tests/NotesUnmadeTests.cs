@@ -66,6 +66,20 @@ public sealed class NotesUnmadeTests : ReviewTestsBase
 
     [Fact]
     [Trait("Category", "Slow")]
+    public async Task AReviewerSessionWithAReasonMayNotRemoveTheReviewNotesLegWhileANoteIsUnmade()
+    {
+        AutopilotOn();
+        var flight = await Reviewed("2", Notes);
+        var leg = _state.Legs(flight.Code).Single(l => l.Name == LegCommander.ReviewNotesLeg);
+
+        var refused = await Run(Verbs.RemoveLeg, Verbs.LegTarget(flight.Code, leg.Name), Reviewer(flight.Code), "the notes are not worth a round");
+
+        refused.Error.ShouldNotBeNull().ShouldContain("owner's word");
+        _state.Legs(flight.Code).ShouldContain(l => l.Name == leg.Name);
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
     public async Task ThePersonClearsTheHoldWithAReasonAndTheHandledCardRecordsWhoAndWhy()
     {
         var flight = await Reviewed("3", Notes);

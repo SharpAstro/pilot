@@ -337,6 +337,26 @@ public sealed class ReviewFollowUpTests : ReviewTestsBase
         item.Why.ShouldBe("out of scope, Parser.cs is wider");
     }
 
+    [Theory]
+    [InlineData("deferred, another repo: read/write widths in px/em", "src/Pilot.Node of DIR.Lib", "DIR.Lib")]
+    [InlineData("deferred, another repo: the fix belongs in src/Pilot.Node", "", null)]
+    [InlineData("deferred, another repo: and/or the sibling", "", null)]
+    [InlineData("deferred, another repo: widths in px/em", "", null)]
+    public void TargetRepoNeverTakesAPathOrAPhraseWithASlashForARepo(string why, string found, string? expected)
+    {
+        var item = new ReviewFollowUp.Item("R1.4", found.Length > 0 ? found : "read/write widths in px/em and/or src/Pilot.Node", why, "") { Kind = ReviewPoints.DeferReason.OtherRepo };
+
+        ReviewFollowUp.TargetRepo(item, n => n == "DIR.Lib").ShouldBe(expected);
+    }
+
+    [Fact]
+    public void TargetRepoPrefersTheSiblingTheAnswerNamesToOneTheFindingMentions()
+    {
+        var item = new ReviewFollowUp.Item("R1.4", "Parser.cs in SharpAstro/Other is wrong", "deferred, another repo: DIR.Lib", "") { Kind = ReviewPoints.DeferReason.OtherRepo };
+
+        ReviewFollowUp.TargetRepo(item, n => n is "DIR.Lib" or "Other").ShouldBe("DIR.Lib");
+    }
+
     [Fact]
     public void AnAnswerStoredBeforeTheReasonExistedStillLoads()
     {
@@ -351,6 +371,9 @@ public sealed class ReviewFollowUpTests : ReviewTestsBase
     [InlineData("The text no longer exists after the rewrite", true)]
     [InlineData("The commit title is removed by the squash", true)]
     [InlineData("The guard in Parser.cs:3 is missing", false)]
+    [InlineData("validation is already done in the caller but the lexer still accepts a bare quote", false)]
+    [InlineData("the rename is already made in Parser.cs but not in Lexer.cs", false)]
+    [InlineData("the old call is no longer in the hot path, yet the cache still holds it", false)]
     [InlineData("", false)]
     public void TextThatSaysItIsSettledIsRecognised(string text, bool settled)
     {

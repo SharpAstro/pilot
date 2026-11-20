@@ -110,6 +110,34 @@ public class ReviewPointsTests
     private static string? RefusalWith(string row14) => ReviewPoints.Refusal(Both, Table.Replace(Row14, row14));
 
     [Theory]
+    [InlineData("| R1.4 | deferred: report back later | needs a call |")]
+    [InlineData("| R1.4 | deferred: reposition the header | needs a call |")]
+    [InlineData("| R1.4 | deferred: ownership is unclear | needs a call |")]
+    public void ADeferralWhoseReasonIsOnlyAWordInsideOtherTextIsRefused(string row)
+    {
+        RefusalWith(row).ShouldNotBeNull().ShouldContain("R1.4 is deferred with no allowed reason");
+    }
+
+    [Theory]
+    [InlineData(": another repo", ReviewPoints.DeferReason.OtherRepo)]
+    [InlineData(": another repository", ReviewPoints.DeferReason.OtherRepo)]
+    [InlineData(": the owner's decision", ReviewPoints.DeferReason.OwnerDecision)]
+    [InlineData(": owner decision", ReviewPoints.DeferReason.OwnerDecision)]
+    [InlineData(": larger than the PR", ReviewPoints.DeferReason.LargerThanFlight)]
+    [InlineData("larger than the flight", ReviewPoints.DeferReason.LargerThanFlight)]
+    public void TheThreeReasonPhrasesAreReadWhateverTheirWording(string text, ReviewPoints.DeferReason reason)
+    {
+        ReviewPoints.ReasonOf(text).ShouldBe(reason);
+    }
+
+    [Fact]
+    public void AnotherRepoPointThatNamesNoRepoIsRefusedSoTheReviewerFixesItInTheSameTurn()
+    {
+        RefusalWith("| R1.4 | deferred: another repo | belongs elsewhere |").ShouldNotBeNull().ShouldContain("R1.4 is deferred to another repo but names none");
+        RefusalWith("| R1.4 | deferred: another repo | the fix belongs in SharpAstro/DIR.Lib |").ShouldBeNull();
+    }
+
+    [Theory]
     [InlineData("| R1.4 | left | out of this flight's scope, needs a decision |")]
     [InlineData("| R1.4 | left | |")]
     public void AFreeTextLeftIsRefusedNamingTheFourEndsAndTheThreeReasons(string row)

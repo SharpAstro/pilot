@@ -41,4 +41,23 @@ public sealed class InvariantBriefTests
 
         Briefs.FixPr(review, "feature", null).ShouldContain("[Trait(\"Category\", \"Invariant\")]");
     }
+
+    [Fact]
+    public void TheFixerIsToldTheFourEndsTheThreeDeferralReasonsAndThatABareLeftIsRefused()
+    {
+        var review = new PrReviewRow { Repo = "SharpAstro/pilot", Number = 1, Head = "abcdef012345", Base = "main", FixWorktree = "/r/fix",
+            Url = "https://github.com/SharpAstro/pilot/pull/1", ClonePath = "/r", Worktree = "/r/.claude/worktrees/review-pilot-1", Reviewer = "r",
+            State = PrReviewState.Closed, StartedAt = DateTimeOffset.UnixEpoch,
+        };
+
+        var brief = Briefs.FixPr(review, "feature", null);
+
+        brief.ShouldContain("not work");
+        brief.ShouldContain("the node's own");
+        brief.ShouldContain("another repo");
+        brief.ShouldContain("the owner's decision");
+        brief.ShouldContain("larger than the PR");
+        brief.ShouldContain("Left");
+        brief.ShouldContain("refused");
+    }
 }
