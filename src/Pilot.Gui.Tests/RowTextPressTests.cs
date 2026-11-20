@@ -116,14 +116,72 @@ public sealed class RowTextPressTests
         texts.Length.ShouldBeGreaterThan(0);
 
         // Every text of the page, tooltip or not: a press that went nowhere must leave the row beneath to select itself.
-        var selectedSomewhere = false;
+        // Each click moves the selection to the row pressed: a swallowed press leaves the previous one.
+        var last = -2;
+        var moved = 0;
         foreach (var region in texts.Reverse().Take(12))
         {
             var (x, y) = Middle(region);
             window.Click(x, y);
-            selectedSomewhere |= window.Chrome.Sessions.Selected >= 0;
+            var now = window.Chrome.Sessions.Selected;
+            now.ShouldBeGreaterThanOrEqualTo(0);
+            if (now != last)
+            {
+                moved++;
+            }
+            last = now;
         }
-        selectedSomewhere.ShouldBeTrue();
+        moved.ShouldBeGreaterThan(1);
+    }
+
+    [Fact]
+    public void AWiggleUnderTheThresholdStillSelectsTheRowAndNoTextAndAMoveOverItDrags()
+    {
+        using var window = new Window();
+        window.Chrome.Show(PilotPage.Jobs);
+        window.Render();
+        var (copied, ctrlC) = Copying(window);
+        var id = window.Chrome.Jobs.SelectableTextRegions.ToArray().Where(r => r.Text.Trim() is "j12" or "j13" or "j14").OrderBy(r => r.Y).Last();
+        var (x, y) = Middle(id);
+
+        window.Send(new InputEvent.MouseDown(x, y));
+        window.Send(new InputEvent.MouseMove(x + 2f, y + 1f));
+        window.Send(new InputEvent.MouseUp(x + 2f, y + 1f));
+        ctrlC();
+        window.Chrome.Jobs.Selected.ShouldBe(2);
+        copied.ShouldBeEmpty();
+
+        window.Send(new InputEvent.MouseDown(id.X + 1f, y));
+        window.Send(new InputEvent.MouseMove(id.X + 6f, y));
+        window.Chrome.Jobs.PageSelection.Dragging.ShouldBeTrue();
+        window.Send(new InputEvent.MouseUp(id.X + 6f, y));
+    }
+
+    [Fact]
+    public void AnArmedPressReleasedElsewhereLeavesNothingToFollowTheHoveringPointer()
+    {
+        using var window = new Window();
+        window.Chrome.Show(PilotPage.Jobs);
+        window.Render();
+        var (copied, ctrlC) = Copying(window);
+        var id = window.Chrome.Jobs.SelectableTextRegions.ToArray().Where(r => r.Text.Trim() is "j12" or "j13" or "j14").OrderBy(r => r.Y).First();
+        var (x, y) = Middle(id);
+
+        window.Send(new InputEvent.MouseDown(x, y));
+        window.Chrome.Jobs.PageSelection.Pending.ShouldBeTrue();
+        // Leave the page with the button held: the page is left, and the release lands wherever.
+        window.Chrome.Show(PilotPage.Home);
+        window.Render();
+        window.Send(new InputEvent.MouseUp(x + 400f, y));
+        window.Chrome.Show(PilotPage.Jobs);
+        window.Render();
+        window.Chrome.Jobs.PageSelection.Pending.ShouldBeFalse();
+
+        window.Send(new InputEvent.MouseMove(x + 30f, y));
+        window.Send(new InputEvent.MouseMove(x + 60f, y));
+        window.Chrome.Jobs.PageSelection.Dragging.ShouldBeFalse();
+        ctrlC();
+        copied.ShouldBeEmpty();
     }
 
     private static (List<string> Copied, Action CtrlC) Copying(Window window)

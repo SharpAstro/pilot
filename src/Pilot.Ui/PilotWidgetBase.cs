@@ -142,6 +142,9 @@ internal abstract class PilotWidgetBase<TSurface> : PixelWidgetBase<TSurface>
     /// <summary>Lets go of the selected text: the page or panel it was made on was left.</summary>
     internal void ClearSelection() => _selection?.Clear();
 
+    /// <summary>Lets go of the selection and of an armed row press (the page was left, or the panel closed).</summary>
+    internal void CancelSelection() => _selection?.Cancel();
+
     /// <summary><paramref name="page"/> with the selection's Fill leaf laid over it, where the host has a clipboard to copy to; place it after the page's text and before the menus over it.</summary>
     protected Layout.Node WithPageSelection(Layout.Node page)
     {
@@ -213,11 +216,12 @@ internal abstract class PilotWidgetBase<TSurface> : PixelWidgetBase<TSurface>
         }
     }
 
-    // Whether the topmost region painted under the point is one the test holds for.
+    // Whether a region has anything to do with a press.
     private static bool TakesPress(ClickableRegion r) =>
         r is { OnPress: not null } or { OnActivate: not null } or { OnDoubleClick: not null } or { Opens: not null }
             or { Dismisses: not null } or { FocusOnOpen: true };
 
+    // Whether the topmost region painted under the point is one the test holds for.
     // With lookThrough, the regions it holds for are skipped, so the topmost one beneath them decides.
     private bool Under(float x, float y, Func<ClickableRegion, bool> test, Func<ClickableRegion, bool>? lookThrough = null)
     {
