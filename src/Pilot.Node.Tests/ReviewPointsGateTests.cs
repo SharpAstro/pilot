@@ -80,7 +80,7 @@ public sealed class ReviewPointsGateTests : ReviewTestsBase
         round.Answers.ShouldNotBeNull().Select(a => (a.Id, a.Answer)).ShouldBe([("R1.1", "addressed"), ("R1.2", "not addressed")]);
     }
 
-    private const string Settled = Table + "| R1.2 | deferred: owner decision | Parser.cs is out of this flight's scope, filed for later |\n";
+    private const string Settled = Table + "| R1.2 | deferred: larger than the flight | Parser.cs is out of this flight's scope, filed for later |\n";
 
     [Fact]
     public async Task ANewFindingInAnUntouchedFileThatIsNotMustBlockIsLeftAndThePassGoesOn()

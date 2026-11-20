@@ -128,6 +128,9 @@ public sealed record PrReviewRow
     /// <summary>The keys of the points <see cref="FollowUpIssue"/> already holds, so a later round adds only the new ones; null while none was filed.</summary>
     public string[]? FollowUpPoints { get; init; }
 
+    /// <summary>Where each deferred point went (pilot #1226), one line per point as <c>reason|repo|issue|key</c>; null while none was routed.</summary>
+    public string[]? DeferredFilings { get; init; }
+
     public required DateTimeOffset StartedAt { get; init; }
 
     public DateTimeOffset? FinishedAt { get; init; }

@@ -262,6 +262,25 @@ internal sealed class FakeGitHub : IGitHub
         return new PullRequestSearch.Read(found, SearchCost, SearchRemaining, null, gone);
     }
 
+    /// <summary>The body of each issue created by number, as EditIssueBodyAsync leaves it.</summary>
+    public ConcurrentDictionary<int, string> IssueBodies { get; } = [];
+
+    /// <summary>The repo path each issue created was made in, by number.</summary>
+    public ConcurrentDictionary<int, string> IssueRepos { get; } = [];
+
+    public Task EditIssueBodyAsync(string repoPath, int number, string body, CancellationToken cancellationToken)
+    {
+        if (EditIssueBodyFails is { } why)
+        {
+            return Task.FromException(new FlightException(why));
+        }
+        IssueBodies[number] = body;
+        return Task.CompletedTask;
+    }
+
+    /// <summary>When set, EditIssueBodyAsync fails with it.</summary>
+    public string? EditIssueBodyFails { get; set; }
+
     /// <summary>Every issue created, as (repo path, title, body).</summary>
     public ConcurrentQueue<(string Repo, string Title, string? Body)> IssuesCreated { get; } = [];
 
@@ -287,6 +306,8 @@ internal sealed class FakeGitHub : IGitHub
         }
         IssuesCreated.Enqueue((repoPath, title, body));
         var number = NewIssue(title);
+        IssueBodies[number] = body ?? "";
+        IssueRepos[number] = repoPath;
         return new IssueInfo { Number = number, Title = title };
     }
 

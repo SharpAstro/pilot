@@ -64,6 +64,15 @@ public sealed partial class GhCli
         }
     }
 
+    public async Task EditIssueBodyAsync(string repoPath, int number, string body, CancellationToken cancellationToken)
+    {
+        var (exit, output, error) = await RunAsync(["issue", "edit", number.ToString(System.Globalization.CultureInfo.InvariantCulture), "--body", body], repoPath, cancellationToken);
+        if (exit != 0)
+        {
+            throw new FlightException($"gh could not save issue #{number}'s body: {(error.Trim().Length > 0 ? error : output).Trim()}");
+        }
+    }
+
     public async Task<IssueInfo> CreateIssueAsync(string repoPath, string title, string? body, CancellationToken cancellationToken)
     {
         // An empty body is given explicitly: without one gh would ask for it, and the node has no terminal.

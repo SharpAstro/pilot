@@ -34,7 +34,7 @@ public sealed class ReviewFollowUpTests : ReviewTestsBase
     private const string Answers =
         "## Earlier points\n| Point | Answer | Where or why |\n|---|---|---|\n"
         + "| R1.1 | addressed | fix.txt:1 |\n| R1.2 | addressed | fix.txt:1 |\n| R1.3 | addressed | fix.txt:1 |\n"
-        + "| R1.4 | deferred: owner decision | a rename of Parser.cs touches every caller, out of this flight's scope |\n";
+        + "| R1.4 | deferred: larger than the flight | a rename of Parser.cs touches every caller, out of this flight's scope |\n";
 
     [Fact]
     public async Task APointLeftWithAReasonIsFiledAsOneIssueTheMergeLinksAndTheMergeGoesAhead()

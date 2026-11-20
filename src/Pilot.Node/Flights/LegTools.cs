@@ -322,6 +322,25 @@ public interface IGitHub
     Task<IssueInfo> CreateIssueAsync(string repoPath, string title, string? body, CancellationToken cancellationToken);
 
     /// <summary>
+    /// Opens an issue as <see cref="CreateIssueAsync"/> does and gives it <paramref name="labels"/> (pilot #1226), each made in the repo when it has none like it.
+    /// The issue exists once it is made: a label refused after that throws with the issue made (the caller never files it twice).
+    /// </summary>
+    /// <exception cref="FlightException">gh could not create it or label it.</exception>
+    async Task<IssueInfo> CreateIssueWithLabelsAsync(string repoPath, string title, string? body, IReadOnlyList<string> labels, CancellationToken cancellationToken)
+    {
+        var made = await CreateIssueAsync(repoPath, title, body, cancellationToken);
+        foreach (var label in labels)
+        {
+            await AddIssueLabelAsync(repoPath, made.Number, label, cancellationToken);
+        }
+        return made with { Labels = [.. labels] };
+    }
+
+    /// <summary>Replaces the body of issue <paramref name="number"/> (pilot #1226: the issue of a flight names that flight once it is made).</summary>
+    /// <exception cref="FlightException">gh could not save it.</exception>
+    Task EditIssueBodyAsync(string repoPath, int number, string body, CancellationToken cancellationToken);
+
+    /// <summary>
     /// Closes issue <paramref name="number"/> as completed with <paramref name="comment"/>; one closed already is left as it is.
     /// </summary>
     /// <exception cref="FlightException">gh could not close it.</exception>
