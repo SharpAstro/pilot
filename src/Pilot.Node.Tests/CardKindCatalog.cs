@@ -166,7 +166,7 @@ internal static class CardKindCatalog
         new("repo-setup", "Handled", ["Flights/RepoSetup.cs"], "RepoSetupTests.SetupAgainstAnOrgWithNoFieldAndNoLabelsMakesTheFieldAndTheReadLabelsOnceAndASecondRunMakesNothing"),
         new("landed", "Handled", [FlightCommanderLand], "CliTests.ADirectFlightIsFlownFromTheCliAloneUpToItsLanding"),
         new("issue-left-open", "ForYou", [FlightCommanderLand], SourcePinned),
-        new("follow-up-no-flight", "ForYou", ["Flights/FollowUpSweep.cs"], "FollowUpCountTests.AnIssueWithNoFlightRingsOnceAfterADayNamingTheIssueAndTheCommand", null, [nameof(Verbs.CreateFlight)]),
+        new("follow-up-no-flight", "ForYou", ["Flights/FollowUpSweep.cs"], "FollowUpCountTests.AnIssueWithNoFlightRingsOnceAfterADayNamingTheIssueAndTheCommand"),
         new("maintenance-run", "Handled", ["Flights/IdleMaintenance.cs"], "IdleMaintenanceTests.TheHandledLineIsPinnedExactly"),
         new("maintenance-first-run", "ForYou", ["Flights/IdleMaintenance.cs"], "MaintenanceFirstRunTests.AnUnsetSettingRaisesOneCardWithTheTotalsAndTheTopFivePerStepAndRunsNoRealStep"),
         new("disk-swept", "Handled", ["Flights/DiskSweep.cs"], "DiskSweepTests.ASweepThatFreedSomethingRaisesOneHandledLineNamingTheCountsAndTheUniqueBytes"),
