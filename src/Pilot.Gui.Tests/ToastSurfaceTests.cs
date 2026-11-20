@@ -184,7 +184,8 @@ public sealed class ToastSurfaceTests
                 }
             }
         }
-        throw new Xunit.Sdk.XunitException("no point of the card's body lies over a session row");
+        string R(ClickableRegion r) => $"[{r.X:0},{r.Y:0},{r.Width:0}x{r.Height:0} surf={r.IsSurface} {r.Result?.GetType().Name}]";
+        throw new Xunit.Sdk.XunitException("no point of the card's body lies over a session row; toast: " + string.Join(" ", toast.Select(R)) + "; rows: " + string.Join(" ", rows.Select(R)));
     }
 
     [Theory]
