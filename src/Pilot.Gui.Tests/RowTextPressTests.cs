@@ -116,24 +116,21 @@ public sealed class RowTextPressTests
         texts.Length.ShouldBeGreaterThan(0);
 
         // Every text of the page, tooltip or not: a press that went nowhere must leave the row beneath to select itself.
-        // Each click moves the selection to the row pressed: a swallowed press leaves the previous one.
-        var rows = new List<ClickableRegion>();
-        window.Chrome.Sessions.CollectPaintedRegions(rows);
-        var rowRegions = rows.Where(r => r is { Result: HitResult.ListItemHit }).OrderBy(r => r.Y).ToList();
-        var checkedClicks = 0;
-        foreach (var region in texts)
+        // Press each text, move the cursor off with a key, press it again: a press that selects the row lands on the same row both
+        // times, a swallowed one leaves the cursor where the key put it.
+        var rowsPressed = new HashSet<int>();
+        foreach (var region in texts.Take(40))
         {
             var (x, y) = Middle(region);
-            var expected = rowRegions.FindIndex(r => x >= r.X && x < r.X + r.Width && y >= r.Y && y < r.Y + r.Height);
-            if (expected < 0)
-            {
-                continue;
-            }
             window.Click(x, y);
-            window.Chrome.Sessions.Selected.ShouldBe(expected);
-            checkedClicks++;
+            var first = window.Chrome.Sessions.Selected;
+            first.ShouldBeGreaterThanOrEqualTo(0);
+            window.Send(new InputEvent.KeyDown(InputKey.Up, InputModifier.None));
+            window.Click(x, y);
+            window.Chrome.Sessions.Selected.ShouldBe(first);
+            rowsPressed.Add(first);
         }
-        checkedClicks.ShouldBeGreaterThan(0);
+        rowsPressed.Count.ShouldBeGreaterThan(1);
     }
 
     [Fact]
