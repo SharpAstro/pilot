@@ -65,6 +65,19 @@ public sealed partial class LegCommander
             throw new FlightException($"{flight.Code} has landed");
         }
         RefuseIfOnHold(flight.Code);
+        var planner = $"{options.Machine.ToLowerInvariant()}-{flight.Code.ToLowerInvariant()}-{PlanLeg}";
+        // One planner a flight: a second would plan the same legs over the first's. Live by its row, started here so
+        // lately that the tracker has not listed it yet (PIL118's plan-flight, sent twice two seconds apart, 2026-10-23), or
+        // still being started: its start is out and not recorded yet (PIL338). Before the held wait below: a held flight with a planner
+        // going is refused as before, as "waits for ..." would be false and its Queued would never clear.
+        if (!replacing && (state.Sessions().Any(s => string.Equals(s.Name, planner, StringComparison.OrdinalIgnoreCase)
+                && s.State is SessionState.Working or SessionState.Waiting or SessionState.Idle && !s.Gone && !_plannersEnded.ContainsKey(s.Id))
+            || (_plannersStarted.TryGetValue(flight.Code, out var at) && time.GetUtcNow() - at < PlannerListedWithin
+                && !state.Sessions().Any(s => string.Equals(s.Name, planner, StringComparison.OrdinalIgnoreCase)))
+            || IsStarting(PlanKey(flight.Code))))
+        {
+            throw new FlightException($"{planner} is planning {flight.Code} already; wait for its planned card, or stop it first");
+        }
         if (flight.State == FlightState.Held && !replacing)
         {
             // (A replan after an overlap answer is not this: it replaces a planner already going and starts the fresh one at once.)
@@ -72,6 +85,8 @@ public sealed partial class LegCommander
             // the sweep's queued-planner pickup starts the planner then, a node restarted meanwhile included.
             // Race with create's plan-on-create and a connect: connect first, this wait applies and the planner starts on release; connect after a
             // planner was started on the still-flying flight, that planner is left be (its planned card goes to Handled for a held flight).
+            // Limits: Queued is a snapshot of what the flight waits for now, so it keeps naming a flight whose connection has landed while
+            // another remains; and the pickup after a restart needs no legs, so a held flight with legs asked to plan more is not picked up.
             var waits = $"{flight.Code} waits for {FlightWaiting.For(flight)}: its planner starts when that has landed";
             state.UpdateFlight(flight.Code, f => f.Queued == waits ? f : f with { Queued = waits });
             _plannersWaiting[flight.Code] = true;
@@ -80,18 +95,6 @@ public sealed partial class LegCommander
                 box.Value = waits;
             }
             return;
-        }
-        var planner = $"{options.Machine.ToLowerInvariant()}-{flight.Code.ToLowerInvariant()}-{PlanLeg}";
-        // One planner a flight: a second would plan the same legs over the first's. Live by its row, started here so
-        // lately that the tracker has not listed it yet (PIL118's plan-flight, sent twice two seconds apart, 2026-10-23), or
-        // still being started: its start is out and not recorded yet (PIL338).
-        if (!replacing && (state.Sessions().Any(s => string.Equals(s.Name, planner, StringComparison.OrdinalIgnoreCase)
-                && s.State is SessionState.Working or SessionState.Waiting or SessionState.Idle && !s.Gone && !_plannersEnded.ContainsKey(s.Id))
-            || (_plannersStarted.TryGetValue(flight.Code, out var at) && time.GetUtcNow() - at < PlannerListedWithin
-                && !state.Sessions().Any(s => string.Equals(s.Name, planner, StringComparison.OrdinalIgnoreCase)))
-            || IsStarting(PlanKey(flight.Code))))
-        {
-            throw new FlightException($"{planner} is planning {flight.Code} already; wait for its planned card, or stop it first");
         }
         // Asked for while the 5-hour window is spent: it waits, and the sweep starts it once the window has reset.
         if (Gate.HoldBecause($"{Verbs.PlanFlight} {Verbs.FlightTarget(flight.Code)}", Models.StartLimitFor(flight.Repo), Models.WeekLimit, NextStepKind, Verbs.FlightTarget(flight.Code), $"{flight.Code} waits to start its planner", Models.WeekPaceFor(flight.Repo)) is { } heldBy)

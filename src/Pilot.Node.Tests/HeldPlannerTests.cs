@@ -100,6 +100,23 @@ public sealed class HeldPlannerTests : LegCommanderTestsBase
     }
 
     [Fact]
+    public async Task AHeldFlightWithAPlannerGoingIsRefusedAsPlanningAlreadyAndRecordsNoWait()
+    {
+        await CreateAsync(1);
+        await CreateAsync(2);
+        _workers.Started.ShouldContain(w => w.Name == "du1-tia2-plan");
+        (await Flights(Verbs.Connect, "flight/TIA2", "TIA1")).Ok.ShouldBeTrue();
+
+        // The one-planner refusal comes before the held wait: the answer would be false (a planner is running), and a Queued left on a
+        // flight whose planner then makes legs would never clear.
+        var again = await _legs.RunAsync(new CommandRequest { Verb = Verbs.PlanFlight, Target = "flight/TIA2", Who = "tests" }, Ct);
+
+        again.Ok.ShouldBeFalse();
+        (again.Error ?? "").ShouldContain("is planning");
+        _state.Flights().Single(f => f.Code == "TIA2").Queued.ShouldBeNull();
+    }
+
+    [Fact]
     public async Task TheQueuedWaitSurvivesARestartAndTheSweepStartsThePlannerAfterTheRelease()
     {
         await CreateAsync(1);
@@ -110,10 +127,10 @@ public sealed class HeldPlannerTests : LegCommanderTestsBase
         _workers.Started.Clear();
 
         // A restart: a fresh state from the journal, fresh commanders (the in-memory wait is lost).
-        var next = new NodeState(_journal, TimeProvider.System);
+        var next = new NodeState(_journal, _clock);
         next.Flights().Single(f => f.Code == "TIA2").Queued.ShouldBe(Waits);
         var options = new NodeOptions(Path.Combine(_root, "node.sock"), Path.Combine(_root, "data"), MachinePrefix: "DU1");
-        var flights = new FlightCommander(next, new Planes(_git), TimeProvider.System);
+        var flights = new FlightCommander(next, new Planes(_git), _clock);
         var legs = new LegCommander(next, _workers, _checks, _github, _git, new Planes(_git), flights, options, _clock);
         (await flights.RunAsync(new CommandRequest { Verb = Verbs.Land, Target = "flight/TIA1", Who = "tests" }, Ct)).Ok.ShouldBeTrue();
 

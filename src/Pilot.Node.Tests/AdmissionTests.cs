@@ -293,9 +293,14 @@ public sealed class AdmissionTests
     }
 
     [Fact]
-    public void APriorityAskingFlightWithNoOtherFlightWantingTheRepoGetsADecision()
+    public void AHeldAskingFlightWhoseOnlyReadyNeighbourOnTheRepoIsPriorityGetsADecision()
     {
-        var input = Repo(Flight("PIL1", "pilot", FlightPhase.Ready) with { Priority = true });
+        // PIL2 is Ready on the repo but a priority flight, so it is outside the wanting set; PIL1 (held, asking) is not Ready either. The set
+        // is empty and nobody holds the repo: this threw (First() of nothing) before the fix. A priority asker never reaches RepoVerdict.
+        var input = Repo(
+            Flight("PIL1", "pilot", FlightPhase.Held, waits: new FlightWait("DE1", "DIR2", WaitKind.Connection)),
+            Flight("PIL2", "pilot", FlightPhase.Ready) with { Priority = true },
+            Flight("DIR2", "DIR.Lib", FlightPhase.Flying));
         Admission.Decide(input, Start("PIL1")).ShouldBeOfType<AdmissionDecision.Admit>();
     }
 
