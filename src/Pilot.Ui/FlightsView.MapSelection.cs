@@ -8,7 +8,7 @@ internal sealed partial class FlightsView<TSurface>
 {
     // Whether a surface point is empty canvas: in no row band, no continent header, and not on the zoom pill or the layers menu.
     // A left press there pans; a press on a row is left to the router (a click selects, and a drag is kept for reordering).
-    private bool IsEmptyCanvas(RectF32 body, float x, float y)
+    internal bool IsEmptyCanvas(RectF32 body, float x, float y)
     {
         if (_layersOnShow && MapLayers.Palette.PanelRect.Contains(x, y))
         {
