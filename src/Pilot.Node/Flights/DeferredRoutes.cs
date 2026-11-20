@@ -69,7 +69,7 @@ internal static class DeferredRoutes
         }
         foreach (var p in todo)
         {
-            var did = string.IsNullOrWhiteSpace(p.Detail) ? "made by the node" : p.Detail.ReplaceLineEndings(" ").Trim();
+            var did = string.IsNullOrWhiteSpace(p.Detail) ? "recorded here by the node" : p.Detail.ReplaceLineEndings(" ").Trim();
             text.Append($"- {p.Key}: {Short(p.Text)} ({did}) {Marker(p.Key)}\n");
         }
         await off(() => c.Github.EditPullRequestBodyAsync(c.RepoPath, pr, text.ToString(), cancellationToken));
@@ -114,6 +114,10 @@ internal static class DeferredRoutes
         {
             var name = repo[(repo.LastIndexOf('/') + 1)..];
             var path = Path.Combine(org, name);
+            if (!c.Github.IsCloned(path))
+            {
+                throw new FlightException($"{string.Join(", ", list.Select(i => i.Key))} is deferred to {repo}, which is not cloned beside this flight's repo ({org}): clone it there, or name another repo in the answer, so the issue is filed there");
+            }
             var keys = list.Select(i => i.Key).ToArray();
             var existing = Filed(all.ToArray(), OwnReason, repo);
             int number;

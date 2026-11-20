@@ -40,7 +40,7 @@ public sealed partial class PrReviews
         ReviewPointAnswer[]? answers = null;
         if (earlier.Count > 0)
         {
-            if (ReviewPoints.Refusal(earlier, report) is { } unsettled)
+            if (ReviewPoints.Refusal(earlier, report, ReviewFollowUp.SiblingsOf(review.ClonePath)) is { } unsettled)
             {
                 throw new FlightException(unsettled);
             }

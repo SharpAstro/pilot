@@ -319,7 +319,7 @@ public sealed partial class LegCommander
         string[]? left = null;
         if (earlier.Count > 0)
         {
-            if (ReviewPoints.Refusal(earlier, report) is { } unsettled)
+            if (ReviewPoints.Refusal(earlier, report, ReviewFollowUp.SiblingsOf(flight.RepoPath)) is { } unsettled)
             {
                 throw new FlightException(unsettled);
             }

@@ -59,17 +59,26 @@ public static partial class ReviewPoints
     /// <summary>The reason a stored or written word names, or null when it names none of the three.</summary>
     public static DeferReason? ReasonOf(string? text)
     {
-        var word = (text ?? "").ToLowerInvariant();
-        if (word.Contains("repo", StringComparison.Ordinal))
+        // The reason is the leading phrase after the colon, never a word inside other text: "report back later" and "reposition the header" are no reason.
+        var word = (text ?? "").ToLowerInvariant().Replace('’', ''').TrimStart(' ', ':', ',', '-', '(', '`', '*').Replace("the owner", "owner", StringComparison.Ordinal);
+        if (StartsWithAny(word, "another repo", "other repo", "a different repo", "different repo"))
         {
             return DeferReason.OtherRepo;
         }
-        if (word.Contains("owner", StringComparison.Ordinal) || word.Contains("decision", StringComparison.Ordinal))
+        if (StartsWithAny(word, "owner decision", "owner's decision", "owners decision", "owner decides", "owner"))
         {
             return DeferReason.OwnerDecision;
         }
-        return word.Contains("larger", StringComparison.Ordinal) || word.Contains("bigger", StringComparison.Ordinal) ? DeferReason.LargerThanFlight : null;
+        return StartsWithAny(word, "larger than", "bigger than") ? DeferReason.LargerThanFlight : null;
     }
+
+    private static bool StartsWithAny(string word, params string[] phrases) =>
+        phrases.Any(p => word.StartsWith(p, StringComparison.Ordinal) && Boundary(word[p.Length..], p.EndsWith("repo", StringComparison.Ordinal)));
+
+    // A phrase ends at a non-letter, so "owner" is no "ownership" and "another repo" no "another reposition"; a repo phrase may also be "repos" or "repository".
+    private static bool Boundary(string rest, bool repo) =>
+        rest.Length == 0 || !char.IsLetterOrDigit(rest[0])
+        || repo && (rest.StartsWith("sitory", StringComparison.Ordinal) || rest.Length >= 1 && rest[0] == 's' && (rest.Length == 1 || !char.IsLetterOrDigit(rest[1])));
 
     /// <summary>The four ends a point may have, as the refusal and the briefs name them.</summary>
     public const string FourEnds = "`addressed` (with where), `not work: <why>`, `node's own`, or `deferred: another repo`, `deferred: owner decision` or `deferred: larger than the flight`";
@@ -246,7 +255,7 @@ public static partial class ReviewPoints
     /// answered still open, unchanged, for later or to do with no reason is named; one left with no reason, or addressed with no
     /// where, is named. A plain "not addressed" is a verdict (it blocks), not a malformed report, so it is not refused here.
     /// </summary>
-    public static string? Refusal(IReadOnlyList<Point> points, string report)
+    public static string? Refusal(IReadOnlyList<Point> points, string report, Func<string, bool>? isSibling = null)
     {
         if (points.Count == 0)
         {
@@ -274,6 +283,10 @@ public static partial class ReviewPoints
                     break;
                 case Answer.Deferred when reply.Reason is null:
                     faults.Add($"{point.Id} is deferred with no allowed reason: write `deferred: another repo`, `deferred: owner decision` or `deferred: larger than the flight`");
+                    break;
+                case Answer.Deferred when reply.Reason == DeferReason.OtherRepo
+                    && ReviewFollowUp.TargetRepo(new ReviewFollowUp.Item(point.Id, point.Text, reply.Detail, ""), isSibling ?? (_ => false)) is null:
+                    faults.Add($"{point.Id} is deferred to another repo but names none: name the repo (owner/name, or its folder beside this one) in the where, so the issue is filed there");
                     break;
                 case Answer.NotAddressed when Vague.Contains(reply.RawAnswer.ToLowerInvariant()) && !HasReason(reply.Detail):
                     faults.Add($"{point.Id} is answered '{reply.RawAnswer}' with no reason: answer it with one of the four ends, {FourEnds}, or `not addressed`");

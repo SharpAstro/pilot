@@ -262,6 +262,12 @@ internal sealed class FakeGitHub : IGitHub
         return new PullRequestSearch.Read(found, SearchCost, SearchRemaining, null, gone);
     }
 
+    /// <summary>Repo paths ending in one of these names are not cloned, as IsCloned says; every other repo is, with nothing on the disk.</summary>
+    public ConcurrentBag<string> UnclonedRepos { get; } = [];
+
+    public bool IsCloned(string repoPath) =>
+        !UnclonedRepos.Any(n => string.Equals(Path.GetFileName(Path.TrimEndingDirectorySeparator(repoPath)), n, StringComparison.OrdinalIgnoreCase));
+
     /// <summary>The body of each issue created by number, as EditIssueBodyAsync leaves it.</summary>
     public ConcurrentDictionary<int, string> IssueBodies { get; } = [];
 

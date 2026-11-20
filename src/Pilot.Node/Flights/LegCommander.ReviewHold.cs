@@ -46,9 +46,10 @@ public sealed partial class LegCommander
         {
             return;
         }
-        if (IsWatchtower(command.Who) && command.PersonsWord is null)
+        // The owner's word, said positively: the person, or the person's word carried by another session. A worker, a reviewer or the watchtower on its own is none.
+        if (!IsPerson(flight, command.Who) && command.PersonsWord is null)
         {
-            throw new FlightException($"{flight.Code}'s review notes are unmade ({string.Join(", ", unmade.Select(p => p.Id))}): the watchtower may not {what}; it needs the owner's word (the person's, with a reason), or each note made, not work, the node's own, or deferred with a reason");
+            throw new FlightException($"{flight.Code}'s review notes are unmade ({string.Join(", ", unmade.Select(p => p.Id))}): {(IsWatchtower(command.Who) ? "the watchtower" : $"'{command.Who}'")} may not {what}; it needs the owner's word (the person's, with a reason), or each note made, not work, the node's own, or deferred with a reason");
         }
         if (why.Length == 0)
         {

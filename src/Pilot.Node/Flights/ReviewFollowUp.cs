@@ -20,11 +20,11 @@ public static partial class ReviewFollowUp
         public ReviewPoints.DeferReason? Kind { get; init; }
     }
 
+    // Anchored phrases only: a generic one ("already done", "no longer in the") drops a real finding that merely says so about something else.
     private static readonly string[] SettledPhrases =
     [
         "all notes are made", "all notes were made", "all notes made", "every note is made", "all of the notes are made", "all notes are answered",
-        "already answered", "answered by the issue", "answered in the issue", "already settled", "already made", "already done",
-        "no longer exists", "no longer exist", "no longer present", "no longer in the", "does not exist any more", "removed by the squash",
+        "already answered by", "answered by the issue", "answered in the issue", "removed by the squash",
         "the squash removes", "the squash drops", "squash removes", "squash drops",
     ];
 

@@ -350,6 +350,9 @@ public interface IGitHub
     /// <exception cref="FlightException">gh could not reopen it.</exception>
     Task ReopenIssueAsync(string repoPath, int number, string comment, CancellationToken cancellationToken) => Task.CompletedTask;
 
+    /// <summary>Whether the clone at <paramref name="repoPath"/> is on this machine, so gh can run in it; its folder existing by default.</summary>
+    bool IsCloned(string repoPath) => Directory.Exists(repoPath);
+
     /// <summary>The body of PR <paramref name="number"/>; null when it cannot be read (and by default).</summary>
     /// <exception cref="FlightException">gh could not read it.</exception>
     Task<string?> PullRequestBodyAsync(string repoPath, int number, CancellationToken cancellationToken) => Task.FromResult<string?>(null);

@@ -76,34 +76,47 @@ public static partial class ReviewFollowUp
     }
 
     /// <summary>
-    /// The repo a point deferred to "another repo" names: <c>owner/name</c> in its why or its text, else a word that is a sibling clone's
-    /// folder (<paramref name="isSibling"/>). Null when it names none, so the point is not filed on a guess.
+    /// The repo a point deferred to "another repo" names, read from the answer's why only (the finding's text mentions paths and
+    /// phrases like <c>and/or</c>, which are not repos): an exact sibling clone's folder name first (<paramref name="isSibling"/>), else
+    /// <c>owner/name</c> with a known org or a capitalised owner, so <c>src/Pilot.Node</c>, <c>and/or</c> and <c>px/em</c> are not repos.
+    /// A sibling named only in the finding's text is the last resort. Null when it names none, so the point is not filed on a guess.
     /// </summary>
     public static string? TargetRepo(Item item, Func<string, bool> isSibling)
     {
-        foreach (var text in new[] { item.Why, item.Found })
+        foreach (Match m in Word().Matches(item.Why ?? ""))
         {
-            foreach (Match m in OwnerSlashName().Matches(text ?? ""))
+            if (isSibling(m.Value.TrimEnd('.')))
             {
-                var name = m.Groups[2].Value;
-                if (!FileLike().IsMatch(name))
-                {
-                    return $"{m.Groups[1].Value}/{name}";
-                }
+                return m.Value.TrimEnd('.');
             }
         }
-        foreach (var text in new[] { item.Why, item.Found })
+        foreach (Match m in OwnerSlashName().Matches(item.Why ?? ""))
         {
-            foreach (Match m in Word().Matches(text ?? ""))
+            var owner = m.Groups[1].Value;
+            var name = m.Groups[2].Value.TrimEnd('.');
+            if (!FileLike().IsMatch(name) && (KnownOrgs.Contains(owner) || owner.Any(char.IsUpper)))
             {
-                if (isSibling(m.Value.TrimEnd('.')))
-                {
-                    return m.Value.TrimEnd('.');
-                }
+                return $"{owner}/{name}";
+            }
+        }
+        foreach (Match m in Word().Matches(item.Found ?? ""))
+        {
+            if (isSibling(m.Value.TrimEnd('.')))
+            {
+                return m.Value.TrimEnd('.');
             }
         }
         return null;
     }
+
+    /// <summary>Whether a name is a sibling clone's folder beside <paramref name="repoPath"/>, the org root's other repos.</summary>
+    public static Func<string, bool> SiblingsOf(string repoPath)
+    {
+        var org = Path.GetDirectoryName(Path.TrimEndingDirectorySeparator(repoPath)) ?? "";
+        return name => name.Length > 0 && Directory.Exists(Path.Combine(org, name));
+    }
+
+    private static readonly HashSet<string> KnownOrgs = new(["SharpAstro", "sebgod"], StringComparer.OrdinalIgnoreCase);
 
     [GeneratedRegex(@"(?<![\w/.\-])([A-Za-z0-9][\w.\-]*)/([A-Za-z0-9][\w.\-]*)(?![\w/.\-]*[/:])")]
     private static partial Regex OwnerSlashName();
