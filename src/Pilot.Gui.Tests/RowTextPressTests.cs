@@ -168,10 +168,16 @@ public sealed class RowTextPressTests
         var (copied, ctrlC) = Copying(window);
         var id = window.Chrome.Jobs.SelectableTextRegions.ToArray().Where(r => r.Text.Trim() is "j12" or "j13" or "j14").OrderBy(r => r.Y).First();
 
+        var all = new List<ClickableRegion>();
+        window.Chrome.Jobs.CollectPaintedRegions(all);
+        var px = id.X + 1f;
+        var py = id.Y + id.Height / 2f;
+        var diag = string.Join(" | ", all.Where(r => px >= r.X && px < r.X + r.Width && py >= r.Y && py < r.Y + r.Height)
+            .Select(r => $"{r.Result?.GetType().Name} press={r.OnPress is not null} act={r.OnActivate is not null} dbl={r.OnDoubleClick is not null} opens={r.Opens is not null} dis={r.Dismisses is not null} ctx={r.OnContextMenu is not null}"));
         Drag(window, id.X + 1f, id.Y + id.Height / 2f, id.X + id.Width - 1f, id.Y + id.Height / 2f);
         ctrlC();
 
-        copied.Count.ShouldBe(1);
+        copied.Count.ShouldBe(1, diag);
         copied[0].ShouldContain("j1");
     }
 
