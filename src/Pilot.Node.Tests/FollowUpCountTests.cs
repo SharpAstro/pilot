@@ -278,12 +278,14 @@ public sealed class FollowUpCountTests : ReviewTestsBase
         var flight = await NewFlight(issue.ToString(), "parser");
         await Fly(flight, "parser", report: "did nothing of the issue");
         (await Run(Verbs.OpenPr, Verbs.FlightTarget(flight.Code), "controller")).Error.ShouldBeNull();
-        (await Run(Verbs.Review, Verbs.FlightTarget(flight.Code), Reviewer(flight.Code), "changes", "## Blocking\n- the guard is missing in Parser.cs:20\n")).Error.ShouldBeNull();
-        var round = F(flight.Code).ReviewRounds!.Last();
-        _state.PutFlight(F(flight.Code) with { ReviewRounds = [.. F(flight.Code).ReviewRounds!.SkipLast(1), round with { Answers = [new ReviewPointAnswer("R1.1", "addressed", "Parser.cs:20"), new ReviewPointAnswer("R1.3", "addressed", "Lexer.cs:3")] }] });
-        var passed = await Run(Verbs.Review, Verbs.FlightTarget(flight.Code), Reviewer(flight.Code), "pass", "fine");
-        passed.Error.ShouldBeNull();
-        passed.Ok.ShouldBeTrue();
+        (await Run(Verbs.Review, Verbs.FlightTarget(flight.Code), Reviewer(flight.Code), "changes", "## Blocking\n- the guard is missing in Parser.cs:20\n\n## Not blocking\n- a nit in Lexer.cs:3\n")).Error.ShouldBeNull();
+        File.WriteAllText(Path.Combine(F(flight.Code).Worktree, "fix.txt"), "more\n");
+        Git(F(flight.Code).Worktree, "add", ".");
+        Git(F(flight.Code).Worktree, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "fix the guard");
+        (await Run(Verbs.StartReview, Verbs.FlightTarget(flight.Code), "controller")).Error.ShouldBeNull();
+        await Started(_legs, flight.Code);
+        var rows = "## Earlier points\n| Point | Answer | Where or why |\n|---|---|---|\n| R1.1 | addressed | Parser.cs:20 |\n| R1.2 | addressed | Lexer.cs:3 |\n";
+        (await Run(Verbs.Review, Verbs.FlightTarget(flight.Code), Reviewer(flight.Code), "pass", rows)).Error.ShouldBeNull();
         _github.Pr = _github.Pr! with { State = "MERGED" };
         await new PrChecks(_state, _github, TimeProvider.System, _flights).LookAsync(Ct);
 
