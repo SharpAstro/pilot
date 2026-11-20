@@ -24,16 +24,19 @@ public sealed class MapDepthTests
     private sealed class Rig : IDisposable
     {
         private readonly PageData _data = PageData.For("sample");
-        private readonly RgbaImageRenderer _renderer = new(Width, Height);
-        private CardsScreen _cards;
+        private readonly RgbaImageRenderer _renderer;
+        private readonly CardsScreen _cards;
+        private readonly int _height;
 
         public PilotChrome<RgbaImage> Chrome { get; }
         public InputRouter Router { get; }
         public (CardRow Card, int Number)? Answered { get; private set; }
 
-        public Rig(BarStates bar, CardsScreen cards)
+        public Rig(BarStates bar, CardsScreen cards, int height = Height)
         {
             _cards = cards;
+            _height = height;
+            _renderer = new RgbaImageRenderer(Width, height);
             Chrome = new PilotChrome<RgbaImage>(_renderer, new SessionsView<RgbaImage>(_renderer)) { FontPath = SessionsCapture.FontPath };
             Chrome.Flights.Mode = FlightsViewMode.Canvas;
             Chrome.Cards.OnAnswer = (card, number) => Answered = (card, number);
@@ -47,7 +50,7 @@ public sealed class MapDepthTests
 
         public void Paint()
         {
-            Chrome.Render(_data.Sessions, _data.Flights, _cards, _data.Jobs, _data.Fleet, _data.Repos, new RectF32(0, 0, Width, Height), _data.Machines);
+            Chrome.Render(_data.Sessions, _data.Flights, _cards, _data.Jobs, _data.Fleet, _data.Repos, new RectF32(0, 0, Width, _height), _data.Machines);
             Router.AfterPaint();
         }
 
