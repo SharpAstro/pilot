@@ -729,7 +729,7 @@ public sealed class AccountLimitTests
 
         _outage.LimitUntil.ShouldBeNull();
         Open().ShouldBeEmpty();
-        _state.Cards().Single(c => c.Kind == TurnOutage.LimitCardKind).Outcome.ShouldContain("old00000 answered a turn on ");
+        _state.Cards().Single(c => c.Kind == TurnOutage.LimitCardKind).Outcome.ShouldNotBeNull().ShouldContain("old00000 answered a turn on ");
     }
 
     [Fact]
