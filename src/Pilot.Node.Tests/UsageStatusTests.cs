@@ -1,7 +1,9 @@
 using Pilot.Commands;
 using Pilot.Contracts;
 using Pilot.Node;
+using Pilot.Node.Flights;
 using Shouldly;
+using Xunit;
 
 namespace Pilot.Node.Tests;
 
