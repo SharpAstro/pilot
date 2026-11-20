@@ -36,11 +36,7 @@ internal sealed class TextSelection<TSurface>(Renderer<TSurface> renderer)
     private bool _dragging;
 
     // A press on a clickable row's text, armed but not taken: it becomes the anchor of a drag once the pointer moves DragThreshold.
-    private bool _pending;
-
-    /// <summary>Whether a press on a row's text is armed: the drag has not begun and the press was the router's.</summary>
-    internal bool Armed => _pending;
-    private (float X, float Y) _pendingAt;
+    private bool _pending;    private (float X, float Y) _pendingAt;
 
     /// <summary>How far, in pixels, the pointer moves with the button held before a drag begun on a row's text takes over from the row's click.</summary>
     private const float DragThreshold = 4f;
