@@ -13,7 +13,7 @@ namespace Pilot.Gui.Tests;
 /// </summary>
 public sealed class OverlayDepthTests
 {
-    private const int Width = 1400, Height = 900;
+    private const int Width = 900, Height = 520;
 
     private static CardRow Card(string id) => new()
     {
@@ -36,6 +36,9 @@ public sealed class OverlayDepthTests
             _cards = cards;
             Chrome = new PilotChrome<RgbaImage>(_renderer, new SessionsView<RgbaImage>(_renderer)) { FontPath = SessionsCapture.FontPath };
             Chrome.Flights.Mode = FlightsViewMode.Canvas;
+            Chrome.Home.CopyText = _ => { };
+            Chrome.Jobs.CopyText = _ => { };
+            Chrome.Cards.CopyText = _ => { };
             Chrome.Cards.OnAnswer = (card, number) => Answered = (card, number);
             Chrome.Notifications.State = bar;
             Chrome.Show(page);
