@@ -4,9 +4,11 @@ using Pilot.Contracts;
 namespace Pilot.Node.Sessions;
 
 /// <summary>
-/// Reads the account's usage once a minute from <c>rate-limits.json</c> in the Claude config folder, which the
-/// controller's status line writes from the <c>rate_limits</c> Claude Code hands it, and the account itself from Claude
-/// Code's <c>.claude.json</c> (<see cref="ClaudeAccount"/>): no token is read, no API called.
+/// Reads the account's usage once a minute: from the server first, as <c>/usage</c> does (<see cref="UsageApi"/>, which paces
+/// itself and reads the login's token for its own request only), and from <c>rate-limits.json</c> in the Claude config folder,
+/// which the controller's status line writes, when the server gives nothing. The account itself comes from Claude
+/// Code's <c>.claude.json</c> (<see cref="ClaudeAccount"/>). A server read replaces the held windows; a file read is merged
+/// only when the server has not answered for <see cref="UsageApi.AfterFailure"/>.
 /// Past <see cref="HighPercent"/> of the 5-hour window it raises a For-you card, once per window, since workers stop
 /// there and a stop the controller saw coming is no surprise.
 /// </summary>
@@ -23,7 +25,13 @@ public sealed class UsageReader(NodeState state, string file, TimeProvider time)
     /// <summary>The 5-hour share past which a card says workers will stop soon.</summary>
     public double HighPercent { get; init; } = 90;
 
+    /// <summary>The live read from the server; null reads the file alone.</summary>
+    public UsageApi? Api { get; init; }
+
     private DateTimeOffset? _warnedFor;
+
+    // When the last server read answered (the node's clock): the file is not read for a while after it.
+    private DateTimeOffset? _serverReadAt;
 
     // The login last read, and when it was seen to change: the status line's file names no account, so after a switch it still
     // holds the last account's figures until the status line writes again, and those were put as the new account's (the owner
@@ -35,7 +43,14 @@ public sealed class UsageReader(NodeState state, string file, TimeProvider time)
     {
         while (!stopping.IsCancellationRequested)
         {
-            Read();
+            try
+            {
+                Read(Api is null ? null : await Api.ReadAsync(stopping));
+            }
+            catch (OperationCanceledException) when (stopping.IsCancellationRequested)
+            {
+                return;
+            }
             try
             {
                 await Task.Delay(TimeSpan.FromMinutes(1), time, stopping);
@@ -51,7 +66,7 @@ public sealed class UsageReader(NodeState state, string file, TimeProvider time)
     /// One read: puts the account and its figures, and warns when the 5-hour window is nearly spent. With no figures the
     /// account is put alone, so a node whose status line writes none still says whose it is; nothing when there is neither.
     /// </summary>
-    public void Read()
+    public void Read(UsageRow? server = null)
     {
         var account = AccountFile is { } path ? ClaudeAccount.Read(path) : null;
         if (account is { Email: var email })
@@ -63,27 +78,83 @@ public sealed class UsageReader(NodeState state, string file, TimeProvider time)
             }
             _email = email;
         }
-        var figures = Parse(file);
+        var figures = server ?? Parse(file);
         // Written before the login changed: the last account's, not this one's. The account is put alone until fresh ones come.
         if (figures is not null && _switchedAt is { } switched && figures.ReadAt < switched)
         {
             figures = null;
         }
+        // While the server answers within its pace the file is not read at all: the status line rewrites it each minute from whatever
+        // its session last got, so a session that took no turn since a reset still holds the old figure and that write is newer, not
+        // fresher. The file only stands in once the server has been silent for a failure's pause.
+        if (server is null && figures is not null && _serverReadAt is { } last && time.GetUtcNow() - last < UsageApi.AfterFailure)
+        {
+            figures = null;
+        }
+        if (server is not null && figures is not null)
+        {
+            _serverReadAt = time.GetUtcNow();
+        }
+        var authoritative = server is not null && figures is not null;
         if ((figures is not null ? figures with { Account = account } : account is null ? null : new UsageRow { Account = account, ReadAt = time.GetUtcNow() }) is not { } read)
         {
+            // Nothing new, but the hold is still worked out again: one that held on figures now past the gate's fresh time ends.
+            state.RefreshHold();
             return;
         }
-        state.PutUsage(read);
+        state.PutUsage(read, authoritative);
+        // The hold follows every read, not only a start that asks: a used reset ends the start gate's hold within this read, and a
+        // node that restarted puts the hold its figures say without waiting for a start (#1193).
+        state.RefreshHold();
         // The merged figures, not this read: a stale writer must not raise, or miss, the warning either.
         var usage = state.Usage()!;
 
-        if (usage.FiveHour is { UsedPercent: var used, ResetsAt: var resets } && used >= HighPercent && resets is { } at && at > time.GetUtcNow() && _warnedFor != at)
+        FollowHighCard(usage);
+    }
+
+    private double? _highShown;
+
+    // The 5-hour line follows the figures as the 7-day card does. It is a Handled line (born closed, nothing to answer), so following is
+    // a new line: one when a fresh read is under the limit again, one when the figure moved and still holds. Every text says when the
+    // figures were read ("as of" an age once past the gate's fresh time).
+    private void FollowHighCard(UsageRow usage)
+    {
+        var now = time.GetUtcNow();
+        if (usage.FiveHour is not { UsedPercent: var used, ResetsAt: { } at } || at <= now)
         {
-            _warnedFor = at;
-            // A reset-only notice: nothing to decide, the node resumes the workers itself, so it is a Handled line.
-            state.RaiseCard(CardBin.Handled, HighKind, Verbs.NodeTarget, $"5-hour usage is at {used:0}%; it resets at {at.ToLocalTime():HH:mm}",
-                "workers stop when it runs out; the node resumes them once it resets");
+            return;
         }
+        var say = Flights.StartGate.ReadSay(usage, now);
+        var reset = $"it resets at {at.ToLocalTime():HH:mm}";
+        if (_warnedFor == at)
+        {
+            if (now - usage.ReadAt >= Flights.StartGate.FreshFor)
+            {
+                return;
+            }
+            if (used < HighPercent)
+            {
+                state.RaiseCard(CardBin.Handled, HighKind, Verbs.NodeTarget, $"5-hour usage now reads {used:0}%; {reset}",
+                    $"the 5-hour window is under {HighPercent:0}% again ({say})");
+                _warnedFor = null;
+            }
+            else if (Math.Round(used) != _highShown)
+            {
+                _highShown = Math.Round(used);
+                state.RaiseCard(CardBin.Handled, HighKind, Verbs.NodeTarget, $"5-hour usage now reads {used:0}%; {reset}",
+                    $"workers stop when it runs out; the node resumes them once it resets ({say})");
+            }
+            return;
+        }
+        if (used < HighPercent)
+        {
+            return;
+        }
+        _warnedFor = at;
+        _highShown = Math.Round(used);
+        // A reset-only notice: nothing to decide, the node resumes the workers itself, so it is a Handled line.
+        state.RaiseCard(CardBin.Handled, HighKind, Verbs.NodeTarget, $"5-hour usage is at {used:0}%; {reset}",
+            $"workers stop when it runs out; the node resumes them once it resets ({say})");
     }
 
     /// <summary>The usage in <paramref name="path"/>, or null when it is missing, half written or of another shape.</summary>
@@ -100,7 +171,7 @@ public sealed class UsageReader(NodeState state, string file, TimeProvider time)
             var readAt = root.TryGetProperty("written_at", out var written) && written.ValueKind == JsonValueKind.Number && written.TryGetInt64(out var seconds)
                 ? DateTimeOffset.FromUnixTimeSeconds(seconds)
                 : new DateTimeOffset(File.GetLastWriteTimeUtc(path), TimeSpan.Zero);
-            return new UsageRow { FiveHour = Window(limits, "five_hour"), SevenDay = Window(limits, "seven_day"), ReadAt = readAt };
+            return new UsageRow { FiveHour = Window(limits, "five_hour"), SevenDay = Window(limits, "seven_day"), ReadAt = readAt, Source = "status line" };
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
         {

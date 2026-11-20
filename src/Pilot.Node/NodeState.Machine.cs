@@ -22,7 +22,7 @@ public sealed partial class NodeState
     {
         lock (_gate)
         {
-            return _usage;
+            return WithHold(_usage);
         }
     }
 
@@ -31,12 +31,12 @@ public sealed partial class NodeState
     /// when the figures changed, or when the same ones were written again 10 minutes after those held: a status line
     /// rewrites them each minute, and a delta for each would fill the journal with nothing.
     /// </summary>
-    public void PutUsage(UsageRow read)
+    public void PutUsage(UsageRow read, bool authoritative = false)
     {
         lock (_gate)
         {
-            var usage = UsageRow.Newest(_usage, read);
-            if (_usage is { } held && held.Account == usage.Account && held.FiveHour == usage.FiveHour && held.SevenDay == usage.SevenDay
+            var usage = authoritative ? UsageRow.Replace(_usage, read) : UsageRow.Newest(_usage, read);
+            if (_usage is { } held && held.Account == usage.Account && held.FiveHour == usage.FiveHour && held.SevenDay == usage.SevenDay && held.Source == usage.Source
                 && held.LoginChangedAt == usage.LoginChangedAt && usage.ReadAt - held.ReadAt < TimeSpan.FromMinutes(10))
             {
                 // Not journalled, but the write itself is remembered: a limit seen after the first write is ended by a rewrite (#1141).
@@ -47,7 +47,7 @@ public sealed partial class NodeState
                 return;
             }
             _usageWrittenAt = null;
-            Publish(new UsageChangedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Usage = usage });
+            Publish(new UsageChangedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Usage = WithHold(usage)! });
         }
     }
 
@@ -64,6 +64,40 @@ public sealed partial class NodeState
                 return;
             }
             var usage = (_usage ?? new UsageRow { ReadAt = at }) with { LoginChangedAt = at };
+            Publish(new UsageChangedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Usage = WithHold(usage)! });
+        }
+    }
+
+    /// <summary>
+    /// Says the hold in force now (an open usage limit, else the start gate's 5-hour hold at one fixed limit); the node wires it. It is read
+    /// outside the state's lock, by <see cref="RefreshHold"/>, and never stored: a node that restarts has no hold until it works one out.
+    /// </summary>
+    public Func<HoldRow?>? HoldSource { get; set; }
+
+    private HoldRow? _hold;
+
+    /// <summary>The usage as clients see it: the held figures with the hold worked out live when a <see cref="HoldSource"/> is wired.</summary>
+    private UsageRow? WithHold(UsageRow? usage) => usage is null || HoldSource is null ? usage : usage with { Hold = _hold };
+
+    /// <summary>
+    /// Works the hold out again and publishes the usage when it changed. Asked when a limit opens or ends, by <c>UsageReader.Read</c> after every read and by the start gate;
+    /// the same state gives the same hold whoever asks, so it neither changes nor publishes for a different caller's limit.
+    /// </summary>
+    public void RefreshHold()
+    {
+        if (HoldSource is not { } source)
+        {
+            return;
+        }
+        var hold = source();
+        lock (_gate)
+        {
+            if (_hold == hold)
+            {
+                return;
+            }
+            _hold = hold;
+            var usage = WithHold(_usage ?? new UsageRow { ReadAt = _time.GetUtcNow() })!;
             Publish(new UsageChangedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Usage = usage });
         }
     }

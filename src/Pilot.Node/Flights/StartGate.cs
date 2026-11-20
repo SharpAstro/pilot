@@ -44,6 +44,20 @@ public sealed class StartGate(NodeState state, TimeProvider time)
             ? new StartHeld($"sessions are not taking turns since {since.ToLocalTime():HH:mm}, so it waits until they take turns again", since)
             : null;
 
+    /// <summary>The <see cref="HoldRow.Kind"/> of the 5-hour hold the gate puts on the snapshot.</summary>
+    public const string GateHoldKind = "start gate";
+
+    /// <summary>The 5-hour share at which <see cref="CurrentHold"/> says the gate holds; the node sets the start limit of normal repos.</summary>
+    public double StatusLimit { get; init; } = 90;
+
+    /// <summary>
+    /// The hold in force for the snapshot, from live state: an open account limit, else the 5-hour window at <see cref="StatusLimit"/>; null when
+    /// none holds. The same whichever start asks, so the snapshot's hold never flips with a caller's own limit.
+    /// </summary>
+    public HoldRow? CurrentHold() =>
+        Outage is { LimitUntil: { } until, LimitSay: { } say } ? new HoldRow { Kind = TurnOutage.LimitHoldKind, Until = until, Why = say }
+        : Check(StatusLimit) is { } five ? new HoldRow { Kind = GateHoldKind, Until = five.Resets, Why = five.Say } : null;
+
     /// <summary>Why a known account limit (<see cref="TurnOutage.OpenLimit"/>) holds every start until its reset, keyed on that reset so it is said once; null when none is open.</summary>
     public StartHeld? CheckLimit() =>
         Outage is { LimitUntil: { } until, LimitSay: { } say } ? new StartHeld(say, until) : null;
@@ -103,7 +117,10 @@ public sealed class StartGate(NodeState state, TimeProvider time)
     {
         RingWeek(weekLimit);
         // The windows first: they say a time they end; the outage is asked last so its probe is only used up by a start nothing else holds.
-        if ((CheckLimit() ?? Check(limit) ?? CheckPace(paceMargin) ?? CheckOutage(key)) is not { } held)
+        // The hold on the snapshot is worked out from live state at one fixed limit (CurrentHold), not from this caller's.
+        state.RefreshHold();
+        var five = Check(limit);
+        if ((CheckLimit() ?? five ?? CheckPace(paceMargin) ?? CheckOutage(key)) is not { } held)
         {
             _said.TryRemove(key, out _);
             return null;
@@ -127,17 +144,75 @@ public sealed class StartGate(NodeState state, TimeProvider time)
         return $"held until {when}: {held.Say}";
     }
 
-    /// <summary>Rings once per 7-day window past <paramref name="weekLimit"/>; the start that asked goes ahead.</summary>
+    /// <summary>
+    /// When the figures were read, for a card's text: <c>figures read 10:40 from the server</c>, and <c>as of 45 min ago, read 10:40 from the
+    /// server</c> once they are older than <see cref="FreshFor"/> (<c>as of 2 h ago</c> past an hour, <see cref="UsageRow.Ago"/>), so a card
+    /// never states old figures as current. Every card that says when its figures were read says it with this.
+    /// </summary>
+    public static string ReadSay(UsageRow usage, DateTimeOffset now)
+    {
+        var age = now - usage.ReadAt;
+        var at = usage.ReadAt.ToLocalTime().ToString("HH:mm", CultureInfo.InvariantCulture);
+        var from = usage.SourceSay() is { } source ? $" from {source}" : "";
+        return age < FreshFor ? $"figures read {at}{from}" : $"as of {UsageRow.Ago(age)}, read {at}{from}";
+    }
+
+    private int? _weekShown;
+    private bool _weekStaleSaid;
+
+    private CardRow? OpenWeekCard() => state.Cards(openOnly: true).FirstOrDefault(c => c.Kind == WeekKind);
+
+    /// <summary>
+    /// Rings once per 7-day window past <paramref name="weekLimit"/>; the start that asked goes ahead. The open card follows the figures: a
+    /// fresh read under the limit closes it with the new figure, a figure that moved restates it, and figures gone stale say so once.
+    /// </summary>
     public void RingWeek(double weekLimit)
     {
         var now = time.GetUtcNow();
-        if (state.Usage() is not { SevenDay: { } week } usage || now - usage.ReadAt >= FreshFor
-            || week.UsedPercent < weekLimit || week.ResetsAt is not { } resets || resets <= now || _weekRung == resets)
+        if (state.Usage() is not { SevenDay: { } week } usage || week.ResetsAt is not { } resets || resets <= now)
+        {
+            return;
+        }
+        var stale = now - usage.ReadAt >= FreshFor;
+        if (_weekRung == resets && OpenWeekCard() is { } open)
+        {
+            var reads = string.Create(CultureInfo.InvariantCulture, $"the 7-day window now reads {week.UsedPercent:0} %, {ReadSay(usage, now)}");
+            if (stale)
+            {
+                if (!_weekStaleSaid)
+                {
+                    Raise(week, resets, weekLimit, usage, now, open, reads);
+                }
+            }
+            else if (week.UsedPercent < weekLimit)
+            {
+                state.CloseCard(open.Id, reads, "node");
+                // It may rise again: the next time past the limit rings again.
+                _weekRung = null;
+            }
+            else if ((int)Math.Round(week.UsedPercent) != _weekShown || _weekStaleSaid)
+            {
+                Raise(week, resets, weekLimit, usage, now, open, reads);
+            }
+            return;
+        }
+        if (stale || week.UsedPercent < weekLimit || _weekRung == resets)
         {
             return;
         }
         _weekRung = resets;
         state.CloseCardsAbout(Verbs.NodeTarget, "a new 7-day window", WeekKind);
+        Raise(week, resets, weekLimit, usage, now, null, null);
+    }
+
+    private void Raise(UsageWindow week, DateTimeOffset resets, double weekLimit, UsageRow usage, DateTimeOffset now, CardRow? replaces, string? restated)
+    {
+        if (replaces is not null)
+        {
+            state.CloseCard(replaces.Id, $"restated: {restated}", "node");
+        }
+        _weekShown = (int)Math.Round(week.UsedPercent);
+        _weekStaleSaid = now - usage.ReadAt >= FreshFor;
         // What the card's buttons do is what its text asks (the review of #797: c3530 told the person to pause flights and offered no
         // button to): hold each flying flight the person can spare (the owner's hold, ground), and take no new flights (maintenance).
         var why = string.Create(CultureInfo.InvariantCulture, $"the 7-day window is {week.UsedPercent:0} % spent");
@@ -149,7 +224,7 @@ public sealed class StartGate(NodeState state, TimeProvider time)
         ];
         var more = flying.Count > MaxHoldChoices ? $" {flying.Count - MaxHoldChoices} more flights fly: hold them from their pages." : "";
         state.RaiseCard(CardBin.ForYou, WeekKind, Verbs.NodeTarget, $"The 7-day window is {week.UsedPercent:0} % spent; it resets {resets.ToLocalTime():ddd HH:mm}",
-            $"The limit for the week is {weekLimit:0} %, and it only rings: the node still starts sessions of its own, and the 5-hour limit is what holds a start.{more}",
+            $"The limit for the week is {weekLimit:0} %, and it only rings: the node still starts sessions of its own, and the 5-hour limit is what holds a start. Usage: {ReadSay(usage, now)}.{more}",
             choices,
             summary: "Nothing stops by itself: hold the flights you can spare, or take no new ones, if the week should last.");
     }

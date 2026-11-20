@@ -74,7 +74,7 @@ public static partial class PilotCommand
     /// The flights and their legs, a line each, and the live sessions. Landed flights are left out unless <paramref name="all"/>,
     /// with a line saying how many; a flight asked for by <paramref name="code"/>, or the newest, shows whatever its state.
     /// </summary>
-    internal static string Status(SnapshotEvent snapshot, bool newestOnly = false, string? code = null, bool maintenance = false, bool? autopilot = null, bool all = false, IReadOnlyCollection<SendTimingRow>? sendTimings = null, IReadOnlyCollection<CommandTimingRow>? commandTimings = null, NodeHeapRow? heap = null, string? reboot = null, string? thisNode = null, bool? canRunGui = null, string? guiReason = null)
+    internal static string Status(SnapshotEvent snapshot, bool newestOnly = false, string? code = null, bool maintenance = false, bool? autopilot = null, bool all = false, IReadOnlyCollection<SendTimingRow>? sendTimings = null, IReadOnlyCollection<CommandTimingRow>? commandTimings = null, NodeHeapRow? heap = null, string? reboot = null, string? thisNode = null, bool? canRunGui = null, string? guiReason = null, DateTimeOffset? now = null, TimeZoneInfo? zone = null)
     {
         var text = new System.Text.StringBuilder();
         if (!newestOnly && code is null && canRunGui is { } gui)
@@ -115,9 +115,12 @@ public static partial class PilotCommand
         {
             text.AppendLine($"account  {account.Line()}");
         }
-        if (!newestOnly && code is null && snapshot.Usage is { HasFigures: true } usage)
+        if (!newestOnly && code is null && snapshot.Usage is { } usage && (usage.HasFigures || usage.Hold is not null))
         {
-            text.AppendLine($"usage  {usage.Line(DateTimeOffset.UtcNow, TimeZoneInfo.Local)}");
+            foreach (var (label, line) in usage.Lines(now ?? DateTimeOffset.UtcNow, zone ?? TimeZoneInfo.Local))
+            {
+                text.AppendLine($"{label}  {line}");
+            }
         }
         if (!newestOnly && code is null && snapshot.Machine is { } machine)
         {

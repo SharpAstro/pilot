@@ -329,9 +329,15 @@ public static partial class NodeApp
         builder.Services.AddSingleton<ICheckRunner, JobCheckRunner>();
         builder.Services.AddSingleton<IGitHub, GhCli>();
         builder.Services.AddSingleton(_ => new RoleModels(options.Saved));
-        builder.Services.AddSingleton(services => new StartGate(services.GetRequiredService<NodeState>(), services.GetRequiredService<TimeProvider>())
+        builder.Services.AddSingleton(services => 
         {
-            Outage = services.GetRequiredService<TurnOutage>(),
+            var gate = new StartGate(services.GetRequiredService<NodeState>(), services.GetRequiredService<TimeProvider>())
+            {
+                Outage = services.GetRequiredService<TurnOutage>(),
+                StatusLimit = services.GetRequiredService<RoleModels>().StartLimit,
+            };
+            services.GetRequiredService<NodeState>().HoldSource = gate.CurrentHold;
+            return gate;
         });
     }
 
@@ -545,6 +551,11 @@ public static partial class NodeApp
         {
             AccountFile = ClaudeAccount.FileFor(services.GetRequiredService<SessionTrackerOptions>().Profile.Root),
             Outage = services.GetRequiredService<TurnOutage>(),
+            Api = new UsageApi(
+                new HttpClient { Timeout = TimeSpan.FromSeconds(20) },
+                Path.Combine(services.GetRequiredService<SessionTrackerOptions>().Profile.Root, ".credentials.json"),
+                services.GetRequiredService<TimeProvider>(),
+                services.GetRequiredService<ILoggerFactory>().CreateLogger<UsageApi>()),
         });
         builder.Services.AddSingleton(services => new TurnOutage(services.GetRequiredService<NodeState>()));
         builder.Services.AddHostedService(services => services.GetRequiredService<UsageReader>());
