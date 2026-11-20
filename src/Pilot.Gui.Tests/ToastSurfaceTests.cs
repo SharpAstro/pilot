@@ -170,12 +170,11 @@ public sealed class ToastSurfaceTests
         {
             for (var x = surfaces.Min(s => s.X) + 4f; x < surfaces.Max(s => s.X + s.Width); x += 3f)
             {
-                var surface = surfaces.FirstOrDefault(s => Inside(s, x, y));
-                if (surface is null || toast.Any(r => !r.IsSurface && Inside(r, x, y)))
+                if (!surfaces.Any(s => Inside(s, x, y)) || toast.Any(r => !r.IsSurface && Inside(r, x, y)))
                 {
                     continue;
                 }
-                if (rows.FirstOrDefault(r => Inside(r, x, y)) is { } row)
+                if (rows.Cast<ClickableRegion?>().FirstOrDefault(r => Inside(r!.Value, x, y)) is { } row)
                 {
                     var open = (X: row.X + 40f, Y: y);
                     if (!surfaces.Any(s => Inside(s, open.X, open.Y)))
