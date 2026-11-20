@@ -129,8 +129,9 @@ public sealed class DeferredPointTests : ReviewTestsBase
     [Fact]
     public async Task AFailureToFileHoldsTheMergeAndTheNextAskFilesTheSamePoint()
     {
-        var code = await PassedWith("| R1.3 | addressed | fix.txt:1 |\n| R1.4 | deferred: another repo | the rename belongs in acme/widget |\n");
+        // gh is down from the pass on: the pass-time filing fails quietly, so it is the merge that has to file the point, and holds.
         _github.CreateIssueFails = "gh could not reach GitHub";
+        var code = await PassedWith("| R1.3 | addressed | fix.txt:1 |\n| R1.4 | deferred: another repo | the rename belongs in acme/widget |\n");
 
         var held = await Merge(code);
 
