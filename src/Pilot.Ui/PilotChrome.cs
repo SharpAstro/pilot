@@ -833,7 +833,8 @@ internal sealed class PilotChrome<TSurface>
 
     /// <summary>
     /// Whether a point is covered by a widget painted after the page (every widget of <see cref="PageWidgets"/> listed after it, and the rail's More
-    /// while its menu is open), read from the regions each registered. Any region counts, a surface (<see cref="ClickableRegion.IsSurface"/>) included.
+    /// while its menu is open), read from the regions each registered. Every region counts, the open bar's press-outside layer
+    /// (<see cref="NotificationsHost.OutsideAction"/>, which spans the page) included; <see cref="DrawnAfterPage"/> leaves that layer out.
     /// </summary>
     internal bool CoveredAfterPage(float x, float y) => CoveredAfter(PageViewOf(Page), x, y);
 
@@ -846,23 +847,38 @@ internal sealed class PilotChrome<TSurface>
     /// <summary>Whether a point is covered by a widget painted after <paramref name="target"/> (the page, or the cards panel, which is itself above the page).</summary>
     private bool CoveredAfter(IPixelWidget target, float x, float y, bool includeSurfaces = true)
     {
+        // Plain loops over the page's list, no LINQ iterators: a MouseMove asks this every frame.
         var widgets = PageWidgets;
-        var after = widgets.SkipWhile(w => !ReferenceEquals(w, target)).Skip(1);
-        if (More.Menu.IsOpen)
+        var start = widgets.Count;
+        for (var i = 0; i < widgets.Count; i++)
         {
-            after = after.Append(More);
-        }
-        var regions = _coverRegions;
-        foreach (var w in after)
-        {
-            regions.Clear();
-            w.CollectPaintedRegions(regions);
-            foreach (var r in regions)
+            if (ReferenceEquals(widgets[i], target))
             {
-                if ((includeSurfaces || r.Result is not HitResult.ButtonHit { Action: NotificationsHost.OutsideAction }) && x >= r.X && x < r.X + r.Width && y >= r.Y && y < r.Y + r.Height)
-                {
-                    return true;
-                }
+                start = i + 1;
+                break;
+            }
+        }
+        for (var i = start; i < widgets.Count; i++)
+        {
+            if (Covers(widgets[i], x, y, includeSurfaces))
+            {
+                return true;
+            }
+        }
+        return More.Menu.IsOpen && Covers(More, x, y, includeSurfaces);
+    }
+
+    // Whether one widget's painted regions hold the point; the open bar's press-outside layer counts only with includeSurfaces.
+    private bool Covers(IPixelWidget widget, float x, float y, bool includeSurfaces)
+    {
+        var regions = _coverRegions;
+        regions.Clear();
+        widget.CollectPaintedRegions(regions);
+        foreach (var r in regions)
+        {
+            if ((includeSurfaces || r is not { Result: HitResult.ButtonHit { Action: NotificationsHost.OutsideAction } }) && x >= r.X && x < r.X + r.Width && y >= r.Y && y < r.Y + r.Height)
+            {
+                return true;
             }
         }
         return false;

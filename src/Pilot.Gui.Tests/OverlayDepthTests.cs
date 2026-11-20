@@ -24,18 +24,26 @@ public sealed class OverlayDepthTests
     private sealed class Rig : IDisposable
     {
         private readonly PageData _data = PageData.For("sample");
-        private readonly RgbaImageRenderer _renderer = new(Width, Height);
+        private readonly RgbaImageRenderer _renderer;
         private readonly CardsScreen _cards;
+        private readonly int _height;
 
         public PilotChrome<RgbaImage> Chrome { get; }
         public InputRouter Router { get; }
         public (CardRow Card, int Number)? Answered { get; private set; }
 
-        public Rig(PilotPage page, BarStates bar, CardsScreen cards)
+        /// <param name="palette">Where the map's layers menu is docked, as <see cref="MapLayerSettings.Palette"/> writes it; null for its default.</param>
+        public Rig(PilotPage page, BarStates bar, CardsScreen cards, int height = Height, string? palette = null)
         {
             _cards = cards;
+            _height = height;
+            _renderer = new RgbaImageRenderer(Width, (uint)height);
             Chrome = new PilotChrome<RgbaImage>(_renderer, new SessionsView<RgbaImage>(_renderer)) { FontPath = SessionsCapture.FontPath };
             Chrome.Flights.Mode = FlightsViewMode.Canvas;
+            if (palette is not null)
+            {
+                Chrome.Flights.MapLayers.Restore(new MapLayerSettings { Palette = palette });
+            }
             Chrome.Home.CopyText = _ => { };
             Chrome.Jobs.CopyText = _ => { };
             Chrome.Cards.CopyText = _ => { };
@@ -49,8 +57,46 @@ public sealed class OverlayDepthTests
 
         public void Paint()
         {
-            Chrome.Render(_data.Sessions, _data.Flights, _cards, _data.Jobs, _data.Fleet, _data.Repos, new RectF32(0, 0, Width, Height), _data.Machines);
+            Chrome.Render(_data.Sessions, _data.Flights, _cards, _data.Jobs, _data.Fleet, _data.Repos, new RectF32(0, 0, Width, _height), _data.Machines);
             Router.AfterPaint();
+        }
+
+        /// <summary>The pointer comes to rest at a point: the move, then one more frame so a hover settles (it is drawn a frame after it is found).</summary>
+        public void Hover((float X, float Y) at)
+        {
+            Send(new InputEvent.MouseMove(at.X, at.Y, MouseButton.None));
+            Paint();
+        }
+
+        /// <summary>The RGBA bytes of a rectangle of the last frame, row by row.</summary>
+        public byte[] PixelsOf(RectF32 rect)
+        {
+            var pixels = _renderer.Surface.Pixels;
+            var (x0, y0) = ((int)MathF.Ceiling(rect.X), (int)MathF.Ceiling(rect.Y));
+            var (x1, y1) = ((int)MathF.Floor(rect.X + rect.Width), (int)MathF.Floor(rect.Y + rect.Height));
+            var bytes = new List<byte>();
+            for (var y = y0; y < y1; y++)
+            {
+                for (var x = x0; x < x1; x++)
+                {
+                    var i = (y * Width + x) * 4;
+                    for (var k = 0; k < 4; k++)
+                    {
+                        bytes.Add(pixels[i + k]);
+                    }
+                }
+            }
+            return [.. bytes];
+        }
+
+        /// <summary>The ringing card's toast: the largest region of the notifications layer that holds the centre of the toast's own button.</summary>
+        public RectF32 Toast(string cardId)
+        {
+            var regions = Regions(Chrome.NotificationsLayer);
+            var button = regions.Last(r => r.Result is HitResult.ButtonHit b && b.Action.StartsWith($"toast:{cardId}:", StringComparison.Ordinal));
+            var (cx, cy) = (button.X + button.Width / 2f, button.Y + button.Height / 2f);
+            var toast = regions.Where(r => cx >= r.X && cx < r.X + r.Width && cy >= r.Y && cy < r.Y + r.Height).MaxBy(r => r.Width * r.Height)!;
+            return new RectF32(toast.X, toast.Y, toast.Width, toast.Height);
         }
 
         public bool Send(InputEvent evt)
@@ -178,5 +224,68 @@ public sealed class OverlayDepthTests
         covered.ShouldNotBeNull("something painted after the page covers part of the layers menu");
         rig.Send(new InputEvent.MouseMove(covered.Value.X, covered.Value.Y, MouseButton.None));
         rig.Chrome.Flights.MapLayers.Palette.IsEngaged.ShouldBeFalse("a pointer under the bar is not over the menu");
+    }
+
+    // At the rig's 900x520 a toast sits below the map's body, so it covers nothing of the map. At 900x360 the body is shorter and the
+    // toast, at the window's bottom right, lies over the body's lower right; the layers menu docked low on the right edge is then under it.
+    private const int ShortHeight = 360;
+    private const string LowPalette = "right:9999:0";
+
+    private static RectF32? Overlap(RectF32 a, RectF32 b)
+    {
+        var (x0, y0) = (MathF.Max(a.X, b.X), MathF.Max(a.Y, b.Y));
+        var (x1, y1) = (MathF.Min(a.X + a.Width, b.X + b.Width), MathF.Min(a.Y + a.Height, b.Y + b.Height));
+        return x1 > x0 + 2f && y1 > y0 + 2f ? new RectF32(x0, y0, x1 - x0, y1 - y0) : null;
+    }
+
+    [Fact]
+    public void OnTheFlightsMapAPointerOverAToastCoveringTheLayersMenuHoldsNoMenu()
+    {
+        using var rig = new Rig(PilotPage.Flights, BarStates.Collapsed, CardsScreen.From([Card("c1")]), ShortHeight, LowPalette);
+        rig.Chrome.Notifications.Open.ShouldBeFalse("the bar is collapsed: the toast is all that is over the page");
+        var toast = rig.Toast("c1");
+        var palette = rig.Chrome.Flights.MapLayers.Palette.PanelRect;
+        var both = Overlap(toast, palette) ?? throw new Xunit.Sdk.XunitException($"the toast {toast} covers no part of the layers menu {palette}");
+        var covered = (X: both.X + both.Width / 2f, Y: both.Y + both.Height / 2f);
+        rig.Chrome.DrawnAfterPage(covered.X, covered.Y).ShouldBeTrue("the toast is painted over that part of the menu");
+
+        // Control: on the menu's own uncovered part, above the toast, the pointer holds the menu.
+        var uncovered = (X: palette.X + palette.Width / 2f, Y: (palette.Y + toast.Y) / 2f);
+        rig.Chrome.DrawnAfterPage(uncovered.X, uncovered.Y).ShouldBeFalse("nothing is painted over the menu above the toast");
+        rig.Hover(uncovered);
+        rig.Chrome.Flights.MapLayers.Palette.IsEngaged.ShouldBeTrue("the pointer on the uncovered menu holds it");
+
+        rig.Hover(covered);
+        rig.Chrome.Flights.MapLayers.Palette.IsEngaged.ShouldBeFalse("a pointer on the toast is not over the menu beneath it");
+    }
+
+    // The row a pointer could light under a toast is one of the layers menu's: its rows light on hover (RowHoverBg). The map's own rows
+    // (the map:<code>:row bands) paint no hover at all (a band is a click target and a context menu, nothing more), so the menu's row is the one to judge.
+    // It is judged by its pixels: a row the toast covers only in part shows its upper strip above the toast, and a lit row or a held menu
+    // (opaque instead of faded) changes that strip.
+    [Fact]
+    public void OnTheFlightsMapAPointerOverAToastCoveringALayersMenuRowLightsNoRow()
+    {
+        using var rig = new Rig(PilotPage.Flights, BarStates.Collapsed, CardsScreen.From([Card("c1")]), ShortHeight, LowPalette);
+        var toast = rig.Toast("c1");
+        var rows = rig.Regions(rig.Chrome.Flights).Where(r => r.Result is HitResult.ButtonHit b && b.Action.StartsWith("FlightMapLayer:", StringComparison.Ordinal)).ToList();
+        rows.ShouldNotBeEmpty("the layers menu is open with its rows");
+        var row = rows.FirstOrDefault(r => r.Y + 2f < toast.Y && r.Y + r.Height > toast.Y + 2f && r.X >= toast.X && r.X + r.Width <= toast.X + toast.Width)
+            ?? throw new Xunit.Sdk.XunitException($"no row of the layers menu runs under the top edge of the toast {toast}");
+        var strip = new RectF32(row.X, row.Y, row.Width, toast.Y - row.Y);
+        var x = row.X + row.Width / 2f;
+
+        // At rest on the toast, clear of the menu, then on the toast where it covers the row's lower part: the strip above stays as it was.
+        rig.Hover((toast.X + 8f, toast.Y + toast.Height - 6f));
+        var before = rig.PixelsOf(strip);
+        var covered = (X: x, Y: (toast.Y + row.Y + row.Height) / 2f);
+        rig.Chrome.DrawnAfterPage(covered.X, covered.Y).ShouldBeTrue("the toast is painted over the row's lower part");
+        rig.Hover(covered);
+        rig.PixelsOf(strip).ShouldBe(before, "a pointer on the toast lights no row beneath it and holds no menu");
+        rig.Chrome.Flights.MapLayers.Palette.IsEngaged.ShouldBeFalse();
+
+        // Control: on the row's own visible strip the pointer lights it, so the strip can show a lit row.
+        rig.Hover((x, (row.Y + toast.Y) / 2f));
+        rig.PixelsOf(strip).ShouldNotBe(before, "the pointer on the row's visible part lights it");
     }
 }
