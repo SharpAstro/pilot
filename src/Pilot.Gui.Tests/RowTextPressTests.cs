@@ -117,21 +117,23 @@ public sealed class RowTextPressTests
 
         // Every text of the page, tooltip or not: a press that went nowhere must leave the row beneath to select itself.
         // Each click moves the selection to the row pressed: a swallowed press leaves the previous one.
-        var last = -2;
-        var moved = 0;
+        var rows = new List<ClickableRegion>();
+        window.Chrome.Sessions.CollectPaintedRegions(rows);
+        var rowRegions = rows.Where(r => r is { Result: HitResult.ListItemHit }).OrderBy(r => r.Y).ToList();
+        var checkedClicks = 0;
         foreach (var region in texts.Reverse().Take(12))
         {
             var (x, y) = Middle(region);
-            window.Click(x, y);
-            var now = window.Chrome.Sessions.Selected;
-            now.ShouldBeGreaterThanOrEqualTo(0);
-            if (now != last)
+            var expected = rowRegions.FindIndex(r => x >= r.X && x < r.X + r.Width && y >= r.Y && y < r.Y + r.Height);
+            if (expected < 0)
             {
-                moved++;
+                continue;
             }
-            last = now;
+            window.Click(x, y);
+            window.Chrome.Sessions.Selected.ShouldBe(expected);
+            checkedClicks++;
         }
-        moved.ShouldBeGreaterThan(1);
+        checkedClicks.ShouldBeGreaterThan(0);
     }
 
     [Fact]
