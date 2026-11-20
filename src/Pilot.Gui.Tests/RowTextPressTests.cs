@@ -27,6 +27,20 @@ public sealed class RowTextPressTests
         EndedAt = ended,
     };
 
+    private static FlightRow Flight(string code, int issue, string title) => new()
+    {
+        Code = code,
+        Repo = "tianwen",
+        RepoPath = "/r/tianwen",
+        Issue = issue,
+        Title = title,
+        Branch = $"flight/{code.ToLowerInvariant()}",
+        Worktree = $"/r/tianwen/.claude/worktrees/{code.ToLowerInvariant()}",
+        Base = "origin/main",
+        State = FlightState.Flying,
+        CreatedAt = Live.At,
+    };
+
     private sealed class Window : IDisposable
     {
         private readonly RgbaImageRenderer _renderer;
@@ -53,7 +67,12 @@ public sealed class RowTextPressTests
             Job("j14", JobState.Succeeded, Live.At.AddMinutes(-30), Live.At.AddMinutes(-29)),
         ], Live.At), "live", Live.At);
 
-        public void Render() => Chrome.Render(_sessions, null, null, Jobs, _size);
+        // Three flights, so the Flights table is a second list page whose rows carry text (the Sessions rows carry none).
+        public FlightsScreen Flights { get; } = new(FlightLine.Build(
+            [Flight("TIA1611", 1611, "Planets on the GPU"), Flight("TIA1612", 1612, "Moons in the sky map"), Flight("TIA1613", 1613, "Comets from the MPC")],
+            [], Live.At), "test", Live.At);
+
+        public void Render() => Chrome.Render(_sessions, Flights, null, Jobs, _size);
 
         public bool Send(InputEvent evt)
         {
@@ -110,20 +129,21 @@ public sealed class RowTextPressTests
     public void APressOnAnotherListPageRowTextSelectsItAndNeverSwallowsTheClickBeneath()
     {
         using var window = new Window();
-        window.Chrome.Show(PilotPage.Sessions);
+        // The Flights table: its rows carry their code, title, branch and the rest as text (the Sessions rows carry none, so a
+        // press there never meets the text selection).
+        window.Chrome.Show(PilotPage.Flights);
         window.Render();
         // Each row's index from its own hit region, so a text is matched to the row it sits in, not to the order of the texts.
         var regions = new List<ClickableRegion>();
-        window.Chrome.Sessions.CollectPaintedRegions(regions);
-        var rows = regions.Where(r => r.Result is HitResult.ListItemHit { ListId: SessionsView<RgbaImage>.ListId }).ToArray();
+        window.Chrome.Flights.CollectPaintedRegions(regions);
+        var rows = regions.Where(r => r.Result is HitResult.ListItemHit { ListId: FlightsView<RgbaImage>.ListId }).ToArray();
         int RowOf(float x, float y) => rows.Where(r => x >= r.X && x < r.X + r.Width && y >= r.Y && y < r.Y + r.Height)
             .Select(r => ((HitResult.ListItemHit)r.Result).Index).DefaultIfEmpty(-1).First();
-        var byRow = window.Chrome.Sessions.SelectableTextRegions.ToArray().Where(r => r.Text.Trim().Length > 0)
+        var byRow = window.Chrome.Flights.SelectableTextRegions.ToArray().Where(r => r.Text.Trim().Length > 0)
             .Select(r => (Region: r, Row: RowOf(Middle(r).X, Middle(r).Y))).Where(t => t.Row >= 0)
             .GroupBy(t => t.Row).OrderBy(g => g.Key).Select(g => g.Select(t => t.Region).ToArray()).ToArray();
-        byRow.Length.ShouldBeGreaterThanOrEqualTo(3, $"rows painted: {rows.Length}, sessions selected: {window.Chrome.Sessions.Selected}; rows: "
-            + string.Join(" | ", rows.Select(r => $"{r.X:0},{r.Y:0} {r.Width:0}x{r.Height:0}")) + "; texts: "
-            + string.Join(" | ", window.Chrome.Sessions.SelectableTextRegions.ToArray().Take(40).Select(r => $"'{r.Text.Trim()}' {r.X:0},{r.Y:0} {r.Width:0}x{r.Height:0}")));
+        byRow.Length.ShouldBe(3, $"{rows.Length} rows painted; texts: "
+            + string.Join(" | ", window.Chrome.Flights.SelectableTextRegions.ToArray().Take(30).Select(r => $"'{r.Text.Trim()}' {r.X:0},{r.Y:0}")));
 
         // Every text of the rows, tooltip or not, round the rows in turn: each press lands on a row other than the one selected,
         // so a press that went nowhere leaves the previous row selected and fails.
@@ -136,11 +156,11 @@ public sealed class RowTextPressTests
                 var (x, y) = Middle(region);
                 var row = RowOf(x, y);
                 window.Click(x, y);
-                window.Chrome.Sessions.Selected.ShouldBe(row, $"press on '{region.Text.Trim()}' in row {row}");
+                window.Chrome.Flights.Selected.ShouldBe(row, $"press on '{region.Text.Trim()}' in row {row}");
                 rowsPressed.Add(row);
             }
         }
-        rowsPressed.Count.ShouldBeGreaterThan(1);
+        rowsPressed.Count.ShouldBe(3);
     }
 
     [Fact]
