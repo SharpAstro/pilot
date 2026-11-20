@@ -225,14 +225,21 @@ public sealed class ToastSurfaceTests
         var selected = rig.Chrome.Sessions.Selected;
         var firstY = first.Y;
 
-        rig.Press(body);
-        rig.Chrome.Sessions.Selected.ShouldBe(selected, "a press on the card does not select the row beneath it");
-        rig.Chrome.Sessions.Transcript.IsOpen.ShouldBeFalse();
-        rig.Chrome.Page.ShouldBe(PilotPage.Sessions);
-
         rig.Wheel(body).ShouldBeTrue("the card takes the wheel");
         rig.Paint();
         rig.SessionRows()[0].Y.ShouldBe(firstY, "the list did not scroll");
+
+        rig.Press(body);
+        rig.Chrome.Sessions.Selected.ShouldBe(selected, "a press on the card does not select the row beneath it");
+        rig.Chrome.Sessions.Transcript.IsOpen.ShouldBeFalse();
+        if (kind == Kind.Staying)
+        {
+            rig.Chrome.Page.ShouldBe(PilotPage.Sessions);
+        }
+
+        // A fading toast's own press opens the job it names, which moves the page; back on Sessions, the row is still where it was.
+        rig.Chrome.Show(PilotPage.Sessions);
+        rig.Paint();
 
         // The control: a press on the same row in the open selects it.
         var index = rows.IndexOf(row);
