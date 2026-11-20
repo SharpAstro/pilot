@@ -236,7 +236,7 @@ public static partial class ReviewFollowUp
     }
 
     /// <summary>The one line above the first point: how the follow-up flight reports a point so the node ticks its line.</summary>
-    public const string ReportLine = "Report each point in the leg's report as `key | addressed | file:line` (the key as its line names it, for example `PIL12:R1.2`), or `key | not work | why`.";
+    public const string ReportLine = "Report each point in the leg's report under a `## Earlier points` heading, one table row a point (the key as its line names it): `| PIL12:R1.2 | addressed | file:line |`, or `| PIL12:R1.2 | not work | why |`. A report without that heading and those rows ticks nothing.";
 
     /// <summary>The title of the one follow-up issue of a PR no flight owns.</summary>
     public static string Title(PrReviewRow review) => $"Follow-up of {review.Repo}#{review.Number}: points its review left for later";
@@ -289,7 +289,7 @@ public static partial class ReviewFollowUp
         return (string.Join('\n', lines), ticked, left, boxes);
     }
 
-    /// <summary>The points alone, as a body and a later comment on the same issue share them.</summary>
+    /// <summary>The points alone, as a body and the points a later round appends to that body share them.</summary>
     public static string Points(IReadOnlyList<Item> items, string? code = null)
     {
         var text = new StringBuilder();

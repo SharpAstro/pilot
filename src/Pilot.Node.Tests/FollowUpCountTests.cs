@@ -268,7 +268,8 @@ public sealed class FollowUpCountTests : ReviewTestsBase
 
         body.ShouldContain("- [ ] `PIL12:R1.2`");
         body.ShouldContain("### PIL12:R1.2: A.cs:1");
-        body.IndexOf("key | addressed | file:line", StringComparison.Ordinal).ShouldBeInRange(0, body.IndexOf("### ", StringComparison.Ordinal));
+        body.IndexOf("`## Earlier points` heading", StringComparison.Ordinal).ShouldBeInRange(0, body.IndexOf("### ", StringComparison.Ordinal));
+        body.ShouldContain("| PIL12:R1.2 | addressed | file:line |");
     }
 
     [Fact]

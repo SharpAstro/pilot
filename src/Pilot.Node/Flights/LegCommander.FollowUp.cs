@@ -11,7 +11,7 @@ public sealed partial class LegCommander
     /// PR; an owner's decision becomes a card that asks the question, never an issue. The rest (larger than the flight, and what has no reason: a
     /// passed-over point, a new finding, a controller's pass-anyway open points, the notes a review-notes round did not make) is the flight's one
     /// follow-up issue, labelled <c>pilot: follow-up</c>, with a flight created on it at once (queued behind the repo's flying one) and named in its body.
-    /// One issue a flight and reason: a point left later is a comment. The PR links it, the row carries its number, and the landing's Handled line names
+    /// One issue a flight and reason: a point left later is appended to its body. The PR links it, the row carries its number, and the landing's Handled line names
     /// it. No points left means no issue (null). <paramref name="lastRoundNotes"/> (the merge path, pilot #1148) also files the last passed round's
     /// not-blocking notes that no review-notes round made.
     /// </summary>

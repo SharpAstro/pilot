@@ -71,12 +71,14 @@ public sealed class ReviewFollowUpTests : ReviewTestsBase
         (await AsIs()).Error.ShouldBeNull();
 
         var issue = _github.IssuesCreated.ShouldHaveSingleItem();
-        // The PR-ready card filed the left point first; the merge adds the unmade notes to that same issue as a comment.
+        // The PR-ready card filed the left point first; the merge adds the unmade notes to that same issue's body, where the tick reads them.
         issue.Body.ShouldNotBeNull().ShouldContain("R1.4");
-        var body = string.Join("\n", _github.IssueComments.Where(c => c.Number == F(code).FollowUpIssue).Select(c => c.Body));
+        var body = _github.IssueBodies[F(code).FollowUpIssue!.Value];
+        body.ShouldContain("R1.4");
         body.ShouldContain("E could be tidier");
         body.ShouldContain("F deserves a comment");
         body.ShouldContain("merged without being made");
+        _github.IssueComments.ShouldNotContain(c => c.Number == F(code).FollowUpIssue);
         F(code).FollowUpPoints.ShouldNotBeNull().Length.ShouldBe(3);
 
         // A second ask (the flight has landed) files nothing more.
@@ -84,6 +86,30 @@ public sealed class ReviewFollowUpTests : ReviewTestsBase
         (await AsIs()).Error.ShouldNotBeNull().ShouldContain("landed");
         _github.IssuesCreated.ShouldHaveSingleItem();
         _github.IssueComments.Count.ShouldBe(commentsBefore);
+    }
+
+    [Fact]
+    public void TheReportExampleTheWorkerIsToldTicksTheLineItNames()
+    {
+        // What the worker is told (the issue's line and the brief are the same text), taken as the worker writes it: the heading, then each example row
+        // with its placeholder filled in. Both rows must parse and the addressed one tick its line; a format the parser skips would tick nothing.
+        var rows = System.Text.RegularExpressions.Regex.Matches(ReviewFollowUp.ReportLine, @"`(\|[^`]+\|)`").Select(m => m.Groups[1].Value).ToList();
+        rows.Count.ShouldBe(2);
+        var report = "## Earlier points\n" + string.Join("\n", rows).Replace("file:line", "A.cs:3").Replace("| why |", "| a title is not code |") + "\n";
+
+        var replies = ReviewPoints.ParseAnswers(report);
+
+        replies.Count.ShouldBe(1, "both rows name the same key, so the later one stands");
+        var addressed = ReviewPoints.ParseAnswers("## Earlier points\n" + rows[0].Replace("file:line", "A.cs:3") + "\n").ShouldHaveSingleItem();
+        addressed.Answer.ShouldBe(ReviewPoints.Answer.Addressed);
+        ReviewPoints.HasWhere(addressed.Detail).ShouldBeTrue();
+        ReviewPoints.ParseAnswers("## Earlier points\n" + rows[1].Replace("| why |", "| a title is not code |") + "\n").ShouldHaveSingleItem().Answer.ShouldBe(ReviewPoints.Answer.NotWork);
+
+        var issue = ReviewFollowUp.Points([new ReviewFollowUp.Item("R1.2", "found in A.cs:3", "larger than the flight", "settle")], "PIL12");
+        var (ticked, count, left, _) = ReviewFollowUp.Tick(issue, [addressed.Id]);
+        count.ShouldBe(1);
+        left.ShouldBe(0);
+        ticked.ShouldContain("- [x] `PIL12:R1.2`");
     }
 
     [Fact]

@@ -455,7 +455,18 @@ internal sealed class FakeGitHub : IGitHub
     public Task<MilestoneIssue?> IssueNowAsync(string repoPath, int number, CancellationToken cancellationToken)
     {
         IssueNowCalls++;
-        return Task.FromResult(MilestoneIssuesOf.TryGetValue(RepoKey(repoPath), out var list) && list.TryGetValue(number, out var found) ? Labelled(found) : null);
+        if (MilestoneIssuesOf.TryGetValue(RepoKey(repoPath), out var list) && list.TryGetValue(number, out var found))
+        {
+            return Task.FromResult<MilestoneIssue?>(Labelled(found));
+        }
+        // An issue the node itself filed (CreateIssueAsync) is on GitHub as well: read it back with the body EditIssueBodyAsync left.
+        if (IssueRepos.TryGetValue(number, out var madeIn) && RepoKey(madeIn) == RepoKey(repoPath) && Issues.TryGetValue(number, out var title))
+        {
+            var at = IdeaClock;
+            return Task.FromResult<MilestoneIssue?>(Labelled(new MilestoneIssue(number, title, IssueBodies.GetValueOrDefault(number, ""), true, null, at, at, "sebgod",
+                $"https://github.com/SharpAstro/{Path.GetFileName(RepoKey(repoPath))}/issues/{number}")));
+        }
+        return Task.FromResult<MilestoneIssue?>(null);
     }
 
     /// <summary>The issue as GitHub reports it: with the labels it carries.</summary>

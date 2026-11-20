@@ -36,8 +36,8 @@ public sealed class InvariantBriefTests
     {
         var leg = new LegRow { Flight = "PIL1", Name = "g", Order = 1, Goal = "g", DoneWhen = "d", State = LegState.Planned };
 
-        Briefs.For(Flight with { Title = "Follow-up of PIL0: points left" }, leg, [leg]).ShouldContain("key | addressed | file:line");
-        Briefs.For(Flight, leg, [leg]).ShouldNotContain("key | addressed | file:line");
+        Briefs.For(Flight with { Title = "Follow-up of PIL0: points left" }, leg, [leg]).ShouldContain("| addressed | file:line |");
+        Briefs.For(Flight, leg, [leg]).ShouldNotContain("| addressed | file:line |");
     }
 
     [Fact]
