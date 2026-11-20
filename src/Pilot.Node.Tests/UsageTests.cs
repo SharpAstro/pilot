@@ -43,8 +43,145 @@ public sealed class UsageTests : IDisposable
         usage.FiveHour.ShouldBe(new UsageWindow { UsedPercent = 42, ResetsAt = Reset });
         usage.SevenDay.ShouldBe(new UsageWindow { UsedPercent = 64, ResetsAt = new DateTimeOffset(2026, 10, 24, 10, 0, 0, TimeSpan.Zero) });
         usage.ReadAt.ShouldBe(Now);
-        usage.Line(Now.AddMinutes(2), TimeZoneInfo.Utc).ShouldBe("5h 42% (resets 14:00) · 7d 64% (resets Sat 10:00)");
-        usage.Line(Now.AddMinutes(20), TimeZoneInfo.Utc).ShouldEndWith(", as of 20 min ago");
+        usage.Source.ShouldBe("status line");
+        usage.Line(Now.AddMinutes(2), TimeZoneInfo.Utc).ShouldBe("5h 42% (resets 14:00) · 7d 64% (resets Sat 10:00), from the status line");
+        usage.Line(Now.AddMinutes(20), TimeZoneInfo.Utc).ShouldEndWith(", as of 20 min ago, from the status line");
+        (usage with { Source = null }).Line(Now.AddMinutes(2), TimeZoneInfo.Utc).ShouldBe("5h 42% (resets 14:00) · 7d 64% (resets Sat 10:00)");
+    }
+
+    [Fact]
+    public void AServerReadWithALowerShareOnTheSameResetReplacesTheHeldFigureAsAUsedResetDoes()
+    {
+        var reader = new UsageReader(_state, File, _time);
+        Write(91, Reset);
+        reader.Read();
+        _state.Usage()!.FiveHour!.UsedPercent.ShouldBe(91);
+
+        _time.Advance(TimeSpan.FromMinutes(1));
+        reader.Read(new UsageRow { FiveHour = new UsageWindow { UsedPercent = 15, ResetsAt = Reset }, ReadAt = _time.GetUtcNow(), Source = "server" });
+
+        var usage = _state.Usage().ShouldNotBeNull();
+        usage.FiveHour!.UsedPercent.ShouldBe(15);
+        usage.Source.ShouldBe("server");
+        usage.Line(_time.GetUtcNow(), TimeZoneInfo.Utc).ShouldEndWith(", from the server");
+    }
+
+    [Fact]
+    public void AFileNeverOverridesTheServerWhileItAnswersAndStandsInOnceItIsSilent()
+    {
+        var reader = new UsageReader(_state, File, _time);
+        _time.Advance(TimeSpan.FromMinutes(5));
+        reader.Read(new UsageRow { FiveHour = new UsageWindow { UsedPercent = 15, ResetsAt = Reset }, ReadAt = _time.GetUtcNow(), Source = "server" });
+
+        // A status line whose session took no turn since the reset still says 91% and rewrites the file with a newer stamp each minute:
+        // newer, not fresher. The server's 15% stays, minute after minute, with no card.
+        var cards = _state.Cards().Length;
+        for (var minute = 1; minute <= 2; minute++)
+        {
+            _time.Advance(TimeSpan.FromMinutes(1));
+            Write(91, Reset, writtenAt: _time.GetUtcNow().ToUnixTimeSeconds());
+            reader.Read();
+            _state.Usage()!.FiveHour!.UsedPercent.ShouldBe(15);
+            _state.Usage()!.Source.ShouldBe("server");
+        }
+        _state.Cards().Length.ShouldBe(cards);
+
+        // The server silent for a failure's pause: the file stands in.
+        _time.Advance(UsageApi.AfterFailure);
+        Write(91, Reset, writtenAt: _time.GetUtcNow().ToUnixTimeSeconds());
+        reader.Read();
+        _state.Usage()!.FiveHour!.UsedPercent.ShouldBe(91);
+    }
+
+    [Fact]
+    public void AFileReadThatTakesOneWindowNamesBothSourcesOnTheRow()
+    {
+        var week = new DateTimeOffset(2026, 10, 24, 10, 0, 0, TimeSpan.Zero);
+        var reader = new UsageReader(_state, File, _time);
+        reader.Read(new UsageRow
+        {
+            FiveHour = new UsageWindow { UsedPercent = 40, ResetsAt = Reset },
+            SevenDay = new UsageWindow { UsedPercent = 70, ResetsAt = week },
+            ReadAt = Now,
+            Source = "server",
+        });
+
+        // The server silent past the 5-hour reset: the status line's file stands in and takes the new 5-hour window, while its 7-day
+        // figure (64%, on the same reset) is older than the server's 70%, which is kept.
+        _time.Advance(TimeSpan.FromHours(2) + TimeSpan.FromMinutes(10));
+        var newWindow = Reset.AddHours(5);
+        Write(5, newWindow, seven: 64, writtenAt: _time.GetUtcNow().ToUnixTimeSeconds());
+        reader.Read();
+
+        var usage = _state.Usage().ShouldNotBeNull();
+        usage.FiveHour!.UsedPercent.ShouldBe(5);
+        usage.SevenDay!.UsedPercent.ShouldBe(70);
+        usage.Source.ShouldBe("server, status line");
+        usage.SourceSay().ShouldBe("the server and the status line");
+        var lines = usage.Lines(_time.GetUtcNow(), TimeZoneInfo.Utc);
+        lines.Single(l => l.Label == "5-hour").Text.ShouldBe("5%, resets 19:00 (read 14:10, just now, from the server and the status line)");
+        lines.Single(l => l.Label == "7-day").Text.ShouldBe("70%, resets Sat 10:00 (read 14:10, just now, from the server and the status line)");
+        usage.Line(_time.GetUtcNow(), TimeZoneInfo.Utc).ShouldEndWith(", from the server and the status line");
+
+        // A read that takes both windows names its own source alone again.
+        _time.Advance(TimeSpan.FromMinutes(1));
+        Write(8, newWindow, seven: 72, writtenAt: _time.GetUtcNow().ToUnixTimeSeconds());
+        reader.Read();
+        _state.Usage()!.Source.ShouldBe("status line");
+    }
+
+    [Fact]
+    public void ARowOfOneSourceStaysThatSourceWhateverAReadOfTheSameSourceTakes()
+    {
+        var week = Now.AddDays(3);
+        var held = new UsageRow
+        {
+            FiveHour = new UsageWindow { UsedPercent = 40, ResetsAt = Reset },
+            SevenDay = new UsageWindow { UsedPercent = 70, ResetsAt = week },
+            ReadAt = Now,
+            Source = "status line",
+        };
+        var read = held with { FiveHour = new UsageWindow { UsedPercent = 45, ResetsAt = Reset }, SevenDay = null, ReadAt = Now.AddMinutes(1) };
+
+        UsageRow.Newest(held, read).Source.ShouldBe("status line");
+        // A held row with no source on record (an older node's) mixed with a read: only the read's source is known.
+        UsageRow.Newest(held with { Source = null }, read with { Source = "server" }).Source.ShouldBe("server");
+        // A read that takes nothing leaves the held row's source.
+        UsageRow.Newest(held, read with { FiveHour = new UsageWindow { UsedPercent = 10, ResetsAt = Reset }, Source = "server" }).Source.ShouldBe("status line");
+    }
+
+    [Fact]
+    public void TheHoldOnTheSnapshotFollowsEveryReadWithNoStartAsking()
+    {
+        var gate = new Flights.StartGate(_state, _time);
+        _state.HoldSource = gate.CurrentHold;
+        var reader = new UsageReader(_state, File, _time);
+
+        // A read at 94% puts the start gate's hold at once, though no start has asked (a node that restarted, say).
+        reader.Read(Row(94, Reset, Now) with { Source = "server" });
+        var hold = _state.Usage()!.Hold.ShouldNotBeNull();
+        hold.Kind.ShouldBe(Flights.StartGate.GateHoldKind);
+        hold.Until.ShouldBe(Reset);
+
+        // A used reset: the server reads 15% on the same resets_at. That one read ends the hold, again with no start asking.
+        _time.Advance(TimeSpan.FromMinutes(1));
+        reader.Read(Row(15, Reset, _time.GetUtcNow()) with { Source = "server" });
+        _state.Usage()!.Hold.ShouldBeNull();
+        _state.Usage()!.Lines(_time.GetUtcNow(), TimeZoneInfo.Utc).ShouldContain(("hold", "no hold"));
+    }
+
+    [Fact]
+    public void AHoldOnFiguresPastTheGatesFreshTimeEndsOnTheNextReadThatBringsNothing()
+    {
+        var gate = new Flights.StartGate(_state, _time);
+        _state.HoldSource = gate.CurrentHold;
+        var reader = new UsageReader(_state, File, _time);
+        reader.Read(Row(94, Reset, Now) with { Source = "server" });
+        _state.Usage()!.Hold.ShouldNotBeNull();
+
+        _time.Advance(Flights.StartGate.FreshFor);
+        reader.Read();
+        _state.Usage()!.Hold.ShouldBeNull();
     }
 
     [Fact]
@@ -176,7 +313,7 @@ public sealed class UsageTests : IDisposable
 
         Write(91, Reset);
         reader.Read();
-        Write(97, Reset);
+        Write(91, Reset);
         reader.Read();
 
         var card = _state.Cards().ShouldHaveSingleItem();
@@ -222,5 +359,35 @@ public sealed class UsageTests : IDisposable
         public void Overflowed()
         {
         }
+    }
+
+    [Fact]
+    public void TheFiveHourLineFollowsTheFiguresWhenTheyMoveAndWhenAFreshReadIsUnderTheLimit()
+    {
+        var reader = new UsageReader(_state, File, _time);
+        reader.Read(Row(92, Reset, Now) with { Source = "server" });
+        Lines().Last().Detail.ShouldNotBeNull().ShouldContain($"figures read {Now.ToLocalTime():HH:mm} from the server");
+
+        _time.Advance(TimeSpan.FromMinutes(1));
+        reader.Read(Row(95, Reset, _time.GetUtcNow()) with { Source = "server" });
+        Lines().Length.ShouldBe(2);
+        Lines().Last().Title.ShouldStartWith("5-hour usage now reads 95%");
+
+        _time.Advance(TimeSpan.FromMinutes(1));
+        var at = _time.GetUtcNow();
+        reader.Read(Row(40, Reset, at) with { Source = "server" });
+        Lines().Length.ShouldBe(3);
+        Lines().Last().Title.ShouldStartWith("5-hour usage now reads 40%");
+        Lines().Last().Detail.ShouldNotBeNull().ShouldContain($"figures read {at.ToLocalTime():HH:mm} from the server");
+    }
+
+    private CardRow[] Lines() => [.. _state.Cards().Where(c => c.Kind == UsageReader.HighKind).OrderBy(c => c.RungAt).ThenBy(c => c.Id, StringComparer.Ordinal)];
+
+    [Fact]
+    public void AFiveHourLineRungFromAnOldFileReadSaysAsOfItsAge()
+    {
+        var reader = new UsageReader(_state, File, _time);
+        reader.Read(Row(95, Reset, Now.AddMinutes(-50)) with { Source = "status line" });
+        _state.Cards().Single(c => c.Kind == UsageReader.HighKind).Detail.ShouldNotBeNull().ShouldContain("as of 50 min ago");
     }
 }

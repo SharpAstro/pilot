@@ -99,6 +99,14 @@ public sealed record SessionRow
     public DateTimeOffset? LastResponseAt { get; init; }
 
     /// <summary>
+    /// When the request behind that last response was sent: the <c>timestamp</c> of the user line (a prompt or a tool result) before the
+    /// last assistant message. An answer already streaming when a limit was seen has a response after it but a request before it, so it
+    /// proves nothing about the limit. Null before its first response, and on a row an older node stored.
+    /// </summary>
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public DateTimeOffset? LastRequestAt { get; init; }
+
+    /// <summary>
     /// Where it is now: from the agents row's <c>status</c> (busy, waiting, idle) while it runs, else its
     /// <c>state</c> (done or blocked is ended, failed is failed).
     /// </summary>
@@ -153,6 +161,13 @@ public sealed record SessionRow
     /// idle with its work half done, and nothing else says so: PIL5's say worker sat nine hours that way.
     /// </summary>
     public string? ApiError { get; init; }
+
+    /// <summary>
+    /// Why its last turn ended, so a limit and a hang can be told apart: the transcript's last <c>apiError</c>, else the last assistant
+    /// message's <c>stop_reason</c>, else the ending hook's word; null when none of them says (and from an older node).
+    /// </summary>
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public string? LastTurnEnd { get; init; }
 
     /// <summary>When the limit behind <see cref="ApiError"/> resets (its <c>rate_limit_info.resetsAt</c>); null when it gave none.</summary>
     public DateTimeOffset? ApiErrorResetsAt { get; init; }

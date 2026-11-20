@@ -6,7 +6,7 @@ using Pilot.Contracts;
 namespace Pilot.Node.Sessions;
 
 /// <summary>The last real response of a transcript: what the row's model, effort, context and last response come from.</summary>
-public sealed record AssistantTurn(string? Model, string? RequestedModel, string? Effort, long ContextTokens, DateTimeOffset? At);
+public sealed record AssistantTurn(string? Model, string? RequestedModel, string? Effort, long ContextTokens, DateTimeOffset? At, DateTimeOffset? RequestAt = null);
 
 /// <summary>A tool call the main transcript holds with no result yet: what a session waiting on a permission prompt asks.</summary>
 /// <param name="Name">The tool (<c>Bash</c>).</param>
@@ -26,7 +26,9 @@ public sealed record TranscriptFacts(
     ApiStop? Stop = null,
     IReadOnlyList<SubagentRow>? Subagents = null,
     PendingTool? PendingTool = null,
-    IReadOnlyList<SpendMessage>? Spend = null)
+    IReadOnlyList<SpendMessage>? Spend = null,
+    string? StopReason = null,
+    DateTimeOffset? LastRequestAt = null)
 {
     public static readonly TranscriptFacts None = new(null, null, null, 0, null, 0, null);
 }
@@ -44,6 +46,7 @@ internal sealed class TranscriptTail(string path)
     private static readonly byte[] ToolUse = "tool_use"u8.ToArray();
     private static readonly byte[] AssistantType = "\"type\":\"assistant\""u8.ToArray();
     private static readonly byte[] Usage = "\"usage\""u8.ToArray();
+    private static readonly byte[] UserType = "\"type\":\"user\""u8.ToArray();
     private static readonly byte[] ToolResult = "tool_result"u8.ToArray();
     private static readonly byte[] ApiErrorKey = "\"apiError\""u8.ToArray();
     private static readonly byte[] Handback = "\"name\":\"SubagentHandback\""u8.ToArray();
@@ -55,6 +58,8 @@ internal sealed class TranscriptTail(string path)
     private string? _pendingToolId;
     private string? _pendingQuestion;
     private string? _lastMessageId;
+    // When the last user line (a prompt or a tool result: a request the model answers) was written, and the one behind the last reply.
+    private DateTimeOffset? _lastUserAt;
     // The main transcript's calls with no result yet, oldest first: parallel calls are written as lines of one message.
     private readonly List<(string Id, PendingTool Tool)> _pendingTools = [];
 
@@ -77,6 +82,13 @@ internal sealed class TranscriptTail(string path)
 
     /// <summary>The API error that ended the last turn, until a real reply comes after it.</summary>
     public ApiStop? Stop { get; private set; }
+
+    /// <summary>
+    /// The <c>stop_reason</c> of the last real assistant message of this session's own turns (<c>end_turn</c>, <c>tool_use</c>,
+    /// <c>max_tokens</c>, …); null before any message that carried one. A streamed message repeats on several lines and only a
+    /// later one carries the reason, so a line without one leaves what was read.
+    /// </summary>
+    public string? StopReason { get; private set; }
 
     /// <summary>A subagent's transcript that has called <c>SubagentHandback</c>: its report is in, and it is done.</summary>
     public bool HandedBack { get; private set; }
@@ -156,8 +168,10 @@ internal sealed class TranscriptTail(string path)
         _details.Clear();
         LastTurn = null;
         Stop = null;
+        StopReason = null;
         HandedBack = false;
         _pendingToolId = _pendingQuestion = _lastMessageId = null;
+        _lastUserAt = null;
         _pendingTools.Clear();
     }
 
@@ -186,6 +200,10 @@ internal sealed class TranscriptTail(string path)
         {
             Resolve(span);
         }
+        if (span.IndexOf(AssistantType) < 0 && span.IndexOf(UserType) >= 0)
+        {
+            NoteUser(line);
+        }
         if (span.IndexOf(Usage) < 0)
         {
             return;
@@ -213,6 +231,7 @@ internal sealed class TranscriptTail(string path)
 
             // A later message means the turn moved on, so a question it asked is answered or abandoned.
             var sidechain = root.TryGetProperty("isSidechain", out var side) && side.ValueKind == JsonValueKind.True;
+            var priorId = _lastMessageId;
             if (id is not null && id != _lastMessageId)
             {
                 _pendingToolId = _pendingQuestion = null;
@@ -228,12 +247,15 @@ internal sealed class TranscriptTail(string path)
             {
                 // A real reply: whatever stopped an earlier turn is behind it.
                 Stop = null;
+                // A new message starts without a reason until a line of it says one.
+                StopReason = ClaudeAgentsJson.Text(message, "stop_reason") is { Length: > 0 } reason ? reason : id is not null && id == priorId ? StopReason : null;
                 LastTurn = new AssistantTurn(
                     model,
                     ClaudeAgentsJson.Text(root, "requestedModel"),
                     ClaudeAgentsJson.Text(root, "effort"),
                     tokens.Context,
-                    ClaudeAgentsJson.Text(root, "timestamp") is { } stamp && DateTimeOffset.TryParse(stamp, CultureInfo.InvariantCulture, DateTimeStyles.None, out var at) ? at : null);
+                    ClaudeAgentsJson.Text(root, "timestamp") is { } stamp && DateTimeOffset.TryParse(stamp, CultureInfo.InvariantCulture, DateTimeStyles.None, out var at) ? at : null,
+                    id is not null && id == priorId && LastTurn is { } same ? same.RequestAt : _lastUserAt);
             }
 
             if (span.IndexOf(ToolUse) >= 0 && message.TryGetProperty("content", out var content) && content.ValueKind == JsonValueKind.Array)
@@ -244,6 +266,60 @@ internal sealed class TranscriptTail(string path)
         catch (JsonException)
         {
             // Not a line of ours to read.
+        }
+    }
+
+    /// <summary>A user line of the main transcript: its timestamp is when the request the next reply answers was sent.</summary>
+    private void NoteUser(ReadOnlyMemory<byte> line)
+    {
+        // A user line can carry a large tool result: only its top-level type, isSidechain and timestamp are read, and every nested value
+        // is skipped by the reader without building a document.
+        try
+        {
+            var reader = new Utf8JsonReader(line.Span);
+            if (!reader.Read() || reader.TokenType != JsonTokenType.StartObject)
+            {
+                return;
+            }
+            string? type = null;
+            string? stamp = null;
+            var sidechain = false;
+            while (reader.Read() && reader.TokenType == JsonTokenType.PropertyName)
+            {
+                var name = reader.ValueSpan;
+                var isType = name.SequenceEqual("type"u8);
+                var isStamp = name.SequenceEqual("timestamp"u8);
+                var isSide = name.SequenceEqual("isSidechain"u8);
+                if (!reader.Read())
+                {
+                    return;
+                }
+                if (isType && reader.TokenType == JsonTokenType.String)
+                {
+                    type = reader.GetString();
+                }
+                else if (isStamp && reader.TokenType == JsonTokenType.String)
+                {
+                    stamp = reader.GetString();
+                }
+                else if (isSide && reader.TokenType is JsonTokenType.True or JsonTokenType.False)
+                {
+                    sidechain = reader.TokenType == JsonTokenType.True;
+                }
+                else
+                {
+                    // Any other value, an object or an array included, is skipped whole, so its members are never read as the line's.
+                    reader.Skip();
+                }
+            }
+            if (type == "user" && !sidechain && stamp is not null
+                && DateTimeOffset.TryParse(stamp, CultureInfo.InvariantCulture, DateTimeStyles.None, out var at))
+            {
+                _lastUserAt = at;
+            }
+        }
+        catch (JsonException)
+        {
         }
     }
 
@@ -472,7 +548,7 @@ internal sealed class SessionTranscripts(ClaudeProfile profile, string sessionId
 
         var turn = _main.LastTurn;
         return new TranscriptFacts(turn?.Model, turn?.RequestedModel, turn?.Effort, turn?.ContextTokens ?? 0, turn?.At, _spend, _main.PendingQuestion, _main.Stop,
-            _subagents.Count == 0 ? null : Subagents(), _main.PendingTool, spend);
+            _subagents.Count == 0 ? null : Subagents(), _main.PendingTool, spend, _main.StopReason, turn?.RequestAt);
     }
 
     // The subagents in the order they started, each as its record (agent-<id>.meta.json) says: what it is, what it was

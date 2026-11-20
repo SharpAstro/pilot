@@ -27,6 +27,7 @@ public sealed class AccountLimitTests
         _state = new NodeState(new InMemoryJournal(), _time);
         _outage = new TurnOutage(_state);
         _gate = new StartGate(_state, _time) { Outage = _outage };
+        _state.HoldSource = _gate.CurrentHold;
         _watch = new LegWatch(_state, (c, _) => Task.FromResult(_state.Complete(c, null)), _time)
         {
             Pilot = "pilot",
@@ -409,7 +410,7 @@ public sealed class AccountLimitTests
         var ended = 0;
         _outage.LimitEnded += () => ended++;
         _gate.Hold("w", 95, 100, "worker-start", "flight/TIA1", "TIA1 waits").ShouldBeTrue();
-        _state.PutSession(Session("new00000", "claude-opus-5-5", Start.AddMinutes(5)) with { LastResponseAt = Start.AddMinutes(6) });
+        _state.PutSession(Session("new00000", "claude-opus-5-5", Start.AddMinutes(5)) with { LastResponseAt = Start.AddMinutes(6), LastRequestAt = Start.AddMinutes(5) });
 
         await _watch.LookAsync(Ct);
 
@@ -467,7 +468,7 @@ public sealed class AccountLimitTests
         await _watch.LookAsync(Ct);
         _outage.LimitUntil.ShouldBe(until);
         _time.Advance(TimeSpan.FromMinutes(10));
-        _state.PutSession(Session("new00000", "claude-opus-5-5", Start.AddMinutes(5)) with { Account = email, LastResponseAt = Start.AddMinutes(6) });
+        _state.PutSession(Session("new00000", "claude-opus-5-5", Start.AddMinutes(5)) with { Account = email, LastResponseAt = Start.AddMinutes(6), LastRequestAt = Start.AddMinutes(5) });
         await _watch.LookAsync(Ct);
         _outage.LimitUntil.ShouldBeNull();
 
@@ -484,7 +485,6 @@ public sealed class AccountLimitTests
         SessionRow[] rows =
         [
             Session("son00000", "claude-sonnet-5-5", Start.AddMinutes(5)) with { LastResponseAt = Start.AddMinutes(6) },
-            Session("old00000", "claude-opus-5-5", Start.AddMinutes(-5)) with { LastResponseAt = Start.AddMinutes(6) },
             Session("err00000", "claude-opus-5-5", Start.AddMinutes(5)) with { LastResponseAt = Start.AddMinutes(6), ApiError = "usage_limit_reached", ApiErrorResetsAt = until },
             Session("quiet000", "claude-opus-5-5", Start.AddMinutes(5)),
             Session("unk00000", "mystery", Start.AddMinutes(5)) with { LastResponseAt = Start.AddMinutes(6) },
@@ -706,7 +706,7 @@ public sealed class AccountLimitTests
         _outage.OpenLimit(until, "one", Start);
 
         var card = Open().ShouldHaveSingleItem();
-        card.Summary.ShouldBe($"The account is on its usage limit until {until.ToLocalTime():HH:mm} (one). The node starts nothing and rings nothing for a session that took no turn; what waited starts then (or sooner, when the account's figures show the window was reset), and this card closes by itself. Marking it read leaves the hold. If the limit is another login's (you logged in again and sessions take turns), lift it.");
+        card.Summary.ShouldBe($"The account is on its usage limit until {until.ToLocalTime():HH:mm} (one). The node holds no usage figures. The node starts nothing and rings nothing for a session that took no turn; what waited starts at the reset, or sooner when a session of the account takes a turn or fresh figures show the window was reset, and this card closes then. Marking it read leaves the hold. If the limit is another login's (you logged in again and sessions take turns), lift it.");
         CardSummaries.For(TurnOutage.LimitCardKind, "node", card.Title, card.Choices).ShouldBe("The account is on a usage or spend limit, so the node starts no session of its own and rings nothing for a session that took no turn. Nothing to do; what waited starts at the reset, when the account's figures show the window was reset, or when a person lifts the hold, and this card closes by itself.");
     }
 
@@ -719,5 +719,134 @@ public sealed class AccountLimitTests
         Verbs.ModelFamily("claude-fable-5-2").ShouldBe("Fable");
         Verbs.ModelFamily("mystery").ShouldBeNull();
         Verbs.ModelFamily(null).ShouldBeNull();
+    }
+    [Fact]
+    public async Task ASessionThatBeganBeforeTheStopAndWasAnsweredAfterTheLimitWasSeenEndsItAndClosesTheCard()
+    {
+        await OpenOpusLimitAsync();
+        _state.PutSession(Session("old00000", "claude-opus-5-5", Start.AddHours(-2)) with { LastResponseAt = _time.GetUtcNow(), LastRequestAt = _time.GetUtcNow() });
+
+        await _watch.LookAsync(Ct);
+
+        _outage.LimitUntil.ShouldBeNull();
+        Open().ShouldBeEmpty();
+        _state.Cards().Single(c => c.Kind == TurnOutage.LimitCardKind).Outcome.ShouldNotBeNull().ShouldContain("old00000 answered a turn on ");
+    }
+
+    [Fact]
+    public async Task AnAnsweredTurnOfAnotherLoginProvesNothingAndAnErroredOneNeither()
+    {
+        var until = await OpenFiveHourLimitAsync();
+        _time.Advance(TimeSpan.FromMinutes(5));
+        _state.PutSession(Session("oth00000", "claude-opus-5-5", Start.AddHours(-2)) with { LastResponseAt = _time.GetUtcNow(), Account = "other@example.org" });
+        _state.PutSession(Session("err00000", "claude-opus-5-5", Start.AddHours(-2)) with { LastResponseAt = _time.GetUtcNow(), ApiError = "usage_limit_reached" });
+        await _watch.LookAsync(Ct);
+        _outage.LimitUntil.ShouldBe(until);
+    }
+
+    [Fact]
+    public async Task AnAnswerWhoseRequestWasSentBeforeTheLimitWasSeenDoesNotEndIt()
+    {
+        var until = await OpenFiveHourLimitAsync();
+        _time.Advance(TimeSpan.FromMinutes(5));
+        // Already streaming when the window ran out: its last line is written after the stop, but it was asked before.
+        _state.PutSession(Session("old00000", "claude-opus-5-5", Start.AddHours(-2)) with { LastResponseAt = _time.GetUtcNow(), LastRequestAt = Start.AddMinutes(-1) });
+        await _watch.LookAsync(Ct);
+        _outage.LimitUntil.ShouldBe(until);
+    }
+
+    [Fact]
+    public void TheHoldOnTheSnapshotIsTheSameWhicheverStartLimitAsksAndPublishesNothingWhenItIsAsked()
+    {
+        var reset = Start.AddHours(2);
+        _state.PutUsage(new UsageRow { FiveHour = new UsageWindow { UsedPercent = 94, ResetsAt = reset }, ReadAt = _time.GetUtcNow(), Source = "server" });
+        _state.RefreshHold();
+        var held = _state.Usage().ShouldNotBeNull().Hold.ShouldNotBeNull();
+        held.Kind.ShouldBe(StartGate.GateHoldKind);
+
+        _gate.Hold("normal", 90, 100, "worker-start", "flight/TIA1", "TIA1 waits").ShouldBeTrue();
+        // The first ask raises its card; what follows must publish nothing more.
+        var seq = _state.Snapshot().Seq;
+        _gate.Hold("priority", 98, 100, "worker-start", "flight/TIA1", "TIA1 waits").ShouldBeFalse();
+        _gate.Hold("normal", 90, 100, "worker-start", "flight/TIA1", "TIA1 waits").ShouldBeTrue();
+
+        _state.Usage()!.Hold.ShouldBe(held);
+        _state.Snapshot().Seq.ShouldBe(seq);
+    }
+
+    [Fact]
+    public async Task AUsageLimitHoldIsWorkedOutFromTheOpenLimitAndEndsWithIt()
+    {
+        var until = await OpenFiveHourLimitAsync();
+        _state.Usage().ShouldNotBeNull().Hold.ShouldNotBeNull().Kind.ShouldBe(TurnOutage.LimitHoldKind);
+        _state.Usage()!.Hold!.Until.ShouldBe(until);
+
+        _time.Advance(until - _time.GetUtcNow() + TimeSpan.FromMinutes(1));
+        await _watch.LookAsync(Ct);
+
+        _outage.LimitUntil.ShouldBeNull();
+        _state.Usage()!.Hold.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task AUsedResetWrittenToTheSourceClosesTheLimitCardAndWithdrawsTheWeekCardInOneReadAndOneSweep()
+    {
+        var until = Start.AddHours(1.5);
+        var week = Start.AddDays(2);
+        _state.PutUsage(Figures(Start.AddMinutes(-1), 100, until, sevenDay: 95, sevenReset: week) with { Source = "server" });
+        _state.PutSession(LimitRow(Mail, until));
+        await _watch.LookAsync(Ct);
+        _gate.RingWeek(90);
+        Open().Count(c => c.Kind == StartGate.WeekKind).ShouldBe(1);
+        Open().Single(c => c.Kind == TurnOutage.LimitCardKind).Summary.ShouldNotBeNull().ShouldContain("Usage: figures read");
+        Open().Single(c => c.Kind == TurnOutage.LimitCardKind).Summary.ShouldNotBeNull().ShouldContain("from the server");
+
+        // The reset is used: a lower utilization on the same resets_at.
+        _time.Advance(TimeSpan.FromMinutes(4));
+        var read = _time.GetUtcNow();
+        _state.PutUsage(Figures(read, 3, until, sevenDay: 44, sevenReset: week) with { Source = "server" }, authoritative: true);
+        await _watch.LookAsync(Ct);
+        _gate.RingWeek(90);
+
+        _outage.LimitUntil.ShouldBeNull();
+        Open().ShouldBeEmpty();
+        var weekCard = _state.Cards().Single(c => c.Kind == StartGate.WeekKind);
+        weekCard.Outcome.ShouldBe($"the 7-day window now reads 44 %, figures read {read.ToLocalTime():HH:mm} from the server");
+    }
+
+    [Fact]
+    public void AWeekCardMovesWithTheFigureAndSaysAsOfOnceTheFiguresAreOld()
+    {
+        var week = Start.AddDays(2);
+        _state.PutUsage(Figures(Start, 10, Start.AddHours(3), sevenDay: 92, sevenReset: week));
+        _gate.RingWeek(90);
+        Open().Single(c => c.Kind == StartGate.WeekKind).Detail.ShouldNotBeNull().ShouldContain($"figures read {Start.ToLocalTime():HH:mm}");
+
+        _time.Advance(TimeSpan.FromMinutes(2));
+        _state.PutUsage(Figures(_time.GetUtcNow(), 10, Start.AddHours(3), sevenDay: 95, sevenReset: week));
+        _gate.RingWeek(90);
+        Open().Single(c => c.Kind == StartGate.WeekKind).Title.ShouldStartWith("The 7-day window is 95 % spent");
+
+        _time.Advance(TimeSpan.FromMinutes(45));
+        _gate.RingWeek(90);
+        var stale = Open().Single(c => c.Kind == StartGate.WeekKind);
+        stale.Detail.ShouldNotBeNull().ShouldContain("as of 45 min ago");
+        _gate.RingWeek(90);
+        Open().Single(c => c.Kind == StartGate.WeekKind).Id.ShouldBe(stale.Id);
+    }
+
+    [Theory]
+    [InlineData(50, "as of 50 min ago")]
+    [InlineData(134, "as of 2 h ago")]
+    public void ALimitCardRungFromOldFiguresSaysAsOfTheirAge(int minutes, string ago)
+    {
+        var read = Start.AddMinutes(-minutes);
+        _state.PutUsage(Figures(read, 50, Start.AddHours(3)) with { Source = "status line" });
+        _outage.OpenLimit(Start.AddHours(1), "one", Start);
+
+        var summary = Open().ShouldHaveSingleItem().Summary.ShouldNotBeNull();
+        summary.ShouldContain($"Usage: {ago}, read {read.ToLocalTime():HH:mm} from the status line.");
+        // The limit card says an old reading in the very words the 5-hour and 7-day cards use.
+        summary.ShouldContain(StartGate.ReadSay(_state.Usage()!, Start));
     }
 }
