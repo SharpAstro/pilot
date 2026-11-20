@@ -87,6 +87,10 @@ public sealed partial class LegCommander
                     state.RaiseCard(CardBin.Handled, "node-label-refused", Verbs.FlightTarget(repaired.Code), $"{repaired.Code}'s PR has no {PilotMarks.NodeLabel(options.Machine)} label", ex.Message);
                 }
             }
+            else
+            {
+                await RefreshPrBodyAsync(repaired, pr.Number, legs, cancellationToken);
+            }
             return (repaired, pr, mergedBase);
         });
         }
@@ -321,6 +325,51 @@ public sealed partial class LegCommander
         return flight.Tracker == TrackerKind.Shortcut && !title.Contains(flight.Item.Display, StringComparison.OrdinalIgnoreCase) ? $"{title} [{flight.Item.Display}]" : title;
     }
 
+    /// <summary>A leg's line of the PR body: its name, its goal and the first line of its finish report.</summary>
+    private static string LegLine(LegRow leg) =>
+        $"{LegLineStart(leg)}{leg.Goal}{(leg.Report is { Length: > 0 } r ? $" — {r.Split('\n')[0].TrimEnd('\r')}" : "")}";
+
+    private static string LegLineStart(LegRow leg) => $"- **{leg.Name}**: ";
+
+    /// <summary>
+    /// The body with each leg's line as its report reads now, or null when nothing differs (pilot #1235: a report corrected on a go-around
+    /// never reached the PR, and the review blocked on the same sentence for three rounds). Only a line the node wrote, found by the
+    /// leg's name at its start, is replaced: every other line, a person's own and the Designs section, is kept as it is. A leg whose line
+    /// is gone from the body (a person removed it) is not put back.
+    /// </summary>
+    internal static string? PrBodyWithReports(string body, IReadOnlyList<LegRow> legs)
+    {
+        var lines = body.Split('\n');
+        var changed = false;
+        for (var i = 0; i < lines.Length; i++)
+        {
+            var ending = lines[i].EndsWith('\r') ? "\r" : "";
+            var line = ending.Length > 0 ? lines[i][..^1] : lines[i];
+            if (legs.FirstOrDefault(l => line.StartsWith(LegLineStart(l), StringComparison.Ordinal)) is { } leg && LegLine(leg) is var now && now != line)
+            {
+                lines[i] = now + ending;
+                changed = true;
+            }
+        }
+        return changed ? string.Join('\n', lines) : null;
+    }
+
+    /// <summary>An open PR's body follows the legs' reports before it is reviewed again; GitHub's refusal is logged and never fails the push.</summary>
+    private async Task RefreshPrBodyAsync(FlightRow flight, int number, IReadOnlyList<LegRow> legs, CancellationToken cancellationToken)
+    {
+        try
+        {
+            if (await github.PullRequestBodyAsync(flight.RepoPath, number, cancellationToken) is { Length: > 0 } body && PrBodyWithReports(body, legs) is { } next)
+            {
+                await github.EditPullRequestBodyAsync(flight.RepoPath, number, next, cancellationToken);
+            }
+        }
+        catch (FlightException ex)
+        {
+            await Error.WriteLineAsync($"flight pr: {flight.Code}'s PR #{number.ToString(CultureInfo.InvariantCulture)} body was not brought up to date with the legs' reports: {ex.Message}");
+        }
+    }
+
     internal static string PrBody(FlightRow flight, IReadOnlyList<LegRow> legs, string? designs = null)
     {
         var body = new System.Text.StringBuilder();
@@ -330,7 +379,7 @@ public sealed partial class LegCommander
             body.AppendLine();
             foreach (var leg in legs)
             {
-                body.AppendLine($"- **{leg.Name}**: {leg.Goal}{(leg.Report is { Length: > 0 } r ? $" — {r.Split('\n')[0]}" : "")}");
+                body.AppendLine(LegLine(leg));
             }
         }
         body.AppendLine();
