@@ -261,7 +261,7 @@ public sealed record NodeSettings
     /// <summary>Whether a repo's ready merge queue entries are merged as one batch (<see cref="MergeBatchKey"/>), its CI run once; off unless set.</summary>
     public bool? MergeBatch { get; init; }
 
-    /// <summary>Whether an assistant's your-only requests run directly (<see cref="AutopilotKey"/>) rather than raising a confirm card; off unless the person saved it on, and only the person may.</summary>
+    /// <summary>Whether an assistant's your-only requests run directly (<see cref="AutopilotKey"/>) rather than raising a confirm card; on unless the person saved it off, and only the person may.</summary>
     public bool? Autopilot { get; init; }
 
     /// <summary>Whether the first review of a large diff runs on the deep model (<see cref="ReviewDeepFirstKey"/>); on unless the person saved it off. A re-review never does.</summary>

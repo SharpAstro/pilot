@@ -494,14 +494,14 @@ public sealed partial class RoleModels
         }
     }
 
-    /// <summary>Whether the autopilot is on (<see cref="NodeSettings.AutopilotKey"/>): in force at once, and off unless the person saved it on.</summary>
+    /// <summary>Whether the autopilot is on (<see cref="NodeSettings.AutopilotKey"/>): in force at once, and on unless the person saved it off.</summary>
     public bool Autopilot
     {
         get
         {
             lock (_lock)
             {
-                return _settings.Autopilot ?? false;
+                return _settings.Autopilot ?? true;
             }
         }
     }
