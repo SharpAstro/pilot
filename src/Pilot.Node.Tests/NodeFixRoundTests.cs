@@ -53,7 +53,7 @@ public sealed class NodeFixRoundTests : ReviewTestsBase
         round.Why.ShouldBe($"the review asked for changes: {Findings}");
         var handled = _state.Cards().Single(c => c.Kind == LegCommander.NodeFixRoundKind);
         handled.Bin.ShouldBe(CardBin.Handled);
-        handled.Detail.ShouldNotBeNull().ShouldContain("the node sent parser round");
+        handled.Detail.ShouldNotBeNull().ShouldContain("the node had a fresh worker go around parser");
         handled.Detail.ShouldContain("the parser drops a token");
     }
 

@@ -45,8 +45,8 @@ public sealed partial class LegCommander
         {
             return false;
         }
-        state.RaiseCard(CardBin.Handled, NodeFixRoundKind, Verbs.FlightTarget(flight.Code), $"{flight.Code}'s review found things to fix: the node sent {last.Name} round",
-            $"On autopilot the node sent {last.Name} round with the review's findings as the brief, round {last.ReviewGoArounds + 1} of at most {MaxReviewGoArounds}, as pressing \"Fix the review's findings\" would. Findings:\n{changes}");
+        state.RaiseCard(CardBin.Handled, NodeFixRoundKind, Verbs.FlightTarget(flight.Code), $"{flight.Code}'s review found things to fix: the node started a fix round on {last.Name}",
+            $"On autopilot the node had a fresh worker go around {last.Name} with the review's findings as the brief, round {last.ReviewGoArounds + 1} of at most {MaxReviewGoArounds}, as pressing \"Fix the review's findings\" would. Findings:\n{changes}");
         return true;
     }
 
