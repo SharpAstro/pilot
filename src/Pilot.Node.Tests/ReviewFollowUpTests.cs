@@ -282,13 +282,16 @@ public sealed class ReviewFollowUpTests : ReviewTestsBase
         ReviewRound[] rounds =
         [
             new() { Round = 1, Verdict = ReviewState.Changes, Findings = Quoting },
-            new() { Round = 2, Verdict = ReviewState.Passed, Findings = Quoting },
+            new() { Round = 2, Verdict = ReviewState.Passed, Findings = Quoting, Answers = [new("R1.2", "left", "out of scope")] },
         ];
 
         ReviewPoints.Number(rounds).Select(p => p.Id).ShouldBe(["R1.1", "R1.2", "R1.3", "R2.1", "R2.2", "R2.3"]);
         ReviewPoints.Number(rounds).Where(p => p.Round == 2).Select(p => p.Text).ShouldContain("C could be tidier");
         // The reviewer passed, so nothing is filed as a controller's pass anyway.
-        ReviewFollowUp.Read(rounds).Items.ShouldAllBe(i => !i.Why.Contains("pass anyway"));
+        // Not on an empty list: the point left is filed, and nothing as a pass anyway (the review of #1142).
+        var items = ReviewFollowUp.Read(rounds).Items;
+        items.ShouldNotBeEmpty();
+        items.ShouldAllBe(i => !i.Why.Contains("pass anyway"));
     }
 
     private static ReviewFollowUp.Standing TwoLeft(string found1, string why1, string found2, string why2) => ReviewFollowUp.Read(
