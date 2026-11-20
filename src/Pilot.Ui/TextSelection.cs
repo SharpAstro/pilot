@@ -55,8 +55,9 @@ internal sealed class TextSelection<TSurface>(Renderer<TSurface> renderer)
     public void Clear()
     {
         _anchor = _caret = null;
+        // The pending anchor is not let go here: the row's own click (run by the router on the same press) may clear the page's
+        // selection, and the armed drag must survive it. A press or a release ends it.
         _dragging = false;
-        _pending = null;
     }
 
     /// <summary>
@@ -393,6 +394,10 @@ internal sealed class TextSelection<TSurface>(Renderer<TSurface> renderer)
                         return false;
                     }
                     _pending = null;
+                    if (armed.Region >= _frame.Count)
+                    {
+                        return false;
+                    }
                     _anchor = _caret = armed;
                     _anchorText = _caretText = _frame[armed.Region].Text;
                     _dragging = true;
