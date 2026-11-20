@@ -174,7 +174,6 @@ internal sealed class DesignReads(NodeClient client, string who, Action redraw)
         chat.OnSendWithPicture = (text, picture) => designs.OpenId is { } id ? SayAsync(id, text, picture, CancellationToken.None) : Task.FromResult<string?>("no design is open");
         chat.Track = track;
         chat.Changed = redraw;
-        // Start its design on a waiting idea (PIL1152): the same wiring in both hosts; the made design's page opens at the next frame.
         // Build a version (PIL1153): design-build for it, the answer shown on the page at the next frame.
         designs.OnBuild = (id, version, repo, milestone) => _ = Task.Run(async () =>
         {
@@ -219,6 +218,7 @@ internal sealed class DesignReads(NodeClient client, string who, Action redraw)
             designs.Typed(await TypeAsync(Verbs.DesignDiscard, id, [], CancellationToken.None).ConfigureAwait(false));
             redraw();
         });
+        // Start its design on a waiting idea (PIL1152): the same wiring in both hosts; the made design's page opens at the next frame.
         designs.OnStartIdea = (idea, node) => _ = Task.Run(async () =>
         {
             var (id, error) = await StartFromIdeaAsync(idea, CancellationToken.None).ConfigureAwait(false);

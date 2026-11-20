@@ -40,7 +40,8 @@ public static partial class Briefs
                 : $"<the node's designs folder>/{d.Id}/{DesignStore.VersionsFolderName}/v{v}";
             text.AppendLine();
             text.AppendLine($"## Design {d.Id} version {v}");
-            text.AppendLine($"This flight is built to version {v} of design {d.Id}. The version is on the node, in `{folder}`:");
+            // Designs are node-local: a flight moved to a peer names a folder that is on the node that built it, not on this one (the review of #1179).
+            text.AppendLine($"This flight is built to version {v} of design {d.Id}. The version is on the node that built it, in `{folder}`; a flight moved to another node finds it there, not on its own node:");
             text.AppendLine($"- `{DesignStore.DocumentFile}`: the design as a document, its objective and one cell per screen (an older version has `{DesignStore.NotesFile}` instead);");
             text.AppendLine($"- `{DesignStore.PrototypeFile}` and `{DesignStore.ScreensFolderName}/<id>.json`: the screens as trees, SHA-256 `{d.Sha256 ?? "(not recorded)"}` (an older version holds its screens in `{DesignStore.PrototypeFile}`);");
             text.AppendLine($"- `{DesignChecker.RendersFolderName}/`: one image of each screen, as the version looks.");
