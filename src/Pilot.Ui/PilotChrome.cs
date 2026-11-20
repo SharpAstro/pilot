@@ -239,8 +239,8 @@ internal sealed class PilotChrome<TSurface>
         More = new RailMoreMenu<TSurface>(renderer);
         Notifications.CardBody = ToastBody;
         // A flight page's Merge is its card's own choice, run as the panel runs it.
-        Flights.CoveredAt = CoveredAfterPage;
-        Flights.OnAnswerCard =(card, number) => Cards.OnAnswer?.Invoke(card, number);
+        Flights.CoveredAt = DrawnAfterPage;
+        Flights.OnAnswerCard = (card, number) => Cards.OnAnswer?.Invoke(card, number);
         // The pages read a card's press state by the card, so its node is part of the key, as in the panel (#922).
         Flights.CardWorking = card => Cards.WorkingOn(card);
         // So is a PR row's Merge or Go around: the same card button, so the node is told what the card's button tells it.
@@ -804,7 +804,9 @@ internal sealed class PilotChrome<TSurface>
         // which the map has only while it is shown), ahead of the router and of the page chords.
         // A press on anything painted after the page (the For you bar's handle, a toast, the open bar, the rail's open More menu) belongs to it,
         // not to the map beneath: one rule, CoveredAfterPage, so a new overlay needs no new line. A pan already in flight still gets its moves and release.
-        var covered = evt is InputEvent.MouseDown down2 && CoveredAfterPage(down2.X, down2.Y);
+        // A plain left press also counts the open bar's press-outside layer (the router collapses the bar with it); a middle or Space press looks through it, so a pan still starts.
+        var covered = evt is InputEvent.MouseDown down2
+            && (down2.Button == MouseButton.Left && !Flights.SpaceHeld ? CoveredAfterPage(down2.X, down2.Y) : DrawnAfterPage(down2.X, down2.Y));
         if (Page == PilotPage.Flights
             && !covered
             && (Flights.HandleMapPointer(evt) || evt is InputEvent.KeyDown { Key: InputKey.D0 or InputKey.D1, Modifiers: InputModifier.Ctrl } chord && Flights.HandleMapKey(chord)))
@@ -839,6 +841,9 @@ internal sealed class PilotChrome<TSurface>
     internal bool DrawnAfterPage(float x, float y) => CoveredAfter(PageViewOf(Page), x, y, includeSurfaces: false);
 
     /// <summary>Whether a point is covered by a widget painted after <paramref name="target"/> (the page, or the cards panel, which is itself above the page).</summary>
+    // Reused by every CoveredAfter call (a MouseMove asks each frame); the input thread is the only caller.
+    private readonly List<ClickableRegion> _coverRegions = [];
+
     private bool CoveredAfter(IPixelWidget target, float x, float y, bool includeSurfaces = true)
     {
         var widgets = PageWidgets;
@@ -847,7 +852,7 @@ internal sealed class PilotChrome<TSurface>
         {
             after = after.Append(More);
         }
-        var regions = new List<ClickableRegion>();
+        var regions = _coverRegions;
         foreach (var w in after)
         {
             regions.Clear();

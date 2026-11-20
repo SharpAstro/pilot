@@ -42,7 +42,7 @@ public sealed class MapDepthTests
             Chrome.Cards.OnAnswer = (card, number) => Answered = (card, number);
             Chrome.Notifications.State = bar;
             Chrome.Show(PilotPage.Flights);
-            Router = new InputRouter(Chrome.Flights.Ui, new BackgroundTaskTracker(), () => { }) { Widgets = () => Chrome.Widgets };
+            Router = new InputRouter(Chrome.Flights.Ui, new BackgroundTaskTracker(), () => { }) { Widgets = () => Chrome.Widgets, Unhandled = evt => Chrome.PageWidget.HandleInput(evt) };
             Paint();
             Paint();
             Chrome.Flights.MapShown.ShouldBeTrue("the sample's flights draw the map");
@@ -174,14 +174,14 @@ public sealed class MapDepthTests
         ViewShouldNotMove(rig, before);
     }
 
-    private static (float X, float Y) BareMap(Rig rig)
+    private static (float X, float Y) BareMap(Rig rig, bool outsideOverlays = false)
     {
         var body = rig.Chrome.Flights.MapBody!.Value;
         for (var y = body.Y + 20f; y < body.Y + body.Height - 20f; y += 12f)
         {
             for (var x = body.X + 20f; x < body.X + body.Width - 20f; x += 12f)
             {
-                if (rig.Chrome.Flights.IsEmptyCanvas(body, x, y))
+                if (rig.Chrome.Flights.IsEmptyCanvas(body, x, y) && (!outsideOverlays || !rig.Chrome.DrawnAfterPage(x, y)))
                 {
                     return (x, y);
                 }
@@ -234,6 +234,55 @@ public sealed class MapDepthTests
         rig.Send(new InputEvent.MouseMove(handle.X, handle.Y, MouseButton.Left));
         rig.Send(new InputEvent.MouseUp(handle.X, handle.Y, MouseButton.Left));
         rig.Chrome.Flights.Viewport.IsPanning.ShouldBeFalse("the release ended the pan");
+        rig.Send(new InputEvent.KeyUp(InputKey.Space));
+    }
+
+    [Fact]
+    public void TheWheelOverBareMapWithTheBarCollapsedMovesTheViewport()
+    {
+        using var rig = new Rig(BarStates.Collapsed, None);
+        var before = rig.View;
+        var (x, y) = BareMap(rig);
+        rig.Send(new InputEvent.Scroll(-3f, x, y, InputModifier.None));
+        rig.View.ShouldNotBe(before, "the control: the wheel on bare map moves it");
+    }
+
+    [Fact]
+    public void WithTheBarOverTheWheelAndCtrlWheelOnBareMapOutsideItStillMoveTheViewport()
+    {
+        using var rig = new Rig(BarStates.Over, Ringing);
+        var (x, y) = BareMap(rig, outsideOverlays: true);
+        var before = rig.View;
+        rig.Send(new InputEvent.Scroll(-3f, x, y, InputModifier.None));
+        var panned = rig.View;
+        panned.ShouldNotBe(before, "the wheel pans though the press-outside layer spans the page");
+        rig.Send(new InputEvent.Scroll(-3f, x, y, InputModifier.Ctrl));
+        rig.View.ShouldNotBe(panned, "Ctrl+wheel zooms likewise");
+    }
+
+    [Fact]
+    public void WithTheBarOverAMiddleDragOnBareMapOutsideItStillPans()
+    {
+        using var rig = new Rig(BarStates.Over, Ringing);
+        var (x, y) = BareMap(rig, outsideOverlays: true);
+        var before = rig.View;
+        rig.Send(new InputEvent.MouseDown(x, y, MouseButton.Middle, InputModifier.None));
+        rig.Send(new InputEvent.MouseMove(x + 30f, y + 20f, MouseButton.Middle));
+        rig.View.ShouldNotBe(before, "a middle drag pans");
+        rig.Send(new InputEvent.MouseUp(x + 30f, y + 20f, MouseButton.Middle));
+    }
+
+    [Fact]
+    public void WithTheBarOverASpaceDragOnBareMapOutsideItStillPans()
+    {
+        using var rig = new Rig(BarStates.Over, Ringing);
+        var (x, y) = BareMap(rig, outsideOverlays: true);
+        var before = rig.View;
+        rig.Send(new InputEvent.KeyDown(InputKey.Space));
+        rig.Send(new InputEvent.MouseDown(x, y));
+        rig.Send(new InputEvent.MouseMove(x + 30f, y + 20f, MouseButton.Left));
+        rig.View.ShouldNotBe(before, "a Space drag pans");
+        rig.Send(new InputEvent.MouseUp(x + 30f, y + 20f, MouseButton.Left));
         rig.Send(new InputEvent.KeyUp(InputKey.Space));
     }
 }

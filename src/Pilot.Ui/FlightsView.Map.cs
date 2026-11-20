@@ -111,6 +111,9 @@ internal sealed partial class FlightsView<TSurface>
     // Whether Space is held (a left drag then moves the map); cleared by its release, or when the map goes away.
     private bool _space;
 
+    /// <summary>Whether Space is held, so a left press pans instead of picking.</summary>
+    internal bool SpaceHeld => _space;
+
     // The button that began the drag in flight, so only its release ends it.
     private MouseButton _panButton;
 
