@@ -127,10 +127,11 @@ internal static class CardKindCatalog
         new("hold-released", "Handled", [LegHoldRelease], "HoldingPatternTests.AHoldWhoseWatchtowerEndedIsReleasedWithItsNotesOnThePrAndMergesOnAutopilot"),
         new("pr-ready-restored", "Handled", [LegReview], "PassedWithoutCardTests.AFlightPassedWithNoCardGetsOneAndAutopilotMergesIt"),
         new("holding-timeout", "Ring", [Checks], "HoldingPatternTests.PastTheBoundTheTimeoutCardRingsAndMergeAsItIsMerges", "the flight's holding pattern on its row is past its timeout and its PR is still open on GitHub", [nameof(Verbs.Merge), nameof(Verbs.Land)]),
-        new("review-loop", "ForYou", [LegReview], "ReviewLoopTests.TheThirdRoundWithChangesRaisesAWatchtowerCardWithEachRoundsFindings"),
+        new("review-loop", "Ring", [LegReview], "ReviewLoopTests.TheThirdRoundWithChangesRaisesAWatchtowerCardWithEachRoundsFindings", "the review's stored rounds show a third answer still asking for changes, and passing it over the findings is an override that is the person's", [nameof(Verbs.Review), nameof(Verbs.AllowRound)]),
         new("stray-session", "Ring", ["Flights/LegWatch.cs"], "WindDownTests.TheSweepRingsOnceForALiveSessionOfALandedFlightAndOnceForOneTheLedgerDoesNotKnow", "a live session's flight has landed (read from the flight row), or the session ledger does not know it", [nameof(Verbs.Stop)]),
 
         // Flights: landing, moving, PRs.
+        new("review-fix-round", "Handled", ["Flights/LegCommander.ReviewChanges.cs"], "NodeFixRoundTests.OnAutopilotAChangesVerdictSendsTheLastLegRoundAsTheNodeWithTheFindingsAsItsBrief"),
         new("review-changes", "Ring", ["Flights/LegCommander.ReviewChanges.cs"], "CardSummaryRaiserTests.AReviewThatAsksForChangesSaysWhichLegsFindingsAreFixedNotRedone", "the reviewer's verdict at the PR's current head asks for changes", [nameof(Verbs.GoAround)]),
         new("rebased-on-base", "Handled", [Shape], "BranchShapeTests.ABranchHoldingAMergeOfItsBaseIsPushedLinearOnARebaseBaseWithItsReviewCarried"),
         new("laid-on-base", "Handled", [Shape], "RebaseLayFlightTests.ABranchThatMergesCleanlyButDoesNotRebaseIsLaidOnItsBaseAsOneCommitAndQueuedOnce"),

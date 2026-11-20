@@ -76,6 +76,19 @@ internal static class DecisionSources
         };
     }
 
+    /// <summary>The one line the node refuses the watchtower's override with (PIL1229): whose it is, whatever --why it gave.</summary>
+    public static string OverrideIsThePersons(CommandRequest command)
+    {
+        var what = command.Verb switch
+        {
+            Verbs.FinishLeg => "Mark done anyway",
+            Verbs.Review => "Pass with notes",
+            Verbs.Merge => "Merge as it is",
+            _ => command.Verb,
+        };
+        return $"{what} over {command.Target} is the person's call: leave the card for them";
+    }
+
     /// <summary>
     /// The reason the sending session gave of its own: its Why, else, given straight, the words after the outcome of an accepted
     /// finish. A card choice's canned Args never count (<paramref name="fromCard"/>). Empty when none.

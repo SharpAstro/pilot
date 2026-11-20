@@ -49,6 +49,8 @@ public sealed class ReviewLoopTests : ReviewTestsBase
         card.Detail.ShouldContain("finding of round 2");
         card.Detail.ShouldContain("finding of round 3");
         card.Choices.Select(c => c.Verb).ShouldBe([Verbs.Review, Verbs.AllowRound]);
+        card.Bin.ShouldBe(CardBin.Ring);
+        card.Summary.ShouldNotBeNull().ShouldContain("Passing it over the findings is the person's");
         Open().ShouldNotContain(c => c.Kind == LegCommander.ReviewChanges);
     }
 
@@ -285,6 +287,7 @@ public sealed class ReviewLoopTests : ReviewTestsBase
         brief.ShouldContain("third review round");
         brief.ShouldContain("pass with them noted");
         brief.ShouldContain("settle in the plane");
+        brief.ShouldContain("is the person's, never yours");
         brief.ShouldContain("Only what you cannot settle rings the controller");
         brief.ShouldContain("a fourth round starts only on your word");
         Briefs.WatchtowerFingerprint(Tower, "pilot").ShouldNotBe(Convert.ToHexString(new byte[8]));

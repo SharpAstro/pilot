@@ -237,6 +237,14 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
                 await LookAtTickerAsync(leg, sessions, now, cancellationToken);
                 continue;
             }
+            // A session that owns a job queued or running by its own row id has plainly started (it ran the command that made the job), whatever
+            // its listing shows: no first-turn restart or ring for it (PIL1229). By row only, never by name, so a replacement of a stalled
+            // worker (which keeps the name) is still judged on its own turns.
+            if (worker is not null && NoTurnYet(worker) && state.Jobs().Any(j => j.State is JobState.Running or JobState.Queued
+                && j.Owner is { Length: > 0 } owner && (owner == worker.Id || owner == worker.SessionId)))
+            {
+                continue;
+            }
             // A worker that shows no first turn is stopped and started once more, before any ring or nudge.
             var (turned, twice) = await FirstTurnLadderAsync(subject, leg.WorkerJob!, worker, leg.StartedAt ?? now, "worker", NeverTurned, subject, Name(leg), now,
                 token => RestartWorker(leg.Flight, leg.Name, token), cancellationToken);
@@ -318,6 +326,11 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
                         $"its session is in a failed state and the leg is not finished ({Steps(leg)}), which the node cannot cure by itself", worker);
                     break;
                 case SessionState.Idle or SessionState.Ended when worker.ApiError is { } error:
+                    // Stopped by the API with work of its own open: the work's end tells it, and the stop is judged after (PIL1229).
+                    if (WaitsOnOwnWork(leg, worker) != OwnWait.None)
+                    {
+                        break;
+                    }
                     await StoppedAsync(leg, worker, error, now, cancellationToken);
                     break;
                 case SessionState.Idle or SessionState.Ended:
@@ -805,8 +818,15 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
             return;
         }
         // Idle on a job of the leg: its end wakes it.
-        var waiting = state.Jobs().Any(j => j.State is JobState.Running or JobState.Queued
+        // The one shared test (OwnJobsWait): a job of the ticker's own (by row, session id or name) or of its leg, queued or running, also
+        // when its turn ended and Claude Code dropped it from its listing, as for a worker, reviewer and validator (PIL1229).
+        var ownJobs = row is null ? default : OwnJobsWait(row, leg);
+        var waiting = ownJobs.Open || state.Jobs().Any(j => j.State is JobState.Running or JobState.Queued
                 && string.Equals(j.Flight, leg.Flight, StringComparison.OrdinalIgnoreCase) && string.Equals(j.Leg, leg.Name, StringComparison.OrdinalIgnoreCase));
+        if (ownJobs.Spoken is { } spokenOf && spokenOf > since)
+        {
+            since = spokenOf;
+        }
         // A ticker the node has just told something (how its finish's check rerun ended, in this look or a recent one) is given its turn on
         // it: its session still shows the turn it ended before it was told, so "ended" is not yet a stop, and the node's own finish is not
         // asked for on top of what it was told. Past the idle grace without a turn of its own, it is stopped as any other. The hold is
@@ -819,7 +839,7 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
             null when now - seen > ShowUpGrace => "its session never showed up",
             null => null,
             { State: SessionState.Failed } => "its session failed",
-            { State: SessionState.Ended } or { Gone: true } => told ? null : "its session ended",
+            { State: SessionState.Ended } or { Gone: true } => told || waiting ? null : "its session ended",
             _ when NoTurnYet(row) => now - row.StartedAt > FirstTurnGrace ? "it never took a turn" : null,
             { State: SessionState.Working or SessionState.Waiting } => null,
             _ when waiting => null,
@@ -1596,6 +1616,12 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
             }
             if (_noFirstTurn.GetValueOrDefault(subject) >= 2 && planner is null or { Gone: true } or { State: SessionState.Failed or SessionState.Ended })
             {
+                continue;
+            }
+            // A planner with a job of its own queued or running waits, not stalls, also after its turn ended: the job's end resumes it (#893).
+            if (planner is not null && OwnJobsWait(planner).Open)
+            {
+                state.CloseCardsAbout(subject, "its planner waits on its own job", PlanStalled);
                 continue;
             }
             string? why = planner switch

@@ -53,7 +53,7 @@ public sealed record NodeInfo
 
     /// <summary>
     /// Whether the node's autopilot is on (<c>pilot settings set autopilot on</c>): an assistant's your-only requests (merge,
-    /// land, settings…) run directly when the person asked, instead of raising a confirm card. Off unless the person saved it on.
+    /// land, settings…) run directly when the person asked, instead of raising a confirm card. On unless the person saved it off.
     /// </summary>
     public bool Autopilot { get; init; }
 
