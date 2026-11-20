@@ -206,6 +206,7 @@ public static partial class CardSummaries
             CiBudgets.CapKind => $"The CI of {what} is past its budget of runner time or has been red too long, so the node pushes nothing more for it. You can raise the cap by one budget, or have the controller take only the legs that pass, or split the flight; the last two are recorded for the controller. Dismissing the card does not lift the stop: pushes stay stopped until 'pilot flight ci-budget {(Verbs.FlightCodeOf(subject) ?? what)} {Verbs.CiContinue}' (or {Verbs.CiLandGreen}, {Verbs.CiSplit}).",
             CiBudgets.AnsweredKind => $"The owner answered the CI budget card of {what} with land what is green or split. It is recorded for the controller and pushes stay stopped; nothing to do.",
             LegCommander.ReviewNotesKind => $"The review of {what} passed with notes that do not block the merge. The merge waits while a review-notes leg makes them (its push ends the hold and a fresh review gates the merge), or the watchtower works on them in the plane; if none takes them in a few minutes the node plans the review-notes leg or rings you. Clearing the flight with the notes unmade is your word only.",
+            LegCommander.NotesUnmadeKind => $"The review of {what} passed with notes that nobody has made, and no review-notes leg is on its way. The merge is refused until each note is made, not work, the node's own or deferred with a reason. Planning the review-notes leg, or your word with a reason, ends it.",
             LegCommander.HumanVerificationKind => $"The review of {what} noted checks only a person can make, and the node filed each as an issue in the repo's human-verification milestone. Check each by hand and close its issue; dismiss this once read.",
             LegCommander.HumanVerificationRefusedKind => $"GitHub refused some of {what}'s human checks, so they are not filed; the verdict stands. The detail names them; file them by hand.",
             LegCommander.HoldingClearedKind => "A flight on hold was cleared to land, by the watchtower or the person, or released by the node because the watchtower did not take the hold: its merge is no longer held, and autopilot merges it as for any passed review.",
@@ -296,7 +297,7 @@ public static partial class CardSummaries
         var head = $"The review of {code} passed with {notes.Count} small {(notes.Count == 1 ? "note" : "notes")} that {(notes.Count == 1 ? "does" : "do")} not block the merge{example}.";
         return fixerLeg is not null
             ? $"{head} The fixer leg {fixerLeg} took them; nothing for you to do."
-            : $"{head} The watchtower plans a review-notes leg for them; clearing the flight with the notes unmade is the owner's word, and the node rings you if nobody makes them.";
+            : $"{head} A review-notes leg makes them; only the owner's word clears the flight with them unmade.";
     }
 
     /// <summary>The sentence of the card that names the issues filed for a flight's human checks: what they are and that the controller checks each by hand and closes it.</summary>

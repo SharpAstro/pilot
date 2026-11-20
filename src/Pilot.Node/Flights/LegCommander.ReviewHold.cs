@@ -259,9 +259,14 @@ public sealed partial class LegCommander
         {
             return;
         }
-        state.RaiseCard(CardBin.Ring, NotesUnmadeKind, subject, $"{flight.Code} has review notes nobody has made",
+        var card = state.RaiseCard(CardBin.Ring, NotesUnmadeKind, subject, $"{flight.Code} has review notes nobody has made",
             $"{why}. Notes without an end: {string.Join("; ", unmade.Select(p => $"{p.Id} {p.Text.ReplaceLineEndings(" ")}"))}. The flight does not merge with them: plan a review-notes leg, or give the owner's word with a reason (flight clear {flight.Code} <why>).",
             link: flight.PullRequestUrl,
             summary: $"{flight.Code} holds {unmade.Count} review {(unmade.Count == 1 ? "note" : "notes")} nobody is making, and a merge is refused until each is made, not work, the node's own or deferred with a reason. Your word with a reason clears it.");
+        state.UpdateChoices(card.Id,
+        [
+            new CardChoice { Label = "Clear the hold, notes unmade", Verb = Verbs.Clear, Target = subject, Args = ["the owner's word, given on the notes-unmade card"] },
+            new CardChoice { Label = "Keep waiting", Verb = Verbs.Dismiss, Target = Verbs.CardTarget(card.Id), Args = ["waiting for the review-notes leg"] },
+        ]);
     }
 }
