@@ -193,6 +193,9 @@ public sealed partial class NodeState
             case AdmissionChangedEvent admission:
                 _admission = admission.Admission;
                 break;
+            case FollowUpsChangedEvent followUps:
+                _followUps = followUps.FollowUps;
+                break;
             case MachineChangedEvent machine:
                 _machine = machine.Machine;
                 break;
@@ -274,6 +277,7 @@ public sealed partial class NodeState
         _usage = snapshot.Usage;
         _machine = snapshot.Machine;
         _admission = snapshot.Admission;
+        _followUps = snapshot.FollowUps;
         _pullRequests = snapshot.PullRequests;
         _repos = snapshot.Repos;
         _node = snapshot.Node;
@@ -313,6 +317,7 @@ public sealed partial class NodeState
         Usage = WithHold(_usage),
         Machine = _machine,
         Admission = _admission,
+        FollowUps = _followUps,
         PullRequests = _pullRequests,
         Repos = _repos,
         Node = _node,

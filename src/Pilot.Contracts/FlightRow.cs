@@ -109,6 +109,17 @@ public sealed record FlightRow
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string[]? FollowUpPoints { get; init; }
 
+    /// <summary>The flight created on <see cref="FollowUpIssue"/> when its points are larger than the flight (pilot #1226), so the issue names its flight from the start; null while none.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? FollowUpFlight { get; init; }
+
+    /// <summary>
+    /// Where each deferred point went (pilot #1226), one line per point as <c>reason|repo|issue|key</c>: another repo's issue (repo named, issue number), or an
+    /// owner-decision card (no repo, issue 0). So a point is acted on once and one issue serves a reason and repo.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string[]? DeferredFilings { get; init; }
+
     /// <summary>When it landed; null until then.</summary>
     public DateTimeOffset? LandedAt { get; init; }
 

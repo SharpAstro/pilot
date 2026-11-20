@@ -241,6 +241,11 @@ public sealed partial class LegCommander
         }
 
         var why = string.Join(' ', command.Args ?? []).Trim();
+        // A review-notes leg is what makes the notes: while they are unmade only the owner's word takes it out (pilot #1226).
+        if (leg.Name.StartsWith(ReviewNotesLeg, StringComparison.Ordinal) && flight.Holding is not null)
+        {
+            RefuseWithoutOwnersWord(flight, command, why, $"remove the {leg.Name} leg");
+        }
         state.RemoveLeg(flight.Code, leg.Name);
         // A hold that named the leg waits on it no more: it is the watchtower's again (or the node's, with none running).
         HoldForWatchtower(flight.Code, leg.Name);

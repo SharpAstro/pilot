@@ -262,6 +262,38 @@ internal sealed class FakeGitHub : IGitHub
         return new PullRequestSearch.Read(found, SearchCost, SearchRemaining, null, gone);
     }
 
+    /// <summary>Repo paths ending in one of these names are not cloned, as IsCloned says; every other repo is, with nothing on the disk.</summary>
+    public ConcurrentBag<string> UnclonedRepos { get; } = [];
+
+    public bool IsCloned(string repoPath) =>
+        !UnclonedRepos.Any(n => string.Equals(Path.GetFileName(Path.TrimEndingDirectorySeparator(repoPath)), n, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>The body of each issue created by number, as EditIssueBodyAsync leaves it.</summary>
+    public ConcurrentDictionary<int, string> IssueBodies { get; } = [];
+
+    /// <summary>The repo path each issue created was made in, by number.</summary>
+    public ConcurrentDictionary<int, string> IssueRepos { get; } = [];
+
+    public Task EditIssueBodyAsync(string repoPath, int number, string body, CancellationToken cancellationToken)
+    {
+        if (EditIssueBodyFails is { } why)
+        {
+            return Task.FromException(new FlightException(why));
+        }
+        IssueBodies[number] = body;
+        foreach (var list in MilestoneIssuesOf.Values)
+        {
+            if (list.TryGetValue(number, out var found))
+            {
+                list[number] = found with { Body = body };
+            }
+        }
+        return Task.CompletedTask;
+    }
+
+    /// <summary>When set, EditIssueBodyAsync fails with it.</summary>
+    public string? EditIssueBodyFails { get; set; }
+
     /// <summary>Every issue created, as (repo path, title, body).</summary>
     public ConcurrentQueue<(string Repo, string Title, string? Body)> IssuesCreated { get; } = [];
 
@@ -287,6 +319,8 @@ internal sealed class FakeGitHub : IGitHub
         }
         IssuesCreated.Enqueue((repoPath, title, body));
         var number = NewIssue(title);
+        IssueBodies[number] = body ?? "";
+        IssueRepos[number] = repoPath;
         return new IssueInfo { Number = number, Title = title };
     }
 
@@ -415,8 +449,25 @@ internal sealed class FakeGitHub : IGitHub
         return Task.FromResult(made);
     }
 
-    public Task<MilestoneIssue?> IssueNowAsync(string repoPath, int number, CancellationToken cancellationToken) =>
-        Task.FromResult(MilestoneIssuesOf.TryGetValue(RepoKey(repoPath), out var list) && list.TryGetValue(number, out var found) ? Labelled(found) : null);
+    /// <summary>How many times IssueNowAsync was called.</summary>
+    public int IssueNowCalls { get; set; }
+
+    public Task<MilestoneIssue?> IssueNowAsync(string repoPath, int number, CancellationToken cancellationToken)
+    {
+        IssueNowCalls++;
+        if (MilestoneIssuesOf.TryGetValue(RepoKey(repoPath), out var list) && list.TryGetValue(number, out var found))
+        {
+            return Task.FromResult<MilestoneIssue?>(Labelled(found));
+        }
+        // An issue the node itself filed (CreateIssueAsync) is on GitHub as well: read it back with the body EditIssueBodyAsync left.
+        if (IssueRepos.TryGetValue(number, out var madeIn) && RepoKey(madeIn) == RepoKey(repoPath) && Issues.TryGetValue(number, out var title))
+        {
+            var at = IdeaClock;
+            return Task.FromResult<MilestoneIssue?>(Labelled(new MilestoneIssue(number, title, IssueBodies.GetValueOrDefault(number, ""), true, null, at, at, "sebgod",
+                $"https://github.com/SharpAstro/{Path.GetFileName(RepoKey(repoPath))}/issues/{number}")));
+        }
+        return Task.FromResult<MilestoneIssue?>(null);
+    }
 
     /// <summary>The issue as GitHub reports it: with the labels it carries.</summary>
     private MilestoneIssue Labelled(MilestoneIssue issue)

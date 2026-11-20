@@ -186,10 +186,12 @@ public static partial class Briefs
         var first = ReviewPoints.Number(again.Rounds).FirstOrDefault()?.Id ?? "R1.1";
         text.AppendLine();
         text.AppendLine($"This is a re-review, and its one job is the list above. The report opens with `## {ReviewPoints.AnswerHeading}`: a table with one row for every");
-        text.AppendLine("point, none left out, columns `Point | Answer | Where or reason`, e.g. `| " + first + " | addressed | src/Foo.cs:42 |`. Each answer is one of:");
+        text.AppendLine("point, none left out, columns `Point | Answer | Where or reason`, e.g. `| " + first + " | addressed | src/Foo.cs:42 |`. Every point ends one of four ways (pilot #1226), each answer being one of:");
         text.AppendLine("- `addressed`: fixed, with where (`file:line`, or the commit). Check it by reading the code or running it; the fixer's word is not a check.");
-        text.AppendLine($"- `left`: left on purpose, with the reason (out of this {what}'s scope, needs a decision the {what} cannot make, safe as it is and why).");
-        text.AppendLine($"  Every left point goes into one follow-up issue for the {what}, which the node files from your table.");
+        text.AppendLine("- `not work: <why>`: the point asks for nothing to be done (a question, praise, a restatement, text that is fine as it is). It is settled and files nothing.");
+        text.AppendLine($"- `node's own`: the {what}'s PR body, title or label. The node sets those, not a fixer; it is settled and files nothing.");
+        text.AppendLine($"- `deferred: another repo`, `deferred: owner decision` or `deferred: larger than the {what}`: the only three reasons a point may wait. Every deferred point goes");
+        text.AppendLine($"  into one follow-up issue for the {what}, which the node files from your table. A bare `left` (and any other free-text answer) is no end and is refused.");
         text.AppendLine("- `not addressed`: no fix and no reason. This blocks the merge.");
         text.AppendLine("\"Still open\", \"unchanged\", \"for later\" and \"to do\" with no reason are refused: a point is settled or it blocks. A point you do not");
         text.AppendLine("mention is refused too, by name.");

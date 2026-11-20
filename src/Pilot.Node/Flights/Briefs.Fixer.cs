@@ -62,6 +62,9 @@ public static partial class Briefs
         text.AppendLine("Make each change asked for, in the tree as it stands: check a finding against the code before you act on it, and if");
         text.AppendLine("it does not hold say so in your comment rather than change anything for it. Add or adjust a test where the");
         text.AppendLine("finding was a behaviour.");
+        text.AppendLine("Every point of the review ends one of four ways, and your comment says which for each: made (with where); not work (with why: it asks for nothing);");
+        text.AppendLine("the node's own (a point about the PR body, title or a label, which the node sets, not you); or deferred, for one of three reasons only: another repo,");
+        text.AppendLine("the owner's decision, or larger than the PR. \"Left\" with free text is no end: the reviewer refuses it, and a deferred point is filed as a follow-up issue.");
         text.AppendLine(InvariantRule);
         text.Append(LfsRule(review.FixWorktree, "worktree"));
         text.AppendLine();

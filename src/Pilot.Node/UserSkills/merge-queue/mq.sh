@@ -6,8 +6,11 @@
 #   mq.sh watch  <pr> [owner/repo]   poll every 60 s until the PR is MERGED or CLOSED (exit 0), leaves the queue unmerged
 #                                    (exit 1), or five polls in a row fail (exit 3: state unknown)
 #   mq.sh enqueue <pr> [owner/repo]  put the PR in the queue (GraphQL enqueuePullRequest), then print its status.
-#                                    The USER's command (`! bash .../mq.sh enqueue N`): pilot's merge guard refuses it
-#                                    from a session, by design.
+#                                    GitHub refuses it until every required check has reported. pilot's merge guard
+#                                    refuses it from a session the node started; the person's own session may run it.
+#   mq.sh ready <pr> [owner/repo]    "Merge when ready": try enqueue every 120 s until GitHub takes it, then watch.
+#                                    exit 0 merged; 1 a check failed, the PR closed or it left the queue; 3 state
+#                                    unknown; 4 not queued after 2 hours. Ends itself: run it in the background.
 #
 # Why enqueue is here: `gh pr merge N` does NOT join a queue on every repo. gh 2.86 answered a green, CLEAN PR on
 # tianwen (#2038, 2026-11-07) with "Auto merge is not allowed for this repository (enablePullRequestAutoMerge)":
@@ -19,11 +22,11 @@
 # the timeline events added_to_merge_queue / removed_from_merge_queue say what happened to it.
 set -euo pipefail
 
-cmd=${1:?usage: mq.sh status|queue|watch|enqueue <pr> [owner/repo]}
+cmd=${1:?usage: mq.sh status|queue|watch|enqueue|ready <pr> [owner/repo]}
 repo_arg=""
 pr=""
 case "$cmd" in
-  status|watch|enqueue) pr=${2:?pr number}; repo_arg=${3:-} ;;
+  status|watch|enqueue|ready) pr=${2:?pr number}; repo_arg=${3:-} ;;
   queue) repo_arg=${2:-} ;;
   *) echo "unknown command: $cmd" >&2; exit 2 ;;
 esac
@@ -48,16 +51,40 @@ status() {
       else "OPEN not queued; mergeState \($p.mergeStateStatus) checks \($checks)" end'
 }
 
+enqueue() {
+  local id
+  id=$(gh api graphql -f query='
+    query($o:String!,$n:String!,$p:Int!){repository(owner:$o,name:$n){pullRequest(number:$p){id}}}'     -f o="$owner" -f n="$name" -F p="$1" --jq .data.repository.pullRequest.id)
+  gh api graphql -f query='
+    mutation($id:ID!){enqueuePullRequest(input:{pullRequestId:$id}){mergeQueueEntry{position}}}'     -f id="$id" --jq '"queued at position \(.data.enqueuePullRequest.mergeQueueEntry.position)"'
+}
+
 case "$cmd" in
   status) status "$pr" ;;
-  enqueue)
-    id=$(gh api graphql -f query='
-      query($o:String!,$n:String!,$p:Int!){repository(owner:$o,name:$n){pullRequest(number:$p){id}}}' \
-      -f o="$owner" -f n="$name" -F p="$pr" --jq .data.repository.pullRequest.id)
-    gh api graphql -f query='
-      mutation($id:ID!){enqueuePullRequest(input:{pullRequestId:$id}){mergeQueueEntry{position}}}' \
-      -f id="$id" --jq '"queued at position \(.data.enqueuePullRequest.mergeQueueEntry.position)"'
-    status "$pr" ;;
+  enqueue) enqueue "$pr"; status "$pr" ;;
+  ready)
+    # The web page's "Merge when ready" has no API where the repo has auto-merge off: enqueue is refused until every
+    # required check has reported, so it is tried until it is taken. A refusal is expected and is not printed each time.
+    end=$((SECONDS + 7200))
+    while :; do
+      line=$(status "$pr" 2>&1) || line="poll failed: $line"
+      case "$line" in
+        MERGED*) echo "$line"; exit 0 ;;
+        CLOSED*) echo "$line"; exit 1 ;;
+        QUEUED*|AUTO*) echo "$(date -u +%H:%M:%SZ) $line"; break ;;
+        *"checks FAILURE"*|*"checks ERROR"*) echo "not queued, a check failed: $line"; exit 1 ;;
+      esac
+      if said=$(enqueue "$pr" 2>&1); then
+        echo "$(date -u +%H:%M:%SZ) $said"
+        break
+      fi
+      if [ "$SECONDS" -ge "$end" ]; then
+        echo "not queued after 2 hours; GitHub's last answer: $said" >&2
+        exit 4
+      fi
+      sleep 120
+    done
+    exec bash "$0" watch "$pr" "$repo" ;;
   queue)
     gh api graphql -f query='
       query($o:String!,$n:String!){repository(owner:$o,name:$n){mergeQueue(branch:"main"){

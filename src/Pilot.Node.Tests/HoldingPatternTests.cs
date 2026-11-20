@@ -33,10 +33,22 @@ public sealed class HoldingPatternTests : ReviewTestsBase
     /// <summary>On autopilot the node plans a review-notes leg at a pass with notes; a test of the hold's own mechanics takes it out, as a watchtower that clears or fixes by itself would.</summary>
     private async Task WithoutTheFixerLeg(string code)
     {
+        // Pilot #1226: while a note has no end only the owner's word takes the leg out, so it is the person's.
         foreach (var leg in _state.Legs(code).Where(l => l.Name.StartsWith("review-notes")))
         {
-            (await Run(Verbs.RemoveLeg, Verbs.LegTarget(code, leg.Name), Tower, "the hold's own mechanics are under test")).Error.ShouldBeNull();
+            (await Run(Verbs.RemoveLeg, Verbs.LegTarget(code, leg.Name), "me", "the hold's own mechanics are under test")).Error.ShouldBeNull();
         }
+    }
+
+    /// <summary>Gives every unmade note of the last passed round an end (addressed, with its where), as a re-review's table or a done leg's report would.</summary>
+    private void NotesMade(string code)
+    {
+        var rounds = F(code).ReviewRounds.ShouldNotBeNull();
+        var ends = ReviewFollowUp.UnmadeNotes(rounds).Select(p => new ReviewPointAnswer(p.Id, "addressed", "fix.txt:1")).ToArray();
+        ends.ShouldNotBeEmpty();
+        var last = rounds.OrderBy(r => r.Round).Last();
+        _state.UpdateFlight(code, f => f with { ReviewRounds = [.. rounds.Where(r => r.Round != last.Round), last with { Answers = [.. last.Answers ?? [], .. ends] }] });
+        ReviewFollowUp.UnmadeNotes(F(code).ReviewRounds).ShouldBeEmpty();
     }
 
     private PrChecks Checks() => new(_state, _github, TimeProvider.System, _flights, _legs);
@@ -66,6 +78,7 @@ public sealed class HoldingPatternTests : ReviewTestsBase
         _github.Checks = ChoiceStatus.Passing;
         var flight = await Reviewed("2", Notes);
         await WithoutTheFixerLeg(flight.Code);
+        NotesMade(flight.Code);
         await Checks().LookAsync(Ct);
         _github.Merged.ShouldBeEmpty();
 
@@ -89,7 +102,7 @@ public sealed class HoldingPatternTests : ReviewTestsBase
         (await Run(Verbs.Clear, Verbs.FlightTarget(flight.Code), Reviewer(flight.Code))).Error.ShouldNotBeNull();
         F(flight.Code).Holding.ShouldNotBeNull();
 
-        (await Run(Verbs.Clear, Verbs.FlightTarget(flight.Code), "me")).Error.ShouldBeNull();
+        (await Run(Verbs.Clear, Verbs.FlightTarget(flight.Code), "me", "the owner's call")).Error.ShouldBeNull();
         (await Run(Verbs.Clear, Verbs.FlightTarget(flight.Code), Tower)).Error.ShouldNotBeNull().ShouldContain("nothing to clear");
     }
 
@@ -193,7 +206,7 @@ public sealed class HoldingPatternTests : ReviewTestsBase
         await checks.LookAsync(Ct);
         Open().ShouldContain(c => c.Kind == LegCommander.HoldingTimeoutKind);
 
-        (await Run(Verbs.Clear, Verbs.FlightTarget(flight.Code), "me")).Error.ShouldBeNull();
+        (await Run(Verbs.Clear, Verbs.FlightTarget(flight.Code), "me", "the owner's call")).Error.ShouldBeNull();
         await checks.LookAsync(Ct);
         Open().ShouldNotContain(c => c.Kind == LegCommander.HoldingTimeoutKind);
     }
@@ -233,17 +246,18 @@ public sealed class HoldingPatternTests : ReviewTestsBase
         text.ShouldContain($"PR #{pr}");
         text.ShouldContain(F(flight.Code).Review!.ReviewedHead![..8]);
         text.ShouldContain("rename `x` to `count`");
-        text.ShouldContain($"Take the hold with pilot flight hold {flight.Code} (or commit in the plane) before the grace ends, or the flight merges with these notes");
+        text.ShouldContain($"Take the hold with pilot flight hold {flight.Code} (or commit in the plane) before the grace ends, or the node plans the review-notes leg itself, or rings the owner");
         text.ShouldContain("pilot leg plan, then pilot leg start");
-        text.ShouldContain($"pilot flight clear {flight.Code} <why>");
+        text.ShouldContain($"pilot flight clear {flight.Code} <why> is refused for the watchtower while a note has no end");
         text.ShouldContain($"only for a one-line change in the plane ({flight.Worktree}), then pilot flight pr {flight.Code}");
     }
 
     [Fact]
     [Trait("Category", "Slow")]
-    public async Task ALaterRoundsNotesThatDoNotBlockAreAFollowUpIssueAndTheFlightMergesWithNoSecondLeg()
+    public async Task ALaterRoundsNotesThatDoNotBlockNeedAnEndAndAreNeitherFiledNorMergedAsTheyAre()
     {
-        // #918: PIL909's #910 went round three times for notes that held nothing. One round of notes holds a merge; the next is filed.
+        // #918: PIL909's #910 went round three times for notes that held nothing. Pilot #1226: they are not filed as they are either;
+        // each needs an end, so the flight holds for a second review-notes leg.
         AutopilotOn();
         var flight = await Reviewed("11", "Checked.\n\n## Not blocking\n- rename `x` to `count`");
         var first = _state.Legs(flight.Code).Single(l => l.Name == LegCommander.ReviewNotesLeg);
@@ -252,20 +266,15 @@ public sealed class HoldingPatternTests : ReviewTestsBase
 
         (await Run(Verbs.Review, Verbs.FlightTarget(flight.Code), Reviewer(flight.Code), "pass", EarlierAnswered + "Round 2.\n\n## Not blocking\n- a log line could name the job")).Error.ShouldBeNull();
 
-        _state.Legs(flight.Code).ShouldNotContain(l => l.Name == $"{LegCommander.ReviewNotesLeg}-2");
-        var issue = _github.IssuesCreated.ShouldHaveSingleItem();
-        issue.Title.ShouldStartWith($"Follow-up of {flight.Code}");
-        issue.Body.ShouldNotBeNull().ShouldContain("a log line could name the job");
-        F(flight.Code).Holding.ShouldBeNull("the flight merges with the notes filed");
+        _state.Legs(flight.Code).ShouldContain(l => l.Name == $"{LegCommander.ReviewNotesLeg}-2");
+        _github.IssuesCreated.ShouldBeEmpty();
+        F(flight.Code).Holding.ShouldNotBeNull("the flight holds for the notes' leg, it does not merge with them filed");
 
-        // Not filed twice (#918, pilot #1148): the merge finds the notes already captured and files no second issue.
-        // A duplicate would not make a second issue (the flight has one), it would comment "More points" and grow FollowUpPoints.
-        var pointsBefore = F(flight.Code).FollowUpPoints.ShouldNotBeNull().ToArray();
+        // The merge refuses the unmade note, and files nothing (a controller's merge is not the owner's word).
         _github.Checks = ChoiceStatus.Passing;
-        (await Run(Verbs.Merge, Verbs.FlightTarget(flight.Code), "controller", _github.Pr!.Head[..8])).Error.ShouldBeNull();
-        _github.IssuesCreated.ShouldHaveSingleItem();
-        _github.IssueComments.ShouldNotContain(c => c.Body.Contains("More points"));
-        F(flight.Code).FollowUpPoints.ShouldBe(pointsBefore);
+        (await Run(Verbs.Merge, Verbs.FlightTarget(flight.Code), "controller", _github.Pr!.Head[..8])).Error.ShouldNotBeNull();
+        _github.IssuesCreated.ShouldBeEmpty();
+        _github.Merged.ShouldBeEmpty();
     }
 
     [Fact]
@@ -308,7 +317,7 @@ public sealed class HoldingPatternTests : ReviewTestsBase
         _state.Legs(flight.Code).ShouldNotContain(l => l.Name.StartsWith("review-notes"));
         var card = Open().Single(c => c.Kind == LegCommander.ReviewNotesKind);
         card.Detail.ShouldNotBeNull().ShouldContain("Delegate");
-        card.Summary.ShouldNotBeNull().ShouldContain("delegates");
+        card.Summary.ShouldNotBeNull().ShouldContain("review-notes leg makes them");
     }
 
     [Fact]
@@ -328,7 +337,7 @@ public sealed class HoldingPatternTests : ReviewTestsBase
 
     [Fact]
     [Trait("Category", "Slow")]
-    public async Task AnUntakenHoldPastTheGraceIsReleasedEvenWhenTheSweepRestoredThePrReadyCardInTheSameLook()
+    public async Task AnUntakenHoldPastTheGraceRingsTheOwnerEvenWhenTheSweepRestoredThePrReadyCardInTheSameLook()
     {
         var flight = await NewFlight("9", "parser");
         await Fly(flight, "parser");
@@ -345,17 +354,40 @@ public sealed class HoldingPatternTests : ReviewTestsBase
 
         Open().ShouldContain(c => c.Kind == LegCommander.PrReady);
         Open().ShouldNotContain(c => c.Kind == LegCommander.HoldingTimeoutKind);
-        F(flight.Code).Holding.ShouldBeNull();
+        // Pilot #1226: the hold is not released into a merge with the note; autopilot is off, so the owner is rung.
+        F(flight.Code).Holding.ShouldNotBeNull();
+        Open().Single(c => c.Kind == LegCommander.NotesUnmadeKind).Bin.ShouldBe(CardBin.Ring);
     }
 
     [Fact]
     [Trait("Category", "Slow")]
-    public async Task AnUntakenHoldMergesAfterTheGraceWithNoRingAndTheNotesCardOpen()
+    public async Task AnUntakenHoldWithUnmadeNotesPlansTheLegAgainAfterTheGraceAndMergesNothing()
     {
         AutopilotOn();
         _github.Checks = ChoiceStatus.Passing;
         var flight = await Reviewed("10", Notes);
         await WithoutTheFixerLeg(flight.Code);
+        var clock = new ManualTime(F(flight.Code).Holding!.Since);
+        var checks = TimedChecks(clock, live: true);
+
+        clock.Advance(TimeSpan.FromMinutes(6));
+        await checks.LookAsync(Ct);
+
+        F(flight.Code).Holding.ShouldNotBeNull().By.ShouldBe(LegCommander.ReviewNotesLeg);
+        _state.Legs(flight.Code).Single(l => l.Name == LegCommander.ReviewNotesLeg).State.ShouldBeOneOf(LegState.Planned, LegState.Flying);
+        _github.Merged.ShouldBeEmpty();
+        _state.Cards(openOnly: false).ShouldNotContain(c => c.Kind == LegCommander.HoldingClearedKind);
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AnUntakenHoldMergesAfterTheGraceWithNoRingOnceEveryNoteHasAnEnd()
+    {
+        AutopilotOn();
+        _github.Checks = ChoiceStatus.Passing;
+        var flight = await Reviewed("10", Notes);
+        await WithoutTheFixerLeg(flight.Code);
+        NotesMade(flight.Code);
         var clock = new ManualTime(F(flight.Code).Holding!.Since);
         var checks = TimedChecks(clock, live: true);
 
@@ -374,19 +406,17 @@ public sealed class HoldingPatternTests : ReviewTestsBase
         var released = _state.Cards(openOnly: false).Single(c => c.Kind == LegCommander.HoldingClearedKind);
         released.Bin.ShouldBe(CardBin.Handled);
         released.Title.ShouldContain("did not take it within 5 minutes");
-        var notes = Open().Single(c => c.Kind == LegCommander.ReviewNotesKind);
-        notes.Bin.ShouldBe(CardBin.ForYou);
-        notes.Detail.ShouldNotBeNull().ShouldContain("rename `x` to `count`");
         Open().ShouldNotContain(c => c.Kind == LegCommander.HoldingTimeoutKind);
         _state.Cards(openOnly: false).ShouldNotContain(c => c.Kind == LegCommander.HoldingTimeoutKind);
     }
 
     [Fact]
     [Trait("Category", "Slow")]
-    public async Task AnUntakenHoldWithAutopilotOffLeavesTheOrdinaryPrReadyCardAndMergesNothing()
+    public async Task AnUntakenHoldWithAutopilotOffAndNotesMadeLeavesTheOrdinaryPrReadyCardAndMergesNothing()
     {
         _github.Checks = ChoiceStatus.Passing;
         var flight = await Reviewed("11", Notes);
+        NotesMade(flight.Code);
         Open().Single(c => c.Kind == LegCommander.PrReady).Title.ShouldContain("holding");
         var clock = new ManualTime(F(flight.Code).Holding!.Since);
         var checks = TimedChecks(clock, live: true);
@@ -416,6 +446,7 @@ public sealed class HoldingPatternTests : ReviewTestsBase
         _github.Checks = ChoiceStatus.Passing;
         var flight = await Reviewed("12", Notes);
         await WithoutTheFixerLeg(flight.Code);
+        NotesMade(flight.Code);
         var clock = new ManualTime(F(flight.Code).Holding!.Since);
         // Told, and given the take bound to start the watchtower; then the node releases the hold itself.
         clock.Advance(TimeSpan.FromMinutes(6));
@@ -439,6 +470,7 @@ public sealed class HoldingPatternTests : ReviewTestsBase
         RealGit(); // the test builds a merge in the plane with checkout, add, commit and merge: git work the model has no checkout for
         var flight = await Reviewed("26", Notes);
         await WithoutTheFixerLeg(flight.Code);
+        NotesMade(flight.Code);
         var reviewed = F(flight.Code).Review!.ReviewedHead!;
         // The node brings the base into the plane by a merge: a commit past the reviewed head, and the base's own commit beside it.
         Git(flight.Worktree, "checkout", "-q", "-b", "base-side", reviewed);
@@ -508,7 +540,8 @@ public sealed class HoldingPatternTests : ReviewTestsBase
         _github.Merged.ShouldBeEmpty();
         Open().ShouldContain(c => c.Kind == LegCommander.ReviewNotesKind);
         (await Run(Verbs.Merge, Verbs.FlightTarget(flight.Code), "controller", _github.Pr!.Head[..8])).Error.ShouldNotBeNull().ShouldContain("holding pattern");
-        // Cleared by the watchtower, it lands as for any passed review.
+        // Cleared by the watchtower once every note has an end, it lands as for any passed review.
+        NotesMade(flight.Code);
         (await Run(Verbs.Clear, Verbs.FlightTarget(flight.Code), Tower, "fixes made")).Error.ShouldBeNull();
         await checks.LookAsync(Ct);
         _github.Merged.ShouldHaveSingleItem();
@@ -525,7 +558,7 @@ public sealed class HoldingPatternTests : ReviewTestsBase
         (await Run(Verbs.Hold, Verbs.FlightTarget(flight.Code), Reviewer(flight.Code))).Error.ShouldNotBeNull();
         F(flight.Code).Holding.ShouldNotBeNull().TakenAt.ShouldBeNull();
 
-        (await Run(Verbs.Clear, Verbs.FlightTarget(flight.Code), "me")).Error.ShouldBeNull();
+        (await Run(Verbs.Clear, Verbs.FlightTarget(flight.Code), "me", "the owner's call")).Error.ShouldBeNull();
         (await Run(Verbs.Hold, Verbs.FlightTarget(flight.Code), Tower)).Error.ShouldNotBeNull().ShouldContain("not in a holding pattern");
     }
 
@@ -736,7 +769,7 @@ public sealed class HoldingPatternTests : ReviewTestsBase
         {
             (await Run(Verbs.Check, Verbs.LegTarget(flight.Code, LegCommander.ReviewNotesLeg), worker, $"{step}")).Ok.ShouldBeTrue();
         }
-        (await Run(Verbs.FinishLeg, Verbs.LegTarget(flight.Code, LegCommander.ReviewNotesLeg), worker, "done", "nothing to change")).Error.ShouldBeNull();
+        (await Run(Verbs.FinishLeg, Verbs.LegTarget(flight.Code, LegCommander.ReviewNotesLeg), worker, "done", EarlierAnswered + "nothing to change in the code, the note was already made")).Error.ShouldBeNull();
         F(flight.Code).Holding.ShouldNotBeNull().By.ShouldBe("node");
 
         // The watchtower's row reads ended; no person or watchtower command follows, only time passes on the fake clock.
@@ -753,8 +786,8 @@ public sealed class HoldingPatternTests : ReviewTestsBase
         await checks.LookAsync(Ct);
 
         F(flight.Code).Holding.ShouldBeNull();
-        // The merge files the unmade notes as the follow-up issue (pilot #1148) and the PR gets its link beside the notes comment.
-        _github.IssuesCreated.ShouldHaveSingleItem().Body.ShouldNotBeNull().ShouldContain("rename `x` to `count`");
+        // The leg's report ended the note (pilot #1226), so nothing is filed as a follow-up and the PR gets the notes comment.
+        _github.IssuesCreated.ShouldBeEmpty();
         var comment = _github.IssueComments.Where(c => c.Body.Contains("merges with them")).ShouldHaveSingleItem();
         comment.Number.ShouldBe(F(flight.Code).PullRequest!.Value);
         comment.Body.ShouldContain(F(flight.Code).Review!.ReviewedHead![..8]);
@@ -767,10 +800,33 @@ public sealed class HoldingPatternTests : ReviewTestsBase
 
     [Fact]
     [Trait("Category", "Slow")]
-    public async Task WithAutopilotOffAHoldWhoseWatchtowerEndedIsClearedWithOneCommentOfTheNotesAndThePrReadyCardStopsHolding()
+    public async Task WithAutopilotOffAHoldWhoseWatchtowerEndedRingsTheOwnerForUnmadeNotesAndKeepsHolding()
     {
         _github.Checks = ChoiceStatus.Passing;
         var flight = await Reviewed("31", "Checked.\n\n## Not blocking\n- rename `x` to `count`\n- a comment is stale");
+        var clock = new ManualTime(F(flight.Code).Holding!.Since);
+        var checks = ChecksWithEndedWatchtower(clock);
+
+        clock.Advance(TimeSpan.FromMinutes(6));
+        await checks.LookAsync(Ct);
+        await checks.LookAsync(Ct);
+
+        F(flight.Code).Holding.ShouldNotBeNull();
+        _github.IssueComments.ShouldBeEmpty();
+        _github.Merged.ShouldBeEmpty();
+        var ring = Open().Single(c => c.Kind == LegCommander.NotesUnmadeKind);
+        ring.Bin.ShouldBe(CardBin.Ring);
+        ring.Detail.ShouldNotBeNull().ShouldContain("rename `x` to `count`");
+        ring.Detail.ShouldContain("a comment is stale");
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task WithAutopilotOffAHoldWhoseWatchtowerEndedIsClearedWithOneCommentOfTheNotesOnceTheyAreMadeAndThePrReadyCardStopsHolding()
+    {
+        _github.Checks = ChoiceStatus.Passing;
+        var flight = await Reviewed("31", "Checked.\n\n## Not blocking\n- rename `x` to `count`\n- a comment is stale");
+        NotesMade(flight.Code);
         _state.Legs(flight.Code).ShouldNotContain(l => l.Name.StartsWith("review-notes"));
         F(flight.Code).Holding.ShouldNotBeNull().By.ShouldBe("node");
         Open().Single(c => c.Kind == LegCommander.PrReady).Title.ShouldContain("holding");
@@ -800,6 +856,7 @@ public sealed class HoldingPatternTests : ReviewTestsBase
     public async Task ARefusedNotesCommentIsAHandledCardAndTheHoldIsReleasedAllTheSame()
     {
         var flight = await Reviewed("32", Notes);
+        NotesMade(flight.Code);
         _github.CommentFails = "comments are locked";
         var clock = new ManualTime(F(flight.Code).Holding!.Since);
         var checks = ChecksWithEndedWatchtower(clock);

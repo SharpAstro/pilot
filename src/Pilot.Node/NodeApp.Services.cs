@@ -754,6 +754,11 @@ public static partial class NodeApp
             Bounds = () => services.GetRequiredService<RoleModels>().Stale,
         });
         builder.Services.AddHostedService(services => services.GetRequiredService<Digest>());
+        // The follow-up backlog's counts per repo, and the ring for an issue with no flight after a day (pilot #1226).
+        builder.Services.AddHostedService(services => new FollowUpSweep(services.GetRequiredService<NodeState>(), services.GetService<IGitHub>(), services.GetRequiredService<TimeProvider>())
+        {
+            Error = services.GetRequiredService<LogWriter>(),
+        });
         builder.Services.AddSingleton(services => new StaleWatch(services.GetRequiredService<NodeState>(), services.GetRequiredService<TimeProvider>())
         {
             Bounds = () => services.GetRequiredService<RoleModels>().Stale,

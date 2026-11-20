@@ -157,6 +157,9 @@ public static class StoreFixtureWriter
         state.PutRepos(Repos(flights: 3));
         state.PutPullRequests(PullRequests("Draft"));
 
+        // The follow-up backlog's counts (contract 9, pilot #1226): a delta only, as a release before it had no such row to set in the snapshot.
+        state.PutFollowUps(new FollowUpsRow { ReadAt = Start.AddHours(2), Repos = [new FollowUpRepoRow { Repo = "SharpAstro/pilot", Open = 2, NoFlight = [801] }] });
+
         // Ideas, issues, milestones and summaries: the rows of the sample, changed or moved.
         var idea = sample.Ideas[0];
         state.PutIdeas(idea.Repo, [idea with { Title = idea.Title + " (edited)" }, .. sample.Ideas.Skip(1).Where(i => i.Repo == idea.Repo)]);

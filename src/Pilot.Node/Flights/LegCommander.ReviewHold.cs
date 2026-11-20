@@ -18,7 +18,7 @@ public sealed partial class LegCommander
     private void ClearHolding(CommandRequest command)
     {
         var flight = FlightOf(command.Target);
-        if (!IsWatchtower(command.Who) && !IsPerson(flight, command.Who))
+        if (!IsWatchtower(command.Who) && !IsPerson(flight, command.Who) && command.PersonsWord is null)
         {
             throw new FlightException("only the watchtower or the person may clear a flight in a holding pattern");
         }
@@ -26,7 +26,35 @@ public sealed partial class LegCommander
         {
             throw new FlightException($"{flight.Code} is not in a holding pattern: nothing to clear");
         }
-        ReleaseHolding(flight, command.Who, string.Join(' ', command.Args ?? []).Trim());
+        var why = string.Join(' ', command.Args ?? []).Trim();
+        RefuseWithoutOwnersWord(flight, command, why, "clear it to land");
+        ReleaseHolding(flight, command.PersonsWord is not null ? "the person" : command.Who, why);
+    }
+
+    /// <summary>The not-blocking notes of the flight's last passed review that have no end yet (pilot #1226).</summary>
+    internal IReadOnlyList<ReviewPoints.Point> UnmadeNotesOf(FlightRow flight) =>
+        ReviewFollowUp.UnmadeNotes(flight.ReviewRounds, state.Legs(flight.Code).Where(l => l.Name.StartsWith(ReviewNotesLeg, StringComparison.Ordinal) && l.State == LegState.Done).Select(l => l.Report));
+
+    /// <summary>
+    /// While the flight's notes are unmade, only the owner's word clears the hold or takes the review-notes leg out (pilot #1226): the
+    /// person, or the watchtower carrying the person's word (<see cref="CommandRequest.PersonsWord"/>), with a reason. The watchtower's
+    /// own judgement that the notes are not worth a round is no end.
+    /// </summary>
+    private void RefuseWithoutOwnersWord(FlightRow flight, CommandRequest command, string why, string what)
+    {
+        if (command.Who == "node" || UnmadeNotesOf(flight) is not { Count: > 0 } unmade)
+        {
+            return;
+        }
+        // The owner's word, said positively: the person, or the person's word carried by another session. A worker, a reviewer or the watchtower on its own is none.
+        if (!IsPerson(flight, command.Who) && command.PersonsWord is null)
+        {
+            throw new FlightException($"{flight.Code}'s review notes are unmade ({string.Join(", ", unmade.Select(p => p.Id))}): {(IsWatchtower(command.Who) ? "the watchtower" : $"'{command.Who}'")} may not {what}; it needs the owner's word (the person's, with a reason), or each note made, not work, the node's own, or deferred with a reason");
+        }
+        if (why.Length == 0)
+        {
+            throw new FlightException($"{flight.Code}'s review notes are unmade ({string.Join(", ", unmade.Select(p => p.Id))}): say why with the owner's word to {what}");
+        }
     }
 
     /// <summary>The hold's reason while a review-notes leg flies on the flight.</summary>
@@ -172,14 +200,14 @@ public sealed partial class LegCommander
     }
 
     /// <summary>
-    /// A hold the watchtower did not take (<paramref name="why"/> says so) is released by the node: the flight merges at the reviewed
-    /// head as for any passed review (autopilot's merge, through the landing routine), or with autopilot off gets its ordinary
-    /// PR-ready card. The review-notes card stays open, saying the flight merges with them. A Handled line names why. False when the
-    /// hold is gone, taken, or another hold than the one looked at (<paramref name="since"/>).
+    /// A hold the watchtower did not take (<paramref name="why"/> says so) never merges the flight with its notes (pilot #1226): the
+    /// node plans the review-notes leg when none is planned or flying (the hold then waits on it), else raises a Ring card to the owner;
+    /// the hold stays. With no unmade note left (each has an end) the hold is released as before. False when the hold is gone, taken,
+    /// or another hold than the one looked at (<paramref name="since"/>), or when it stays.
     /// </summary>
     internal async Task<bool> ReleaseHoldNotTakenAsync(string code, DateTimeOffset since, string why, CancellationToken cancellationToken)
     {
-        var call = await EnterAsync(code, "having its untaken hold released", cancellationToken);
+        var call = await EnterAsync(code, "having its untaken hold looked at", cancellationToken);
         try
         {
             var subject = Verbs.FlightTarget(code);
@@ -187,19 +215,21 @@ public sealed partial class LegCommander
             {
                 return false;
             }
+            if (UnmadeNotesOf(flight) is { Count: > 0 } unmade)
+            {
+                // The flight is let go for the plan, as plan-leg refuses a flight with a call out (Dispose is safe twice).
+                call.Dispose();
+                await PlanOrRingForNotesAsync(flight, unmade, why, cancellationToken);
+                return false;
+            }
             Record(code, f => f with { Holding = null });
             state.RaiseCard(CardBin.Handled, HoldingClearedKind, subject, $"{code}'s hold was released: {why}",
-                $"{why}, so the node released the hold and the flight merges at the reviewed head with the review's notes, which stay on a card for you");
+                $"{why}, and every note has an end, so the node released the hold");
             // The PR-ready card says it is ready, not holding; the notes card says the flight merges with them.
             if (state.Cards(openOnly: true).FirstOrDefault(c => c.Kind == PrReady && c.Subject == subject) is { } ready && flight.PullRequest is { } number)
             {
                 state.UpdateCard(ready.Id, $"{code}'s PR #{number} is ready to merge", ready.Detail?.Replace(HeldDetailTail, ""), ready.Choices, ready.Link, PrReady,
                     $"{code} is reviewed and its PR #{number} is ready. Merge lands it; dismissing leaves the PR open.", MergeCardBin());
-            }
-            if (state.Cards(openOnly: true).FirstOrDefault(c => c.Kind == ReviewNotesKind && c.Subject == subject) is { } notes)
-            {
-                state.UpdateCard(notes.Id, notes.Title, $"{notes.Detail} The watchtower did not take the hold ({why}), so {code} merges with these notes: they are for a follow-up.",
-                    notes.Choices, notes.Link, ReviewNotesKind, CardSummaries.ReviewNotesLeft(code), notes.Bin);
             }
             return true;
         }
@@ -208,5 +238,36 @@ public sealed partial class LegCommander
             call.Dispose();
             _one.Release();
         }
+    }
+
+    /// <summary>The Ring card kind of a flight whose review notes have no end and no review-notes leg to make them.</summary>
+    public const string NotesUnmadeKind = "notes-unmade";
+
+    /// <summary>
+    /// Under the commander's lock: plans the review-notes leg for notes with no end when none is planned or flying and the node may
+    /// (autopilot); else raises one Ring card to the owner naming the notes. The hold stays either way.
+    /// </summary>
+    internal async Task PlanOrRingForNotesAsync(FlightRow flight, IReadOnlyList<ReviewPoints.Point> unmade, string why, CancellationToken cancellationToken)
+    {
+        var subject = Verbs.FlightTarget(flight.Code);
+        var onWay = state.Legs(flight.Code).Any(l => l.Name.StartsWith(ReviewNotesLeg, StringComparison.Ordinal) && l.State is LegState.Planned or LegState.Flying);
+        if (!onWay && await PlanReviewNotesLegAsync(flight, [.. unmade.Select(p => p.Text)], cancellationToken) is { } planned)
+        {
+            HoldForLeg(flight.Code, planned);
+            return;
+        }
+        if (state.Cards(openOnly: true).Any(c => c.Kind == NotesUnmadeKind && c.Subject == subject))
+        {
+            return;
+        }
+        var card = state.RaiseCard(CardBin.Ring, NotesUnmadeKind, subject, $"{flight.Code} has review notes nobody has made",
+            $"{why}. Notes without an end: {string.Join("; ", unmade.Select(p => $"{p.Id} {p.Text.ReplaceLineEndings(" ")}"))}. The flight does not merge with them: plan a review-notes leg, or give the owner's word with a reason (flight clear {flight.Code} <why>).",
+            link: flight.PullRequestUrl,
+            summary: $"{flight.Code} holds {unmade.Count} review {(unmade.Count == 1 ? "note" : "notes")} nobody is making, and a merge is refused until each is made, not work, the node's own or deferred with a reason. Your word with a reason clears it.");
+        state.UpdateChoices(card.Id,
+        [
+            new CardChoice { Label = "Clear the hold, notes unmade", Verb = Verbs.Clear, Target = subject, Args = ["the owner's word, given on the notes-unmade card"] },
+            new CardChoice { Label = "Keep waiting", Verb = Verbs.Dismiss, Target = Verbs.CardTarget(card.Id), Args = ["waiting for the review-notes leg"] },
+        ]);
     }
 }

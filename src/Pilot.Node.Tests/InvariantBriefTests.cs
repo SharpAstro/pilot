@@ -32,6 +32,15 @@ public sealed class InvariantBriefTests
     }
 
     [Fact]
+    public void TheWorkerOfAFollowUpIssueIsToldToReportEachPointAsKeyAddressedFileLine()
+    {
+        var leg = new LegRow { Flight = "PIL1", Name = "g", Order = 1, Goal = "g", DoneWhen = "d", State = LegState.Planned };
+
+        Briefs.For(Flight with { Title = "Follow-up of PIL0: points left" }, leg, [leg]).ShouldContain("| addressed | file:line |");
+        Briefs.For(Flight, leg, [leg]).ShouldNotContain("| addressed | file:line |");
+    }
+
+    [Fact]
     public void TheFixerIsToldANewRepoWideGuardCarriesTheInvariantTrait()
     {
         var review = new PrReviewRow { Repo = "SharpAstro/pilot", Number = 1, Head = "abcdef012345", Base = "main", FixWorktree = "/r/fix",
@@ -40,5 +49,24 @@ public sealed class InvariantBriefTests
         };
 
         Briefs.FixPr(review, "feature", null).ShouldContain("[Trait(\"Category\", \"Invariant\")]");
+    }
+
+    [Fact]
+    public void TheFixerIsToldTheFourEndsTheThreeDeferralReasonsAndThatABareLeftIsRefused()
+    {
+        var review = new PrReviewRow { Repo = "SharpAstro/pilot", Number = 1, Head = "abcdef012345", Base = "main", FixWorktree = "/r/fix",
+            Url = "https://github.com/SharpAstro/pilot/pull/1", ClonePath = "/r", Worktree = "/r/.claude/worktrees/review-pilot-1", Reviewer = "r",
+            State = PrReviewState.Closed, StartedAt = DateTimeOffset.UnixEpoch,
+        };
+
+        var brief = Briefs.FixPr(review, "feature", null);
+
+        brief.ShouldContain("not work");
+        brief.ShouldContain("the node's own");
+        brief.ShouldContain("another repo");
+        brief.ShouldContain("the owner's decision");
+        brief.ShouldContain("larger than the PR");
+        brief.ShouldContain("Left");
+        brief.ShouldContain("the reviewer refuses it");
     }
 }

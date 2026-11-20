@@ -46,7 +46,10 @@ public static class ReviewRing
                 case "addressed":
                     grouped.Addressed.Add($"{point.Id}: {text} (where: {Or(answer.Detail, "not said")})");
                     break;
-                case "left":
+                case "not work" or "node's own":
+                    grouped.Addressed.Add($"{point.Id}: {text} ({answer.Answer}: {Or(answer.Detail, "nothing to do")})");
+                    break;
+                case "left" or "deferred":
                     grouped.Left.Add($"{point.Id}: {text} (reason: {Or(answer.Detail, "not said")})");
                     break;
                 default:

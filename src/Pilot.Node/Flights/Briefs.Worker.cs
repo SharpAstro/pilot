@@ -55,6 +55,11 @@ public static partial class Briefs
         text.AppendLine();
         text.AppendLine("## Goal");
         text.AppendLine(leg.Goal);
+        if (flight.Title?.StartsWith(FollowUpSweep.TitlePrefix, StringComparison.Ordinal) == true)
+        {
+            text.AppendLine();
+            text.AppendLine(ReviewFollowUp.ReportLine);
+        }
         if (leg.Checklist.Length > 0)
         {
             text.AppendLine();

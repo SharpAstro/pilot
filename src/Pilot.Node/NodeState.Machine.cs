@@ -120,6 +120,28 @@ public sealed partial class NodeState
         }
     }
 
+    /// <summary>The follow-up issue counts as last read; null before any.</summary>
+    public FollowUpsRow? FollowUps()
+    {
+        lock (_gate)
+        {
+            return _followUps;
+        }
+    }
+
+    /// <summary>Puts the follow-up counts when they differ from the held ones (the read time aside), so a sweep that finds the same counts adds no delta.</summary>
+    public void PutFollowUps(FollowUpsRow row)
+    {
+        lock (_gate)
+        {
+            if (_followUps is { } held && held.Repos.SequenceEqual(row.Repos))
+            {
+                return;
+            }
+            Publish(new FollowUpsChangedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), FollowUps = row });
+        }
+    }
+
     /// <summary>Puts the admission when it differs from the one held, so a sweep that finds the same count adds no delta.</summary>
     public void PutAdmission(AdmissionRow row)
     {
