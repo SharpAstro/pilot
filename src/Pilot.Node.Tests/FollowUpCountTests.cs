@@ -258,14 +258,7 @@ public sealed class FollowUpCountTests : ReviewTestsBase
         _github.ClosedIssues.Select(c => c.Number).ShouldBe([plain]);
     }
 
-    private const string Namespaced = "### PIL12:R1.3: a
-- [ ] `PIL12:R1.3`
-- Found: x
-
-### PIL12:R1.4: b
-- [ ] `PIL12:R1.4`
-- Found: y
-";
+    private const string Namespaced = "### PIL12:R1.3: a\n- [ ] `PIL12:R1.3`\n- Found: x\n\n### PIL12:R1.4: b\n- [ ] `PIL12:R1.4`\n- Found: y\n";
 
     [Fact]
     public void ThePointsOfAFlightAreKeyedWithItsCodeAndTheBodyTellsHowToReport()
@@ -285,9 +278,7 @@ public sealed class FollowUpCountTests : ReviewTestsBase
         var flight = await NewFlight(issue.ToString(), "parser");
         await Fly(flight, "parser", report: "did nothing of the issue");
         (await Run(Verbs.OpenPr, Verbs.FlightTarget(flight.Code), "controller")).Error.ShouldBeNull();
-        (await Run(Verbs.Review, Verbs.FlightTarget(flight.Code), Reviewer(flight.Code), "changes", "## Blocking
-- the guard is missing in Parser.cs:20
-")).Error.ShouldBeNull();
+        (await Run(Verbs.Review, Verbs.FlightTarget(flight.Code), Reviewer(flight.Code), "changes", "## Blocking\n- the guard is missing in Parser.cs:20\n")).Error.ShouldBeNull();
         var round = F(flight.Code).ReviewRounds!.Last();
         _state.PutFlight(F(flight.Code) with { ReviewRounds = [.. F(flight.Code).ReviewRounds!.SkipLast(1), round with { Answers = [new ReviewPointAnswer("R1.3", "addressed", "Lexer.cs:3")] }] });
         (await Run(Verbs.Review, Verbs.FlightTarget(flight.Code), Reviewer(flight.Code), "pass", "fine")).Ok.ShouldBeTrue();
@@ -303,18 +294,12 @@ public sealed class FollowUpCountTests : ReviewTestsBase
     {
         var issue = FollowUp(TimeSpan.FromHours(2), body: Namespaced);
 
-        await Landed(issue, "did
-
-" + Answers + "| R1.3 | addressed | Lexer.cs:3 |
-");
+        await Landed(issue, "did\n\n" + Answers + "| R1.3 | addressed | Lexer.cs:3 |\n");
         _github.IssueBodies.ContainsKey(issue).ShouldBeFalse();
         _github.ClosedIssues.ShouldBeEmpty();
 
         var second = FollowUp(TimeSpan.FromHours(2), body: Namespaced);
-        await Landed(second, "did
-
-" + Answers + "| PIL12:R1.3 | addressed | Lexer.cs:3 |
-");
+        await Landed(second, "did\n\n" + Answers + "| PIL12:R1.3 | addressed | Lexer.cs:3 |\n");
         var body = _github.IssueBodies[second];
         body.ShouldContain("- [x] `PIL12:R1.3`");
         body.ShouldContain("- [ ] `PIL12:R1.4`");
@@ -324,31 +309,19 @@ public sealed class FollowUpCountTests : ReviewTestsBase
     [Fact]
     public async Task APointALaterRoundAddsLandsInTheIssueBodyWhereTheTickReadsItAndKeepsTheIssueOpen()
     {
-        var existing = FollowUp(TimeSpan.FromHours(2), body: "### PIL1:R1.3: a
-- [x] `PIL1:R1.3`
-- Found: x
-");
+        var existing = FollowUp(TimeSpan.FromHours(2), body: "### PIL1:R1.3: a\n- [x] `PIL1:R1.3`\n- Found: x\n");
         var flight = await NewFlight("40", "parser");
         await Fly(flight, "parser");
         _state.PutFlight(F(flight.Code) with { FollowUpIssue = existing, FollowUpPoints = ["R1.3"], FollowUpFlight = "PIL99" });
         (await Run(Verbs.OpenPr, Verbs.FlightTarget(flight.Code), "controller")).Error.ShouldBeNull();
-        (await Run(Verbs.Review, Verbs.FlightTarget(flight.Code), Reviewer(flight.Code), "changes", "## Blocking
-- the guard is missing in Parser.cs:20
-- the lexer wants a rewrite
-")).Error.ShouldBeNull();
-        File.WriteAllText(Path.Combine(F(flight.Code).Worktree, "fix.txt"), "more
-");
+        (await Run(Verbs.Review, Verbs.FlightTarget(flight.Code), Reviewer(flight.Code), "changes", "## Blocking\n- the guard is missing in Parser.cs:20\n- the lexer wants a rewrite\n")).Error.ShouldBeNull();
+        File.WriteAllText(Path.Combine(F(flight.Code).Worktree, "fix.txt"), "more\n");
         Git(F(flight.Code).Worktree, "add", ".");
         Git(F(flight.Code).Worktree, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "fix");
         (await Run(Verbs.StartReview, Verbs.FlightTarget(flight.Code), "controller")).Error.ShouldBeNull();
         await Started(_legs, flight.Code);
         (await Run(Verbs.Review, Verbs.FlightTarget(flight.Code), Reviewer(flight.Code), "pass",
-            "## Earlier points
-| Point | Answer | Where or why |
-|---|---|---|
-| R1.1 | addressed | fix.txt:1 |
-| R1.2 | deferred: larger than the flight | the lexer wants a rewrite |
-")).Error.ShouldBeNull();
+            "## Earlier points\n| Point | Answer | Where or why |\n|---|---|---|\n| R1.1 | addressed | fix.txt:1 |\n| R1.2 | deferred: larger than the flight | the lexer wants a rewrite |\n")).Error.ShouldBeNull();
 
         (await Run(Verbs.Merge, Verbs.FlightTarget(flight.Code), "controller", _github.Pr!.Head)).Error.ShouldBeNull();
 
