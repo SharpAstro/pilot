@@ -395,12 +395,12 @@ internal sealed class TextSelection<TSurface>(Renderer<TSurface> renderer)
                     }
                     _pending = false;
                     // The spot is found now, in this frame: the row's click redrew the page since the press.
-                    if (RegionAt(_pendingAt.X, _pendingAt.Y) is not (var at and >= 0))
+                    if (RegionAt(_pendingAt.X, _pendingAt.Y) is not (var armedAt and >= 0))
                     {
                         return false;
                     }
-                    _anchor = _caret = new Spot(at, CharAt(_frame[at], _pendingAt.X));
-                    _anchorText = _caretText = _frame[at].Text;
+                    _anchor = _caret = new Spot(armedAt, CharAt(_frame[armedAt], _pendingAt.X));
+                    _anchorText = _caretText = _frame[armedAt].Text;
                     _dragging = true;
                 }
                 if (!_dragging)
