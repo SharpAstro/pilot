@@ -37,7 +37,7 @@ public sealed class UsageApiTests : IDisposable
         WriteCredentials(Now.AddHours(1));
         _handler.Reply(System.Net.HttpStatusCode.OK, Answer);
 
-        var row = (await Api().ReadAsync(default)).ShouldNotBeNull();
+        var row = (await Api().ReadAsync(TestContext.Current.CancellationToken)).ShouldNotBeNull();
 
         row.FiveHour.ShouldBe(new UsageWindow { UsedPercent = 15, ResetsAt = new DateTimeOffset(2026, 11, 20, 15, 10, 0, TimeSpan.Zero) });
         row.SevenDay.ShouldBe(new UsageWindow { UsedPercent = 44.5, ResetsAt = new DateTimeOffset(2026, 11, 24, 10, 0, 0, TimeSpan.Zero) });
@@ -54,15 +54,15 @@ public sealed class UsageApiTests : IDisposable
     {
         WriteCredentials(Now.AddSeconds(-1));
 
-        (await Api().ReadAsync(default)).ShouldBeNull();
+        (await Api().ReadAsync(TestContext.Current.CancellationToken)).ShouldBeNull();
 
         _handler.Requests.ShouldBeEmpty();
         // Nothing was paced either: a fresh login is read at once.
         var api = Api();
-        (await api.ReadAsync(default)).ShouldBeNull();
+        (await api.ReadAsync(TestContext.Current.CancellationToken)).ShouldBeNull();
         WriteCredentials(Now.AddHours(1));
         _handler.Reply(System.Net.HttpStatusCode.OK, Answer);
-        (await api.ReadAsync(default)).ShouldNotBeNull();
+        (await api.ReadAsync(TestContext.Current.CancellationToken)).ShouldNotBeNull();
     }
 
     [Fact]
@@ -70,13 +70,13 @@ public sealed class UsageApiTests : IDisposable
     {
         var api = Api();
 
-        (await api.ReadAsync(default)).ShouldBeNull();
+        (await api.ReadAsync(TestContext.Current.CancellationToken)).ShouldBeNull();
 
         _handler.Requests.ShouldBeEmpty();
         _log.Lines.ShouldBeEmpty();
         WriteCredentials(Now.AddHours(1));
         _handler.Reply(System.Net.HttpStatusCode.OK, Answer);
-        (await api.ReadAsync(default)).ShouldNotBeNull();
+        (await api.ReadAsync(TestContext.Current.CancellationToken)).ShouldNotBeNull();
     }
 
     [Fact]
@@ -86,13 +86,13 @@ public sealed class UsageApiTests : IDisposable
         _handler.Reply(System.Net.HttpStatusCode.OK, Answer);
         var api = Api();
 
-        (await api.ReadAsync(default)).ShouldNotBeNull();
+        (await api.ReadAsync(TestContext.Current.CancellationToken)).ShouldNotBeNull();
         _time.Advance(TimeSpan.FromSeconds(119));
-        (await api.ReadAsync(default)).ShouldBeNull();
+        (await api.ReadAsync(TestContext.Current.CancellationToken)).ShouldBeNull();
         _handler.Requests.Count.ShouldBe(1);
 
         _time.Advance(TimeSpan.FromSeconds(1));
-        (await api.ReadAsync(default)).ShouldNotBeNull();
+        (await api.ReadAsync(TestContext.Current.CancellationToken)).ShouldNotBeNull();
         _handler.Requests.Count.ShouldBe(2);
     }
 
@@ -103,14 +103,14 @@ public sealed class UsageApiTests : IDisposable
         _handler.Reply(System.Net.HttpStatusCode.TooManyRequests, "rate limited for " + Token);
         var api = Api();
 
-        (await api.ReadAsync(default)).ShouldBeNull();
+        (await api.ReadAsync(TestContext.Current.CancellationToken)).ShouldBeNull();
         _time.Advance(TimeSpan.FromMinutes(9));
-        (await api.ReadAsync(default)).ShouldBeNull();
+        (await api.ReadAsync(TestContext.Current.CancellationToken)).ShouldBeNull();
         _handler.Requests.Count.ShouldBe(1);
 
         _handler.Reply(System.Net.HttpStatusCode.OK, Answer);
         _time.Advance(TimeSpan.FromMinutes(1));
-        (await api.ReadAsync(default)).ShouldNotBeNull();
+        (await api.ReadAsync(TestContext.Current.CancellationToken)).ShouldNotBeNull();
         _handler.Requests.Count.ShouldBe(2);
         _log.Lines.ShouldHaveSingleItem().ShouldContain("429");
     }
@@ -121,13 +121,13 @@ public sealed class UsageApiTests : IDisposable
         WriteCredentials(Now.AddHours(1));
         var api = Api();
         _handler.Reply(System.Net.HttpStatusCode.Unauthorized, "bad " + Token);
-        await api.ReadAsync(default);
+        await api.ReadAsync(TestContext.Current.CancellationToken);
         _time.Advance(TimeSpan.FromMinutes(10));
         _handler.Throw(new HttpRequestException("connect failed with " + Token));
-        await api.ReadAsync(default);
+        await api.ReadAsync(TestContext.Current.CancellationToken);
         _time.Advance(TimeSpan.FromMinutes(10));
         _handler.Reply(System.Net.HttpStatusCode.OK, "not json " + Token);
-        await api.ReadAsync(default);
+        await api.ReadAsync(TestContext.Current.CancellationToken);
 
         _log.Lines.Count.ShouldBe(3);
         _log.Lines.ShouldAllBe(l => !l.Contains(Token) && !l.Contains("SECRET"));
@@ -139,11 +139,11 @@ public sealed class UsageApiTests : IDisposable
         WriteCredentials(Now.AddHours(1));
         _handler.Reply(System.Net.HttpStatusCode.OK, Answer);
         var api = Api();
-        await api.ReadAsync(default);
+        await api.ReadAsync(TestContext.Current.CancellationToken);
 
         File.WriteAllText(Credentials, $$$"""{"claudeAiOauth":{"accessToken":"second-token","expiresAt":{{{Now.AddHours(1).ToUnixTimeMilliseconds()}}}}}""");
         _time.Advance(UsageApi.Every);
-        await api.ReadAsync(default);
+        await api.ReadAsync(TestContext.Current.CancellationToken);
 
         _handler.Requests[1].Authorization.ShouldBe("Bearer second-token");
         typeof(UsageApi).GetFields(System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public)
@@ -161,7 +161,7 @@ public sealed class UsageApiTests : IDisposable
         var api = Api();
         var reader = new UsageReader(state, file, _time) { Api = api };
 
-        reader.Read(await api.ReadAsync(default));
+        reader.Read(await api.ReadAsync(TestContext.Current.CancellationToken));
 
         var usage = state.Usage().ShouldNotBeNull();
         usage.FiveHour!.UsedPercent.ShouldBe(33);
