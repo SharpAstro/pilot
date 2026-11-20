@@ -35,6 +35,7 @@ public static partial class ReviewPoints
         /// <summary>The node's own: the node does it (the PR body, title or a label), not the fixer. Files nothing.</summary>
         NodesOwn,
         /// <summary>Deferred, with one of three <see cref="DeferReason"/>s. Goes into the follow-up issue.</summary>
+        Deferred,
         /// <summary>No fix and no reason; blocks.</summary>
         NotAddressed,
     }
