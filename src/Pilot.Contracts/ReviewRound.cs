@@ -43,4 +43,11 @@ public sealed record ReviewRound
 }
 
 /// <summary>One row of a re-review's table: the point's id, its answer (addressed, left, not addressed) and the where or the reason.</summary>
-public sealed record ReviewPointAnswer(string Id, string Answer, string Detail);
+public sealed record ReviewPointAnswer(string Id, string Answer, string Detail)
+{
+    /// <summary>
+    /// For a deferred point (pilot #1226), why: <c>another repo</c>, <c>owner decision</c> or <c>larger than the flight</c>. Null for every other end, and for
+    /// a round stored before the ends existed, whose <c>left</c> answer reads as deferred with no reason.
+    /// </summary>
+    public string? Reason { get; init; }
+}

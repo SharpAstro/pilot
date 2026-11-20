@@ -135,7 +135,7 @@ public abstract class ReviewTestsBase : IDisposable
     }
 
     /// <summary>A leg flown as a worker flies it: started by the node, a commit in the plane, its step ticked, finished by the worker.</summary>
-    private protected async Task Fly(FlightRow flight, string leg, int lines = 1)
+    private protected async Task Fly(FlightRow flight, string leg, int lines = 1, string report = "did it")
     {
         var start = await Run(Verbs.StartLeg, Verbs.LegTarget(flight.Code, leg), "controller");
         start.Error.ShouldBeNull();
@@ -146,7 +146,7 @@ public abstract class ReviewTestsBase : IDisposable
         Git(flight.Worktree, "add", ".");
         Git(flight.Worktree, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", $"{leg} work");
         (await Run(Verbs.Check, Verbs.LegTarget(flight.Code, leg), worker, "1")).Ok.ShouldBeTrue();
-        (await Run(Verbs.FinishLeg, Verbs.LegTarget(flight.Code, leg), worker, "done", "did it")).Error.ShouldBeNull();
+        (await Run(Verbs.FinishLeg, Verbs.LegTarget(flight.Code, leg), worker, "done", report)).Error.ShouldBeNull();
     }
 
     /// <summary>The table a re-review opens with, answering every earlier point addressed (pilot #1107); empty before any round.</summary>

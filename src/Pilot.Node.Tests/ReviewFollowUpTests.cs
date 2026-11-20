@@ -16,7 +16,7 @@ public sealed class ReviewFollowUpTests : ReviewTestsBase
 
     private async Task<string> SecondRound(string firstReport)
     {
-        var flight = await NewFlight("1", "parser");
+        var flight = await NewFlight("40", "parser");
         await Fly(flight, "parser");
         (await Run(Verbs.OpenPr, Verbs.FlightTarget(flight.Code), "controller")).Error.ShouldBeNull();
         (await Run(Verbs.Review, Verbs.FlightTarget(flight.Code), Reviewer(flight.Code), "changes", firstReport)).Error.ShouldBeNull();
@@ -34,7 +34,7 @@ public sealed class ReviewFollowUpTests : ReviewTestsBase
     private const string Answers =
         "## Earlier points\n| Point | Answer | Where or why |\n|---|---|---|\n"
         + "| R1.1 | addressed | fix.txt:1 |\n| R1.2 | addressed | fix.txt:1 |\n| R1.3 | addressed | fix.txt:1 |\n"
-        + "| R1.4 | left | a rename of Parser.cs touches every caller, out of this flight's scope |\n";
+        + "| R1.4 | deferred: larger than the flight | a rename of Parser.cs touches every caller, out of this flight's scope |\n";
 
     [Fact]
     public async Task APointLeftWithAReasonIsFiledAsOneIssueTheMergeLinksAndTheMergeGoesAhead()
@@ -65,23 +65,51 @@ public sealed class ReviewFollowUpTests : ReviewTestsBase
         (await Run(Verbs.Review, Verbs.FlightTarget(code), Reviewer(code), "pass",
             Answers + "\n## Not blocking\n- E could be tidier in Lexer.cs:8\n- F deserves a comment in Parser.cs:40\n")).Error.ShouldBeNull();
         // A pass with notes holds the flight; a person clears the hold untaken, so the notes were never made.
-        (await Run(Verbs.Clear, Verbs.FlightTarget(code), "me")).Error.ShouldBeNull();
-        (await Merge(code)).Error.ShouldBeNull();
+        // Only the person's word clears it with the notes unmade (pilot #1226): a reason, then the as-is merge.
+        (await Run(Verbs.Clear, Verbs.FlightTarget(code), "me", "to merge the notes as follow-ups")).Error.ShouldBeNull();
+        Task<CommandResult> AsIs() => Run(Verbs.Merge, Verbs.FlightTarget(code), "me", _github.Pr!.Head, "squash", LegCommander.MergeAsIs);
+        (await AsIs()).Error.ShouldBeNull();
 
         var issue = _github.IssuesCreated.ShouldHaveSingleItem();
-        // The PR-ready card filed the left point first; the merge adds the unmade notes to that same issue as a comment.
+        // The PR-ready card filed the left point first; the merge adds the unmade notes to that same issue's body, where the tick reads them.
         issue.Body.ShouldNotBeNull().ShouldContain("R1.4");
-        var body = string.Join("\n", _github.IssueComments.Where(c => c.Number == F(code).FollowUpIssue).Select(c => c.Body));
+        var body = _github.IssueBodies[F(code).FollowUpIssue!.Value];
+        body.ShouldContain("R1.4");
         body.ShouldContain("E could be tidier");
         body.ShouldContain("F deserves a comment");
         body.ShouldContain("merged without being made");
+        _github.IssueComments.ShouldNotContain(c => c.Number == F(code).FollowUpIssue);
         F(code).FollowUpPoints.ShouldNotBeNull().Length.ShouldBe(3);
 
         // A second ask (the flight has landed) files nothing more.
         var commentsBefore = _github.IssueComments.Count;
-        (await Merge(code)).Error.ShouldNotBeNull().ShouldContain("landed");
+        (await AsIs()).Error.ShouldNotBeNull().ShouldContain("landed");
         _github.IssuesCreated.ShouldHaveSingleItem();
         _github.IssueComments.Count.ShouldBe(commentsBefore);
+    }
+
+    [Fact]
+    public void TheReportExampleTheWorkerIsToldTicksTheLineItNames()
+    {
+        // What the worker is told (the issue's line and the brief are the same text), taken as the worker writes it: the heading, then each example row
+        // with its placeholder filled in. Both rows must parse and the addressed one tick its line; a format the parser skips would tick nothing.
+        var rows = System.Text.RegularExpressions.Regex.Matches(ReviewFollowUp.ReportLine, @"`(\|[^`]+\|)`").Select(m => m.Groups[1].Value).ToList();
+        rows.Count.ShouldBe(2);
+        var report = "## Earlier points\n" + string.Join("\n", rows).Replace("file:line", "A.cs:3").Replace("| why |", "| a title is not code |") + "\n";
+
+        var replies = ReviewPoints.ParseAnswers(report);
+
+        replies.Count.ShouldBe(1, "both rows name the same key, so the later one stands");
+        var addressed = ReviewPoints.ParseAnswers("## Earlier points\n" + rows[0].Replace("file:line", "A.cs:3") + "\n").ShouldHaveSingleItem();
+        addressed.Answer.ShouldBe(ReviewPoints.Answer.Addressed);
+        ReviewPoints.HasWhere(addressed.Detail).ShouldBeTrue();
+        ReviewPoints.ParseAnswers("## Earlier points\n" + rows[1].Replace("| why |", "| a title is not code |") + "\n").ShouldHaveSingleItem().Answer.ShouldBe(ReviewPoints.Answer.NotWork);
+
+        var issue = ReviewFollowUp.Points([new ReviewFollowUp.Item("R1.2", "found in A.cs:3", "larger than the flight", "settle")], "PIL12");
+        var (ticked, count, left, _) = ReviewFollowUp.Tick(issue, [addressed.Id]);
+        count.ShouldBe(1);
+        left.ShouldBe(0);
+        ticked.ShouldContain("- [x] `PIL12:R1.2`");
     }
 
     [Fact]
@@ -299,5 +327,99 @@ public sealed class ReviewFollowUpTests : ReviewTestsBase
         var standing = TwoLeft("Parser.cs: the guard is missing", "wider", "Other thing", "later");
 
         standing.Items[0].Settle.ShouldContain("the guard is missing");
+    }
+
+    private static ReviewFollowUp.Standing WithAnswers(params ReviewPointAnswer[] answers) => ReviewFollowUp.Read(
+    [
+        new ReviewRound { Round = 1, Verdict = ReviewState.Changes, Findings = "## Blocking\n- A in Parser.cs:1\n- B in Parser.cs:2\n- C in Parser.cs:3\n- D in Parser.cs:4\n- E in Parser.cs:5\n" },
+        new ReviewRound { Round = 2, Verdict = ReviewState.Passed, Findings = "", Answers = answers },
+    ]);
+
+    [Fact]
+    public void NotWorkAndNodesOwnPointsFileNothingAndAMadeOneNeitherButADeferredOneIsAnItemWithItsReason()
+    {
+        var standing = WithAnswers(
+            new("R1.1", "addressed", "Parser.cs:9"),
+            new("R1.2", "not work", "praise"),
+            new("R1.3", "node's own", ""),
+            new("R1.4", "deferred", "needs the other package") { Reason = "another repo" },
+            new("R1.5", "deferred", "") { Reason = "larger than the flight" });
+
+        standing.NotAddressed.ShouldBeEmpty();
+        standing.Items.Select(i => i.Key).ShouldBe(["R1.4", "R1.5"]);
+        standing.Items.Select(i => i.Kind).ShouldBe([ReviewPoints.DeferReason.OtherRepo, ReviewPoints.DeferReason.LargerThanFlight]);
+        standing.Items[0].Why.ShouldContain("another repo");
+        standing.Items[0].Why.ShouldContain("needs the other package");
+    }
+
+    [Fact]
+    public void AnOldStoredLeftAnswerReadsAsDeferredWithNoReason()
+    {
+        var standing = WithAnswers(new ReviewPointAnswer("R1.1", "left","out of scope, Parser.cs is wider"));
+
+        var item = standing.Items.ShouldHaveSingleItem();
+        item.Key.ShouldBe("R1.1");
+        item.Kind.ShouldBeNull();
+        item.Why.ShouldBe("out of scope, Parser.cs is wider");
+    }
+
+    [Theory]
+    [InlineData("deferred, another repo: read/write widths in px/em", "src/Pilot.Node of DIR.Lib", "DIR.Lib")]
+    [InlineData("deferred, another repo: the fix belongs in src/Pilot.Node", "", null)]
+    [InlineData("deferred, another repo: and/or the sibling", "", null)]
+    [InlineData("deferred, another repo: widths in px/em", "", null)]
+    public void TargetRepoNeverTakesAPathOrAPhraseWithASlashForARepo(string why, string found, string? expected)
+    {
+        var item = new ReviewFollowUp.Item("R1.4", found.Length > 0 ? found : "read/write widths in px/em and/or src/Pilot.Node", why, "") { Kind = ReviewPoints.DeferReason.OtherRepo };
+
+        ReviewFollowUp.TargetRepo(item, n => n == "DIR.Lib").ShouldBe(expected);
+    }
+
+    [Fact]
+    public void TargetRepoPrefersTheSiblingTheAnswerNamesToOneTheFindingMentions()
+    {
+        var item = new ReviewFollowUp.Item("R1.4", "Parser.cs in SharpAstro/Other is wrong", "deferred, another repo: DIR.Lib", "") { Kind = ReviewPoints.DeferReason.OtherRepo };
+
+        ReviewFollowUp.TargetRepo(item, n => n is "DIR.Lib" or "Other").ShouldBe("DIR.Lib");
+    }
+
+    [Fact]
+    public void AnAnswerStoredBeforeTheReasonExistedStillLoads()
+    {
+        var old = System.Text.Json.JsonSerializer.Deserialize<ReviewPointAnswer>("""{"Id":"R1.1","Answer":"left","Detail":"why"}""");
+
+        old.ShouldNotBeNull().Reason.ShouldBeNull();
+    }
+
+    [Theory]
+    [InlineData("All notes are made in the review-notes round", true)]
+    [InlineData("This is already answered by the issue", true)]
+    [InlineData("The text no longer exists after the rewrite", false)]
+    [InlineData("The commit title is removed by the squash", true)]
+    [InlineData("The guard in Parser.cs:3 is missing", false)]
+    [InlineData("validation is already done in the caller but the lexer still accepts a bare quote", false)]
+    [InlineData("the rename is already made in Parser.cs but not in Lexer.cs", false)]
+    [InlineData("the old call is no longer in the hot path, yet the cache still holds it", false)]
+    [InlineData("", false)]
+    public void TextThatSaysItIsSettledIsRecognised(string text, bool settled)
+    {
+        ReviewFollowUp.IsSettledText(text).ShouldBe(settled);
+    }
+
+    [Fact]
+    public void ASettledLeftPointOrNoteIsNeverFiled()
+    {
+        var rounds = new[]
+        {
+            new ReviewRound
+            {
+                Round = 1, Verdict = ReviewState.Passed, Findings = "## Not blocking\n- all notes are made in Parser.cs\n- the guard in Lexer.cs:3 is missing\n",
+                LeftPoints = ["already answered by the issue", "a gap in Parser.cs:9"],
+            },
+        };
+
+        ReviewFollowUp.Read(rounds).Items.Select(i => i.Found).ShouldBe(["a gap in Parser.cs:9"]);
+        ReviewFollowUp.LastRoundNotes(rounds).Select(i => i.Found).ShouldBe(["the guard in Lexer.cs:3 is missing"]);
+        ReviewFollowUp.NotesItems(1, ["the title is removed by the squash", "Parser.cs:1 is wrong"]).Select(i => i.Found).ShouldBe(["Parser.cs:1 is wrong"]);
     }
 }

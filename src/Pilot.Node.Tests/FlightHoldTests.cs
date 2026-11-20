@@ -170,10 +170,11 @@ public sealed class FlightHoldTests : ReviewTestsBase
 
     [Fact]
     [Trait("Category", "Slow")]
-    public async Task TheReviewHoldSweepWritesNothingOnAHeldFlightsPrAndReleasesItsReviewHoldOnceUnheld()
+    public async Task TheReviewHoldSweepWritesNothingOnAHeldFlightsPrAndKeepsItsReviewHoldOnceUnheldWhileTheNoteIsUnmade()
     {
         _github.Checks = ChoiceStatus.Passing;
-        // Autopilot off: no review-notes leg is planned, the review hold is the node's, and with no watchtower the sweep would release it.
+        // Autopilot off: no review-notes leg is planned, the review hold is the node's, and with no watchtower the sweep looks at it
+        // (before pilot #1226 it released the hold and merged with the notes; now an unmade note keeps it and rings the owner).
         var flight = await Reviewed("10", "Checked.\n\n## Not blocking\n- rename `x` to `count`");
         var since = F(flight.Code).Holding.ShouldNotBeNull().Since;
         (await Hold(flight)).Error.ShouldBeNull();
@@ -188,7 +189,6 @@ public sealed class FlightHoldTests : ReviewTestsBase
         (await _legs.ReleaseUntakenHoldAsync(flight.Code, Ct)).ShouldBeFalse();
 
         // Hold and unhold comment on the flight's issue (pilot: ...); the review hold's release writes "Review of ..." on the PR.
-        var pr = F(flight.Code).PullRequest!.Value;
         bool ReviewNotes((int Number, string Body) c) => c.Body.StartsWith("Review of ", StringComparison.Ordinal);
         _github.IssueComments.Where(ReviewNotes).ShouldBeEmpty();
         F(flight.Code).Holding.ShouldNotBeNull().Since.ShouldBe(since);
@@ -197,10 +197,12 @@ public sealed class FlightHoldTests : ReviewTestsBase
         (await Run(Verbs.Unground, Verbs.FlightTarget(flight.Code), "me")).Error.ShouldBeNull();
         await checks.LookAsync(Ct);
 
-        F(flight.Code).Holding.ShouldBeNull();
-        var notes = _github.IssueComments.Where(ReviewNotes).ShouldHaveSingleItem();
-        notes.Number.ShouldBe(pr);
-        notes.Body.ShouldContain("rename `x` to `count`");
+        // pilot #1226: a hold nobody takes never merges the flight with notes that have no end. The review hold stays (unholding the
+        // flight does not end the note), the node (autopilot off here, so no review-notes leg) raises one Ring card to the owner naming
+        // the note, and nothing is written on the PR.
+        F(flight.Code).Holding.ShouldNotBeNull();
+        _github.IssueComments.Where(ReviewNotes).ShouldBeEmpty();
+        Open().ShouldContain(c => c.Kind == LegCommander.NotesUnmadeKind);
     }
 
     [Fact]

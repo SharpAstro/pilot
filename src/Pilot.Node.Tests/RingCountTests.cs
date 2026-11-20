@@ -23,7 +23,7 @@ public sealed class RingCountTests : PrFixTestsBase
         await _reviews.SweepAsync(Ct);
         Row.Head.ShouldBe(head);
         // R1.1 fixed, R2.1 left on purpose, R3.1 not addressed; the fourth round's own finding is the point still asked.
-        var answers = Table + "| R1.1 | addressed | README.md:1 |\n| R2.1 | left | the owner decides the wording |\n| R3.1 | not addressed | |\n\n";
+        var answers = Table + "| R1.1 | addressed | README.md:1 |\n| R2.1 | deferred: owner decision | the owner decides the wording |\n| R3.1 | not addressed | |\n\n";
         (await Run(Verbs.PrVerdict, "acme/widget#7", Row.Reviewer, "changes", answers + "Round report.", "README.md:1 fourth problem")).Error.ShouldBeNull();
         return _state.Cards(openOnly: true).Where(c => c.Kind == PrReviews.FixCappedKind).ShouldHaveSingleItem();
     }

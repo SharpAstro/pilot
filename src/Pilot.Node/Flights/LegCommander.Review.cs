@@ -319,16 +319,16 @@ public sealed partial class LegCommander
         string[]? left = null;
         if (earlier.Count > 0)
         {
-            if (ReviewPoints.Refusal(earlier, report) is { } unsettled)
+            if (ReviewPoints.Refusal(earlier, report, ReviewFollowUp.SiblingsOf(flight.RepoPath)) is { } unsettled)
             {
                 throw new FlightException(unsettled);
             }
             var blockedBy = ReviewPoints.AnyNotAddressed(earlier, report);
             if (verdict == "pass" && blockedBy)
             {
-                throw new FlightException("a pass cannot leave an earlier point not addressed: give changes, with it under `## Blocking`, or answer it addressed (with where) or left (with a reason)");
+                throw new FlightException("a pass cannot leave an earlier point not addressed: give changes, with it under `## Blocking`, or answer it with one of the four ends: addressed (with where), not work, node's own, or deferred (with a reason)");
             }
-            answers = [.. ReviewPoints.ParseAnswers(report).Select(r => new ReviewPointAnswer(r.Id, r.Answer switch { ReviewPoints.Answer.Addressed => "addressed", ReviewPoints.Answer.Left => "left", _ => "not addressed" }, r.Detail))];
+            answers = [.. ReviewPoints.ParseAnswers(report).Select(ReviewPoints.ToStored)];
             // A new blocking finding in text the fix did not touch, and not marked must-block, is left for the follow-up and blocks nothing.
             if (verdict == "changes" && await UntouchedNewFindingsAsync(flight, review, ReviewPoints.NewBlocking(findings), cancellationToken) is { Count: > 0 } outside)
             {
@@ -407,21 +407,16 @@ public sealed partial class LegCommander
             {
                 // The verdict is kept and given to GitHub: the flight is let go (Dispose is safe twice), as plan-leg refuses a flight with a call out.
                 call.Dispose();
-                // Notes that do not block are made in one round (#918): a later round's become a follow-up issue and the merge goes
-                // ahead. PIL909's #910 went round three times for notes that held nothing, each round a leg and a check rerun.
-                // Not a return: the reviewer is still done with below, whichever way the notes went (review of #935).
-                var filed = state.Legs(flight.Code).Any(l => l.Name.StartsWith(ReviewNotesLeg, StringComparison.Ordinal) && l.State == LegState.Done)
-                    && await FileNotesFollowUpAsync(FlightOf(command.Target), notes, cancellationToken);
-                if (!filed)
+                // Every note needs an end (pilot #1226): a later round's notes (#918) are no longer filed as they are, they go to a
+                // review-notes leg like the first round's, and each ends made, not work, the node's own or deferred with a reason.
+                // Not a return: the reviewer is still done with below (review of #935).
+                var fixer = await PlanReviewNotesLegAsync(flight, notes, cancellationToken);
+                // The hold waits on the leg that makes the notes, never on a watchtower that may not be running (PIL815).
+                if (fixer is not null)
                 {
-                    var fixer = await PlanReviewNotesLegAsync(flight, notes, cancellationToken);
-                    // The hold waits on the leg that makes the notes, never on a watchtower that may not be running (PIL815).
-                    if (fixer is not null)
-                    {
-                        HoldForLeg(flight.Code, fixer);
-                    }
-                    RaiseReviewNotes(FlightOf(command.Target), notes, fixer);
+                    HoldForLeg(flight.Code, fixer);
                 }
+                RaiseReviewNotes(FlightOf(command.Target), notes, fixer);
             }
         }
         else if (ReviewLoopHeld(flight))
@@ -565,7 +560,7 @@ public sealed partial class LegCommander
                 + (holding ? HeldDetailTail : ""),
             [new CardChoice { Label = MergeLabel, Verb = Verbs.Merge, Target = Verbs.FlightTarget(flight.Code), Args = [pr.Head] }], link: pr.Url,
             summary: holding
-                ? $"Wait a few minutes: {flight.Code} passed its review with notes and merges with them unless the watchtower takes the hold or commits in the plane. The merge is refused until then."
+                ? $"Wait: {flight.Code} passed its review with notes, and a review-notes leg makes them (or the owner clears the hold with a reason). The merge is refused until each note has an end."
                 : $"{flight.Code} is reviewed and its PR #{pr.Number} is ready. Merge lands it; dismissing leaves the PR open.",
             // The title names the PR only: a new head is a new card for a person to see, whatever was dismissed for the one before (#853).
             cause: $"{(holding ? "holding" : "ready")}:{pr.Number}:{pr.Head}");
@@ -633,9 +628,9 @@ public sealed partial class LegCommander
         state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), "its review passed again", ReviewNotesKind);
         var action = fixerLeg is not null
             ? $"The node planned {flight.Code}/{fixerLeg} to make them (autopilot); it starts as any planned leg and the review runs again on its result. Nothing to do but watch it."
-            : $"Delegate: plan a review-notes leg carrying the notes (pilot leg plan, then pilot leg start), or pilot flight clear {flight.Code} <why> when they are not worth a round, within a few minutes, and say which here. "
+            : $"Delegate: plan a review-notes leg carrying the notes (pilot leg plan, then pilot leg start) within a few minutes, and say so here. Clearing the hold is the owner's word, not yours (pilot flight clear {flight.Code} <why> is refused for the watchtower while a note has no end). "
                 + $"A fix of your own only for a one-line change in the plane ({flight.Worktree}), then pilot flight pr {flight.Code}. "
-                + $"Take the hold with pilot flight hold {flight.Code} (or commit in the plane) before the grace ends, or the flight merges with these notes.";
+                + $"Take the hold with pilot flight hold {flight.Code} (or commit in the plane) before the grace ends, or the node plans the review-notes leg itself, or rings the owner.";
         state.RaiseCard(CardBin.ForYou, ReviewNotesKind, Verbs.FlightTarget(flight.Code), $"{flight.Code}'s review passed with notes",
             $"PR #{flight.PullRequest}, head {(flight.Review?.ReviewedHead is { } head ? CommitRefs.Short(head) : "unknown")}. Notes: {string.Join("; ", notes)} {action}",
             link: flight.PullRequestUrl, summary: CardSummaries.ReviewNotes(flight.Code, notes, fixerLeg),
@@ -692,37 +687,8 @@ public sealed partial class LegCommander
         }
     }
 
-    /// <summary>
-    /// A later round's not-blocking notes (#918): filed as one follow-up issue that names the flight, its PR and each note, and the hold
-    /// released so the flight merges with them. False when the issue could not be filed: the notes then go round as before, never lost.
-    /// </summary>
-    private async Task<bool> FileNotesFollowUpAsync(FlightRow flight, IReadOnlyList<string> notes, CancellationToken cancellationToken)
-    {
-        var items = ReviewFollowUp.NotesItems(flight.ReviewRounds?.Length ?? 1, notes);
-        if (items.Count == 0)
-        {
-            return false;
-        }
-        int? number;
-        try
-        {
-            // The flight's one follow-up issue (PIL1107), never a second beside it: the notes join the points its reviews left.
-            number = await EnsureFollowUpAsync(flight, items, cancellationToken);
-        }
-        catch (MergeBlockedException ex)
-        {
-            await Error.WriteLineAsync($"review: {flight.Code}'s later notes were not filed as a follow-up, they go round instead: {ex.Message}");
-            return false;
-        }
-        if (number is { } made && FlightOf(Verbs.FlightTarget(flight.Code)) is { Holding: not null } held)
-        {
-            ReleaseHolding(held, "node", $"a later round's notes that do not block are filed as #{made}, so it merges with them");
-        }
-        return number is not null;
-    }
-
     // The sentence RaisePrReadyAsync adds to a holding flight's PR-ready card, which a released hold takes off again.
-    private const string HeldDetailTail = " The merge is held for a few minutes: unless the watchtower takes the hold (a review-notes leg, flight hold, or a commit in the plane) it merges with the notes.";
+    private const string HeldDetailTail = " The merge is held until each note is made, not work, the node's own, or deferred with a reason: a review-notes leg makes them, and only the owner's word clears the hold.";
 
     /// <summary>The Ring card kind of a holding flight the watchtower has not cleared in time, or whose watchtower is not live.</summary>
     public const string HoldingTimeoutKind = "holding-timeout";

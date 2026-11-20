@@ -84,7 +84,8 @@ public sealed partial class CommitNotDropTests
         summary.ShouldContain("passed with 2 small notes");
         summary.ShouldContain("do not block the merge");
         summary.ShouldContain("rename `x` to `count`");
-        summary.ShouldContain("nothing for you to do");
+        summary.ShouldContain("the owner's word");
+        CardSummaries.ReviewNotes("COD54", ["one nit"], "review-notes").ShouldContain("nothing for you to do");
         // The node's own machinery is no part of it.
         summary.ShouldNotContain("leg goes round");
         summary.ShouldNotContain("no leg");
