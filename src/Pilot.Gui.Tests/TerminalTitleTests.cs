@@ -33,6 +33,20 @@ public sealed class TerminalTitleTests
     public void FlightsWithThreeCardsForYouLeadsWithTheCount() =>
         Title(PilotPage.Flights, null, Filter(), Cards(3)).ShouldBe("(3) pilot · Flights · DE1");
 
+    /// <summary>
+    /// The title counts what the panel shows: a card dismissed and not yet closed by the node is hidden there, so it is not counted
+    /// (the host passes CardsView.Visible, the review of #1058).
+    /// </summary>
+    [Fact]
+    public void ADismissedCardNotYetClosedIsNotCounted()
+    {
+        var cards = Cards(3);
+        var view = new CardsView<DIR.Lib.RgbaImage>(new DIR.Lib.RgbaImageRenderer(10, 10));
+        view.NoteDismissed(cards.Open.First(c => c.Id == "y0"));
+
+        Title(PilotPage.Home, null, Filter(), view.Visible(cards)).ShouldBe("(2) pilot · Home · DE1");
+    }
+
     [Fact]
     public void RingsCountToo() =>
         Title(PilotPage.Home, null, Filter(), Cards(1, rings: 2)).ShouldBe("(3) pilot · Home · DE1");
