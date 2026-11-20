@@ -137,7 +137,7 @@ internal static class DeferredRoutes
                 }
                 catch (FlightException ex)
                 {
-                    await Console.Error.WriteLineAsync($"review: {c.Subject}'s PR was not given the link to {repo}#{number}: {ex.Message}");
+                    await System.Console.Error.WriteLineAsync($"review: {c.Subject}'s PR was not given the link to {repo}#{number}: {ex.Message}");
                 }
             }
         }
