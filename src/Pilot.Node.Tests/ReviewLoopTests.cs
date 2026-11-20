@@ -50,7 +50,7 @@ public sealed class ReviewLoopTests : ReviewTestsBase
         card.Detail.ShouldContain("finding of round 3");
         card.Choices.Select(c => c.Verb).ShouldBe([Verbs.Review, Verbs.AllowRound]);
         card.Bin.ShouldBe(CardBin.Ring);
-        card.Summary.ShouldNotBeNull().ShouldContain("Pass with notes is the person's");
+        card.Summary.ShouldNotBeNull().ShouldContain("Passing it over the findings is the person's");
         Open().ShouldNotContain(c => c.Kind == LegCommander.ReviewChanges);
     }
 

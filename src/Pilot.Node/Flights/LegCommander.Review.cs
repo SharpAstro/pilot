@@ -824,6 +824,6 @@ public sealed partial class LegCommander
                 new CardChoice { Label = "Pass with notes", Verb = Verbs.Review, Target = target, Args = ["pass", "passed with the findings noted: repeated or not blocking"] },
                 new CardChoice { Label = "Allow one more round", Verb = Verbs.AllowRound, Target = target, Args = ["the watchtower allowed it"] },
             ], link: flight.PullRequestUrl,
-            summary: $"The review of {flight.Code} (PR #{flight.PullRequest}) has had {ReviewRing.Rounds(rounds)} in all. Points: {ReviewRing.Counts(rounds)}. No round starts until it is passed with notes or one more is allowed. Pass with notes is the person's; the watchtower may allow one more round when the points left are small, saying so in the press.");
+            summary: $"The review of {flight.Code} (PR #{flight.PullRequest}) has had {ReviewRing.Rounds(rounds)} in all. Points: {ReviewRing.Counts(rounds)}. No round starts until it is passed with notes or one more is allowed. Passing it over the findings is the person's; the watchtower may give it a further round when the points left are small, saying so in the press.");
     }
 }
