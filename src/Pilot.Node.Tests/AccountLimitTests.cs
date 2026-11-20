@@ -754,8 +754,8 @@ public sealed class AccountLimitTests
         await _watch.LookAsync(Ct);
         _gate.RingWeek(90);
         Open().Count(c => c.Kind == StartGate.WeekKind).ShouldBe(1);
-        Open().Single(c => c.Kind == TurnOutage.LimitCardKind).Summary.ShouldContain("figures read");
-        Open().Single(c => c.Kind == TurnOutage.LimitCardKind).Summary.ShouldContain("from the server");
+        Open().Single(c => c.Kind == TurnOutage.LimitCardKind).Summary.ShouldNotBeNull().ShouldContain("figures read");
+        Open().Single(c => c.Kind == TurnOutage.LimitCardKind).Summary.ShouldNotBeNull().ShouldContain("from the server");
 
         // The reset is used: a lower utilization on the same resets_at.
         _time.Advance(TimeSpan.FromMinutes(4));
@@ -776,7 +776,7 @@ public sealed class AccountLimitTests
         var week = Start.AddDays(2);
         _state.PutUsage(Figures(Start, 10, Start.AddHours(3), sevenDay: 92, sevenReset: week));
         _gate.RingWeek(90);
-        Open().Single(c => c.Kind == StartGate.WeekKind).Detail.ShouldContain($"figures read {Start.ToLocalTime():HH:mm}");
+        Open().Single(c => c.Kind == StartGate.WeekKind).Detail.ShouldNotBeNull().ShouldContain($"figures read {Start.ToLocalTime():HH:mm}");
 
         _time.Advance(TimeSpan.FromMinutes(2));
         _state.PutUsage(Figures(_time.GetUtcNow(), 10, Start.AddHours(3), sevenDay: 95, sevenReset: week));
@@ -786,7 +786,7 @@ public sealed class AccountLimitTests
         _time.Advance(TimeSpan.FromMinutes(45));
         _gate.RingWeek(90);
         var stale = Open().Single(c => c.Kind == StartGate.WeekKind);
-        stale.Detail.ShouldContain("as of 45 min ago");
+        stale.Detail.ShouldNotBeNull().ShouldContain("as of 45 min ago");
         _gate.RingWeek(90);
         Open().Single(c => c.Kind == StartGate.WeekKind).Id.ShouldBe(stale.Id);
     }
@@ -796,6 +796,6 @@ public sealed class AccountLimitTests
     {
         _state.PutUsage(Figures(Start.AddMinutes(-50), 50, Start.AddHours(3)) with { Source = "status line" });
         _outage.OpenLimit(Start.AddHours(1), "one", Start);
-        Open().ShouldHaveSingleItem().Summary.ShouldContain("as of 50 min ago");
+        Open().ShouldHaveSingleItem().Summary.ShouldNotBeNull().ShouldContain("as of 50 min ago");
     }
 }

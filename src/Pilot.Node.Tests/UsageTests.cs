@@ -268,7 +268,7 @@ public sealed class UsageTests : IDisposable
         var reader = new UsageReader(_state, File, _time);
         reader.Read(Row(92, Reset, Now) with { Source = "server" });
         var card = _state.Cards(openOnly: true).Single(c => c.Kind == UsageReader.HighKind);
-        card.Detail.ShouldContain($"figures read {Now.ToLocalTime():HH:mm} from the server");
+        card.Detail.ShouldNotBeNull().ShouldContain($"figures read {Now.ToLocalTime():HH:mm} from the server");
 
         _time.Advance(TimeSpan.FromMinutes(1));
         reader.Read(Row(95, Reset, _time.GetUtcNow()) with { Source = "server" });
@@ -288,6 +288,6 @@ public sealed class UsageTests : IDisposable
     {
         var reader = new UsageReader(_state, File, _time);
         reader.Read(Row(95, Reset, Now.AddMinutes(-50)) with { Source = "status line" });
-        _state.Cards(openOnly: true).Single(c => c.Kind == UsageReader.HighKind).Detail.ShouldContain("as of 50 min ago");
+        _state.Cards(openOnly: true).Single(c => c.Kind == UsageReader.HighKind).Detail.ShouldNotBeNull().ShouldContain("as of 50 min ago");
     }
 }
