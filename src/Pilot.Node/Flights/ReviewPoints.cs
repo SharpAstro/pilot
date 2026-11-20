@@ -149,7 +149,7 @@ public static partial class ReviewPoints
     }
 
     // An optional flight code before the key (PIL12:R1.2): a follow-up issue names its points so, so only the flight that left them ticks them.
-    [GeneratedRegex(@"(?:[A-Za-z]+\d+:)?R\d+\.\d+", RegexOptions.IgnoreCase)]
+    [GeneratedRegex(@"(?:\b[A-Za-z]+\d+:)?\bR\d+\.\d+\b", RegexOptions.IgnoreCase)]
     private static partial Regex IdToken();
 
     /// <summary>The rows of the table under <see cref="AnswerHeading"/>; a later row for a point replaces an earlier one.</summary>
