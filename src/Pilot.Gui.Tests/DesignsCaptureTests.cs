@@ -49,8 +49,10 @@ public sealed class DesignsCaptureTests
         }
     }
 
+    // Named for what it proves: the dump's design lines and a page that renders. That the chat's entries are drawn is
+    // TheChatOfAnOpenCaptureIsTheFeedsEntriesAndThePageHasNoTextOverlap's (the review of #1161).
     [Fact]
-    public void ACaptureOfAnOpenDesignHoldsItsChatEntries()
+    public void ACaptureOfAnOpenDesignNamesItsDesignAndVersionAndRenders()
     {
         var chat = PageData.DesignChatPage();
         var folder = Capture("design-open", 1600, 900, "DSN-1", chat, out var dump);
