@@ -98,9 +98,14 @@ public sealed class UsageReader(NodeState state, string file, TimeProvider time)
         var authoritative = server is not null && figures is not null;
         if ((figures is not null ? figures with { Account = account } : account is null ? null : new UsageRow { Account = account, ReadAt = time.GetUtcNow() }) is not { } read)
         {
+            // Nothing new, but the hold is still worked out again: one that held on figures now past the gate's fresh time ends.
+            state.RefreshHold();
             return;
         }
         state.PutUsage(read, authoritative);
+        // The hold follows every read, not only a start that asks: a used reset ends the start gate's hold within this read, and a
+        // node that restarted puts the hold its figures say without waiting for a start (#1193).
+        state.RefreshHold();
         // The merged figures, not this read: a stale writer must not raise, or miss, the warning either.
         var usage = state.Usage()!;
 

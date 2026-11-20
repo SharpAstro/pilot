@@ -94,6 +94,40 @@ public sealed class UsageTests : IDisposable
     }
 
     [Fact]
+    public void TheHoldOnTheSnapshotFollowsEveryReadWithNoStartAsking()
+    {
+        var gate = new Flights.StartGate(_state, _time);
+        _state.HoldSource = gate.CurrentHold;
+        var reader = new UsageReader(_state, File, _time);
+
+        // A read at 94% puts the start gate's hold at once, though no start has asked (a node that restarted, say).
+        reader.Read(Row(94, Reset, Now) with { Source = "server" });
+        var hold = _state.Usage()!.Hold.ShouldNotBeNull();
+        hold.Kind.ShouldBe(Flights.StartGate.GateHoldKind);
+        hold.Until.ShouldBe(Reset);
+
+        // A used reset: the server reads 15% on the same resets_at. That one read ends the hold, again with no start asking.
+        _time.Advance(TimeSpan.FromMinutes(1));
+        reader.Read(Row(15, Reset, _time.GetUtcNow()) with { Source = "server" });
+        _state.Usage()!.Hold.ShouldBeNull();
+        _state.Usage()!.Lines(_time.GetUtcNow(), TimeZoneInfo.Utc).ShouldContain(("hold", "no hold"));
+    }
+
+    [Fact]
+    public void AHoldOnFiguresPastTheGatesFreshTimeEndsOnTheNextReadThatBringsNothing()
+    {
+        var gate = new Flights.StartGate(_state, _time);
+        _state.HoldSource = gate.CurrentHold;
+        var reader = new UsageReader(_state, File, _time);
+        reader.Read(Row(94, Reset, Now) with { Source = "server" });
+        _state.Usage()!.Hold.ShouldNotBeNull();
+
+        _time.Advance(Flights.StartGate.FreshFor);
+        reader.Read();
+        _state.Usage()!.Hold.ShouldBeNull();
+    }
+
+    [Fact]
     public void AMissingOrHalfWrittenFileIsNothing()
     {
         UsageReader.Parse(File).ShouldBeNull();

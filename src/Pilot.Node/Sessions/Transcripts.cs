@@ -272,13 +272,47 @@ internal sealed class TranscriptTail(string path)
     /// <summary>A user line of the main transcript: its timestamp is when the request the next reply answers was sent.</summary>
     private void NoteUser(ReadOnlyMemory<byte> line)
     {
+        // A user line can carry a large tool result: only its top-level type, isSidechain and timestamp are read, and every nested value
+        // is skipped by the reader without building a document.
         try
         {
-            using var doc = JsonDocument.Parse(line);
-            var root = doc.RootElement;
-            if (root.ValueKind == JsonValueKind.Object && ClaudeAgentsJson.Text(root, "type") == "user"
-                && !(root.TryGetProperty("isSidechain", out var side) && side.ValueKind == JsonValueKind.True)
-                && ClaudeAgentsJson.Text(root, "timestamp") is { } stamp && DateTimeOffset.TryParse(stamp, CultureInfo.InvariantCulture, DateTimeStyles.None, out var at))
+            var reader = new Utf8JsonReader(line.Span);
+            if (!reader.Read() || reader.TokenType != JsonTokenType.StartObject)
+            {
+                return;
+            }
+            string? type = null;
+            string? stamp = null;
+            var sidechain = false;
+            while (reader.Read() && reader.TokenType == JsonTokenType.PropertyName)
+            {
+                var name = reader.ValueSpan;
+                var isType = name.SequenceEqual("type"u8);
+                var isStamp = name.SequenceEqual("timestamp"u8);
+                var isSide = name.SequenceEqual("isSidechain"u8);
+                if (!reader.Read())
+                {
+                    return;
+                }
+                if (isType && reader.TokenType == JsonTokenType.String)
+                {
+                    type = reader.GetString();
+                }
+                else if (isStamp && reader.TokenType == JsonTokenType.String)
+                {
+                    stamp = reader.GetString();
+                }
+                else if (isSide)
+                {
+                    sidechain = reader.TokenType == JsonTokenType.True;
+                }
+                else
+                {
+                    reader.Skip();
+                }
+            }
+            if (type == "user" && !sidechain && stamp is not null
+                && DateTimeOffset.TryParse(stamp, CultureInfo.InvariantCulture, DateTimeStyles.None, out var at))
             {
                 _lastUserAt = at;
             }

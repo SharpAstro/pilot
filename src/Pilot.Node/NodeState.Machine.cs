@@ -80,7 +80,7 @@ public sealed partial class NodeState
     private UsageRow? WithHold(UsageRow? usage) => usage is null || HoldSource is null ? usage : usage with { Hold = _hold };
 
     /// <summary>
-    /// Works the hold out again and publishes the usage when it changed. Asked when a limit opens or ends, after a read and by the start gate;
+    /// Works the hold out again and publishes the usage when it changed. Asked when a limit opens or ends, by <c>UsageReader.Read</c> after every read and by the start gate;
     /// the same state gives the same hold whoever asks, so it neither changes nor publishes for a different caller's limit.
     /// </summary>
     public void RefreshHold()

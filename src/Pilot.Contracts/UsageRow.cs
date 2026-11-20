@@ -46,7 +46,8 @@ public sealed record UsageRow
 
     /// <summary>
     /// The hold the node has in force on the account (an open usage limit, or the start gate's 5-hour hold), with until when and why; null
-    /// when none holds, and on a row an older node stored. Put by the node when a limit opens or ends (<c>NodeState.PutHold</c>).
+    /// when none holds, and on a row an older node stored. Worked out live by <c>NodeState.RefreshHold</c> from <c>StartGate.CurrentHold</c>
+    /// after every usage read, when a limit opens or ends, and when a start asks.
     /// </summary>
     [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
     public HoldRow? Hold { get; init; }
