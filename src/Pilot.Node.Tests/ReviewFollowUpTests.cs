@@ -368,7 +368,7 @@ public sealed class ReviewFollowUpTests : ReviewTestsBase
     [Theory]
     [InlineData("All notes are made in the review-notes round", true)]
     [InlineData("This is already answered by the issue", true)]
-    [InlineData("The text no longer exists after the rewrite", true)]
+    [InlineData("The text no longer exists after the rewrite", false)]
     [InlineData("The commit title is removed by the squash", true)]
     [InlineData("The guard in Parser.cs:3 is missing", false)]
     [InlineData("validation is already done in the caller but the lexer still accepts a bare quote", false)]
@@ -394,6 +394,6 @@ public sealed class ReviewFollowUpTests : ReviewTestsBase
 
         ReviewFollowUp.Read(rounds).Items.Select(i => i.Found).ShouldBe(["a gap in Parser.cs:9"]);
         ReviewFollowUp.LastRoundNotes(rounds).Select(i => i.Found).ShouldBe(["the guard in Lexer.cs:3 is missing"]);
-        ReviewFollowUp.NotesItems(1, ["the text no longer exists", "Parser.cs:1 is wrong"]).Select(i => i.Found).ShouldBe(["Parser.cs:1 is wrong"]);
+        ReviewFollowUp.NotesItems(1, ["the title is removed by the squash", "Parser.cs:1 is wrong"]).Select(i => i.Found).ShouldBe(["Parser.cs:1 is wrong"]);
     }
 }

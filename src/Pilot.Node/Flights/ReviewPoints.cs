@@ -60,7 +60,7 @@ public static partial class ReviewPoints
     public static DeferReason? ReasonOf(string? text)
     {
         // The reason is the leading phrase after the colon, never a word inside other text: "report back later" and "reposition the header" are no reason.
-        var word = (text ?? "").ToLowerInvariant().Replace('’', ''').TrimStart(' ', ':', ',', '-', '(', '`', '*').Replace("the owner", "owner", StringComparison.Ordinal);
+        var word = (text ?? "").ToLowerInvariant().Replace('’', '\'').TrimStart(' ', ':', ',', '-', '(', '`', '*').Replace("the owner", "owner", StringComparison.Ordinal);
         if (StartsWithAny(word, "another repo", "other repo", "a different repo", "different repo"))
         {
             return DeferReason.OtherRepo;
