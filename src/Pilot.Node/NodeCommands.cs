@@ -247,6 +247,15 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
         {
             return state.Complete(command, refused);
         }
+        // An override is the person's (PIL1229): the watchtower on its own, with no word of the person's on the command, is refused
+        // it before it runs, whatever --why it gives. It is refused on a card's answer too (the choice runs again as this verb). An
+        // assistant acting on the person's message keeps the --why rule below.
+        if (command.PersonsWord is null && command.Who == watchtower.Name && !watchtower.ActingForPerson
+            && DecisionSources.IsOverride(command, ReviewerOfTarget(command))
+            && command.Verb != Verbs.CreateFlight)
+        {
+            return state.Complete(command, DecisionSources.OverrideIsThePersons(command));
+        }
         // A gate override (PIL702) needs a reason of the session's own, from anyone but the person and the node: the black box
         // keeps it. A card choice's canned words never count, so a card's answer is held to the same rule through its Why.
         if (standing.Kind != StandingKind.Person && !(command.Who == "node" && command.PersonsWord is null)

@@ -301,7 +301,7 @@ public sealed partial class LegCommander
         {
             throw new FlightException($"only {review.Reviewer} gives {flight.Code}'s verdict; the controller may only pass one that asked for changes");
         }
-        // The watchtower's "ready anyway" is as much a way round the person as its go-around: past the cap the card is theirs.
+        // The node refuses the watchtower's override before it gets here (NodeCommands, PIL1229); this stays for a direct caller: past the cap the card is theirs.
         if (!fromReviewer && IsWatchtower(command.Who) && command.PersonsWord is null && state.Legs(flight.Code).OrderBy(l => l.Order).LastOrDefault() is { ReviewGoArounds: >= MaxReviewGoArounds } capped)
         {
             throw new FlightException(
@@ -817,12 +817,13 @@ public sealed partial class LegCommander
         state.CloseCardsAbout(target, "its review loop was held again", ReviewLoopKind);
         // The rounds the PR has had in all, and every point in three groups (pilot #1107), read from the stored answers.
         detail.AppendLine().AppendLine($"Points after {ReviewRing.Rounds(rounds)}:").Append(ReviewRing.Points(rounds));
-        state.RaiseCard(CardBin.ForYou, ReviewLoopKind, target, $"{flight.Code}'s review is in a loop: {ReviewRing.Rounds(rounds)} in all, {rounds.Count(r => r.Verdict == ReviewState.Changes)} with changes",
+        // Rings the person at once (PIL1229): Pass with notes is an override, theirs; the watchtower may only allow one more round.
+        state.RaiseCard(CardBin.Ring, ReviewLoopKind, target, $"{flight.Code}'s review is in a loop: {ReviewRing.Rounds(rounds)} in all, {rounds.Count(r => r.Verdict == ReviewState.Changes)} with changes",
             detail.ToString().TrimEnd(),
             [
                 new CardChoice { Label = "Pass with notes", Verb = Verbs.Review, Target = target, Args = ["pass", "passed with the findings noted: repeated or not blocking"] },
                 new CardChoice { Label = "Allow one more round", Verb = Verbs.AllowRound, Target = target, Args = ["the watchtower allowed it"] },
             ], link: flight.PullRequestUrl,
-            summary: $"The review of {flight.Code} (PR #{flight.PullRequest}) has had {ReviewRing.Rounds(rounds)} in all. Points: {ReviewRing.Counts(rounds)}. No round starts until it is passed with notes or one more is allowed.");
+            summary: $"The review of {flight.Code} (PR #{flight.PullRequest}) has had {ReviewRing.Rounds(rounds)} in all. Points: {ReviewRing.Counts(rounds)}. No round starts until it is passed with notes or one more is allowed. Pass with notes is the person's; the watchtower may allow one more round when the points left are small, saying so in the press.");
     }
 }
