@@ -270,11 +270,12 @@ public sealed class OverlayDepthTests
         var toast = rig.Toast("c1");
         var rows = rig.Regions(rig.Chrome.Flights).Where(r => r.Result is HitResult.ButtonHit b && b.Action.StartsWith("FlightMapLayer:", StringComparison.Ordinal)).ToList();
         rows.ShouldNotBeEmpty("the layers menu is open with its rows");
-        var at = rows.FindIndex(r => r.Y + 2f < toast.Y && r.Y + r.Height > toast.Y + 2f && r.X >= toast.X && r.X + r.Width <= toast.X + toast.Width);
-        at.ShouldBeGreaterThanOrEqualTo(0, $"a row of the layers menu runs under the top edge of the toast {toast}");
+        // The menu docks to the right edge and the toast keeps a margin there, so a row need only overlap the toast across, not lie inside it.
+        var at = rows.FindIndex(r => r.Y + 2f < toast.Y && r.Y + r.Height > toast.Y + 2f && r.X < toast.X + toast.Width - 8f && r.X + r.Width > toast.X + 8f);
+        at.ShouldBeGreaterThanOrEqualTo(0, $"a row of the layers menu runs under the top edge of the toast {toast}; rows: {string.Join(", ", rows.Select(r => $"{r.X},{r.Y} {r.Width}x{r.Height}"))}");
         var row = rows[at];
         var strip = new RectF32(row.X, row.Y, row.Width, toast.Y - row.Y);
-        var x = row.X + row.Width / 2f;
+        var x = (Math.Max(row.X, toast.X) + Math.Min(row.X + row.Width, toast.X + toast.Width)) / 2f;
 
         // At rest on the toast, clear of the menu, then on the toast where it covers the row's lower part: the strip above stays as it was.
         rig.Hover((toast.X + 8f, toast.Y + toast.Height - 6f));
