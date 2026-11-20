@@ -154,6 +154,13 @@ public sealed record SessionRow
     /// </summary>
     public string? ApiError { get; init; }
 
+    /// <summary>
+    /// Why its last turn ended, so a limit and a hang can be told apart: the transcript's last <c>apiError</c>, else the last assistant
+    /// message's <c>stop_reason</c>, else the ending hook's word; null when none of them says (and from an older node).
+    /// </summary>
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public string? LastTurnEnd { get; init; }
+
     /// <summary>When the limit behind <see cref="ApiError"/> resets (its <c>rate_limit_info.resetsAt</c>); null when it gave none.</summary>
     public DateTimeOffset? ApiErrorResetsAt { get; init; }
 

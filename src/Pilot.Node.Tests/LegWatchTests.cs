@@ -62,9 +62,10 @@ public sealed class LegWatchTests
         SummaryMatchesChoices(card);
     }
 
-    private void Worker(SessionState state, DateTimeOffset? lastResponse = null, string? apiError = null, DateTimeOffset? resetsAt = null, string? waitingFor = null, long context = 0, string id = "a1b2c3d4") =>
+    private void Worker(SessionState state, DateTimeOffset? lastResponse = null, string? apiError = null, DateTimeOffset? resetsAt = null, string? waitingFor = null, long context = 0, string id = "a1b2c3d4", string? lastTurnEnd = null) =>
         _state.PutSession(new SessionRow
         {
+            LastTurnEnd = lastTurnEnd,
             Id = id,
             SessionId = id + "-0000-4000-8000-000000000000",
             Name = "du1-tia1-parser",
@@ -244,6 +245,24 @@ public sealed class LegWatchTests
         card.Title.ShouldBe("TIA1 is stuck: its worker stopped working");
         card.Detail.ShouldNotBeNull().ShouldContain("it answered each");
         card.Detail.ShouldNotContain("to no avail");
+    }
+
+    [Theory]
+    [InlineData("usage_limit_reached", "its last turn ended on usage_limit_reached; ")]
+    [InlineData("end_turn", "its last turn ended on end_turn; ")]
+    [InlineData("the Stop hook", "its last turn ended on the Stop hook; ")]
+    [InlineData(null, "why its last turn ended is unknown; ")]
+    public async Task AStuckWorkersCardNamesWhyItsLastTurnEndedOrSaysItIsUnknown(string? end, string said)
+    {
+        Worker(SessionState.Idle, lastTurnEnd: end);
+        _time.Advance(TimeSpan.FromMinutes(10));
+        await _watch.LookAsync(Ct);
+        await _watch.LookAsync(Ct);
+        await _watch.LookAsync(Ct);
+
+        var card = Open().ShouldHaveSingleItem();
+        card.Title.ShouldBe("TIA1 is stuck: its worker stopped working");
+        card.Detail.ShouldNotBeNull().ShouldContain(said);
     }
 
     [Fact]

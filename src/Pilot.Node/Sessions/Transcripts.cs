@@ -26,7 +26,8 @@ public sealed record TranscriptFacts(
     ApiStop? Stop = null,
     IReadOnlyList<SubagentRow>? Subagents = null,
     PendingTool? PendingTool = null,
-    IReadOnlyList<SpendMessage>? Spend = null)
+    IReadOnlyList<SpendMessage>? Spend = null,
+    string? StopReason = null)
 {
     public static readonly TranscriptFacts None = new(null, null, null, 0, null, 0, null);
 }
@@ -77,6 +78,13 @@ internal sealed class TranscriptTail(string path)
 
     /// <summary>The API error that ended the last turn, until a real reply comes after it.</summary>
     public ApiStop? Stop { get; private set; }
+
+    /// <summary>
+    /// The <c>stop_reason</c> of the last real assistant message of this session's own turns (<c>end_turn</c>, <c>tool_use</c>,
+    /// <c>max_tokens</c>, …); null before any message that carried one. A streamed message repeats on several lines and only a
+    /// later one carries the reason, so a line without one leaves what was read.
+    /// </summary>
+    public string? StopReason { get; private set; }
 
     /// <summary>A subagent's transcript that has called <c>SubagentHandback</c>: its report is in, and it is done.</summary>
     public bool HandedBack { get; private set; }
@@ -156,6 +164,7 @@ internal sealed class TranscriptTail(string path)
         _details.Clear();
         LastTurn = null;
         Stop = null;
+        StopReason = null;
         HandedBack = false;
         _pendingToolId = _pendingQuestion = _lastMessageId = null;
         _pendingTools.Clear();
@@ -213,6 +222,7 @@ internal sealed class TranscriptTail(string path)
 
             // A later message means the turn moved on, so a question it asked is answered or abandoned.
             var sidechain = root.TryGetProperty("isSidechain", out var side) && side.ValueKind == JsonValueKind.True;
+            var priorId = _lastMessageId;
             if (id is not null && id != _lastMessageId)
             {
                 _pendingToolId = _pendingQuestion = null;
@@ -228,6 +238,8 @@ internal sealed class TranscriptTail(string path)
             {
                 // A real reply: whatever stopped an earlier turn is behind it.
                 Stop = null;
+                // A new message starts without a reason until a line of it says one.
+                StopReason = ClaudeAgentsJson.Text(message, "stop_reason") is { Length: > 0 } reason ? reason : id is not null && id == priorId ? StopReason : null;
                 LastTurn = new AssistantTurn(
                     model,
                     ClaudeAgentsJson.Text(root, "requestedModel"),
@@ -472,7 +484,7 @@ internal sealed class SessionTranscripts(ClaudeProfile profile, string sessionId
 
         var turn = _main.LastTurn;
         return new TranscriptFacts(turn?.Model, turn?.RequestedModel, turn?.Effort, turn?.ContextTokens ?? 0, turn?.At, _spend, _main.PendingQuestion, _main.Stop,
-            _subagents.Count == 0 ? null : Subagents(), _main.PendingTool, spend);
+            _subagents.Count == 0 ? null : Subagents(), _main.PendingTool, spend, _main.StopReason);
     }
 
     // The subagents in the order they started, each as its record (agent-<id>.meta.json) says: what it is, what it was

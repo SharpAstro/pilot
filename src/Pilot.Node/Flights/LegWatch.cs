@@ -697,8 +697,8 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
             var report = leg.Report is { Length: > 0 } r && !r.StartsWith("go-around:", StringComparison.Ordinal) ? $"; leg's report: {r.Split('\n')[0]}" : "";
             Ring(leg, Idle, $"{leg.Flight} is stuck: its worker stopped working",
                 answered > 0
-                    ? $"no turn for {Ago(now, since)}, {Steps(leg)}; {RoomLead(worker)}nudged {nudges} {(nudges == 1 ? "time" : "times")} and it answered {(answered >= nudges ? "each" : $"{answered} of them")}, then went idle again: its transcript says what it waits on{report}"
-                    : $"no turn for {Ago(now, since)}, {Steps(leg)}; {RoomLead(worker)}nudged {nudges} {(nudges == 1 ? "time" : "times")} with no answer, and the node nudges no more{report}",
+                    ? $"no turn for {Ago(now, since)}, {Steps(leg)}; {LastEnd(worker)}{RoomLead(worker)}nudged {nudges} {(nudges == 1 ? "time" : "times")} and it answered {(answered >= nudges ? "each" : $"{answered} of them")}, then went idle again: its transcript says what it waits on{report}"
+                    : $"no turn for {Ago(now, since)}, {Steps(leg)}; {LastEnd(worker)}{RoomLead(worker)}nudged {nudges} {(nudges == 1 ? "time" : "times")} with no answer, and the node nudges no more{report}",
                 worker);
             return;
         }
@@ -717,9 +717,13 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
         }
         else
         {
-            Ring(leg, Idle, $"{leg.Flight} is stuck: its worker stopped and cannot be nudged", $"no turn for {Ago(now, since)}, {Steps(leg)}; {RoomLead(worker)}the node tried to nudge it: {result.Error ?? "no reason given"}", worker);
+            Ring(leg, Idle, $"{leg.Flight} is stuck: its worker stopped and cannot be nudged", $"no turn for {Ago(now, since)}, {Steps(leg)}; {LastEnd(worker)}{RoomLead(worker)}the node tried to nudge it: {result.Error ?? "no reason given"}", worker);
         }
     }
+
+    /// <summary>Why the worker's last turn ended, for a stuck card, so a limit and a hang read differently; says it is unknown when no source does.</summary>
+    internal static string LastEnd(SessionRow worker) =>
+        worker.LastTurnEnd is { Length: > 0 } end ? $"its last turn ended on {end}; " : "why its last turn ended is unknown; ";
 
     // By worker job: when the ticking pass was asked for, once, so a worker's ticker is started a single time even when its start
     // is refused or fails (the start's own card says so); and by ticker job: when the watch first saw it, and which stalls rang.

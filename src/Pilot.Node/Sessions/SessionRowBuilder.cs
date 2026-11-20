@@ -139,6 +139,7 @@ public static class SessionRowBuilder
             SpendWeighted = transcripts.SpendWeighted,
             Subagents = transcripts.Subagents is { Count: > 0 } subagents ? [.. subagents] : null,
             ApiError = apiError,
+            LastTurnEnd = apiError ?? transcripts.StopReason ?? (hook?.EndReason is { Length: > 0 } hookEnd ? hookEnd : hook is { Event: { Length: > 0 } hookEvent, State: SessionState.Idle or SessionState.Ended } ? $"the {hookEvent} hook" : null),
             ApiErrorResetsAt = transcripts.Stop?.ResetsAt,
             Budget = role.Budget,
             EndedBecause = endedBecause,
