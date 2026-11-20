@@ -134,4 +134,25 @@ public sealed class DesignTargetsTests : IAsyncLifetime
         DesignTargets.Resolve(null, 500, 700)!.Name.ShouldBe("500x700");
         DesignTargets.ResolveAll([]).ShouldBe([DesignTargets.Desktop]);
     }
+
+    /// <summary>A target name becomes part of a file name: one that could leave the renders folder is refused (the review of #1116).</summary>
+    [Theory]
+    [InlineData("../../escape")]
+    [InlineData("sub/dir")]
+    [InlineData("sub\\dir")]
+    [InlineData("..")]
+    [InlineData("")]
+    [InlineData("a:b")]
+    public void ATargetNameThatIsNoPlainFileNameIsRefused(string name)
+    {
+        DesignTargets.IsPlainName(name).ShouldBeFalse();
+        Should.Throw<ArgumentException>(() => DesignTargets.RenderFile("home", name));
+    }
+
+    [Theory]
+    [InlineData("Desktop")]
+    [InlineData("phone-wide")]
+    [InlineData("Wall 4K")]
+    public void APlainTargetNameMakesTheRenderFile(string name) =>
+        DesignTargets.RenderFile("home", name).ShouldBe($"home.{name}.png");
 }

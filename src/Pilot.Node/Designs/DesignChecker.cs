@@ -50,7 +50,10 @@ public static class DesignChecker
             var findings = NamesTargets(loaded)
                 ? Prototype.Check(loaded, fontPath: fontPath ?? FontPath)
                 : Prototype.Check(loaded, DesignSizes.All, fontPath: fontPath ?? FontPath);
-            return [.. findings.Select(Line).Concat(CellLines(loaded, terminals ?? [])).Concat(DocumentLines(prototypeFile, loaded, requireDocument)).Distinct(StringComparer.Ordinal)];
+            // A target whose name cannot be a file name is said here, before a render refuses it (the review of #1116).
+            var names = loaded.Targets.Select((t, i) => (t.Name, i)).Where(t => !DesignTargets.IsPlainName(t.Name))
+                .Select(t => $"$.targets[{t.i}].name: '{t.Name}' is not a plain file name (no path separator, '..' or character a file name cannot hold)");
+            return [.. names.Concat(findings.Select(Line)).Concat(CellLines(loaded, terminals ?? [])).Concat(DocumentLines(prototypeFile, loaded, requireDocument)).Distinct(StringComparer.Ordinal)];
         }
         catch (FileNotFoundException ex)
         {
@@ -196,8 +199,9 @@ public static class DesignChecker
     }
 
     /// <summary>
-    /// Draws every screen of <paramref name="document"/> at its design size into <paramref name="rendersFolder"/> as <c>&lt;screen id&gt;.png</c>, after clearing
-    /// the PNGs of an earlier render, and stamps the folder with <paramref name="prototypeSha256"/>. Returns the screens' ids.
+    /// Draws every screen of <paramref name="document"/> into <paramref name="rendersFolder"/>, after clearing the PNGs of an earlier render, and stamps the
+    /// folder with <paramref name="prototypeSha256"/>: a document that names targets as <c>&lt;screen&gt;.&lt;target&gt;.png</c> at each target, returning
+    /// <c>screen.target</c> for each; one that names none as <c>&lt;screen id&gt;.png</c> at its design size, returning the screens' ids.
     /// </summary>
     public static string[] Render(PrototypeDocument document, string rendersFolder, string prototypeSha256, string? fontPath = null, string[]? terminals = null, string? monoFontPath = null)
     {
