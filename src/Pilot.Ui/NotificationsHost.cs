@@ -414,23 +414,20 @@ internal sealed class NotificationsHost
 
     private Layout.Node OpenBar(Layout.Node panel, NotificationsColors colors)
     {
-        var all = Layout.Builder.HStack(Layout.Builder.Text("All ▸", 12f, colors.Text, TextAlign.Center).WAuto())
-            .Pad(6f, 2f)
-            .Bg(colors.Card)
-            .Clickable(new HitResult.ButtonHit("notifications:all"), _ => OpenPage?.Invoke(), CursorKind.Pointer)
-            .WithTooltip("Open the Notifications page: everything that needs you and everything that happened", Layout.DockSide.Bottom)
-            .WAuto();
+        // The library's icon controls (PIL1232), drawn from pilot's palette through the one theme: the pin's pressed look and its filled
+        // glyph follow Docked (the bar's state), never the click; the hit ids and the words are the buttons' they replace.
+        var theme = UiThemes.Current;
         var pinned = Docked;
-        var pinBg = pinned ? Palette.Current.RailAccent : colors.Card;
-        var pinFg = new[] { colors.Text, Palette.Current.Ground, new RGBAColor32(0, 0, 0, 0xff) }.MaxBy(c => Contrast.Ratio(c, pinBg));
-        var pin = Layout.Builder.HStack(Layout.Builder.Text(pinned ? "Pinned" : "Pin", 12f, pinFg, TextAlign.Center).WAuto())
-            .Pad(6f, 2f)
-            .Bg(pinBg)
-            .Clickable(new HitResult.ButtonHit(PinAction), _ => TogglePin(), CursorKind.Pointer)
-            .WithTooltip(pinned
-                ? DockedNow ? "Pinned beside the page: press to let the bar open over it" : "Pinned, but this window has no room beside the page, so the bar opens over it: press to unpin"
-                : "Open over the page: press to pin the bar beside it", Layout.DockSide.Bottom)
-            .WAuto();
+        var pin = Layout.Builder.IconToggle(Layout.IconKind.Pin, pinned, _ => TogglePin(), theme,
+                words: pinned
+                    ? DockedNow ? "Pinned beside the page: press to let the bar open over it" : "Pinned, but this window has no room beside the page, so the bar opens over it: press to unpin"
+                    : "Open over the page: press to pin the bar beside it",
+                hit: new HitResult.ButtonHit(PinAction))
+            .WithCursor(CursorKind.Pointer);
+        var all = Layout.Builder.IconAction(Layout.IconKind.OpenInPage, () => OpenPage?.Invoke(), theme,
+                words: "Open the Notifications page: everything that needs you and everything that happened",
+                hit: new HitResult.ButtonHit("notifications:all"))
+            .WithCursor(CursorKind.Pointer);
         var collapse = Layout.Builder.HStack(
                 Layout.Builder.Text("For you", 12f, colors.Dim).WStar(),
                 pin,
