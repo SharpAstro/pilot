@@ -16,7 +16,7 @@ public sealed class ReviewFollowUpTests : ReviewTestsBase
 
     private async Task<string> SecondRound(string firstReport)
     {
-        var flight = await NewFlight("1", "parser");
+        var flight = await NewFlight("40", "parser");
         await Fly(flight, "parser");
         (await Run(Verbs.OpenPr, Verbs.FlightTarget(flight.Code), "controller")).Error.ShouldBeNull();
         (await Run(Verbs.Review, Verbs.FlightTarget(flight.Code), Reviewer(flight.Code), "changes", firstReport)).Error.ShouldBeNull();

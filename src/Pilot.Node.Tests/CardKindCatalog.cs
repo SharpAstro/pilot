@@ -286,6 +286,8 @@ internal static class CardKindCatalog
         ["Flights/LegCommander.Overlap.cs|title"] = "the overlap title built in LegCommander.Overlap names both flights, the files they share and the choice",
         ["Flights/LegCommander.Move.cs|title"] = "the move's own failure text: its first part is the reason, built where the move is refused",
         ["Flights/LegCommander.Move.cs|text"] = "the move's own line: who handed the flight to whom",
+        ["Flights/LegCommander.FollowUp.cs|title"] = "the title DeferredRoutes.RouteAsync builds: the subject and the owner-decision question, pinned by DeferredPointTests",
+        ["Flights/PrReviews.FollowUp.cs|title"] = "the title DeferredRoutes.RouteAsync builds: the subject and the owner-decision question, pinned by DeferredPointTests",
         ["Flights/PrReviews.Cards.cs|title"] = "the parameter of PrReviews.RaiseOnce, whose titles are the literals at each RaiseOnce( call, which the guard reads as it reads RaiseCard",
         ["Flights/PackageWatch.cs|late.Title"] = "PackageWatch.LateAsync names the package, its version and the run",
         ["Flights/FlightCommander.Receive.cs|card.Title"] = "the card a refused receive carried over from the node that raised it",
