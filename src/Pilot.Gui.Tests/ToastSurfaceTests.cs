@@ -214,6 +214,9 @@ public sealed class ToastSurfaceTests
         rig.TooltipAfterRest(open).ShouldNotBeNull();
     }
 
+    /// <summary>The index of the first row the list registers (rows outside the clip are not registered, so a scroll shows here and a row's Y alone would not).</summary>
+    private static int TopIndex(Rig rig) => ((HitResult.ListItemHit)rig.SessionRows()[0].Result!).Index;
+
     [Theory]
     [MemberData(nameof(Cases))]
     public void APressAndAWheelTurnOnTheCardsBodyNeverReachTheRow(Kind kind, int width, int height, float dpi)
@@ -221,13 +224,12 @@ public sealed class ToastSurfaceTests
         using var rig = new Rig(kind, width, height, dpi);
         var (body, open, row) = Find(rig);
         var rows = rig.SessionRows();
-        var first = rows[0];
         var selected = rig.Chrome.Sessions.Selected;
-        var firstY = first.Y;
+        var top = TopIndex(rig);
 
-        rig.Wheel(body).ShouldBeTrue("the card takes the wheel");
+        rig.Wheel(body);
         rig.Paint();
-        rig.SessionRows()[0].Y.ShouldBe(firstY, "the list did not scroll");
+        TopIndex(rig).ShouldBe(top, "the list did not scroll: the same row is still first");
 
         rig.Press(body);
         rig.Chrome.Sessions.Selected.ShouldBe(selected, "a press on the card does not select the row beneath it");
@@ -245,5 +247,10 @@ public sealed class ToastSurfaceTests
         var index = rows.IndexOf(row);
         rig.Press(open);
         rig.Chrome.Sessions.Selected.ShouldBe(index, "the row in the open takes the press");
+
+        // The control for the wheel: a turn on the same row in the open does scroll the list, so the unchanged top above is a proof.
+        rig.Wheel(open);
+        rig.Paint();
+        TopIndex(rig).ShouldNotBe(top, "a wheel turn in the open scrolls the list");
     }
 }

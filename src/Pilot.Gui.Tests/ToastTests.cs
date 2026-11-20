@@ -241,7 +241,7 @@ public sealed class ToastTests
         more.Toasts.Count.ShouldBe(3);
         w.Frame(T0.AddSeconds(2.1), job: JobState.Succeeded);
         more.Toasts.Count.ShouldBeLessThanOrEqualTo(3);
-        more.Toasts[0].Notification.Title.ShouldBe("Event 4", "newest first in the feed, and nearest the bottom right corner");
+        more.Toasts[0].Notification.Title.ShouldBe("Event 4", "newest first in the feed");
     }
 
     [Fact]
