@@ -125,7 +125,7 @@ internal sealed partial class FlightsView<TSurface>
     private const float ArrowStep = 40f;
     private const float ArrowStepBig = 160f;
 
-    /// <summary>Whether a point is covered by something painted after this page (the chrome's rule): the map takes no wheel turn there.</summary>
+    /// <summary>Whether a point is covered by something painted after this page (the chrome's rule): the map takes no wheel turn or pinch there.</summary>
     internal Func<float, float, bool>? CoveredAt { get; set; }
 
     private bool HandleMapScroll(InputEvent.Scroll scroll)
@@ -163,7 +163,8 @@ internal sealed partial class FlightsView<TSurface>
                 _space = false;
                 Changed?.Invoke();
                 return false;
-            case InputEvent.Pinch pinch when MapLive && _mapBody is { } pinchBody && pinchBody.Contains(pinch.X, pinch.Y):
+            // A pinch over a toast, the edge handle or the open bar is theirs, as the wheel is: the same CoveredAt rule as HandleMapScroll.
+            case InputEvent.Pinch pinch when MapLive && _mapBody is { } pinchBody && pinchBody.Contains(pinch.X, pinch.Y) && CoveredAt?.Invoke(pinch.X, pinch.Y) != true:
                 var (px, py) = ToView(pinchBody, pinch.X, pinch.Y);
                 if (_vp.ZoomAt(pinch.Scale, px, py))
                 {
