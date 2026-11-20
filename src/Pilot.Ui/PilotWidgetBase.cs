@@ -206,7 +206,10 @@ internal abstract class PilotWidgetBase<TSurface> : PixelWidgetBase<TSurface>
                 // clickable row's own hit decides and the router gets the press (#1221). A region that is not plain chrome, or has
                 // anything to do with a press, is not ours.
                 return PageSelection.HandleInput(evt, (x, y) => !Under(x, y, r => r is not { Result: HitResult.ChromeHit } || TakesPress(r),
-                    lookThrough: r => r is { Result: HitResult.ChromeHit } && !TakesPress(r)));
+                    lookThrough: r => r is { Result: HitResult.ChromeHit } && !TakesPress(r)),
+                    // A clickable list row (the topmost region once tooltip-only ones are looked through): a drag on its text selects the text.
+                    (x, y) => Under(x, y, r => r is { Result: HitResult.ListItemHit },
+                        lookThrough: r => r is { Result: HitResult.ChromeHit } && !TakesPress(r)));
         }
     }
 

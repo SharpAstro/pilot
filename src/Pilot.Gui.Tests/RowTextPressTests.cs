@@ -126,6 +126,72 @@ public sealed class RowTextPressTests
         selectedSomewhere.ShouldBeTrue();
     }
 
+    private static (List<string> Copied, Action CtrlC) Copying(Window window)
+    {
+        var copied = new List<string>();
+        window.Chrome.Jobs.CopyText = copied.Add;
+        return (copied, () => window.Send(new InputEvent.KeyDown(InputKey.C, InputModifier.Ctrl)));
+    }
+
+    private static void Drag(Window window, float x0, float y0, float x1, float y1)
+    {
+        window.Send(new InputEvent.MouseDown(x0, y0));
+        window.Send(new InputEvent.MouseMove((x0 + x1) / 2f, (y0 + y1) / 2f));
+        window.Send(new InputEvent.MouseMove(x1, y1));
+        window.Send(new InputEvent.MouseUp(x1, y1));
+    }
+
+    [Fact]
+    public void ADragBeginOnAJobsCommandTextWhichCarriesATooltipSelectsTheTextItCoversAndCtrlCCopiesIt()
+    {
+        using var window = new Window();
+        window.Chrome.Show(PilotPage.Jobs);
+        window.Render();
+        var (copied, ctrlC) = Copying(window);
+        var command = window.Chrome.Jobs.SelectableTextRegions.ToArray().Where(r => r.Text.Contains("dotnet test", StringComparison.Ordinal))
+            .OrderBy(r => r.Y).First();
+
+        Drag(window, command.X + 1f, command.Y + command.Height / 2f, command.X + command.Width - 1f, command.Y + command.Height / 2f);
+        ctrlC();
+
+        copied.Count.ShouldBe(1);
+        copied[0].ShouldContain("dotnet");
+        window.Chrome.Jobs.Selected.ShouldBe(0);
+    }
+
+    [Fact]
+    public void ADragBeginOnAJobsIdWhichHasNoTooltipSelectsTheTextItCoversAndCtrlCCopiesIt()
+    {
+        using var window = new Window();
+        window.Chrome.Show(PilotPage.Jobs);
+        window.Render();
+        var (copied, ctrlC) = Copying(window);
+        var id = window.Chrome.Jobs.SelectableTextRegions.ToArray().Where(r => r.Text.Trim() is "j12" or "j13" or "j14").OrderBy(r => r.Y).First();
+
+        Drag(window, id.X + 1f, id.Y + id.Height / 2f, id.X + id.Width - 1f, id.Y + id.Height / 2f);
+        ctrlC();
+
+        copied.Count.ShouldBe(1);
+        copied[0].ShouldContain("j1");
+    }
+
+    [Fact]
+    public void APressAndReleaseWithNoMoveSelectsTheRowAndNoText()
+    {
+        using var window = new Window();
+        window.Chrome.Show(PilotPage.Jobs);
+        window.Render();
+        var (copied, ctrlC) = Copying(window);
+        var id = window.Chrome.Jobs.SelectableTextRegions.ToArray().Where(r => r.Text.Trim() is "j12" or "j13" or "j14").OrderBy(r => r.Y).Last();
+
+        var (x, y) = Middle(id);
+        window.Click(x, y);
+        ctrlC();
+
+        window.Chrome.Jobs.Selected.ShouldBe(2);
+        copied.ShouldBeEmpty();
+    }
+
     [Fact]
     public void APressOnAButtonIsStillTheButtons()
     {
