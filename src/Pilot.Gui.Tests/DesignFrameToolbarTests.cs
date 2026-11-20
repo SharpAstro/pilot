@@ -23,10 +23,12 @@ public sealed class DesignFrameToolbarTests
             Chrome = new PilotChrome<RgbaImage>(_renderer, new SessionsView<RgbaImage>(_renderer)) { FontPath = SessionsCapture.FontPath };
             Chrome.Autopilot.OnToggle = _ => Task.FromResult<string?>(null);
             Chrome.Show(PilotPage.Designs);
+            Router = new InputRouter(Chrome.Designs.Ui, new BackgroundTaskTracker(), () => { }) { Widgets = () => Chrome.Widgets };
             View.Open("DSN-1");
             Paint();
         }
 
+        public InputRouter Router { get; }
         public DesignsScreen Screen { get; }
         public PilotChrome<RgbaImage> Chrome { get; }
         public DesignsView<RgbaImage> View => Chrome.Designs;
@@ -40,6 +42,31 @@ public sealed class DesignFrameToolbarTests
         public List<Layout.ArrangedNode<float>> Arranged(float width = 1920f) =>
             Layout.Engine.Arrange(View.Tree(Screen), new Rect<float>(0, 0, width, 1080), new PixelMeasureContext<RgbaImage>(_renderer, SessionsCapture.FontPath, 1f)).ToList();
 
+        public ClickableRegion Region(string action)
+        {
+            var regions = new List<ClickableRegion>();
+            View.CollectPaintedRegions(regions);
+            return regions.First(x => x.Result is HitResult.ButtonHit b && b.Action == action);
+        }
+
+        public void Press(string action)
+        {
+            var r = Region(action);
+            var (x, y) = (r.X + r.Width / 2f, r.Y + r.Height / 2f);
+            Router.Handle(new InputEvent.MouseDown(x, y, MouseButton.Left, InputModifier.None, 1));
+            Router.Handle(new InputEvent.MouseUp(x, y, MouseButton.Left));
+            Paint();
+        }
+
+        // The segment's own fill, sampled just inside its top-left corner where no word is drawn.
+        public RGBAColor32 FillOf(string action)
+        {
+            var r = Region(action);
+            var px = _renderer.Surface.Pixels;
+            var i = ((int)(r.Y + 2) * 1920 + (int)(r.X + 2)) * 4;
+            return new RGBAColor32(px[i], px[i + 1], px[i + 2], 255);
+        }
+
         public void Dispose() => _renderer.Dispose();
     }
 
@@ -52,9 +79,52 @@ public sealed class DesignFrameToolbarTests
         var buttons = all.Where(a => a.Node.Hit is HitResult.ButtonHit { Action: { } act } && own.IsMatch(act)).ToList();
         buttons.Count.ShouldBe(7);
         buttons.Select(b => b.Bounds.Y).Distinct().Count().ShouldBe(1, "one row");
-        buttons.Select(b => b.Bounds.Height).Distinct().Count().ShouldBe(1, "one height");
+        // The five sizes are the library's segments (each inset inside the control, so a little less tall than it); Rotate and Point at this are buttons of the control's height.
+        var plain = buttons.Where(b => b.Node.Hit is HitResult.ButtonHit { Action: { } a } && (a.Contains("rotate") || a.Contains("point"))).ToList();
+        plain.Select(b => b.Bounds.Height).Distinct().Count().ShouldBe(1, "one height");
+        plain.ShouldAllBe(b => Math.Abs(b.Bounds.Height - AboutCard.HeaderButton) < 0.5f);
         var texts = SentenceRuns.Texts(all.Select(a => a.Node));
         foreach (var label in Labels)
+        {
+            texts.ShouldContain(label);
+        }
+    }
+
+    [Fact]
+    public void APressOnASizeSegmentChangesThatFramesSizeAndTheChosenSegmentFollowsTheState()
+    {
+        using var rig = new Rig();
+        rig.Press("designs:frame-size:0:0:Phone");
+        rig.View.FrameSizeName(0, 0).ShouldBe("Phone");
+        rig.Press("designs:frame-terminal:0:0");
+        rig.View.FrameSizeName(0, 0).ShouldBe("Terminal");
+
+        // Set without a press: the chosen segment is the state's, drawn in a fill the others do not have.
+        rig.View.PickFrameTarget(0, 0, "Tablet").ShouldBeTrue();
+        rig.Paint();
+        rig.FillOf("designs:frame-size:0:0:Tablet").ShouldNotBe(rig.FillOf("designs:frame-size:0:0:Phone"));
+        rig.FillOf("designs:frame-size:0:0:Phone").ShouldBe(rig.FillOf("designs:frame-size:0:0:Laptop"));
+    }
+
+    [Theory]
+    [InlineData(InputKey.D1, "Desktop")]
+    [InlineData(InputKey.D3, "Tablet")]
+    [InlineData(InputKey.D4, "Phone")]
+    public void AltAndTheSegmentsDigitPicksTheFramesSize(InputKey key, string size)
+    {
+        using var rig = new Rig();
+        rig.Router.Handle(new InputEvent.KeyDown(key, InputModifier.Alt)).ShouldBeTrue();
+        rig.View.FrameSizeName(0, 0).ShouldBe(size);
+    }
+
+    [Fact]
+    public void AtANarrowWellTheWordsStayInWholeBecauseTheLibraryHasNoMarkToStandForThem()
+    {
+        // DIR.Lib#300: no desktop, tablet, phone or terminal mark yet, so the segments keep their words at every width (the library drops a word only where a mark stands for it)
+        // and the toolbar wraps Rotate and Point at this onto a second row instead; nothing is cut.
+        using var rig = new Rig();
+        var texts = SentenceRuns.Texts(rig.Arranged(700f).Select(a => a.Node));
+        foreach (var label in new[] { "Desktop", "Laptop", "Tablet", "Phone", "Terminal", "Rotate", "Point at this" })
         {
             texts.ShouldContain(label);
         }

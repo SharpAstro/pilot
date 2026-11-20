@@ -1466,31 +1466,57 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
             .Follows(new HitResult.ButtonHit(action), _ => click());
     }
 
-    private const float ToolButtonH = 26f;
+    private const float ToolButtonH = AboutCard.HeaderButton;
     private const float ToolGap = 6f;
 
-    // The frame's own toolbar, in one place under every frame, inside its well: Desktop, Laptop, Tablet, Phone, Rotate, Terminal and Point at this. It wraps onto a second row
-    // where the well is narrow, never cuts. Returns the toolbar and its height.
+    // One keyboard cursor per frame's size control, as the library asks (Left and Right step from where the reader last was).
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<(int Cell, int Frame), ListCursor> _sizeCursors = new();
+
+    /// <summary>
+    /// The frame's size choice (PIL1232): DIR.Lib's segmented control over the built-in sizes and Terminal, the one-of-few row the owner called pure text. The library has no mark for a
+    /// desktop, tablet, phone or terminal yet (SharpAstro/DIR.Lib#300), so the segments carry words alone and pilot draws no glyph. Each segment keeps the hit id its button had
+    /// (<c>designs:frame-size:{cell}:{index}:{name}</c>, <c>designs:frame-terminal:{cell}:{index}</c>); the chosen one is the frame's size state, not the click. Alt+1 to Alt+5 pick a
+    /// size for the frame Point at this works for (the first until one was pointed at), as one frame's chords are free on the page and every frame's would collide.
+    /// </summary>
+    private Layout.Node SizeChoice(int cell, int index, string size)
+    {
+        var shortcuts = (_pointAt ?? _plays.Keys.OrderBy(k => k).Select(k => ((int Cell, int Frame)?)k).FirstOrDefault()) == (cell, index);
+        List<Layout.ButtonGroupOption<string>> options = [];
+        foreach (var target in DesignTargets.BuiltIn)
+        {
+            var name = target.Name;
+            options.Add(new Layout.ButtonGroupOption<string>(name, name)
+            {
+                Hit = new HitResult.ButtonHit($"designs:frame-size:{cell}:{index}:{name}"),
+                Shortcut = shortcuts ? new KeyChord(InputKey.D1 + options.Count, InputModifier.Alt) : null,
+            });
+        }
+        options.Add(new Layout.ButtonGroupOption<string>("Terminal", "Terminal")
+        {
+            Hit = new HitResult.ButtonHit($"designs:frame-terminal:{cell}:{index}"),
+            Shortcut = shortcuts ? new KeyChord(InputKey.D1 + options.Count, InputModifier.Alt) : null,
+        });
+        return Layout.Builder.Segmented<string>([.. options], size, name => { if (name == "Terminal") PickFrameTerminal(cell, index); else PickFrameTarget(cell, index, name); },
+            UiThemes.Current, _sizeCursors.GetOrAdd((cell, index), _ => new ListCursor()), $"designs:frame-sizes:{cell}:{index}", 12f).WithCursor(CursorKind.Pointer);
+    }
+
+    // The frame's own toolbar, in one place under every frame, inside its well: the size choice (Desktop, Laptop, Tablet, Phone, Terminal), Rotate and Point at this. It wraps onto a
+    // second row where the well is narrow, never cuts. Returns the toolbar and its height.
     private (Layout.Node Node, float Height) FrameToolbar(FramePlay play, int cell, int index)
     {
         var size = FrameSizeName(cell, index);
         var pointing = _pointing && _pointAt == (cell, index);
-        List<(string Label, Layout.Node Button)> buttons = [];
-        foreach (var target in DesignTargets.BuiltIn)
-        {
-            var name = target.Name;
-            buttons.Add((name, ToolButton(name, $"Show this frame as a {name.ToLowerInvariant()} ({target.Width} x {target.Height})", $"designs:frame-size:{cell}:{index}:{name}", () => PickFrameTarget(cell, index, name), chosen: size == name)));
-        }
-        buttons.Add(("Rotate", ToolButton("Rotate", "Swap this frame's width and height", $"designs:frame-rotate:{cell}:{index}", () => RotateFrame(cell, index))));
-        buttons.Add(("Terminal", ToolButton("Terminal", $"Show this frame as a terminal ({_terminalSize} cells)", $"designs:frame-terminal:{cell}:{index}", () => PickFrameTerminal(cell, index), chosen: size == "Terminal")));
-        buttons.Add(("Point at this", ToolButton("Point at this", pointing ? "Pointing: a click on this screen puts that node's key in your message. Click again to play it." : "Click a part of this screen to put its key in your message instead of playing the click", $"designs:frame-point:{cell}:{index}", () => Point(!pointing, cell, index), pointing: pointing)));
+        List<(float Width, Layout.Node Item)> items = [];
+        var sizesWidth = (DesignTargets.BuiltIn.Sum(t => t.Name.Length) + "Terminal".Length) * 7f + 5 * 24f;
+        items.Add((sizesWidth, SizeChoice(cell, index, size)));
+        items.Add(("Rotate".Length * 7f + 20f, ToolButton("Rotate", "Swap this frame's width and height", $"designs:frame-rotate:{cell}:{index}", () => RotateFrame(cell, index))));
+        items.Add(("Point at this".Length * 7f + 20f, ToolButton("Point at this", pointing ? "Pointing: a click on this screen puts that node's key in your message. Click again to play it." : "Click a part of this screen to put its key in your message instead of playing the click", $"designs:frame-point:{cell}:{index}", () => Point(!pointing, cell, index), pointing: pointing)));
         var room = WellInnerWidth();
         List<Layout.Node> rows = [];
         List<Layout.Node> row = [];
         var used = 0f;
-        foreach (var (label, button) in buttons)
+        foreach (var (width, item) in items)
         {
-            var width = label.Length * 7f + 20f;
             if (row.Count > 0 && used + ToolGap + width > room)
             {
                 rows.Add(Layout.Builder.HStack([.. row]).WithGap(ToolGap).HFixed(ToolButtonH));
@@ -1498,7 +1524,7 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
                 used = 0f;
             }
             used += (row.Count > 0 ? ToolGap : 0f) + width;
-            row.Add(button);
+            row.Add(item);
         }
         rows.Add(Layout.Builder.HStack([.. row]).WithGap(ToolGap).HFixed(ToolButtonH));
         var height = rows.Count * ToolButtonH + (rows.Count - 1) * ToolGap;
