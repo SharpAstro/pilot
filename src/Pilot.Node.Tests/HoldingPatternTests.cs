@@ -317,7 +317,7 @@ public sealed class HoldingPatternTests : ReviewTestsBase
         _state.Legs(flight.Code).ShouldNotContain(l => l.Name.StartsWith("review-notes"));
         var card = Open().Single(c => c.Kind == LegCommander.ReviewNotesKind);
         card.Detail.ShouldNotBeNull().ShouldContain("Delegate");
-        card.Summary.ShouldNotBeNull().ShouldContain("plans a review-notes leg");
+        card.Summary.ShouldNotBeNull().ShouldContain("review-notes leg makes them");
     }
 
     [Fact]
