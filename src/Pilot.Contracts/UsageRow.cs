@@ -1,10 +1,10 @@
 namespace Pilot.Contracts;
 
 /// <summary>
-/// The account the node's sessions run under, and its usage as Claude Code last told a status line: the 5-hour and
-/// 7-day windows, each its share used and when it resets. The node reads the figures from <c>rate-limits.json</c> in the
-/// Claude config folder, which the controller's status line writes (its <c>rate_limits</c>, the only place Claude Code
-/// hands them out), and the account from Claude Code's <c>.claude.json</c>; it never touches a login's tokens.
+/// The account the node's sessions run under, and its usage: the 5-hour and 7-day windows, each its share used and when
+/// it resets. The node asks the server on its own clock, as <c>/usage</c> does (<c>UsageApi</c>, with the login's access
+/// token read for that request alone), and falls back to <c>rate-limits.json</c> in the Claude config folder, which the
+/// controller's status line writes; the account comes from Claude Code's <c>.claude.json</c>. <see cref="Source"/> says which.
 /// </summary>
 /// <remarks>
 /// The account rides here rather than on an event of its own: usage is the account's, a fleet of nodes on different
@@ -31,6 +31,10 @@ public sealed record UsageRow
 
     /// <summary>When the status line wrote the figures: how fresh they are, since a status line only writes while a session is open.</summary>
     public required DateTimeOffset ReadAt { get; init; }
+
+    /// <summary>Where the figures came from: <c>server</c> or <c>status line</c>; null on a row an older node stored.</summary>
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public string? Source { get; init; }
 
     /// <summary>
     /// When the login was last seen to change, or a person lifted a usage limit that did not hold (#1123); null when neither is on record.
@@ -72,7 +76,25 @@ public sealed record UsageRow
             // Fresh when anything was taken from the read; a stale write leaves the held figures as old as they were.
             ReadAt = fiveTaken || sevenTaken ? (read.ReadAt > held.ReadAt ? read.ReadAt : held.ReadAt) : held.ReadAt,
             LoginChangedAt = Later(held.LoginChangedAt, read.LoginChangedAt),
+            Source = fiveTaken || sevenTaken ? read.Source : held.Source,
         };
+    }
+
+    /// <summary>
+    /// A server read is the account's own state, so it replaces the held windows outright: a used reset is a lower share on the
+    /// same <c>resets_at</c>, which <see cref="Newest(UsageRow?, UsageRow)"/> would refuse. The account and the login-change time carry over.
+    /// </summary>
+    public static UsageRow Replace(UsageRow? held, UsageRow read)
+    {
+        if (held is null)
+        {
+            return read;
+        }
+        if (read.Account is { } account && held.Account is { } was && account.Email != was.Email)
+        {
+            return read with { LoginChangedAt = Later(held.LoginChangedAt, read.LoginChangedAt) };
+        }
+        return read with { Account = read.Account ?? held.Account, LoginChangedAt = Later(held.LoginChangedAt, read.LoginChangedAt) };
     }
 
     private static UsageWindow? Newest(UsageWindow? held, UsageWindow? read, out bool taken)
@@ -102,7 +124,8 @@ public sealed record UsageRow
             : $"{name} {window.UsedPercent:0}%{(window.ResetsAt is { } at ? $" (resets {TimeZoneInfo.ConvertTime(at, zone).ToString(format, System.Globalization.CultureInfo.InvariantCulture)})" : "")}";
         var parts = new[] { Part("5h", FiveHour, "HH:mm"), Part("7d", SevenDay, "ddd HH:mm") }.Where(p => p.Length > 0).ToList();
         var age = now - ReadAt;
-        var stale = age < TimeSpan.FromMinutes(5) ? "" : age < TimeSpan.FromHours(1) ? $", as of {(int)age.TotalMinutes} min ago" : $", as of {age.TotalHours:0} h ago";
+        var from = Source is { Length: > 0 } source ? $", from the {source}" : "";
+        var stale = age < TimeSpan.FromMinutes(5) ? from : age < TimeSpan.FromHours(1) ? $", as of {(int)age.TotalMinutes} min ago{from}" : $", as of {age.TotalHours:0} h ago{from}";
         return (parts.Count == 0 ? "no figures" : string.Join(" · ", parts)) + stale;
     }
 }

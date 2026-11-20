@@ -31,12 +31,12 @@ public sealed partial class NodeState
     /// when the figures changed, or when the same ones were written again 10 minutes after those held: a status line
     /// rewrites them each minute, and a delta for each would fill the journal with nothing.
     /// </summary>
-    public void PutUsage(UsageRow read)
+    public void PutUsage(UsageRow read, bool authoritative = false)
     {
         lock (_gate)
         {
-            var usage = UsageRow.Newest(_usage, read);
-            if (_usage is { } held && held.Account == usage.Account && held.FiveHour == usage.FiveHour && held.SevenDay == usage.SevenDay
+            var usage = authoritative ? UsageRow.Replace(_usage, read) : UsageRow.Newest(_usage, read);
+            if (_usage is { } held && held.Account == usage.Account && held.FiveHour == usage.FiveHour && held.SevenDay == usage.SevenDay && held.Source == usage.Source
                 && held.LoginChangedAt == usage.LoginChangedAt && usage.ReadAt - held.ReadAt < TimeSpan.FromMinutes(10))
             {
                 // Not journalled, but the write itself is remembered: a limit seen after the first write is ended by a rewrite (#1141).

@@ -545,6 +545,11 @@ public static partial class NodeApp
         {
             AccountFile = ClaudeAccount.FileFor(services.GetRequiredService<SessionTrackerOptions>().Profile.Root),
             Outage = services.GetRequiredService<TurnOutage>(),
+            Api = new UsageApi(
+                new HttpClient { Timeout = TimeSpan.FromSeconds(20) },
+                Path.Combine(services.GetRequiredService<SessionTrackerOptions>().Profile.Root, ".credentials.json"),
+                services.GetRequiredService<TimeProvider>(),
+                services.GetRequiredService<ILoggerFactory>().CreateLogger<UsageApi>()),
         });
         builder.Services.AddSingleton(services => new TurnOutage(services.GetRequiredService<NodeState>()));
         builder.Services.AddHostedService(services => services.GetRequiredService<UsageReader>());

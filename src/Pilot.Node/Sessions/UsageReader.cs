@@ -4,9 +4,11 @@ using Pilot.Contracts;
 namespace Pilot.Node.Sessions;
 
 /// <summary>
-/// Reads the account's usage once a minute from <c>rate-limits.json</c> in the Claude config folder, which the
-/// controller's status line writes from the <c>rate_limits</c> Claude Code hands it, and the account itself from Claude
-/// Code's <c>.claude.json</c> (<see cref="ClaudeAccount"/>): no token is read, no API called.
+/// Reads the account's usage once a minute: from the server first, as <c>/usage</c> does (<see cref="UsageApi"/>, which paces
+/// itself and reads the login's token for its own request only), and from <c>rate-limits.json</c> in the Claude config folder,
+/// which the controller's status line writes, when the server gives nothing. The account itself comes from Claude
+/// Code's <c>.claude.json</c> (<see cref="ClaudeAccount"/>). A server read replaces the held windows; a file read is merged
+/// only when it was written after the last server read.
 /// Past <see cref="HighPercent"/> of the 5-hour window it raises a For-you card, once per window, since workers stop
 /// there and a stop the controller saw coming is no surprise.
 /// </summary>
@@ -23,7 +25,13 @@ public sealed class UsageReader(NodeState state, string file, TimeProvider time)
     /// <summary>The 5-hour share past which a card says workers will stop soon.</summary>
     public double HighPercent { get; init; } = 90;
 
+    /// <summary>The live read from the server; null reads the file alone.</summary>
+    public UsageApi? Api { get; init; }
+
     private DateTimeOffset? _warnedFor;
+
+    // When the last server read was taken: a file written before it is older news and never overrides it.
+    private DateTimeOffset? _serverReadAt;
 
     // The login last read, and when it was seen to change: the status line's file names no account, so after a switch it still
     // holds the last account's figures until the status line writes again, and those were put as the new account's (the owner
@@ -35,7 +43,14 @@ public sealed class UsageReader(NodeState state, string file, TimeProvider time)
     {
         while (!stopping.IsCancellationRequested)
         {
-            Read();
+            try
+            {
+                Read(Api is null ? null : await Api.ReadAsync(stopping));
+            }
+            catch (OperationCanceledException) when (stopping.IsCancellationRequested)
+            {
+                return;
+            }
             try
             {
                 await Task.Delay(TimeSpan.FromMinutes(1), time, stopping);
@@ -51,7 +66,7 @@ public sealed class UsageReader(NodeState state, string file, TimeProvider time)
     /// One read: puts the account and its figures, and warns when the 5-hour window is nearly spent. With no figures the
     /// account is put alone, so a node whose status line writes none still says whose it is; nothing when there is neither.
     /// </summary>
-    public void Read()
+    public void Read(UsageRow? server = null)
     {
         var account = AccountFile is { } path ? ClaudeAccount.Read(path) : null;
         if (account is { Email: var email })
@@ -63,17 +78,27 @@ public sealed class UsageReader(NodeState state, string file, TimeProvider time)
             }
             _email = email;
         }
-        var figures = Parse(file);
+        var figures = server ?? Parse(file);
         // Written before the login changed: the last account's, not this one's. The account is put alone until fresh ones come.
         if (figures is not null && _switchedAt is { } switched && figures.ReadAt < switched)
         {
             figures = null;
         }
+        // The file is older news than a server read taken after it was written.
+        if (server is null && figures is not null && _serverReadAt is { } last && figures.ReadAt <= last)
+        {
+            figures = null;
+        }
+        if (server is not null && figures is not null)
+        {
+            _serverReadAt = server.ReadAt;
+        }
+        var authoritative = server is not null && figures is not null;
         if ((figures is not null ? figures with { Account = account } : account is null ? null : new UsageRow { Account = account, ReadAt = time.GetUtcNow() }) is not { } read)
         {
             return;
         }
-        state.PutUsage(read);
+        state.PutUsage(read, authoritative);
         // The merged figures, not this read: a stale writer must not raise, or miss, the warning either.
         var usage = state.Usage()!;
 
@@ -100,7 +125,7 @@ public sealed class UsageReader(NodeState state, string file, TimeProvider time)
             var readAt = root.TryGetProperty("written_at", out var written) && written.ValueKind == JsonValueKind.Number && written.TryGetInt64(out var seconds)
                 ? DateTimeOffset.FromUnixTimeSeconds(seconds)
                 : new DateTimeOffset(File.GetLastWriteTimeUtc(path), TimeSpan.Zero);
-            return new UsageRow { FiveHour = Window(limits, "five_hour"), SevenDay = Window(limits, "seven_day"), ReadAt = readAt };
+            return new UsageRow { FiveHour = Window(limits, "five_hour"), SevenDay = Window(limits, "seven_day"), ReadAt = readAt, Source = "status line" };
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
         {

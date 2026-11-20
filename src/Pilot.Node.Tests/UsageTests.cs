@@ -43,8 +43,46 @@ public sealed class UsageTests : IDisposable
         usage.FiveHour.ShouldBe(new UsageWindow { UsedPercent = 42, ResetsAt = Reset });
         usage.SevenDay.ShouldBe(new UsageWindow { UsedPercent = 64, ResetsAt = new DateTimeOffset(2026, 10, 24, 10, 0, 0, TimeSpan.Zero) });
         usage.ReadAt.ShouldBe(Now);
-        usage.Line(Now.AddMinutes(2), TimeZoneInfo.Utc).ShouldBe("5h 42% (resets 14:00) · 7d 64% (resets Sat 10:00)");
-        usage.Line(Now.AddMinutes(20), TimeZoneInfo.Utc).ShouldEndWith(", as of 20 min ago");
+        usage.Source.ShouldBe("status line");
+        usage.Line(Now.AddMinutes(2), TimeZoneInfo.Utc).ShouldBe("5h 42% (resets 14:00) · 7d 64% (resets Sat 10:00), from the status line");
+        usage.Line(Now.AddMinutes(20), TimeZoneInfo.Utc).ShouldEndWith(", as of 20 min ago, from the status line");
+        (usage with { Source = null }).Line(Now.AddMinutes(2), TimeZoneInfo.Utc).ShouldBe("5h 42% (resets 14:00) · 7d 64% (resets Sat 10:00)");
+    }
+
+    [Fact]
+    public void AServerReadWithALowerShareOnTheSameResetReplacesTheHeldFigureAsAUsedResetDoes()
+    {
+        var reader = new UsageReader(_state, File, _time);
+        Write(91, Reset);
+        reader.Read();
+        _state.Usage()!.FiveHour!.UsedPercent.ShouldBe(91);
+
+        _time.Advance(TimeSpan.FromMinutes(1));
+        reader.Read(new UsageRow { FiveHour = new UsageWindow { UsedPercent = 15, ResetsAt = Reset }, ReadAt = _time.GetUtcNow(), Source = "server" });
+
+        var usage = _state.Usage().ShouldNotBeNull();
+        usage.FiveHour!.UsedPercent.ShouldBe(15);
+        usage.Source.ShouldBe("server");
+        usage.Line(_time.GetUtcNow(), TimeZoneInfo.Utc).ShouldEndWith(", from the server");
+    }
+
+    [Fact]
+    public void AFileWrittenBeforeTheLastServerReadNeverOverridesItAndALaterOneIsMerged()
+    {
+        var reader = new UsageReader(_state, File, _time);
+        _time.Advance(TimeSpan.FromMinutes(5));
+        var serverAt = _time.GetUtcNow();
+        reader.Read(new UsageRow { FiveHour = new UsageWindow { UsedPercent = 15, ResetsAt = Reset }, ReadAt = serverAt, Source = "server" });
+
+        // A status line that last redrew before the reset still says 91%: older news.
+        Write(91, Reset, writtenAt: Now.ToUnixTimeSeconds());
+        reader.Read();
+        _state.Usage()!.FiveHour!.UsedPercent.ShouldBe(15);
+
+        // Written after the server read, and grown: merged as ever.
+        Write(20, Reset, writtenAt: serverAt.AddMinutes(1).ToUnixTimeSeconds());
+        reader.Read();
+        _state.Usage()!.FiveHour!.UsedPercent.ShouldBe(20);
     }
 
     [Fact]
