@@ -86,7 +86,8 @@ internal static class MoveFailureBand
         }
         if (failed.Count > MaxBands)
         {
-            yield return Layout.Builder.Text($"and {failed.Count - MaxBands} more flights whose move failed: their rows are red", 12f, p.FailedText).RowH(22f);
+            var more = failed.Count - MaxBands;
+            yield return Layout.Builder.Text(more == 1 ? "and 1 more flight whose move failed: its row is red" : $"and {more} more flights whose move failed: their rows are red", 12f, p.FailedText).RowH(22f);
         }
     }
 }
