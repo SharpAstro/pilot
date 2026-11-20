@@ -439,52 +439,57 @@ public sealed class StandingTests
     }
 
     [Fact]
-    public async Task AutopilotIsOffByDefaultAndSavedOnlyWhenThePersonSetsIt()
+    public async Task AutopilotIsOnByDefaultAndSavedOffOnlyWhenThePersonSetsIt()
     {
-        await using var node = await NodeHarness.StartAsync(Ct);
+        await using var node = await NodeHarness.StartAsync(Ct, autopilotOff: false);
         var lookout = Lookout(node);
         Fly(node, "TIA1", "du1-tia1-parser");
 
-        (await node.Client.GetNodeAsync(Ct)).Autopilot.ShouldBeFalse();
+        (await node.Client.GetNodeAsync(Ct)).Autopilot.ShouldBeTrue();
         var row = (await node.Client.GetSettingsAsync(Ct)).Response.ShouldNotBeNull().Settings.Single(s => s.Key == NodeSettings.AutopilotKey);
-        (row.Value, row.Source).ShouldBe(("off", SettingSources.Default));
+        (row.Value, row.Source).ShouldBe(("on", SettingSources.Default));
         row.Choices.ShouldBe(["on", "off"]);
 
         // An assistant (by its flag), the lookout and a flight's session are all refused, and nothing is saved.
         foreach (var (who, agent) in new[] { ("pilot-33", true), ("mcp", true), ("cli", true), (lookout, false), ("du1-tia1-parser", true) })
         {
-            (await Error(node, Command(Verbs.Set, Verbs.NodeTarget, who, agent, "autopilot", "on"))).ShouldNotBeNull().ShouldContain("autopilot is the person's to change");
+            (await Error(node, Command(Verbs.Set, Verbs.NodeTarget, who, agent, "autopilot", "off"))).ShouldNotBeNull().ShouldContain("autopilot is the person's to change");
             // Taking it out is changing it too.
             (await Error(node, Command(Verbs.Set, Verbs.NodeTarget, who, agent, "autopilot"))).ShouldNotBeNull().ShouldContain("autopilot is the person's to change");
         }
         Saved(node).ShouldBeNull();
-        (await node.Client.GetNodeAsync(Ct)).Autopilot.ShouldBeFalse();
+        (await node.Client.GetNodeAsync(Ct)).Autopilot.ShouldBeTrue();
 
         // The person: the GUI, or a CLI nobody's session runs. Saved, and in force at once.
-        var set = (await node.Client.SendAsync(Command(Verbs.Set, Verbs.NodeTarget, "gui", false, "autopilot", "on"), Ct)).Response.ShouldNotBeNull();
+        var set = (await node.Client.SendAsync(Command(Verbs.Set, Verbs.NodeTarget, "gui", false, "autopilot", "off"), Ct)).Response.ShouldNotBeNull();
         set.Error.ShouldBeNull();
         set.Way.ShouldNotBeNull().ShouldContain("in force now");
-        Saved(node).ShouldBe("on");
-        (await node.Client.GetNodeAsync(Ct)).Autopilot.ShouldBeTrue();
-        (await node.Client.GetSettingsAsync(Ct)).Response.ShouldNotBeNull().Settings.Single(s => s.Key == NodeSettings.AutopilotKey).Value.ShouldBe("on");
-
-        // An assistant cannot turn it off either.
-        (await Error(node, Command(Verbs.Set, Verbs.NodeTarget, "pilot-33", true, "autopilot", "off"))).ShouldNotBeNull().ShouldContain("autopilot is the person's to change");
-        (await node.Client.GetNodeAsync(Ct)).Autopilot.ShouldBeTrue();
-        (await Error(node, Command(Verbs.Set, Verbs.NodeTarget, "cli", false, "autopilot", "off"))).ShouldBeNull();
         Saved(node).ShouldBe("off");
         (await node.Client.GetNodeAsync(Ct)).Autopilot.ShouldBeFalse();
+        (await node.Client.GetSettingsAsync(Ct)).Response.ShouldNotBeNull().Settings.Single(s => s.Key == NodeSettings.AutopilotKey).Value.ShouldBe("off");
+
+        // An assistant cannot turn it back on either.
+        (await Error(node, Command(Verbs.Set, Verbs.NodeTarget, "pilot-33", true, "autopilot", "on"))).ShouldNotBeNull().ShouldContain("autopilot is the person's to change");
+        (await node.Client.GetNodeAsync(Ct)).Autopilot.ShouldBeFalse();
+        (await Error(node, Command(Verbs.Set, Verbs.NodeTarget, "cli", false, "autopilot", "on"))).ShouldBeNull();
+        Saved(node).ShouldBe("on");
+        (await node.Client.GetNodeAsync(Ct)).Autopilot.ShouldBeTrue();
         (await Error(node, Command(Verbs.Set, Verbs.NodeTarget, "gui", false, "autopilot", "maybe"))).ShouldBe("autopilot takes on or off");
     }
 
     [Fact]
-    public async Task ASavedAutopilotIsOnWhenTheNodeStarts()
+    public async Task ANodeWithNoSavedAutopilotReadsItOnAndOneSavedOffReadsItOff()
     {
-        await using var first = await NodeHarness.StartAsync(Ct);
+        await using var first = await NodeHarness.StartAsync(Ct, autopilotOff: false);
         var models = first.App.Services.GetRequiredService<RoleModels>();
+        models.Autopilot.ShouldBeTrue();
+        models.Apply(NodeSettings.With(new NodeSettings(), NodeSettings.AutopilotKey, ["off"]).Settings.ShouldNotBeNull());
         models.Autopilot.ShouldBeFalse();
         models.Apply(NodeSettings.With(new NodeSettings(), NodeSettings.AutopilotKey, ["on"]).Settings.ShouldNotBeNull());
         models.Autopilot.ShouldBeTrue();
+        new RoleModels(new NodeSettings()).Autopilot.ShouldBeTrue();
+        new RoleModels(new NodeSettings { Autopilot = false }).Autopilot.ShouldBeFalse();
+        RoleModels.Unset.Autopilot.ShouldBeFalse();
     }
 
     [Fact]

@@ -300,7 +300,7 @@ public sealed class HoldingPatternTests : ReviewTestsBase
         await Fly(flight, "parser");
         (await Run(Verbs.OpenPr, Verbs.FlightTarget(flight.Code), "controller")).Error.ShouldBeNull();
         // A real node with autopilot not set: it advances flights (Advances is on), but the autopilot setting is off.
-        _legs.Models = new RoleModels(new NodeSettings());
+        _legs.Models = new RoleModels(new NodeSettings { Autopilot = false });
         _legs.Models.Advances.ShouldBeTrue();
         _legs.Models.Autopilot.ShouldBeFalse();
         (await Run(Verbs.Review, Verbs.FlightTarget(flight.Code), Reviewer(flight.Code), "pass", Notes)).Error.ShouldBeNull();
