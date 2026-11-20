@@ -44,6 +44,9 @@ public sealed class StartGate(NodeState state, TimeProvider time)
             ? new StartHeld($"sessions are not taking turns since {since.ToLocalTime():HH:mm}, so it waits until they take turns again", since)
             : null;
 
+    /// <summary>The <see cref="HoldRow.Kind"/> of the 5-hour hold the gate puts on the snapshot.</summary>
+    public const string GateHoldKind = "start gate";
+
     /// <summary>Why a known account limit (<see cref="TurnOutage.OpenLimit"/>) holds every start until its reset, keyed on that reset so it is said once; null when none is open.</summary>
     public StartHeld? CheckLimit() =>
         Outage is { LimitUntil: { } until, LimitSay: { } say } ? new StartHeld(say, until) : null;
@@ -103,7 +106,10 @@ public sealed class StartGate(NodeState state, TimeProvider time)
     {
         RingWeek(weekLimit);
         // The windows first: they say a time they end; the outage is asked last so its probe is only used up by a start nothing else holds.
-        if ((CheckLimit() ?? Check(limit) ?? CheckPace(paceMargin) ?? CheckOutage(key)) is not { } held)
+        // The 5-hour hold rides the snapshot (UsageRow.Hold) so pilot status says it; the open limit puts its own (TurnOutage).
+        var five = Check(limit);
+        state.PutHold(GateHoldKind, five is { } f ? new HoldRow { Kind = GateHoldKind, Until = f.Resets, Why = f.Say } : null);
+        if ((CheckLimit() ?? five ?? CheckPace(paceMargin) ?? CheckOutage(key)) is not { } held)
         {
             _said.TryRemove(key, out _);
             return null;

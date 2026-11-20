@@ -12,7 +12,7 @@ internal static class StatusMarkdown
 {
     private static readonly string[] ImageExtensions = [".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp"];
 
-    internal static string Build(SnapshotEvent snapshot, bool maintenance = false, bool? autopilot = null, bool all = false, IReadOnlyDictionary<string, string>? copies = null, IReadOnlyCollection<SendTimingRow>? sendTimings = null, IReadOnlyCollection<CommandTimingRow>? commandTimings = null, NodeHeapRow? heap = null, string? reboot = null, string? thisNode = null, string? code = null)
+    internal static string Build(SnapshotEvent snapshot, bool maintenance = false, bool? autopilot = null, bool all = false, IReadOnlyDictionary<string, string>? copies = null, IReadOnlyCollection<SendTimingRow>? sendTimings = null, IReadOnlyCollection<CommandTimingRow>? commandTimings = null, NodeHeapRow? heap = null, string? reboot = null, string? thisNode = null, string? code = null, DateTimeOffset? now = null, TimeZoneInfo? zone = null)
     {
         var text = new StringBuilder();
         text.AppendLine("# pilot status").AppendLine();
@@ -51,9 +51,12 @@ internal static class StatusMarkdown
         {
             facts.Add($"**account** {Text(account.Line())}");
         }
-        if (snapshot.Usage is { HasFigures: true } usage)
+        if (snapshot.Usage is { } usage && (usage.HasFigures || usage.Hold is not null))
         {
-            facts.Add($"**usage** {Text(usage.Line(DateTimeOffset.UtcNow, TimeZoneInfo.Local))}");
+            foreach (var (label, line) in usage.Lines(now ?? DateTimeOffset.UtcNow, zone ?? TimeZoneInfo.Local))
+            {
+                facts.Add($"**{label}** {Text(line)}");
+            }
         }
         if (snapshot.Machine is { } machine)
         {

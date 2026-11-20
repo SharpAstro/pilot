@@ -23,7 +23,7 @@ public sealed record UsageRow
     /// no usage for it, as for none at all.
     /// </summary>
     [System.Text.Json.Serialization.JsonIgnore]
-    public bool IsEmpty => Account is null && !HasFigures;
+    public bool IsEmpty => Account is null && !HasFigures && Hold is null;
 
     public UsageWindow? FiveHour { get; init; }
 
@@ -43,6 +43,13 @@ public sealed record UsageRow
     /// </summary>
     [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
     public DateTimeOffset? LoginChangedAt { get; init; }
+
+    /// <summary>
+    /// The hold the node has in force on the account (an open usage limit, or the start gate's 5-hour hold), with until when and why; null
+    /// when none holds, and on a row an older node stored. Put by the node when a limit opens or ends (<c>NodeState.PutHold</c>).
+    /// </summary>
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public HoldRow? Hold { get; init; }
 
     /// <summary>The later of two login-change times, null when neither is known.</summary>
     public static DateTimeOffset? Later(DateTimeOffset? a, DateTimeOffset? b) => a is { } x && b is { } y ? (x > y ? x : y) : a ?? b;
@@ -64,7 +71,7 @@ public sealed record UsageRow
         if (read.Account is { } account && held.Account is { } was && account.Email != was.Email)
         {
             // The change time is the node's, not an account's: the later of the two is kept across the switch.
-            return read with { LoginChangedAt = Later(held.LoginChangedAt, read.LoginChangedAt) };
+            return read with { LoginChangedAt = Later(held.LoginChangedAt, read.LoginChangedAt), Hold = null };
         }
         var fiveHour = Newest(held.FiveHour, read.FiveHour, out var fiveTaken);
         var sevenDay = Newest(held.SevenDay, read.SevenDay, out var sevenTaken);
@@ -76,6 +83,7 @@ public sealed record UsageRow
             // Fresh when anything was taken from the read; a stale write leaves the held figures as old as they were.
             ReadAt = fiveTaken || sevenTaken ? (read.ReadAt > held.ReadAt ? read.ReadAt : held.ReadAt) : held.ReadAt,
             LoginChangedAt = Later(held.LoginChangedAt, read.LoginChangedAt),
+            Hold = held.Hold,
             Source = fiveTaken || sevenTaken ? read.Source : held.Source,
         };
     }
@@ -92,9 +100,28 @@ public sealed record UsageRow
         }
         if (read.Account is { } account && held.Account is { } was && account.Email != was.Email)
         {
-            return read with { LoginChangedAt = Later(held.LoginChangedAt, read.LoginChangedAt) };
+            return read with { LoginChangedAt = Later(held.LoginChangedAt, read.LoginChangedAt), Hold = null };
         }
-        return read with { Account = read.Account ?? held.Account, LoginChangedAt = Later(held.LoginChangedAt, read.LoginChangedAt) };
+        return read with { Account = read.Account ?? held.Account, LoginChangedAt = Later(held.LoginChangedAt, read.LoginChangedAt), Hold = held.Hold };
+    }
+
+    /// <summary>
+    /// The usage as lines, one per window and a hold line, for <c>pilot status</c>: <c>5-hour  42%, resets 14:00 (read 09:10, 3 min ago, from the server)</c>,
+    /// the 7-day the same, and <c>hold  held until 13:00: why</c> or <c>hold  no hold</c>.
+    /// </summary>
+    public IReadOnlyList<(string Label, string Text)> Lines(DateTimeOffset now, TimeZoneInfo zone)
+    {
+        var lines = new List<(string, string)>();
+        var age = now - ReadAt;
+        var ago = age < TimeSpan.FromMinutes(1) ? "just now" : age < TimeSpan.FromHours(1) ? $"{(int)age.TotalMinutes} min ago" : $"{age.TotalHours:0} h ago";
+        var read = $"read {TimeZoneInfo.ConvertTime(ReadAt, zone).ToString("HH:mm", System.Globalization.CultureInfo.InvariantCulture)}, {ago}, from {(Source is { Length: > 0 } s ? "the " + s : "an unknown source")}";
+        string Window(UsageWindow? w, string format) => w is null
+            ? "no figure"
+            : $"{w.UsedPercent:0}%{(w.ResetsAt is { } at ? $", resets {TimeZoneInfo.ConvertTime(at, zone).ToString(format, System.Globalization.CultureInfo.InvariantCulture)}" : "")} ({read})";
+        lines.Add(("5-hour", Window(FiveHour, "HH:mm")));
+        lines.Add(("7-day", Window(SevenDay, "ddd HH:mm")));
+        lines.Add(("hold", Hold is { } hold && hold.Until > now ? hold.Line(now, zone) : "no hold"));
+        return lines;
     }
 
     private static UsageWindow? Newest(UsageWindow? held, UsageWindow? read, out bool taken)
@@ -152,6 +179,25 @@ public sealed record AccountRow
     {
         var about = string.Join(", ", new[] { Organization, Plan }.Where(p => !string.IsNullOrWhiteSpace(p)));
         return about.Length == 0 ? Email : $"{Email} ({about})";
+    }
+}
+
+/// <summary>A hold in force: what holds (<see cref="Kind"/>), until when and why.</summary>
+public sealed record HoldRow
+{
+    /// <summary><c>usage limit</c> (the account is on its limit) or <c>start gate</c> (the 5-hour window is spent past the limit for starts).</summary>
+    public required string Kind { get; init; }
+
+    public required DateTimeOffset Until { get; init; }
+
+    public required string Why { get; init; }
+
+    /// <summary>The line every client shows: <c>held until 13:00: why</c>, ddd HH:mm when not today.</summary>
+    public string Line(DateTimeOffset now, TimeZoneInfo zone)
+    {
+        var at = TimeZoneInfo.ConvertTime(Until, zone);
+        var today = at.Date == TimeZoneInfo.ConvertTime(now, zone).Date;
+        return $"held until {at.ToString(today ? "HH:mm" : "ddd HH:mm", System.Globalization.CultureInfo.InvariantCulture)}: {Why}";
     }
 }
 

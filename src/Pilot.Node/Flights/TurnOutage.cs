@@ -326,12 +326,16 @@ public sealed class TurnOutage(NodeState state)
         _stalled.Clear();
         _waiting.Clear();
         _probeKey = null;
+        state.PutHold(LimitHoldKind, null);
         if (_cardId is { } id)
         {
             state.CloseCard(id, why, LegWatch.Who);
             _cardId = null;
         }
     }
+
+    /// <summary>The <see cref="HoldRow.Kind"/> of the hold an open account limit puts on the snapshot.</summary>
+    public const string LimitHoldKind = "usage limit";
 
     /// <summary>The kind of the one card an account limit raises.</summary>
     public const string LimitCardKind = "account-limit";
@@ -427,6 +431,7 @@ public sealed class TurnOutage(NodeState state)
         {
             state.CloseCard(prior, $"the limit now lasts until {until.ToLocalTime():HH:mm}", LegWatch.Who);
         }
+        state.PutHold(LimitHoldKind, new HoldRow { Kind = LimitHoldKind, Until = until, Why = why });
         var card = state.RaiseCard(CardBin.ForYou, LimitCardKind, Verbs.NodeTarget, $"On the usage limit until {until.ToLocalTime():HH:mm}",
             $"limit seen at {at:O}: {why}; resets {until:O}; the node starts no session of its own and rings nothing for a session that took no turn until then",
             [

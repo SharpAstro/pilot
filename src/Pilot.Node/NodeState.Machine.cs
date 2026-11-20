@@ -68,6 +68,28 @@ public sealed partial class NodeState
         }
     }
 
+    /// <summary>
+    /// Puts the hold in force on the usage (<see cref="UsageRow.Hold"/>) so clients can show it: <paramref name="hold"/> of kind
+    /// <paramref name="kind"/>, or null to end the hold of that kind (a hold of another kind stays). Nothing is published when it changes nothing.
+    /// </summary>
+    public void PutHold(string kind, HoldRow? hold)
+    {
+        lock (_gate)
+        {
+            var held = _usage?.Hold;
+            if (hold is null ? held is null || held.Kind != kind : held == hold)
+            {
+                return;
+            }
+            if (hold is null && held is null)
+            {
+                return;
+            }
+            var usage = (_usage ?? new UsageRow { ReadAt = _time.GetUtcNow() }) with { Hold = hold };
+            Publish(new UsageChangedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Usage = usage });
+        }
+    }
+
     /// <summary>The machine as last sampled; null before any.</summary>
     public MachineRow? Machine()
     {
