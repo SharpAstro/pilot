@@ -142,6 +142,9 @@ internal abstract class PilotWidgetBase<TSurface> : PixelWidgetBase<TSurface>
     /// <summary>Lets go of the selected text: the page or panel it was made on was left.</summary>
     internal void ClearSelection() => _selection?.Clear();
 
+    /// <summary>Lets go of the selection and of an armed row press (the page was left, or the panel closed).</summary>
+    internal void CancelSelection() => _selection?.Cancel();
+
     /// <summary><paramref name="page"/> with the selection's Fill leaf laid over it, where the host has a clipboard to copy to; place it after the page's text and before the menus over it.</summary>
     protected Layout.Node WithPageSelection(Layout.Node page)
     {
@@ -202,15 +205,25 @@ internal abstract class PilotWidgetBase<TSurface> : PixelWidgetBase<TSurface>
                 links.OpenSelection(new PointerPress(right.X, right.Y, right.Button, right.Modifiers, right.ClickCount));
                 return true;
             default:
-                // Property patterns throughout: a region that is not plain chrome, or has anything to do with a press, is not ours.
-                return PageSelection.HandleInput(evt, (x, y) => !Under(x, y, r => r is not { Result: HitResult.ChromeHit }
-                    || r is { OnPress: not null } or { OnActivate: not null } or { OnDoubleClick: not null } or { Opens: not null }
-                    or { Dismisses: not null } or { FocusOnOpen: true }));
+                // A region that only carries a tooltip (plain chrome, no press role) is looked through to the region beneath it, so a
+                // clickable row's own hit decides and the router gets the press (#1221). A region that is not plain chrome, or has
+                // anything to do with a press, is not ours.
+                return PageSelection.HandleInput(evt, (x, y) => !Under(x, y, r => r is not { Result: HitResult.ChromeHit } || TakesPress(r),
+                    lookThrough: r => r is { Result: HitResult.ChromeHit } && !TakesPress(r)),
+                    // A clickable list row (the topmost region once tooltip-only ones are looked through): a drag on its text selects the text.
+                    (x, y) => Under(x, y, r => r is { Result: HitResult.ListItemHit },
+                        lookThrough: r => r is { Result: HitResult.ChromeHit } && !TakesPress(r)));
         }
     }
 
+    // Whether a region has anything to do with a press.
+    private static bool TakesPress(ClickableRegion r) =>
+        r is { OnPress: not null } or { OnActivate: not null } or { OnDoubleClick: not null } or { Opens: not null }
+            or { Dismisses: not null } or { FocusOnOpen: true };
+
     // Whether the topmost region painted under the point is one the test holds for.
-    private bool Under(float x, float y, Func<ClickableRegion, bool> test)
+    // With lookThrough, the regions it holds for are skipped, so the topmost one beneath them decides.
+    private bool Under(float x, float y, Func<ClickableRegion, bool> test, Func<ClickableRegion, bool>? lookThrough = null)
     {
         var regions = new List<ClickableRegion>();
         CollectPaintedRegions(regions);
@@ -219,6 +232,10 @@ internal abstract class PilotWidgetBase<TSurface> : PixelWidgetBase<TSurface>
             var r = regions[i];
             if (x >= r.X && x < r.X + r.Width && y >= r.Y && y < r.Y + r.Height)
             {
+                if (lookThrough?.Invoke(r) == true)
+                {
+                    continue;
+                }
                 return test(r);
             }
         }

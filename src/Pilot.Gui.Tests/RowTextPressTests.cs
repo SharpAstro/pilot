@@ -1,0 +1,301 @@
+using DIR.Lib;
+using Pilot.Contracts;
+using Pilot.Ui;
+using Shouldly;
+using Xunit;
+
+namespace Pilot.Gui.Tests;
+
+/// <summary>
+/// A left press and release on any text of a clickable list row selects the row, whether the cell carries a tooltip or not
+/// (#1221): the text selection looks through a region that only carries a tooltip to the row's own hit beneath it, so the
+/// router gets the press. A press on a button is still the button's.
+/// </summary>
+public sealed class RowTextPressTests
+{
+    private static readonly DateTimeOffset Now = Live.At.AddHours(2);
+
+    private static JobRow Job(string id, JobState state, DateTimeOffset started, DateTimeOffset? ended = null) => new()
+    {
+        Id = id,
+        Command = $"dotnet test {id}",
+        Cwd = "/r/orbit",
+        State = state,
+        LogPath = $"/data/jobs/{id}.log",
+        Timeout = TimeSpan.FromHours(1),
+        StartedAt = started,
+        EndedAt = ended,
+    };
+
+    private static NodeSummary Node(string stream, string account) => new()
+    {
+        Connected = true, Status = "live", Stream = stream, Account = account, LiveSessions = 3,
+        Node = new NodeInfo { WireVersion = 1, Version = "2.0.9", MachineName = "DESKTOP-7", MachinePrefix = "SE2", ProcessId = 1, StartedAt = Live.At, DataFolder = "/d", SocketPath = "/s", Stream = stream },
+    };
+
+    private sealed class Window : IDisposable
+    {
+        private readonly RgbaImageRenderer _renderer;
+        private readonly InputRouter _router;
+        private readonly RectF32 _size;
+        private readonly SessionsScreen _sessions;
+
+        public Window(int width = 1400, int height = 900)
+        {
+            _renderer = new RgbaImageRenderer((uint)width, (uint)height);
+            Chrome = new PilotChrome<RgbaImage>(_renderer, new SessionsView<RgbaImage>(_renderer)) { FontPath = SessionsCapture.FontPath };
+            Chrome.Play.ShowEverything();
+            _router = new InputRouter(Chrome.Flights.Ui, new BackgroundTaskTracker(), () => { }) { Widgets = () => Chrome.Widgets };
+            _size = new RectF32(0, 0, width, height);
+            _sessions = SessionsCapture.ScreenFor(SessionsCapture.LoadSnapshot(SessionsCapture.SamplePath), "test");
+        }
+
+        public PilotChrome<RgbaImage> Chrome { get; }
+
+        public JobsScreen Jobs { get; } = new(JobLine.Build(
+        [
+            Job("j12", JobState.Succeeded, Live.At.AddMinutes(-60), Live.At.AddMinutes(-59)),
+            Job("j13", JobState.Failed, Live.At.AddMinutes(-40), Live.At.AddMinutes(-35)),
+            Job("j14", JobState.Succeeded, Live.At.AddMinutes(-30), Live.At.AddMinutes(-29)),
+        ], Live.At), "live", Live.At);
+
+        // Three nodes, so the Fleet table is a second list page whose rows carry selectable text, some of it with a tooltip
+        // (the Sessions rows carry no selectable text, and the Flights page opens on its canvas, not its table).
+        public FleetScreen Fleet { get; } = new(
+        [
+            FleetLine.From("node.sock", here: true, canCommand: true, null, Node("laptop", "ada@example.org")),
+            FleetLine.From("10.0.0.9:47731", here: false, canCommand: true, null, Node("desktop", "bo@example.org")),
+            FleetLine.From("10.0.0.7:47731", here: false, canCommand: true, null, Node("nas", "ci@example.org")),
+        ], Live.At);
+
+        public void Render() => Chrome.Render(_sessions, null, null, Jobs, Fleet, _size);
+
+        public bool Send(InputEvent evt)
+        {
+            var handled = Chrome.HandleInput(evt) || _router.Handle(evt);
+            Render();
+            return handled;
+        }
+
+        public void Click(float x, float y)
+        {
+            Send(new InputEvent.MouseDown(x, y));
+            Send(new InputEvent.MouseUp(x, y));
+        }
+
+        public void Dispose() => _renderer.Dispose();
+    }
+
+    private static (float X, float Y) Middle(SelectableTextRegion r) => (r.X + r.Width / 2f, r.Y + r.Height / 2f);
+
+    [Fact]
+    public void APressOnAJobsCommandTextWhichCarriesATooltipSelectsTheRow()
+    {
+        using var window = new Window();
+        window.Chrome.Show(PilotPage.Jobs);
+        window.Render();
+        // The selected job's detail below the list repeats its command: the three rows' own are the topmost ones.
+        var commands = window.Chrome.Jobs.SelectableTextRegions.ToArray().Where(r => r.Text.Contains("dotnet test", StringComparison.Ordinal))
+            .OrderBy(r => r.Y).Take(3).ToArray();
+        commands.Length.ShouldBe(3);
+
+        for (var row = 0; row < commands.Length; row++)
+        {
+            var (x, y) = Middle(commands[row]);
+            window.Click(x, y);
+            window.Chrome.Jobs.Selected.ShouldBe(row);
+        }
+    }
+
+    [Fact]
+    public void APressOnACellWithNoTooltipSelectsTheRowToo()
+    {
+        using var window = new Window();
+        window.Chrome.Show(PilotPage.Jobs);
+        window.Render();
+        var ids = window.Chrome.Jobs.SelectableTextRegions.ToArray().Where(r => r.Text.Trim() is "j12" or "j13" or "j14").ToArray();
+        ids.Length.ShouldBe(3);
+
+        var (x, y) = Middle(ids[2]);
+        window.Click(x, y);
+        window.Chrome.Jobs.Selected.ShouldBe(2);
+    }
+
+    [Fact]
+    public void APressOnAnotherListPageRowTextSelectsItAndNeverSwallowsTheClickBeneath()
+    {
+        using var window = new Window();
+        // The Fleet table: its rows carry the machine, account, usage and the rest as selectable text, the machine and account
+        // with a tooltip. (The Sessions rows carry no selectable text, so a press there never meets the text selection.)
+        window.Chrome.Show(PilotPage.Fleet);
+        window.Render();
+        // Each row's index from its own hit region, so a text is matched to the row it sits in, not to the order of the texts.
+        var regions = new List<ClickableRegion>();
+        window.Chrome.Fleet.CollectPaintedRegions(regions);
+        var rows = regions.Where(r => r.Result is HitResult.ListItemHit { ListId: FleetView<RgbaImage>.ListId }).ToArray();
+        int RowOf(float x, float y) => rows.Where(r => x >= r.X && x < r.X + r.Width && y >= r.Y && y < r.Y + r.Height)
+            .Select(r => ((HitResult.ListItemHit)r.Result).Index).DefaultIfEmpty(-1).First();
+        var byRow = window.Chrome.Fleet.SelectableTextRegions.ToArray().Where(r => r.Text.Trim().Length > 0)
+            .Select(r => (Region: r, Row: RowOf(Middle(r).X, Middle(r).Y))).Where(t => t.Row >= 0)
+            .GroupBy(t => t.Row).OrderBy(g => g.Key).Select(g => g.Select(t => t.Region).ToArray()).ToArray();
+        byRow.Length.ShouldBe(3, $"{rows.Length} rows painted; texts: "
+            + string.Join(" | ", window.Chrome.Fleet.SelectableTextRegions.ToArray().Take(30).Select(r => $"'{r.Text.Trim()}' {r.X:0},{r.Y:0}")));
+
+        // Every text of the rows, tooltip or not, round the rows in turn: each press lands on a row other than the one selected,
+        // so a press that went nowhere leaves the previous row selected and fails.
+        var rowsPressed = new HashSet<int>();
+        for (var turn = 0; turn < byRow.Max(texts => texts.Length); turn++)
+        {
+            foreach (var texts in byRow.Where(texts => texts.Length > turn))
+            {
+                var region = texts[turn];
+                var (x, y) = Middle(region);
+                var row = RowOf(x, y);
+                window.Click(x, y);
+                window.Chrome.Fleet.Selected.ShouldBe(row, $"press on '{region.Text.Trim()}' in row {row}");
+                rowsPressed.Add(row);
+            }
+        }
+        rowsPressed.Count.ShouldBe(3);
+    }
+
+    [Fact]
+    public void AWiggleUnderTheThresholdStillSelectsTheRowAndNoTextAndAMoveOverItDrags()
+    {
+        using var window = new Window();
+        window.Chrome.Show(PilotPage.Jobs);
+        window.Render();
+        var (copied, ctrlC) = Copying(window);
+        var id = window.Chrome.Jobs.SelectableTextRegions.ToArray().Where(r => r.Text.Trim() is "j12" or "j13" or "j14").OrderBy(r => r.Y).Last();
+        var (x, y) = Middle(id);
+
+        window.Send(new InputEvent.MouseDown(x, y));
+        window.Send(new InputEvent.MouseMove(x + 2f, y + 1f));
+        window.Send(new InputEvent.MouseUp(x + 2f, y + 1f));
+        ctrlC();
+        window.Chrome.Jobs.Selected.ShouldBe(2);
+        copied.ShouldBeEmpty();
+
+        window.Send(new InputEvent.MouseDown(id.X + 1f, y));
+        window.Send(new InputEvent.MouseMove(id.X + 6f, y));
+        window.Chrome.Jobs.PageSelection.Dragging.ShouldBeTrue();
+        window.Send(new InputEvent.MouseUp(id.X + 6f, y));
+    }
+
+    [Fact]
+    public void AnArmedPressReleasedElsewhereLeavesNothingToFollowTheHoveringPointer()
+    {
+        using var window = new Window();
+        window.Chrome.Show(PilotPage.Jobs);
+        window.Render();
+        var (copied, ctrlC) = Copying(window);
+        var id = window.Chrome.Jobs.SelectableTextRegions.ToArray().Where(r => r.Text.Trim() is "j12" or "j13" or "j14").OrderBy(r => r.Y).First();
+        var (x, y) = Middle(id);
+
+        window.Send(new InputEvent.MouseDown(x, y));
+        window.Chrome.Jobs.PageSelection.Pending.ShouldBeTrue();
+        // Leave the page with the button held: the page is left, and the release lands wherever.
+        window.Chrome.Show(PilotPage.Home);
+        window.Render();
+        window.Send(new InputEvent.MouseUp(x + 400f, y));
+        window.Chrome.Show(PilotPage.Jobs);
+        window.Render();
+        window.Chrome.Jobs.PageSelection.Pending.ShouldBeFalse();
+
+        window.Send(new InputEvent.MouseMove(x + 30f, y));
+        window.Send(new InputEvent.MouseMove(x + 60f, y));
+        window.Chrome.Jobs.PageSelection.Dragging.ShouldBeFalse();
+        ctrlC();
+        copied.ShouldBeEmpty();
+    }
+
+    private static (List<string> Copied, Action CtrlC) Copying(Window window)
+    {
+        var copied = new List<string>();
+        window.Chrome.Jobs.CopyText = copied.Add;
+        // The page lays the selection's leaf over itself only where the host has a clipboard: draw once with it.
+        window.Render();
+        return (copied, () => window.Send(new InputEvent.KeyDown(InputKey.C, InputModifier.Ctrl)));
+    }
+
+    private static void Drag(Window window, float x0, float y0, float x1, float y1)
+    {
+        window.Send(new InputEvent.MouseDown(x0, y0));
+        window.Send(new InputEvent.MouseMove((x0 + x1) / 2f, (y0 + y1) / 2f));
+        window.Send(new InputEvent.MouseMove(x1, y1));
+        window.Send(new InputEvent.MouseUp(x1, y1));
+    }
+
+    [Fact]
+    public void ADragBeginOnAJobsCommandTextWhichCarriesATooltipSelectsTheTextItCoversAndCtrlCCopiesIt()
+    {
+        using var window = new Window();
+        window.Chrome.Show(PilotPage.Jobs);
+        window.Render();
+        var (copied, ctrlC) = Copying(window);
+        var command = window.Chrome.Jobs.SelectableTextRegions.ToArray().Where(r => r.Text.Contains("dotnet test", StringComparison.Ordinal))
+            .OrderBy(r => r.Y).First();
+
+        Drag(window, command.X + 1f, command.Y + command.Height / 2f, command.X + command.Width - 1f, command.Y + command.Height / 2f);
+        ctrlC();
+
+        copied.Count.ShouldBe(1);
+        copied[0].ShouldContain("dotnet");
+        window.Chrome.Jobs.Selected.ShouldBe(0);
+    }
+
+    [Fact]
+    public void ADragBeginOnAJobsIdWhichHasNoTooltipSelectsTheTextItCoversAndCtrlCCopiesIt()
+    {
+        using var window = new Window();
+        window.Chrome.Show(PilotPage.Jobs);
+        window.Render();
+        var (copied, ctrlC) = Copying(window);
+        var id = window.Chrome.Jobs.SelectableTextRegions.ToArray().Where(r => r.Text.Trim() is "j12" or "j13" or "j14").OrderBy(r => r.Y).First();
+
+        Drag(window, id.X + 1f, id.Y + id.Height / 2f, id.X + id.Width - 1f, id.Y + id.Height / 2f);
+        ctrlC();
+
+        copied.Count.ShouldBe(1);
+        copied[0].ShouldContain("j1");
+    }
+
+    [Fact]
+    public void APressAndReleaseWithNoMoveSelectsTheRowAndNoText()
+    {
+        using var window = new Window();
+        window.Chrome.Show(PilotPage.Jobs);
+        window.Render();
+        var (copied, ctrlC) = Copying(window);
+        var id = window.Chrome.Jobs.SelectableTextRegions.ToArray().Where(r => r.Text.Trim() is "j12" or "j13" or "j14").OrderBy(r => r.Y).Last();
+
+        var (x, y) = Middle(id);
+        window.Click(x, y);
+        ctrlC();
+
+        window.Chrome.Jobs.Selected.ShouldBe(2);
+        copied.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void APressOnAButtonIsStillTheButtons()
+    {
+        using var window = new Window();
+        window.Chrome.Show(PilotPage.Jobs);
+        window.Render();
+        var regions = new List<ClickableRegion>();
+        window.Chrome.Jobs.CollectPaintedRegions(regions);
+        var at = regions.FindIndex(r => r is { Result: HitResult.ButtonHit } && r.Width > 4f && r.Height > 4f);
+        if (at < 0)
+        {
+            window.Chrome.Show(PilotPage.Home);
+            window.Render();
+            regions.Clear();
+            window.Chrome.Home.CollectPaintedRegions(regions);
+            at = regions.FindIndex(r => r is { Result: HitResult.ButtonHit } && r.Width > 4f && r.Height > 4f);
+        }
+        at.ShouldBeGreaterThanOrEqualTo(0);
+        var button = regions[at];
+        window.Chrome.HandleInput(new InputEvent.MouseDown(button.X + button.Width / 2f, button.Y + button.Height / 2f)).ShouldBeFalse();
+    }
+}

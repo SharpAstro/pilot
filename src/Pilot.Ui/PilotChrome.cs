@@ -658,7 +658,7 @@ internal sealed class PilotChrome<TSurface>
         if (page != Page)
         {
             // Text selected on the flight's page stays on it: leaving the page lets it go.
-            PageViewOf(Page).ClearSelection();
+            PageViewOf(Page).CancelSelection();
         }
         var before = Page;
         Page = page;
@@ -829,16 +829,16 @@ internal sealed class PilotChrome<TSurface>
         if (panel is null)
         {
             // The panel is gone (closed, or no room): its text is not there to keep selected.
-            Cards.ClearSelection();
+            Cards.CancelSelection();
         }
         PilotWidgetBase<TSurface> target = page;
         if (panel is not null)
         {
-            if (page.PageSelection.Dragging)
+            if (page.PageSelection.Dragging || page.PageSelection.Pending)
             {
                 target = page;
             }
-            else if (panel.PageSelection.Dragging)
+            else if (panel.PageSelection.Dragging || panel.PageSelection.Pending)
             {
                 target = panel;
             }
