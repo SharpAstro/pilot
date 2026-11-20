@@ -758,6 +758,9 @@ public static partial class NodeApp
         builder.Services.AddHostedService(services => new FollowUpSweep(services.GetRequiredService<NodeState>(), services.GetService<IGitHub>(), services.GetRequiredService<TimeProvider>())
         {
             Error = services.GetRequiredService<LogWriter>(),
+            // One ring for the fleet: the node that reads a repo's PRs rings for it, and a flight on any node counts.
+            Machine = options.Machine,
+            Fleet = () => services.GetRequiredService<FlightCommander>().Fleet,
         });
         builder.Services.AddSingleton(services => new StaleWatch(services.GetRequiredService<NodeState>(), services.GetRequiredService<TimeProvider>())
         {
