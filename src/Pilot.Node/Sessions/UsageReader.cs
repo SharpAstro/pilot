@@ -107,8 +107,9 @@ public sealed class UsageReader(NodeState state, string file, TimeProvider time)
 
     private double? _highShown;
 
-    // The 5-hour card follows the figures as the 7-day one does: closed with the new figure when a fresh read is under the limit, restated
-    // when the figure moved, and every text says when the figures were read ("as of" an age once past the gate's fresh time).
+    // The 5-hour line follows the figures as the 7-day card does. It is a Handled line (born closed, nothing to answer), so following is
+    // a new line: one when a fresh read is under the limit again, one when the figure moved and still holds. Every text says when the
+    // figures were read ("as of" an age once past the gate's fresh time).
     private void FollowHighCard(UsageRow usage)
     {
         var now = time.GetUtcNow();
@@ -117,8 +118,8 @@ public sealed class UsageReader(NodeState state, string file, TimeProvider time)
             return;
         }
         var say = Flights.StartGate.ReadSay(usage, now);
-        var open = state.Cards(openOnly: true).FirstOrDefault(c => c.Kind == HighKind);
-        if (_warnedFor == at && open is not null)
+        var reset = $"it resets at {at.ToLocalTime():HH:mm}";
+        if (_warnedFor == at)
         {
             if (now - usage.ReadAt >= Flights.StartGate.FreshFor)
             {
@@ -126,24 +127,26 @@ public sealed class UsageReader(NodeState state, string file, TimeProvider time)
             }
             if (used < HighPercent)
             {
-                state.CloseCard(open.Id, string.Create(System.Globalization.CultureInfo.InvariantCulture, $"the 5-hour window now reads {used:0} %, {say}"), "node");
+                state.RaiseCard(CardBin.Handled, HighKind, Verbs.NodeTarget, $"5-hour usage now reads {used:0}%; {reset}",
+                    $"the 5-hour window is under {HighPercent:0}% again ({say})");
                 _warnedFor = null;
-                return;
             }
-            if (Math.Round(used) == _highShown)
+            else if (Math.Round(used) != _highShown)
             {
-                return;
+                _highShown = Math.Round(used);
+                state.RaiseCard(CardBin.Handled, HighKind, Verbs.NodeTarget, $"5-hour usage now reads {used:0}%; {reset}",
+                    $"workers stop when it runs out; the node resumes them once it resets ({say})");
             }
-            state.CloseCard(open.Id, string.Create(System.Globalization.CultureInfo.InvariantCulture, $"restated: the 5-hour window now reads {used:0} %, {say}"), "node");
+            return;
         }
-        else if (used < HighPercent || _warnedFor == at)
+        if (used < HighPercent)
         {
             return;
         }
         _warnedFor = at;
         _highShown = Math.Round(used);
         // A reset-only notice: nothing to decide, the node resumes the workers itself, so it is a Handled line.
-        state.RaiseCard(CardBin.Handled, HighKind, Verbs.NodeTarget, $"5-hour usage is at {used:0}%; it resets at {at.ToLocalTime():HH:mm}",
+        state.RaiseCard(CardBin.Handled, HighKind, Verbs.NodeTarget, $"5-hour usage is at {used:0}%; {reset}",
             $"workers stop when it runs out; the node resumes them once it resets ({say})");
     }
 

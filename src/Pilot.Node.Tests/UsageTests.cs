@@ -263,31 +263,32 @@ public sealed class UsageTests : IDisposable
     }
 
     [Fact]
-    public void TheFiveHourCardIsClosedWithTheNewFigureWhenAFreshReadIsUnderTheLimitAndRestatedWhenItMoves()
+    public void TheFiveHourLineFollowsTheFiguresWhenTheyMoveAndWhenAFreshReadIsUnderTheLimit()
     {
         var reader = new UsageReader(_state, File, _time);
         reader.Read(Row(92, Reset, Now) with { Source = "server" });
-        var card = _state.Cards(openOnly: true).Single(c => c.Kind == UsageReader.HighKind);
-        card.Detail.ShouldNotBeNull().ShouldContain($"figures read {Now.ToLocalTime():HH:mm} from the server");
+        Lines().Last().Detail.ShouldNotBeNull().ShouldContain($"figures read {Now.ToLocalTime():HH:mm} from the server");
 
         _time.Advance(TimeSpan.FromMinutes(1));
         reader.Read(Row(95, Reset, _time.GetUtcNow()) with { Source = "server" });
-        var restated = _state.Cards(openOnly: true).Single(c => c.Kind == UsageReader.HighKind);
-        restated.Id.ShouldNotBe(card.Id);
-        restated.Title.ShouldStartWith("5-hour usage is at 95%");
+        Lines().Length.ShouldBe(2);
+        Lines().First().Title.ShouldStartWith("5-hour usage now reads 95%");
 
         _time.Advance(TimeSpan.FromMinutes(1));
         var at = _time.GetUtcNow();
         reader.Read(Row(40, Reset, at) with { Source = "server" });
-        _state.Cards(openOnly: true).Where(c => c.Kind == UsageReader.HighKind).ShouldBeEmpty();
-        _state.Cards().Single(c => c.Id == restated.Id).Outcome.ShouldBe($"the 5-hour window now reads 40 %, figures read {at.ToLocalTime():HH:mm} from the server");
+        Lines().Length.ShouldBe(3);
+        Lines().First().Title.ShouldStartWith("5-hour usage now reads 40%");
+        Lines().First().Detail.ShouldNotBeNull().ShouldContain($"figures read {at.ToLocalTime():HH:mm} from the server");
     }
 
+    private CardRow[] Lines() => [.. _state.Cards().Where(c => c.Kind == UsageReader.HighKind).OrderBy(c => c.RungAt).ThenBy(c => c.Id, StringComparer.Ordinal)];
+
     [Fact]
-    public void AFiveHourCardRungFromAnOldFileReadSaysAsOfItsAge()
+    public void AFiveHourLineRungFromAnOldFileReadSaysAsOfItsAge()
     {
         var reader = new UsageReader(_state, File, _time);
         reader.Read(Row(95, Reset, Now.AddMinutes(-50)) with { Source = "status line" });
-        _state.Cards(openOnly: true).Single(c => c.Kind == UsageReader.HighKind).Detail.ShouldNotBeNull().ShouldContain("as of 50 min ago");
+        _state.Cards().Single(c => c.Kind == UsageReader.HighKind).Detail.ShouldNotBeNull().ShouldContain("as of 50 min ago");
     }
 }

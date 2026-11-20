@@ -239,7 +239,7 @@ public sealed class TurnOutage(NodeState state)
                 // taken only when it began after the limit was seen. A row of unknown family proves nothing either.
                 if (_limitFamily is { } family && _limitSeenAt is { } seen
                     && sessions.FirstOrDefault(s => s.ApiError is null && s.LastResponseAt is { } r && r > seen
-                        && (s.Account is { } who ? string.Equals(who, _limitAccount, StringComparison.OrdinalIgnoreCase) : s.StartedAt > seen)
+                        && (_limitAccount is null || (s.Account is { } who ? string.Equals(who, _limitAccount, StringComparison.OrdinalIgnoreCase) : s.StartedAt > seen))
                         && string.Equals(Verbs.ModelFamily(s.Model), family, StringComparison.Ordinal)) is { } proof)
                 {
                     // The end moves the cut as a lift does (PutLoginChanged), so the rows that opened the limit do not reopen it.

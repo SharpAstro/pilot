@@ -754,7 +754,7 @@ public sealed class AccountLimitTests
         await _watch.LookAsync(Ct);
         _gate.RingWeek(90);
         Open().Count(c => c.Kind == StartGate.WeekKind).ShouldBe(1);
-        Open().Single(c => c.Kind == TurnOutage.LimitCardKind).Summary.ShouldNotBeNull().ShouldContain("figures read");
+        Open().Single(c => c.Kind == TurnOutage.LimitCardKind).Summary.ShouldNotBeNull().ShouldContain("The usage figures were read");
         Open().Single(c => c.Kind == TurnOutage.LimitCardKind).Summary.ShouldNotBeNull().ShouldContain("from the server");
 
         // The reset is used: a lower utilization on the same resets_at.
