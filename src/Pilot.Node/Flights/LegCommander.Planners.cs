@@ -65,6 +65,21 @@ public sealed partial class LegCommander
             throw new FlightException($"{flight.Code} has landed");
         }
         RefuseIfOnHold(flight.Code);
+        if (flight.State == FlightState.Held)
+        {
+            // A flight waiting for a connected flight starts no planner (PIL1222). The wait is its Queued, which the release to Flying keeps, so
+            // the sweep's queued-planner pickup starts the planner then, a node restarted meanwhile included.
+            // Race with create's plan-on-create and a connect: connect first, this wait applies and the planner starts on release; connect after a
+            // planner was started on the still-flying flight, that planner is left be (its planned card goes to Handled for a held flight).
+            var waits = $"{flight.Code} waits for {FlightWaiting.For(flight)}: its planner starts when that has landed";
+            state.UpdateFlight(flight.Code, f => f.Queued == waits ? f : f with { Queued = waits });
+            _plannersWaiting[flight.Code] = true;
+            if (_heldAnswer.Value is { } box)
+            {
+                box.Value = waits;
+            }
+            return;
+        }
         var planner = $"{options.Machine.ToLowerInvariant()}-{flight.Code.ToLowerInvariant()}-{PlanLeg}";
         // One planner a flight: a second would plan the same legs over the first's. Live by its row, started here so
         // lately that the tracker has not listed it yet (PIL118's plan-flight, sent twice two seconds apart, 2026-10-23), or
