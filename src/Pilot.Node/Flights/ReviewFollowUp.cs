@@ -251,7 +251,7 @@ public static partial class ReviewFollowUp
 
     /// <summary>
     /// Ticks the <c>- [ ] `key`</c> lines of <paramref name="body"/> that <paramref name="keys"/> name and returns the new body, how many it ticked and how many
-    /// lines are left unticked. An older issue with no checkbox line comes back as it is (left is 0 only when it has lines and all are ticked: see <paramref name="hasBoxes"/>).
+    /// lines are left unticked. An older issue with no checkbox line comes back as it is (left is 0 only when it has lines and all are ticked: see <c>HasBoxes</c>).
     /// </summary>
     public static (string Body, int Ticked, int Left, bool HasBoxes) Tick(string body, IEnumerable<string> keys)
     {
