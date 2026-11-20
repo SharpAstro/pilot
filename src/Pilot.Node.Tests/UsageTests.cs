@@ -94,6 +94,63 @@ public sealed class UsageTests : IDisposable
     }
 
     [Fact]
+    public void AFileReadThatTakesOneWindowNamesBothSourcesOnTheRow()
+    {
+        var week = new DateTimeOffset(2026, 10, 24, 10, 0, 0, TimeSpan.Zero);
+        var reader = new UsageReader(_state, File, _time);
+        reader.Read(new UsageRow
+        {
+            FiveHour = new UsageWindow { UsedPercent = 40, ResetsAt = Reset },
+            SevenDay = new UsageWindow { UsedPercent = 70, ResetsAt = week },
+            ReadAt = Now,
+            Source = "server",
+        });
+
+        // The server silent past the 5-hour reset: the status line's file stands in and takes the new 5-hour window, while its 7-day
+        // figure (64%, on the same reset) is older than the server's 70%, which is kept.
+        _time.Advance(TimeSpan.FromHours(2) + TimeSpan.FromMinutes(10));
+        var newWindow = Reset.AddHours(5);
+        Write(5, newWindow, seven: 64, writtenAt: _time.GetUtcNow().ToUnixTimeSeconds());
+        reader.Read();
+
+        var usage = _state.Usage().ShouldNotBeNull();
+        usage.FiveHour!.UsedPercent.ShouldBe(5);
+        usage.SevenDay!.UsedPercent.ShouldBe(70);
+        usage.Source.ShouldBe("server, status line");
+        usage.SourceSay().ShouldBe("the server and the status line");
+        var lines = usage.Lines(_time.GetUtcNow(), TimeZoneInfo.Utc);
+        lines.Single(l => l.Label == "5-hour").Text.ShouldBe("5%, resets 19:00 (read 14:10, just now, from the server and the status line)");
+        lines.Single(l => l.Label == "7-day").Text.ShouldBe("70%, resets Sat 10:00 (read 14:10, just now, from the server and the status line)");
+        usage.Line(_time.GetUtcNow(), TimeZoneInfo.Utc).ShouldEndWith(", from the server and the status line");
+
+        // A read that takes both windows names its own source alone again.
+        _time.Advance(TimeSpan.FromMinutes(1));
+        Write(8, newWindow, seven: 72, writtenAt: _time.GetUtcNow().ToUnixTimeSeconds());
+        reader.Read();
+        _state.Usage()!.Source.ShouldBe("status line");
+    }
+
+    [Fact]
+    public void ARowOfOneSourceStaysThatSourceWhateverAReadOfTheSameSourceTakes()
+    {
+        var week = Now.AddDays(3);
+        var held = new UsageRow
+        {
+            FiveHour = new UsageWindow { UsedPercent = 40, ResetsAt = Reset },
+            SevenDay = new UsageWindow { UsedPercent = 70, ResetsAt = week },
+            ReadAt = Now,
+            Source = "status line",
+        };
+        var read = held with { FiveHour = new UsageWindow { UsedPercent = 45, ResetsAt = Reset }, SevenDay = null, ReadAt = Now.AddMinutes(1) };
+
+        UsageRow.Newest(held, read).Source.ShouldBe("status line");
+        // A held row with no source on record (an older node's) mixed with a read: only the read's source is known.
+        UsageRow.Newest(held with { Source = null }, read with { Source = "server" }).Source.ShouldBe("server");
+        // A read that takes nothing leaves the held row's source.
+        UsageRow.Newest(held, read with { FiveHour = new UsageWindow { UsedPercent = 10, ResetsAt = Reset }, Source = "server" }).Source.ShouldBe("status line");
+    }
+
+    [Fact]
     public void TheHoldOnTheSnapshotFollowsEveryReadWithNoStartAsking()
     {
         var gate = new Flights.StartGate(_state, _time);

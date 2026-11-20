@@ -11,7 +11,8 @@ namespace Pilot.Node.Sessions;
 /// <c>GET /api/oauth/usage</c> with the account's own access token from <c>.credentials.json</c>. The token is read from disk for each
 /// request and lives in no field; it is never logged, written or sent anywhere but that request. An expired token is skipped, never
 /// refreshed (a refresh rotates the refresh token, and one made outside Claude Code's lock signs Claude Code out). A failure is logged
-/// by status code only. At most one request per <see cref="Every"/>, <see cref="AfterFailure"/> after a failure.
+/// by status code only. At most one request per <see cref="Every"/>, <see cref="AfterFailure"/> after a failure. A well-formed answer
+/// with neither window is no failure: it is paced by <see cref="Every"/>, logs nothing and brings no figures.
 /// </summary>
 public sealed class UsageApi(HttpClient http, string credentialsFile, TimeProvider time, ILogger? log = null)
 {
@@ -25,7 +26,7 @@ public sealed class UsageApi(HttpClient http, string credentialsFile, TimeProvid
 
     private DateTimeOffset _notBefore = DateTimeOffset.MinValue;
 
-    /// <summary>The figures from the server, or null when none came: paced, no usable token, or a failure.</summary>
+    /// <summary>The figures from the server, or null when none came: paced, no usable token, a failure, or an answer with neither window.</summary>
     public async Task<UsageRow?> ReadAsync(CancellationToken cancel)
     {
         var now = time.GetUtcNow();
@@ -50,14 +51,17 @@ public sealed class UsageApi(HttpClient http, string credentialsFile, TimeProvid
                 log?.LogWarning("Usage read failed: HTTP {Status}", (int)response.StatusCode);
                 return null;
             }
-            var row = Parse(await response.Content.ReadAsStringAsync(cancel), now);
-            if (row is null)
+            using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancel));
+            if (doc.RootElement.ValueKind != JsonValueKind.Object)
             {
                 log?.LogWarning("Usage read failed: answer of an unknown shape");
                 return null;
             }
+            // A well-formed answer is an answer, also one with neither window: it is paced as one and logs nothing. It brings no
+            // figures, so the node keeps what it holds, and the status line's file stands in once the server has brought none for
+            // AfterFailure (UsageReader), as after a failure.
             _notBefore = now + Every;
-            return row;
+            return Parse(doc.RootElement, now);
         }
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException && !cancel.IsCancellationRequested)
         {
@@ -96,12 +100,13 @@ public sealed class UsageApi(HttpClient http, string credentialsFile, TimeProvid
     public static UsageRow? Parse(string json, DateTimeOffset now)
     {
         using var doc = JsonDocument.Parse(json);
-        if (doc.RootElement.ValueKind != JsonValueKind.Object)
-        {
-            return null;
-        }
-        var five = Window(doc.RootElement, "five_hour");
-        var seven = Window(doc.RootElement, "seven_day");
+        return doc.RootElement.ValueKind == JsonValueKind.Object ? Parse(doc.RootElement, now) : null;
+    }
+
+    private static UsageRow? Parse(JsonElement root, DateTimeOffset now)
+    {
+        var five = Window(root, "five_hour");
+        var seven = Window(root, "seven_day");
         return five is null && seven is null ? null : new UsageRow { FiveHour = five, SevenDay = seven, ReadAt = now, Source = SourceName };
     }
 

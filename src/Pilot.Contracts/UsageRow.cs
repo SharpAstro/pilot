@@ -32,9 +32,31 @@ public sealed record UsageRow
     /// <summary>When the figures were read, from the server or when the status line wrote them: how fresh they are.</summary>
     public required DateTimeOffset ReadAt { get; init; }
 
-    /// <summary>Where the figures came from: <c>server</c> or <c>status line</c>; null on a row an older node stored.</summary>
+    /// <summary>
+    /// Where the figures came from: <c>server</c> or <c>status line</c>, or <c>server, status line</c> when a read took one window and
+    /// the other was kept from a read of the other source (the row names every source a figure on it may have come from); null on a
+    /// row an older node stored.
+    /// </summary>
     [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
     public string? Source { get; init; }
+
+    /// <summary>The names in a <see cref="Source"/> that mixes several.</summary>
+    public const string SourceSeparator = ", ";
+
+    /// <summary>
+    /// <see cref="Source"/> as text: <c>the server</c>, <c>the server and the status line</c> for a mix; null when no source is on record.
+    /// A method, not a property, so the wire does not carry it.
+    /// </summary>
+    public string? SourceSay() => Source is { Length: > 0 } source
+        ? string.Join(" and ", source.Split(SourceSeparator, StringSplitOptions.RemoveEmptyEntries).Select(name => "the " + name))
+        : null;
+
+    /// <summary>How old figures of <paramref name="age"/> are, as every client and card says it: <c>just now</c>, <c>12 min ago</c>, <c>2 h ago</c>.</summary>
+    public static string Ago(TimeSpan age) => age < TimeSpan.FromMinutes(1)
+        ? "just now"
+        : age < TimeSpan.FromHours(1)
+            ? string.Create(System.Globalization.CultureInfo.InvariantCulture, $"{(int)age.TotalMinutes} min ago")
+            : string.Create(System.Globalization.CultureInfo.InvariantCulture, $"{age.TotalHours:0} h ago");
 
     /// <summary>
     /// When the login was last seen to change, or a person lifted a usage limit that did not hold (#1123); null when neither is on record.
@@ -76,6 +98,9 @@ public sealed record UsageRow
         }
         var fiveHour = Newest(held.FiveHour, read.FiveHour, out var fiveTaken);
         var sevenDay = Newest(held.SevenDay, read.SevenDay, out var sevenTaken);
+        var taken = fiveTaken || sevenTaken;
+        // A window the read did not take, and the held row had, stays from the held row's source.
+        var kept = (!fiveTaken && held.FiveHour is not null) || (!sevenTaken && held.SevenDay is not null);
         return new UsageRow
         {
             Account = read.Account ?? held.Account,
@@ -85,8 +110,17 @@ public sealed record UsageRow
             ReadAt = fiveTaken || sevenTaken ? (read.ReadAt > held.ReadAt ? read.ReadAt : held.ReadAt) : held.ReadAt,
             LoginChangedAt = Later(held.LoginChangedAt, read.LoginChangedAt),
             Hold = held.Hold,
-            Source = fiveTaken || sevenTaken ? read.Source : held.Source,
+            Source = taken && kept ? Mix(held.Source, read.Source) : taken ? read.Source : held.Source,
         };
+    }
+
+    // The sources of a row whose windows came from two reads, each name once, in a fixed order: "server, status line". A held row that
+    // names no source (an older node's) leaves the read's alone, since nothing else is known.
+    private static string? Mix(string? held, string? read)
+    {
+        var names = new[] { held, read }.Where(s => s is { Length: > 0 }).SelectMany(s => s!.Split(SourceSeparator, StringSplitOptions.RemoveEmptyEntries))
+            .Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToList();
+        return names.Count == 0 ? null : string.Join(SourceSeparator, names);
     }
 
     /// <summary>
@@ -113,9 +147,7 @@ public sealed record UsageRow
     public IReadOnlyList<(string Label, string Text)> Lines(DateTimeOffset now, TimeZoneInfo zone)
     {
         var lines = new List<(string, string)>();
-        var age = now - ReadAt;
-        var ago = age < TimeSpan.FromMinutes(1) ? "just now" : age < TimeSpan.FromHours(1) ? $"{(int)age.TotalMinutes} min ago" : $"{age.TotalHours:0} h ago";
-        var read = $"read {TimeZoneInfo.ConvertTime(ReadAt, zone).ToString("HH:mm", System.Globalization.CultureInfo.InvariantCulture)}, {ago}, from {(Source is { Length: > 0 } s ? "the " + s : "an unknown source")}";
+        var read = $"read {TimeZoneInfo.ConvertTime(ReadAt, zone).ToString("HH:mm", System.Globalization.CultureInfo.InvariantCulture)}, {Ago(now - ReadAt)}, from {SourceSay() ?? "an unknown source"}";
         string Window(UsageWindow? w, string format) => w is null
             ? "no figure"
             : $"{w.UsedPercent:0}%{(w.ResetsAt is { } at ? $", resets {TimeZoneInfo.ConvertTime(at, zone).ToString(format, System.Globalization.CultureInfo.InvariantCulture)}" : "")} ({read})";
@@ -152,8 +184,8 @@ public sealed record UsageRow
             : $"{name} {window.UsedPercent:0}%{(window.ResetsAt is { } at ? $" (resets {TimeZoneInfo.ConvertTime(at, zone).ToString(format, System.Globalization.CultureInfo.InvariantCulture)})" : "")}";
         var parts = new[] { Part("5h", FiveHour, "HH:mm"), Part("7d", SevenDay, "ddd HH:mm") }.Where(p => p.Length > 0).ToList();
         var age = now - ReadAt;
-        var from = Source is { Length: > 0 } source ? $", from the {source}" : "";
-        var stale = age < TimeSpan.FromMinutes(5) ? from : age < TimeSpan.FromHours(1) ? $", as of {(int)age.TotalMinutes} min ago{from}" : $", as of {age.TotalHours:0} h ago{from}";
+        var from = SourceSay() is { } source ? $", from {source}" : "";
+        var stale = age < TimeSpan.FromMinutes(5) ? from : $", as of {Ago(age)}{from}";
         return (parts.Count == 0 ? "no figures" : string.Join(" · ", parts)) + stale;
     }
 }

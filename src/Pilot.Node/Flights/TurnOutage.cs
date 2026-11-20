@@ -442,18 +442,10 @@ public sealed class TurnOutage(NodeState state)
         _cardId = card.Id;
     }
 
-    // When the figures the node holds were last read and where from, for a card's summary: said as of an age once past the gate's fresh time.
-    private string FiguresSay(DateTimeOffset now)
-    {
-        if (state.Usage() is not { HasFigures: true } usage)
-        {
-            return "The node holds no usage figures.";
-        }
-        var from = usage.Source is { Length: > 0 } src ? $" from the {src}" : "";
-        var age = now - usage.ReadAt;
-        var when = age >= StartGate.FreshFor ? $"as of {(int)age.TotalMinutes} min ago ({usage.ReadAt.ToLocalTime():HH:mm})" : $"read {usage.ReadAt.ToLocalTime():HH:mm}";
-        return $"The usage figures were {when}{from}.";
-    }
+    // When the figures the node holds were last read and where from, for a card's summary: in the start gate's words, so the limit card
+    // and the 5-hour and 7-day cards say an old reading alike (as of an age once past the gate's fresh time, in hours past one).
+    private string FiguresSay(DateTimeOffset now) =>
+        state.Usage() is { HasFigures: true } usage ? $"Usage: {StartGate.ReadSay(usage, now)}." : "The node holds no usage figures.";
 
     private void Open(DateTimeOffset at, string why)
     {

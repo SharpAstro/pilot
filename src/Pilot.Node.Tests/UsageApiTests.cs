@@ -116,6 +116,41 @@ public sealed class UsageApiTests : IDisposable
     }
 
     [Fact]
+    public async Task AnAnswerWithNeitherWindowIsPacedAsAnAnswerAndLogsNothing()
+    {
+        WriteCredentials(Now.AddHours(1));
+        _handler.Reply(System.Net.HttpStatusCode.OK, """{"five_hour":null,"seven_day":null,"seven_day_opus":null}""");
+        var api = Api();
+
+        (await api.ReadAsync(TestContext.Current.CancellationToken)).ShouldBeNull();
+        _log.Lines.ShouldBeEmpty();
+
+        // Paced by Every, not by AfterFailure: the next request goes two minutes on, and its figures are taken.
+        _handler.Reply(System.Net.HttpStatusCode.OK, Answer);
+        _time.Advance(UsageApi.Every - TimeSpan.FromSeconds(1));
+        (await api.ReadAsync(TestContext.Current.CancellationToken)).ShouldBeNull();
+        _handler.Requests.Count.ShouldBe(1);
+        _time.Advance(TimeSpan.FromSeconds(1));
+        (await api.ReadAsync(TestContext.Current.CancellationToken)).ShouldNotBeNull().FiveHour!.UsedPercent.ShouldBe(15);
+        _handler.Requests.Count.ShouldBe(2);
+        _log.Lines.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task AnAnswerThatIsNoObjectIsAFailure()
+    {
+        WriteCredentials(Now.AddHours(1));
+        _handler.Reply(System.Net.HttpStatusCode.OK, "[]");
+        var api = Api();
+
+        (await api.ReadAsync(TestContext.Current.CancellationToken)).ShouldBeNull();
+        _log.Lines.ShouldHaveSingleItem().ShouldContain("unknown shape");
+        _time.Advance(UsageApi.Every);
+        (await api.ReadAsync(TestContext.Current.CancellationToken)).ShouldBeNull();
+        _handler.Requests.Count.ShouldBe(1);
+    }
+
+    [Fact]
     public async Task TheTokenIsInNoLogLineWhateverFails()
     {
         WriteCredentials(Now.AddHours(1));

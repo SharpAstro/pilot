@@ -84,6 +84,36 @@ public sealed class SessionRowTests : IDisposable
     }
 
     [Fact]
+    public void WhyTheLastTurnEndedIsTheApiErrorElseTheStopReasonElseTheHooksEndElseTheHookThatEndedIt()
+    {
+        var idle = new ClaudeAgentRow(null, AgentRows.SessionA, 1, "C:\\work", "background", "PIL5 node", "idle", null, null, null);
+        var gone = idle with { Pid = null };
+        var at = new DateTimeOffset(2026, 11, 20, 12, 0, 0, TimeSpan.Zero);
+        var stopHook = new HookState("Stop", at, SessionState.Idle, null, ApiError: "rate_limit_error");
+        var endHook = new HookState("SessionEnd", at, SessionState.Ended, null, ApiError: null, EndReason: "prompt_input_exit");
+        var every = TranscriptFacts.None with { Stop = new ApiStop("usage_limit_reached", at.AddHours(1)), StopReason = "end_turn" };
+        string? Why(ClaudeAgentRow agent, TranscriptFacts facts, HookState? hook) =>
+            SessionRowBuilder.Build(agent, facts, null, null, SessionRoleInfo.AdHoc, hook).LastTurnEnd;
+
+        // Every source present: the transcript's apiError wins over the hook's, the stop_reason and the hook.
+        Why(idle, every, stopHook).ShouldBe("usage_limit_reached");
+        Why(gone, every, endHook with { ApiError = "overloaded_error" }).ShouldBe("usage_limit_reached");
+        // No apiError in the transcript: the hook's apiError, still before the stop_reason.
+        Why(idle, every with { Stop = null }, stopHook).ShouldBe("rate_limit_error");
+        // No apiError at all: the last assistant message's stop_reason.
+        Why(idle, every with { Stop = null }, stopHook with { ApiError = null }).ShouldBe("end_turn");
+        Why(gone, every with { Stop = null }, endHook).ShouldBe("end_turn");
+        // No stop_reason: the ending hook's reason.
+        Why(gone, TranscriptFacts.None, endHook).ShouldBe("prompt_input_exit");
+        // No reason on the hook: the hook that ended the turn, by its event.
+        Why(idle, TranscriptFacts.None, stopHook with { ApiError = null }).ShouldBe("the Stop hook");
+        Why(gone, TranscriptFacts.None, endHook with { EndReason = null }).ShouldBe("the SessionEnd hook");
+        // Nothing to go on: unknown. A working hook's apiError is a stop a later turn cleared, and a working hook ended no turn.
+        Why(idle, TranscriptFacts.None, null).ShouldBeNull();
+        Why(idle with { Status = "busy" }, TranscriptFacts.None, new HookState("UserPromptSubmit", at, SessionState.Working, null, ApiError: "rate_limit_error")).ShouldBeNull();
+    }
+
+    [Fact]
     public void AListingThatIsNotAnArrayIsNoListing()
     {
         ClaudeAgentsJson.Parse("").ShouldBeNull();

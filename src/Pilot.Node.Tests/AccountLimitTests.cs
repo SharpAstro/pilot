@@ -798,7 +798,7 @@ public sealed class AccountLimitTests
         await _watch.LookAsync(Ct);
         _gate.RingWeek(90);
         Open().Count(c => c.Kind == StartGate.WeekKind).ShouldBe(1);
-        Open().Single(c => c.Kind == TurnOutage.LimitCardKind).Summary.ShouldNotBeNull().ShouldContain("The usage figures were read");
+        Open().Single(c => c.Kind == TurnOutage.LimitCardKind).Summary.ShouldNotBeNull().ShouldContain("Usage: figures read");
         Open().Single(c => c.Kind == TurnOutage.LimitCardKind).Summary.ShouldNotBeNull().ShouldContain("from the server");
 
         // The reset is used: a lower utilization on the same resets_at.
@@ -835,11 +835,18 @@ public sealed class AccountLimitTests
         Open().Single(c => c.Kind == StartGate.WeekKind).Id.ShouldBe(stale.Id);
     }
 
-    [Fact]
-    public void ALimitCardRungFromOldFiguresSaysAsOfTheirAge()
+    [Theory]
+    [InlineData(50, "as of 50 min ago")]
+    [InlineData(134, "as of 2 h ago")]
+    public void ALimitCardRungFromOldFiguresSaysAsOfTheirAge(int minutes, string ago)
     {
-        _state.PutUsage(Figures(Start.AddMinutes(-50), 50, Start.AddHours(3)) with { Source = "status line" });
+        var read = Start.AddMinutes(-minutes);
+        _state.PutUsage(Figures(read, 50, Start.AddHours(3)) with { Source = "status line" });
         _outage.OpenLimit(Start.AddHours(1), "one", Start);
-        Open().ShouldHaveSingleItem().Summary.ShouldNotBeNull().ShouldContain("as of 50 min ago");
+
+        var summary = Open().ShouldHaveSingleItem().Summary.ShouldNotBeNull();
+        summary.ShouldContain($"Usage: {ago}, read {read.ToLocalTime():HH:mm} from the status line.");
+        // The limit card says an old reading in the very words the 5-hour and 7-day cards use.
+        summary.ShouldContain(StartGate.ReadSay(_state.Usage()!, Start));
     }
 }

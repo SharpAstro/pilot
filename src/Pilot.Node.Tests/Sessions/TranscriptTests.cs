@@ -110,6 +110,23 @@ public sealed class TranscriptTests : IDisposable
     }
 
     [Fact]
+    public void AUserLineIsReadByItsTopLevelFieldsWhateverItsNestedValuesHold()
+    {
+        var path = _profile.TranscriptPath(AgentRows.SessionA);
+        // A tool result: a large nested message before the line's own timestamp, whose members carry a type, a timestamp and an
+        // isSidechain of their own.
+        var result = "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"timestamp\":\"2026-10-18T07:00:00.000Z\","
+            + "\"isSidechain\":true,\"content\":\"" + new string('x', 20_000) + "\"}]},\"isSidechain\":false,\"timestamp\":\"2026-10-18T08:10:00.000Z\"}\n";
+        _profile.Append(path, result, Turn("m1", "end_turn"));
+        Read().LastRequestAt.ShouldBe(DateTimeOffset.Parse("2026-10-18T08:10:00Z"));
+
+        // An isSidechain that is no boolean is skipped whole: its members are not read as the line's.
+        var odd = "{\"type\":\"user\",\"isSidechain\":{\"type\":\"summary\",\"timestamp\":\"2026-10-18T09:00:00.000Z\"},\"timestamp\":\"2026-10-18T08:20:00.000Z\"}\n";
+        _profile.Append(path, odd, Turn("m2", "end_turn"));
+        Read().LastRequestAt.ShouldBe(DateTimeOffset.Parse("2026-10-18T08:20:00Z"));
+    }
+
+    [Fact]
     public void AMessageStillStreamingHasNoStopReasonYetAndAnApiErrorLineIsNoReply()
     {
         _profile.Append(_profile.TranscriptPath(AgentRows.SessionA), Turn("m1", "end_turn"), Turn("m2", null));

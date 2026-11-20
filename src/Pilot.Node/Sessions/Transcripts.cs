@@ -302,12 +302,13 @@ internal sealed class TranscriptTail(string path)
                 {
                     stamp = reader.GetString();
                 }
-                else if (isSide)
+                else if (isSide && reader.TokenType is JsonTokenType.True or JsonTokenType.False)
                 {
                     sidechain = reader.TokenType == JsonTokenType.True;
                 }
                 else
                 {
+                    // Any other value, an object or an array included, is skipped whole, so its members are never read as the line's.
                     reader.Skip();
                 }
             }

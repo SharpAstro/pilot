@@ -146,19 +146,15 @@ public sealed class StartGate(NodeState state, TimeProvider time)
 
     /// <summary>
     /// When the figures were read, for a card's text: <c>figures read 10:40 from the server</c>, and <c>as of 45 min ago, read 10:40 from the
-    /// server</c> once they are older than <see cref="FreshFor"/>, so a card never states old figures as current.
+    /// server</c> once they are older than <see cref="FreshFor"/> (<c>as of 2 h ago</c> past an hour, <see cref="UsageRow.Ago"/>), so a card
+    /// never states old figures as current. Every card that says when its figures were read says it with this.
     /// </summary>
     public static string ReadSay(UsageRow usage, DateTimeOffset now)
     {
         var age = now - usage.ReadAt;
         var at = usage.ReadAt.ToLocalTime().ToString("HH:mm", CultureInfo.InvariantCulture);
-        var from = usage.Source is { Length: > 0 } source ? $" from the {source}" : "";
-        if (age < FreshFor)
-        {
-            return $"figures read {at}{from}";
-        }
-        var ago = age < TimeSpan.FromHours(1) ? $"{(int)age.TotalMinutes} min" : $"{age.TotalHours:0} h";
-        return $"as of {ago} ago, read {at}{from}";
+        var from = usage.SourceSay() is { } source ? $" from {source}" : "";
+        return age < FreshFor ? $"figures read {at}{from}" : $"as of {UsageRow.Ago(age)}, read {at}{from}";
     }
 
     private int? _weekShown;
