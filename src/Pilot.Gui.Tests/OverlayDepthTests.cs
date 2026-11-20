@@ -1,3 +1,4 @@
+using System.Globalization;
 using DIR.Lib;
 using Pilot.Contracts;
 using Pilot.Ui;
@@ -231,6 +232,9 @@ public sealed class OverlayDepthTests
     private const int ShortHeight = 360;
     private const string LowPalette = "right:9999:0";
 
+    private static List<ClickableRegion> LayerRows(Rig rig) =>
+        rig.Regions(rig.Chrome.Flights).Where(r => r.Result is HitResult.ButtonHit b && b.Action.StartsWith("FlightMapLayer:", StringComparison.Ordinal)).ToList();
+
     private static RectF32? Overlap(RectF32 a, RectF32 b)
     {
         var (x0, y0) = (MathF.Max(a.X, b.X), MathF.Max(a.Y, b.Y));
@@ -263,12 +267,25 @@ public sealed class OverlayDepthTests
     // (the map:<code>:row bands) paint no hover at all (a band is a click target and a context menu, nothing more), so the menu's row is the one to judge.
     // It is judged by its pixels: a row the toast covers only in part shows its upper strip above the toast, and a lit row or a held menu
     // (opaque instead of faded) changes that strip.
+    // Docked low, the menu's rows fall either clear above the toast or wholly under it, so the menu is first slid up its edge until
+    // its first row under the toast runs under the toast's top edge instead, half above and half under.
     [Fact]
     public void OnTheFlightsMapAPointerOverAToastCoveringALayersMenuRowLightsNoRow()
     {
-        using var rig = new Rig(PilotPage.Flights, BarStates.Collapsed, CardsScreen.From([Card("c1")]), ShortHeight, LowPalette);
+        var cards = CardsScreen.From([Card("c1")]);
+        float along;
+        using (var low = new Rig(PilotPage.Flights, BarStates.Collapsed, cards, ShortHeight, LowPalette))
+        {
+            var lowToast = low.Toast("c1");
+            var lowRows = LayerRows(low);
+            var under = lowRows.FindIndex(r => r.Y + 2f >= lowToast.Y);
+            under.ShouldBeGreaterThanOrEqualTo(0, $"a row of the low menu lies under the toast {lowToast}");
+            along = low.Chrome.Flights.MapLayers.Palette.OffsetAlong + (lowToast.Y - lowRows[under].Height / 2f - lowRows[under].Y);
+        }
+
+        using var rig = new Rig(PilotPage.Flights, BarStates.Collapsed, cards, ShortHeight, string.Create(CultureInfo.InvariantCulture, $"right:{along}:0"));
         var toast = rig.Toast("c1");
-        var rows = rig.Regions(rig.Chrome.Flights).Where(r => r.Result is HitResult.ButtonHit b && b.Action.StartsWith("FlightMapLayer:", StringComparison.Ordinal)).ToList();
+        var rows = LayerRows(rig);
         rows.ShouldNotBeEmpty("the layers menu is open with its rows");
         // The menu docks to the right edge and the toast keeps a margin there, so a row need only overlap the toast across, not lie inside it.
         var at = rows.FindIndex(r => r.Y + 2f < toast.Y && r.Y + r.Height > toast.Y + 2f && r.X < toast.X + toast.Width - 8f && r.X + r.Width > toast.X + 8f);
