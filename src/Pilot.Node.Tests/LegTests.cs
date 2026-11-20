@@ -281,6 +281,13 @@ internal sealed class FakeGitHub : IGitHub
             return Task.FromException(new FlightException(why));
         }
         IssueBodies[number] = body;
+        foreach (var list in MilestoneIssuesOf.Values)
+        {
+            if (list.TryGetValue(number, out var found))
+            {
+                list[number] = found with { Body = body };
+            }
+        }
         return Task.CompletedTask;
     }
 
@@ -442,8 +449,14 @@ internal sealed class FakeGitHub : IGitHub
         return Task.FromResult(made);
     }
 
-    public Task<MilestoneIssue?> IssueNowAsync(string repoPath, int number, CancellationToken cancellationToken) =>
-        Task.FromResult(MilestoneIssuesOf.TryGetValue(RepoKey(repoPath), out var list) && list.TryGetValue(number, out var found) ? Labelled(found) : null);
+    /// <summary>How many times IssueNowAsync was called.</summary>
+    public int IssueNowCalls { get; set; }
+
+    public Task<MilestoneIssue?> IssueNowAsync(string repoPath, int number, CancellationToken cancellationToken)
+    {
+        IssueNowCalls++;
+        return Task.FromResult(MilestoneIssuesOf.TryGetValue(RepoKey(repoPath), out var list) && list.TryGetValue(number, out var found) ? Labelled(found) : null);
+    }
 
     /// <summary>The issue as GitHub reports it: with the labels it carries.</summary>
     private MilestoneIssue Labelled(MilestoneIssue issue)

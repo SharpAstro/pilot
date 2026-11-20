@@ -111,6 +111,8 @@ public sealed class FollowUpSweep(NodeState state, IGitHub? github, TimeProvider
         return row;
     }
 
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<(string Path, int Number), DateTimeOffset?> _createdAt = new();
+
     private async Task<List<(int Number, string Title, DateTimeOffset? CreatedAt)>> OpenFollowUpsAsync(string path, CancellationToken cancellationToken)
     {
         var found = new Dictionary<int, (int, string, DateTimeOffset?)>();
@@ -122,8 +124,16 @@ public sealed class FollowUpSweep(NodeState state, IGitHub? github, TimeProvider
         {
             if (issue.Title.StartsWith(TitlePrefix, StringComparison.Ordinal) && !found.ContainsKey(issue.Number))
             {
-                var now = await github.IssueNowAsync(path, issue.Number, cancellationToken);
-                found[issue.Number] = (issue.Number, issue.Title, now?.CreatedAt);
+                // Read once per issue: a creation time never changes.
+                if (!_createdAt.TryGetValue((path, issue.Number), out var created))
+                {
+                    created = (await github.IssueNowAsync(path, issue.Number, cancellationToken))?.CreatedAt;
+                    if (created is not null)
+                    {
+                        _createdAt[(path, issue.Number)] = created;
+                    }
+                }
+                found[issue.Number] = (issue.Number, issue.Title, created);
             }
         }
         return [.. found.Values];

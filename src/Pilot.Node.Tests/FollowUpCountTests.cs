@@ -257,4 +257,120 @@ public sealed class FollowUpCountTests : ReviewTestsBase
         _github.IssueBodies.ContainsKey(plain).ShouldBeFalse();
         _github.ClosedIssues.Select(c => c.Number).ShouldBe([plain]);
     }
+
+    private const string Namespaced = "### PIL12:R1.3: a
+- [ ] `PIL12:R1.3`
+- Found: x
+
+### PIL12:R1.4: b
+- [ ] `PIL12:R1.4`
+- Found: y
+";
+
+    [Fact]
+    public void ThePointsOfAFlightAreKeyedWithItsCodeAndTheBodyTellsHowToReport()
+    {
+        var flight = new FlightRow { Code = "PIL12", Repo = Repo_, RepoPath = Repo, Issue = 1, Branch = "b", Worktree = "w", Base = "main", State = FlightState.Flying, CreatedAt = Start };
+        var body = ReviewFollowUp.Body(flight, [new ReviewFollowUp.Item("R1.2", "in A.cs:1", "later", "a flight")]);
+
+        body.ShouldContain("- [ ] `PIL12:R1.2`");
+        body.ShouldContain("### PIL12:R1.2: A.cs:1");
+        body.IndexOf("key | addressed | file:line", StringComparison.Ordinal).ShouldBeInRange(0, body.IndexOf("### ", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task AReviewAnswerOfTheFollowUpFlightsOwnTicksNothingOfTheIssue()
+    {
+        var issue = FollowUp(TimeSpan.FromHours(2), body: TwoPoints);
+        var flight = await NewFlight(issue.ToString(), "parser");
+        await Fly(flight, "parser", report: "did nothing of the issue");
+        (await Run(Verbs.OpenPr, Verbs.FlightTarget(flight.Code), "controller")).Error.ShouldBeNull();
+        (await Run(Verbs.Review, Verbs.FlightTarget(flight.Code), Reviewer(flight.Code), "changes", "## Blocking
+- the guard is missing in Parser.cs:20
+")).Error.ShouldBeNull();
+        var round = F(flight.Code).ReviewRounds!.Last();
+        _state.PutFlight(F(flight.Code) with { ReviewRounds = [.. F(flight.Code).ReviewRounds!.SkipLast(1), round with { Answers = [new ReviewPointAnswer("R1.3", "addressed", "Lexer.cs:3")] }] });
+        (await Run(Verbs.Review, Verbs.FlightTarget(flight.Code), Reviewer(flight.Code), "pass", "fine")).Ok.ShouldBeTrue();
+        _github.Pr = _github.Pr! with { State = "MERGED" };
+        await new PrChecks(_state, _github, TimeProvider.System, _flights).LookAsync(Ct);
+
+        _github.IssueBodies.ContainsKey(issue).ShouldBeFalse();
+        _github.ClosedIssues.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task ABareKeyOfAnotherFlightsLegTicksNoNamespacedLineAndTheNamespacedKeyDoes()
+    {
+        var issue = FollowUp(TimeSpan.FromHours(2), body: Namespaced);
+
+        await Landed(issue, "did
+
+" + Answers + "| R1.3 | addressed | Lexer.cs:3 |
+");
+        _github.IssueBodies.ContainsKey(issue).ShouldBeFalse();
+        _github.ClosedIssues.ShouldBeEmpty();
+
+        var second = FollowUp(TimeSpan.FromHours(2), body: Namespaced);
+        await Landed(second, "did
+
+" + Answers + "| PIL12:R1.3 | addressed | Lexer.cs:3 |
+");
+        var body = _github.IssueBodies[second];
+        body.ShouldContain("- [x] `PIL12:R1.3`");
+        body.ShouldContain("- [ ] `PIL12:R1.4`");
+        _github.ClosedIssues.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task APointALaterRoundAddsLandsInTheIssueBodyWhereTheTickReadsItAndKeepsTheIssueOpen()
+    {
+        var existing = FollowUp(TimeSpan.FromHours(2), body: "### PIL1:R1.3: a
+- [x] `PIL1:R1.3`
+- Found: x
+");
+        var flight = await NewFlight("40", "parser");
+        await Fly(flight, "parser");
+        _state.PutFlight(F(flight.Code) with { FollowUpIssue = existing, FollowUpPoints = ["R1.3"], FollowUpFlight = "PIL99" });
+        (await Run(Verbs.OpenPr, Verbs.FlightTarget(flight.Code), "controller")).Error.ShouldBeNull();
+        (await Run(Verbs.Review, Verbs.FlightTarget(flight.Code), Reviewer(flight.Code), "changes", "## Blocking
+- the guard is missing in Parser.cs:20
+- the lexer wants a rewrite
+")).Error.ShouldBeNull();
+        File.WriteAllText(Path.Combine(F(flight.Code).Worktree, "fix.txt"), "more
+");
+        Git(F(flight.Code).Worktree, "add", ".");
+        Git(F(flight.Code).Worktree, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "fix");
+        (await Run(Verbs.StartReview, Verbs.FlightTarget(flight.Code), "controller")).Error.ShouldBeNull();
+        await Started(_legs, flight.Code);
+        (await Run(Verbs.Review, Verbs.FlightTarget(flight.Code), Reviewer(flight.Code), "pass",
+            "## Earlier points
+| Point | Answer | Where or why |
+|---|---|---|
+| R1.1 | addressed | fix.txt:1 |
+| R1.2 | deferred: larger than the flight | the lexer wants a rewrite |
+")).Error.ShouldBeNull();
+
+        (await Run(Verbs.Merge, Verbs.FlightTarget(flight.Code), "controller", _github.Pr!.Head)).Error.ShouldBeNull();
+
+        var body = _github.IssueBodies[existing];
+        body.ShouldContain("- [x] `PIL1:R1.3`");
+        body.ShouldContain($"- [ ] `{flight.Code}:R1.2`");
+        _github.IssueComments.ShouldNotContain(c => c.Number == existing);
+        var (_, _, left, _) = ReviewFollowUp.Tick(body, []);
+        left.ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task TheSweepReadsATitleOnlyIssuesCreationTimeOncePerIssueNotOncePerSweep()
+    {
+        FlightOn(1, "PIL1");
+        FollowUp(TimeSpan.FromHours(2), labelled: false);
+        var sweep = new FollowUpSweep(_state, _github, _time);
+        _github.IssueNowCalls = 0;
+
+        await sweep.SweepAsync(Ct);
+        await sweep.SweepAsync(Ct);
+
+        _github.IssueNowCalls.ShouldBe(1);
+    }
 }

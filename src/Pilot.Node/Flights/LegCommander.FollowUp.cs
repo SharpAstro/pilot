@@ -57,7 +57,10 @@ public sealed partial class LegCommander
                 var keys = fresh.Select(i => i.Key).ToArray();
                 if (number is { } existing)
                 {
-                    await OffLockAsync(null, () => github.CommentIssueAsync(flight.RepoPath, existing, $"More points {flight.Code}'s reviews left:\n\n{ReviewFollowUp.Points(fresh)}", cancellationToken));
+                    // Appended to the body, where the tick reads the lines; the lines already ticked stay as they are.
+                    var current = await OffLockAsync(null, () => github.IssueNowAsync(flight.RepoPath, existing, cancellationToken))
+                        ?? throw new FlightException($"follow-up issue #{existing} was not found");
+                    await OffLockAsync(null, () => github.EditIssueBodyAsync(flight.RepoPath, existing, current.Body.TrimEnd() + "\n\n" + ReviewFollowUp.Points(fresh, flight.Code).TrimEnd() + "\n", cancellationToken));
                     Record(flight.Code, f => f with { FollowUpPoints = [.. (f.FollowUpPoints ?? []), .. keys] });
                 }
                 else

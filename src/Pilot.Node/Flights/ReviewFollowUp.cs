@@ -229,9 +229,14 @@ public static partial class ReviewFollowUp
         var text = new StringBuilder();
         text.AppendLine($"{flight.Code} ({flight.PullRequestUrl ?? $"#{flight.PullRequest}"}) merges with these points left, each with a reason. Nothing lands open (pilot #1107): they are filed here, one issue for the flight.");
         text.AppendLine();
-        text.Append(Points(items));
+        text.AppendLine(ReportLine);
+        text.AppendLine();
+        text.Append(Points(items, flight.Code));
         return text.ToString();
     }
+
+    /// <summary>The one line above the first point: how the follow-up flight reports a point so the node ticks its line.</summary>
+    public const string ReportLine = "Report each point in the leg's report as `key | addressed | file:line` (the key as its line names it, for example `PIL12:R1.2`), or `key | not work | why`.";
 
     /// <summary>The title of the one follow-up issue of a PR no flight owns.</summary>
     public static string Title(PrReviewRow review) => $"Follow-up of {review.Repo}#{review.Number}: points its review left for later";
@@ -285,14 +290,17 @@ public static partial class ReviewFollowUp
     }
 
     /// <summary>The points alone, as a body and a later comment on the same issue share them.</summary>
-    public static string Points(IReadOnlyList<Item> items)
+    public static string Points(IReadOnlyList<Item> items, string? code = null)
     {
         var text = new StringBuilder();
         foreach (var item in items)
         {
-            text.AppendLine($"### {item.Key}: {item.Where ?? "no file named"}");
+            // The earlier flight's code goes before the key (PIL12:R1.2), so a leg of another flight that reports a bare R1.2 ticks nothing.
+            // A stored issue body with the bare key still ticks by the bare key (Tick matches the line's own text); only a new body is namespaced.
+            var key = code is { Length: > 0 } ? $"{code}:{item.Key}" : item.Key;
+            text.AppendLine($"### {key}: {item.Where ?? "no file named"}");
             // The one line a later flight ticks when the point is made (pilot #1226); the issue closes when none is left unticked.
-            text.AppendLine($"- [ ] {Box(item.Key)}");
+            text.AppendLine($"- [ ] {Box(key)}");
             text.AppendLine($"- Found: {item.Found.ReplaceLineEndings(" ")}");
             text.AppendLine($"- Why it was left: {item.Why.ReplaceLineEndings(" ")}");
             text.AppendLine($"- What would settle it: {item.Settle}");

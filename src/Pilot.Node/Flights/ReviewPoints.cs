@@ -148,7 +148,8 @@ public static partial class ReviewPoints
         return dot is > 0 and <= 3 && text[..dot].All(char.IsAsciiDigit) ? text[(dot + 2)..].Trim() : text;
     }
 
-    [GeneratedRegex(@"\bR\d+\.\d+\b", RegexOptions.IgnoreCase)]
+    // An optional flight code before the key (PIL12:R1.2): a follow-up issue names its points so, so only the flight that left them ticks them.
+    [GeneratedRegex(@"(?:[A-Za-z]+\d+:)?R\d+\.\d+", RegexOptions.IgnoreCase)]
     private static partial Regex IdToken();
 
     /// <summary>The rows of the table under <see cref="AnswerHeading"/>; a later row for a point replaces an earlier one.</summary>

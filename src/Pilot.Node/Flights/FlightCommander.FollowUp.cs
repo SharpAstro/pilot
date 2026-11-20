@@ -5,7 +5,7 @@ namespace Pilot.Node.Flights;
 public sealed partial class FlightCommander
 {
     /// <summary>
-    /// A landed flight whose issue is a follow-up issue (pilot #1226): ticks the <c>- [ ] `key`</c> lines the points its leg reports and review answers say were made
+    /// A landed flight whose issue is a follow-up issue (pilot #1226): ticks the <c>- [ ] `key`</c> lines the points its leg reports say were made
     /// (addressed, not work, the node's own), and says whether the issue is to stay open because lines are left unticked. An issue with no checkbox line (an older
     /// one) is left as it is and closes as any issue does. Landed already, so a failure is said on stderr and never refuses anything; the issue stays open then.
     /// </summary>
@@ -25,17 +25,7 @@ public sealed partial class FlightCommander
                 return false;
             }
             var made = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var answer in (flight.ReviewRounds ?? []).OrderBy(r => r.Round).SelectMany(r => r.Answers ?? []))
-            {
-                if (answer.Answer is "addressed" or "not work" or "node's own")
-                {
-                    made.Add(answer.Id);
-                }
-                else
-                {
-                    made.Remove(answer.Id);
-                }
-            }
+            // Only leg report rows tick: the landing flight's own review answers answer its own PR, not the issue's points.
             foreach (var leg in state.Legs(flight.Code).Where(l => !string.IsNullOrWhiteSpace(l.Report)))
             {
                 foreach (var reply in ReviewPoints.ParseAnswers(leg.Report!))
