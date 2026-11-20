@@ -25,7 +25,8 @@ queued it. Queue state is GraphQL only (`PullRequest.mergeQueueEntry`), and the 
 | `bash <this skill's folder>/mq.sh status <pr>` | one line: `MERGED at ...`, `QUEUED position N state S since ...`, `AUTO ...` (enters the queue when checks pass), `OPEN not queued; mergeState ... checks ...`, or `CLOSED` |
 | `bash <this skill's folder>/mq.sh queue` | every entry in main's queue, in order |
 | `bash <this skill's folder>/mq.sh watch <pr>` | polls each 60 s: exit 0 once merged or closed; exit 1 with the removal event if the PR LEFT the queue unmerged (a failed queue build); a failed poll is retried, and exit 3 means five failed in a row, so the PR's state is unknown, never that it left the queue |
-| `bash <this skill's folder>/mq.sh enqueue <pr>` | puts the PR in the queue and prints its status line; the USER runs it (`!`), since the merge guard refuses it from a session |
+| `bash <this skill's folder>/mq.sh enqueue <pr>` | puts the PR in the queue and prints its status line; refused by GitHub until every required check has reported |
+| `bash <this skill's folder>/mq.sh ready <pr>` | "Merge when ready": tries `enqueue` each 120 s until GitHub takes it, then watches it land; exit 0 merged, exit 1 a check failed or it left the queue, exit 3 state unknown, exit 4 not in after 2 hours |
 
 The folder is `~/.claude/skills/merge-queue` (or under `CLAUDE_CONFIG_DIR`). An optional last argument
 `owner/repo` targets another repo.
@@ -35,13 +36,32 @@ The folder is `~/.claude/skills/merge-queue` (or under `CLAUDE_CONFIG_DIR`). An 
 **"Is #N merged?" / "where is it?"**: `mq.sh status N`. Report the line as it is. If QUEUED, say its
 position; if OPEN and checks pass, say it is ready to queue.
 
-**Queue a PR: a session does not.** pilot's merge guard (a PreToolUse hook) refuses `gh pr merge`, the GraphQL
-`enqueuePullRequest` / `mergePullRequest` and a push to a default branch, and points at
-`pilot flight merge <code> <head>`. A flight's PR merges that way. Any other PR is the user's to queue: from the
-PR page, or `! bash <this skill's folder>/mq.sh enqueue <N>` typed in the prompt (a `!` command is the user's own,
-and no hook sees it). Give the user that exact line, with the folder written out. **Do not offer `gh pr merge N`**:
-gh 2.86 asked a green, CLEAN tianwen PR for auto-merge instead of the queue and failed with "Auto merge is not
-allowed for this repository (enablePullRequestAutoMerge)". Never suggest `--admin`, which bypasses the queue.
+**Queue a PR: whose it is depends on who started the session.**
+
+- **A flight's PR is the node's.** On autopilot the node queues it once it is reviewed and green; a session does not
+  race it (`pilot flight merge <code> <head>` is the command when a person wants it merged).
+- **A session the node started** (a worker, planner, validator or reviewer in a plane under `.claude/worktrees/`, or
+  the watchtower) is refused by pilot's merge guard, a PreToolUse hook: `gh pr merge`, the GraphQL
+  `enqueuePullRequest` / `mergePullRequest` and a push to a default branch all come back with a deny that points at
+  `pilot flight merge`. Do not route around it.
+- **The person's own session, and one they steer, queues its own PRs.** The guard lets it through (`MergeGuard`, "the
+  person's own session ... merges as they say"). A PR opened by hand there is queued by the session that opened it,
+  in the same turn, without being asked: run `mq.sh ready <N>` in the background right after `gh pr create` and
+  report when it exits.
+
+**"Merge when ready" has no API on these repos; `mq.sh ready` stands in for it.** Three facts, each tried:
+
+- `enqueuePullRequest` (what `mq.sh enqueue` sends) is refused while a required check has not reported: `Pull request
+  Required status check "gate" is expected`. It is accepted the moment the check reports (pilot#1242, 2026-11-21:
+  refused at open, accepted when `gate` reported, queued at position 1).
+- `gh pr merge N`, `gh pr merge --auto` and the GraphQL `enablePullRequestAutoMerge` all ask for auto-merge and fail
+  with `Auto merge is not allowed for this repository`: pilot and tianwen have the repo setting "Allow auto-merge"
+  off (`gh api repos/<owner>/<repo> --jq .allow_auto_merge` says `false`). The web page's "Merge when ready" button
+  works all the same, which is why the button and the API look like two different things.
+- Switching "Allow auto-merge" on (`gh repo edit --enable-auto-merge`) should make `gh pr merge N` arm a PR as the
+  button does. Not tried: it is the owner's setting, and an armed PR merges whatever head it has when its checks pass.
+
+So **do not offer or try `gh pr merge N`** on these repos, and never `--admin`, which bypasses the queue.
 
 **Watch it land**: run `mq.sh watch N` in the background and report when it exits. A queue run builds the PR on
 top of main, so a PR green on its branch can still be thrown out; exit 1 means that, and the queue's own check
