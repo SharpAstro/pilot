@@ -143,7 +143,7 @@ public class ReviewPointsTests
         var reply = ReviewPoints.ParseAnswers(Table.Replace(Row14, $"| R1.4 | {word} | |")).Single(r => r.Id == "R1.4");
         reply.Answer.ShouldBe(ReviewPoints.Answer.NodesOwn);
         ReviewPoints.ToStored(reply).Answer.ShouldBe("node's own");
-        ReviewPoints.AnyNotAddressed(Both, Table.Replace(Row14, $"| R1.4 | {word} | |")).ShouldBeFalse();
+        ReviewPoints.AnyNotAddressed(Both, Table.Replace(Row14, $"| R1.4 | {word} | |").Replace("| R2.2 | not addressed | |", "| R2.2 | addressed | x |")).ShouldBeFalse();
     }
 
     [Theory]
