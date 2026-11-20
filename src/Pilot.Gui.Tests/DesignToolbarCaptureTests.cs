@@ -28,13 +28,16 @@ public sealed class DesignToolbarCaptureTests
         {
             foreach (var (name, palette) in new[] { ("standard", Palette.Standard), ("night", Palette.Night) })
             {
-                foreach (var (width, height) in new[] { (700, 1000), (1920, 1080) })
+                // The narrow window is tall enough that the page's first frame and its toolbar both show (the chat sits under the document there).
+                foreach (var (width, height) in new[] { (700, 1700), (1920, 1080) })
                 {
                     Palette.Current = palette;
                     using var renderer = new RgbaImageRenderer((uint)width, (uint)height);
                     var screen = PageData.DesignsFor("sample", Now);
                     var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
                     chrome.Autopilot.OnToggle = _ => Task.FromResult<string?>(null);
+                    // The chrome sets the palette from its own Night switch at each render, so the switch is what picks the palette.
+                    chrome.Night.On = ReferenceEquals(palette, Palette.Night);
                     chrome.Show(PilotPage.Designs);
                     chrome.Designs.Open("DSN-1");
                     var data = PageData.For("sample");
