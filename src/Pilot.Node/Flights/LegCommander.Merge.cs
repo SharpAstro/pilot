@@ -58,9 +58,7 @@ public sealed partial class LegCommander
             // Nothing lands open (pilot #1107): the points its reviews left are filed as the flight's one follow-up issue before any merge, a hand's,
             // the autopilot's, an armed one's or the queue's. Done once the flight is under way (Enqueue put it in _active), so two asks for one
             // flight cannot both see no issue and file two: the second is refused above until this one ends.
-            // Pilot #1148, #1226: a note of the passing round with no end refuses the merge; only the owner's word (the person's as-is merge) lets it by.
-            var ownersWord = command.PersonsWord is not null || (command.Args is { Length: > 2 } mergeArgs && mergeArgs[2] == MergeAsIs && IsPerson(asked, command.Who));
-            await EnsureFollowUpAsync(Mergeable(command).Item1, null, cancellationToken, lastRoundNotes: true, ownersWord: ownersWord);
+            await EnsureFollowUpAsync(Mergeable(command).Item1, null, cancellationToken, lastRoundNotes: true, ownersWord: command.PersonsWord is not null || (command.Args is { Length: > 2 } mergeArgs && mergeArgs[2] == MergeAsIs && IsPerson(asked, command.Who))); // #1148, #1226: a passing-round note with no end refuses the merge unless the owner says so (the person's as-is merge)
             await OffLockAsync(null, () => WaitTurnAsync(asked.Code, asked.Repo, cancellationToken));
             if (Models.MergeBatch)
             {

@@ -246,7 +246,7 @@ public sealed class HoldingPatternTests : ReviewTestsBase
         text.ShouldContain($"PR #{pr}");
         text.ShouldContain(F(flight.Code).Review!.ReviewedHead![..8]);
         text.ShouldContain("rename `x` to `count`");
-        text.ShouldContain($"Take the hold with pilot flight hold {flight.Code} (or commit in the plane) before the grace ends, or the flight merges with these notes");
+        text.ShouldContain($"Take the hold with pilot flight hold {flight.Code} (or commit in the plane) before the grace ends, or the node plans the review-notes leg itself, or rings the owner");
         text.ShouldContain("pilot leg plan, then pilot leg start");
         text.ShouldContain($"pilot flight clear {flight.Code} <why> is refused for the watchtower while a note has no end");
         text.ShouldContain($"only for a one-line change in the plane ({flight.Worktree}), then pilot flight pr {flight.Code}");
@@ -317,7 +317,7 @@ public sealed class HoldingPatternTests : ReviewTestsBase
         _state.Legs(flight.Code).ShouldNotContain(l => l.Name.StartsWith("review-notes"));
         var card = Open().Single(c => c.Kind == LegCommander.ReviewNotesKind);
         card.Detail.ShouldNotBeNull().ShouldContain("Delegate");
-        card.Summary.ShouldNotBeNull().ShouldContain("delegates");
+        card.Summary.ShouldNotBeNull().ShouldContain("plans a review-notes leg");
     }
 
     [Fact]

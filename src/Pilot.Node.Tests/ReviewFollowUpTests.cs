@@ -65,8 +65,10 @@ public sealed class ReviewFollowUpTests : ReviewTestsBase
         (await Run(Verbs.Review, Verbs.FlightTarget(code), Reviewer(code), "pass",
             Answers + "\n## Not blocking\n- E could be tidier in Lexer.cs:8\n- F deserves a comment in Parser.cs:40\n")).Error.ShouldBeNull();
         // A pass with notes holds the flight; a person clears the hold untaken, so the notes were never made.
-        (await Run(Verbs.Clear, Verbs.FlightTarget(code), "me")).Error.ShouldBeNull();
-        (await Merge(code)).Error.ShouldBeNull();
+        // Only the person's word clears it with the notes unmade (pilot #1226): a reason, then the as-is merge.
+        (await Run(Verbs.Clear, Verbs.FlightTarget(code), "me", "to merge the notes as follow-ups")).Error.ShouldBeNull();
+        Task<CommandResult> AsIs() => Run(Verbs.Merge, Verbs.FlightTarget(code), "me", _github.Pr!.Head, "squash", LegCommander.MergeAsIs);
+        (await AsIs()).Error.ShouldBeNull();
 
         var issue = _github.IssuesCreated.ShouldHaveSingleItem();
         // The PR-ready card filed the left point first; the merge adds the unmade notes to that same issue as a comment.
@@ -79,7 +81,7 @@ public sealed class ReviewFollowUpTests : ReviewTestsBase
 
         // A second ask (the flight has landed) files nothing more.
         var commentsBefore = _github.IssueComments.Count;
-        (await Merge(code)).Error.ShouldNotBeNull().ShouldContain("landed");
+        (await AsIs()).Error.ShouldNotBeNull().ShouldContain("landed");
         _github.IssuesCreated.ShouldHaveSingleItem();
         _github.IssueComments.Count.ShouldBe(commentsBefore);
     }
