@@ -283,4 +283,29 @@ public sealed class AdmissionTests
         Admission.Decide(input, Start("PIL1")).ShouldBeOfType<AdmissionDecision.Admit>();
         Admission.Decide(input, Start("PIL2")).ShouldBeOfType<AdmissionDecision.Admit>();
     }
+
+    [Fact]
+    public void AHeldAskingFlightWithNobodyElseReadyOnTheRepoGetsADecision()
+    {
+        // PIL1 waits for PIL2 (another repo), holds no repo, and nobody on pilot wants it: the set of flights wanting the repo is empty.
+        var input = Repo(Flight("PIL1", "pilot", FlightPhase.Held, waits: new FlightWait("DE1", "DIR2", WaitKind.Connection)), Flight("DIR2", "DIR.Lib", FlightPhase.Flying));
+        Should.NotThrow(() => Admission.Decide(input, Start("PIL1")));
+    }
+
+    [Fact]
+    public void APriorityAskingFlightWithNoOtherFlightWantingTheRepoGetsADecision()
+    {
+        var input = Repo(Flight("PIL1", "pilot", FlightPhase.Ready) with { Priority = true });
+        Admission.Decide(input, Start("PIL1")).ShouldBeOfType<AdmissionDecision.Admit>();
+    }
+
+    [Fact]
+    public void ACycleWhoseWantingSetIsEmptyMakesTheAskingFlightWaitOnTheHolder()
+    {
+        // PIL1 (held, asking) waits for PIL2, which holds the repo and waits for PIL1: a cycle with no flight wanting the repo.
+        var input = Repo(
+            Flight("PIL1", "pilot", FlightPhase.Held, waits: new FlightWait("DE1", "PIL2", WaitKind.Connection)),
+            Holding("PIL2", "pilot", waits: new FlightWait("DE1", "PIL1", WaitKind.Connection)));
+        Admission.Decide(input, Start("PIL1")).ShouldBeOfType<AdmissionDecision.Wait>().Why.ShouldContain("PIL2");
+    }
 }
