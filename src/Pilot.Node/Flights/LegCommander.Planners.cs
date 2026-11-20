@@ -65,8 +65,9 @@ public sealed partial class LegCommander
             throw new FlightException($"{flight.Code} has landed");
         }
         RefuseIfOnHold(flight.Code);
-        if (flight.State == FlightState.Held)
+        if (flight.State == FlightState.Held && !replacing)
         {
+            // (A replan after an overlap answer is not this: it replaces a planner already going and starts the fresh one at once.)
             // A flight waiting for a connected flight starts no planner (PIL1222). The wait is its Queued, which the release to Flying keeps, so
             // the sweep's queued-planner pickup starts the planner then, a node restarted meanwhile included.
             // Race with create's plan-on-create and a connect: connect first, this wait applies and the planner starts on release; connect after a
