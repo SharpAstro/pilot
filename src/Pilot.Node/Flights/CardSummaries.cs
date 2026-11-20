@@ -94,6 +94,7 @@ public static partial class CardSummaries
             LegCommander.PlannedKind => choices.Count == 0
                 ? $"{what} has a plan of legs, but its flight is held and cannot start yet. The detail says what it waits for; Start is offered here once that lifts."
                 : $"{what} has a plan of legs. Start it to fly them, or change the plan first.",
+            FollowUpSweep.RingKind => "A follow-up issue has waited over a day with no flight, and nothing picks it up until one is created. Create its flight, or close the issue if it is no longer wanted.",
             "landed" => $"{what} landed: its PR is merged and its legs are done. Nothing to do; dismiss it when read.",
             RebootPrep.Kind => "The machine is being made ready to reboot, or was resumed after one. Maintenance mode says whether anything new starts; pilot node reboot status says how far it is.",
             RebootPrep.ReadyKind => "Every session's state is saved and none is running: the machine can reboot now. After it, pilot node reboot done leaves maintenance mode, each flight resuming from its file.",

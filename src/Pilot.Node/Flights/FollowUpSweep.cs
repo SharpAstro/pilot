@@ -103,7 +103,7 @@ public sealed class FollowUpSweep(NodeState state, IGitHub? github, TimeProvider
             rows.Add(new FollowUpRepoRow { Repo = repo, Open = issues.Count, NoFlight = [.. none.Select(i => i.Number)] });
             foreach (var issue in none.Where(i => i.CreatedAt is { } at && now - at > RingAfter))
             {
-                Ring(repo, issue.Number, issue.Title);
+                Ring(repo, path, issue.Number, issue.Title);
             }
         }
         var row = new FollowUpsRow { ReadAt = now, Repos = [.. rows] };
@@ -130,7 +130,7 @@ public sealed class FollowUpSweep(NodeState state, IGitHub? github, TimeProvider
     }
 
     /// <summary>Rings once per issue, deduped by the card's subject.</summary>
-    private void Ring(string repo, int number, string title)
+    private void Ring(string repo, string path, int number, string title)
     {
         var subject = $"follow-up:{repo}#{number}";
         if (!_rung.Add(subject) || state.Cards().Any(c => c.Kind == RingKind && c.Subject == subject))
@@ -138,6 +138,7 @@ public sealed class FollowUpSweep(NodeState state, IGitHub? github, TimeProvider
             return;
         }
         state.RaiseCard(CardBin.ForYou, RingKind, subject, $"Follow-up issue {repo}#{number} has had no flight for over a day",
-            $"{title}\n\nNothing picks it up until a flight is created on it: pilot flight create {number} --repo {repo}");
+            $"{title}\n\nNothing picks it up until a flight is created on it: pilot flight create {number} --repo {repo}",
+            choices: [new CardChoice { Label = "Create its flight", Verb = Verbs.CreateFlight, Target = Verbs.RepoTarget(path), Args = [number.ToString(System.Globalization.CultureInfo.InvariantCulture)] }]);
     }
 }

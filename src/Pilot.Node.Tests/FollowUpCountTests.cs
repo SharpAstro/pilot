@@ -68,6 +68,7 @@ public sealed class FollowUpCountTests : ReviewTestsBase
         var number = FollowUp(TimeSpan.FromHours(2));
         FlightOn(900, "SWP1");
         await _github.CloseIssueAsync(Repo, number, "done", Ct);
+        _github.Issues.TryRemove(number, out _);
         var key = Path.TrimEndingDirectorySeparator(Path.GetFullPath(Repo));
         _github.MilestoneIssuesOf[key][number] = _github.MilestoneIssuesOf[key][number] with { Open = false };
 
