@@ -9,7 +9,6 @@ namespace Pilot.Node.Tests;
 /// PIL1229, Decision 2: with the autopilot on, a review that asks for changes under the loop limit and the go-around cap is sent round
 /// by the node itself (the press the watchtower made 205 times); in every other case the card is raised as before.
 /// </summary>
-[Trait("Category", "Slow")]
 public sealed class NodeFixRoundTests : ReviewTestsBase
 {
     private const string Findings = "## Blocking\n- the parser drops a token";
