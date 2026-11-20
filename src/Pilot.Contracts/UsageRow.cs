@@ -29,7 +29,7 @@ public sealed record UsageRow
 
     public UsageWindow? SevenDay { get; init; }
 
-    /// <summary>When the status line wrote the figures: how fresh they are, since a status line only writes while a session is open.</summary>
+    /// <summary>When the figures were read, from the server or when the status line wrote them: how fresh they are.</summary>
     public required DateTimeOffset ReadAt { get; init; }
 
     /// <summary>Where the figures came from: <c>server</c> or <c>status line</c>; null on a row an older node stored.</summary>

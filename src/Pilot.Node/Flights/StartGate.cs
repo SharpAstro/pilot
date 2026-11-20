@@ -47,6 +47,17 @@ public sealed class StartGate(NodeState state, TimeProvider time)
     /// <summary>The <see cref="HoldRow.Kind"/> of the 5-hour hold the gate puts on the snapshot.</summary>
     public const string GateHoldKind = "start gate";
 
+    /// <summary>The 5-hour share at which <see cref="CurrentHold"/> says the gate holds; the node sets the start limit of normal repos.</summary>
+    public double StatusLimit { get; init; } = 90;
+
+    /// <summary>
+    /// The hold in force for the snapshot, from live state: an open account limit, else the 5-hour window at <see cref="StatusLimit"/>; null when
+    /// none holds. The same whichever start asks, so the snapshot's hold never flips with a caller's own limit.
+    /// </summary>
+    public HoldRow? CurrentHold() =>
+        Outage is { LimitUntil: { } until, LimitSay: { } say } ? new HoldRow { Kind = TurnOutage.LimitHoldKind, Until = until, Why = say }
+        : Check(StatusLimit) is { } five ? new HoldRow { Kind = GateHoldKind, Until = five.Resets, Why = five.Say } : null;
+
     /// <summary>Why a known account limit (<see cref="TurnOutage.OpenLimit"/>) holds every start until its reset, keyed on that reset so it is said once; null when none is open.</summary>
     public StartHeld? CheckLimit() =>
         Outage is { LimitUntil: { } until, LimitSay: { } say } ? new StartHeld(say, until) : null;
@@ -106,9 +117,9 @@ public sealed class StartGate(NodeState state, TimeProvider time)
     {
         RingWeek(weekLimit);
         // The windows first: they say a time they end; the outage is asked last so its probe is only used up by a start nothing else holds.
-        // The 5-hour hold rides the snapshot (UsageRow.Hold) so pilot status says it; the open limit puts its own (TurnOutage).
+        // The hold on the snapshot is worked out from live state at one fixed limit (CurrentHold), not from this caller's.
+        state.RefreshHold();
         var five = Check(limit);
-        state.PutHold(GateHoldKind, five is { } f ? new HoldRow { Kind = GateHoldKind, Until = f.Resets, Why = f.Say } : null);
         if ((CheckLimit() ?? five ?? CheckPace(paceMargin) ?? CheckOutage(key)) is not { } held)
         {
             _said.TryRemove(key, out _);

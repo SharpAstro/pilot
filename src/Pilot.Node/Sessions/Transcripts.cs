@@ -6,7 +6,7 @@ using Pilot.Contracts;
 namespace Pilot.Node.Sessions;
 
 /// <summary>The last real response of a transcript: what the row's model, effort, context and last response come from.</summary>
-public sealed record AssistantTurn(string? Model, string? RequestedModel, string? Effort, long ContextTokens, DateTimeOffset? At);
+public sealed record AssistantTurn(string? Model, string? RequestedModel, string? Effort, long ContextTokens, DateTimeOffset? At, DateTimeOffset? RequestAt = null);
 
 /// <summary>A tool call the main transcript holds with no result yet: what a session waiting on a permission prompt asks.</summary>
 /// <param name="Name">The tool (<c>Bash</c>).</param>
@@ -27,7 +27,8 @@ public sealed record TranscriptFacts(
     IReadOnlyList<SubagentRow>? Subagents = null,
     PendingTool? PendingTool = null,
     IReadOnlyList<SpendMessage>? Spend = null,
-    string? StopReason = null)
+    string? StopReason = null,
+    DateTimeOffset? LastRequestAt = null)
 {
     public static readonly TranscriptFacts None = new(null, null, null, 0, null, 0, null);
 }
@@ -45,6 +46,7 @@ internal sealed class TranscriptTail(string path)
     private static readonly byte[] ToolUse = "tool_use"u8.ToArray();
     private static readonly byte[] AssistantType = "\"type\":\"assistant\""u8.ToArray();
     private static readonly byte[] Usage = "\"usage\""u8.ToArray();
+    private static readonly byte[] UserType = "\"type\":\"user\""u8.ToArray();
     private static readonly byte[] ToolResult = "tool_result"u8.ToArray();
     private static readonly byte[] ApiErrorKey = "\"apiError\""u8.ToArray();
     private static readonly byte[] Handback = "\"name\":\"SubagentHandback\""u8.ToArray();
@@ -56,6 +58,8 @@ internal sealed class TranscriptTail(string path)
     private string? _pendingToolId;
     private string? _pendingQuestion;
     private string? _lastMessageId;
+    // When the last user line (a prompt or a tool result: a request the model answers) was written, and the one behind the last reply.
+    private DateTimeOffset? _lastUserAt;
     // The main transcript's calls with no result yet, oldest first: parallel calls are written as lines of one message.
     private readonly List<(string Id, PendingTool Tool)> _pendingTools = [];
 
@@ -167,6 +171,7 @@ internal sealed class TranscriptTail(string path)
         StopReason = null;
         HandedBack = false;
         _pendingToolId = _pendingQuestion = _lastMessageId = null;
+        _lastUserAt = null;
         _pendingTools.Clear();
     }
 
@@ -194,6 +199,10 @@ internal sealed class TranscriptTail(string path)
         if ((_pendingToolId is not null || _pendingTools.Count > 0) && span.IndexOf(ToolResult) >= 0 && span.IndexOf(AssistantType) < 0)
         {
             Resolve(span);
+        }
+        if (span.IndexOf(AssistantType) < 0 && span.IndexOf(UserType) >= 0)
+        {
+            NoteUser(line);
         }
         if (span.IndexOf(Usage) < 0)
         {
@@ -245,7 +254,8 @@ internal sealed class TranscriptTail(string path)
                     ClaudeAgentsJson.Text(root, "requestedModel"),
                     ClaudeAgentsJson.Text(root, "effort"),
                     tokens.Context,
-                    ClaudeAgentsJson.Text(root, "timestamp") is { } stamp && DateTimeOffset.TryParse(stamp, CultureInfo.InvariantCulture, DateTimeStyles.None, out var at) ? at : null);
+                    ClaudeAgentsJson.Text(root, "timestamp") is { } stamp && DateTimeOffset.TryParse(stamp, CultureInfo.InvariantCulture, DateTimeStyles.None, out var at) ? at : null,
+                    id is not null && id == priorId && LastTurn is { } same ? same.RequestAt : _lastUserAt);
             }
 
             if (span.IndexOf(ToolUse) >= 0 && message.TryGetProperty("content", out var content) && content.ValueKind == JsonValueKind.Array)
@@ -256,6 +266,25 @@ internal sealed class TranscriptTail(string path)
         catch (JsonException)
         {
             // Not a line of ours to read.
+        }
+    }
+
+    /// <summary>A user line of the main transcript: its timestamp is when the request the next reply answers was sent.</summary>
+    private void NoteUser(ReadOnlyMemory<byte> line)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(line);
+            var root = doc.RootElement;
+            if (root.ValueKind == JsonValueKind.Object && ClaudeAgentsJson.Text(root, "type") == "user"
+                && !(root.TryGetProperty("isSidechain", out var side) && side.ValueKind == JsonValueKind.True)
+                && ClaudeAgentsJson.Text(root, "timestamp") is { } stamp && DateTimeOffset.TryParse(stamp, CultureInfo.InvariantCulture, DateTimeStyles.None, out var at))
+            {
+                _lastUserAt = at;
+            }
+        }
+        catch (JsonException)
+        {
         }
     }
 
@@ -484,7 +513,7 @@ internal sealed class SessionTranscripts(ClaudeProfile profile, string sessionId
 
         var turn = _main.LastTurn;
         return new TranscriptFacts(turn?.Model, turn?.RequestedModel, turn?.Effort, turn?.ContextTokens ?? 0, turn?.At, _spend, _main.PendingQuestion, _main.Stop,
-            _subagents.Count == 0 ? null : Subagents(), _main.PendingTool, spend, _main.StopReason);
+            _subagents.Count == 0 ? null : Subagents(), _main.PendingTool, spend, _main.StopReason, turn?.RequestAt);
     }
 
     // The subagents in the order they started, each as its record (agent-<id>.meta.json) says: what it is, what it was

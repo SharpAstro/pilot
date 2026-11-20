@@ -67,22 +67,30 @@ public sealed class UsageTests : IDisposable
     }
 
     [Fact]
-    public void AFileWrittenBeforeTheLastServerReadNeverOverridesItAndALaterOneIsMerged()
+    public void AFileNeverOverridesTheServerWhileItAnswersAndStandsInOnceItIsSilent()
     {
         var reader = new UsageReader(_state, File, _time);
         _time.Advance(TimeSpan.FromMinutes(5));
-        var serverAt = _time.GetUtcNow();
-        reader.Read(new UsageRow { FiveHour = new UsageWindow { UsedPercent = 15, ResetsAt = Reset }, ReadAt = serverAt, Source = "server" });
+        reader.Read(new UsageRow { FiveHour = new UsageWindow { UsedPercent = 15, ResetsAt = Reset }, ReadAt = _time.GetUtcNow(), Source = "server" });
 
-        // A status line that last redrew before the reset still says 91%: older news.
-        Write(91, Reset, writtenAt: Now.ToUnixTimeSeconds());
-        reader.Read();
-        _state.Usage()!.FiveHour!.UsedPercent.ShouldBe(15);
+        // A status line whose session took no turn since the reset still says 91% and rewrites the file with a newer stamp each minute:
+        // newer, not fresher. The server's 15% stays, minute after minute, with no card.
+        var cards = _state.Cards().Length;
+        for (var minute = 1; minute <= 2; minute++)
+        {
+            _time.Advance(TimeSpan.FromMinutes(1));
+            Write(91, Reset, writtenAt: _time.GetUtcNow().ToUnixTimeSeconds());
+            reader.Read();
+            _state.Usage()!.FiveHour!.UsedPercent.ShouldBe(15);
+            _state.Usage()!.Source.ShouldBe("server");
+        }
+        _state.Cards().Length.ShouldBe(cards);
 
-        // Written after the server read, and grown: merged as ever.
-        Write(20, Reset, writtenAt: serverAt.AddMinutes(1).ToUnixTimeSeconds());
+        // The server silent for a failure's pause: the file stands in.
+        _time.Advance(UsageApi.AfterFailure);
+        Write(91, Reset, writtenAt: _time.GetUtcNow().ToUnixTimeSeconds());
         reader.Read();
-        _state.Usage()!.FiveHour!.UsedPercent.ShouldBe(20);
+        _state.Usage()!.FiveHour!.UsedPercent.ShouldBe(91);
     }
 
     [Fact]

@@ -329,9 +329,15 @@ public static partial class NodeApp
         builder.Services.AddSingleton<ICheckRunner, JobCheckRunner>();
         builder.Services.AddSingleton<IGitHub, GhCli>();
         builder.Services.AddSingleton(_ => new RoleModels(options.Saved));
-        builder.Services.AddSingleton(services => new StartGate(services.GetRequiredService<NodeState>(), services.GetRequiredService<TimeProvider>())
+        builder.Services.AddSingleton(services => 
         {
-            Outage = services.GetRequiredService<TurnOutage>(),
+            var gate = new StartGate(services.GetRequiredService<NodeState>(), services.GetRequiredService<TimeProvider>())
+            {
+                Outage = services.GetRequiredService<TurnOutage>(),
+                StatusLimit = services.GetRequiredService<RoleModels>().StartLimit,
+            };
+            services.GetRequiredService<NodeState>().HoldSource = gate.CurrentHold;
+            return gate;
         });
     }
 

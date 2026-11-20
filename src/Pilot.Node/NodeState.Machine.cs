@@ -22,7 +22,7 @@ public sealed partial class NodeState
     {
         lock (_gate)
         {
-            return _usage;
+            return WithHold(_usage);
         }
     }
 
@@ -47,7 +47,7 @@ public sealed partial class NodeState
                 return;
             }
             _usageWrittenAt = null;
-            Publish(new UsageChangedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Usage = usage });
+            Publish(new UsageChangedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Usage = WithHold(usage)! });
         }
     }
 
@@ -64,28 +64,40 @@ public sealed partial class NodeState
                 return;
             }
             var usage = (_usage ?? new UsageRow { ReadAt = at }) with { LoginChangedAt = at };
-            Publish(new UsageChangedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Usage = usage });
+            Publish(new UsageChangedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Usage = WithHold(usage)! });
         }
     }
 
     /// <summary>
-    /// Puts the hold in force on the usage (<see cref="UsageRow.Hold"/>) so clients can show it: <paramref name="hold"/> of kind
-    /// <paramref name="kind"/>, or null to end the hold of that kind (a hold of another kind stays). Nothing is published when it changes nothing.
+    /// Says the hold in force now (an open usage limit, else the start gate's 5-hour hold at one fixed limit); the node wires it. It is read
+    /// outside the state's lock, by <see cref="RefreshHold"/>, and never stored: a node that restarts has no hold until it works one out.
     /// </summary>
-    public void PutHold(string kind, HoldRow? hold)
+    public Func<HoldRow?>? HoldSource { get; set; }
+
+    private HoldRow? _hold;
+
+    /// <summary>The usage as clients see it: the held figures with the hold worked out live when a <see cref="HoldSource"/> is wired.</summary>
+    private UsageRow? WithHold(UsageRow? usage) => usage is null || HoldSource is null ? usage : usage with { Hold = _hold };
+
+    /// <summary>
+    /// Works the hold out again and publishes the usage when it changed. Asked when a limit opens or ends, after a read and by the start gate;
+    /// the same state gives the same hold whoever asks, so it neither changes nor publishes for a different caller's limit.
+    /// </summary>
+    public void RefreshHold()
     {
+        if (HoldSource is not { } source)
+        {
+            return;
+        }
+        var hold = source();
         lock (_gate)
         {
-            var held = _usage?.Hold;
-            if (hold is null ? held is null || held.Kind != kind : held == hold)
+            if (_hold == hold)
             {
                 return;
             }
-            if (hold is null && held is null)
-            {
-                return;
-            }
-            var usage = (_usage ?? new UsageRow { ReadAt = _time.GetUtcNow() }) with { Hold = hold };
+            _hold = hold;
+            var usage = WithHold(_usage ?? new UsageRow { ReadAt = _time.GetUtcNow() })!;
             Publish(new UsageChangedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Usage = usage });
         }
     }

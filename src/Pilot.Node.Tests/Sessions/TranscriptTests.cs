@@ -96,6 +96,20 @@ public sealed class TranscriptTests : IDisposable
     }
 
     [Fact]
+    public void TheRequestBehindTheLastResponseIsTheUserLineBeforeItAndAStreamedMessageKeepsIt()
+    {
+        static string User(string at) => "{\"type\":\"user\",\"uuid\":\"q-" + at + "\",\"timestamp\":\"2026-10-18T" + at + ".000Z\",\"message\":{\"role\":\"user\",\"content\":\"go\"}}\n";
+        _profile.Append(_profile.TranscriptPath(AgentRows.SessionA), User("08:00:00"), Turn("m1", null));
+        // A later user line (the next request) arrives while m1 still streams its last lines: m1's request stays the 08:00 one.
+        _profile.Append(_profile.TranscriptPath(AgentRows.SessionA), User("08:30:00"), Turn("m1", "end_turn"));
+
+        Read().LastRequestAt.ShouldBe(DateTimeOffset.Parse("2026-10-18T08:00:00Z"));
+
+        _profile.Append(_profile.TranscriptPath(AgentRows.SessionA), Turn("m2", "end_turn"));
+        Read().LastRequestAt.ShouldBe(DateTimeOffset.Parse("2026-10-18T08:30:00Z"));
+    }
+
+    [Fact]
     public void AMessageStillStreamingHasNoStopReasonYetAndAnApiErrorLineIsNoReply()
     {
         _profile.Append(_profile.TranscriptPath(AgentRows.SessionA), Turn("m1", "end_turn"), Turn("m2", null));

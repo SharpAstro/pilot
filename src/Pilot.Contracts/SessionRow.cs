@@ -99,6 +99,14 @@ public sealed record SessionRow
     public DateTimeOffset? LastResponseAt { get; init; }
 
     /// <summary>
+    /// When the request behind that last response was sent: the <c>timestamp</c> of the user line (a prompt or a tool result) before the
+    /// last assistant message. An answer already streaming when a limit was seen has a response after it but a request before it, so it
+    /// proves nothing about the limit. Null before its first response, and on a row an older node stored.
+    /// </summary>
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public DateTimeOffset? LastRequestAt { get; init; }
+
+    /// <summary>
     /// Where it is now: from the agents row's <c>status</c> (busy, waiting, idle) while it runs, else its
     /// <c>state</c> (done or blocked is ended, failed is failed).
     /// </summary>

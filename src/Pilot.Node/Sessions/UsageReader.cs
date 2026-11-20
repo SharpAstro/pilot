@@ -8,7 +8,7 @@ namespace Pilot.Node.Sessions;
 /// itself and reads the login's token for its own request only), and from <c>rate-limits.json</c> in the Claude config folder,
 /// which the controller's status line writes, when the server gives nothing. The account itself comes from Claude
 /// Code's <c>.claude.json</c> (<see cref="ClaudeAccount"/>). A server read replaces the held windows; a file read is merged
-/// only when it was written after the last server read.
+/// only when the server has not answered for <see cref="UsageApi.AfterFailure"/>.
 /// Past <see cref="HighPercent"/> of the 5-hour window it raises a For-you card, once per window, since workers stop
 /// there and a stop the controller saw coming is no surprise.
 /// </summary>
@@ -30,7 +30,7 @@ public sealed class UsageReader(NodeState state, string file, TimeProvider time)
 
     private DateTimeOffset? _warnedFor;
 
-    // When the last server read was taken: a file written before it is older news and never overrides it.
+    // When the last server read answered (the node's clock): the file is not read for a while after it.
     private DateTimeOffset? _serverReadAt;
 
     // The login last read, and when it was seen to change: the status line's file names no account, so after a switch it still
@@ -84,14 +84,16 @@ public sealed class UsageReader(NodeState state, string file, TimeProvider time)
         {
             figures = null;
         }
-        // The file is older news than a server read taken after it was written.
-        if (server is null && figures is not null && _serverReadAt is { } last && figures.ReadAt <= last)
+        // While the server answers within its pace the file is not read at all: the status line rewrites it each minute from whatever
+        // its session last got, so a session that took no turn since a reset still holds the old figure and that write is newer, not
+        // fresher. The file only stands in once the server has been silent for a failure's pause.
+        if (server is null && figures is not null && _serverReadAt is { } last && time.GetUtcNow() - last < UsageApi.AfterFailure)
         {
             figures = null;
         }
         if (server is not null && figures is not null)
         {
-            _serverReadAt = server.ReadAt;
+            _serverReadAt = time.GetUtcNow();
         }
         var authoritative = server is not null && figures is not null;
         if ((figures is not null ? figures with { Account = account } : account is null ? null : new UsageRow { Account = account, ReadAt = time.GetUtcNow() }) is not { } read)

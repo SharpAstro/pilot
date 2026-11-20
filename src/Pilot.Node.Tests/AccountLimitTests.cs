@@ -27,6 +27,7 @@ public sealed class AccountLimitTests
         _state = new NodeState(new InMemoryJournal(), _time);
         _outage = new TurnOutage(_state);
         _gate = new StartGate(_state, _time) { Outage = _outage };
+        _state.HoldSource = _gate.CurrentHold;
         _watch = new LegWatch(_state, (c, _) => Task.FromResult(_state.Complete(c, null)), _time)
         {
             Pilot = "pilot",
@@ -409,7 +410,7 @@ public sealed class AccountLimitTests
         var ended = 0;
         _outage.LimitEnded += () => ended++;
         _gate.Hold("w", 95, 100, "worker-start", "flight/TIA1", "TIA1 waits").ShouldBeTrue();
-        _state.PutSession(Session("new00000", "claude-opus-5-5", Start.AddMinutes(5)) with { LastResponseAt = Start.AddMinutes(6) });
+        _state.PutSession(Session("new00000", "claude-opus-5-5", Start.AddMinutes(5)) with { LastResponseAt = Start.AddMinutes(6), LastRequestAt = Start.AddMinutes(5) });
 
         await _watch.LookAsync(Ct);
 
@@ -467,7 +468,7 @@ public sealed class AccountLimitTests
         await _watch.LookAsync(Ct);
         _outage.LimitUntil.ShouldBe(until);
         _time.Advance(TimeSpan.FromMinutes(10));
-        _state.PutSession(Session("new00000", "claude-opus-5-5", Start.AddMinutes(5)) with { Account = email, LastResponseAt = Start.AddMinutes(6) });
+        _state.PutSession(Session("new00000", "claude-opus-5-5", Start.AddMinutes(5)) with { Account = email, LastResponseAt = Start.AddMinutes(6), LastRequestAt = Start.AddMinutes(5) });
         await _watch.LookAsync(Ct);
         _outage.LimitUntil.ShouldBeNull();
 
@@ -723,7 +724,7 @@ public sealed class AccountLimitTests
     public async Task ASessionThatBeganBeforeTheStopAndWasAnsweredAfterTheLimitWasSeenEndsItAndClosesTheCard()
     {
         await OpenOpusLimitAsync();
-        _state.PutSession(Session("old00000", "claude-opus-5-5", Start.AddHours(-2)) with { LastResponseAt = _time.GetUtcNow() });
+        _state.PutSession(Session("old00000", "claude-opus-5-5", Start.AddHours(-2)) with { LastResponseAt = _time.GetUtcNow(), LastRequestAt = _time.GetUtcNow() });
 
         await _watch.LookAsync(Ct);
 
@@ -741,6 +742,49 @@ public sealed class AccountLimitTests
         _state.PutSession(Session("err00000", "claude-opus-5-5", Start.AddHours(-2)) with { LastResponseAt = _time.GetUtcNow(), ApiError = "usage_limit_reached" });
         await _watch.LookAsync(Ct);
         _outage.LimitUntil.ShouldBe(until);
+    }
+
+    [Fact]
+    public async Task AnAnswerWhoseRequestWasSentBeforeTheLimitWasSeenDoesNotEndIt()
+    {
+        var until = await OpenFiveHourLimitAsync();
+        _time.Advance(TimeSpan.FromMinutes(5));
+        // Already streaming when the window ran out: its last line is written after the stop, but it was asked before.
+        _state.PutSession(Session("old00000", "claude-opus-5-5", Start.AddHours(-2)) with { LastResponseAt = _time.GetUtcNow(), LastRequestAt = Start.AddMinutes(-1) });
+        await _watch.LookAsync(Ct);
+        _outage.LimitUntil.ShouldBe(until);
+    }
+
+    [Fact]
+    public void TheHoldOnTheSnapshotIsTheSameWhicheverStartLimitAsksAndPublishesNothingWhenItIsAsked()
+    {
+        var reset = Start.AddHours(2);
+        _state.PutUsage(new UsageRow { FiveHour = new UsageWindow { UsedPercent = 94, ResetsAt = reset }, ReadAt = _time.GetUtcNow(), Source = "server" });
+        _state.RefreshHold();
+        var held = _state.Usage().ShouldNotBeNull().Hold.ShouldNotBeNull();
+        held.Kind.ShouldBe(StartGate.GateHoldKind);
+        var seq = _state.Snapshot().Seq;
+
+        _gate.Hold("normal", 90, 100, "worker-start", "flight/TIA1", "TIA1 waits").ShouldBeTrue();
+        _gate.Hold("priority", 98, 100, "worker-start", "flight/TIA1", "TIA1 waits").ShouldBeFalse();
+        _gate.Hold("normal", 90, 100, "worker-start", "flight/TIA1", "TIA1 waits").ShouldBeTrue();
+
+        _state.Usage()!.Hold.ShouldBe(held);
+        _state.Snapshot().Seq.ShouldBe(seq);
+    }
+
+    [Fact]
+    public async Task AUsageLimitHoldIsWorkedOutFromTheOpenLimitAndEndsWithIt()
+    {
+        var until = await OpenFiveHourLimitAsync();
+        _state.Usage().ShouldNotBeNull().Hold.ShouldNotBeNull().Kind.ShouldBe(TurnOutage.LimitHoldKind);
+        _state.Usage()!.Hold!.Until.ShouldBe(until);
+
+        _time.Advance(until - _time.GetUtcNow() + TimeSpan.FromMinutes(1));
+        await _watch.LookAsync(Ct);
+
+        _outage.LimitUntil.ShouldBeNull();
+        _state.Usage()!.Hold.ShouldBeNull();
     }
 
     [Fact]

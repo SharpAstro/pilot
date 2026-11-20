@@ -235,10 +235,10 @@ public sealed class TurnOutage(NodeState state)
                     return true;
                 }
                 // Evidence ends it (#1123): a session of the limit's account and family whose turn was answered after the limit was seen,
-                // with no limit error (it may have begun before the stop). Another login's row proves nothing; a row with no account is
+                // with no limit error, whose request was sent after the limit was seen (an answer already streaming at the stop proves nothing). Another login's row proves nothing; a row with no account is
                 // taken only when it began after the limit was seen. A row of unknown family proves nothing either.
                 if (_limitFamily is { } family && _limitSeenAt is { } seen
-                    && sessions.FirstOrDefault(s => s.ApiError is null && s.LastResponseAt is { } r && r > seen
+                    && sessions.FirstOrDefault(s => s.ApiError is null && s.LastResponseAt is { } r && r > seen && s.LastRequestAt is { } q && q > seen
                         && (_limitAccount is null || (s.Account is { } who ? string.Equals(who, _limitAccount, StringComparison.OrdinalIgnoreCase) : s.StartedAt > seen))
                         && string.Equals(Verbs.ModelFamily(s.Model), family, StringComparison.Ordinal)) is { } proof)
                 {
@@ -326,7 +326,7 @@ public sealed class TurnOutage(NodeState state)
         _stalled.Clear();
         _waiting.Clear();
         _probeKey = null;
-        state.PutHold(LimitHoldKind, null);
+        state.RefreshHold();
         if (_cardId is { } id)
         {
             state.CloseCard(id, why, LegWatch.Who);
@@ -431,7 +431,7 @@ public sealed class TurnOutage(NodeState state)
         {
             state.CloseCard(prior, $"the limit now lasts until {until.ToLocalTime():HH:mm}", LegWatch.Who);
         }
-        state.PutHold(LimitHoldKind, new HoldRow { Kind = LimitHoldKind, Until = until, Why = why });
+        state.RefreshHold();
         var card = state.RaiseCard(CardBin.ForYou, LimitCardKind, Verbs.NodeTarget, $"On the usage limit until {until.ToLocalTime():HH:mm}",
             $"limit seen at {at:O}: {why}; resets {until:O}; the node starts no session of its own and rings nothing for a session that took no turn until then",
             [
