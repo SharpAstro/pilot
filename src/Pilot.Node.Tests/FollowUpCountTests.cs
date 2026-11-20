@@ -284,7 +284,7 @@ public sealed class FollowUpCountTests : ReviewTestsBase
         Git(F(flight.Code).Worktree, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "fix the guard");
         (await Run(Verbs.StartReview, Verbs.FlightTarget(flight.Code), "controller")).Error.ShouldBeNull();
         await Started(_legs, flight.Code);
-        var rows = "## Earlier points\n| Point | Answer | Where or why |\n|---|---|---|\n| R1.1 | addressed | Parser.cs:20 |\n| R1.2 | addressed | Lexer.cs:3 |\n";
+        var rows = "## Earlier points\n| Point | Answer | Where or why |\n|---|---|---|\n| R1.1 | addressed | Parser.cs:20 |\n| R1.2 | addressed | Lexer.cs:3 |\n| R1.3 | addressed | Lexer.cs:3 |\n";
         (await Run(Verbs.Review, Verbs.FlightTarget(flight.Code), Reviewer(flight.Code), "pass", rows)).Error.ShouldBeNull();
         _github.Pr = _github.Pr! with { State = "MERGED" };
         await new PrChecks(_state, _github, TimeProvider.System, _flights).LookAsync(Ct);
