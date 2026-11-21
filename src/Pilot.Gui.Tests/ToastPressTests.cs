@@ -130,18 +130,69 @@ public sealed class ToastPressTests
     [Theory]
     [InlineData(240f)]
     [InlineData(340f)]
-    public void ALongLabelWrapsInsideTheToastAndNothingOverlaps(float width)
+    public void ALongLabelEndsInAnEllipsisInsideTheToastAndNothingOverlaps(float width)
     {
         using var rig = new Rig(Card(LongLabel));
         var row = rig.Row(width);
 
         // The library's button is one line and does not clamp to the toast: a long label ends in an ellipsis and carries the whole label
         // as its tooltip, so nothing is cut silently.
-        ArrangedText.Concat(row).ShouldContain("Start web-header and then…");
+        ArrangedText.Concat(row).ShouldContain("…");
+        ArrangedText.Concat(row).ShouldNotContain("before going on to land it");
         row.Select(a => a.Node.Tooltip?.ToString()).ShouldContain(t => t != null && t.Contains(LongLabel));
         row.Where(a => a.Bounds.X + a.Bounds.Width > width + 0.5f).Select(a => $"{a.Node.GetType().Name}@{a.Bounds.X:0},{a.Bounds.Y:0},{a.Bounds.Width:0}x{a.Bounds.Height:0} hit={a.Node.Hit}")
             .ShouldBeEmpty($"nothing runs past the toast at {width}");
         TextOverlap.Faults(row).Select(f => f.Line).ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void ALongLabelIsCutByItsDrawnWidthNotByItsLength()
+    {
+        using var rig = new Rig(Card());
+        // Eleven wide letters and thirty narrow ones: a count of characters cuts the wrong one.
+        var wide = new string('W', 14);
+        var narrow = new string('i', 60);
+        var wideShown = rig.Chrome.FitToastLabel(wide);
+        var narrowShown = rig.Chrome.FitToastLabel(narrow);
+
+        wideShown.ShouldEndWith("…");
+        wideShown.Length.ShouldBeLessThan(narrowShown.Length, "wide letters fit fewer to the same width");
+        narrowShown.Length.ShouldBeGreaterThan(26, "narrow letters are not cut at a character count");
+        rig.Chrome.FitToastLabel("Go around").ShouldBe("Go around");
+    }
+
+    [Fact]
+    public void ALongLabelKeepsTheToastItsHeightWhenAPressMakesTheChoicesDead()
+    {
+        using var rig = new Rig(Card(LongLabel));
+        var idle = rig.Row();
+        rig.Chrome.Cards.NoteWorking("c1", "card:c1:1");
+        var working = rig.Row();
+
+        working.Max(a => a.Bounds.Y + a.Bounds.Height).ShouldBe(idle.Max(a => a.Bounds.Y + a.Bounds.Height), 0.5f, "the dead twin is one line as the live button is");
+    }
+
+    [Fact]
+    public void ALongRefusalCarriesItsWholeTextOnHover()
+    {
+        var long_ = string.Join(' ', Enumerable.Repeat("refused: the flight is held and nothing can be started on it", 6));
+        using var rig = new Rig(Card());
+        rig.Chrome.Cards.Presses.NoteRefused(CardsView<RgbaImage>.PressKeyOf(null, "c1"), long_);
+        var row = rig.Row(240f);
+
+        row.Select(a => a.Node.Tooltip?.ToString()).ShouldContain(t => t != null && t.Contains(long_));
+    }
+
+    [Fact]
+    public void TheNightPalettesInkInTheToastReadsAtAAWhereThePaletteHasAnyThatCan()
+    {
+        var p = Palette.Night;
+        var colors = NotificationsHost.Colors();
+        foreach (var (name, ink, bg) in new[] { ("dead twin", p.Dim, colors.Card), ("refusal", p.Held, colors.Surface) })
+        {
+            var shown = Contrast.Readable(ink, bg, p.Failed);
+            Contrast.Ratio(shown, bg).ShouldBeGreaterThanOrEqualTo(Contrast.AA, name);
+        }
     }
 
     [Fact]

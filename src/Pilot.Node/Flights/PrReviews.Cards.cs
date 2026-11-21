@@ -265,12 +265,24 @@ public sealed partial class PrReviews
         foreach (var review in state.PrReviews().Where(r => r is { Fixer: null } && r.State != PrReviewState.Reviewing))
         {
             var subject = Verbs.PrTarget(review.Repo, review.Number);
-            if (!state.Cards(openOnly: true).Any(c => c.Subject == subject && PrActingCardKinds.Contains(c.Kind)))
+            var open = state.Cards(openOnly: true).Where(c => c.Subject == subject && PrActingCardKinds.Contains(c.Kind)).ToList();
+            if (open.Count == 0)
+            {
+                continue;
+            }
+            // A Merge card can stand for days: a PR holding only that is read at most every MergeReadEvery, not at every sweep.
+            // Any other open card (a review's, a fixer's end) is still read at each sweep, as the head may move under it.
+            var now = time.GetUtcNow();
+            if (open.All(c => c.Kind == MergeKind) && _mergeRead.TryGetValue(subject, out var last) && now - last < MergeReadEvery)
             {
                 continue;
             }
             try
             {
+                if (open.All(c => c.Kind == MergeKind))
+                {
+                    _mergeRead[subject] = now;
+                }
                 var read = await github.PullRequestOfAsync(review.Repo, review.Number, cancellationToken);
                 if (string.Equals(read.State, "MERGED", StringComparison.OrdinalIgnoreCase) || string.Equals(read.State, "CLOSED", StringComparison.OrdinalIgnoreCase))
                 {

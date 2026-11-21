@@ -561,10 +561,31 @@ internal sealed class PilotChrome<TSurface>
         _ => () => Show(PilotPage.Jobs),
     };
 
-    // A staying card's toast keeps its words and carries the card's own plain choices, answered as the panel answers them (Cards.OnAnswer).
-    /// <summary>The longest label a toast's library button shows whole, in characters; a longer one ends in an ellipsis.</summary>
-    internal const int ToastLabelChars = 26;
+    /// <summary>The widest a toast's library button label is drawn, in pixels at 100%; a wider label ends in an ellipsis, measured as drawn, not counted in characters.</summary>
+    internal const float ToastLabelWidth = 190f;
 
+    /// <summary>The label cut to <see cref="ToastLabelWidth"/> as the toast's font measures it, ending in an ellipsis; whole when it fits or when no font is set.</summary>
+    internal string FitToastLabel(string label)
+    {
+        if (FontPath is not { Length: > 0 } font)
+        {
+            return label;
+        }
+        var size = NotificationsHost.Style.FontSize;
+        float Width(string text) => _renderer.MeasureText(text.AsSpan(), font, size * DpiScale).Width / DpiScale;
+        if (Width(label) <= ToastLabelWidth)
+        {
+            return label;
+        }
+        var keep = label.Length - 1;
+        while (keep > 1 && Width(label[..keep].TrimEnd() + "…") > ToastLabelWidth)
+        {
+            keep--;
+        }
+        return label[..keep].TrimEnd() + "…";
+    }
+
+    // A staying card's toast keeps its words and carries the card's own plain choices, answered as the panel answers them (Cards.OnAnswer).
     private Func<Layout.Node>? ToastBody(CardRow card, string? node)
     {
         var plain = card.Choices.Select((choice, i) => (choice, number: i + 1))
@@ -587,6 +608,8 @@ internal sealed class PilotChrome<TSurface>
             // SharpAstro/DIR.Lib#302 (buttons on Dismiss's row) is still open: once it ships these choices move onto Dismiss's row.
             var pressKey = CardsView<TSurface>.PressKeyOf(node, card.Id);
             var colors = NotificationsHost.Colors();
+            // The toast's own words stay readable on its backgrounds in every palette (the night palette's dim red is under AA on them).
+            var ink = Contrast.Readable(p.Dim, colors.Card, p.Failed);
             var severity = card.Bin == CardBin.Ring ? NotificationSeverity.Warn : NotificationSeverity.Info;
             var pending = Cards.Presses.PendingOf(pressKey);
             foreach (var (choice, number) in plain)
@@ -597,17 +620,19 @@ internal sealed class PilotChrome<TSurface>
                 {
                     Action press = () => Cards.OnAnswer?.Invoke(card, number);
                     // The library's button is one line at the width of its text, which a long label pushes past the toast (it does not clamp
-                    // to the toast): a long label ends in an ellipsis, with the whole label on hover. Its dead twin wraps.
-                    var shown = choice.Label.Length > ToastLabelChars ? choice.Label[..(ToastLabelChars - 1)].TrimEnd() + "…" : choice.Label;
+                    // to the toast): a long label ends in an ellipsis at a measured width, with the whole label on hover. Its dead twin is
+                    // that same one line, so the toast keeps its height when a press makes the choices dead.
+                    var shown = FitToastLabel(choice.Label);
                     var button = first
                         ? NotificationsLayout.PrimaryButton(shown, severity, colors, NotificationsHost.Style, new HitResult.ButtonHit(hit), press)
                         : NotificationsLayout.PlainButton(shown, colors, NotificationsHost.Style, new HitResult.ButtonHit(hit), press);
                     return shown == choice.Label ? button : button.WithTooltip(choice.Label);
-                }, _ => CardsView<TSurface>.ChoicePill(choice.Label, pending == $"card:{card.Id}:{number}", null, null, null, p.Dim, wrap: true, bg: colors.Card)));
+                }, _ => CardsView<TSurface>.ChoicePill(shown, pending == $"card:{card.Id}:{number}", null, null, null, ink, tooltip: shown == choice.Label ? null : choice.Label, bg: colors.Card)));
             }
-            if (Cards.Presses.RefusalLine(pressKey, 12f, p.Held, 3) is { } refusal)
+            // A refusal longer than its 3 lines ends in an ellipsis, so the whole text is on hover.
+            if (Cards.Presses.RefusalLine(pressKey, 12f, Contrast.Readable(p.Held, colors.Surface, p.Failed), 3) is { } refusal)
             {
-                parts.Add(refusal);
+                parts.Add(Cards.Presses.RefusedOf(pressKey) is { Length: > 0 } why ? refusal.WithTooltip(why) : refusal);
             }
             return Layout.Builder.VStack([.. parts]).WithGap(4f).WStar();
         };

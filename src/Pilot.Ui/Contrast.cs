@@ -27,6 +27,26 @@ internal static class Contrast
         return (hi + 0.05) / (lo + 0.05);
     }
 
+    /// <summary>WCAG AA for body text.</summary>
+    public const double AA = 4.5;
+
+    /// <summary>
+    /// <paramref name="ink"/> as it is when it reads at AA on <paramref name="bg"/>, else the first mix toward <paramref name="reach"/>
+    /// that does, else <paramref name="reach"/> itself (a palette with no ink that can: the nearest it has).
+    /// </summary>
+    public static RGBAColor32 Readable(RGBAColor32 ink, RGBAColor32 bg, RGBAColor32 reach)
+    {
+        for (var t = 0.0; t <= 1.0; t += 0.1)
+        {
+            var candidate = t == 0 ? ink : Mix(ink, reach, t);
+            if (Ratio(candidate, bg) >= AA)
+            {
+                return candidate;
+            }
+        }
+        return reach;
+    }
+
     /// <summary>The colour <paramref name="t"/> of the way from <paramref name="from"/> to <paramref name="to"/>, opaque.</summary>
     public static RGBAColor32 Mix(RGBAColor32 from, RGBAColor32 to, double t)
     {
