@@ -173,6 +173,27 @@ public sealed class ToastPressTests
     }
 
     [Fact]
+    public void TheRealMergeLabelIsShownWholeAndBothChoicesWithDismissFitTheToastIdleAndPressed()
+    {
+        // The node's own Merge label (LegCommander.MergeLabel) is 12 characters: the cut must not turn it into "Merge the…".
+        const string merge = "Merge the PR";
+        PilotChrome<RgbaImage>.CutToastLabel(merge).ShouldBe(merge);
+        using var measure = new RgbaImageRenderer(1, 1);
+        var ctx = new PixelMeasureContext<RgbaImage>(measure, SessionsCapture.FontPath, 1f);
+        var colors = NotificationsHost.Colors();
+        // Dismiss is drawn by the library as a plain button after the choices in the same row: its real width is measured, not a guessed room.
+        var dismiss = Layout.Engine.Arrange(NotificationsLayout.PlainButton("Dismiss", colors, NotificationsHost.Style, null!, () => { }), new Rect<float>(0, 0, 340f, 100f), ctx)
+            .Max(a => a.Bounds.X + a.Bounds.Width);
+        using var idle = new Rig(Card(merge));
+        var live = idle.ButtonRow().Max(a => a.Bounds.X + a.Bounds.Width);
+        (live + 6f + dismiss).ShouldBeLessThanOrEqualTo(340f, "the live choices and Dismiss fit one toast row");
+        using var pressed = new Rig(Card(merge));
+        pressed.Chrome.Cards.NoteWorking("c1", "card:c1:1");
+        var twin = pressed.ButtonRow().Max(a => a.Bounds.X + a.Bounds.Width);
+        (twin + 6f + dismiss).ShouldBeLessThanOrEqualTo(340f, "the pressed twin, with its dots, is wider than the live button and still fits");
+    }
+
+    [Fact]
     public void ALongLabelIsCutByCharactersAndAShortOneIsWhole()
     {
         var cut = PilotChrome<RgbaImage>.CutToastLabel(new string('W', 60));
