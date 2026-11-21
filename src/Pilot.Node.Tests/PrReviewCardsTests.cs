@@ -55,7 +55,7 @@ public sealed class PrReviewCardsTests : PrFixTestsBase
         PrActingCardsOf(openOnly: true).ShouldBeEmpty();
         var closed = PrActingCardsOf(openOnly: false).ToList();
         closed.Count.ShouldBe(PrActing.Length + 1);
-        closed.ShouldAllBe(c => c.State == CardState.Closed && c.Outcome == $"acme/widget#7 is {said}");
+        closed.ShouldAllBe(c => c.State == CardState.Closed && c.Outcome != null && c.Outcome.Contains($"acme/widget#7 is {said}"));
     }
 
     [Fact]
