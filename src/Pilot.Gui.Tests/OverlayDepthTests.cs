@@ -273,25 +273,36 @@ public sealed class OverlayDepthTests
     public void OnTheFlightsMapAPointerOverAToastCoveringALayersMenuRowLightsNoRow()
     {
         var cards = CardsScreen.From([Card("c1")]);
+        // The menu docks to the right edge and the toast keeps a margin there, so a row need only overlap the toast across, not lie inside it.
+        static int Straddling(List<ClickableRegion> rows, RectF32 toast) =>
+            rows.FindIndex(r => r.Y + 2f < toast.Y && r.Y + r.Height > toast.Y + 2f && r.X < toast.X + toast.Width - 8f && r.X + r.Width > toast.X + 8f);
+
+        // The menu cannot slide past its edges, and the toast's size decides which slides reach a straddling row, so the slide is searched for: from where the low menu stands, up
+        // and down in small steps until a row runs under the toast's top edge.
         float along;
-        string lowRowsText;
+        float lowOffset;
         using (var low = new Rig(PilotPage.Flights, BarStates.Collapsed, cards, ShortHeight, LowPalette))
         {
-            var lowToast = low.Toast("c1");
-            var lowRows = LayerRows(low);
-            lowRowsText = $"toast {lowToast}: {string.Join(", ", lowRows.Select(r => $"{r.Y}+{r.Height}"))}; offset {low.Chrome.Flights.MapLayers.Palette.OffsetAlong}";
-            var under = lowRows.FindIndex(r => r.Y + 2f >= lowToast.Y);
-            under.ShouldBeGreaterThanOrEqualTo(0, $"a row of the low menu lies under the toast {lowToast}");
-            along = low.Chrome.Flights.MapLayers.Palette.OffsetAlong + (lowToast.Y - lowRows[under].Height / 2f - lowRows[under].Y);
+            lowOffset = low.Chrome.Flights.MapLayers.Palette.OffsetAlong;
         }
+        var found = float.NaN;
+        for (var step = -60f; step <= 20f && float.IsNaN(found); step += 3f)
+        {
+            using var probe = new Rig(PilotPage.Flights, BarStates.Collapsed, cards, ShortHeight, string.Create(CultureInfo.InvariantCulture, $"right:{lowOffset + step}:0"));
+            if (Straddling(LayerRows(probe), probe.Toast("c1")) >= 0)
+            {
+                found = lowOffset + step;
+            }
+        }
+        float.IsNaN(found).ShouldBeFalse("some slide of the layers menu puts a row under the top edge of the toast");
+        along = found;
 
         using var rig = new Rig(PilotPage.Flights, BarStates.Collapsed, cards, ShortHeight, string.Create(CultureInfo.InvariantCulture, $"right:{along}:0"));
         var toast = rig.Toast("c1");
         var rows = LayerRows(rig);
         rows.ShouldNotBeEmpty("the layers menu is open with its rows");
-        // The menu docks to the right edge and the toast keeps a margin there, so a row need only overlap the toast across, not lie inside it.
-        var at = rows.FindIndex(r => r.Y + 2f < toast.Y && r.Y + r.Height > toast.Y + 2f && r.X < toast.X + toast.Width - 8f && r.X + r.Width > toast.X + 8f);
-        at.ShouldBeGreaterThanOrEqualTo(0, $"a row of the layers menu runs under the top edge of the toast {toast}; along {along}, low rows {lowRowsText}; rows: {string.Join(", ", rows.Select(r => $"{r.X},{r.Y} {r.Width}x{r.Height}"))}");
+        var at = Straddling(rows, toast);
+        at.ShouldBeGreaterThanOrEqualTo(0, $"a row of the layers menu runs under the top edge of the toast {toast}");
         var row = rows[at];
         var strip = new RectF32(row.X, row.Y, row.Width, toast.Y - row.Y);
         var x = (Math.Max(row.X, toast.X) + Math.Min(row.X + row.Width, toast.X + toast.Width)) / 2f;
