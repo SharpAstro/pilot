@@ -291,7 +291,7 @@ public sealed class OverlayDepthTests
         rows.ShouldNotBeEmpty("the layers menu is open with its rows");
         // The menu docks to the right edge and the toast keeps a margin there, so a row need only overlap the toast across, not lie inside it.
         var at = rows.FindIndex(r => r.Y + 2f < toast.Y && r.Y + r.Height > toast.Y + 2f && r.X < toast.X + toast.Width - 8f && r.X + r.Width > toast.X + 8f);
-        at.ShouldBeGreaterThanOrEqualTo(0, $"a row of the layers menu runs under the top edge of the toast {toast}; along {along}, low rows {string.Join(", ", LayerRows(rig).Count)}, rows:{string.Join(", ", rows.Select(r => $"{r.X},{r.Y} {r.Width}x{r.Height}"))}");
+        at.ShouldBeGreaterThanOrEqualTo(0, $"a row of the layers menu runs under the top edge of the toast {toast}; along {along}, low rows {lowRowsText}; rows: {string.Join(", ", rows.Select(r => $"{r.X},{r.Y} {r.Width}x{r.Height}"))}");
         var row = rows[at];
         var strip = new RectF32(row.X, row.Y, row.Width, toast.Y - row.Y);
         var x = (Math.Max(row.X, toast.X) + Math.Min(row.X + row.Width, toast.X + toast.Width)) / 2f;
