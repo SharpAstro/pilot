@@ -282,6 +282,7 @@ public sealed class OverlayDepthTests
         // The low menu's stored offset is the unclamped 9999, so the slide is searched by absolute offset from the top of the edge, clamped by the menu itself.
         float along;
         var found = float.NaN;
+        var seen = new System.Text.StringBuilder();
         for (var offset = 0f; offset <= 600f && float.IsNaN(found); offset += 4f)
         {
             using var probe = new Rig(PilotPage.Flights, BarStates.Collapsed, cards, ShortHeight, string.Create(CultureInfo.InvariantCulture, $"right:{offset}:0"));
@@ -289,8 +290,12 @@ public sealed class OverlayDepthTests
             {
                 found = offset;
             }
+            else if (offset % 100f == 0f)
+            {
+                seen.Append(CultureInfo.InvariantCulture, $"[{offset}: panel {probe.Chrome.Flights.MapLayers.Palette.PanelRect} toast {probe.Toast("c1")} rows {string.Join(' ', LayerRows(probe).Select(r => $"{r.Y:0.#}+{r.Height:0.#}"))}] ");
+            }
         }
-        float.IsNaN(found).ShouldBeFalse("some slide of the layers menu puts a row under the top edge of the toast");
+        float.IsNaN(found).ShouldBeFalse($"some slide of the layers menu puts a row under the top edge of the toast; {seen}");
         along = found;
 
         using var rig = new Rig(PilotPage.Flights, BarStates.Collapsed, cards, ShortHeight, string.Create(CultureInfo.InvariantCulture, $"right:{along}:0"));
