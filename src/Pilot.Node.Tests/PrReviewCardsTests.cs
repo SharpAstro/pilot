@@ -152,7 +152,7 @@ public sealed class PrReviewCardsTests : PrFixTestsBase
         await reviews.SweepAsync(Ct);
         _github.PrReads["acme/widget#7"].ShouldBe(1);
 
-        _state.CloseCard(merge.Id, "dismissed", "controller");
+        _state.CloseCard(merge.Id, "answered elsewhere", "node");
         await reviews.SweepAsync(Ct);
         _state.RaiseCard(CardBin.ForYou, PrReviews.MergeKind, subject, "Merge", "detail", choices);
         await reviews.SweepAsync(Ct);
