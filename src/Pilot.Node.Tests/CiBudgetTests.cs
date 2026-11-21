@@ -24,6 +24,8 @@ public sealed class CiBudgetTests : ReviewTestsBase
     private async Task<FlightRow> Flying(string issue, params CiRun[] runs)
     {
         var (flight, _) = await Passed(issue);
+        // The tests count against a budget of 4 runner-hours, set as a node sets it; the default is TheBudgetIsEightRunnerHoursUnlessSet's.
+        _legs.Models = new RoleModels(NodeSettings.With(new NodeSettings(), NodeSettings.FlightCiBudgetKey, ["4"]).Settings!);
         _github.CiRuns[flight.Branch] = runs;
         return flight;
     }
@@ -106,10 +108,10 @@ public sealed class CiBudgetTests : ReviewTestsBase
     }
 
     [Fact]
-    public void TheBudgetIsFourRunnerHoursUnlessSetAndTakesWholeHoursOneToAThousand()
+    public void TheBudgetIsEightRunnerHoursUnlessSetAndTakesWholeHoursOneToAThousand()
     {
-        new RoleModels(new NodeSettings()).FlightCiBudget.ShouldBe(4);
-        NodeSettings.DefaultFlightCiBudget.ShouldBe(4);
+        new RoleModels(new NodeSettings()).FlightCiBudget.ShouldBe(8);
+        NodeSettings.DefaultFlightCiBudget.ShouldBe(8);
 
         var set = NodeSettings.With(new NodeSettings(), NodeSettings.FlightCiBudgetKey, ["9"]).Settings.ShouldNotBeNull();
         set.FlightCiBudget.ShouldBe(9);

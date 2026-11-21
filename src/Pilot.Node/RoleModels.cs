@@ -645,7 +645,7 @@ public sealed partial class RoleModels
         }
     }
 
-    /// <summary>Runner-hours of CI a flight's PR may spend before the node stops pushing for it (<see cref="NodeSettings.FlightCiBudgetKey"/>); 4 by default.</summary>
+    /// <summary>Runner-hours of CI a flight's PR may spend before the node stops pushing for it (<see cref="NodeSettings.FlightCiBudgetKey"/>); 8 by default.</summary>
     public int FlightCiBudget
     {
         get
