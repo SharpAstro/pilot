@@ -279,19 +279,15 @@ public sealed class OverlayDepthTests
 
         // The menu cannot slide past its edges, and the toast's size decides which slides reach a straddling row, so the slide is searched for: from where the low menu stands, up
         // and down in small steps until a row runs under the toast's top edge.
+        // The low menu's stored offset is the unclamped 9999, so the slide is searched by absolute offset from the top of the edge, clamped by the menu itself.
         float along;
-        float lowOffset;
-        using (var low = new Rig(PilotPage.Flights, BarStates.Collapsed, cards, ShortHeight, LowPalette))
-        {
-            lowOffset = low.Chrome.Flights.MapLayers.Palette.OffsetAlong;
-        }
         var found = float.NaN;
-        for (var step = -60f; step <= 20f && float.IsNaN(found); step += 3f)
+        for (var offset = 0f; offset <= 600f && float.IsNaN(found); offset += 4f)
         {
-            using var probe = new Rig(PilotPage.Flights, BarStates.Collapsed, cards, ShortHeight, string.Create(CultureInfo.InvariantCulture, $"right:{lowOffset + step}:0"));
+            using var probe = new Rig(PilotPage.Flights, BarStates.Collapsed, cards, ShortHeight, string.Create(CultureInfo.InvariantCulture, $"right:{offset}:0"));
             if (Straddling(LayerRows(probe), probe.Toast("c1")) >= 0)
             {
-                found = lowOffset + step;
+                found = offset;
             }
         }
         float.IsNaN(found).ShouldBeFalse("some slide of the layers menu puts a row under the top edge of the toast");
