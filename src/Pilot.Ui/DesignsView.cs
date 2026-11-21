@@ -1474,7 +1474,7 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
     private readonly System.Collections.Concurrent.ConcurrentDictionary<(int Cell, int Frame), ListCursor> _sizeCursors = new();
 
     // The width the size choice needs as one segmented control: the words at 7 units a letter and 24 round each.
-    private static readonly float SizesWidth = (DesignTargets.BuiltIn.Sum(t => t.Name.Length) + "Terminal".Length) * 7f + (DesignTargets.BuiltIn.Count + 1) * 24f;
+    private static readonly float SizesWidth = (DesignTargets.BuiltIn.Sum(t => t.Name.Length) + "Terminal".Length) * 7f + (DesignTargets.BuiltIn.Count() + 1) * 24f;
 
     /// <summary>
     /// The frame's size choice (PIL1232): DIR.Lib's segmented control over the built-in sizes and Terminal, the one-of-few row the owner called pure text. The library has no mark for a
