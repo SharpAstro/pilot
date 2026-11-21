@@ -282,7 +282,9 @@ public sealed partial class PrReviews
             // A Merge card can stand for days: a PR holding only that is read at most every MergeReadEvery, not at every sweep.
             // Any other open card (a review's, a fixer's end) is still read at each sweep, as the head may move under it.
             var now = time.GetUtcNow();
-            if (open.All(c => c.Kind == MergeKind) && _mergeRead.TryGetValue(subject, out var last) && now - last < MergeReadEvery)
+            // The stamp is of these very cards: a new Merge card is never held off by the stamp of one that closed another way.
+            var heldCards = string.Join(',', open.Select(c => c.Id));
+            if (open.All(c => c.Kind == MergeKind) && _mergeRead.TryGetValue(subject, out var last) && last.Cards == heldCards && now - last.At < MergeReadEvery)
             {
                 continue;
             }
@@ -292,7 +294,7 @@ public sealed partial class PrReviews
                 // Stamped after the read, so one that fails is tried again at the next sweep.
                 if (open.All(c => c.Kind == MergeKind))
                 {
-                    _mergeRead[subject] = now;
+                    _mergeRead[subject] = (heldCards, now);
                 }
                 if (string.Equals(read.State, "MERGED", StringComparison.OrdinalIgnoreCase) || string.Equals(read.State, "CLOSED", StringComparison.OrdinalIgnoreCase))
                 {
