@@ -37,7 +37,7 @@ public static class DesignPaths
     public static string ScreenRender(string folder, string screen, string? firstTarget = null)
     {
         var plain = Path.Combine(RendersOf(folder), screen + ".png");
-        return !File.Exists(plain) && firstTarget is { Length: > 0 } ? TargetRender(folder, screen, firstTarget) : plain;
+        return !File.Exists(plain) && firstTarget is { Length: > 0 } && DesignTargets.IsPlainName(firstTarget) ? TargetRender(folder, screen, firstTarget) : plain;
     }
 
     /// <summary>The PNG of a screen at the target called <paramref name="target"/>: <c>renders/&lt;screen&gt;.&lt;target&gt;.png</c>.</summary>

@@ -205,6 +205,11 @@ public static class DesignChecker
     /// </summary>
     public static string[] Render(PrototypeDocument document, string rendersFolder, string prototypeSha256, string? fontPath = null, string[]? terminals = null, string? monoFontPath = null)
     {
+        // A target name no file can carry is refused before the earlier renders are cleared, so a bad document costs none of the good ones (the review of #1245).
+        if (NamesTargets(document) && document.Targets.Select((t, i) => (t.Name, i)).FirstOrDefault(t => !DesignTargets.IsPlainName(t.Name)) is ({ } name, var badAt))
+        {
+            throw new DesignException($"$.targets[{badAt}].name: '{name}' is not a plain file name (no path separator, '..' or character a file name cannot hold)");
+        }
         Directory.CreateDirectory(rendersFolder);
         foreach (var old in Directory.EnumerateFiles(rendersFolder, "*.png").Concat(Directory.EnumerateFiles(rendersFolder, "*.txt")).ToArray())
         {

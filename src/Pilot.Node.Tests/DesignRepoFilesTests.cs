@@ -189,7 +189,12 @@ public sealed class DesignRepoFilesTests : IDisposable
         _store.Find(id)!.Record.Single().Folder.ShouldBeNull();
         _record.Section(flight).ShouldContain("not committed: render big.png is 600 KB, over 500 KB");
         _state.Cards(openOnly: true).Count(c => c.Kind == DesignRecord.OversizeKind).ShouldBe(1);
-        _state.Cards(openOnly: true).Single(c => c.Kind == DesignRecord.OversizeKind).Title.ShouldBe($"PIL9: design {id} v1 is not committed to the repo");
+        var card = _state.Cards(openOnly: true).Single(c => c.Kind == DesignRecord.OversizeKind);
+        card.Title.ShouldBe($"PIL9: design {id} v1 is not committed to the repo");
+        // The remedy is the same in the detail, the summary and the kind's table line (the review of #1245).
+        card.Detail.ShouldNotBeNull().ShouldContain("replan-design");
+        card.Summary.ShouldNotBeNull().ShouldContain("replan-design");
+        Pilot.Node.Flights.CardSummaries.For(card.Kind, card.Subject, card.Title, card.Choices).ShouldContain("replan-design");
     }
 
     [Fact]

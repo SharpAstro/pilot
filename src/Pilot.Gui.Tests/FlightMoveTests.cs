@@ -427,6 +427,18 @@ public sealed class FlightMoveTests
     }
 
     [Fact]
+    public void FlightMoveOneFailureOverTheBandsIsSaidInTheSingular()
+    {
+        var rows = Enumerable.Range(1, MoveFailureBand.MaxBands + 1).Select(i => Flight($"TIA{i}", "tianwen", i, FlightState.Flying, $"flight {i}", f => f with { MoveFailure = $"DE1 refused TIA{i}. Turn accept-fleet-flights on at DE1, then Retry move." })).ToArray();
+        var screen = new FlightsScreen(FlightLine.Build(rows, [], At), "sample", At);
+        using var renderer = new RgbaImageRenderer(1600, 900);
+
+        var runs = Runs(Arrange(View(renderer).Tree(screen), renderer, 1600, 900));
+
+        runs.Select(r => r.Text).ShouldContain("and 1 more flight whose move failed: its row is red");
+    }
+
+    [Fact]
     public void FlightMoveCapturesAtANarrowAndAWideSize()
     {
         var screen = Screen(Rows);
