@@ -116,7 +116,7 @@ public static partial class Briefs
         text.AppendLine();
         text.AppendLine("Sort every finding under one of two headings. `## Blocking`: what must change before the merge (a Done-when that does");
         text.AppendLine("not hold, a bug, a regression, a test that proves nothing, something the issue asked for that is missing). `## Not blocking`:");
-        text.AppendLine("nits and suggestions (naming, style, a comment, a small tidy-up, an idea for later). Findings that are all not blocking are a");
+        text.AppendLine("nits and suggestions (naming, style, a comment, a small tidy-up), which a review-notes round makes in this PR. Findings that are all not blocking are a");
         text.AppendLine("pass with notes: the flight holds its merge while the watchtower makes the small ones in the plane; no leg goes round.");
         if (again is null)
         {
@@ -192,12 +192,15 @@ public static partial class Briefs
         text.AppendLine($"- `node's own`: the {what}'s PR body, title or label. The node sets those, not a fixer; it is settled and files nothing.");
         text.AppendLine($"- `deferred: another repo`, `deferred: owner decision` or `deferred: larger than the {what}`: the only three reasons a point may wait. Every deferred point goes");
         text.AppendLine($"  into one follow-up issue for the {what}, which the node files from your table. A bare `left` (and any other free-text answer) is no end and is refused.");
+        text.AppendLine($"  `deferred: larger than the {what}` holds only for a point that needs a design or a plan of its own. A fixer that deferred a test, a rename, a comment,");
+        text.AppendLine("  a doc line, a guard or a refactor of the files it touched as larger has not addressed it: answer it `not addressed`, so the next round makes it.");
         text.AppendLine("- `not addressed`: no fix and no reason. This blocks the merge.");
         text.AppendLine("\"Still open\", \"unchanged\", \"for later\" and \"to do\" with no reason are refused: a point is settled or it blocks. A point you do not");
         text.AppendLine("mention is refused too, by name.");
         text.AppendLine($"Then the new findings, under `## Blocking` and `## Not blocking`. A fault in the lines changed since `{again.Last.Head}` blocks as always. A new finding");
         text.AppendLine($"in text the fix round did not touch blocks only when it must: start it with `{ReviewPoints.MustBlockMarker} <kind>`, the kind being one of");
-        text.AppendLine($"{string.Join(", ", ReviewPoints.MustBlockKinds)}. Any other finding in untouched text is left for the follow-up issue: the node files only what is under `## Blocking`, so");
-        text.AppendLine("put it there, with no `must-block:` prefix, and give `changes`: the node takes the round as a pass and files it. Under `## Not blocking` it is a note, made by a review-notes round, not a follow-up item.");
+        text.AppendLine($"{string.Join(", ", ReviewPoints.MustBlockKinds)}. Any other finding in untouched text goes under `## Not blocking`: it is a note, made by a");
+        text.AppendLine("review-notes round in this PR, not a follow-up issue. Put it under `## Blocking` without the prefix only when it needs a design or a plan of its own:");
+        text.AppendLine("then give `changes`, and the node takes the round as a pass and files it as the follow-up issue.");
     }
 }

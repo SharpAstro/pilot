@@ -79,6 +79,9 @@ public sealed class ToastTests
 
         public NotificationFeed Feed => Chrome.Notifications.Feed;
 
+        /// <summary>What stands over the page: the ringing cards opened since the first look, and the events.</summary>
+        public NotificationFeed Toasts => Chrome.Notifications.Toasts;
+
         /// <summary>One frame at <paramref name="at"/>.</summary>
         public void Frame(DateTimeOffset at, CardsScreen? cards = null, JobState job = JobState.Running, (float X, float Y)? pointer = null)
         {
@@ -97,7 +100,7 @@ public sealed class ToastTests
 
     private static bool IsToast(ClickableRegion region) => region.Result is NotificationHit { Part: NotificationPart.Toast };
 
-    private static List<Notification> Fading(Window w) => [.. w.Feed.Toasts.Where(t => t.Notification.Kind == NotificationKind.Fading).Select(t => t.Notification)];
+    private static List<Notification> Fading(Window w) => [.. w.Toasts.Toasts.Where(t => t.Notification.Kind == NotificationKind.Fading).Select(t => t.Notification)];
 
     [Fact]
     public void ARingingCardWhileCollapsedIsAStayingToastUntilItIsGoneOrDismissed()
@@ -106,26 +109,49 @@ public sealed class ToastTests
         w.Frame(T0, CardsScreen.Empty);
         w.Frame(T0.AddSeconds(1), Ringing());
 
-        var staying = w.Feed.Toasts.Where(t => t.Notification.Kind == NotificationKind.Staying).ToList();
-        staying.Count.ShouldBe(2);
+        // Only the ring toasts; the For you card waits on the bar, in the list and the bell's count.
+        var staying = w.Toasts.Toasts.Where(t => t.Notification.Kind == NotificationKind.Staying).ToList();
+        staying.Count.ShouldBe(1);
         staying.ShouldAllBe(t => t.RemainingFraction == 1.0);
-        staying.Select(t => t.Notification.Severity).ShouldContain(NotificationSeverity.Warn, "the ringing card is a warning");
+        staying.Single().Notification.Severity.ShouldBe(NotificationSeverity.Warn, "the ringing card is a warning");
         staying.ShouldAllBe(t => t.Notification.Row != null, "the card's own choice is a button on its toast");
+        w.Feed.NeedsYou.Count.ShouldBe(2, "both cards are in the list");
 
         // An hour on, with no one at the window: still there.
         w.Frame(T0.AddHours(1), Ringing());
-        w.Feed.Toasts.Count(t => t.Notification.Kind == NotificationKind.Staying).ShouldBe(2);
+        w.Toasts.Toasts.Count(t => t.Notification.Kind == NotificationKind.Staying).ShouldBe(1);
 
-        // Dismissed by the person: the toast goes, into the history.
-        var ringing = w.Feed.Toasts.Single(t => t.Notification.Severity == NotificationSeverity.Warn).Notification;
-        w.Feed.Dismiss(ringing.Id);
-        w.Feed.Toasts.ShouldNotContain(t => t.Notification.Id == ringing.Id);
-        w.Feed.History.ShouldContain(n => n.Id == ringing.Id);
+        // Dismissed by the person: the toast goes, and the card stays in the list until it is answered.
+        var ringing = w.Toasts.Toasts.Single().Notification;
+        w.Toasts.Dismiss(ringing.Id);
+        w.Toasts.Toasts.ShouldBeEmpty();
+        w.Feed.NeedsYou.Count.ShouldBe(2, "dismissing a toast leaves the card");
+        w.Frame(T0.AddHours(1).AddSeconds(1), Ringing());
+        w.Toasts.Toasts.ShouldBeEmpty("a dismissed toast does not come back while its card is open");
 
-        // The other one is answered: the card leaves the panel, its toast leaves, and the history keeps it.
-        w.Frame(T0.AddHours(1).AddSeconds(1), CardsScreen.Empty);
-        w.Feed.Toasts.ShouldBeEmpty();
+        // Both are answered: the cards leave the list into its history.
+        w.Frame(T0.AddHours(1).AddSeconds(2), CardsScreen.Empty);
+        w.Toasts.Toasts.ShouldBeEmpty();
         w.Feed.History.Count.ShouldBe(2);
+    }
+
+    [Fact]
+    public void WhatIsOpenAtTheWindowsFirstLookAndEveryForYouCardToastNothing()
+    {
+        // The owner, 2026-11-21: a window that started on 37 open cards toasted every one, three at a time, the next as each was dismissed.
+        using var w = new Window(1920, 1080);
+        w.Frame(T0, Ringing());
+        w.Toasts.Toasts.ShouldBeEmpty("what was open before the window looked is not news, a ring included");
+        w.Feed.NeedsYou.Count.ShouldBe(2, "the list and the bell still have them");
+
+        var more = CardsScreen.From([.. Ringing().Open, Card("c3", CardBin.ForYou, "Follow-up issue SharpAstro/pilot#956 has had no flight for over a day")]);
+        w.Frame(T0.AddSeconds(1), more);
+        w.Toasts.Toasts.ShouldBeEmpty("a For you card that opens later waits on the bar too");
+        w.Feed.NeedsYou.Count.ShouldBe(3);
+        w.Chrome.Notifications.HandleTint.ShouldBe(HandleTints.NeedsYou, "the handle still says something needs the person");
+
+        w.Frame(T0.AddSeconds(2), CardsScreen.From([.. more.Open, Card("c4", CardBin.Ring, "PIL1252 is stuck")]));
+        w.Toasts.Toasts.ShouldHaveSingleItem().Notification.Title.ShouldBe("PIL1252 is stuck", "a ring that opens later toasts");
     }
 
     [Fact]
@@ -138,11 +164,11 @@ public sealed class ToastTests
         w.Frame(T0.AddSeconds(10), job: JobState.Succeeded);
         var toast = Fading(w).ShouldHaveSingleItem();
         toast.Severity.ShouldBe(NotificationSeverity.Success);
-        w.Feed.Toasts.Single().RemainingFraction.ShouldBe(1.0, 0.01);
+        w.Toasts.Toasts.Single().RemainingFraction.ShouldBe(1.0, 0.01);
 
         w.Frame(T0.AddSeconds(14.9), job: JobState.Succeeded);
         Fading(w).Count.ShouldBe(1, "still there just short of 5 s");
-        w.Feed.Toasts.Single().RemainingFraction.ShouldBeLessThan(0.1);
+        w.Toasts.Toasts.Single().RemainingFraction.ShouldBeLessThan(0.1);
 
         w.Frame(T0.AddSeconds(15.1), job: JobState.Succeeded);
         Fading(w).ShouldBeEmpty("gone after 5 s");
@@ -192,10 +218,10 @@ public sealed class ToastTests
         over.ShouldNotBeNull("the fading toast sits at the bottom right");
 
         w.Frame(T0.AddSeconds(1.5), job: JobState.Succeeded, pointer: over);
-        var before = w.Feed.Toasts.Single().RemainingFraction;
+        var before = w.Toasts.Toasts.Single().RemainingFraction;
         w.Frame(T0.AddSeconds(4), job: JobState.Succeeded, pointer: over);
         w.Frame(T0.AddSeconds(9), job: JobState.Succeeded, pointer: over);
-        w.Feed.Toasts.Single().RemainingFraction.ShouldBe(before, 0.001, "the countdown stops under the pointer");
+        w.Toasts.Toasts.Single().RemainingFraction.ShouldBe(before, 0.001, "the countdown stops under the pointer");
 
         w.Frame(T0.AddSeconds(9.1), job: JobState.Succeeded);
         w.Frame(T0.AddSeconds(15), job: JobState.Succeeded);
@@ -233,7 +259,7 @@ public sealed class ToastTests
         w.Save($"toasts-bottom-right-{width}");
 
         // Five at once: three show.
-        var more = w.Feed;
+        var more = w.Toasts;
         for (var i = 0; i < 5; i++)
         {
             more.Post(new Notification { Title = "Event " + i, Text = "something ended", Kind = NotificationKind.Fading }, T0.AddSeconds(2));
@@ -272,7 +298,7 @@ public sealed class ToastTests
         Fading(w).ShouldHaveSingleItem();
         now = T0.AddSeconds(4);
         w.Frame(T0, job: JobState.Succeeded);
-        w.Feed.Toasts.Single().RemainingFraction.ShouldBeLessThan(0.6, "the countdown moved with the clock, the snapshot's time unchanged");
+        w.Toasts.Toasts.Single().RemainingFraction.ShouldBeLessThan(0.6, "the countdown moved with the clock, the snapshot's time unchanged");
         now = T0.AddSeconds(7);
         w.Frame(T0, job: JobState.Succeeded);
         Fading(w).ShouldBeEmpty();
@@ -322,13 +348,13 @@ public sealed class ToastTests
         w.Frame(T0, ringing, job: JobState.Running);
         // A job that ended is a fading toast, the kind that declares a toast region (a staying one is chrome around its buttons).
         w.Frame(T0.AddSeconds(1), ringing, job: JobState.Succeeded);
-        w.Feed.Toasts.ShouldNotBeEmpty("the card and the event toast on another page while collapsed");
+        w.Toasts.Toasts.ShouldNotBeEmpty("the card and the event toast on another page while collapsed");
         var before = new List<ClickableRegion>();
         w.Chrome.NotificationsLayer.CollectPaintedRegions(before);
         before.Any(IsToast).ShouldBeTrue("the fading toast is painted on the Jobs page");
         w.Chrome.Show(PilotPage.Notifications);
         w.Frame(T0.AddSeconds(2), ringing, job: JobState.Succeeded);
-        w.Feed.Toasts.ShouldNotBeEmpty("the toasts are still live in the feed; the page only draws none");
+        w.Toasts.Toasts.ShouldNotBeEmpty("the toasts are still live in the feed; the page only draws none");
         w.Chrome.Notifications.ToastsOnPage.ShouldBeFalse();
         w.Chrome.Notifications.Animating.ShouldBeFalse();
         // What the layer paints, not only the flags: no toast region on the page.

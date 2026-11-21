@@ -22,6 +22,17 @@ internal sealed class NotificationsHost
     /// <summary>The ids' notifications, one per open card.</summary>
     public NotificationFeed Feed { get; } = new() { KeepFor = DefaultKeepFor };
 
+    // What stands over the page as a toast, apart from the list (Feed): a card toasts only when it rings and opened after this window's first
+    // look, and every event toasts. A window that started with 37 open cards toasted every one of them, a For you card (a follow-up with no
+    // flight, a digest) as loudly as a ring, three at a time, the next popping up as each was dismissed (the owner, 2026-11-21: "bombarded
+    // with messages even though there's just one flight on"). Dismissing a toast closes it here only: the card stays on the bar and the list.
+    private readonly NotificationFeed _toasts = new();
+    private readonly Dictionary<(string? Node, string Id), long> _toastIds = [];
+    private bool _looked;
+
+    /// <summary>The toasts over the page: the ringing cards opened since the window's first look, and the events.</summary>
+    internal NotificationFeed Toasts => _toasts;
+
     /// <summary>How long a toast that left and a card that was handled are kept in the history, until the setting for it is passed in.</summary>
     public static readonly TimeSpan DefaultKeepFor = TimeSpan.FromHours(24);
 
@@ -91,7 +102,7 @@ internal sealed class NotificationsHost
     public bool ToastsOnPage { get; private set; } = true;
 
     /// <summary>Whether a fading toast is on screen, so the window draws a frame each tick for its countdown.</summary>
-    public bool Animating => !Open && ToastsOnPage && Feed.Toasts.Any(t => t.Notification.Kind == NotificationKind.Fading);
+    public bool Animating => !Open && ToastsOnPage && _toasts.Toasts.Any(t => t.Notification.Kind == NotificationKind.Fading);
 
     /// <summary>
     /// The buttons a staying card's toast carries, as the card's own panel answers them (null for a card with none); set by the chrome,
@@ -226,7 +237,7 @@ internal sealed class NotificationsHost
             if (!_ids.ContainsKey(key))
             {
                 Posted();
-                _ids[key] = Feed.Post(new Notification
+                var notification = new Notification
                 {
                     Title = card.Title,
                     Text = card.Summary ?? "",
@@ -236,17 +247,30 @@ internal sealed class NotificationsHost
                     Kind = NotificationKind.Staying,
                     Source = key.Item1,
                     Row = CardBody?.Invoke(card, key.Item1),
-                }, now).Id;
+                };
+                _ids[key] = Feed.Post(notification, now).Id;
+                // Only a ring that opened while the window looks stands over the page: what was open at the first look is not news, and a
+                // For you card waits on the bar (the handle tints, the bell counts it) without a toast.
+                if (_looked && card.Bin == CardBin.Ring && !Open)
+                {
+                    _toastIds[key] = _toasts.Post(notification, now).Id;
+                }
             }
         }
+        _looked = true;
         // Every key seen is in _ids by now, so a card has gone only when _ids holds more: most frames allocate nothing here.
         foreach (var gone in _ids.Count > seen.Count ? _ids.Keys.Where(k => !seen.Contains(k)).ToArray() : [])
         {
-            // A card gone from the panel (answered, or handled elsewhere) is closed into the history.
+            // A card gone from the panel (answered, or handled elsewhere) is closed into the history, and its toast with it.
             Feed.Dismiss(_ids[gone]);
             _ids.Remove(gone);
+            if (_toastIds.Remove(gone, out var toast))
+            {
+                _toasts.Dismiss(toast);
+            }
         }
         Feed.Advance(now);
+        _toasts.Advance(now);
     }
 
     /// <summary>
@@ -256,7 +280,7 @@ internal sealed class NotificationsHost
     public void PostEvent(PilotEvent e, Action? open, DateTimeOffset now)
     {
         Posted();
-        var posted = Feed.Post(new Notification
+        var notification = new Notification
         {
             Title = e.Title,
             Text = e.Text,
@@ -264,15 +288,20 @@ internal sealed class NotificationsHost
             Kind = NotificationKind.Fading,
             Source = e.Node,
             Action = open,
-        }, now);
+        };
+        var posted = Feed.Post(notification, now);
         if (Open)
         {
             Feed.Dismiss(posted.Id);
         }
+        else
+        {
+            _toasts.Post(notification, now);
+        }
     }
 
     /// <summary>The toast under the pointer, from the layer's hit test: its countdown stops while the pointer rests on it.</summary>
-    public void Hover(HitResult? hit) => Feed.PointerOver(NotificationsLayout.ToastIdOf(hit));
+    public void Hover(HitResult? hit) => _toasts.PointerOver(NotificationsLayout.ToastIdOf(hit));
 
     /// <summary>A press on a fading toast opens what it is about and closes it as handled; false when the hit is not one.</summary>
     public bool Press(HitResult? hit)
@@ -281,7 +310,7 @@ internal sealed class NotificationsHost
         {
             return false;
         }
-        Feed.Handle(id);
+        _toasts.Handle(id);
         return true;
     }
 
@@ -302,7 +331,7 @@ internal sealed class NotificationsHost
         // way) and the toasts, none while the open bar holds every card (the stack is wider than the bar and would peek out past its edge) or
         // on the list itself.
         var pageStyle = Style with { StripWidth = 0f, MaxToasts = barOpen || onList ? 0 : Style.MaxToasts };
-        var body = NotificationsLayout.Build(page, Feed, _lib, colors, pageStyle, Pointer, PageRect);
+        var body = NotificationsLayout.Build(page, _toasts, _lib, colors, pageStyle, Pointer, PageRect);
         // The library docks a strip of no width beside what it builds and lays its bell and count past the edge; the rail's entry is the one
         // bell, so only the fill (the page and its toasts) is kept, and the toggle key the strip declared is declared here on a node of no size.
         body = body is Layout.Node.Dock { Fill: var fill } ? fill : body;

@@ -26,7 +26,7 @@ public sealed class OverlayDepthTests
     {
         private readonly PageData _data = PageData.For("sample");
         private readonly RgbaImageRenderer _renderer;
-        private readonly CardsScreen _cards;
+        private CardsScreen _cards;
         private readonly int _height;
 
         public PilotChrome<RgbaImage> Chrome { get; }
@@ -36,7 +36,8 @@ public sealed class OverlayDepthTests
         /// <param name="palette">Where the map's layers menu is docked, as <see cref="MapLayerSettings.Palette"/> writes it; null for its default.</param>
         public Rig(PilotPage page, BarStates bar, CardsScreen cards, int height = Height, string? palette = null)
         {
-            _cards = cards;
+            // The window's first look sees no card, so the rig's ringing cards open after it and toast (the first look is not news).
+            _cards = CardsScreen.Empty;
             _height = height;
             _renderer = new RgbaImageRenderer(Width, (uint)height);
             Chrome = new PilotChrome<RgbaImage>(_renderer, new SessionsView<RgbaImage>(_renderer)) { FontPath = SessionsCapture.FontPath };
@@ -52,6 +53,8 @@ public sealed class OverlayDepthTests
             Chrome.Notifications.State = bar;
             Chrome.Show(page);
             Router = new InputRouter(Chrome.Flights.Ui, new BackgroundTaskTracker(), () => { }) { Widgets = () => Chrome.Widgets };
+            Paint();
+            _cards = cards;
             Paint();
             Paint();
         }

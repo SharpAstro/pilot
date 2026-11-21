@@ -25,7 +25,7 @@ public sealed class MapDepthTests
     {
         private readonly PageData _data = PageData.For("sample");
         private readonly RgbaImageRenderer _renderer;
-        private readonly CardsScreen _cards;
+        private CardsScreen _cards;
         private readonly int _width, _height;
 
         public PilotChrome<RgbaImage> Chrome { get; }
@@ -34,7 +34,8 @@ public sealed class MapDepthTests
 
         public Rig(BarStates bar, CardsScreen cards, int height = Height, int width = Width)
         {
-            _cards = cards;
+            // The window's first look sees no card, so the rig's ringing cards open after it and toast (the first look is not news).
+            _cards = CardsScreen.Empty;
             _width = width;
             _height = height;
             _renderer = new RgbaImageRenderer((uint)width, (uint)height);
@@ -44,6 +45,8 @@ public sealed class MapDepthTests
             Chrome.Notifications.State = bar;
             Chrome.Show(PilotPage.Flights);
             Router = new InputRouter(Chrome.Flights.Ui, new BackgroundTaskTracker(), () => { }) { Widgets = () => Chrome.Widgets, Unhandled = evt => Chrome.PageWidget.HandleInput(evt) };
+            Paint();
+            _cards = cards;
             Paint();
             Paint();
             Chrome.Flights.MapShown.ShouldBeTrue("the sample's flights draw the map");

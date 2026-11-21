@@ -74,7 +74,7 @@ public sealed record NodeSettings
     /// red for more than <see cref="FlightCiRedHours"/> in a row stops it too.
     /// </summary>
     public const string FlightCiBudgetKey = "flight-ci-budget";
-    public const int DefaultFlightCiBudget = 4;
+    public const int DefaultFlightCiBudget = 8;
     /// <summary>Hours a flight's PR may stay red before the node stops pushing for it (PIL795).</summary>
     public const int FlightCiRedHours = 3;
 
