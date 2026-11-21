@@ -351,4 +351,145 @@ public sealed class FollowUpCountTests : ReviewTestsBase
 
         _github.IssueNowCalls.ShouldBe(1);
     }
+
+    // ---- One ring for the fleet (the follow-up rings were raised by every node, and a dismiss on one left the other's) ----
+
+    private sealed class OnePeerFleet(FlightRow[] flights, bool down = false) : IFleet
+    {
+        public IReadOnlyList<IFleetPeer> Peers() => [new Peer(flights, down)];
+
+        private sealed class Peer(FlightRow[] flights, bool down) : IFleetPeer
+        {
+            public string Name => "DE1";
+
+            public string Endpoint => "de1.local:47731";
+
+            public bool HasGrant => true;
+
+            public Task<NodeInfo> NodeAsync(CancellationToken cancellationToken) => throw new NotSupportedException();
+
+            public Task<RepoInfo[]?> ReposAsync(CancellationToken cancellationToken) => throw new NotSupportedException();
+
+            public Task<FleetLoad> LoadAsync(CancellationToken cancellationToken) => down ? throw new IOException("peer is down") : Task.FromResult(new FleetLoad(null, flights));
+
+            public Task<CommandResult> SendAsync(CommandRequest command, CancellationToken cancellationToken) => throw new NotSupportedException();
+        }
+    }
+
+    private FollowUpSweep SweepOn(string machine, IFleet? fleet = null) => new(_state, _github, _time) { Machine = machine, Fleet = () => fleet };
+
+    /// <summary>The repo's pull requests were last read by <paramref name="by"/>.</summary>
+    private void ReadBy(string by) =>
+        _state.PutPullRequests(new PullRequestsRow { ReadAt = Start, RepoReads = [new PullRequestRepoRead(Repo_, Start, by)] });
+
+    private CardRow[] OpenRings() => [.. _state.Cards(openOnly: true).Where(c => c.Kind == FollowUpSweep.RingKind)];
+
+    [Fact]
+    public async Task OnlyTheNodeThatReadsTheReposPullRequestsRingsForItsFollowUps()
+    {
+        var number = FollowUp(TimeSpan.FromDays(2));
+        FlightOn(900, "SWP1");
+        ReadBy("DE1");
+
+        await SweepOn("SE1").SweepAsync(Ct);
+        OpenRings().ShouldBeEmpty();
+        // Still counted here, so status and the digest show it on every node.
+        _state.FollowUps().ShouldNotBeNull().Repos.ShouldHaveSingleItem().NoFlight.ShouldBe([number]);
+
+        await SweepOn("DE1").SweepAsync(Ct);
+        OpenRings().ShouldHaveSingleItem().Subject.ShouldBe($"follow-up:{Repo_}#{number}");
+    }
+
+    [Fact]
+    public async Task AFlightOnAnotherNodeCountsAndRingsNothing()
+    {
+        var number = FollowUp(TimeSpan.FromDays(2));
+        FlightOn(900, "SWP1");
+        var theirs = new FlightRow
+        {
+            Code = "SWP9", Repo = "tianwen", RepoPath = "/de1/tianwen", Issue = number, Branch = "flight/swp9", Worktree = "/de1/swp9", Base = "main",
+            State = FlightState.Flying, CreatedAt = Start,
+        };
+
+        var row = (await SweepOn("SE1", new OnePeerFleet([theirs])).SweepAsync(Ct)).ShouldNotBeNull();
+
+        row.Repos.ShouldHaveSingleItem().NoFlight.ShouldBeEmpty();
+        OpenRings().ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task ARingClosesOnceItsIssueHasAFlightOrAnotherNodeRingsForTheRepo()
+    {
+        var first = FollowUp(TimeSpan.FromDays(2));
+        var second = FollowUp(TimeSpan.FromDays(2));
+        FlightOn(900, "SWP1");
+        var sweep = SweepOn("SE1");
+        await sweep.SweepAsync(Ct);
+        OpenRings().Length.ShouldBe(2);
+
+        // The first gains a flight: its ring closes, the second's stays.
+        FlightOn(first, "SWP2");
+        await sweep.SweepAsync(Ct);
+        OpenRings().ShouldHaveSingleItem().Subject.ShouldBe($"follow-up:{Repo_}#{second}");
+
+        // DE1 reads the repo now: this node's ring closes, as DE1 rings for it.
+        ReadBy("DE1");
+        await sweep.SweepAsync(Ct);
+        OpenRings().ShouldBeEmpty();
+    }
+
+    private async Task CloseIssueAsync(int number)
+    {
+        await _github.CloseIssueAsync(Repo, number, "done", Ct);
+        _github.Issues.TryRemove(number, out _);
+        var key = Path.TrimEndingDirectorySeparator(Path.GetFullPath(Repo));
+        _github.MilestoneIssuesOf[key][number] = _github.MilestoneIssuesOf[key][number] with { Open = false };
+    }
+
+    [Fact]
+    public async Task ARingClosesOnceItsIssueClosedWhetherOrNotAnotherFollowUpIsStillOpen()
+    {
+        var only = FollowUp(TimeSpan.FromDays(2));
+        FlightOn(900, "SWP1");
+        var sweep = SweepOn("SE1");
+        await sweep.SweepAsync(Ct);
+        OpenRings().ShouldHaveSingleItem();
+
+        // The repo's last open follow-up closes: no open follow-up left, the ring still closes.
+        await CloseIssueAsync(only);
+        await sweep.SweepAsync(Ct);
+        OpenRings().ShouldBeEmpty();
+
+        var first = FollowUp(TimeSpan.FromDays(2));
+        var second = FollowUp(TimeSpan.FromDays(2));
+        await sweep.SweepAsync(Ct);
+        OpenRings().Length.ShouldBe(2);
+
+        await CloseIssueAsync(first);
+        await sweep.SweepAsync(Ct);
+        OpenRings().ShouldHaveSingleItem().Subject.ShouldBe($"follow-up:{Repo_}#{second}");
+    }
+
+    [Fact]
+    public async Task AGrantedPeerThatDoesNotAnswerHoldsTheRingsAndTheyAreNotLostWhenItDoes()
+    {
+        var number = FollowUp(TimeSpan.FromDays(2));
+        FlightOn(900, "SWP1");
+        var sweep = SweepOn("SE1", new OnePeerFleet([], down: true));
+
+        await sweep.SweepAsync(Ct);
+        OpenRings().ShouldBeEmpty();
+
+        var up = SweepOn("SE1", new OnePeerFleet([]));
+        await up.SweepAsync(Ct);
+        OpenRings().ShouldHaveSingleItem();
+
+        // Ownership moves away and back: the ring closed in between rings again.
+        ReadBy("DE1");
+        await up.SweepAsync(Ct);
+        OpenRings().ShouldBeEmpty();
+        ReadBy("SE1");
+        await up.SweepAsync(Ct);
+        OpenRings().ShouldHaveSingleItem().Subject.ShouldBe($"follow-up:{Repo_}#{number}");
+    }
 }
