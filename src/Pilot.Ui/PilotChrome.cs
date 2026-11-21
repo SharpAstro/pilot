@@ -615,6 +615,7 @@ internal sealed class PilotChrome<TSurface>
             foreach (var (choice, number) in plain)
             {
                 var hit = $"toast:{card.Id}:{number}";
+                var shown = FitToastLabel(choice.Label);
                 var first = number == plain[0].number;
                 parts.Add(Cards.Presses.Button(pressKey, hit, () =>
                 {
@@ -622,7 +623,6 @@ internal sealed class PilotChrome<TSurface>
                     // The library's button is one line at the width of its text, which a long label pushes past the toast (it does not clamp
                     // to the toast): a long label ends in an ellipsis at a measured width, with the whole label on hover. Its dead twin is
                     // that same one line, so the toast keeps its height when a press makes the choices dead.
-                    var shown = FitToastLabel(choice.Label);
                     var button = first
                         ? NotificationsLayout.PrimaryButton(shown, severity, colors, NotificationsHost.Style, new HitResult.ButtonHit(hit), press)
                         : NotificationsLayout.PlainButton(shown, colors, NotificationsHost.Style, new HitResult.ButtonHit(hit), press);
