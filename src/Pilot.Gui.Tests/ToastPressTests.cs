@@ -184,13 +184,13 @@ public sealed class ToastPressTests
         var colors = NotificationsHost.Colors();
         // Dismiss is drawn by the library as a plain button after the choices in the same row: its real width is measured, not a guessed room.
         var dismiss = Layout.Engine.Arrange(Layout.Builder.HStack([NotificationsLayout.PlainButton("Dismiss", colors, NotificationsHost.Style, null!, () => { })]), new Rect<float>(0, 0, 340f, 100f), ctx)
-            .Max(a => a.Bounds.X + a.Bounds.Width);
+            .Skip(1).Max(a => a.Bounds.X + a.Bounds.Width);
         using var idle = new Rig(Card(merge));
-        var live = idle.ButtonRow().Max(a => a.Bounds.X + a.Bounds.Width);
+        var live = idle.ButtonRow().Skip(1).Max(a => a.Bounds.X + a.Bounds.Width);
         (live + 6f + dismiss).ShouldBeLessThanOrEqualTo(340f, "the live choices and Dismiss fit one toast row");
         using var pressed = new Rig(Card(merge));
         pressed.Chrome.Cards.NoteWorking("c1", "card:c1:1");
-        var twin = pressed.ButtonRow().Max(a => a.Bounds.X + a.Bounds.Width);
+        var twin = pressed.ButtonRow().Skip(1).Max(a => a.Bounds.X + a.Bounds.Width);
         (twin + 6f + dismiss).ShouldBeLessThanOrEqualTo(340f, "the pressed twin, with its dots, is wider than the live button and still fits");
     }
 
