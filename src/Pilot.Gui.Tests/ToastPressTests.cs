@@ -62,6 +62,21 @@ public sealed class ToastPressTests
             return Layout.Engine.Arrange(row(), new Rect<float>(0, 0, width, 1400), new PixelMeasureContext<RgbaImage>(_measure, SessionsCapture.FontPath, 1f));
         }
 
+        /// <summary>How many pixels of the last frame are exactly this colour.</summary>
+        public int Count(RGBAColor32 color)
+        {
+            var pixels = _renderer.Surface.Pixels;
+            var n = 0;
+            for (var i = 0; i + 3 < pixels.Length; i += 4)
+            {
+                if (pixels[i] == color.Red && pixels[i + 1] == color.Green && pixels[i + 2] == color.Blue)
+                {
+                    n++;
+                }
+            }
+            return n;
+        }
+
         public void Save(string name)
         {
             if (Dir() is { } dir)
@@ -193,6 +208,16 @@ public sealed class ToastPressTests
             Palette.Current = Palette.Night;
             var p = Palette.Night;
             var colors = NotificationsHost.Colors();
+            // The drawn ground: the night CPU render of a refused toast paints the toast on the colour the host hands the library, so the ink is
+            // measured against a ground that is on the page. The count is of the card colour over the page's own, which differs in night.
+            using (var rig = new Rig(Card(), 700, 600))
+            {
+                rig.Chrome.Night.On = true;
+                rig.Chrome.Cards.Presses.NoteRefused(CardsView<RgbaImage>.PressKeyOf(null, "c1"), Why);
+                rig.Frame(CardsScreen.From([Card()]), 2);
+                rig.Frame(CardsScreen.From([Card()]), 3);
+                rig.Count(colors.Card).ShouldBeGreaterThan(300, "the toast is drawn on the card colour the contrast is measured against");
+            }
             // The library draws the plain choice and the title on its own tinted fill (under AA in night): a DIR.Lib issue, not measured here.
             foreach (var (name, ink, bg) in new[] { ("dead twin", p.Dim, colors.Card), ("refusal", p.Held, colors.Card) })
             {

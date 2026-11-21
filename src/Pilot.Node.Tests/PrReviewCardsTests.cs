@@ -161,6 +161,24 @@ public sealed class PrReviewCardsTests : PrFixTestsBase
     }
 
     [Fact]
+    public async Task AMergeReadThatFailsLeavesNoStampSoTheNextSweepReadsItAgain()
+    {
+        await Review("acme/widget#7", "changes", Design);
+        _state.CloseCard(OpenDesign(_state)!.Id, "dismissed", "controller");
+        _state.RaiseCard(CardBin.ForYou, PrReviews.MergeKind, Verbs.PrTarget("acme/widget", 7), "Merge", "detail",
+            [new CardChoice { Label = "Merge", Verb = Verbs.ReviewPr, Target = Verbs.PrTarget("acme/widget", 7) }]);
+        var (reviews, _) = OnAFakeClock();
+        _github.Prs.TryRemove("acme/widget#7", out var pr).ShouldBeTrue();
+        _github.PrReads.Clear();
+
+        await reviews.SweepAsync(Ct);
+        _github.Prs["acme/widget#7"] = pr;
+        await reviews.SweepAsync(Ct);
+
+        _github.PrReads["acme/widget#7"].ShouldBe(2, "the read that failed was not stamped, so the next sweep inside MergeReadEvery reads it again");
+    }
+
+    [Fact]
     public async Task APrHoldingAnyOtherCardIsReadAtEverySweep()
     {
         await Review("acme/widget#7", "changes", Design);
