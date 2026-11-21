@@ -205,8 +205,9 @@ internal sealed class NotificationsHost
             Warn = p.Held,
             Error = p.Failed,
             Success = p.Ok,
-            Surface = p.HeaderBg,
-            Card = p.PanelBg,
+            // The night palette's only ink that reads at AA (Failed's red, 4.7:1) does so on its black ground and on nothing lighter.
+            Surface = ReferenceEquals(p, Palette.Night) ? p.Ground : p.HeaderBg,
+            Card = ReferenceEquals(p, Palette.Night) ? p.Ground : p.PanelBg,
             Text = p.Bright,
             Dim = p.Dim,
             Separator = p.RailSeparator,

@@ -186,12 +186,21 @@ public sealed class ToastPressTests
     [Fact]
     public void TheNightPalettesInkInTheToastReadsAtAAWhereThePaletteHasAnyThatCan()
     {
-        var p = Palette.Night;
-        var colors = NotificationsHost.Colors();
-        foreach (var (name, ink, bg) in new[] { ("dead twin", p.Dim, colors.Card), ("refusal", p.Held, colors.Surface) })
+        var was = Palette.Current;
+        try
         {
-            var shown = Contrast.Readable(ink, bg, p.Failed);
-            Contrast.Ratio(shown, bg).ShouldBeGreaterThanOrEqualTo(Contrast.AA, name);
+            Palette.Current = Palette.Night;
+            var p = Palette.Night;
+            var colors = NotificationsHost.Colors();
+            foreach (var (name, ink, bg) in new[] { ("dead twin", p.Dim, colors.Card), ("refusal", p.Held, colors.Surface), ("plain choice", colors.Text, colors.Surface) })
+            {
+                var shown = Contrast.Readable(ink, bg, p.Failed);
+                Contrast.Ratio(shown, bg).ShouldBeGreaterThanOrEqualTo(Contrast.AA, name);
+            }
+        }
+        finally
+        {
+            Palette.Current = was;
         }
     }
 
