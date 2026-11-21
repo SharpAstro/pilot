@@ -27,6 +27,60 @@ public sealed class PrReviewCardsTests : PrFixTestsBase
         };
     }
 
+    private static readonly string[] PrActing = [PrReviews.MergeKind, PrReviews.FixEndedKind, PrReviews.QueueRefusedKind];
+
+    private void RaisePrActingCards()
+    {
+        foreach (var kind in PrActing)
+        {
+            _state.RaiseCard(CardBin.ForYou, kind, Verbs.PrTarget("acme/widget", 7), $"{kind} on acme/widget#7", "detail",
+                [new CardChoice { Label = "Act", Verb = Verbs.ReviewPr, Target = Verbs.PrTarget("acme/widget", 7) }]);
+        }
+    }
+
+    private IEnumerable<CardRow> PrActingCardsOf(bool openOnly) =>
+        _state.Cards(openOnly: openOnly).Where(c => PrActing.Contains(c.Kind) || c.Kind == PrReviews.DesignKind);
+
+    [Theory]
+    [InlineData("MERGED", "merged")]
+    [InlineData("CLOSED", "closed")]
+    public async Task ASweepClosesEveryCardThatActsOnAPrOnceItIsMergedOrClosedNamingTheState(string prState, string said)
+    {
+        await Review("acme/widget#7", "changes", Design);
+        RaisePrActingCards();
+        _github.Prs["acme/widget#7"] = _github.Prs["acme/widget#7"] with { State = prState };
+
+        await _reviews.SweepAsync(Ct);
+
+        PrActingCardsOf(openOnly: true).ShouldBeEmpty();
+        var closed = PrActingCardsOf(openOnly: false).ToList();
+        closed.Count.ShouldBe(PrActing.Length + 1);
+        closed.ShouldAllBe(c => c.State == CardState.Closed && c.Outcome == $"acme/widget#7 is {said}");
+    }
+
+    [Fact]
+    public async Task AnOpenPrKeepsItsPrActingCardsOpen()
+    {
+        await Review("acme/widget#7", "changes", Design);
+        RaisePrActingCards();
+
+        await _reviews.SweepAsync(Ct);
+
+        PrActingCardsOf(openOnly: true).Count().ShouldBe(PrActing.Length + 1);
+    }
+
+    [Fact]
+    public async Task GitHubNotAnsweringClosesNoPrActingCard()
+    {
+        await Review("acme/widget#7", "changes", Design);
+        RaisePrActingCards();
+        _github.Prs.TryRemove("acme/widget#7", out _);
+
+        await _reviews.SweepAsync(Ct);
+
+        PrActingCardsOf(openOnly: true).Count().ShouldBe(PrActing.Length + 1);
+    }
+
     [Fact]
     public async Task ADesignCardClosesNamingTheNewHeadWhenThePrMovesPastTheReviewedCommitAndIsNotRaisedAgainAfterARestart()
     {

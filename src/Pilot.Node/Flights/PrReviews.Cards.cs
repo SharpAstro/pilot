@@ -249,19 +249,39 @@ public sealed partial class PrReviews
         return true;
     }
 
-    /// <summary>Reads the head only of the reviews with a card of theirs open, and closes those cards when it has moved past the reviewed commit.</summary>
+    /// <summary>
+    /// Every kind whose choice acts on the PR (the review's own, Merge the PR, the queue's refusal, a fixer round's end): once the PR is
+    /// merged or closed, a press on any of them can only be refused. A design question is closed with them: a PR that is gone has
+    /// nothing left for the answer to change.
+    /// </summary>
+    private static readonly string[] PrActingCardKinds = [.. ReviewCardKinds, MergeKind, QueueRefusedKind, FixEndedKind];
+
+    /// <summary>
+    /// Reads GitHub once per PR with a card of theirs open. A PR read as MERGED or CLOSED closes those cards, naming the state, and ends
+    /// its review if still open; otherwise the review's cards are closed once the head moved past the reviewed commit.
+    /// </summary>
     private async Task CloseCardsOfOvertakenReviewsAsync(CancellationToken cancellationToken)
     {
         foreach (var review in state.PrReviews().Where(r => r is { Fixer: null } && r.State != PrReviewState.Reviewing))
         {
             var subject = Verbs.PrTarget(review.Repo, review.Number);
-            if (!state.Cards(openOnly: true).Any(c => c.Subject == subject && ReviewCardKinds.Contains(c.Kind)))
+            if (!state.Cards(openOnly: true).Any(c => c.Subject == subject && PrActingCardKinds.Contains(c.Kind)))
             {
                 continue;
             }
             try
             {
                 var read = await github.PullRequestOfAsync(review.Repo, review.Number, cancellationToken);
+                if (string.Equals(read.State, "MERGED", StringComparison.OrdinalIgnoreCase) || string.Equals(read.State, "CLOSED", StringComparison.OrdinalIgnoreCase))
+                {
+                    var said = read.State.ToLowerInvariant();
+                    state.CloseCardsAbout(subject, $"{review.Repo}#{review.Number} is {said}", PrActingCardKinds);
+                    if (review.State == PrReviewState.Reviewed && !_graced.ContainsKey(subject))
+                    {
+                        await EndAsync(review, $"the PR is {said}", cancellationToken);
+                    }
+                    continue;
+                }
                 CloseCardsPastHead(review, read.Head);
             }
             catch (FlightException)
