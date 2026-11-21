@@ -23,7 +23,7 @@ internal sealed partial class IdeasView<TSurface>
     [
         new(IdeasViewMode.List, "ideas:view:list", "List", Icon: Layout.IconKind.List),
         new(IdeasViewMode.Tree, "ideas:view:tree", "Tree grid", Icon: Layout.IconKind.Grid),
-        new(IdeasViewMode.Canvas, "ideas:view:canvas", "Canvas"),
+        new(IdeasViewMode.Canvas, "ideas:view:canvas", "Canvas", AsWord: true),
     ];
 
     private readonly ListScrollController _boardScroll = new() { Mode = ScrollBarMode.Interactive };

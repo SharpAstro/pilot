@@ -220,22 +220,13 @@ internal sealed class PlayFilter
         }
     }
 
-    private const string ListId = "play";
-
-    /// <summary>
-    /// The header's In play / Everything pair (PIL1232): one DIR.Lib segmented control, the shown one chosen from <see cref="InPlay"/> (the state, not the
-    /// click), the words only (the library has no mark for either yet, SharpAstro/DIR.Lib#299), the hit ids play:in-play and play:everything, picked by
-    /// Alt+I and Alt+E, drawn from <paramref name="night"/>'s palette when given.
-    /// </summary>
+    /// <summary>The header's pills, beside the node pills: In play, Everything, the shown one lit.</summary>
     public IEnumerable<Layout.Node> Pills(Palette? night = null)
     {
-        var options = new Layout.ButtonGroupOption<bool>[]
-        {
-            new(true, "In play") { Hit = new HitResult.ButtonHit("play:in-play"), Shortcut = new KeyChord(InputKey.I, InputModifier.Alt) },
-            new(false, "Everything") { Hit = new HitResult.ButtonHit("play:everything"), Shortcut = new KeyChord(InputKey.E, InputModifier.Alt) },
-        };
-        yield return Layout.Builder.Segmented<bool>(options, InPlay, inPlay => { if (inPlay) ShowInPlay(); else ShowEverything(); },
-            UiThemes.For(night ?? Palette.Current), ViewSwitch.CursorOf(ListId), ListId, 12f).WithCursor(CursorKind.Pointer);
+        var lit = night is null ? NodeFilter.Lit : (night.RowFocusBg, night.ButtonHover);
+        (RGBAColor32, RGBAColor32)? plain = night is null ? null : (night.Button, night.ButtonHover);
+        yield return CardsView<RgbaImage>.HeaderPill("In play", "play:in-play", ShowInPlay, InPlay ? lit : plain, night?.Bright);
+        yield return CardsView<RgbaImage>.HeaderPill("Everything", "play:everything", ShowEverything, InPlay ? plain : lit, night?.Bright);
     }
 
     /// <summary>The pills in a line, for a dump or a test: <c>[In play] Everything</c>, the shown one bracketed.</summary>

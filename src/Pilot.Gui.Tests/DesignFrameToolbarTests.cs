@@ -132,6 +132,21 @@ public sealed class DesignFrameToolbarTests
     }
 
     [Fact]
+    public void AWellNarrowerThanTheSegmentedControlWrapsTheSizesAsButtonsAndNothingIsCut()
+    {
+        // At 360 the well holds about 270 units, less than the segmented control (about 344, one unbreakable item): the sizes are separate buttons again, which wrap, and every
+        // one lies inside the window with the hit id it always had.
+        using var rig = new Rig();
+        var all = rig.Arranged(360f);
+        var own = new System.Text.RegularExpressions.Regex(@"^designs:frame-(size|rotate|terminal|point):0:0(:|$)");
+        var buttons = all.Where(a => a.Node.Hit is HitResult.ButtonHit { Action: { } act } && own.IsMatch(act)).ToList();
+        buttons.Count.ShouldBe(7);
+        buttons.ShouldAllBe(b => b.Bounds.X >= 0f && b.Bounds.X + b.Bounds.Width <= 360f + 0.5f, "inside the window");
+        buttons.Select(b => b.Bounds.Y).Distinct().Count().ShouldBeGreaterThan(1, "wrapped onto a second row");
+        buttons.ShouldAllBe(b => Math.Abs(b.Bounds.Height - AboutCard.HeaderButton) < 0.5f, "every one a button of the header height");
+    }
+
+    [Fact]
     public void PhoneChangesOnlyThatFrameAndRotateSwapsItsSides()
     {
         using var rig = new Rig();

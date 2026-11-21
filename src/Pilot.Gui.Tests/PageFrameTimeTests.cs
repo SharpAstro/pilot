@@ -33,8 +33,7 @@ public sealed class PageFrameTimeTests
         // A pilot run job cannot set PILOT_FRAME_TIMES, so its artifact folder takes the lines when it is not set (PIL1232).
         var file = Environment.GetEnvironmentVariable("PILOT_FRAME_TIMES") is { Length: > 0 } given ? given
             : Environment.GetEnvironmentVariable("PILOT_JOB_ARTIFACTS") is { Length: > 0 } dir ? Path.Combine(dir, "frame-times.txt")
-            : Path.Combine(AppContext.BaseDirectory, "captures", "frame-times.txt");
-        Directory.CreateDirectory(Path.GetDirectoryName(file)!);
+            : null;
         if (file is not null)
         {
             lock (Gate)

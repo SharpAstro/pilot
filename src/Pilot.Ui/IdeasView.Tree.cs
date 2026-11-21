@@ -117,7 +117,7 @@ internal sealed partial class IdeasView<TSurface>
             {
                 ViewMode = mode;
                 Changed?.Invoke();
-            }, P, "ideas:view")],
+            }, P)],
             Source = Send is null ? "not live" : screen.AsOf == default ? screen.Source : PageHeader.SourceLine(screen.Source, screen.AsOf),
         }, new TopBarParts(null, null, Autopilot, About, Night));
 

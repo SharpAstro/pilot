@@ -1469,8 +1469,12 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
     private const float ToolButtonH = AboutCard.HeaderButton;
     private const float ToolGap = 6f;
 
-    // One keyboard cursor per frame's size control, as the library asks (Left and Right step from where the reader last was).
+    // One keyboard cursor per frame's size control, as the library's Segmented asks. Every option carries its own Hit, so Left and Right do not move the choice (the press and the
+    // chords do); the cursor is the library's required argument, not a keyboard path of this page.
     private readonly System.Collections.Concurrent.ConcurrentDictionary<(int Cell, int Frame), ListCursor> _sizeCursors = new();
+
+    // The width the size choice needs as one segmented control: the words at 7 units a letter and 24 round each.
+    private static readonly float SizesWidth = (DesignTargets.BuiltIn.Sum(t => t.Name.Length) + "Terminal".Length) * 7f + (DesignTargets.BuiltIn.Count + 1) * 24f;
 
     /// <summary>
     /// The frame's size choice (PIL1232): DIR.Lib's segmented control over the built-in sizes and Terminal, the one-of-few row the owner called pure text. The library has no mark for a
@@ -1480,7 +1484,7 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
     /// </summary>
     private Layout.Node SizeChoice(int cell, int index, string size)
     {
-        var shortcuts = (_pointAt ?? _plays.Keys.OrderBy(k => k).Select(k => ((int Cell, int Frame)?)k).FirstOrDefault()) == (cell, index);
+        var shortcuts = (_pointAt ?? (_plays.Count > 0 ? ((int Cell, int Frame)?)_plays.Keys.Min() : null)) == (cell, index);
         List<Layout.ButtonGroupOption<string>> options = [];
         foreach (var target in DesignTargets.BuiltIn)
         {
@@ -1500,18 +1504,37 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
             UiThemes.Current, _sizeCursors.GetOrAdd((cell, index), _ => new ListCursor()), $"designs:frame-sizes:{cell}:{index}", 12f).WithCursor(CursorKind.Pointer);
     }
 
-    // The frame's own toolbar, in one place under every frame, inside its well: the size choice (Desktop, Laptop, Tablet, Phone, Terminal), Rotate and Point at this. It wraps onto a
-    // second row where the well is narrow, never cuts. Returns the toolbar and its height.
+    // The size choice as separate buttons, each with the chosen fill: what a terminal page and a well narrower than the segmented control draw, since the library's control has no cell
+    // form (SharpAstro/DIR.Lib#299) and no icons to narrow to (#300). Each button wraps on its own, as they always did.
+    private IEnumerable<(float Width, Layout.Node Item)> SizeButtons(int cell, int index, string? size)
+    {
+        foreach (var target in DesignTargets.BuiltIn)
+        {
+            var name = target.Name;
+            yield return (name.Length * 7f + 20f, ToolButton(name, $"Show this frame as a {name.ToLowerInvariant()} ({target.Width} x {target.Height})", $"designs:frame-size:{cell}:{index}:{name}", () => PickFrameTarget(cell, index, name), chosen: size == name));
+        }
+        yield return ("Terminal".Length * 7f + 20f, ToolButton("Terminal", $"Show this frame as a terminal ({_terminalSize} cells)", $"designs:frame-terminal:{cell}:{index}", () => PickFrameTerminal(cell, index), chosen: size == "Terminal"));
+    }
+
+    // The frame's own toolbar, in one place under every frame, inside its well: the size choice (Desktop, Laptop, Tablet, Phone, Terminal), Rotate and Point at this. The size choice is
+    // one segmented control where the well holds it (it cannot break); in a terminal or a narrower well it is the separate buttons. The items wrap onto a second row, never cut.
+    // Returns the toolbar and its height.
     private (Layout.Node Node, float Height) FrameToolbar(FramePlay play, int cell, int index)
     {
         var size = FrameSizeName(cell, index);
         var pointing = _pointing && _pointAt == (cell, index);
+        var room = WellInnerWidth();
         List<(float Width, Layout.Node Item)> items = [];
-        var sizesWidth = (DesignTargets.BuiltIn.Sum(t => t.Name.Length) + "Terminal".Length) * 7f + 5 * 24f;
-        items.Add((sizesWidth, SizeChoice(cell, index, size ?? "")));
+        if (Terminal is null && SizesWidth <= room)
+        {
+            items.Add((SizesWidth, SizeChoice(cell, index, size ?? "")));
+        }
+        else
+        {
+            items.AddRange(SizeButtons(cell, index, size));
+        }
         items.Add(("Rotate".Length * 7f + 20f, ToolButton("Rotate", "Swap this frame's width and height", $"designs:frame-rotate:{cell}:{index}", () => RotateFrame(cell, index))));
         items.Add(("Point at this".Length * 7f + 20f, ToolButton("Point at this", pointing ? "Pointing: a click on this screen puts that node's key in your message. Click again to play it." : "Click a part of this screen to put its key in your message instead of playing the click", $"designs:frame-point:{cell}:{index}", () => Point(!pointing, cell, index), pointing: pointing)));
-        var room = WellInnerWidth();
         List<Layout.Node> rows = [];
         List<Layout.Node> row = [];
         var used = 0f;

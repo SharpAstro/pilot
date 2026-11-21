@@ -303,31 +303,6 @@ public static class TerminalWireframeSweepTests
     /// </summary>
     internal static readonly (string Case, string Rule, string What)[] Baseline =
     [
-        // PIL1232: the library's segmented control (In play / Everything, the Ideas views) paints a one-row filled container in cells.
-        ("jobs | many | 80x24", "SolidStrip", "a filled node one row tall and 23 cells wide holds nothing and is painted solid; a rule should be a thin line, not a bar"), // DIR.Lib #299
-        ("jobs | many | 100x30", "SolidStrip", "a filled node one row tall and 23 cells wide holds nothing and is painted solid; a rule should be a thin line, not a bar"), // DIR.Lib #299
-        ("jobs | many | 160x44", "SolidStrip", "a filled node one row tall and 23 cells wide holds nothing and is painted solid; a rule should be a thin line, not a bar"), // DIR.Lib #299
-        ("jobs | many | 250x60", "SolidStrip", "a filled node one row tall and 23 cells wide holds nothing and is painted solid; a rule should be a thin line, not a bar"), // DIR.Lib #299
-        ("jobs | long | 80x24", "SolidStrip", "a filled node one row tall and 23 cells wide holds nothing and is painted solid; a rule should be a thin line, not a bar"), // DIR.Lib #299
-        ("jobs | long | 100x30", "SolidStrip", "a filled node one row tall and 23 cells wide holds nothing and is painted solid; a rule should be a thin line, not a bar"), // DIR.Lib #299
-        ("jobs | long | 160x44", "SolidStrip", "a filled node one row tall and 23 cells wide holds nothing and is painted solid; a rule should be a thin line, not a bar"), // DIR.Lib #299
-        ("jobs | long | 250x60", "SolidStrip", "a filled node one row tall and 23 cells wide holds nothing and is painted solid; a rule should be a thin line, not a bar"), // DIR.Lib #299
-        ("sessions | many | 80x24", "SolidStrip", "a filled node one row tall and 23 cells wide holds nothing and is painted solid; a rule should be a thin line, not a bar"), // DIR.Lib #299
-        ("sessions | many | 100x30", "SolidStrip", "a filled node one row tall and 23 cells wide holds nothing and is painted solid; a rule should be a thin line, not a bar"), // DIR.Lib #299
-        ("sessions | many | 160x44", "SolidStrip", "a filled node one row tall and 23 cells wide holds nothing and is painted solid; a rule should be a thin line, not a bar"), // DIR.Lib #299
-        ("sessions | many | 250x60", "SolidStrip", "a filled node one row tall and 23 cells wide holds nothing and is painted solid; a rule should be a thin line, not a bar"), // DIR.Lib #299
-        ("sessions | long | 80x24", "SolidStrip", "a filled node one row tall and 23 cells wide holds nothing and is painted solid; a rule should be a thin line, not a bar"), // DIR.Lib #299
-        ("sessions | long | 100x30", "SolidStrip", "a filled node one row tall and 23 cells wide holds nothing and is painted solid; a rule should be a thin line, not a bar"), // DIR.Lib #299
-        ("sessions | long | 160x44", "SolidStrip", "a filled node one row tall and 23 cells wide holds nothing and is painted solid; a rule should be a thin line, not a bar"), // DIR.Lib #299
-        ("sessions | long | 250x60", "SolidStrip", "a filled node one row tall and 23 cells wide holds nothing and is painted solid; a rule should be a thin line, not a bar"), // DIR.Lib #299
-        ("ideas | many | 80x24", "SolidStrip", "a filled node one row tall and 33 cells wide holds nothing and is painted solid; a rule should be a thin line, not a bar"), // DIR.Lib #299
-        ("ideas | many | 100x30", "SolidStrip", "a filled node one row tall and 33 cells wide holds nothing and is painted solid; a rule should be a thin line, not a bar"), // DIR.Lib #299
-        ("ideas | many | 160x44", "SolidStrip", "a filled node one row tall and 33 cells wide holds nothing and is painted solid; a rule should be a thin line, not a bar"), // DIR.Lib #299
-        ("ideas | many | 250x60", "SolidStrip", "a filled node one row tall and 33 cells wide holds nothing and is painted solid; a rule should be a thin line, not a bar"), // DIR.Lib #299
-        ("ideas | long | 80x24", "SolidStrip", "a filled node one row tall and 33 cells wide holds nothing and is painted solid; a rule should be a thin line, not a bar"), // DIR.Lib #299
-        ("ideas | long | 100x30", "SolidStrip", "a filled node one row tall and 33 cells wide holds nothing and is painted solid; a rule should be a thin line, not a bar"), // DIR.Lib #299
-        ("ideas | long | 160x44", "SolidStrip", "a filled node one row tall and 33 cells wide holds nothing and is painted solid; a rule should be a thin line, not a bar"), // DIR.Lib #299
-        ("ideas | long | 250x60", "SolidStrip", "a filled node one row tall and 33 cells wide holds nothing and is painted solid; a rule should be a thin line, not a bar"), // DIR.Lib #299
         // PIL1191: Build this version moved from a Build part of the document to the first row, so the document is shorter and the scroll viewport's clip falls on the played frame's well in the long state at 100x30 (the two many-state entries #1185 added no longer occur).
         ("design page | long | 100x30", "EmptyRows", "a filled container is arranged 2 rows tall but its content sits on row 16 only; 1 row(s) are empty inside its fill (own vertical padding 0 row(s), visible border 0 row(s))"), // Console.Lib #78
         ("pull requests | long | 100x30", "EmptyRows", "a filled container is arranged 2 rows tall but its content sits on row 11 only; 1 row(s) are empty inside its fill (own vertical padding 0 row(s), visible border 0 row(s))"), // pilot #1077

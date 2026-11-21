@@ -42,12 +42,12 @@ internal sealed partial class FlightsView<TSurface>
     // the switch is the one the Ideas pane shares (ViewSwitch).
     private static readonly ViewChoice<FlightsViewMode>[] ViewChoices =
     [
-        new(FlightsViewMode.Canvas, "flights:view:canvas", "Canvas"),
+        new(FlightsViewMode.Canvas, "flights:view:canvas", "Canvas", AsWord: true),
         new(FlightsViewMode.Grid, "flights:view:grid", "Grid", Icon: Layout.IconKind.Grid),
         new(FlightsViewMode.List, "flights:view:list", "List", Icon: Layout.IconKind.List),
     ];
 
-    private Layout.Node ViewSwitch() => Pilot.Ui.ViewSwitch.Build(ViewChoices, Mode, mode => Mode = mode, P, "flights:view");
+    private Layout.Node ViewSwitch() => Pilot.Ui.ViewSwitch.Build(ViewChoices, Mode, mode => Mode = mode, P);
 
     // The cards as a wrapping grid, in the list's order: the engine wraps them by the width it is given.
     private Layout.Node GridBody(FlightsScreen screen)
