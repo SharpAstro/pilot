@@ -183,7 +183,7 @@ public sealed class ToastPressTests
         var ctx = new PixelMeasureContext<RgbaImage>(measure, SessionsCapture.FontPath, 1f);
         var colors = NotificationsHost.Colors();
         // Dismiss is drawn by the library as a plain button after the choices in the same row: its real width is measured, not a guessed room.
-        var dismiss = Layout.Engine.Arrange(NotificationsLayout.PlainButton("Dismiss", colors, NotificationsHost.Style, null!, () => { }), new Rect<float>(0, 0, 340f, 100f), ctx)
+        var dismiss = Layout.Engine.Arrange(Layout.Builder.HStack([NotificationsLayout.PlainButton("Dismiss", colors, NotificationsHost.Style, null!, () => { })]), new Rect<float>(0, 0, 340f, 100f), ctx)
             .Max(a => a.Bounds.X + a.Bounds.Width);
         using var idle = new Rig(Card(merge));
         var live = idle.ButtonRow().Max(a => a.Bounds.X + a.Bounds.Width);
