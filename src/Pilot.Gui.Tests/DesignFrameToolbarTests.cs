@@ -46,7 +46,7 @@ public sealed class DesignFrameToolbarTests
         {
             var regions = new List<ClickableRegion>();
             View.CollectPaintedRegions(regions);
-            return regions.First(x => x.Result is HitResult.ButtonHit b && b.Action == action);
+            return regions.First(x => x.Result is HitResult.ButtonHit b && b.Action == action || x.Result is HitResult.ListItemHit l && $"{l.ListId}:{l.Index}" == action);
         }
 
         public void Press(string action)
@@ -76,7 +76,7 @@ public sealed class DesignFrameToolbarTests
         using var rig = new Rig();
         var all = rig.Arranged();
         var own = new System.Text.RegularExpressions.Regex(@"^designs:frame-(size|rotate|terminal|point):0:0(:|$)");
-        var buttons = all.Where(a => a.Node.Hit is HitResult.ButtonHit { Action: { } act } && own.IsMatch(act)).ToList();
+        var buttons = all.Where(a => a.Node.Hit is HitResult.ButtonHit { Action: { } act } && own.IsMatch(act) || a.Node.Hit is HitResult.ListItemHit { ListId: "designs:frame-sizes:0:0" }).ToList();
         buttons.Count.ShouldBe(7);
         // One vertical middle (the segments are inset inside their control, so their tops differ from the buttons').
         buttons.Select(b => (int)Math.Round(b.Bounds.Y + b.Bounds.Height / 2f)).Distinct().Count().ShouldBe(1, "one row");
@@ -95,16 +95,28 @@ public sealed class DesignFrameToolbarTests
     public void APressOnASizeSegmentChangesThatFramesSizeAndTheChosenSegmentFollowsTheState()
     {
         using var rig = new Rig();
-        rig.Press("designs:frame-size:0:0:Phone");
+        rig.Press("designs:frame-sizes:0:0:3");
         rig.View.FrameSizeName(0, 0).ShouldBe("Phone");
-        rig.Press("designs:frame-terminal:0:0");
+        rig.Press("designs:frame-sizes:0:0:4");
         rig.View.FrameSizeName(0, 0).ShouldBe("Terminal");
 
         // Set without a press: the chosen segment is the state's, drawn in a fill the others do not have.
         rig.View.PickFrameTarget(0, 0, "Tablet").ShouldBeTrue();
         rig.Paint();
-        rig.FillOf("designs:frame-size:0:0:Tablet").ShouldNotBe(rig.FillOf("designs:frame-size:0:0:Phone"));
-        rig.FillOf("designs:frame-size:0:0:Phone").ShouldBe(rig.FillOf("designs:frame-size:0:0:Laptop"));
+        rig.FillOf("designs:frame-sizes:0:0:2").ShouldNotBe(rig.FillOf("designs:frame-sizes:0:0:3"));
+        rig.FillOf("designs:frame-sizes:0:0:3").ShouldBe(rig.FillOf("designs:frame-sizes:0:0:1"));
+    }
+
+    [Fact]
+    public void RightAndLeftStepTheSizeChoiceOnceTheControlHasBeenPressed()
+    {
+        using var rig = new Rig();
+        rig.Press("designs:frame-sizes:0:0:1");
+        rig.View.FrameSizeName(0, 0).ShouldBe("Laptop");
+        rig.Router.Handle(new InputEvent.KeyDown(InputKey.Right, InputModifier.None)).ShouldBeTrue();
+        rig.View.FrameSizeName(0, 0).ShouldBe("Tablet");
+        rig.Router.Handle(new InputEvent.KeyDown(InputKey.Left, InputModifier.None)).ShouldBeTrue();
+        rig.View.FrameSizeName(0, 0).ShouldBe("Laptop");
     }
 
     [Theory]

@@ -1469,17 +1469,27 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
     private const float ToolButtonH = AboutCard.HeaderButton;
     private const float ToolGap = 6f;
 
-    // One keyboard cursor per frame's size control, as the library's Segmented asks. Every option carries its own Hit, so Left and Right do not move the choice (the press and the
-    // chords do); the cursor is the library's required argument, not a keyboard path of this page.
+    // One keyboard cursor per frame's size control, as the library's Segmented asks. The options take the library's own list hits, so Left and Right move the choice as a press
+    // would (list id designs:frame-sizes:{cell}:{index}, the segment index in order: the sizes, then Terminal).
     private readonly System.Collections.Concurrent.ConcurrentDictionary<(int Cell, int Frame), ListCursor> _sizeCursors = new();
 
-    // The width the size choice needs as one segmented control: the words at 7 units a letter and 24 round each.
-    private static readonly float SizesWidth = (DesignTargets.BuiltIn.Sum(t => t.Name.Length) + "Terminal".Length) * 7f + (DesignTargets.BuiltIn.Count() + 1) * 24f;
+    // The width the size choice needs as one segmented control, measured from the control itself (the library sizes it to its content), so it follows the library's padding and the
+    // font rather than a guess. Without a font to measure with it falls back to 7 units a letter and 24 round each segment.
+    private float SizesWidth()
+    {
+        if (string.IsNullOrEmpty(FontPath))
+        {
+            return (DesignTargets.BuiltIn.Sum(t => t.Name.Length) + "Terminal".Length) * 7f + (DesignTargets.BuiltIn.Count() + 1) * 24f;
+        }
+        var context = new PixelMeasureContext<TSurface>(Renderer, FontPath, 1f);
+        return Layout.Engine.Measure(SizeChoice(-1, -1, ""), new Size<float>(100000f, 100000f), context).Width;
+    }
 
     /// <summary>
     /// The frame's size choice (PIL1232): DIR.Lib's segmented control over the built-in sizes and Terminal, the one-of-few row the owner called pure text. The library has no mark for a
-    /// desktop, tablet, phone or terminal yet (SharpAstro/DIR.Lib#300), so the segments carry words alone and pilot draws no glyph. Each segment keeps the hit id its button had
-    /// (<c>designs:frame-size:{cell}:{index}:{name}</c>, <c>designs:frame-terminal:{cell}:{index}</c>); the chosen one is the frame's size state, not the click. Alt+1 to Alt+5 pick a
+    /// desktop, tablet, phone or terminal yet (SharpAstro/DIR.Lib#300), so the segments carry words alone and pilot draws no glyph. Each segment is a list item of
+    /// <c>designs:frame-sizes:{cell}:{index}</c>, so Left and Right step the choice (the separate buttons a terminal and a narrow well draw keep
+    /// <c>designs:frame-size:{cell}:{index}:{name}</c> and <c>designs:frame-terminal:{cell}:{index}</c>); the chosen one is the frame's size state, not the click. Alt+1 to Alt+5 pick a
     /// size for the frame Point at this works for (the first until one was pointed at), as one frame's chords are free on the page and every frame's would collide.
     /// </summary>
     private Layout.Node SizeChoice(int cell, int index, string size)
@@ -1491,13 +1501,11 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
             var name = target.Name;
             options.Add(new Layout.ButtonGroupOption<string>(name, name)
             {
-                Hit = new HitResult.ButtonHit($"designs:frame-size:{cell}:{index}:{name}"),
                 Shortcut = shortcuts ? new KeyChord(InputKey.D1 + options.Count, InputModifier.Alt) : null,
             });
         }
         options.Add(new Layout.ButtonGroupOption<string>("Terminal", "Terminal")
         {
-            Hit = new HitResult.ButtonHit($"designs:frame-terminal:{cell}:{index}"),
             Shortcut = shortcuts ? new KeyChord(InputKey.D1 + options.Count, InputModifier.Alt) : null,
         });
         return Layout.Builder.Segmented<string>([.. options], size, name => { if (name == "Terminal") PickFrameTerminal(cell, index); else PickFrameTarget(cell, index, name); },
@@ -1525,9 +1533,10 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
         var pointing = _pointing && _pointAt == (cell, index);
         var room = WellInnerWidth();
         List<(float Width, Layout.Node Item)> items = [];
-        if (Terminal is null && SizesWidth <= room)
+        var sizesWidth = Terminal is null ? SizesWidth() : float.MaxValue;
+        if (sizesWidth <= room)
         {
-            items.Add((SizesWidth, SizeChoice(cell, index, size ?? "")));
+            items.Add((sizesWidth, SizeChoice(cell, index, size ?? "")));
         }
         else
         {

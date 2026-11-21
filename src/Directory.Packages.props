@@ -31,7 +31,13 @@
   <!-- Pilot.Gui: the SharpAstro stack. A local build compiles the sibling clones instead (the UseLocal* switches in
        Pilot.Gui.csproj); these are what CI restores. -->
   <ItemGroup>
-    <!-- Console.Lib is exact: 5.26.2761 is the first release with CON84 (EmptyRows skips a declared border row), and stays at 5.26.2761. The DIR.Lib and SdlVulkan.Renderer pins below are exact at the versions that bring the inspector opt-in (DIR_INSPECTOR) into Release builds; DIR.Lib and DIR.Lib.Debug are on 11.89.8521, the first release with the icon controls (SharpAstro/DIR.Lib#290: Builder.IconToggle, IconAction and Segmented, and the Pin, PinFilled and OpenInPage icons); it keeps #282 (toasts at the bottom right, a surface taking the pointer from what it covers), and SdlVulkan.Renderer stays 7.106.5581, which needs DIR.Lib >= 11.84.7971, and SdlVulkan.Renderer and its Debug twin on 7.106.5581, the first releases with the caret blink handover (SharpAstro/.github#13: the phase lives on WindowUiSettings, SdlEventLoop sets it and wakes at each change). -->
+    <!-- The SharpAstro pins below are exact, each for the release that first brought a feature this repo uses:
+         - Console.Lib 5.26.2761: CON84 (EmptyRows skips a declared border row).
+         - DIR.Lib and DIR.Lib.Debug 11.89.8521: the icon controls (SharpAstro/DIR.Lib#290: Builder.IconToggle, IconAction and Segmented, and the Pin, PinFilled and OpenInPage
+           icons). It also keeps #282 (toasts at the bottom right, a surface taking the pointer from what it covers) and the DIR_INSPECTOR opt-in in Release builds.
+         - SdlVulkan.Renderer and SdlVulkan.Renderer.Debug 7.106.5581: the caret blink handover (SharpAstro/.github#13: the phase lives on WindowUiSettings, SdlEventLoop sets it
+           and wakes at each change). It needs DIR.Lib >= 11.84.7971. -->
+
     <PackageVersion Include="Console.Lib" Version="5.26.2761" />
     <PackageVersion Include="Console.Lib.Debug" Version="5.26.2761" />
     <PackageVersion Include="DIR.Lib" Version="11.89.8521" />
