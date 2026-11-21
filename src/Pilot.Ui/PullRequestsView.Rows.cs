@@ -75,9 +75,16 @@ internal sealed partial class PullRequestsView<TSurface>
             }
             else if (ListCursor.Index != index)
             {
+                // Cleared whatever MoveTo does, so a throw in it never leaves the view deaf to the cursor (the review of #1056).
                 _syncing = true;
-                ListCursor.MoveTo(index);
-                _syncing = false;
+                try
+                {
+                    ListCursor.MoveTo(index);
+                }
+                finally
+                {
+                    _syncing = false;
+                }
             }
             if (_reveal is null)
             {

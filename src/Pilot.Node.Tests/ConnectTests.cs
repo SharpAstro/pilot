@@ -574,6 +574,26 @@ public sealed class ConnectTests : OverlapTestsBase
         MergedHoldCards().ShouldBeEmpty();
     }
 
+    /// <summary>A wait past the bound whose PR is still open is asked about once in <see cref="FlightCommander.MergedHoldRecheck"/>, not on every sweep (the review of #975).</summary>
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AnOpenPrPastTheBoundIsAskedAboutOnceInTheRecheckNotOnEverySweep_818()
+    {
+        var (flights, clock, asked) = await HeldOnAMergedFlightAsync("OPEN");
+        clock.Now += TimeSpan.FromHours(3);
+
+        await flights.LookAtPeerConnectionsAsync(Ct);
+        var once = asked.Count;
+        once.ShouldBeGreaterThan(0);
+        clock.Now += TimeSpan.FromMinutes(1);
+        await flights.LookAtPeerConnectionsAsync(Ct);
+        asked.Count.ShouldBe(once);
+
+        clock.Now += FlightCommander.MergedHoldRecheck;
+        await flights.LookAtPeerConnectionsAsync(Ct);
+        asked.Count.ShouldBeGreaterThan(once);
+    }
+
     [Fact]
     [Trait("Category", "Slow")]
     public async Task TheMergedHoldCardClosesOnceTheHoldLifts_818()

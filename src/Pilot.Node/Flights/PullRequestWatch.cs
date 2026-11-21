@@ -335,8 +335,8 @@ public sealed class PullRequestWatch(NodeState state, RepoCatalog repos, IGitHub
             }
             // A PR the search listed but whose own state is merged or closed is not open: out of this read, out of a peer's taken row
             // (which may predate the merge), and out of what is held for a repo not read.
-            // The search itself never returns a row for such a PR (its parse names it in Gone), so the count is what it named, plus any
-            // row a peer's share or the held row still carried.
+            // The count is what the search named in Gone. The search itself never returns a row for such a PR, and a Gone PR's repo is
+            // always read, so the two filters below drop nothing today; they stand for a peer's share or held row that still carries one.
             var dropped = gone.Count;
             prs.RemoveAll(p => gone.Contains((p.Repo, p.Number)));
             var fresh = prs.ToArray();

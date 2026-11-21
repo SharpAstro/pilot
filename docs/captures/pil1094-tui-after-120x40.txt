@@ -4,7 +4,7 @@
 │ For you
 │ 3 ringing · 4 for you
 │ ╭────────────────────────────╮
-│ │ RING· stale 9 d 23 h       │
+│ │ RING· stale 14 d 14 h      │
 │ │ PIL716 is stuck: its       │
 │ │ worker stopped working     │
 │ │ The worker of              │
@@ -22,7 +22,7 @@
 │ │  Dismiss                   │
 │ ╰────────────────────────────╯
 │ ╭────────────────────────────╮
-│ │ RING· stale 9 d 23 h       │
+│ │ RING· stale 14 d 14 h      │
 │ │ SharpAstro/tianwen#2051:   │
 │ │ the review asks a          │
 │ │ question of design         │
@@ -33,7 +33,7 @@
 │ │ the archive nebula-fields  │
 │ │ over the whole session.    │
 │ │ B: measure it per field    │
-│ │ and keep the worst of the  │
-│ │ nebula-fields.             │
-│ │ ▸ Detail                   │
 │ ╰────────────────────────────╯
+│ Tasks
+│  Chat with the watchtower
+│  Clean up

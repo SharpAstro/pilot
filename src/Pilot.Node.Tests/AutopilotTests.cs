@@ -278,6 +278,25 @@ public sealed class AutopilotTests
         node.State.Cards().ShouldNotContain(c => c.Kind == CardKinds.AutopilotRan);
     }
 
+    /// <summary>With the autopilot on, an assistant's press of the first-run maintenance card is done, as the README says (the review of #1126).</summary>
+    [Fact]
+    public async Task WithAutopilotOnAnAssistantsPressOnTheFirstRunMaintenanceCardIsDone()
+    {
+        await using var node = await NodeHarness.StartAsync(Ct);
+        (await Send(node, Command(Verbs.Set, Verbs.NodeTarget, "gui", args: ["autopilot", "on"]))).Error.ShouldBeNull();
+        var card = node.State.RaiseCard(CardBin.ForYou, IdleMaintenance.FirstRunKind, Verbs.NodeTarget, "Run the first idle disk sweep?", null,
+        [
+            new CardChoice { Label = IdleMaintenance.RunLabel, Verb = Verbs.Set, Target = Verbs.NodeTarget, Args = [NodeSettings.MaintenanceEveryKey, "1d"] },
+            new CardChoice { Label = IdleMaintenance.KeepOffLabel, Verb = Verbs.Set, Target = Verbs.NodeTarget, Args = [NodeSettings.MaintenanceEveryKey, "off"] },
+        ]);
+
+        var pressed = await Send(node, Command(Verbs.Answer, Verbs.CardTarget(card.Id), Assistant, agent: true, Why, IdleMaintenance.KeepOffLabel));
+
+        pressed.Error.ShouldBeNull();
+        node.State.Cards().Single(c => c.Id == card.Id).State.ShouldBe(CardState.Closed);
+        node.State.Cards().ShouldNotContain(c => c.Kind == CardKinds.AssistantAsk);
+    }
+
     [Fact]
     public async Task WithAutopilotOnTheSameMergeGoesThroughRecordedWithTheSessionAndMessageAndAHandledCardSaysIt()
     {

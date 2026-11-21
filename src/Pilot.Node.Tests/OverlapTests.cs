@@ -489,6 +489,9 @@ public sealed class OverlapTests1 : OverlapTestsBase
         // A Handled card says it was folded, and no plain landed card rings.
         var card = _state.Cards().Single(c => c.Kind == FlightCommander.FoldedKind);
         (card.Bin, card.Subject, card.Title).ShouldBe((CardBin.Handled, "flight/TIA2", "TIA2 folded into TIA1"));
+        // The work item's number shows once: after a title, or within an untitled flight's noun (the review of #1129).
+        card.Detail.ShouldNotBeNull().ShouldNotContain($"{retired.Item.Display} ({retired.Item.Display})");
+        card.Detail.ShouldStartWith(retired.Title is { } title ? $"{title} ({retired.Item.Display})" : $"{retired.Item.Noun} is now TIA1's");
         _state.Cards().ShouldNotContain(c => c.Kind == "landed");
         F("TIA1").FoldedInto.ShouldBeNull();
         F("TIA1").State.ShouldNotBe(FlightState.Landed);

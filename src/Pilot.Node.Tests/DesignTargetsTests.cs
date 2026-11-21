@@ -86,6 +86,36 @@ public sealed class DesignTargetsTests : IAsyncLifetime
             ["home.Desktop.png", "home.Phone.png", "settings.Desktop.png", "settings.Phone.png"]);
     }
 
+    private const string BadTarget = "\"targets\": [{ \"name\": \"a/b\", \"width\": 390, \"height\": 844, \"scale\": 1 }]";
+
+    [Fact]
+    public async Task CheckSaysATargetNameThatIsNotAPlainFileName()
+    {
+        await DraftWith(BadTarget);
+
+        var (exit, said) = await Pilot("design", "check", "DSN-1");
+
+        exit.ShouldNotBe(0, said);
+        said.ShouldContain("$.targets[0].name: 'a/b' is not a plain file name");
+    }
+
+    [Fact]
+    public async Task RenderRefusesATargetNameThatIsNotAPlainFileNameAndKeepsTheEarlierRenders()
+    {
+        await DraftWith(DesktopOnly);
+        (await Pilot("design", "render", "DSN-1")).Exit.ShouldBe(0);
+        var before = Directory.EnumerateFiles(Draft("renders")).Select(Path.GetFileName).Order().ToArray();
+        before.ShouldNotBeEmpty();
+        File.WriteAllText(Draft("prototype.json"), File.ReadAllText(Draft("prototype.json")).Replace("\"name\": \"Desktop\"", "\"name\": \"a/b\""));
+
+        var (exit, said) = await Pilot("design", "render", "DSN-1");
+
+        exit.ShouldNotBe(0, said);
+        said.ShouldContain("is not a plain file name");
+        said.ShouldNotContain("ArgumentException");
+        Directory.EnumerateFiles(Draft("renders")).Select(Path.GetFileName).Order().ShouldBe(before);
+    }
+
     [Fact]
     public async Task PublishRefusesNamingTheTargetWhenItsPngIsMissing()
     {
@@ -134,4 +164,25 @@ public sealed class DesignTargetsTests : IAsyncLifetime
         DesignTargets.Resolve(null, 500, 700)!.Name.ShouldBe("500x700");
         DesignTargets.ResolveAll([]).ShouldBe([DesignTargets.Desktop]);
     }
+
+    /// <summary>A target name becomes part of a file name: one that could leave the renders folder is refused (the review of #1116).</summary>
+    [Theory]
+    [InlineData("../../escape")]
+    [InlineData("sub/dir")]
+    [InlineData("sub\\dir")]
+    [InlineData("..")]
+    [InlineData("")]
+    [InlineData("a:b")]
+    public void ATargetNameThatIsNoPlainFileNameIsRefused(string name)
+    {
+        DesignTargets.IsPlainName(name).ShouldBeFalse();
+        Should.Throw<ArgumentException>(() => DesignTargets.RenderFile("home", name));
+    }
+
+    [Theory]
+    [InlineData("Desktop")]
+    [InlineData("phone-wide")]
+    [InlineData("Wall 4K")]
+    public void APlainTargetNameMakesTheRenderFile(string name) =>
+        DesignTargets.RenderFile("home", name).ShouldBe($"home.{name}.png");
 }

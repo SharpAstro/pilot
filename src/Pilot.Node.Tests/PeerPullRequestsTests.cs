@@ -127,6 +127,20 @@ public sealed class PeerPullRequestsTests : IDisposable
     // The stream is down and the cache waits to open it again (the rescan's timer and the backoff's are set).
     private Task Backing(PeerPullRequests cache) => Until(cache, () => _clock.Waiting >= 2);
 
+    /// <summary>On host stop a run may have ended and disposed its token source first: stopping it then is no error (the review of #993).</summary>
+    [Fact]
+    public void StoppingATokenSourceARunAlreadyDisposedIsNoError()
+    {
+        var stop = new CancellationTokenSource();
+        stop.Dispose();
+
+        Should.NotThrow(() => PeerPullRequests.StopQuietly(stop));
+        Should.NotThrow(() => PeerPullRequests.StopQuietly(null));
+        using var live = new CancellationTokenSource();
+        PeerPullRequests.StopQuietly(live);
+        live.IsCancellationRequested.ShouldBeTrue();
+    }
+
     [Fact]
     public async Task AChangedReadReachesTheCacheWithNoPoll()
     {

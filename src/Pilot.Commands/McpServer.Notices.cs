@@ -188,6 +188,9 @@ internal sealed partial class McpServer
         {
             if (_subscribed.Count == 0)
             {
+                // The loop ends here, so it lets go of its slot under the same lock: a subscribe that lands before this task completes
+                // then starts a fresh loop instead of finding this one still running and starting nothing (the review of #1203).
+                _notices = null;
                 return false;
             }
             keys = [.. _subscribed.Keys.Where(k => k.Length > 0)];

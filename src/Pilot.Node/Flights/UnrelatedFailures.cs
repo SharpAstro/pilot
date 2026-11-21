@@ -158,6 +158,8 @@ public static partial class UnrelatedFailures
     /// be rewritten. A segment on the Microsoft.Testing.Platform filters instead loses its filters (VSTest's and the platform's) and gets
     /// <c>--filter-method *.Class.Method</c>; the dot keeps the wildcard to a whole class name, so <c>FooTests</c> never selects
     /// <c>BarFooTests</c>. A test whose name has characters outside letters, digits, <c>_</c>, <c>.</c> and <c>+</c> leaves that segment as it is.
+    /// A class in the global namespace has no dot before its name, so <c>*.</c> finds none of its tests: the base run then shows no failure and
+    /// the test is taken as the flight's, which is safe, never a false pass (checked on xunit.v3.mtp-v2 4.0.3, the review of #1091).
     /// </summary>
     public static string? Only(string check, string test) =>
         test.Contains('\'') ? null : Refilter(
@@ -171,6 +173,8 @@ public static partial class UnrelatedFailures
     /// A segment on the Microsoft.Testing.Platform filters gets <c>--filter-not-class *.A</c> for each class instead (the dot keeps the
     /// wildcard to a whole class name, so <c>A</c> never leaves out <c>BA</c>); one with a <c>--filter-query</c>, or a class name with odd
     /// characters, stays as it is. Null when no segment could be rewritten (a filter holding a single quote, or no <c>dotnet test</c> at all).
+    /// A class in the global namespace has no dot before its name, so <c>*.</c> does not leave it out: the rerun fails on it again and the leg
+    /// fails as it would have, which is safe, never a false pass (the review of #1091).
     /// </summary>
     public static string? Excluding(string check, IReadOnlyCollection<string> classes)
     {

@@ -427,7 +427,7 @@ public static partial class Briefs
     {
         var text = new StringBuilder();
         var state = FlightWaiting.OnHoldText(flight) ?? (flight.State == FlightState.Held ? $"held, waiting for {FlightWaiting.For(flight)}" : flight.State.ToString().ToLowerInvariant());
-        text.Append($"{flight.Code}: {flight.Title ?? flight.Item.Noun} ({flight.Repo} {flight.Item.Display}, {state})");
+        text.Append($"{flight.Code}: {(flight.Title is { } title ? $"{title} ({flight.Repo} {flight.Item.Display}, {state})" : $"{flight.Item.Noun} ({flight.Repo}, {state})")}");
         text.Append(flight.PullRequestUrl is { } url ? $", PR {url}" : ", no PR yet");
         text.Append(flight.Review is { } review ? $", review {review.State.ToString().ToLowerInvariant()}" : ", no review yet");
         foreach (var leg in legs.Where(l => l.Flight == flight.Code).OrderBy(l => l.Order))

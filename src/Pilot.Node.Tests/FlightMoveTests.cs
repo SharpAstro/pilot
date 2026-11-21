@@ -746,12 +746,16 @@ public sealed class FlightMoveTests2 : FlightMoveTestsBase
     public async Task AHandMoveOutsideMaintenanceMovesTheFlightAsWell()
     {
         Fly(LegState.Done);
+        // The 7-day card raised while the flight was here offers to hold it; once it is the other node's, that button is gone (the review of #949).
+        _sender.RaiseCard(CardBin.Ring, StartGate.WeekKind, "node", "7-day usage", choices:
+            [new CardChoice { Label = "Hold TIA900", Verb = Verbs.Ground, Target = "flight/TIA900" }, new CardChoice { Label = "Take no new flights", Verb = Verbs.Ground, Target = "node" }]);
 
         var moved = await _senderLegs.RunAsync(new CommandRequest { Verb = Verbs.MoveFlight, Target = "flight/TIA900", Who = "tests" }, Ct);
 
         moved.Ok.ShouldBeTrue(moved.Error);
         MovedAway();
         _sender.Cards().Single(c => c.Kind == LegCommander.MovedAwayKind).Detail.ShouldNotBeNull().ShouldNotContain("maintenance");
+        _sender.Cards(openOnly: true).Single(c => c.Kind == StartGate.WeekKind).Choices.Select(c => c.Label).ShouldBe(["Take no new flights"]);
     }
 
     [Fact]

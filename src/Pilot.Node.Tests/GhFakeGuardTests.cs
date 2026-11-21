@@ -27,7 +27,8 @@ public sealed partial class GhFakeGuardTests
         + @"|\b" + Q + @"(?:" + Types + @")(?:\[\])?\??\s+\w+\s*(?:\{[^}]*\}\s*)?=\s*new\("
         + @"|\b" + Q + @"(?:" + Types + @")(?:\[\])?\??\s+\w+\s*\([^)]*\)\s*=>\s*new\("
         + @"|\b" + Q + @"(?:" + Types + @")(?:\[\])?\??\s+\w+\s*\([^)]*\)\s*\{\s*return\s+new\("
-        + @"|\bwith\s*\{[^}]*\b(?:" + BuilderOnlyMembers + @")\s*=")]
+        // A `with` that sets a builder-only member, also after a nested initializer one level deep (`with { X = new Y { }, MergedAt = ... }`).
+        + @"|\bwith\s*\{(?:[^{}]|\{[^{}]*\})*?\b(?:" + BuilderOnlyMembers + @")\s*=")]
     private static partial Regex DirectConstruction();
 
     /// <summary>The places of <paramref name="source"/> (1-based line, the line's text) that build a gh-read record directly; a comment line is not one.</summary>
@@ -87,9 +88,8 @@ public sealed partial class GhFakeGuardTests
     public void NoTestBuildsAGhReadRecordByHandOutsideTheBuilders()
     {
         var offenders = Offenders();
-        var fresh = offenders.ToList();
-        fresh.ShouldBeEmpty("build these through GhAnswers (it parses a recorded gh answer):\n" +
-            string.Join("\n", fresh.SelectMany(o => o.Value.Select(h => $"{o.Key}:{h.Line}: {h.Text.Trim()}"))));
+        offenders.ShouldBeEmpty("build these through GhAnswers (it parses a recorded gh answer):\n" +
+            string.Join("\n", offenders.SelectMany(o => o.Value.Select(h => $"{o.Key}:{h.Line}: {h.Text.Trim()}"))));
     }
 
     [Fact]
@@ -116,6 +116,7 @@ public sealed partial class GhFakeGuardTests
     [InlineData("var s = new global::Pilot.Contracts.PullRequestStatus { Number = 1 };")]
     [InlineData("_github.Pr = _github.Pr! with { State = \"MERGED\", MergedAt = Now };")]
     [InlineData("Queue = queued with { Queued = false, RemovedReason = \"X\" };")]
+    [InlineData("_github.Pr = _github.Pr! with { Checks = new Checks { Ok = true }, MergedAt = Now };")]
     [InlineData("PullRequestStatus Pr(int n)\n    {\n        return new() { Number = n };\n    }")]
     public void TheScannerFlagsADirectConstruction(string line) => Scan(line).ShouldHaveSingleItem();
 

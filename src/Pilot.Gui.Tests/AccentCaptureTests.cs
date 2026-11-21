@@ -242,4 +242,17 @@ public sealed class AccentCaptureTests
             }
         }
     }
+
+    /// <summary>
+    /// The flights-archive case is worth its Night comparison only while it draws the archive's elements (the pill, the archived count, the
+    /// panel's Archive button): it must not draw the same as the plain flights page (the review of #1089).
+    /// </summary>
+    [Fact]
+    public async Task TheArchiveCaseDrawsMoreThanThePlainFlightsPage()
+    {
+        var (archive, _, _) = await Draw("flights-archive", null, night: true);
+        var (plain, _, _) = await Draw("flights", null, night: true);
+
+        archive.SequenceEqual(plain).ShouldBeFalse();
+    }
 }

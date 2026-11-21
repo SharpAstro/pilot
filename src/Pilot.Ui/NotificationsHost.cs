@@ -206,6 +206,8 @@ internal sealed class NotificationsHost
     /// <summary>Toggles the bar; what the bell, the collapse button and the key all do.</summary>
     public void Toggle() => State = Open ? BarStates.Collapsed : _lastOpen;
 
+    private readonly HashSet<(string?, string)> _seen = [];
+
     /// <summary>
     /// Keeps the feed to the open cards: a card new to the panel is posted (a ringing one as a warning, any other as information),
     /// a card gone from it is closed into the history. The feed's clock moves to <paramref name="now"/>.
@@ -213,7 +215,9 @@ internal sealed class NotificationsHost
     public void Sync(IReadOnlyList<CardRow> open, Func<CardRow, string?> nodeOf, DateTimeOffset now)
     {
         Fold();
-        var seen = new HashSet<(string?, string)>();
+        // Runs every frame on the UI thread: the set is kept and cleared, not made anew (the review of #1194).
+        var seen = _seen;
+        seen.Clear();
         Ringing = open.Any(c => c.Bin == CardBin.Ring);
         foreach (var card in open)
         {
@@ -227,13 +231,16 @@ internal sealed class NotificationsHost
                     Title = card.Title,
                     Text = card.Summary ?? "",
                     Severity = card.Bin == CardBin.Ring ? NotificationSeverity.Warn : NotificationSeverity.Info,
+                    // A staying toast stays until pressed or dismissed, by #1184's design: dismissing the toast closes the notification
+                    // only, and the card stays open on the bar until it is answered (the review of #1194).
                     Kind = NotificationKind.Staying,
                     Source = key.Item1,
                     Row = CardBody?.Invoke(card),
                 }, now).Id;
             }
         }
-        foreach (var gone in _ids.Keys.Where(k => !seen.Contains(k)).ToArray())
+        // Every key seen is in _ids by now, so a card has gone only when _ids holds more: most frames allocate nothing here.
+        foreach (var gone in _ids.Count > seen.Count ? _ids.Keys.Where(k => !seen.Contains(k)).ToArray() : [])
         {
             // A card gone from the panel (answered, or handled elsewhere) is closed into the history.
             Feed.Dismiss(_ids[gone]);

@@ -138,6 +138,18 @@ public sealed class TurnOutageTests
         Open().ShouldHaveSingleItem().Summary!.ShouldContain("2 sessions showed no first turn");
     }
 
+    /// <summary>A subject that took its turn after all no longer counts: a second stalled one within the window is then one stuck session, not an outage (the review of #972).</summary>
+    [Fact]
+    public void ASubjectThatTurnedNoLongerCountsTowardAnOutage()
+    {
+        _outage.Observe("flight/TIA1/parser", Start);
+        _outage.Turned("flight/TIA1/parser");
+
+        _outage.Observe("flight/TIA1/solver", Start.AddMinutes(4));
+        _outage.IsOpen.ShouldBeFalse();
+        Open().ShouldBeEmpty();
+    }
+
     [Fact]
     public void TwoSubjectsMoreThanTenMinutesApartAreTwoStuckSessionsNotAnOutage()
     {

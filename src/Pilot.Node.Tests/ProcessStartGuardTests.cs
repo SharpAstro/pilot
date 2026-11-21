@@ -101,15 +101,12 @@ public sealed class ProcessStartGuardTests
     [Fact]
     public void TheObserverThrowsInAnUnmarkedTestNamingTheKindAndTheCommand()
     {
+        // PILOT_TEST_PROCESS_GUARD=report is the run's own mode: the observer then never throws (the report is its only effect), so there
+        // is nothing to assert and the test says it was skipped rather than passing on nothing (the review of #958).
+        Assert.SkipWhen(ReportMode, "PILOT_TEST_PROCESS_GUARD=report: the observer never throws");
         // Provoked on purpose, so the observer checks it but leaves it out of the process-start report.
         using var provoking = TestEnvironment.ProvokingAStart();
 
-        // PILOT_TEST_PROCESS_GUARD=report is the run's own mode: the observer then never throws (the report is its only effect).
-        if (ReportMode)
-        {
-            ProcessStarts.Observe("git", new ProcessStartInfo("git", "status"));
-            return;
-        }
         var ex = Should.Throw<ProcessStartNotAllowedException>(() => ProcessStarts.Observe("git", new ProcessStartInfo("git", "status")));
 
         ex.Message.ShouldContain("git status");
@@ -148,23 +145,16 @@ public sealed class ProcessStartGuardTests
     [Fact]
     public async Task OnAThreadWithNoTestAStartIsTheCarriedTestsAndThrowsWhenThatTestIsUnmarked()
     {
+        // Report mode never throws (see the observer test above): skipped there rather than passing on nothing (the review of #958).
+        Assert.SkipWhen(ReportMode, "PILOT_TEST_PROCESS_GUARD=report: the observer never throws");
         var ex = await OnAThreadWithNoTestAsync(() =>
         {
             TestEnvironment.CarryOwner(new TestEnvironment.Owner("Some.UnmarkedNodeTest", Unmarked));
-            if (ReportMode)
-            {
-                // Report mode never throws (see the observer test above).
-                ProcessStarts.Observe("git", new ProcessStartInfo("git", "fetch origin"));
-                return null;
-            }
             return Should.Throw<ProcessStartNotAllowedException>(() => ProcessStarts.Observe("git", new ProcessStartInfo("git", "fetch origin")));
         });
 
-        if (ex is not null)
-        {
-            ex.Message.ShouldContain("Some.UnmarkedNodeTest");
-            ex.Message.ShouldContain("git fetch origin");
-        }
+        ex.ShouldNotBeNull().Message.ShouldContain("Some.UnmarkedNodeTest");
+        ex.Message.ShouldContain("git fetch origin");
     }
 
     [Fact]

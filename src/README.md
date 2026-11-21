@@ -709,10 +709,15 @@ A design (`DSN-<n>`) is a prototype of DIR.Lib screens the owner briefs, kept in
 `pilot design new`, `brief`, `draft`, `check`, `render`, `publish`, `show`, `terminals`, and `pilot designs`. The node is the one
 writer; `check` and `render` load the draft's `prototype.json` with DIR.Lib's `Prototype`.
 
+**Designs and ideas (PIL1185).** A design and an idea are linked many to many with `pilot design link DSN-<n> <idea>` and
+`pilot design unlink`; each shows the other on its page. A flight planned from a linked idea is built to its designs, and the
+PR body carries a Designs section naming each version. `pilot flight replan-design` moves a flight to a design's newer
+published version: its recorded version and prototype hash change, the issue is told, and a fresh planner starts.
+
 **Where a built design lives (PIL1208).** When a flight builds a version, the node commits that version's files under
 `docs/designs/<issue>/` in the flight's repo (the issue is the design's own, since a DSN id repeats across nodes), so they land
 with the flight. A render over 500 KB, or a version over 3 MB in all, is not committed; the PR says so and one card offers
-placing again. Once the flight merges, the design issue and the PR's Designs section link the folder at the merge commit (a
+placing again, which places a smaller version once the flight is moved to it with `pilot flight replan-design`. Once the flight merges, the design issue and the PR's Designs section link the folder at the merge commit (a
 permalink), each link is checked, and the branch `design/<issue>` is deleted, unless a newer version that has not been built is
 on it (an unbuilt design keeps its branch). `pilot design show` prints `built: <owner/repo> docs/designs/<n> at <short sha>, v<k>`
 and the Designs page shows the same text as its `Built:` line, both from `DesignSyncText.BuiltPlace`; a design with no landed
@@ -785,7 +790,8 @@ A node's first sweep waits for a look (#1114). While `maintenance-every` has nev
 nothing: once idle, the node runs a dry run and raises one For-you card (`maintenance-first-run`) with its totals and the five
 largest items per step. **Run on schedule** saves `maintenance-every` as `1d`, so the schedule applies from then on; **Keep off**
 saves it as `off`. The card is looked up by kind among the open cards, so a later tick or a restart raises no second, and the
-the node's own sweep never presses either choice, and an assistant's press is asked on a card for the person unless the autopilot is on. A node where a person has set `maintenance-every` (either value) never gets the card.
+node's own sweep never presses either choice, and an assistant's press is asked on a card for the person unless the autopilot
+is on. A node where a person has set `maintenance-every` (either value) never gets the card.
 
 The steps:
 

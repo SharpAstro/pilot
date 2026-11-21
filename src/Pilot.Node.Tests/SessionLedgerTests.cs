@@ -131,6 +131,30 @@ public sealed class SessionLedgerTests : IDisposable
         Row("a1b2c3d4").FixRound.ShouldBe(2);
     }
 
+    /// <summary>An ended fixer row keeps its round once the PR's review no longer names it, through the row it had (the review of #1011).</summary>
+    [Fact]
+    public async Task AnEndedFixersRowKeepsItsRoundOnceTheReviewNoLongerNamesIt()
+    {
+        Launch(AgentRows.SessionA, "de1-fix-pilot-7", SessionStartReasons.PrFix, pr: 7);
+        var review = new PrReviewRow
+        {
+            Repo = "SharpAstro/pilot", Number = 7, Url = "u", Base = "main", Head = "h", ClonePath = _folder, Worktree = _folder, Reviewer = "de1-review-pilot-7",
+            State = default, StartedAt = Start, Fixer = "de1-fix-pilot-7", FixRound = 2,
+        };
+        _state.PutPrReview(review);
+        _agents.Json = AgentRows.List(AgentRows.Background(AgentRows.SessionA, "de1-fix-pilot-7", "working", pid: 1, status: "busy"));
+        await _tracker.PollAsync(Ct);
+
+        _state.PutPrReview(review with { Fixer = null, FixRound = 3 });
+        _agents.Json = "[]";
+        await _tracker.PollAsync(Ct);
+        await _tracker.PollAsync(Ct);
+
+        var row = Row("a1b2c3d4");
+        row.State.ShouldNotBe(SessionState.Working);
+        row.FixRound.ShouldBe(2);
+    }
+
     [Fact]
     public async Task ASessionTheNodeStoppedCarriesTheEndReasonAndTimeGiven()
     {

@@ -117,6 +117,15 @@ public sealed class DesignCardWordsTests
         card.Summary.ShouldNotBeNull().ShouldContain("2A: keep it. 2B: rename it.");
     }
 
+    /// <summary>Questions with no option take no tag, so the box of a card of several gives no tag as its example (the review of #949).</summary>
+    [Fact]
+    public void SeveralQuestionsWithNoOptionsAskForAnAnswerToEachWithoutATagAsTheExample()
+    {
+        var card = Raise(new DesignQuestion(null!, "q1?", []), new DesignQuestion(null!, "q2?", []));
+
+        card.Choices.Single().AsksFor.ShouldBe("Your answer to each question");
+    }
+
     [Theory]
     [InlineData("Keep")]
     [InlineData("Rename")]
