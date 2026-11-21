@@ -275,10 +275,11 @@ public sealed class OverlayDepthTests
         var cards = CardsScreen.From([Card("c1")]);
         // The menu docks to the right edge and the toast keeps a margin there, so a row need only overlap the toast across, not lie inside it.
         static int Straddling(List<ClickableRegion> rows, RectF32 toast) =>
-            rows.FindIndex(r => r.Y + 2f < toast.Y && r.Y + r.Height > toast.Y + 2f && r.X < toast.X + toast.Width - 8f && r.X + r.Width > toast.X + 8f);
+            rows.FindIndex(r => r.Y + 1f < toast.Y && r.Y + r.Height > toast.Y + 1f && r.X < toast.X + toast.Width - 8f && r.X + r.Width > toast.X + 8f);
 
         // The menu cannot slide past its edges, and the toast's size decides which slides reach a straddling row, so the slide is searched for: from where the low menu stands, up
         // and down in small steps until a row runs under the toast's top edge.
+        // With the library's toast the menu slides only about 43 units, so at its lowest the third row runs about 2 units under the toast's top edge: the margin is 1.
         // The low menu's stored offset is the unclamped 9999, so the slide is searched by absolute offset from the top of the edge, clamped by the menu itself.
         float along;
         var found = float.NaN;
