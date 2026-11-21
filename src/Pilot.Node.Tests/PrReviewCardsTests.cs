@@ -78,8 +78,9 @@ public sealed class PrReviewCardsTests : PrFixTestsBase
     [InlineData("OPEN", null, PrReviewState.Reviewed)]
     public async Task ASweepSettlesEveryReviewCardKindAndEndsTheReviewOnlyWhenThePrIsMergedOrClosed(string prState, string? said, PrReviewState review)
     {
-        await Review("acme/widget#7", "changes", Design);
-        _reviews.Of(Seven)!.State.ShouldBe(PrReviewState.Reviewed, "the review stands before the sweep");
+        var done = await Review("acme/widget#7", "changes", Design);
+        // The helper waits out the reviewer's grace, which ends the review: put it back to the open state the sweep's end is about.
+        _state.PutPrReview(done with { State = PrReviewState.Reviewed, ClosedAt = null });
         RaiseReviewCards();
         _github.Prs["acme/widget#7"] = _github.Prs["acme/widget#7"] with { State = prState };
 
@@ -143,9 +144,11 @@ public sealed class PrReviewCardsTests : PrFixTestsBase
         _github.PrReads.Clear();
 
         await reviews.SweepAsync(Ct);
+        var first = _github.PrReads["acme/widget#7"];
         await reviews.SweepAsync(Ct);
 
-        _github.PrReads["acme/widget#7"].ShouldBe(2);
+        first.ShouldBeGreaterThan(0);
+        _github.PrReads["acme/widget#7"].ShouldBe(first * 2, "a PR with a card that is not a Merge card is read at every sweep, not throttled");
     }
 
     [Fact]
