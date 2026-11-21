@@ -83,7 +83,9 @@ public sealed class ReReviewTests : ReviewTestsBase
         brief.ShouldContain("must-block:");
         brief.ShouldContain("build or test break");
         brief.ShouldContain("not the whole PR");
-        brief.ShouldContain("give `changes`: the node takes the round as a pass and files it");
+        brief.ShouldContain("give `changes`, and the node takes the round as a pass and files it");
+        brief.ShouldContain("Any other finding in untouched text goes under `## Not blocking`", Case.Sensitive, "a finding is made in the PR, not filed, unless it needs a design of its own");
+        brief.ShouldContain("answer it `not addressed`, so the next round makes it");
         brief.IndexOf("## Earlier points", StringComparison.Ordinal).ShouldBeLessThan(brief.IndexOf("new findings", StringComparison.Ordinal));
     }
 
