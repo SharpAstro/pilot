@@ -30,7 +30,11 @@ public sealed class PageFrameTimeTests
     {
         var (prepare, arrange) = await PageTextOverlapTests.TimedArrange(page, state, width, dpi, height);
         var line = $"{PageTextOverlapTests.Key(page, state, width, dpi, height)}\tsetup+first frame {prepare:F1} ms\tarrange {arrange[0]:F1} / {arrange[1]:F1} / {arrange[2]:F1} ms";
-        if (Environment.GetEnvironmentVariable("PILOT_FRAME_TIMES") is { Length: > 0 } file)
+        // A pilot run job cannot set PILOT_FRAME_TIMES, so its artifact folder takes the lines when it is not set (PIL1232).
+        var file = Environment.GetEnvironmentVariable("PILOT_FRAME_TIMES") is { Length: > 0 } given ? given
+            : Environment.GetEnvironmentVariable("PILOT_JOB_ARTIFACTS") is { Length: > 0 } dir ? Path.Combine(dir, "frame-times.txt")
+            : null;
+        if (file is not null)
         {
             lock (Gate)
             {

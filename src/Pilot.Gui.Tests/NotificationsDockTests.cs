@@ -109,6 +109,60 @@ public sealed class NotificationsDockTests
         chrome.Notifications.State.ShouldBe(BarStates.Over);
     }
 
+    // A pixel just inside the left edge of a region, on its vertical middle: the control's fill, clear of the icon at the centre.
+    private static RGBAColor32 FillOf(RgbaImageRenderer renderer, ClickableRegion at)
+    {
+        var x = (int)(at.X + 3f);
+        var y = (int)(at.Y + at.Height / 2f);
+        var i = (y * Width + x) * 4;
+        var px = renderer.Surface.Pixels;
+        return new RGBAColor32(px[i], px[i + 1], px[i + 2], 0xff);
+    }
+
+    private static int Distance(RGBAColor32 a, RGBAColor32 b) => Math.Abs(a.Red - b.Red) + Math.Abs(a.Green - b.Green) + Math.Abs(a.Blue - b.Blue);
+
+    [Fact]
+    public void ThePinReadsOffOverThePageAndPressedDockedFromTheBarsStateAlone()
+    {
+        var accent = UiThemes.Current.Palette.Accent;
+        var (over, overRenderer) = Draw(BarStates.Over);
+        using var _ = overRenderer;
+        var off = FillOf(overRenderer, Region(over, NotificationsHost.PinAction));
+        Distance(off, accent).ShouldBeGreaterThan(30, "over the page the pin is not pressed: no accent fill");
+
+        var (docked, dockedRenderer) = Draw(BarStates.Docked);
+        using var __ = dockedRenderer;
+        Distance(FillOf(dockedRenderer, Region(docked, NotificationsHost.PinAction)), accent).ShouldBeLessThanOrEqualTo(6, "docked the pin is pressed: the accent fill, set from State with no press");
+    }
+
+    [Fact]
+    public void TheHeaderControlsAreFoundByTheirHitsAndPressedAsBefore()
+    {
+        var (chrome, renderer) = Draw(BarStates.Over);
+        using var _ = renderer;
+        Region(chrome, "notifications:all").Width.ShouldBeGreaterThan(0f);
+        PressOn(chrome, NotificationsHost.PinAction);
+        chrome.Notifications.State.ShouldBe(BarStates.Docked, "a press on notifications:pin docks the bar");
+        PressOn(chrome, NotificationsHost.PinAction);
+        chrome.Notifications.State.ShouldBe(BarStates.Over, "and undocks it");
+        PressOn(chrome, "notifications:all");
+        chrome.Page.ShouldBe(PilotPage.Notifications, "a press on notifications:all opens the page");
+    }
+
+    [Fact]
+    public void EachHeaderControlCarriesItsTooltipAsWords()
+    {
+        var (over, overRenderer) = Draw(BarStates.Over);
+        using var _ = overRenderer;
+        Region(over, NotificationsHost.PinAction).Tooltip.ShouldBe("Open over the page: press to pin the bar beside it");
+        Region(over, "notifications:all").Tooltip.ShouldBe("Open the Notifications page: everything that needs you and everything that happened");
+
+        var (docked, dockedRenderer) = Draw(BarStates.Docked);
+        using var __ = dockedRenderer;
+        docked.Notifications.DockedNow.ShouldBeTrue();
+        Region(docked, NotificationsHost.PinAction).Tooltip.ShouldBe("Pinned beside the page: press to let the bar open over it");
+    }
+
     [Fact]
     public void DockedThePageIsTheWindowLessTheRailAndTheBarAndNoPageTextLiesUnderTheBar()
     {

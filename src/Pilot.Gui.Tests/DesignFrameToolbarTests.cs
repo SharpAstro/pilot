@@ -23,22 +23,49 @@ public sealed class DesignFrameToolbarTests
             Chrome = new PilotChrome<RgbaImage>(_renderer, new SessionsView<RgbaImage>(_renderer)) { FontPath = SessionsCapture.FontPath };
             Chrome.Autopilot.OnToggle = _ => Task.FromResult<string?>(null);
             Chrome.Show(PilotPage.Designs);
+            Router = new InputRouter(Chrome.Designs.Ui, new BackgroundTaskTracker(), () => { }) { Widgets = () => Chrome.Widgets };
             View.Open("DSN-1");
             Paint();
         }
 
+        public InputRouter Router { get; }
         public DesignsScreen Screen { get; }
         public PilotChrome<RgbaImage> Chrome { get; }
         public DesignsView<RgbaImage> View => Chrome.Designs;
 
-        public void Paint()
+        public void Paint(float width = 1920f)
         {
             var data = PageData.For("sample");
-            Chrome.Render(data.Sessions, data.Flights, data.Cards, data.Jobs, data.Fleet, data.Repos, data.PullRequests, new RectF32(0, 0, 1920, 1080), data.Machines, null, data.Spend, Screen);
+            Chrome.Render(data.Sessions, data.Flights, data.Cards, data.Jobs, data.Fleet, data.Repos, data.PullRequests, new RectF32(0, 0, width, 1080), data.Machines, null, data.Spend, Screen);
         }
 
         public List<Layout.ArrangedNode<float>> Arranged(float width = 1920f) =>
             Layout.Engine.Arrange(View.Tree(Screen), new Rect<float>(0, 0, width, 1080), new PixelMeasureContext<RgbaImage>(_renderer, SessionsCapture.FontPath, 1f)).ToList();
+
+        public ClickableRegion Region(string action)
+        {
+            var regions = new List<ClickableRegion>();
+            View.CollectPaintedRegions(regions);
+            return regions.First(x => x.Result is HitResult.ButtonHit b && b.Action == action || x.Result is HitResult.ListItemHit l && $"{l.ListId}:{l.Index}" == action);
+        }
+
+        public void Press(string action)
+        {
+            var r = Region(action);
+            var (x, y) = (r.X + r.Width / 2f, r.Y + r.Height / 2f);
+            Router.Handle(new InputEvent.MouseDown(x, y, MouseButton.Left, InputModifier.None, 1));
+            Router.Handle(new InputEvent.MouseUp(x, y, MouseButton.Left));
+            Paint();
+        }
+
+        // The segment's own fill, sampled just inside its top-left corner where no word is drawn.
+        public RGBAColor32 FillOf(string action)
+        {
+            var r = Region(action);
+            var px = _renderer.Surface.Pixels;
+            var i = ((int)(r.Y + 2) * 1920 + (int)(r.X + 2)) * 4;
+            return new RGBAColor32(px[i], px[i + 1], px[i + 2], 255);
+        }
 
         public void Dispose() => _renderer.Dispose();
     }
@@ -49,15 +76,93 @@ public sealed class DesignFrameToolbarTests
         using var rig = new Rig();
         var all = rig.Arranged();
         var own = new System.Text.RegularExpressions.Regex(@"^designs:frame-(size|rotate|terminal|point):0:0(:|$)");
-        var buttons = all.Where(a => a.Node.Hit is HitResult.ButtonHit { Action: { } act } && own.IsMatch(act)).ToList();
+        var buttons = all.Where(a => a.Node.Hit is HitResult.ButtonHit { Action: { } act } && own.IsMatch(act) || a.Node.Hit is HitResult.ListItemHit { ListId: "designs:frame-sizes:0:0" }).ToList();
         buttons.Count.ShouldBe(7);
-        buttons.Select(b => b.Bounds.Y).Distinct().Count().ShouldBe(1, "one row");
-        buttons.Select(b => b.Bounds.Height).Distinct().Count().ShouldBe(1, "one height");
+        // One vertical middle (the segments are inset inside their control, so their tops differ from the buttons').
+        buttons.Select(b => (int)Math.Round(b.Bounds.Y + b.Bounds.Height / 2f)).Distinct().Count().ShouldBe(1, "one row");
+        // The five sizes are the library's segments (each inset inside the control, so a little less tall than it); Rotate and Point at this are buttons of the control's height.
+        var plain = buttons.Where(b => b.Node.Hit is HitResult.ButtonHit { Action: { } a } && (a.Contains("rotate") || a.Contains("point"))).ToList();
+        plain.Select(b => b.Bounds.Height).Distinct().Count().ShouldBe(1, "one height");
+        plain.ShouldAllBe(b => Math.Abs(b.Bounds.Height - AboutCard.HeaderButton) < 0.5f);
         var texts = SentenceRuns.Texts(all.Select(a => a.Node));
         foreach (var label in Labels)
         {
             texts.ShouldContain(label);
         }
+    }
+
+    [Fact]
+    public void APressOnASizeSegmentChangesThatFramesSizeAndTheChosenSegmentFollowsTheState()
+    {
+        using var rig = new Rig();
+        rig.Press("designs:frame-sizes:0:0:3");
+        rig.View.FrameSizeName(0, 0).ShouldBe("Phone");
+        rig.Press("designs:frame-sizes:0:0:4");
+        rig.View.FrameSizeName(0, 0).ShouldBe("Terminal");
+
+        // Set without a press: the chosen segment is the state's, drawn in a fill the others do not have.
+        rig.View.PickFrameTarget(0, 0, "Tablet").ShouldBeTrue();
+        rig.Paint();
+        rig.FillOf("designs:frame-sizes:0:0:2").ShouldNotBe(rig.FillOf("designs:frame-sizes:0:0:3"));
+        rig.FillOf("designs:frame-sizes:0:0:3").ShouldBe(rig.FillOf("designs:frame-sizes:0:0:1"));
+    }
+
+    [Fact]
+    public void RightAndLeftStepTheSizeChoiceOnceTheControlHasBeenPressed()
+    {
+        using var rig = new Rig();
+        rig.View.PickFrameTarget(0, 0, "Laptop").ShouldBeTrue();
+        rig.Paint();
+        // A press on the chosen segment changes nothing and puts the keyboard in the control.
+        rig.Press("designs:frame-sizes:0:0:1");
+        rig.View.FrameSizeName(0, 0).ShouldBe("Laptop");
+        rig.Router.Handle(new InputEvent.KeyDown(InputKey.Right, InputModifier.None)).ShouldBeTrue();
+        rig.View.FrameSizeName(0, 0).ShouldBe("Tablet");
+        // The window repaints between key presses, which rebuilds the control from the new state.
+        rig.Paint();
+        rig.Router.Handle(new InputEvent.KeyDown(InputKey.Left, InputModifier.None)).ShouldBeTrue();
+        rig.View.FrameSizeName(0, 0).ShouldBe("Laptop");
+    }
+
+    [Theory]
+    [InlineData(InputKey.D1, "Desktop")]
+    [InlineData(InputKey.D3, "Tablet")]
+    [InlineData(InputKey.D2, "Laptop")]
+    public void AltAndTheSegmentsDigitPicksTheFramesSize(InputKey key, string size)
+    {
+        using var rig = new Rig();
+        rig.Router.Handle(new InputEvent.KeyDown(key, InputModifier.Alt)).ShouldBeTrue();
+        rig.View.FrameSizeName(0, 0).ShouldBe(size);
+    }
+
+    [Fact]
+    public void AtANarrowWellTheWordsStayInWholeBecauseTheLibraryHasNoMarkToStandForThem()
+    {
+        // DIR.Lib#300: no desktop, tablet, phone or terminal mark yet, so the segments keep their words at every width (the library drops a word only where a mark stands for it)
+        // and the toolbar wraps Rotate and Point at this onto a second row instead; nothing is cut.
+        using var rig = new Rig();
+        var texts = SentenceRuns.Texts(rig.Arranged(700f).Select(a => a.Node));
+        foreach (var label in new[] { "Desktop", "Laptop", "Tablet", "Phone", "Terminal", "Rotate", "Point at this" })
+        {
+            texts.ShouldContain(label);
+        }
+    }
+
+    [Fact]
+    public void AWellNarrowerThanTheSegmentedControlWrapsTheSizesAsButtonsAndNothingIsCut()
+    {
+        // At 360 the well holds about 270 units, less than the segmented control (about 344, one unbreakable item): the sizes are separate buttons again, which wrap, and every
+        // one lies inside the window with the hit id it always had.
+        using var rig = new Rig();
+        // The view learns its width from a render, so it is painted at 360 first.
+        rig.Paint(360f);
+        var all = rig.Arranged(360f);
+        var own = new System.Text.RegularExpressions.Regex(@"^designs:frame-(size|rotate|terminal|point):0:0(:|$)");
+        var buttons = all.Where(a => a.Node.Hit is HitResult.ButtonHit { Action: { } act } && own.IsMatch(act)).ToList();
+        buttons.Count.ShouldBe(7);
+        buttons.ShouldAllBe(b => b.Bounds.X >= 0f && b.Bounds.X + b.Bounds.Width <= 360f + 0.5f, "inside the window");
+        buttons.Select(b => b.Bounds.Y).Distinct().Count().ShouldBeGreaterThan(1, "wrapped onto a second row");
+        buttons.ShouldAllBe(b => Math.Abs(b.Bounds.Height - AboutCard.HeaderButton) < 0.5f, "every one a button of the header height");
     }
 
     [Fact]

@@ -106,6 +106,54 @@ public sealed class NotificationsCaptureTests
         File.WriteAllBytes(Path.Combine(ArtifactDir(), $"{Tag}-for-you-{shot.ToString().ToLowerInvariant()}-{width}x{height}.png"), PngWriter.Encode(renderer.Surface.Pixels, width, height));
     }
 
+    /// <summary>
+    /// PIL1232: the open and docked bar's header (pin toggle, open-in-page action) at a narrow window and in the night palette, written as
+    /// <c>pil1232-bar-{PILOT_CAPTURE_PHASE}-{shot}-{palette}-{width}.png</c> only when PILOT_JOB_ARTIFACTS or PILOT_TEST_CAPTURE names a folder.
+    /// </summary>
+    [Theory]
+    [InlineData(Shot.Over, false, 700, 900)]
+    [InlineData(Shot.Docked, false, 700, 900)]
+    [InlineData(Shot.Over, true, 700, 900)]
+    [InlineData(Shot.Docked, true, 700, 900)]
+    [InlineData(Shot.Over, true, 1920, 1080)]
+    [InlineData(Shot.Docked, true, 1920, 1080)]
+    public void TheBarHeaderAtANarrowWindowAndInTheNightPalette(Shot shot, bool night, int width, int height)
+    {
+        PageTime.Zone = TimeZoneInfo.Utc;
+        var dir = Environment.GetEnvironmentVariable("PILOT_JOB_ARTIFACTS") is { Length: > 0 } a ? a
+            : Environment.GetEnvironmentVariable("PILOT_TEST_CAPTURE") is { Length: > 0 } c ? Path.GetDirectoryName(c) : null;
+        var phase = Environment.GetEnvironmentVariable("PILOT_CAPTURE_PHASE") is { Length: > 0 } p ? p : "after";
+        var was = Palette.Current;
+        try
+        {
+            using var renderer = new RgbaImageRenderer((uint)width, (uint)height);
+            var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
+            // The chrome sets the palette from its own Night switch at each render, so the switch is what picks the palette.
+            chrome.Night.On = night;
+            var data = PageData.For("sample");
+            var ideas = PageTextOverlapTests.IdeasFor("sample");
+            chrome.Show(PilotPage.Ideas);
+            Prepare(chrome, shot);
+            void Frame() => chrome.Render(data.Sessions, data.Flights, CardsOf(shot), data.Jobs, data.Fleet, data.Repos, new RectF32(0, 0, width, height), data.Machines, ideas);
+            Frame();
+            Frame();
+            var regions = new List<ClickableRegion>();
+            chrome.NotificationsLayer.CollectPaintedRegions(regions);
+            regions.Select(r => r.Result).OfType<HitResult.ButtonHit>().Select(h => h.Action).ShouldContain("notifications:pin");
+            regions.Select(r => r.Result).OfType<HitResult.ButtonHit>().Select(h => h.Action).ShouldContain("notifications:all");
+            if (dir is not null)
+            {
+                Directory.CreateDirectory(dir);
+                File.WriteAllBytes(Path.Combine(dir, $"pil1232-bar-{phase}-{shot.ToString().ToLowerInvariant()}-{(night ? "night" : "standard")}-{width}.png"),
+                    PngWriter.Encode(renderer.Surface.Pixels, width, height));
+            }
+        }
+        finally
+        {
+            Palette.Current = was;
+        }
+    }
+
     private sealed class BufferedViewport(CellBuffer buffer, int width, int height) : ITerminalViewport
     {
         public (int Column, int Row) Offset => (0, 0);
