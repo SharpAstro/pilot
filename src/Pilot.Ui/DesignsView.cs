@@ -1482,7 +1482,7 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
             return (DesignTargets.BuiltIn.Sum(t => t.Name.Length) + "Terminal".Length) * 7f + (DesignTargets.BuiltIn.Count() + 1) * 24f;
         }
         var context = new PixelMeasureContext<TSurface>(Renderer, FontPath, 1f);
-        return Layout.Engine.Measure(SizeChoice(-1, -1, ""), new Size<float>(100000f, 100000f), context).Width;
+        return Layout.Engine.Measure(SizeChoice(-1, -1, ""), new Layout.Size<float>(100000f, 100000f), context).Width;
     }
 
     /// <summary>
