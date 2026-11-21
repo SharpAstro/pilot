@@ -666,8 +666,10 @@ public sealed partial class LegCommander
         var args = new List<string>
         {
             $"name={name}",
-            "goal=make the review's not-blocking notes",
-            $"done-when=Each of the review's not-blocking notes is made or answered in a commit: {string.Join("; ", clean)}. The check passes.",
+            // Make them, not defer them: "larger than the flight" turned most notes into follow-up issues nobody picked up (65 open in pilot
+            // on 2026-11-21; the owner: "I want the fixer to just fix things instead of saying these 4 things need to be done later").
+            "goal=make every one of the review's not-blocking notes in this flight",
+            $"done-when=Each of the review's not-blocking notes is made in a commit: {string.Join("; ", clean)}. A note waits only when its change belongs in another repo or is a decision only the owner can make; size is no reason, so a test, a rename, a comment, a doc line or a refactor is made here. The check passes.",
         };
         if (legs.OrderBy(l => l.Order).LastOrDefault(l => l.Check is not null)?.Check is { } check)
         {
