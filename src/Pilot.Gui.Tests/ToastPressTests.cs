@@ -58,7 +58,7 @@ public sealed class ToastPressTests
         /// <summary>The toast's own row as the feed draws it now, arranged in a toast's width.</summary>
         public ImmutableArray<Layout.ArrangedNode<float>> Row(float width = 340f)
         {
-            var row = Chrome.Notifications.Feed.Toasts.Single(t => t.Notification.Kind == DIR.Lib.Notifications.NotificationKind.Staying).Notification.Row.ShouldNotBeNull();
+            var row = Chrome.Notifications.Toasts.Toasts.Single(t => t.Notification.Kind == DIR.Lib.Notifications.NotificationKind.Staying).Notification.Row.ShouldNotBeNull();
             return Layout.Engine.Arrange(row(), new Rect<float>(0, 0, width, 1400), new PixelMeasureContext<RgbaImage>(_measure, SessionsCapture.FontPath, 1f));
         }
 
