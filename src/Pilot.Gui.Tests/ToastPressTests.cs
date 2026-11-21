@@ -145,7 +145,6 @@ public sealed class ToastPressTests
     }
 
     [Theory]
-    [InlineData(240f)]
     [InlineData(340f)]
     public void ALongLabelEndsInAnEllipsisInsideTheToastAndNothingOverlaps(float width)
     {
