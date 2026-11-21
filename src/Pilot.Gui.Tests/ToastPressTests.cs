@@ -66,6 +66,14 @@ public sealed class ToastPressTests
             return Layout.Engine.Arrange(node, new Rect<float>(0, 0, width, 1400), new PixelMeasureContext<RgbaImage>(_measure, SessionsCapture.FontPath, 1f));
         }
 
+        /// <summary>Only the choices' row, arranged as above, so a check on how far it runs is not met by the body's full-width nodes.</summary>
+        public ImmutableArray<Layout.ArrangedNode<float>> ButtonRow(float width = 340f)
+        {
+            var n = Chrome.Notifications.Toasts.Toasts.Single(t => t.Notification.Kind == DIR.Lib.Notifications.NotificationKind.Staying).Notification;
+            var node = Layout.Builder.HStack([.. n.Buttons.ShouldNotBeNull()()]).WithGap(6f);
+            return Layout.Engine.Arrange(node, new Rect<float>(0, 0, width, 1400), new PixelMeasureContext<RgbaImage>(_measure, SessionsCapture.FontPath, 1f));
+        }
+
         /// <summary>How many pixels of the last frame are exactly this colour.</summary>
         public int Count(RGBAColor32 color)
         {
@@ -159,7 +167,7 @@ public sealed class ToastPressTests
         ArrangedText.Concat(row).ShouldNotContain("before going on to land it");
         row.Select(a => a.Node.Tooltip?.ToString()).ShouldContain(t => t != null && t.Contains(LongLabel));
         Actions(row).ShouldContain("toast:c1:1", "the tooltip on the cut button does not swallow its press");
-        row.Where(a => a.Bounds.X + a.Bounds.Width > width - DismissRoom + 0.5f).Select(a => $"{a.Node.GetType().Name}@{a.Bounds.X:0},{a.Bounds.Y:0},{a.Bounds.Width:0}x{a.Bounds.Height:0} hit={a.Node.Hit}")
+        rig.ButtonRow(width).Where(a => a.Bounds.X + a.Bounds.Width > width - DismissRoom + 0.5f).Select(a => $"{a.Node.GetType().Name}@{a.Bounds.X:0},{a.Bounds.Y:0},{a.Bounds.Width:0}x{a.Bounds.Height:0} hit={a.Node.Hit}")
             .ShouldBeEmpty($"nothing runs past the toast at {width}");
         TextOverlap.Faults(row).Select(f => f.Line).ShouldBeEmpty();
     }
