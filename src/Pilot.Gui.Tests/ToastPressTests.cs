@@ -1,0 +1,172 @@
+using System.Collections.Immutable;
+using DIR.Lib;
+using Pilot.Contracts;
+using Pilot.Ui;
+using SharpAstro.Png;
+using Shouldly;
+using Xunit;
+using Layout = DIR.Lib.Layout;
+
+namespace Pilot.Gui.Tests;
+
+/// <summary>
+/// A card toast's choices (PIL1252) go through the card's Presses under its press key, as the panel's do: dead with "…" on the one pressed
+/// while the node works, the node's refusal in the toast body, and drawn in the library's toast button style. Every row is the toast's own
+/// Row, arranged on the CPU with no window, and the captures (narrow and wide, standard and night, a long label and a refusal) go to
+/// PILOT_JOB_ARTIFACTS or PILOT_TEST_CAPTURE when set.
+/// </summary>
+public sealed class ToastPressTests
+{
+    private static readonly DateTimeOffset T0 = PageData.Now;
+    private const string LongLabel = "Start web-header and then wait for the review of the whole flight before going on to land it";
+    private const string Why = "refused: the flight is held, so nothing can be started on it until its owner lifts the hold";
+
+    private static CardRow Card(string label = "Start web-header") => new()
+    {
+        Id = "c1", Bin = CardBin.Ring, Kind = "pr-ready", Subject = "flight/ORBc1", Title = "TIA1818's PR #63 is ready to merge", Summary = "A short line on what happened.",
+        At = Live.At, State = CardState.Open,
+        Choices =
+        [
+            new CardChoice { Label = label, Verb = Verbs.StartLeg, Target = "flight/TIA1818/web-header" },
+            new CardChoice { Label = "Go around", Verb = Verbs.StartLeg, Target = "flight/TIA1818/other" },
+        ],
+    };
+
+    private sealed class Rig : IDisposable
+    {
+        private readonly RgbaImageRenderer _measure = new(1, 1);
+        private readonly RgbaImageRenderer _renderer;
+        private readonly PageData _data = PageData.For("sample");
+        private readonly int _width, _height;
+        public PilotChrome<RgbaImage> Chrome { get; }
+
+        public Rig(CardRow card, int width = 1920, int height = 1080)
+        {
+            _width = width;
+            _height = height;
+            _renderer = new RgbaImageRenderer((uint)width, (uint)height);
+            Chrome = new PilotChrome<RgbaImage>(_renderer, new SessionsView<RgbaImage>(_renderer)) { FontPath = SessionsCapture.FontPath };
+            Chrome.Notifications.Open = false;
+            Chrome.Show(PilotPage.Jobs);
+            Frame(CardsScreen.Empty, 0);
+            Frame(CardsScreen.From([card]), 1);
+        }
+
+        public void Frame(CardsScreen cards, int seconds) =>
+            Chrome.Render(_data.Sessions with { AsOf = T0.AddSeconds(seconds) }, _data.Flights, cards, _data.Jobs, _data.Fleet, _data.Repos, new RectF32(0, 0, _width, _height), _data.Machines);
+
+        /// <summary>The toast's own row as the feed draws it now, arranged in a toast's width.</summary>
+        public ImmutableArray<Layout.ArrangedNode<float>> Row(float width = 340f)
+        {
+            var row = Chrome.Notifications.Feed.Toasts.Single(t => t.Notification.Kind == DIR.Lib.Notifications.NotificationKind.Staying).Notification.Row.ShouldNotBeNull();
+            return Layout.Engine.Arrange(row(), new Rect<float>(0, 0, width, 1400), new PixelMeasureContext<RgbaImage>(_measure, SessionsCapture.FontPath, 1f));
+        }
+
+        public void Save(string name)
+        {
+            if (Dir() is { } dir)
+            {
+                Directory.CreateDirectory(dir);
+                File.WriteAllBytes(Path.Combine(dir, name + ".png"), PngWriter.Encode(_renderer.Surface.Pixels, _width, _height));
+            }
+        }
+
+        public void Dispose()
+        {
+            _renderer.Dispose();
+            _measure.Dispose();
+        }
+    }
+
+    private static string? Dir() => Environment.GetEnvironmentVariable("PILOT_JOB_ARTIFACTS") is { Length: > 0 } a ? a
+        : Environment.GetEnvironmentVariable("PILOT_TEST_CAPTURE") is { Length: > 0 } c ? Path.GetDirectoryName(c) : null;
+
+    private static string[] Actions(ImmutableArray<Layout.ArrangedNode<float>> arranged) =>
+        [.. arranged.Select(a => a.Node.Hit).OfType<HitResult.ButtonHit>().Select(b => b.Action)];
+
+    [Fact]
+    public void AnIdleToastHasBothChoicesAsButtonsAndNoRefusal()
+    {
+        using var rig = new Rig(Card());
+        var row = rig.Row();
+
+        Actions(row).ShouldBe(["toast:c1:1", "toast:c1:2"]);
+        var runs = ArrangedText.Runs(row).Select(r => r.Trim()).ToList();
+        runs.ShouldContain("Start web-header");
+        runs.ShouldContain("Go around");
+        ArrangedText.Concat(row).ShouldNotContain("…");
+    }
+
+    [Fact]
+    public void WhileTheNodeWorksThePressedChoiceReadsWithDotsAndNoChoiceTakesAPress()
+    {
+        using var rig = new Rig(Card());
+        // What Program notes for a press of the panel's button: the card's press key, the panel's hit id for the choice.
+        rig.Chrome.Cards.NoteWorking("c1", "card:c1:1");
+        var row = rig.Row();
+
+        Actions(row).ShouldBeEmpty("a press is with the node: the toast's choices take none");
+        var runs = ArrangedText.Runs(row).Select(r => r.Trim()).ToList();
+        runs.ShouldContain("Start web-header …");
+        runs.ShouldContain("Go around", "the other choice is dead but not marked");
+    }
+
+    [Fact]
+    public void ARefusedPressPutsTheNodesWordsInTheToastBodyWrappedAndTheChoicesComeBack()
+    {
+        using var rig = new Rig(Card());
+        rig.Chrome.Cards.NoteWorking("c1", "card:c1:1");
+        rig.Chrome.Cards.Presses.NoteRefused(CardsView<RgbaImage>.PressKeyOf(null, "c1"), Why);
+        var row = rig.Row();
+
+        ArrangedText.Concat(row).ShouldContain("the flight is held");
+        ArrangedText.Runs(row).Count(r => Why.Contains(r.Trim()) && r.Trim().Length > 0).ShouldBeGreaterThan(1, "the words wrap onto lines, none is cut");
+        Actions(row).ShouldContain("toast:c1:2");
+        TextOverlap.Faults(row).Select(f => f.Line).ShouldBeEmpty();
+    }
+
+    [Theory]
+    [InlineData(240f)]
+    [InlineData(340f)]
+    public void ALongLabelWrapsInsideTheToastAndNothingOverlaps(float width)
+    {
+        using var rig = new Rig(Card(LongLabel));
+        var row = rig.Row(width);
+
+        ArrangedText.Concat(row).ShouldContain("Start web-header");
+        ArrangedText.Concat(row).Replace(" ", "").ShouldContain(LongLabel.Replace(" ", ""));
+        row.ShouldAllBe(a => a.Bounds.X + a.Bounds.Width <= width + 0.5f, $"nothing runs past the toast at {width}");
+        TextOverlap.Faults(row).Select(f => f.Line).ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void TheCapturesAreWrittenNarrowAndWideInTheStandardAndNightPalettes()
+    {
+        var dir = Dir();
+        if (dir is null)
+        {
+            return;
+        }
+        var was = Palette.Current;
+        try
+        {
+            foreach (var (name, palette) in new[] { ("standard", Palette.Standard), ("night", Palette.Night) })
+            {
+                foreach (var (width, height) in new[] { (700, 600), (1920, 1080) })
+                {
+                    Palette.Current = palette;
+                    using var rig = new Rig(Card(LongLabel), width, height);
+                    rig.Chrome.Night.On = ReferenceEquals(palette, Palette.Night);
+                    rig.Chrome.Cards.Presses.NoteRefused(CardsView<RgbaImage>.PressKeyOf(null, "c1"), Why);
+                    rig.Frame(CardsScreen.From([Card(LongLabel)]), 2);
+                    rig.Frame(CardsScreen.From([Card(LongLabel)]), 3);
+                    rig.Save($"pil1252-toast-{name}-{width}");
+                }
+            }
+        }
+        finally
+        {
+            Palette.Current = was;
+        }
+    }
+}
