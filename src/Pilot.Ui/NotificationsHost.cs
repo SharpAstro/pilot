@@ -108,7 +108,7 @@ internal sealed class NotificationsHost
     /// The buttons a staying card's toast carries, as the card's own panel answers them (null for a card with none); set by the chrome,
     /// which owns the answer path. The row replaces the toast's body, so the card keeps its look.
     /// </summary>
-    public Func<CardRow, Func<Layout.Node>?>? CardBody { get; set; }
+    public Func<CardRow, string?, Func<Layout.Node>?>? CardBody { get; set; }
 
     /// <summary>What the rail's Notifications entry shows: the count of what needs the person and whether a card rings.</summary>
     public BellState Bell => new(Feed.BellCount, Ringing);
@@ -205,8 +205,9 @@ internal sealed class NotificationsHost
             Warn = p.Held,
             Error = p.Failed,
             Success = p.Ok,
-            Surface = p.HeaderBg,
-            Card = p.PanelBg,
+            // The night palette's only ink that reads at AA (Failed's red, 4.7:1) does so on its black ground and on nothing lighter.
+            Surface = ReferenceEquals(p, Palette.Night) ? p.Ground : p.HeaderBg,
+            Card = ReferenceEquals(p, Palette.Night) ? p.Ground : p.PanelBg,
             Text = p.Bright,
             Dim = p.Dim,
             Separator = p.RailSeparator,
@@ -246,7 +247,7 @@ internal sealed class NotificationsHost
                     // only, and the card stays open on the bar until it is answered (the review of #1194).
                     Kind = NotificationKind.Staying,
                     Source = key.Item1,
-                    Row = CardBody?.Invoke(card),
+                    Row = CardBody?.Invoke(card, key.Item1),
                 };
                 _ids[key] = Feed.Post(notification, now).Id;
                 // Only a ring that opened while the window looks stands over the page: what was open at the first look is not news, and a

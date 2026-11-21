@@ -105,6 +105,11 @@ public sealed partial class PrReviews(
     /// <summary>How often it looks for reviews whose card has closed.</summary>
     public TimeSpan Interval { get; init; } = TimeSpan.FromSeconds(30);
 
+    /// <summary>How long a PR holding only a long-lived Merge card goes between GitHub reads of its state.</summary>
+    public TimeSpan MergeReadEvery { get; init; } = TimeSpan.FromMinutes(5);
+
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, (string Cards, DateTimeOffset At)> _mergeRead = new(StringComparer.Ordinal);
+
     /// <summary>How long a reviewer that gave its verdict has to end its turn before it is stopped.</summary>
     public TimeSpan SelfFinishGrace { get; init; } = TimeSpan.FromSeconds(90);
 

@@ -249,19 +249,64 @@ public sealed partial class PrReviews
         return true;
     }
 
-    /// <summary>Reads the head only of the reviews with a card of theirs open, and closes those cards when it has moved past the reviewed commit.</summary>
+    /// <summary>
+    /// Every kind whose choice acts on the PR (the review's own, Merge the PR, the queue's refusal, a fixer round's end): once the PR is
+    /// merged or closed, a press on any of them can only be refused. A design question is closed with them: a PR that is gone has
+    /// nothing left for the answer to change.
+    /// </summary>
+    private static readonly string[] PrActingCardKinds = [.. ReviewCardKinds, MergeKind, QueueRefusedKind, FixEndedKind];
+
+    /// <summary>
+    /// Reads GitHub once per PR with a card of theirs open. A PR read as MERGED or CLOSED closes those cards, naming the state, and ends
+    /// its review if still open; otherwise the review's cards are closed once the head moved past the reviewed commit.
+    /// </summary>
     private async Task CloseCardsOfOvertakenReviewsAsync(CancellationToken cancellationToken)
     {
+        // A stamp outlives its PR's cards when they close any other way (answered, dismissed, the head moved): forget those.
+        if (!_mergeRead.IsEmpty)
+        {
+            var live = state.Cards(openOnly: true).Where(c => c.Kind == MergeKind).Select(c => c.Subject).ToHashSet(StringComparer.Ordinal);
+            foreach (var stamped in _mergeRead.Keys.Where(k => !live.Contains(k)).ToList())
+            {
+                _mergeRead.TryRemove(stamped, out _);
+            }
+        }
         foreach (var review in state.PrReviews().Where(r => r is { Fixer: null } && r.State != PrReviewState.Reviewing))
         {
             var subject = Verbs.PrTarget(review.Repo, review.Number);
-            if (!state.Cards(openOnly: true).Any(c => c.Subject == subject && ReviewCardKinds.Contains(c.Kind)))
+            var open = state.Cards(openOnly: true).Where(c => c.Subject == subject && PrActingCardKinds.Contains(c.Kind)).ToList();
+            if (open.Count == 0)
+            {
+                continue;
+            }
+            // A Merge card can stand for days: a PR holding only that is read at most every MergeReadEvery, not at every sweep.
+            // Any other open card (a review's, a fixer's end) is still read at each sweep, as the head may move under it.
+            var now = time.GetUtcNow();
+            // The stamp is of these very cards: a new Merge card is never held off by the stamp of one that closed another way.
+            var heldCards = string.Join(',', open.Select(c => c.Id));
+            if (open.All(c => c.Kind == MergeKind) && _mergeRead.TryGetValue(subject, out var last) && last.Cards == heldCards && now - last.At < MergeReadEvery)
             {
                 continue;
             }
             try
             {
                 var read = await github.PullRequestOfAsync(review.Repo, review.Number, cancellationToken);
+                // Stamped after the read, so one that fails is tried again at the next sweep.
+                if (open.All(c => c.Kind == MergeKind))
+                {
+                    _mergeRead[subject] = (heldCards, now);
+                }
+                if (string.Equals(read.State, "MERGED", StringComparison.OrdinalIgnoreCase) || string.Equals(read.State, "CLOSED", StringComparison.OrdinalIgnoreCase))
+                {
+                    var said = read.State.ToLowerInvariant();
+                    state.CloseCardsAbout(subject, $"{review.Repo}#{review.Number} is {said}", PrActingCardKinds);
+                    _mergeRead.TryRemove(subject, out _);
+                    if (review.State == PrReviewState.Reviewed && !_graced.ContainsKey(subject))
+                    {
+                        await EndAsync(review, $"the PR is {said}", cancellationToken);
+                    }
+                    continue;
+                }
                 CloseCardsPastHead(review, read.Head);
             }
             catch (FlightException)

@@ -27,6 +27,196 @@ public sealed class PrReviewCardsTests : PrFixTestsBase
         };
     }
 
+    private static readonly string[] PrActing = [PrReviews.MergeKind, PrReviews.FixEndedKind, PrReviews.QueueRefusedKind];
+
+    private void RaisePrActingCards()
+    {
+        foreach (var kind in PrActing)
+        {
+            _state.RaiseCard(CardBin.ForYou, kind, Verbs.PrTarget("acme/widget", 7), $"{kind} on acme/widget#7", "detail",
+                [new CardChoice { Label = "Act", Verb = Verbs.ReviewPr, Target = Verbs.PrTarget("acme/widget", 7) }]);
+        }
+    }
+
+    private IEnumerable<CardRow> PrActingCardsOf(bool openOnly) =>
+        _state.Cards(openOnly: openOnly).Where(c => PrActing.Contains(c.Kind) || c.Kind == PrReviews.DesignKind);
+
+    [Theory]
+    [InlineData("MERGED", "merged")]
+    [InlineData("CLOSED", "closed")]
+    public async Task ASweepClosesEveryCardThatActsOnAPrOnceItIsMergedOrClosedNamingTheState(string prState, string said)
+    {
+        await Review("acme/widget#7", "changes", Design);
+        RaisePrActingCards();
+        _github.Prs["acme/widget#7"] = _github.Prs["acme/widget#7"] with { State = prState };
+
+        await _reviews.SweepAsync(Ct);
+
+        PrActingCardsOf(openOnly: true).ShouldBeEmpty();
+        var closed = PrActingCardsOf(openOnly: false).ToList();
+        closed.Count.ShouldBe(PrActing.Length + 1);
+        closed.ShouldAllBe(c => c.State == CardState.Closed && c.Outcome != null && c.Outcome.Contains($"acme/widget#7 is {said}"));
+    }
+
+    private static readonly string[] ReviewKinds =
+        [PrReviews.FixOfferKind, PrReviews.FixCappedKind, PrReviews.FixFailedKind, PrReviews.NoFixerKind, PrReviews.ReadyKind];
+
+    private void RaiseReviewCards()
+    {
+        foreach (var kind in ReviewKinds)
+        {
+            _state.RaiseCard(CardBin.ForYou, kind, Verbs.PrTarget("acme/widget", 7), $"{kind} on acme/widget#7", "detail",
+                [new CardChoice { Label = "Act", Verb = Verbs.ReviewPr, Target = Verbs.PrTarget("acme/widget", 7) }]);
+        }
+    }
+
+    private IEnumerable<CardRow> ReviewCardsOf(bool openOnly) => _state.Cards(openOnly: openOnly).Where(c => ReviewKinds.Contains(c.Kind));
+
+    [Theory]
+    [InlineData("MERGED", "merged", PrReviewState.Closed)]
+    [InlineData("CLOSED", "closed", PrReviewState.Closed)]
+    [InlineData("OPEN", null, PrReviewState.Reviewed)]
+    public async Task ASweepSettlesEveryReviewCardKindAndEndsTheReviewOnlyWhenThePrIsMergedOrClosed(string prState, string? said, PrReviewState review)
+    {
+        var done = await Review("acme/widget#7", "changes", Design);
+        // The helper waits out the reviewer's grace, which ends the review: put it back to the open state the sweep's end is about.
+        // A posted review, or one whose card closed, ends in the sweep on its own account, so it is neither here.
+        _state.PutPrReview(done with { State = PrReviewState.Reviewed, ClosedAt = null, PostedId = null, Card = null });
+        RaiseReviewCards();
+        _github.Prs["acme/widget#7"] = _github.Prs["acme/widget#7"] with { State = prState };
+
+        await _reviews.SweepAsync(Ct);
+
+        if (said is null)
+        {
+            // Another step of the sweep settles one kind as handled on its own; none is closed for the PR's state.
+            ReviewCardsOf(openOnly: true).Count().ShouldBeGreaterThanOrEqualTo(ReviewKinds.Length - 1);
+            ReviewCardsOf(openOnly: false).ShouldNotContain(c => c.Outcome != null && (c.Outcome.Contains(" is merged") || c.Outcome.Contains(" is closed")));
+        }
+        else
+        {
+            ReviewCardsOf(openOnly: true).ShouldBeEmpty();
+            ReviewCardsOf(openOnly: false).ShouldAllBe(c => c.Outcome != null && c.Outcome.Contains($"acme/widget#7 is {said}"));
+        }
+        _reviews.Of(Seven)!.State.ShouldBe(review);
+    }
+
+    private sealed class Clock(DateTimeOffset start) : TimeProvider
+    {
+        public DateTimeOffset Now { get; set; } = start;
+
+        public override DateTimeOffset GetUtcNow() => Now;
+    }
+
+    private (PrReviews Reviews, Clock Clock) OnAFakeClock()
+    {
+        var clock = new Clock(DateTimeOffset.Parse("2026-11-21T10:00:00Z"));
+        var git = _git;
+        return (new PrReviews(_state, _workers, _github, git, new Planes(git), new RepoCatalog(_state, _options), _options, clock)
+        {
+            SelfFinishGrace = TimeSpan.FromMilliseconds(1),
+            MergeReadEvery = TimeSpan.FromMinutes(5),
+        }, clock);
+    }
+
+    [Fact]
+    public async Task APrHoldingOnlyAMergeCardIsReadOnceWithinMergeReadEveryAndAgainAfterIt()
+    {
+        await Review("acme/widget#7", "changes", Design);
+        _state.CloseCard(OpenDesign(_state)!.Id, "dismissed", "controller");
+        _state.RaiseCard(CardBin.ForYou, PrReviews.MergeKind, Verbs.PrTarget("acme/widget", 7), "Merge", "detail",
+            [new CardChoice { Label = "Merge", Verb = Verbs.ReviewPr, Target = Verbs.PrTarget("acme/widget", 7) }]);
+        var (reviews, clock) = OnAFakeClock();
+        _github.PrReads.Clear();
+
+        await reviews.SweepAsync(Ct);
+        await reviews.SweepAsync(Ct);
+        _github.PrReads["acme/widget#7"].ShouldBe(1, "two sweeps inside MergeReadEvery read it once");
+
+        clock.Now += TimeSpan.FromMinutes(6);
+        await reviews.SweepAsync(Ct);
+        _github.PrReads["acme/widget#7"].ShouldBe(2, "after MergeReadEvery it is read again");
+    }
+
+    [Fact]
+    public async Task AMergeReadStampDoesNotOutliveItsCardWhenItClosesAnyOtherWay()
+    {
+        await Review("acme/widget#7", "changes", Design);
+        _state.CloseCard(OpenDesign(_state)!.Id, "dismissed", "controller");
+        var subject = Verbs.PrTarget("acme/widget", 7);
+        CardChoice[] choices = [new CardChoice { Label = "Merge", Verb = Verbs.ReviewPr, Target = subject }];
+        var merge = _state.RaiseCard(CardBin.ForYou, PrReviews.MergeKind, subject, "Merge", "detail", choices);
+        var (reviews, _) = OnAFakeClock();
+        _github.PrReads.Clear();
+
+        await reviews.SweepAsync(Ct);
+        _github.PrReads["acme/widget#7"].ShouldBe(1);
+
+        _state.CloseCard(merge.Id, "answered elsewhere", "node");
+        await reviews.SweepAsync(Ct);
+        _state.RaiseCard(CardBin.ForYou, PrReviews.MergeKind, subject, "Merge", "detail", choices);
+        await reviews.SweepAsync(Ct);
+
+        _github.PrReads["acme/widget#7"].ShouldBe(2, "a new Merge card is read at once, not held off by the stamp of the card that closed another way");
+    }
+
+    [Fact]
+    public async Task AMergeReadThatFailsLeavesNoStampSoTheNextSweepReadsItAgain()
+    {
+        await Review("acme/widget#7", "changes", Design);
+        _state.CloseCard(OpenDesign(_state)!.Id, "dismissed", "controller");
+        _state.RaiseCard(CardBin.ForYou, PrReviews.MergeKind, Verbs.PrTarget("acme/widget", 7), "Merge", "detail",
+            [new CardChoice { Label = "Merge", Verb = Verbs.ReviewPr, Target = Verbs.PrTarget("acme/widget", 7) }]);
+        var (reviews, _) = OnAFakeClock();
+        _github.Prs.TryRemove("acme/widget#7", out var pr).ShouldBeTrue();
+        _github.PrReads.Clear();
+
+        await reviews.SweepAsync(Ct);
+        _github.Prs["acme/widget#7"] = pr;
+        await reviews.SweepAsync(Ct);
+
+        _github.PrReads["acme/widget#7"].ShouldBe(2, "the read that failed was not stamped, so the next sweep inside MergeReadEvery reads it again");
+    }
+
+    [Fact]
+    public async Task APrHoldingAnyOtherCardIsReadAtEverySweep()
+    {
+        await Review("acme/widget#7", "changes", Design);
+        RaisePrActingCards();
+        var (reviews, _) = OnAFakeClock();
+        _github.PrReads.Clear();
+
+        await reviews.SweepAsync(Ct);
+        var first = _github.PrReads["acme/widget#7"];
+        await reviews.SweepAsync(Ct);
+
+        first.ShouldBeGreaterThan(0);
+        _github.PrReads["acme/widget#7"].ShouldBe(first * 2, "a PR with a card that is not a Merge card is read at every sweep, not throttled");
+    }
+
+    [Fact]
+    public async Task AnOpenPrKeepsItsPrActingCardsOpen()
+    {
+        await Review("acme/widget#7", "changes", Design);
+        RaisePrActingCards();
+
+        await _reviews.SweepAsync(Ct);
+
+        PrActingCardsOf(openOnly: true).Count().ShouldBe(PrActing.Length + 1);
+    }
+
+    [Fact]
+    public async Task GitHubNotAnsweringClosesNoPrActingCard()
+    {
+        await Review("acme/widget#7", "changes", Design);
+        RaisePrActingCards();
+        _github.Prs.TryRemove("acme/widget#7", out _);
+
+        await _reviews.SweepAsync(Ct);
+
+        PrActingCardsOf(openOnly: true).Count().ShouldBe(PrActing.Length + 1);
+    }
+
     [Fact]
     public async Task ADesignCardClosesNamingTheNewHeadWhenThePrMovesPastTheReviewedCommitAndIsNotRaisedAgainAfterARestart()
     {
