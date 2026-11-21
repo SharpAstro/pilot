@@ -577,12 +577,21 @@ internal sealed class PilotChrome<TSurface>
         {
             return label;
         }
-        var keep = label.Length - 1;
-        while (keep > 1 && Width(label[..keep].TrimEnd() + "…") > ToastLabelWidth)
+        // A binary search for the longest cut that fits (about 7 measures), since the host rebuilds this each frame for each choice.
+        var (lo, hi) = (1, label.Length - 1);
+        while (lo < hi)
         {
-            keep--;
+            var mid = (lo + hi + 1) / 2;
+            if (Width(label[..mid].TrimEnd() + "…") <= ToastLabelWidth)
+            {
+                lo = mid;
+            }
+            else
+            {
+                hi = mid - 1;
+            }
         }
-        return label[..keep].TrimEnd() + "…";
+        return label[..lo].TrimEnd() + "…";
     }
 
     // A staying card's toast keeps its words and carries the card's own plain choices, answered as the panel answers them (Cards.OnAnswer).
@@ -629,10 +638,14 @@ internal sealed class PilotChrome<TSurface>
                     return shown == choice.Label ? button : button.WithTooltip(choice.Label);
                 }, _ => CardsView<TSurface>.ChoicePill(shown, pending == $"card:{card.Id}:{number}", null, null, null, ink, tooltip: shown == choice.Label ? null : choice.Label, bg: colors.Card)));
             }
-            // A refusal longer than its 3 lines ends in an ellipsis, so the whole text is on hover.
-            if (Cards.Presses.RefusalLine(pressKey, 12f, Contrast.Readable(p.Held, colors.Surface, p.Failed), 3) is { } refusal)
+            // A refusal longer than its 3 lines ends in an ellipsis, so the whole text is on hover. It sits on the card's own ground (the
+            // toast's fill is that ground tinted by the severity, which no red of the night palette reads on at AA) and its ink is measured
+            // against that ground. The library's own choice buttons and the title are drawn on the tinted fill by the library:
+            // SharpAstro/DIR.Lib toast tint and button colours (issue filed), not this flight's to change.
+            if (Cards.Presses.RefusalLine(pressKey, 12f, Contrast.Readable(p.Held, colors.Card, p.Failed), 3) is { } refusal)
             {
-                parts.Add(Cards.Presses.RefusedOf(pressKey) is { Length: > 0 } why ? refusal.WithTooltip(why) : refusal);
+                var line = refusal.Pad(6f, 3f).Bg(colors.Card);
+                parts.Add(Cards.Presses.RefusedOf(pressKey) is { Length: > 0 } why ? line.WithTooltip(why) : line);
             }
             return Layout.Builder.VStack([.. parts]).WithGap(4f).WStar();
         };

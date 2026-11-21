@@ -279,15 +279,17 @@ public sealed partial class PrReviews
             }
             try
             {
+                var read = await github.PullRequestOfAsync(review.Repo, review.Number, cancellationToken);
+                // Stamped after the read, so one that fails is tried again at the next sweep.
                 if (open.All(c => c.Kind == MergeKind))
                 {
                     _mergeRead[subject] = now;
                 }
-                var read = await github.PullRequestOfAsync(review.Repo, review.Number, cancellationToken);
                 if (string.Equals(read.State, "MERGED", StringComparison.OrdinalIgnoreCase) || string.Equals(read.State, "CLOSED", StringComparison.OrdinalIgnoreCase))
                 {
                     var said = read.State.ToLowerInvariant();
                     state.CloseCardsAbout(subject, $"{review.Repo}#{review.Number} is {said}", PrActingCardKinds);
+                    _mergeRead.TryRemove(subject, out _);
                     if (review.State == PrReviewState.Reviewed && !_graced.ContainsKey(subject))
                     {
                         await EndAsync(review, $"the PR is {said}", cancellationToken);
