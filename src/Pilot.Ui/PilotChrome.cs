@@ -562,6 +562,9 @@ internal sealed class PilotChrome<TSurface>
     };
 
     // A staying card's toast keeps its words and carries the card's own plain choices, answered as the panel answers them (Cards.OnAnswer).
+    /// <summary>The longest label a toast's library button shows whole, in characters; a longer one ends in an ellipsis.</summary>
+    internal const int ToastLabelChars = 26;
+
     private Func<Layout.Node>? ToastBody(CardRow card, string? node)
     {
         var plain = card.Choices.Select((choice, i) => (choice, number: i + 1))
@@ -593,12 +596,13 @@ internal sealed class PilotChrome<TSurface>
                 parts.Add(Cards.Presses.Button(pressKey, hit, () =>
                 {
                     Action press = () => Cards.OnAnswer?.Invoke(card, number);
+                    // The library's button is one line at the width of its text, which a long label pushes past the toast (it does not clamp
+                    // to the toast): a long label ends in an ellipsis, with the whole label on hover. Its dead twin wraps.
+                    var shown = choice.Label.Length > ToastLabelChars ? choice.Label[..(ToastLabelChars - 1)].TrimEnd() + "…" : choice.Label;
                     var button = first
-                        ? NotificationsLayout.PrimaryButton(choice.Label, severity, colors, NotificationsHost.Style, new HitResult.ButtonHit(hit), press)
-                        : NotificationsLayout.PlainButton(choice.Label, colors, NotificationsHost.Style, new HitResult.ButtonHit(hit), press);
-                    // The library's button is one line at its own width, which a long label pushes past the toast: held to the toast's
-                    // width it ends in an ellipsis, with the whole label on hover (its dead twin wraps).
-                    return button.WStar().WithTooltip(choice.Label);
+                        ? NotificationsLayout.PrimaryButton(shown, severity, colors, NotificationsHost.Style, new HitResult.ButtonHit(hit), press)
+                        : NotificationsLayout.PlainButton(shown, colors, NotificationsHost.Style, new HitResult.ButtonHit(hit), press);
+                    return shown == choice.Label ? button : button.WithTooltip(choice.Label);
                 }, _ => CardsView<TSurface>.ChoicePill(choice.Label, pending == $"card:{card.Id}:{number}", null, null, null, p.Dim, wrap: true, bg: colors.Card)));
             }
             if (Cards.Presses.RefusalLine(pressKey, 12f, p.Held, 3) is { } refusal)
