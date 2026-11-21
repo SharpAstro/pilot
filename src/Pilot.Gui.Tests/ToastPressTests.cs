@@ -116,6 +116,8 @@ public sealed class ToastPressTests
     {
         using var rig = new Rig(Card());
         rig.Chrome.Cards.NoteWorking("c1", "card:c1:1");
+        // The node answered: the press is no longer with it, and its words stay.
+        rig.Chrome.Cards.NoteWorking("c1", null);
         rig.Chrome.Cards.Presses.NoteRefused(CardsView<RgbaImage>.PressKeyOf(null, "c1"), Why);
         var row = rig.Row();
 
@@ -133,9 +135,12 @@ public sealed class ToastPressTests
         using var rig = new Rig(Card(LongLabel));
         var row = rig.Row(width);
 
+        // The library's button is one line: held to the toast's width it ends in an ellipsis (its text is marked Truncated) and carries the
+        // whole label as its tooltip, so nothing is cut silently.
         ArrangedText.Concat(row).ShouldContain("Start web-header");
-        ArrangedText.Concat(row).Replace(" ", "").ShouldContain(LongLabel.Replace(" ", ""));
-        row.ShouldAllBe(a => a.Bounds.X + a.Bounds.Width <= width + 0.5f, $"nothing runs past the toast at {width}");
+        row.Select(a => a.Node.Tooltip?.ToString()).ShouldContain(t => t != null && t.Contains(LongLabel));
+        row.Where(a => a.Bounds.X + a.Bounds.Width > width + 0.5f).Select(a => $"{a.Node.GetType().Name}@{a.Bounds.X:0},{a.Bounds.Y:0},{a.Bounds.Width:0}x{a.Bounds.Height:0} hit={a.Node.Hit}")
+            .ShouldBeEmpty($"nothing runs past the toast at {width}");
         TextOverlap.Faults(row).Select(f => f.Line).ShouldBeEmpty();
     }
 

@@ -593,9 +593,12 @@ internal sealed class PilotChrome<TSurface>
                 parts.Add(Cards.Presses.Button(pressKey, hit, () =>
                 {
                     Action press = () => Cards.OnAnswer?.Invoke(card, number);
-                    return first
+                    var button = first
                         ? NotificationsLayout.PrimaryButton(choice.Label, severity, colors, NotificationsHost.Style, new HitResult.ButtonHit(hit), press)
                         : NotificationsLayout.PlainButton(choice.Label, colors, NotificationsHost.Style, new HitResult.ButtonHit(hit), press);
+                    // The library's button is one line at its own width, which a long label pushes past the toast: held to the toast's
+                    // width it ends in an ellipsis, with the whole label on hover (its dead twin wraps).
+                    return button.WStar().WithTooltip(choice.Label);
                 }, _ => CardsView<TSurface>.ChoicePill(choice.Label, pending == $"card:{card.Id}:{number}", null, null, null, p.Dim, wrap: true, bg: colors.Card)));
             }
             if (Cards.Presses.RefusalLine(pressKey, 12f, p.Held, 3) is { } refusal)
