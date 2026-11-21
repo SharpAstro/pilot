@@ -110,6 +110,9 @@ internal sealed class NotificationsHost
     /// </summary>
     public Func<CardRow, string?, Func<Layout.Node>?>? CardBody { get; set; }
 
+    /// <summary>The choices a staying card's toast carries in Dismiss's row (library buttons, DIR.Lib 11.91); null for a card with none. Set by the chrome with <see cref="CardBody"/>.</summary>
+    public Func<CardRow, string?, Func<IReadOnlyList<Layout.Node>>?>? CardButtons { get; set; }
+
     /// <summary>What the rail's Notifications entry shows: the count of what needs the person and whether a card rings.</summary>
     public BellState Bell => new(Feed.BellCount, Ringing);
 
@@ -248,6 +251,7 @@ internal sealed class NotificationsHost
                     Kind = NotificationKind.Staying,
                     Source = key.Item1,
                     Row = CardBody?.Invoke(card, key.Item1),
+                    Buttons = CardButtons?.Invoke(card, key.Item1),
                 };
                 _ids[key] = Feed.Post(notification, now).Id;
                 // Only a ring that opened while the window looks stands over the page: what was open at the first look is not news, and a

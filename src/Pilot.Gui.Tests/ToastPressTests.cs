@@ -58,8 +58,10 @@ public sealed class ToastPressTests
         /// <summary>The toast's own row as the feed draws it now, arranged in a toast's width.</summary>
         public ImmutableArray<Layout.ArrangedNode<float>> Row(float width = 340f)
         {
-            var row = Chrome.Notifications.Toasts.Toasts.Single(t => t.Notification.Kind == DIR.Lib.Notifications.NotificationKind.Staying).Notification.Row.ShouldNotBeNull();
-            return Layout.Engine.Arrange(row(), new Rect<float>(0, 0, width, 1400), new PixelMeasureContext<RgbaImage>(_measure, SessionsCapture.FontPath, 1f));
+            var n = Chrome.Notifications.Toasts.Toasts.Single(t => t.Notification.Kind == DIR.Lib.Notifications.NotificationKind.Staying).Notification;
+            // The body, then the choices as the library lays them in Dismiss's row (Notification.Buttons).
+            var node = Layout.Builder.VStack(n.Row.ShouldNotBeNull()(), Layout.Builder.HStack([.. n.Buttons.ShouldNotBeNull()()]).WithGap(6f));
+            return Layout.Engine.Arrange(node, new Rect<float>(0, 0, width, 1400), new PixelMeasureContext<RgbaImage>(_measure, SessionsCapture.FontPath, 1f));
         }
 
         /// <summary>How many pixels of the last frame are exactly this colour.</summary>
@@ -162,19 +164,13 @@ public sealed class ToastPressTests
     }
 
     [Fact]
-    public void ALongLabelIsCutByItsDrawnWidthNotByItsLength()
+    public void ALongLabelIsCutByCharactersAndAShortOneIsWhole()
     {
-        using var rig = new Rig(Card());
-        // Fourteen wide letters and sixty narrow ones: a count of characters cuts the wrong one.
-        var wide = new string('W', 14);
-        var narrow = new string('i', 60);
-        var wideShown = rig.Chrome.FitToastLabel(wide);
-        var narrowShown = rig.Chrome.FitToastLabel(narrow);
+        var cut = PilotChrome<RgbaImage>.CutToastLabel(new string('W', 60));
 
-        wideShown.ShouldEndWith("…");
-        wideShown.Length.ShouldBeLessThan(narrowShown.Length, "wide letters fit fewer to the same width");
-        narrowShown.Length.ShouldBeGreaterThan(26, "narrow letters are not cut at a character count");
-        rig.Chrome.FitToastLabel("Go around").ShouldBe("Go around");
+        cut.ShouldEndWith("…");
+        cut.Length.ShouldBeLessThanOrEqualTo(PilotChrome<RgbaImage>.ToastLabelChars);
+        PilotChrome<RgbaImage>.CutToastLabel("Go around").ShouldBe("Go around");
     }
 
     [Fact]
