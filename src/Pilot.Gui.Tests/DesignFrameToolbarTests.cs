@@ -111,6 +111,9 @@ public sealed class DesignFrameToolbarTests
     public void RightAndLeftStepTheSizeChoiceOnceTheControlHasBeenPressed()
     {
         using var rig = new Rig();
+        rig.View.PickFrameTarget(0, 0, "Laptop").ShouldBeTrue();
+        rig.Paint();
+        // A press on the chosen segment changes nothing and puts the keyboard in the control.
         rig.Press("designs:frame-sizes:0:0:1");
         rig.View.FrameSizeName(0, 0).ShouldBe("Laptop");
         rig.Router.Handle(new InputEvent.KeyDown(InputKey.Right, InputModifier.None)).ShouldBeTrue();
