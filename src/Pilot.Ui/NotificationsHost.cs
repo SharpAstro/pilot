@@ -97,7 +97,7 @@ internal sealed class NotificationsHost
     /// The buttons a staying card's toast carries, as the card's own panel answers them (null for a card with none); set by the chrome,
     /// which owns the answer path. The row replaces the toast's body, so the card keeps its look.
     /// </summary>
-    public Func<CardRow, Func<Layout.Node>?>? CardBody { get; set; }
+    public Func<CardRow, string?, Func<Layout.Node>?>? CardBody { get; set; }
 
     /// <summary>What the rail's Notifications entry shows: the count of what needs the person and whether a card rings.</summary>
     public BellState Bell => new(Feed.BellCount, Ringing);
@@ -235,7 +235,7 @@ internal sealed class NotificationsHost
                     // only, and the card stays open on the bar until it is answered (the review of #1194).
                     Kind = NotificationKind.Staying,
                     Source = key.Item1,
-                    Row = CardBody?.Invoke(card),
+                    Row = CardBody?.Invoke(card, key.Item1),
                 }, now).Id;
             }
         }

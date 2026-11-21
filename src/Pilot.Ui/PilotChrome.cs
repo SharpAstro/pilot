@@ -562,7 +562,7 @@ internal sealed class PilotChrome<TSurface>
     };
 
     // A staying card's toast keeps its words and carries the card's own plain choices, answered as the panel answers them (Cards.OnAnswer).
-    private Func<Layout.Node>? ToastBody(CardRow card)
+    private Func<Layout.Node>? ToastBody(CardRow card, string? node)
     {
         var plain = card.Choices.Select((choice, i) => (choice, number: i + 1))
             .Where(c => c.choice.AsksFor is null && c.choice.Status != ChoiceStatus.Unavailable && !ChoiceStatus.IsChip(c.choice.Status)).Take(2).ToArray();
@@ -578,9 +578,29 @@ internal sealed class PilotChrome<TSurface>
             {
                 parts.Add(WrappedProse.Of(summary, 12f, p.Dim, 3, selectable: false));
             }
+            // The choices go through the card's Presses under its press key, as the panel's do: while the node works they are dead and the
+            // one pressed reads "<label> …"; a refusal is shown under them. The toast's hit ids stay distinct from the panel's (toast:), while
+            // the pending hit Program notes is the panel's (card:<id>:<n>), so the pressed choice is told by its number.
+            // SharpAstro/DIR.Lib#302 (buttons on Dismiss's row) is still open: once it ships these choices move onto Dismiss's row.
+            var pressKey = CardsView<TSurface>.PressKeyOf(node, card.Id);
+            var colors = NotificationsHost.Colors();
+            var severity = card.Bin == CardBin.Ring ? NotificationSeverity.Warn : NotificationSeverity.Info;
+            var pending = Cards.Presses.PendingOf(pressKey);
             foreach (var (choice, number) in plain)
             {
-                parts.Add(CardsView<TSurface>.ChoicePill(choice.Label, false, $"toast:{card.Id}:{number}", () => Cards.OnAnswer?.Invoke(card, number), null, p.Bright, wrap: true));
+                var hit = $"toast:{card.Id}:{number}";
+                var first = number == plain[0].number;
+                parts.Add(Cards.Presses.Button(pressKey, hit, () =>
+                {
+                    Action press = () => Cards.OnAnswer?.Invoke(card, number);
+                    return first
+                        ? NotificationsLayout.PrimaryButton(choice.Label, severity, colors, NotificationsHost.Style, new HitResult.ButtonHit(hit), press)
+                        : NotificationsLayout.PlainButton(choice.Label, colors, NotificationsHost.Style, new HitResult.ButtonHit(hit), press);
+                }, _ => CardsView<TSurface>.ChoicePill(choice.Label, pending == $"card:{card.Id}:{number}", null, null, null, p.Dim, wrap: true, bg: colors.Card)));
+            }
+            if (Cards.Presses.RefusalLine(pressKey, 12f, p.Held, 3) is { } refusal)
+            {
+                parts.Add(refusal);
             }
             return Layout.Builder.VStack([.. parts]).WithGap(4f).WStar();
         };
