@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using DIR.Lib;
+using DIR.Lib.Notifications;
 using Pilot.Contracts;
 using Pilot.Ui;
 using SharpAstro.Png;
