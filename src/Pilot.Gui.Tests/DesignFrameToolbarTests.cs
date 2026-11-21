@@ -118,6 +118,8 @@ public sealed class DesignFrameToolbarTests
         rig.View.FrameSizeName(0, 0).ShouldBe("Laptop");
         rig.Router.Handle(new InputEvent.KeyDown(InputKey.Right, InputModifier.None)).ShouldBeTrue();
         rig.View.FrameSizeName(0, 0).ShouldBe("Tablet");
+        // The window repaints between key presses, which rebuilds the control from the new state.
+        rig.Paint();
         rig.Router.Handle(new InputEvent.KeyDown(InputKey.Left, InputModifier.None)).ShouldBeTrue();
         rig.View.FrameSizeName(0, 0).ShouldBe("Laptop");
     }
