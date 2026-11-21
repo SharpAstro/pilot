@@ -20,10 +20,10 @@ public sealed class ToastPressTests
     private static readonly DateTimeOffset T0 = PageData.Now;
     // The library lays Dismiss after the choices in the same row, which does not wrap: the choices leave it this much of the toast (at 100%).
     private const float DismissRoom = 80f;
-    private const string LongLabel = "Start web-header and then wait for the review of the whole flight before going on to land it";
+    private const string LongLabel = "Start it and then wait for the review of the whole flight before going on to land it";
     private const string Why = "refused: the flight is held, so nothing can be started on it until its owner lifts the hold";
 
-    private static CardRow Card(string label = "Start web-header") => new()
+    private static CardRow Card(string label = "Start it") => new()
     {
         Id = "c1", Bin = CardBin.Ring, Kind = "pr-ready", Subject = "flight/ORBc1", Title = "TIA1818's PR #63 is ready to merge", Summary = "A short line on what happened.",
         At = Live.At, State = CardState.Open,
@@ -111,7 +111,7 @@ public sealed class ToastPressTests
 
         Actions(row).ShouldBe(["toast:c1:1", "toast:c1:2"]);
         var runs = ArrangedText.Runs(row).Select(r => r.Trim()).ToList();
-        runs.ShouldContain("Start web-header");
+        runs.ShouldContain("Start it");
         runs.ShouldContain("Go around");
         ArrangedText.Concat(row).ShouldNotContain("…");
     }
@@ -126,7 +126,7 @@ public sealed class ToastPressTests
 
         Actions(row).ShouldBeEmpty("a press is with the node: the toast's choices take none");
         var runs = ArrangedText.Runs(row).Select(r => r.Trim()).ToList();
-        runs.ShouldContain("Start web-header …");
+        runs.ShouldContain("Start it …");
         runs.ShouldContain("Go around", "the other choice is dead but not marked");
     }
 
