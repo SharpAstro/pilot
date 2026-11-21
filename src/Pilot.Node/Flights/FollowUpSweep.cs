@@ -4,7 +4,7 @@ namespace Pilot.Node.Flights;
 
 /// <summary>
 /// The follow-up backlog's limit (pilot #1226): every <see cref="Interval"/> it lists each known repo's open follow-up issues (labelled
-/// <c>pilot: follow-up</c> or titled <c>Follow-up of</c>) through GitHub, off the lock, matches each to a flight on this node by issue number, and keeps
+/// <c>pilot: follow-up</c> or titled <c>Follow-up of</c>) through GitHub, off the lock, matches each to a flight on this node or a reachable peer by issue number, and keeps
 /// the counts per repo in node state, which status and the digest show. An issue that has had no flight for <see cref="RingAfter"/> (from its creation)
 /// rings the owner once, naming the issue and the command that creates its flight.
 /// <para>
@@ -84,7 +84,8 @@ public sealed class FollowUpSweep(NodeState state, IGitHub? github, TimeProvider
         {
             return null;
         }
-        var flights = (await PeerFlightsAsync(cancellationToken)).Concat(state.Flights().Select(f => (f.Repo, f.Issue))).ToList();
+        var (peerFlights, peersComplete) = await PeerFlightsAsync(cancellationToken);
+        var flights = peerFlights.Concat(state.Flights().Select(f => (f.Repo, f.Issue))).ToList();
         var rows = new List<FollowUpRepoRow>();
         var now = time.GetUtcNow();
         foreach (var (repo, path) in Repos())
@@ -107,17 +108,21 @@ public sealed class FollowUpSweep(NodeState state, IGitHub? github, TimeProvider
             }
             if (issues.Count == 0)
             {
+                // The repo was read and has no open follow-up: every ring for it is settled.
+                CloseSettled(repo, new HashSet<int>());
                 continue;
             }
             var withFlight = flights.Where(f => SameRepo(f.Repo, repo)).Select(f => f.Issue).ToHashSet();
             var none = issues.Where(i => !withFlight.Contains(i.Number)).OrderBy(i => i.Number).ToList();
             rows.Add(new FollowUpRepoRow { Repo = repo, Open = issues.Count, NoFlight = [.. none.Select(i => i.Number)] });
-            var due = OwnsRing(repo) ? none.Where(i => i.CreatedAt is { } at && now - at > RingAfter).ToList() : [];
-            foreach (var issue in due)
+            var owns = OwnsRing(repo);
+            var due = owns ? none.Where(i => i.CreatedAt is { } at && now - at > RingAfter).ToList() : [];
+            // A granted peer that did not answer may hold the flight: ring nothing new, and keep the rings already open, until it answers.
+            foreach (var issue in peersComplete ? due : [])
             {
                 Ring(repo, path, issue.Number, issue.Title);
             }
-            CloseSettled(repo, due.Select(i => i.Number).ToHashSet());
+            CloseSettled(repo, (owns && !peersComplete ? none : due).Select(i => i.Number).ToHashSet());
         }
         var row = new FollowUpsRow { ReadAt = now, Repos = [.. rows] };
         state.PutFollowUps(row);
@@ -142,14 +147,17 @@ public sealed class FollowUpSweep(NodeState state, IGitHub? github, TimeProvider
             if (int.TryParse(card.Subject[prefix.Length..], out var number) && !due.Contains(number))
             {
                 state.CloseCardsAbout(card.Subject, "its issue closed, has a flight, or another node rings for it", RingKind);
+                // Closed by the node, not dismissed: it may ring again if the issue is left without a flight later or ownership returns.
+                _rung.Remove(card.Subject);
             }
         }
     }
 
-    /// <summary>The (repo, issue) of every flight a reachable peer last published; a peer that cannot be read adds nothing.</summary>
-    private async Task<List<(string Repo, int Issue)>> PeerFlightsAsync(CancellationToken cancellationToken)
+    /// <summary>The (repo, issue) of every flight a reachable peer last published, and whether every peer answered.</summary>
+    private async Task<(List<(string Repo, int Issue)> Flights, bool Complete)> PeerFlightsAsync(CancellationToken cancellationToken)
     {
         var found = new List<(string, int)>();
+        var complete = true;
         foreach (var peer in Fleet?.Invoke()?.Peers() ?? [])
         {
             try
@@ -158,10 +166,11 @@ public sealed class FollowUpSweep(NodeState state, IGitHub? github, TimeProvider
             }
             catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
             {
-                // A peer that is down counts nothing; its flights count again at the next sweep it answers.
+                // A peer that is down counts nothing and the sweep holds its rings; its flights count again at the next sweep it answers.
+                complete &= !peer.HasGrant;
             }
         }
-        return found;
+        return (found, complete);
     }
 
     /// <summary>A flight names its repo as <c>owner/name</c> or by its name alone; either matches the GitHub name.</summary>
@@ -202,7 +211,8 @@ public sealed class FollowUpSweep(NodeState state, IGitHub? github, TimeProvider
     private void Ring(string repo, string path, int number, string title)
     {
         var subject = $"follow-up:{repo}#{number}";
-        if (!_rung.Add(subject) || state.Cards().Any(c => c.Kind == RingKind && c.Subject == subject))
+        // A card the node closed itself (settled) does not stop a new ring; one the person dismissed does.
+        if (state.Cards().Any(c => c.Kind == RingKind && c.Subject == subject && (c.State == CardState.Open || c.ClosedBy != "node")) || !_rung.Add(subject))
         {
             return;
         }

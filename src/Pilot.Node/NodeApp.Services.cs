@@ -757,10 +757,7 @@ public static partial class NodeApp
         // The follow-up backlog's counts per repo, and the ring for an issue with no flight after a day (pilot #1226).
         builder.Services.AddHostedService(services => new FollowUpSweep(services.GetRequiredService<NodeState>(), services.GetService<IGitHub>(), services.GetRequiredService<TimeProvider>())
         {
-            Error = services.GetRequiredService<LogWriter>(),
-            // One ring for the fleet: the node that reads a repo's PRs rings for it, and a flight on any node counts.
-            Machine = options.Machine,
-            Fleet = () => services.GetRequiredService<FlightCommander>().Fleet,
+            Error = services.GetRequiredService<LogWriter>(), Machine = options.Machine, Fleet = () => services.GetRequiredService<FlightCommander>().Fleet,
         });
         builder.Services.AddSingleton(services => new StaleWatch(services.GetRequiredService<NodeState>(), services.GetRequiredService<TimeProvider>())
         {

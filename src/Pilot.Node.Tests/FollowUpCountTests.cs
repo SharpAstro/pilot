@@ -354,11 +354,11 @@ public sealed class FollowUpCountTests : ReviewTestsBase
 
     // ---- One ring for the fleet (the follow-up rings were raised by every node, and a dismiss on one left the other's) ----
 
-    private sealed class OnePeerFleet(FlightRow[] flights) : IFleet
+    private sealed class OnePeerFleet(FlightRow[] flights, bool down = false) : IFleet
     {
-        public IReadOnlyList<IFleetPeer> Peers() => [new Peer(flights)];
+        public IReadOnlyList<IFleetPeer> Peers() => [new Peer(flights, down)];
 
-        private sealed class Peer(FlightRow[] flights) : IFleetPeer
+        private sealed class Peer(FlightRow[] flights, bool down) : IFleetPeer
         {
             public string Name => "DE1";
 
@@ -370,7 +370,7 @@ public sealed class FollowUpCountTests : ReviewTestsBase
 
             public Task<RepoInfo[]?> ReposAsync(CancellationToken cancellationToken) => throw new NotSupportedException();
 
-            public Task<FleetLoad> LoadAsync(CancellationToken cancellationToken) => Task.FromResult(new FleetLoad(null, flights));
+            public Task<FleetLoad> LoadAsync(CancellationToken cancellationToken) => down ? throw new IOException("peer is down") : Task.FromResult(new FleetLoad(null, flights));
 
             public Task<CommandResult> SendAsync(CommandRequest command, CancellationToken cancellationToken) => throw new NotSupportedException();
         }
@@ -436,5 +436,60 @@ public sealed class FollowUpCountTests : ReviewTestsBase
         ReadBy("DE1");
         await sweep.SweepAsync(Ct);
         OpenRings().ShouldBeEmpty();
+    }
+
+    private async Task CloseIssueAsync(int number)
+    {
+        await _github.CloseIssueAsync(Repo, number, "done", Ct);
+        _github.Issues.TryRemove(number, out _);
+        var key = Path.TrimEndingDirectorySeparator(Path.GetFullPath(Repo));
+        _github.MilestoneIssuesOf[key][number] = _github.MilestoneIssuesOf[key][number] with { Open = false };
+    }
+
+    [Fact]
+    public async Task ARingClosesOnceItsIssueClosedWhetherOrNotAnotherFollowUpIsStillOpen()
+    {
+        var only = FollowUp(TimeSpan.FromDays(2));
+        FlightOn(900, "SWP1");
+        var sweep = SweepOn("SE1");
+        await sweep.SweepAsync(Ct);
+        OpenRings().ShouldHaveSingleItem();
+
+        // The repo's last open follow-up closes: no open follow-up left, the ring still closes.
+        await CloseIssueAsync(only);
+        await sweep.SweepAsync(Ct);
+        OpenRings().ShouldBeEmpty();
+
+        var first = FollowUp(TimeSpan.FromDays(2));
+        var second = FollowUp(TimeSpan.FromDays(2));
+        await sweep.SweepAsync(Ct);
+        OpenRings().Length.ShouldBe(2);
+
+        await CloseIssueAsync(first);
+        await sweep.SweepAsync(Ct);
+        OpenRings().ShouldHaveSingleItem().Subject.ShouldBe($"follow-up:{Repo_}#{second}");
+    }
+
+    [Fact]
+    public async Task AGrantedPeerThatDoesNotAnswerHoldsTheRingsAndTheyAreNotLostWhenItDoes()
+    {
+        var number = FollowUp(TimeSpan.FromDays(2));
+        FlightOn(900, "SWP1");
+        var sweep = SweepOn("SE1", new OnePeerFleet([], down: true));
+
+        await sweep.SweepAsync(Ct);
+        OpenRings().ShouldBeEmpty();
+
+        var up = SweepOn("SE1", new OnePeerFleet([]));
+        await up.SweepAsync(Ct);
+        OpenRings().ShouldHaveSingleItem();
+
+        // Ownership moves away and back: the ring closed in between rings again.
+        ReadBy("DE1");
+        await up.SweepAsync(Ct);
+        OpenRings().ShouldBeEmpty();
+        ReadBy("SE1");
+        await up.SweepAsync(Ct);
+        OpenRings().ShouldHaveSingleItem().Subject.ShouldBe($"follow-up:{Repo_}#{number}");
     }
 }
