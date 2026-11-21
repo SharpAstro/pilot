@@ -1475,14 +1475,23 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
 
     // The width the size choice needs as one segmented control, measured from the control itself (the library sizes it to its content), so it follows the library's padding and the
     // font rather than a guess. Without a font to measure with it falls back to 7 units a letter and 24 round each segment.
+    // Measured once per font and kept, as the toolbar is built on every paint; the measuring control takes a throwaway cursor, so it leaves no entry in _sizeCursors.
+    private (string Font, float Width)? _sizesWidth;
+
     private float SizesWidth()
     {
         if (string.IsNullOrEmpty(FontPath))
         {
             return (DesignTargets.BuiltIn.Sum(t => t.Name.Length) + "Terminal".Length) * 7f + (DesignTargets.BuiltIn.Count() + 1) * 24f;
         }
+        if (_sizesWidth is { } cached && cached.Font == FontPath)
+        {
+            return cached.Width;
+        }
         var context = new PixelMeasureContext<TSurface>(Renderer, FontPath, 1f);
-        return Layout.Engine.Measure(SizeChoice(-1, -1, ""), new Layout.Size<float>(100000f, 100000f), context).Width;
+        var width = Layout.Engine.Measure(SizeChoice(-1, -1, ""), new Layout.Size<float>(100000f, 100000f), context).Width;
+        _sizesWidth = (FontPath, width);
+        return width;
     }
 
     /// <summary>
@@ -1509,7 +1518,7 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
             Shortcut = shortcuts ? new KeyChord(InputKey.D1 + options.Count, InputModifier.Alt) : null,
         });
         return Layout.Builder.Segmented<string>([.. options], size, name => { if (name == "Terminal") PickFrameTerminal(cell, index); else PickFrameTarget(cell, index, name); },
-            UiThemes.Current, _sizeCursors.GetOrAdd((cell, index), _ => new ListCursor()), $"designs:frame-sizes:{cell}:{index}", 12f).WithCursor(CursorKind.Pointer);
+            UiThemes.Current, cell < 0 ? new ListCursor() : _sizeCursors.GetOrAdd((cell, index), _ => new ListCursor()), $"designs:frame-sizes:{cell}:{index}", 12f).WithCursor(CursorKind.Pointer);
     }
 
     // The size choice as separate buttons, each with the chosen fill: what a terminal page and a well narrower than the segmented control draw, since the library's control has no cell

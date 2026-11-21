@@ -32,6 +32,7 @@ public sealed class SelectableContentTests
         ("settings", t => t.StartsWith("saved in ", StringComparison.Ordinal) && t.EndsWith("the command line wins over it", StringComparison.Ordinal), "the header's source line is chrome"),
         ("settings", t => IsPairCaption(t), "a range row's pair that cannot be pressed now (it would move a handle past the other) is a control label that is not a button"),
         ("fleet", t => t.StartsWith("every node heard", StringComparison.Ordinal), "the fleet page's lede is chrome"),
+        ("design page", t => t is "Desktop" or "Laptop" or "Tablet" or "Phone" or "Terminal", "the frame toolbar's size segments are the library's Segmented control, whose options are list items (so the arrow keys step them); they are controls, not rows of content"),
         ("flight page", t => t is "Goal" or "Done when" or "Report", "a field's label beside its selectable value is a label"),
         ("chat", t => t is "✓" or "✗" or "Bash" or "Push the branch" || t.Contains(':', StringComparison.Ordinal) && t.Length == 8, "a tool call's header row: a press folds the call, so a drag cannot start there"),
         ("transcript", t => t is "✓" or "✗" or "Bash" or "Push the branch" || t.Contains(':', StringComparison.Ordinal) && t.Length == 8, "a tool call's header row: a press folds the call, so a drag cannot start there"),
