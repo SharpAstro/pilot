@@ -262,6 +262,15 @@ public sealed partial class PrReviews
     /// </summary>
     private async Task CloseCardsOfOvertakenReviewsAsync(CancellationToken cancellationToken)
     {
+        // A stamp outlives its PR's cards when they close any other way (answered, dismissed, the head moved): forget those.
+        if (!_mergeRead.IsEmpty)
+        {
+            var live = state.Cards(openOnly: true).Where(c => c.Kind == MergeKind).Select(c => c.Subject).ToHashSet(StringComparer.Ordinal);
+            foreach (var stamped in _mergeRead.Keys.Where(k => !live.Contains(k)).ToList())
+            {
+                _mergeRead.TryRemove(stamped, out _);
+            }
+        }
         foreach (var review in state.PrReviews().Where(r => r is { Fixer: null } && r.State != PrReviewState.Reviewing))
         {
             var subject = Verbs.PrTarget(review.Repo, review.Number);

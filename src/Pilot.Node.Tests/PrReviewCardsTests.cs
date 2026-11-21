@@ -139,6 +139,28 @@ public sealed class PrReviewCardsTests : PrFixTestsBase
     }
 
     [Fact]
+    public async Task AMergeReadStampDoesNotOutliveItsCardWhenItClosesAnyOtherWay()
+    {
+        await Review("acme/widget#7", "changes", Design);
+        _state.CloseCard(OpenDesign(_state)!.Id, "dismissed", "controller");
+        var subject = Verbs.PrTarget("acme/widget", 7);
+        CardChoice[] choices = [new CardChoice { Label = "Merge", Verb = Verbs.ReviewPr, Target = subject }];
+        var merge = _state.RaiseCard(CardBin.ForYou, PrReviews.MergeKind, subject, "Merge", "detail", choices);
+        var (reviews, _) = OnAFakeClock();
+        _github.PrReads.Clear();
+
+        await reviews.SweepAsync(Ct);
+        _github.PrReads["acme/widget#7"].ShouldBe(1);
+
+        _state.CloseCard(merge.Id, "dismissed", "controller");
+        await reviews.SweepAsync(Ct);
+        _state.RaiseCard(CardBin.ForYou, PrReviews.MergeKind, subject, "Merge", "detail", choices);
+        await reviews.SweepAsync(Ct);
+
+        _github.PrReads["acme/widget#7"].ShouldBe(2, "a new Merge card is read at once, not held off by the stamp of the card that closed another way");
+    }
+
+    [Fact]
     public async Task APrHoldingAnyOtherCardIsReadAtEverySweep()
     {
         await Review("acme/widget#7", "changes", Design);
