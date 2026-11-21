@@ -259,7 +259,11 @@ public sealed class McpDesignNoticesTests : IAsyncLifetime
         }
         folder.ShouldNotBeNull();
         var readme = File.ReadAllText(Path.Combine(folder, "README.md"));
-        var mcp = readme[readme.IndexOf("### The MCP server", StringComparison.Ordinal)..];
+        // The section alone, to the next heading of its level or above, so a later section cannot satisfy it (the review of #1203).
+        var start = readme.IndexOf("### The MCP server", StringComparison.Ordinal);
+        start.ShouldBeGreaterThanOrEqualTo(0);
+        var ends = new[] { readme.IndexOf("\n## ", start, StringComparison.Ordinal), readme.IndexOf("\n### ", start + 1, StringComparison.Ordinal) }.Where(i => i > start);
+        var mcp = readme[start..(ends.Any() ? ends.Min() : readme.Length)];
         mcp.ShouldContain("pilot://designs");
         mcp.ShouldContain("resources/templates/list");
         mcp.ShouldContain("resources/subscribe");

@@ -93,7 +93,9 @@ public static partial class PilotCommand
                     await output.WriteLineAsync($"{peer.EndPoint}  {peer.DisplayName}{(peer.Properties.TryGetValue("machine", out var m) ? $"  ({m})" : "")}");
                     if (peer.Properties.TryGetValue("gui", out var gui))
                     {
-                        await output.WriteLineAsync($"  GUI jobs: {(gui == "yes" ? "can run (an interactive desktop)" : "none (no interactive desktop)")}");
+                        // The announcement says only whether the machine has an interactive desktop: the node's own GUI lane (gui-slots) is live
+                        // and not announced, so the line does not say the node will run them; its pilot status does (the review of #1084).
+                        await output.WriteLineAsync($"  desktop: {(gui == "yes" ? "an interactive one, for GUI jobs (its pilot status says whether its GUI lane is on)" : "none interactive (no GUI jobs)")}");
                     }
                     await output.WriteLineAsync("  " + await NodeTargets.WatchtowerLineAsync(peer.EndPoint.ToString()!, TimeSpan.FromSeconds(2), ct));
                 }

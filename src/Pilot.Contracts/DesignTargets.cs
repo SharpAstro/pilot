@@ -12,7 +12,8 @@ public sealed record DesignSurface(string Name, int Width, int Height, double Sc
 
 /// <summary>
 /// The built-in targets of a design (PIL1097), one catalogue the node's check and render and the GUI's Designs page both read: Desktop 1440x900 at 1,
-/// Laptop 1280x800 at 1.5, Tablet 820x1180 at 2 and Phone 390x844 at 3. A document's <c>targets</c> entry names one of these or gives its own size.
+/// Laptop 1280x800 at 1.5, Tablet 820x1180 at 2 and Phone 390x844 at 3. A document's <c>targets</c> entry gives a name and its own size: DIR.Lib's
+/// parser refuses an entry with a name alone, so a built-in name with no size is not yet a target (the review of #1116 left that for a follow-up).
 /// </summary>
 public static class DesignTargets
 {
@@ -52,6 +53,16 @@ public static class DesignTargets
         return resolved.Length == 0 ? [Desktop] : resolved;
     }
 
-    /// <summary>The file name of a screen's render at a target: <c>&lt;screen&gt;.&lt;target&gt;.png</c>.</summary>
-    public static string RenderFile(string screen, string target) => $"{screen}.{target}.png";
+    /// <summary>
+    /// The file name of a screen's render at a target: <c>&lt;screen&gt;.&lt;target&gt;.png</c>. A target name that is not a plain file-name segment
+    /// (a separator, <c>..</c>, a character no file name takes) is refused, so no render is written outside the renders folder (the review of #1116).
+    /// </summary>
+    public static string RenderFile(string screen, string target) => IsPlainName(target)
+        ? $"{screen}.{target}.png"
+        : throw new ArgumentException($"the target name '{target}' is not a plain file name: it may not hold a path separator, '..' or a character a file name cannot", nameof(target));
+
+    /// <summary>Whether <paramref name="name"/> can be part of a file name in the renders folder: not empty, no separator, no <c>..</c>, no character a file name cannot hold.</summary>
+    public static bool IsPlainName(string name) =>
+        !string.IsNullOrWhiteSpace(name) && !name.Contains("..", StringComparison.Ordinal)
+        && name.IndexOfAny(['/', '\\', ':', '*', '?', '"', '<', '>', '|']) < 0 && !name.Any(char.IsControl);
 }

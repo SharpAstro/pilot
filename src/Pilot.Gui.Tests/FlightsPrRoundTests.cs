@@ -191,4 +191,18 @@ public sealed class FlightsPrRoundTests
         text.ShouldContain("and 3 more rounds");
         faults.ShouldBe(0);
     }
+
+    /// <summary>One round hidden is "1 more round", not "1 more rounds" (the review of #1016).</summary>
+    [Fact]
+    public void OneHiddenRoundIsNamedInTheSingular()
+    {
+        var reviews = Enumerable.Range(1, FlightsView<RgbaImage>.MaxRoundRows + 1)
+            .Select(n => Review(PrReviewState.Reviewing, fixer: null, round: null) with { Number = 2000 + n })
+            .ToArray();
+        var screen = Screen(reviews, Live.Row("s2", "de1-review-pilot-1000", SessionState.Working));
+
+        var (text, _) = Render(FlightsViewMode.List, screen, 1280f);
+
+        text.ShouldContain("and 1 more round, in pilot status");
+    }
 }

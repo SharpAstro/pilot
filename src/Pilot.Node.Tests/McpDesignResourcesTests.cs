@@ -262,6 +262,22 @@ public sealed class McpDesignResourcesTests : IAsyncLifetime
         (await Refused("pilot://designs/DSN-1/versions/1/screens/nope")).ShouldContain("no screen nope");
     }
 
+    // A first target that is no plain file name has no render to find: the screen is not found, listing the screens, not an internal error.
+    [Fact]
+    public async Task AFirstTargetThatIsNotAPlainFileNameIsNotFoundNotAnInternalError()
+    {
+        await Published();
+        var renders = Path.Combine(Version1(), "renders");
+        File.Move(Path.Combine(renders, "home.png"), Path.Combine(renders, "home.Desktop.png"));
+        var prototypeFile = DesignPaths.PrototypeFile(Version1());
+        File.SetAttributes(prototypeFile, FileAttributes.Normal);
+        var prototype = System.Text.Json.Nodes.JsonNode.Parse(await File.ReadAllTextAsync(prototypeFile, Ct))!.AsObject();
+        prototype["targets"] = System.Text.Json.Nodes.JsonNode.Parse("""[{"name":"Phone/Portrait","width":390,"height":844}]""");
+        await File.WriteAllTextAsync(prototypeFile, prototype.ToJsonString(), Ct);
+
+        (await Refused("pilot://designs/DSN-1/versions/1/screens/home")).ShouldContain("no screen home");
+    }
+
     [Theory]
     [InlineData("""{"targets":[{"name":"phone","width":390,"height":844}]}""", "phone")]
     [InlineData("""{"targets":[{"name":"Wide","width":390.5,"height":844}]}""", "Wide")]

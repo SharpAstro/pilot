@@ -104,7 +104,7 @@ public sealed class PeerPullRequests(Func<IFleet?> fleet, TimeProvider time, Fun
     }
 
     // A run that has ended disposes its token source; stopping one that is already gone is no error.
-    private static void StopQuietly(CancellationTokenSource? stop)
+    internal static void StopQuietly(CancellationTokenSource? stop)
     {
         try
         {

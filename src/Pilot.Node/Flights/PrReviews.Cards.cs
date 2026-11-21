@@ -92,7 +92,7 @@ public sealed partial class PrReviews
             {
                 choices.Add(new CardChoice { Label = RecommendedLabel(questions.Count), Verb = Verbs.FixPr, Target = subject, Args = [recommended], Hint = recommended });
             }
-            choices.Add(AnswerChoice(subject, questions.Count));
+            choices.Add(AnswerChoice(subject, questions.Count, tags: questions.Any(q => q.Options.Count > 0)));
             return choices;
         }
         foreach (var question in questions)
@@ -201,11 +201,13 @@ public sealed partial class PrReviews
 
     /// <summary>
     /// The design card's Answer: <c>review fix</c> with the words the person types, which the card's answer appends to its args. On a card of
-    /// several <paramref name="questions"/> the box asks for an answer to each, and says the tags it takes.
+    /// several <paramref name="questions"/> the box asks for an answer to each, and says the tags it takes when there are any: a card whose
+    /// questions have no options takes no tag, so its box gives no tag as the example (the review of #949).
     /// </summary>
-    internal static CardChoice AnswerChoice(string subject, int questions = 1) => new()
+    internal static CardChoice AnswerChoice(string subject, int questions = 1, bool tags = true) => new()
     {
-        Label = AnswerLabel, Verb = Verbs.FixPr, Target = subject, AsksFor = questions > 1 ? "Your answer to each question, such as 1A 2B" : "Your answer",
+        Label = AnswerLabel, Verb = Verbs.FixPr, Target = subject,
+        AsksFor = questions > 1 ? tags ? "Your answer to each question, such as 1A 2B" : "Your answer to each question" : "Your answer",
     };
 
     /// <summary>

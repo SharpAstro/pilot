@@ -17,11 +17,17 @@ public sealed partial class FlightCommander
     /// </summary>
     private readonly ConcurrentDictionary<(string Held, string On), DateTimeOffset> _localSeen = new();
 
+    /// <summary>How long a wait past <see cref="MergedHoldAfter"/> that GitHub says is not done goes before GitHub is asked again (the review of #975).</summary>
+    public static readonly TimeSpan MergedHoldRecheck = TimeSpan.FromMinutes(10);
+
+    /// <summary>When GitHub last said a wait past the bound was not done, by (held flight, waited-for flight); in memory, as <see cref="_localSeen"/>.</summary>
+    private readonly ConcurrentDictionary<(string Held, string On), DateTimeOffset> _mergedAsked = new();
+
     /// <summary>
     /// The backstop of #818: a flight held more than <see cref="MergedHoldAfter"/> on a flight (of this node or another) whose PR merged or
     /// whose issue closed on GitHub, and still held after the look, rings one card for the held flight, with a line per such wait naming both
-    /// flights, how long, and the disconnect that lifts it. GitHub is asked off the lock, on every sweep, for each wait past the bound that has
-    /// no line on the card yet. A line goes once its wait is gone, and the card with its last line.
+    /// flights, how long, and the disconnect that lifts it. GitHub is asked off the lock for each wait past the bound that has no line on the
+    /// card yet, at most once in <see cref="MergedHoldRecheck"/> while it says the wait is not done. A line goes once its wait is gone, and the card with its last line.
     /// </summary>
     internal async Task RingMergedHoldsAsync(CancellationToken cancellationToken)
     {
@@ -47,15 +53,18 @@ public sealed partial class FlightCommander
                 live.Add((held.Code, on));
                 var age = now - since;
                 // A line on the card for another wait of the same flight is no answer for this one.
-                if (age <= MergedHoldAfter || HasMergedHoldCard(held.Code, on))
+                if (age <= MergedHoldAfter || HasMergedHoldCard(held.Code, on)
+                    || (_mergedAsked.TryGetValue((held.Code, on), out var asked) && now - asked < MergedHoldRecheck))
                 {
                     continue;
                 }
                 var (ended, pr) = await GitHubSaysAsync(held, wait, cancellationToken);
                 if (!ended)
                 {
+                    _mergedAsked[(held.Code, on)] = now;
                     continue;
                 }
+                _mergedAsked.TryRemove((held.Code, on), out _);
                 var what = pr.EndsWith(" is merged", StringComparison.Ordinal) ? $"PR {pr["its PR ".Length..^" is merged".Length]} merged" : $"issue #{wait.Issue} closed";
                 fresh.Add(HoldLine(held.Code, on, what, age));
             }
@@ -69,6 +78,10 @@ public sealed partial class FlightCommander
         foreach (var key in _localSeen.Keys.Where(k => !live.Contains(k)))
         {
             _localSeen.TryRemove(key, out _);
+        }
+        foreach (var key in _mergedAsked.Keys.Where(k => !live.Contains(k)))
+        {
+            _mergedAsked.TryRemove(key, out _);
         }
         // One card per held flight: a lift of one wait drops its line, and a lift of the last closes the card.
         foreach (var card in state.Cards(openOnly: true).Where(c => c.Kind == MergedHoldKind))
@@ -88,9 +101,23 @@ public sealed partial class FlightCommander
     }
 
     private static string HoldLine(string held, string on, string what, TimeSpan age) =>
-        $"{held} has been held {(int)age.TotalHours} h {age.Minutes:00} m on {on}, whose {what}. GitHub says {on} is done, yet the hold stayed after the sweep. Lift it with: pilot flight disconnect {held} {on}";
+        $"{held} has been held {(int)age.TotalHours} h {age.Minutes:00} m on {on}, whose {what}. GitHub says {on} is done, yet the hold stayed after the sweep. Lift it with: {DisconnectCommand}{held} {on}";
 
-    private static IEnumerable<string> HoldLines(CardRow card) => (card.Detail ?? "").Split('\n', StringSplitOptions.RemoveEmptyEntries);
+    private const string DisconnectCommand = "pilot flight disconnect ";
+
+    /// <summary>
+    /// The card's hold lines: those that end with a disconnect command. Any other line a card's detail comes to carry (an owner hold's note)
+    /// is not one, so it is neither kept when the card is remade nor parsed for a flight (the review of #975).
+    /// </summary>
+    private static IEnumerable<string> HoldLines(CardRow card) =>
+        (card.Detail ?? "").Split('\n', StringSplitOptions.RemoveEmptyEntries).Where(l => OnOf(l) is not null);
+
+    /// <summary>The waited-for flight of a hold line: the last word of the disconnect command it ends with; null for any other line.</summary>
+    private static string? OnOf(string line)
+    {
+        var at = line.LastIndexOf(DisconnectCommand, StringComparison.OrdinalIgnoreCase);
+        return at >= 0 && line[(at + DisconnectCommand.Length)..].Split(' ', StringSplitOptions.RemoveEmptyEntries) is [_, var on] ? on : null;
+    }
 
     private CardRow? OpenHoldCard(string held) =>
         state.Cards(openOnly: true).FirstOrDefault(c => c.Kind == MergedHoldKind && string.Equals(c.Subject, Verbs.FlightTarget(held), StringComparison.OrdinalIgnoreCase));
@@ -99,7 +126,8 @@ public sealed partial class FlightCommander
     private void RaiseHoldCard(string held, List<string> lines)
     {
         state.CloseCardsAbout(Verbs.FlightTarget(held), "the card was remade", MergedHoldKind);
-        var ons = lines.Select(l => l.Split(" on ", 2)[1].Split(',')[0]).ToList();
+        // The waited-for flight is read from the disconnect command the line ends with, not from its wording (the review of #975).
+        var ons = lines.Select(l => OnOf(l)!).ToList();
         var title = lines.Count == 1
             ? lines[0][..lines[0].IndexOf(". ", StringComparison.Ordinal)]
             : $"{held} is held on {lines.Count} flights that are done";
@@ -117,5 +145,5 @@ public sealed partial class FlightCommander
         && HoldLines(card).Any(l => LineIsFor(l, held, on));
 
     private static bool LineIsFor(string line, string held, string on) =>
-        line.EndsWith($"pilot flight disconnect {held} {on}", StringComparison.OrdinalIgnoreCase);
+        line.EndsWith($"{DisconnectCommand}{held} {on}", StringComparison.OrdinalIgnoreCase);
 }

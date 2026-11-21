@@ -53,14 +53,26 @@ public sealed class TestDirsTests
         Should.NotThrow(() => TestDirs.MakeWritable(gone));
     }
 
+    // The #1063 failure: the file is gone but its folder is still there (FileNotFoundException, not DirectoryNotFoundException).
+    // The test's own output folder exists and holds no such file, so nothing is written (the review of #1067).
+    [Fact]
+    public void MakeWritableSkipsAFileThatHasVanishedFromAFolderStillThere()
+    {
+        var gone = Path.Combine(AppContext.BaseDirectory, "gone-" + Guid.NewGuid().ToString("N")[..8] + ".txt");
+        Should.NotThrow(() => TestDirs.MakeWritable(gone));
+    }
+
     // Every shape of a file walk (Directory or DirectoryInfo, Enumerate or Get, Files or FileSystemInfos) whose loop body
     // clears attributes (File.SetAttributes or an .Attributes assignment).
     private static readonly Regex Walk = new(
         @"(?:Enumerate|Get)(?:Files|FileSystemInfos)\([^;]*\)\s*\)\s*\{[^}]*(?:SetAttributes\(|\.Attributes\s*=)",
         RegexOptions.Singleline | RegexOptions.CultureInvariant);
 
-    // A walk of one named file (SeedRepo's "config" rewrite) has no wildcard in its pattern and is not a cleanup walk.
-    private static readonly Regex NamedFile = new(@",\s*""[^*?""]+""\s*[,)]", RegexOptions.CultureInvariant);
+    // A walk of one named file (SeedRepo's "config" rewrite) has no wildcard in its pattern and is not a cleanup walk. The pattern is the
+    // walk's own argument (the first of a DirectoryInfo's, the second of a Directory's), so a literal inside the folder argument
+    // (Path.Combine(root, "sub")) does not make a tree walk look like a named-file one (the review of #1067).
+    private static readonly Regex NamedFile = new(
+        @"(?:Files|FileSystemInfos)\((?:[^,()""]*(?:\([^()]*\))?[^,()""]*,\s*)?""[^*?""]+""\s*[,)]", RegexOptions.CultureInvariant);
 
     private static bool WalksATree(string source) =>
         Walk.Matches(source).Any(m => !NamedFile.IsMatch(m.Value[..m.Value.IndexOf('{')]));
@@ -69,6 +81,7 @@ public sealed class TestDirsTests
     [InlineData("foreach (var f in Directory.EnumerateFiles(root, \"*\", SearchOption.AllDirectories))\n{\n File.SetAttributes(f, FileAttributes.Normal);\n}", true)]
     [InlineData("foreach (var f in Directory.GetFiles(root, \"*\", SearchOption.AllDirectories))\n{\n File.SetAttributes(f, FileAttributes.Normal);\n}", true)]
     [InlineData("foreach (var f in Directory.GetFiles(root))\n{\n File.SetAttributes(f, FileAttributes.Normal);\n}", true)]
+    [InlineData("foreach (var f in Directory.EnumerateFiles(Path.Combine(root, \"sub\"), \"*\", SearchOption.AllDirectories))\n{\n File.SetAttributes(f, FileAttributes.Normal);\n}", true)]
     [InlineData("foreach (var f in new DirectoryInfo(root).EnumerateFiles(\"*\", SearchOption.AllDirectories))\n{\n f.Attributes = FileAttributes.Normal;\n}", true)]
     [InlineData("foreach (var f in new DirectoryInfo(root).EnumerateFileSystemInfos(\"*\", SearchOption.AllDirectories))\n{\n f.Attributes = FileAttributes.Normal;\n}", true)]
     [InlineData("foreach (var c in Directory.EnumerateFiles(root, \"config\", SearchOption.AllDirectories))\n{\n File.SetAttributes(c, FileAttributes.Normal);\n}", false)]

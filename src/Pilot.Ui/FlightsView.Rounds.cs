@@ -35,7 +35,8 @@ internal sealed partial class FlightsView<TSurface>
         }
         if (shown < screen.Rounds.Count)
         {
-            rows.Add(Layout.Builder.Text($"and {screen.Rounds.Count - shown} more rounds, in pilot status", 12f, Faint).RowH(22f));
+            var more = screen.Rounds.Count - shown;
+            rows.Add(Layout.Builder.Text($"and {more} more round{(more == 1 ? "" : "s")}, in pilot status", 12f, Faint).RowH(22f));
         }
         return Layout.Builder.VStack([.. rows]).Pad(Gutter, 6f).WStar().HAuto();
     }

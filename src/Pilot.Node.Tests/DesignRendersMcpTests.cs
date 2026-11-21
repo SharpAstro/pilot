@@ -215,7 +215,8 @@ public sealed class DesignRendersMcpTests : IAsyncLifetime
         {
             process.Kill(entireProcessTree: true);
             await process.WaitForExitAsync(CancellationToken.None);
-            await stderr;
+            // Its own deadline: the process is gone, so its stderr ends, but a stuck read must not hold the test (the review of #1201).
+            await stderr.WaitAsync(TimeSpan.FromSeconds(20), TestContext.Current.CancellationToken);
         }
     }
 }

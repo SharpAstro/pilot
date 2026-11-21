@@ -108,6 +108,8 @@ public sealed class LandingInProgressTests : ReviewTestsBase
 
         result.Error.ShouldBeNull();
         result.Ok.ShouldBeTrue();
+        // The merge itself was made: the landing it reached is the one under way (the review of #1060).
+        _github.Merged.ShouldHaveSingleItem();
 
         gate.Open();
         (await land).Ok.ShouldBeTrue();

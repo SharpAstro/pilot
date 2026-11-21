@@ -118,7 +118,7 @@ public static partial class CardSummaries
             LegCommander.ValidatingKind => $"A validator was started to check {what} against the tree before its worker starts. Nothing to do; the node starts the leg on its answer.",
             LegCommander.TickerStartedKind => $"The worker of {what} ended with its work committed and steps still open, so the node started a finishing pass to close what the commits cover. Nothing to do; it rings only if that pass stops without finishing.",
             LegCommander.SiblingBehindKind => $"{what} compiles against a sibling clone that is behind origin and the node could not pull it. Pull it by hand, or let the leg run on the clone it has.",
-            Designs.DesignRecord.OversizeKind => $"A built design's files for {what} are over a size limit, so they are not committed to the PR. Make the renders smaller and publish a new version, and the next push to the PR carries them.",
+            Designs.DesignRecord.OversizeKind => $"A built design's files for {what} are over a size limit, so they are not committed to the PR. Make the renders smaller, publish a new version, then move the flight to it with pilot flight replan-design.",
             LegCommander.SiblingPulledKind => $"The node pulled a sibling clone that was behind origin before it started {what}. Nothing to do.",
             LegCommander.NodeFixRoundKind => "On autopilot the node had a fresh worker go around the flight's last leg to fix what its review asked for. The detail lists the findings. Nothing to do.",
             LegCommander.SelfFinishedKind => $"The node finished {what} itself: its work was pushed and its check passed. Nothing to do.",

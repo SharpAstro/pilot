@@ -1542,6 +1542,8 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
                 && (planner.ContextTokens > 0 || planner.LastResponseAt is not null))
             {
                 _noFirstTurn.Remove(subject);
+                // A planner that took its turn after all no longer counts toward an outage, as a worker, validator or reviewer does (the review of #972).
+                Outage.Turned(subject);
             }
             if (cards.Any(c => c.State == CardState.Open && c.Subject == subject && c.Kind != PlanStalled))
             {

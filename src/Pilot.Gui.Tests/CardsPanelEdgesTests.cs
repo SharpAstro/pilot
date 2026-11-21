@@ -15,8 +15,8 @@ namespace Pilot.Gui.Tests;
 /// PIL1094: the rule under the cards panel's header read as a stray thin line on top of the first card. Cards have no gap between them
 /// (each card's own frame separates it from the next), so the space a header rule would keep from the first card is zero, and a border
 /// the head declares lands on the card's frame. Here: no border a header, the panel's edge or the foot declares lies within one card gap
-/// (zero: touches or overlaps) of a card's frame (the foot is arranged too, CanTell on), in design units and in cells alike. PILOT_CARDS_CAPTURES names a folder the captures
-/// (docs/captures/pil1094-*) are written to.
+/// (zero: touches or overlaps) of a card's frame (the foot is arranged too, CanTell on), in design units and in cells alike.
+/// PILOT_CARDS_CAPTURES names a folder the captures (docs/captures/pil1094-*) are written to.
 /// </summary>
 public sealed class CardsPanelEdgesTests
 {
@@ -59,6 +59,8 @@ public sealed class CardsPanelEdgesTests
             if (style.Sides.HasFlag(Layout.BorderSides.Right)) edges.Add(("right", new Rect<float>(b.X + b.Width - w, b.Y, w, b.Height)));
         }
         // Answer fields and pills carry an all-sides border too; a card's frame spans the panel, so only the widest framed boxes count as cards.
+        // This assumes the widest framed box is a card, as it is in the panel today; were it ever not, fewer boxes would count as cards
+        // and the test could only miss an edge, never fail on one that is not there (the review of #1099).
         var cardWidth = framed.Count == 0 ? 0f : framed.Max(f => f.Width) * 0.8f;
         return (edges, [.. framed.Where(f => f.Width >= cardWidth)]);
     }

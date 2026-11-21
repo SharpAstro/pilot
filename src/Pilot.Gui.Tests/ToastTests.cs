@@ -212,7 +212,7 @@ public sealed class ToastTests
         w.Frame(T0.AddSeconds(1), job: JobState.Succeeded);
         var page = w.Chrome.PageBounds!.Value;
         var column = page.Right - NotificationsHost.Style.Margin * dpi - NotificationsHost.Style.ToastWidth * dpi / 2f;
-        var top = page.Y + NotificationsHost.Style.Margin + 10f;
+        var top = page.Y + (NotificationsHost.Style.Margin + 10f) * dpi; // scaled as the column is (the review of #1227)
 
         // The pointer at the top right, where the toast used to dodge to the bottom from: it stays at the bottom right.
         w.Frame(T0.AddSeconds(1.1), job: JobState.Succeeded, pointer: (column, top));
