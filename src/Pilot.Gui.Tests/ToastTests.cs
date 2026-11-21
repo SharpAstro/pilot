@@ -386,6 +386,6 @@ public sealed class ToastTests
             text.AppendLine(string.Concat(Enumerable.Range(0, columns).Select(x => buffer.BackAt(x, y).Glyph)).TrimEnd());
         }
         File.WriteAllText(Path.Combine(ArtifactDir(), $"toasts-tui-{columns}x{rows}.txt"), text.ToString());
-        text.ToString().ShouldContain("ready to merge", Case.Sensitive, "a staying toast is in the terminal frame");
+        text.ToString().ShouldContain("PR #63 is ready to", Case.Sensitive, "a staying toast is in the terminal frame");
     }
 }

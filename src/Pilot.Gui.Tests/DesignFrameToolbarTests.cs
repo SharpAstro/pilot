@@ -33,10 +33,10 @@ public sealed class DesignFrameToolbarTests
         public PilotChrome<RgbaImage> Chrome { get; }
         public DesignsView<RgbaImage> View => Chrome.Designs;
 
-        public void Paint()
+        public void Paint(float width = 1920f)
         {
             var data = PageData.For("sample");
-            Chrome.Render(data.Sessions, data.Flights, data.Cards, data.Jobs, data.Fleet, data.Repos, data.PullRequests, new RectF32(0, 0, 1920, 1080), data.Machines, null, data.Spend, Screen);
+            Chrome.Render(data.Sessions, data.Flights, data.Cards, data.Jobs, data.Fleet, data.Repos, data.PullRequests, new RectF32(0, 0, width, 1080), data.Machines, null, data.Spend, Screen);
         }
 
         public List<Layout.ArrangedNode<float>> Arranged(float width = 1920f) =>
@@ -137,6 +137,8 @@ public sealed class DesignFrameToolbarTests
         // At 360 the well holds about 270 units, less than the segmented control (about 344, one unbreakable item): the sizes are separate buttons again, which wrap, and every
         // one lies inside the window with the hit id it always had.
         using var rig = new Rig();
+        // The view learns its width from a render, so it is painted at 360 first.
+        rig.Paint(360f);
         var all = rig.Arranged(360f);
         var own = new System.Text.RegularExpressions.Regex(@"^designs:frame-(size|rotate|terminal|point):0:0(:|$)");
         var buttons = all.Where(a => a.Node.Hit is HitResult.ButtonHit { Action: { } act } && own.IsMatch(act)).ToList();
