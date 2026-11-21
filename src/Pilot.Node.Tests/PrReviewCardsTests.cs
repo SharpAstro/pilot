@@ -80,7 +80,8 @@ public sealed class PrReviewCardsTests : PrFixTestsBase
     {
         var done = await Review("acme/widget#7", "changes", Design);
         // The helper waits out the reviewer's grace, which ends the review: put it back to the open state the sweep's end is about.
-        _state.PutPrReview(done with { State = PrReviewState.Reviewed, ClosedAt = null });
+        // A posted review, or one whose card closed, ends in the sweep on its own account, so it is neither here.
+        _state.PutPrReview(done with { State = PrReviewState.Reviewed, ClosedAt = null, PostedId = null, Card = null });
         RaiseReviewCards();
         _github.Prs["acme/widget#7"] = _github.Prs["acme/widget#7"] with { State = prState };
 
