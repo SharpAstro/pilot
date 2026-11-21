@@ -18,6 +18,8 @@ namespace Pilot.Gui.Tests;
 public sealed class ToastPressTests
 {
     private static readonly DateTimeOffset T0 = PageData.Now;
+    // The library lays Dismiss after the choices in the same row, which does not wrap: the choices leave it this much of the toast (at 100%).
+    private const float DismissRoom = 80f;
     private const string LongLabel = "Start web-header and then wait for the review of the whole flight before going on to land it";
     private const string Why = "refused: the flight is held, so nothing can be started on it until its owner lifts the hold";
 
@@ -157,7 +159,7 @@ public sealed class ToastPressTests
         ArrangedText.Concat(row).ShouldNotContain("before going on to land it");
         row.Select(a => a.Node.Tooltip?.ToString()).ShouldContain(t => t != null && t.Contains(LongLabel));
         Actions(row).ShouldContain("toast:c1:1", "the tooltip on the cut button does not swallow its press");
-        row.Where(a => a.Bounds.X + a.Bounds.Width > width + 0.5f).Select(a => $"{a.Node.GetType().Name}@{a.Bounds.X:0},{a.Bounds.Y:0},{a.Bounds.Width:0}x{a.Bounds.Height:0} hit={a.Node.Hit}")
+        row.Where(a => a.Bounds.X + a.Bounds.Width > width - DismissRoom + 0.5f).Select(a => $"{a.Node.GetType().Name}@{a.Bounds.X:0},{a.Bounds.Y:0},{a.Bounds.Width:0}x{a.Bounds.Height:0} hit={a.Node.Hit}")
             .ShouldBeEmpty($"nothing runs past the toast at {width}");
         TextOverlap.Faults(row).Select(f => f.Line).ShouldBeEmpty();
     }

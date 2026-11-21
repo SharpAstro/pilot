@@ -563,7 +563,7 @@ internal sealed class PilotChrome<TSurface>
     };
 
     /// <summary>The most characters of a choice's label a toast button shows; a longer label is cut there and ends in an ellipsis, the whole label on hover. A character cut, not a measured one: nothing here measures text.</summary>
-    internal const int ToastLabelChars = 16;
+    internal const int ToastLabelChars = 10;
 
     /// <summary>The label as a toast button shows it: whole when short, else cut at <see cref="ToastLabelChars"/> ending in an ellipsis.</summary>
     internal static string CutToastLabel(string label) =>
