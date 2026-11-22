@@ -365,7 +365,7 @@ public sealed class PrFixTests2 : PrFixTestsBase
     private async Task<string> ApprovedWithAPointLeft()
     {
         _github.Summary = GhAnswers.ChecksOf(ChoiceStatus.Passing, 1, 1);
-        _github.Queue = GhAnswers.MergeQueue("idle", Row.Head);
+        _github.Queue = GhAnswers.MergeQueue("idle", _github.Prs["acme/widget#7"].Head);
         (await Run(Verbs.ReviewPr, "acme/widget#7", "controller")).Error.ShouldBeNull();
         (await Run(Verbs.PrVerdict, "acme/widget#7", Row.Reviewer, "approve", NotBlocking)).Error.ShouldBeNull();
         return Row.Head;
