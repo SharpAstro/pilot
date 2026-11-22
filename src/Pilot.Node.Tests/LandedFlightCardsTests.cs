@@ -67,6 +67,7 @@ public sealed class LandedFlightCardsTests : IDisposable
     private void PutJob(string id, string? flight, string? owner) => _state.PutJob(new JobRow
     {
         Id = id, Command = "dotnet test", Cwd = _root, State = JobState.Succeeded, StartedAt = Began, EndedAt = Began.AddMinutes(1), Flight = flight, Owner = owner,
+        LogPath = Path.Combine(_root, id + ".log"), Timeout = TimeSpan.FromMinutes(30),
     });
 
     private void Card(string kind, string subject, CardBin bin = CardBin.Ring) => _state.RaiseCard(bin, kind, subject, kind + " of " + subject);
