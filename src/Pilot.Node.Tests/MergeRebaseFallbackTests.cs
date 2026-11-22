@@ -43,7 +43,7 @@ public sealed class MergeRebaseFallbackGitTests() : ReviewTestsBase(realGit: tru
         shaped.ShouldNotBe(head);
         Git(Repo, "rev-list", "--merges", "--count", $"origin/main..{shaped}").ShouldBe("0");
         F(flight.Code).State.ShouldBe(FlightState.Landed);
-        _state.Cards().ShouldNotContain(c => c.Kind == LegCommander.MergeFailed || c.Kind == PrChecks.AutopilotMergeRefused);
+        _state.Cards().ShouldNotContain(c => c.Kind == LegCommander.MergeFailed || c.Kind == PrChecks.NodeMergeRefused);
     }
 
     [Fact]
@@ -96,6 +96,6 @@ public sealed class MergeRebaseFallbackGitTests() : ReviewTestsBase(realGit: tru
         // Bringing the branch up to date closes the old PR-ready card and raises it again for the new head; nothing else rings for the owner.
         ringBefore.ShouldNotBeEmpty();
         _state.Cards(openOnly: true).Where(c => c.Bin == CardBin.Ring && c.Subject == Verbs.FlightTarget(flight.Code)).Select(c => c.Kind).ShouldAllBe(k => k == LegCommander.PrReady);
-        _state.Cards().ShouldNotContain(c => c.Kind == LegCommander.MergeFailed || c.Kind == PrChecks.AutopilotMergeRefused);
+        _state.Cards().ShouldNotContain(c => c.Kind == LegCommander.MergeFailed || c.Kind == PrChecks.NodeMergeRefused);
     }
 }

@@ -80,7 +80,7 @@ internal sealed record FleetLine
     /// <summary>Whether it never said hello: not connected and no <see cref="NodeInfo"/> ever received.</summary>
     public bool NeverReached { get; init; }
 
-    /// <summary>Whether the node was heard and cannot be reached now: its counts, account, usage, autopilot and maintenance are its last words, drawn dimmed and dated by <see cref="LastHeard"/>.</summary>
+    /// <summary>Whether the node was heard and cannot be reached now: its counts, account, usage and maintenance are its last words, drawn dimmed and dated by <see cref="LastHeard"/>.</summary>
     public bool LastKnown { get; init; }
 
     /// <summary>When a <see cref="LastKnown"/> node went quiet (its last word, in this machine's time); null for any other row.</summary>

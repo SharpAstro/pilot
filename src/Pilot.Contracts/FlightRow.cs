@@ -359,7 +359,7 @@ public sealed record FlightRow
 
     /// <summary>
     /// Set while the flight circles in a holding pattern: its review passed with not blocking notes, and the watchtower is making
-    /// the small fixes. Autopilot's merge and the PR-ready card's Merge are held until the watchtower (or the person) clears it
+    /// the small fixes. The node's merge and the PR-ready card's Merge are held until the watchtower (or the person) clears it
     /// (<c>flight clear</c>) or pushes (<c>flight pr</c>). Null otherwise. Optional, so the wire version does not move.
     /// </summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
@@ -367,7 +367,7 @@ public sealed record FlightRow
 
     /// <summary>
     /// The owner's hold (<c>flight ground</c>, #771): while it stands the node starts nothing for the flight and takes no outward
-    /// step (no leg, worker, planner, reviewer, go-around, base merge, push, PR open or merge), from the autopilot, the sweeps, the
+    /// step (no leg, worker, planner, reviewer, go-around, base merge, push, PR open or merge), from the node's own press, the sweeps, the
     /// watchtower or a card's button alike, until <c>flight unground</c>. Not <see cref="Holding"/> (the review-notes holding pattern, which
     /// only holds the merge) and not <see cref="LegRow.Hold"/> (a leg's wait for a package). Null while the flight is not held.
     /// Optional, so the wire version does not move.

@@ -651,7 +651,7 @@ public sealed partial class LegCommander(
                 // new head (its status and label are set again there), and its PR-ready card offers the merge at that head.
                 flight = Record(code, f => f with { Review = f.Review is { } held ? held with { ReviewedHead = kept, StatusState = null } : null })!;
                 await OffLockAsync(null, () => _marks.ApplyAsync(code, cancellationToken));
-                state.CloseCardsAbout(Verbs.FlightTarget(code), $"{code} brought up to date with {flight.Base}; its review carries to {CommitRefs.Short(kept)}", PrReady, MergeFailed, PrChecks.AutopilotMergeRefused);
+                state.CloseCardsAbout(Verbs.FlightTarget(code), $"{code} brought up to date with {flight.Base}; its review carries to {CommitRefs.Short(kept)}", PrReady, MergeFailed, PrChecks.NodeMergeRefused);
                 if (flight.PullRequest is not null)
                 {
                     await RaisePrReadyAsync(flight, "passed, and carried over the clean merge of its base", "Review", cancellationToken);
@@ -660,7 +660,7 @@ public sealed partial class LegCommander(
                 await CheckAfterPushAsync(flight, cancellationToken);
                 return (null, kept);
             }
-            state.CloseCardsAbout(Verbs.FlightTarget(code), $"{code} brought up to date with {flight.Base}; reviewed afresh", PrReady, MergeFailed, PrChecks.AutopilotMergeRefused);
+            state.CloseCardsAbout(Verbs.FlightTarget(code), $"{code} brought up to date with {flight.Base}; reviewed afresh", PrReady, MergeFailed, PrChecks.NodeMergeRefused);
             await StartReviewAsync(flight, cancellationToken, quiet: true);
             await CheckAfterPushAsync(flight, cancellationToken);
             return (null, null);

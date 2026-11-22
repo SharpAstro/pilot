@@ -63,7 +63,7 @@ public sealed class AutopilotNodePressTests
     {
         var command = _ran.ShouldHaveSingleItem();
         (command.Verb, command.Target, string.Join('|', command.Args), command.Who, command.Autopilot).ShouldBe((Verbs.Answer, Verbs.CardTarget(card.Id), label, "node", true));
-        var handled = _state.Cards().Single(c => c.Kind == CardKinds.AutopilotRan);
+        var handled = _state.Cards().Single(c => c.Kind == CardKinds.NodeRan);
         handled.Bin.ShouldBe(CardBin.Handled);
         var detail = handled.Detail ?? "";
         detail.ShouldContain(card.Id);
@@ -148,7 +148,7 @@ public sealed class AutopilotNodePressTests
         FoldCard();
         (await PressedAsync()).ShouldBe(0);
         _ran.ShouldBeEmpty();
-        _state.Cards().ShouldNotContain(c => c.Kind == CardKinds.AutopilotRan);
+        _state.Cards().ShouldNotContain(c => c.Kind == CardKinds.NodeRan);
     }
 
     [Fact]
@@ -160,7 +160,7 @@ public sealed class AutopilotNodePressTests
         (await press.PressAsync(CancellationToken.None)).ShouldBe(0);
         (await press.PressAsync(CancellationToken.None)).ShouldBe(0);
         _ran.Count.ShouldBe(1);
-        _state.Cards().ShouldNotContain(c => c.Kind == CardKinds.AutopilotRan);
+        _state.Cards().ShouldNotContain(c => c.Kind == CardKinds.NodeRan);
     }
 
     [Fact]
@@ -260,7 +260,7 @@ public sealed class AutopilotNodePressTests
         result.Ok.ShouldBeTrue(result.Error);
         node.State.Cards().Single(c => c.Id == card.Id).State.ShouldBe(CardState.Closed);
         var decision = node.State.Decisions().Single(d => d.Subject == StrayKey);
-        (decision.By, decision.ByKind).ShouldBe(("node", DecisionByKinds.Autopilot));
+        (decision.By, decision.ByKind).ShouldBe(("node", DecisionByKinds.Node));
         decision.Reason.ShouldContain(why);
     }
 }

@@ -12,7 +12,7 @@ namespace Pilot.Node.Flights;
 public sealed partial class LegCommander
 {
     /// <summary>The last item of <see cref="FlightRow.MergeWhenGreen"/> when the node armed the merge itself, on autopilot.</summary>
-    public const string ArmedByAutopilot = "autopilot";
+    public const string ArmedByNode = "autopilot";
 
     /// <summary>The button that merges a flight's PR: two words at least, as every button says what it does (#797).</summary>
     public const string MergeLabel = "Merge the PR";
@@ -27,8 +27,8 @@ public sealed partial class LegCommander
         // The merge is an entry in its repo's queue (MergeRow), never done on the spot: the node takes the repo's entries in order, one
         // at a time, and the entry says where it stands. Only a flight that may merge at all (every leg done, review passed) gets one.
         var (asked, askedHead, askedMethod) = Mergeable(command);
-        var by = command.Who != "node" ? MergeBy.Hand : asked.MergeWhenGreen is null ? MergeBy.Autopilot
-            : asked.MergeWhenGreen[^1] == ArmedByAutopilot ? MergeBy.Autopilot : MergeBy.Armed;
+        var by = command.Who != "node" ? MergeBy.Hand : asked.MergeWhenGreen is null ? MergeBy.Node
+            : asked.MergeWhenGreen[^1] == ArmedByNode ? MergeBy.Node : MergeBy.Armed;
         // A flight's entry is its one merge command's: a second ask while one is under way is refused and leaves the entry as it is.
         bool underWay;
         lock (_turns)
@@ -249,7 +249,7 @@ public sealed partial class LegCommander
         {
             (null, false) => [pr.Head, method],
             (_, false) => [pr.Head, method, how!],
-            _ => [pr.Head, method, how ?? "", ArmedByAutopilot],
+            _ => [pr.Head, method, how ?? "", ArmedByNode],
         } });
         return (false, ArmedLine(checks, how, progress), MergeWays.Armed);
     }
@@ -474,7 +474,7 @@ public sealed partial class LegCommander
             {
                 Record(flight.Code, f => f with { Review = f.Review is { } held ? held with { ReviewedHead = pr.Head, StatusState = null } : null });
                 await _marks.ApplyAsync(flight.Code, cancellationToken);
-                state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), $"{flight.Code}'s head moved by {flight.Base} or by whitespace or documentation only; its review carries to {CommitRefs.Short(pr.Head)}", PrReady, MergeFailed, PrChecks.AutopilotMergeRefused);
+                state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), $"{flight.Code}'s head moved by {flight.Base} or by whitespace or documentation only; its review carries to {CommitRefs.Short(pr.Head)}", PrReady, MergeFailed, PrChecks.NodeMergeRefused);
                 return pr;
             }
             // The node starts a review of the new head (HeadMovedAsync): it waits on that.
@@ -838,7 +838,7 @@ public sealed partial class LegCommander
             await TurnToChangesAsync(flight, why, cancellationToken);
             flight = FlightOf(target);
         }
-        state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), $"{flight.Code}'s merge was taken back: {why}", PrReady, MergeFailed, PrChecks.AutopilotMergeRefused);
+        state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), $"{flight.Code}'s merge was taken back: {why}", PrReady, MergeFailed, PrChecks.NodeMergeRefused);
         state.RaiseCard(CardBin.Handled, MergeTakenBackKind, Verbs.FlightTarget(flight.Code),
             $"{flight.Code}'s merge of PR #{number} was taken back",
             $"{(took.Count > 0 ? $"{string.Join(", ", took)}. " : "")}{why}. The merge is offered again once the new leg is done and a fresh review passes.",

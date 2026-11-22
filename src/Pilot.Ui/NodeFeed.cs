@@ -90,7 +90,7 @@ internal sealed class NodeFeed : IAsyncDisposable
 
     /// <summary>
     /// What the node says it is: the fixed fields (version, process, folders) as of its last connection, and what changes
-    /// (maintenance, autopilot, fleet flights, account, watchtower) as the stream last carried it; null until it has said.
+    /// (maintenance, fleet flights, account, watchtower) as the stream last carried it; null until it has said.
     /// </summary>
     public NodeInfo? Node => NodeOf(Volatile.Read(ref _view));
 

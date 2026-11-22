@@ -33,7 +33,7 @@ public sealed class NodePress(NodeState state, Func<bool> autopilotOn, Func<Comm
 
     private readonly HashSet<string> _tried = new(StringComparer.Ordinal);
 
-    /// <summary>Whether a card of this kind may be pressed by the node on autopilot, so the ring judge and the watchtower leave it to the node.</summary>
+    /// <summary>Whether a card of this kind may be pressed by the node by the node, so the ring judge and the watchtower leave it to the node.</summary>
     public static bool Owns(string kind) => kind is StraySweep.Kind or CardKinds.Overlap or PrReviews.FixEndedKind;
 
     /// <summary>
@@ -117,7 +117,7 @@ public sealed class NodePress(NodeState state, Func<bool> autopilotOn, Func<Comm
                 continue;
             }
             pressed++;
-            state.RaiseCard(CardBin.Handled, CardKinds.AutopilotRan, Verbs.CardTarget(card.Id), $"The node pressed '{choice.Label}' on autopilot: {card.Title}",
+            state.RaiseCard(CardBin.Handled, CardKinds.NodeRan, Verbs.CardTarget(card.Id), $"The node pressed '{choice.Label}': {card.Title}",
                 $"Card {card.Id} ({card.Kind}). The rule that let the node press it: {rule.Why}.");
         }
         return pressed;

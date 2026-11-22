@@ -65,7 +65,7 @@ public sealed record CommandRequest
     public string? RequestId { get; init; }
 
     /// <summary>
-    /// Set by the node when it let an assistant's your-only command through because the autopilot is on, so the command's
+    /// Set by the node when it let an assistant's your-only command through directly, so the command's
     /// result and its black-box line say so. Never read from the wire: a client cannot claim it.
     /// </summary>
     [JsonIgnore]
@@ -166,7 +166,7 @@ public sealed record CommandResult
     /// <summary>The setting's row as it stands after a <c>set node</c> that saved it, so a page shows it from the answer; null for any other command or a refusal.</summary>
     public SettingRow? Setting { get; init; }
 
-    /// <summary>Whether the node ran it as an assistant's your-only command because the autopilot is on (<see cref="CommandRequest.Autopilot"/>).</summary>
+    /// <summary>Whether the node ran it as an assistant's your-only command directly (<see cref="CommandRequest.Autopilot"/>).</summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
     public bool Autopilot { get; init; }
 
@@ -512,7 +512,7 @@ public static class Verbs
 
     /// <summary>
     /// <c>clear flight/&lt;code&gt; [why…]</c>: the watchtower's word (or the person's) that a flight held in a holding pattern (a
-    /// review passed with notes) is cleared to land: autopilot's merge and the PR-ready card's Merge are no longer held.
+    /// review passed with notes) is cleared to land: the node's merge and the PR-ready card's Merge are no longer held.
     /// </summary>
     public const string Clear = "clear";
 
@@ -1318,7 +1318,7 @@ public sealed record BlackBoxLine
     /// <summary>Why not, when it was refused.</summary>
     public string? Error { get; init; }
 
-    /// <summary>Whether it ran on the autopilot: an assistant's your-only command, done without the person's answer (<see cref="Who"/> is that session).</summary>
+    /// <summary>Whether the node ran it directly: an assistant's your-only command, done without the person's answer (<see cref="Who"/> is that session).</summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
     public bool Autopilot { get; init; }
 

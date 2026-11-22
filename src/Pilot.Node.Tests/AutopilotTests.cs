@@ -248,7 +248,7 @@ public sealed class AutopilotTests
         node.State.Flights().Single().State.ShouldBe(FlightState.Landed);
         var line = BlackBox(node).Single(l => l.Verb == Verbs.Merge);
         (line.Who, line.Ok, line.Autopilot, line.Why).ShouldBe((Assistant, true, true, Why));
-        var handled = node.State.Cards().Single(c => c.Kind == CardKinds.AutopilotRan);
+        var handled = node.State.Cards().Single(c => c.Kind == CardKinds.NodeRan);
         (handled.Bin, handled.State, handled.Title, handled.AskedBy, handled.Why).ShouldBe((CardBin.Handled, CardState.Closed, "pilot-33 merged #63 (TIA1) on autopilot", Assistant, Why));
         handled.Detail.ShouldNotBeNull().ShouldContain(Why);
         node.State.Cards().ShouldNotContain(c => c.Kind == CardKinds.AssistantAsk);
@@ -269,7 +269,7 @@ public sealed class AutopilotTests
         node.GitHub.Merged.ShouldBeEmpty();
         var card = Ask(node);
         (card.Bin, card.Subject).ShouldBe((CardBin.ForYou, "flight/TIA1"));
-        node.State.Cards().ShouldNotContain(c => c.Kind == CardKinds.AutopilotRan);
+        node.State.Cards().ShouldNotContain(c => c.Kind == CardKinds.NodeRan);
 
         // The person's own merge, by Allow on the card or by hand, is not held.
         (await Send(node, Command(Verbs.Answer, Verbs.CardTarget(card.Id), "gui", args: "Allow it"))).Error.ShouldBeNull();
@@ -294,7 +294,7 @@ public sealed class AutopilotTests
         node.GitHub.Merged.ShouldBeEmpty();
         var card = Ask(node);
         card.Title.ShouldContain("merge acme/widget#7");
-        node.State.Cards().ShouldNotContain(c => c.Kind == CardKinds.AutopilotRan);
+        node.State.Cards().ShouldNotContain(c => c.Kind == CardKinds.NodeRan);
     }
 
     [Fact]
@@ -312,11 +312,11 @@ public sealed class AutopilotTests
 
         refused.Error.ShouldNotBeNull().ShouldContain("has not been reviewed");
         refused.Autopilot.ShouldBeTrue();
-        node.State.Cards().ShouldNotContain(c => c.Kind == CardKinds.AutopilotRan);
+        node.State.Cards().ShouldNotContain(c => c.Kind == CardKinds.NodeRan);
 
         Ready(node);
         (await Send(node, Command(Verbs.Merge, "flight/TIA1", Assistant, agent: true, args: Head))).Error.ShouldBeNull();
-        node.State.Cards().Single(c => c.Kind == CardKinds.AutopilotRan).Detail.ShouldBe("No message given");
+        node.State.Cards().Single(c => c.Kind == CardKinds.NodeRan).Detail.ShouldBe("No message given");
     }
 
     [Fact]
@@ -333,7 +333,7 @@ public sealed class AutopilotTests
         }
 
         node.GitHub.Merged.ShouldBeEmpty();
-        node.State.Cards().ShouldNotContain(c => c.Kind == CardKinds.AssistantAsk || c.Kind == CardKinds.AutopilotRan);
+        node.State.Cards().ShouldNotContain(c => c.Kind == CardKinds.AssistantAsk || c.Kind == CardKinds.NodeRan);
     }
 
     [Fact]
@@ -347,7 +347,7 @@ public sealed class AutopilotTests
         merged.Error.ShouldBeNull();
         merged.Autopilot.ShouldBeFalse();
         node.GitHub.Merged.Single().Number.ShouldBe(63);
-        node.State.Cards().ShouldNotContain(c => c.Kind == CardKinds.AssistantAsk || c.Kind == CardKinds.AutopilotRan);
+        node.State.Cards().ShouldNotContain(c => c.Kind == CardKinds.AssistantAsk || c.Kind == CardKinds.NodeRan);
     }
 
     [Fact]

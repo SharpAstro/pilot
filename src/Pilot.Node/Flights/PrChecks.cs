@@ -565,7 +565,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
         {
             var (head, method) = (flight.MergeWhenGreen![0], flight.MergeWhenGreen[1]);
             var how = flight.MergeWhenGreen.ElementAtOrDefault(2) is { Length: > 0 } who ? who : null;
-            var byAutopilot = flight.MergeWhenGreen[^1] == LegCommander.ArmedByAutopilot;
+            var byAutopilot = flight.MergeWhenGreen[^1] == LegCommander.ArmedByNode;
             var native = how == LegCommander.ArmedByGitHub;
             var number = flight.PullRequest!.Value;
             var subject = Verbs.FlightTarget(flight.Code);
@@ -722,7 +722,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                 else if (result.Ok && result.Way == MergeWays.Updated)
                 {
                     // Behind its base: brought up to date and reviewed afresh, which offers the merge again; nothing was dropped.
-                    state.RaiseCard(CardBin.Handled, CardKinds.AutopilotRan, subject, $"{flight.Code}'s PR #{number} was updated and is reviewed again", result.Made);
+                    state.RaiseCard(CardBin.Handled, CardKinds.NodeRan, subject, $"{flight.Code}'s PR #{number} was updated and is reviewed again", result.Made);
                     continue;
                 }
                 else if (result.Ok && result.Way == MergeWays.InProgress)
@@ -1092,7 +1092,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                 var outcome = merged ? $"merged on GitHub as #{number}" : $"#{number} closed on GitHub without a merge";
                 state.CloseCard(card.Id, outcome, "github");
                 // The autopilot's refused merge of this PR has nothing left to offer.
-                state.CloseCardsAbout(card.Subject, outcome, AutopilotMergeRefused);
+                state.CloseCardsAbout(card.Subject, outcome, NodeMergeRefused);
                 if (merged && flights is not null)
                 {
                     try
@@ -1232,7 +1232,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
     }
 
     /// <summary>The card a merge the autopilot asked for and GitHub or the node refused: why, with Merge to try again.</summary>
-    public const string AutopilotMergeRefused = "autopilot-merge-refused";
+    public const string NodeMergeRefused = "autopilot-merge-refused";
 
     /// <summary>
     /// With the autopilot on, a flight whose review passed is merged by the node itself, from its PR-ready card, once its checks
@@ -1250,7 +1250,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             // A flight in a holding pattern circles: not asked, and the head not marked as tried, so it merges once cleared.
             || flight.Holding is not null
             // A leg still to fly (a review-notes leg, say) is the merge's own refusal: not asked, and the head not marked as tried, so
-            // it merges once that leg lands. Asking rang "merge on autopilot was refused: has legs not done" (PDF446, PIL841, 2026-11-07).
+            // it merges once that leg lands. Asking rang "merge by the node was refused: has legs not done" (PDF446, PIL841, 2026-11-07).
             || state.OpenLegs(flight.Code).Count > 0
             || card.Choices.FirstOrDefault(c => c.Verb == Verbs.Merge) is not { } merge
             // Another merge of its repo holds the turn: asked at a later look, and only an ask made marks the head as tried.
@@ -1281,7 +1281,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             _autoMerged.Remove(key);
             return;
         }
-        var rule = $"autopilot on, review passed, checks {status ?? "unknown"}";
+        var rule = $"review passed, checks {status ?? "unknown"}";
         var asked = _mergeTries.TryGetValue(key, out var before) ? new List<DateTimeOffset>(before.At) : new List<DateTimeOffset>();
         if (refusal is not null)
         {
@@ -1302,7 +1302,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                     _ => ("Merge", rule),
                 };
             state.RecordDecision(Verbs.FlightTarget(flight.Code), DecisionKinds.Merge, $"Merge {flight.Code}'s PR #{flight.PullRequest} now, or wait?",
-                ["Merge", "Arm the merge", "Join the merge queue", "Bring the branch up to date", "Wait"], choice, "node", DecisionByKinds.Autopilot, reason);
+                ["Merge", "Arm the merge", "Join the merge queue", "Bring the branch up to date", "Wait"], choice, "node", DecisionByKinds.Node, reason);
         }
         if (retry)
         {
@@ -1319,7 +1319,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
         if (result.Ok && result.Way == MergeWays.Updated)
         {
             // Behind its base: brought up to date and reviewed afresh, which closed the card and offers the merge again. Handled, not refused.
-            state.RaiseCard(CardBin.Handled, CardKinds.AutopilotRan, Verbs.FlightTarget(flight.Code),
+            state.RaiseCard(CardBin.Handled, CardKinds.NodeRan, Verbs.FlightTarget(flight.Code),
                 $"{flight.Code}'s PR #{flight.PullRequest} was updated and is reviewed again", result.Made);
             return;
         }
@@ -1331,13 +1331,13 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
         }
         if (result.Ok)
         {
-            state.CloseCard(card.Id, result.Made is { Length: > 0 } made ? $"on autopilot: {made}" : "merged on autopilot", "node");
-            state.RaiseCard(CardBin.Handled, CardKinds.AutopilotRan, Verbs.FlightTarget(flight.Code),
-                $"{flight.Code}'s PR #{flight.PullRequest} {(result.Made is { Length: > 0 } ? "is merging" : "merged")} on autopilot", result.Made);
+            state.CloseCard(card.Id, result.Made is { Length: > 0 } made ? $"by the node: {made}" : "merged", "node");
+            state.RaiseCard(CardBin.Handled, CardKinds.NodeRan, Verbs.FlightTarget(flight.Code),
+                $"{flight.Code}'s PR #{flight.PullRequest} {(result.Made is { Length: > 0 } ? "is merging" : "merged")}", result.Made);
             return;
         }
         _mergeTries[key] = new MergeTries(asked, time.GetUtcNow());
-        RaiseMergeRefused(flight, merge, result, refusal!, asked, key, "on autopilot");
+        RaiseMergeRefused(flight, merge, result, refusal!, asked, key, "by the node");
     }
 
     /// <summary>
@@ -1390,7 +1390,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
         var summary = $"{todo} {(conflicting ? $"The PR still conflicted with its base after {asked.Count} tries" : passing ? $"GitHub did not take the merge in {asked.Count} tries" : "The merge was refused")}: {LegCommander.OneLine(error)}.";
         var choices = label is null ? [] : new List<CardChoice> { new() { Label = label, Verb = verb, Target = verb == Verbs.Dismiss ? "" : subject, Args = args } };
         // A closed PR is a fact to read (For you); anything else a person must see rings, with a choice or without one.
-        var raised = state.RaiseCard(refusal.Action == MergeAction.PrClosed ? CardBin.ForYou : CardBin.Ring, AutopilotMergeRefused, subject, title, detail, choices, link: flight.PullRequestUrl, summary: summary);
+        var raised = state.RaiseCard(refusal.Action == MergeAction.PrClosed ? CardBin.ForYou : CardBin.Ring, NodeMergeRefused, subject, title, detail, choices, link: flight.PullRequestUrl, summary: summary);
         if (choices.Count == 1 && verb == Verbs.Dismiss)
         {
             // Done on GitHub or on another card: pressing says so and closes this one, and the autopilot asks again at the next look.

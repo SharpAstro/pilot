@@ -20,7 +20,7 @@ public sealed class DecisionTests : IDisposable
         }
     }
 
-    private static DecisionRow Record(NodeState state, string subject, string kind, string choice = "yes", string by = "autopilot-1", string byKind = DecisionByKinds.Autopilot) =>
+    private static DecisionRow Record(NodeState state, string subject, string kind, string choice = "yes", string by = "autopilot-1", string byKind = DecisionByKinds.Node) =>
         state.RecordDecision(subject, kind, $"Which for {subject}?", ["yes", "no"], choice, by, byKind, " because it is so ");
 
     [Fact]

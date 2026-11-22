@@ -150,7 +150,7 @@ public sealed partial class LegCommander
             flight = cleared;
         }
         // The cards that offer the merge or a step close: the hold refuses each button, and a release brings the due ones back.
-        state.CloseCardsAbout(target, $"{flight.Code} is on hold by {by}", PrReady, MergeFailed, PrChecks.AutopilotMergeRefused, NextStepKind);
+        state.CloseCardsAbout(target, $"{flight.Code} is on hold by {by}", PrReady, MergeFailed, PrChecks.NodeMergeRefused, NextStepKind);
         state.CloseCardsAbout(target, repeat ? "the hold's reason was updated" : "on hold", OnHoldKind);
         // A held flight loads the machine no more (the held PIL895 ran the whole Pilot.Node.Tests suite for an hour after "hold all
         // flights", SE1, 2026-11-09): its running jobs end, but for its leg's check, which a cancel would count as a failure; its queued

@@ -92,7 +92,7 @@ public sealed class RetryAndHoldTests : IDisposable
     // A flight whose merge the autopilot armed, at a head whose checks fail.
     private void CiFlight(string code, int pr, char head, long run, string? log = null, string[]? files = null)
     {
-        Flight(code, pr, armed: [Head(head), "squash", LegCommander.ArmedByAutopilot]);
+        Flight(code, pr, armed: [Head(head), "squash", LegCommander.ArmedByNode]);
         _github.PrFiles[pr] = files ?? ["src/Pilot.Node/Flights/PrChecks.cs"];
         _github.PrOf[Branch(code)] = GhAnswers.PullRequestByBranch(number: pr, head: Head(head), url: $"https://github.com/x/tianwen/pull/{pr}");
         _github.Summary = GhAnswers.ChecksOf(ChoiceStatus.Failing, 1, 2, "build", $"https://github.com/x/tianwen/actions/runs/{run}");

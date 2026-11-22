@@ -38,7 +38,7 @@ position; if OPEN and checks pass, say it is ready to queue.
 
 **Queue a PR: whose it is depends on who started the session.**
 
-- **A flight's PR is the node's.** On autopilot the node queues it once it is reviewed and green; a session does not
+- **A flight's PR is the node's.** The node queues it once it is reviewed and green; a session does not
   race it (`pilot flight merge <code> <head>` is the command when a person wants it merged).
 - **A session the node started** (a worker, planner, validator or reviewer in a plane under `.claude/worktrees/`, or
   the watchtower) is refused by pilot's merge guard, a PreToolUse hook: `gh pr merge`, the GraphQL

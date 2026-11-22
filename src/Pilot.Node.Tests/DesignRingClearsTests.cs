@@ -168,7 +168,7 @@ public sealed class DesignRingClearsTests : PrFixTestsBase
         detail.ShouldContain($"Chosen: {DecidableDesign.Answer}");
         detail.ShouldContain("Why: the watchtower answered it with review fix on autopilot");
         Fixers.ShouldHaveSingleItem().Brief.ShouldContain(DecidableDesign.Answer);
-        _state.Decisions(kind: DecisionKinds.Design).ShouldHaveSingleItem().ByKind.ShouldBe(DecisionByKinds.Autopilot);
+        _state.Decisions(kind: DecisionKinds.Design).ShouldHaveSingleItem().ByKind.ShouldBe(DecisionByKinds.Node);
     }
 
     [Fact]

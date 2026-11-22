@@ -101,7 +101,7 @@ public sealed partial class LegCommander
             if (flight.Review is not null)
             {
                 state.PutFlight(flight with { Review = null });
-                state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), held ? "its review waits for the 5-hour window" : "its review waits for a slot", ReviewChanges, PrReady, MergeFailed, PrChecks.AutopilotMergeRefused, LegWatch.ReviewStalled);
+                state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), held ? "its review waits for the 5-hour window" : "its review waits for a slot", ReviewChanges, PrReady, MergeFailed, PrChecks.NodeMergeRefused, LegWatch.ReviewStalled);
             }
             return;
         }
@@ -169,7 +169,7 @@ public sealed partial class LegCommander
                         GoAround = legs.Sum(l => l.GoArounds), ReviewedHead = reviewedHead,
                     },
                 });
-                state.CloseCardsAbout(subject, "a fresh review started", ReviewChanges, ReviewLoopKind, PrReady, MergeFailed, PrChecks.AutopilotMergeRefused, LegWatch.ReviewStalled);
+                state.CloseCardsAbout(subject, "a fresh review started", ReviewChanges, ReviewLoopKind, PrReady, MergeFailed, PrChecks.NodeMergeRefused, LegWatch.ReviewStalled);
                 if (baseMergeOnly)
                 {
                     Ledger?.Mark(new WasteMark(WasteKinds.BaseMergeReview, flight.Code, null, null, null, 0, "head changed only by a base merge", time.GetUtcNow()));
@@ -537,7 +537,7 @@ public sealed partial class LegCommander
             RefuseIfOnHold(code);
             var changes = changesFor(number);
             await TurnToChangesAsync(flight, changes, cancellationToken);
-            state.CloseCardsAbout(Verbs.FlightTarget(code), closing, PrReady, MergeFailed, PrChecks.AutopilotMergeRefused);
+            state.CloseCardsAbout(Verbs.FlightTarget(code), closing, PrReady, MergeFailed, PrChecks.NodeMergeRefused);
             RaiseReviewChanges(FlightOf(Verbs.FlightTarget(code)), changes, reason);
             return null;
         }

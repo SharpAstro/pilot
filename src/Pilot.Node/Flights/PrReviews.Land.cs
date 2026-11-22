@@ -36,16 +36,16 @@ public sealed partial class PrReviews
                 }
                 var title = outcome.Kind switch
                 {
-                    LandKind.Queued => $"Queued {review.Repo}#{review.Number} in {read.Base}'s merge queue at {at} on autopilot",
-                    LandKind.Armed => $"Armed the merge of {review.Repo}#{review.Number} at {at} on autopilot",
-                    _ => $"Merged {review.Repo}#{review.Number} by {outcome.Method} at {at} on autopilot",
+                    LandKind.Queued => $"Queued {review.Repo}#{review.Number} in {read.Base}'s merge queue at {at}",
+                    LandKind.Armed => $"Armed the merge of {review.Repo}#{review.Number} at {at}",
+                    _ => $"Merged {review.Repo}#{review.Number} by {outcome.Method} at {at}",
                 };
                 state.RaiseCard(CardBin.Handled, QueuedKind, subject, title, $"Reviewed {review.Verdict}, checks green.", link: review.Url);
                 return true;
             default:
                 var said = outcome.Said ?? "GitHub refused";
                 state.PutPrReview(review with { QueueNote = $"GitHub refused to merge it: {said}" });
-                state.RaiseCard(CardBin.ForYou, QueueRefusedKind, subject, $"GitHub refused to merge {review.Repo}#{review.Number} on autopilot: {LegCommander.OneLine(said)}", said,
+                state.RaiseCard(CardBin.ForYou, QueueRefusedKind, subject, $"GitHub refused to merge {review.Repo}#{review.Number} by the node: {LegCommander.OneLine(said)}", said,
                     [new CardChoice { Label = $"Merge {review.Repo}#{review.Number} once more", Note = $"at {at}", Verb = Verbs.Merge, Target = subject, Args = [review.Head] }], link: review.Url);
                 return true;
         }

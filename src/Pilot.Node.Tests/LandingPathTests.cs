@@ -205,7 +205,7 @@ public sealed class LandingPathTests : ReviewTestsBase
 
         await new PrChecks(_state, _github, TimeProvider.System, _flights, _legs).LookAsync(Ct);
 
-        var card = Open().Single(c => c.Kind == PrChecks.AutopilotMergeRefused);
+        var card = Open().Single(c => c.Kind == PrChecks.NodeMergeRefused);
         card.Detail.ShouldNotBeNull().ShouldContain("second line");
         card.Detail.ShouldContain("third line");
         card.Detail.ShouldContain("goes on and on past what a card title should ever hold");

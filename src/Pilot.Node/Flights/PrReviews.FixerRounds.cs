@@ -344,7 +344,7 @@ public sealed partial class PrReviews
     private static string AnswerReason(DesignDecided? decision, string? who, bool autopilot) =>
         decision is not null ? decision.Reason
         : who == CommentWho ? "the PR's author, or the controller, answered it in a comment on the PR"
-        : autopilot ? $"the watchtower answered it with review fix on autopilot ({who})"
+        : autopilot ? $"the watchtower answered it with review fix ({who})"
         : $"{who} answered it, on the card or with review fix";
 
     /// <summary>

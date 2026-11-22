@@ -22,7 +22,7 @@ public sealed class DecisionAutopilotMergeTests : ReviewTestsBase
 
         await new PrChecks(_state, _github, TimeProvider.System, _flights, _legs).LookAsync(Ct);
 
-        var merges = _state.Decisions(flight.Code, DecisionKinds.Merge).Where(d => d.ByKind == DecisionByKinds.Autopilot).ToArray();
+        var merges = _state.Decisions(flight.Code, DecisionKinds.Merge).Where(d => d.ByKind == DecisionByKinds.Node).ToArray();
         var decision = merges.First(d => d.Choice == "Merge");
         decision.Subject.ShouldBe($"flight/{flight.Code}");
         decision.Options.ShouldContain("Merge");
@@ -66,7 +66,7 @@ public sealed class DecisionAutopilotMergeTests : ReviewTestsBase
         var decision = _state.Decisions(flight.Code).ShouldHaveSingleItem();
         decision.Kind.ShouldBe(DecisionKinds.Merge);
         decision.Choice.ShouldBe("Bring the branch up to date");
-        (decision.By, decision.ByKind).ShouldBe(("node", DecisionByKinds.Autopilot));
+        (decision.By, decision.ByKind).ShouldBe(("node", DecisionByKinds.Node));
         decision.Reason.ShouldContain("behind its base");
     }
 }
@@ -175,7 +175,7 @@ public sealed class DecisionAssistantAnswerTests
         node.State.Cards().Single(c => c.Id == ring.Id).State.ShouldBe(CardState.Closed);
         var decision = node.State.Decisions().ShouldHaveSingleItem();
         decision.Choice.ShouldBe("Retry");
-        (decision.By, decision.ByKind).ShouldBe((Assistant, DecisionByKinds.Autopilot));
+        (decision.By, decision.ByKind).ShouldBe((Assistant, DecisionByKinds.Node));
     }
 }
 

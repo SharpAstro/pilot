@@ -21,7 +21,7 @@ public sealed record DecisionRow
     /// <summary>The one taken.</summary>
     public required string Choice { get; init; }
 
-    /// <summary>Who chose: the name of the autopilot, the watchtower, the person or the node.</summary>
+    /// <summary>Who chose: the node (by its rules), the watchtower, the person or the node.</summary>
     public required string By { get; init; }
 
     /// <summary>As what: one of <see cref="DecisionByKinds"/>.</summary>
@@ -62,7 +62,7 @@ public static class DecisionKinds
 /// <summary>Who a decision's <see cref="DecisionRow.By"/> is.</summary>
 public static class DecisionByKinds
 {
-    public const string Autopilot = "autopilot";
+    public const string Node = "autopilot";
     public const string Watchtower = "watchtower";
     public const string Person = "person";
     public const string Node = "node";

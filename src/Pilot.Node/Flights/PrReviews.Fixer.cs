@@ -301,11 +301,11 @@ public sealed partial class PrReviews
         {
             return await ActOnAnswerAsync(pr, review, given!, command.Who, command.PersonsWord, command.Autopilot, words, cancellationToken, command);
         }
-        // The watchtower's fixer on autopilot keeps the guards the node's own fixer keeps (the review of #470): no fourth round, no
+        // The watchtower's fixer by the node keeps the guards the node's own fixer keeps (the review of #470): no fourth round, no
         // design question, and no push to another author's PR until the person has chosen Fix it. Those stay the person's.
         if (command.Autopilot && await WhyNoFixerAsync(pr, review, cancellationToken) is { } why)
         {
-            throw new FlightException($"not started on the autopilot: {why}; that is the person's to choose");
+            throw new FlightException($"not started by the node: {why}; that is the person's to choose");
         }
         return await StartFixerAsync(pr, review, cancellationToken);
     }
@@ -358,7 +358,7 @@ public sealed partial class PrReviews
         }
         if (autopilot && await WhyNoFixerAsync(pr, review, cancellationToken) is { } why)
         {
-            throw new FlightException($"not started on the autopilot: {why}; that is the person's to choose");
+            throw new FlightException($"not started by the node: {why}; that is the person's to choose");
         }
         // A PR already in the merge queue is taken out first: the fixer's push would otherwise land the queued head without the fix.
         var dequeued = false;
@@ -414,7 +414,7 @@ public sealed partial class PrReviews
         var options = questions.Count > 1 ? DesignQuestion.OptionLabels(questions) : state.Cards().Where(c => c.Kind == DesignKind && c.Subject == target)
             // The option's words are the answer its button sends: the label is only its letter (Pick option A).
             .SelectMany(c => c.Choices).Where(c => c.AsksFor is null).Select(c => c.Args.FirstOrDefault() ?? c.Label).Distinct().ToArray();
-        var byKind = command.Autopilot ? DecisionByKinds.Autopilot
+        var byKind = command.Autopilot ? DecisionByKinds.Node
             : command.PersonsWord is not null || Standing.Of(command, state, "").Kind == StandingKind.Person ? DecisionByKinds.Person
             : DecisionByKinds.Node;
         return PostDesignDecisionAsync(pr, flight, review, given, command.Who, byKind, words.Length > 0 ? words : "the author's answer on the PR", options, cancellationToken);

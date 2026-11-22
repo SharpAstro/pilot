@@ -471,7 +471,7 @@ public sealed class ReviewTests1 : ReviewTestsBase
         await checks.LookAsync(Ct);
         _github.Merged.ShouldHaveSingleItem().Item1.ShouldBe(pr);
         Open().ShouldNotContain(c => c.Id == ready.Id);
-        _state.Cards().ShouldContain(c => c.Kind == CardKinds.AutopilotRan && c.Subject == $"flight/{flight.Code}");
+        _state.Cards().ShouldContain(c => c.Kind == CardKinds.NodeRan && c.Subject == $"flight/{flight.Code}");
 
         // Once a head, not every look.
         await checks.LookAsync(Ct);
@@ -557,7 +557,7 @@ public sealed class ReviewTests1 : ReviewTestsBase
         await checks.LookAsync(Ct);
         _github.Merged.ShouldBeEmpty();
         var armed = F(flight.Code).MergeWhenGreen.ShouldNotBeNull();
-        (armed[0], armed[^1]).ShouldBe((_github.Pr!.Head, LegCommander.ArmedByAutopilot));
+        (armed[0], armed[^1]).ShouldBe((_github.Pr!.Head, LegCommander.ArmedByNode));
         Open().ShouldNotContain(c => c.Kind == LegCommander.PrReady);
 
         _github.Checks = ChoiceStatus.Failing;
@@ -584,7 +584,7 @@ public sealed class ReviewTests1 : ReviewTestsBase
         _github.Checks = ChoiceStatus.Pending;
         _legs.Models = new RoleModels(new NodeSettings());
         (await Run(Verbs.Merge, $"flight/{flight.Code}", "controller", _github.Pr!.Head[..8])).Ok.ShouldBeTrue();
-        F(flight.Code).MergeWhenGreen.ShouldNotBeNull().ShouldNotContain(LegCommander.ArmedByAutopilot);
+        F(flight.Code).MergeWhenGreen.ShouldNotBeNull().ShouldNotContain(LegCommander.ArmedByNode);
         // Choosing Merge on the card closes it.
         _state.CloseCard(Open().Single(c => c.Kind == LegCommander.PrReady).Id, "chose Merge", "controller").ShouldBeTrue();
 
@@ -611,7 +611,7 @@ public sealed class ReviewTests1 : ReviewTestsBase
         await checks.LookAsync(Ct);
 
         _github.Merged.ShouldBeEmpty();
-        Open().Where(c => c.Kind == PrChecks.AutopilotMergeRefused).ShouldHaveSingleItem().Subject.ShouldBe($"flight/{flight.Code}");
+        Open().Where(c => c.Kind == PrChecks.NodeMergeRefused).ShouldHaveSingleItem().Subject.ShouldBe($"flight/{flight.Code}");
         Open().ShouldContain(c => c.Id == ready.Id);
 
         // Main moved: the base is merged into the flight (a clean merge alone keeps its pass), and the refused merge's card, with its
@@ -620,7 +620,7 @@ public sealed class ReviewTests1 : ReviewTestsBase
         await checks.LookAsync(Ct);
 
         F(flight.Code).Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Passed);
-        Open().ShouldNotContain(c => c.Id == ready.Id || c.Kind == PrChecks.AutopilotMergeRefused);
+        Open().ShouldNotContain(c => c.Id == ready.Id || c.Kind == PrChecks.NodeMergeRefused);
     }
 
     [Fact]
@@ -1710,7 +1710,7 @@ public sealed class ReviewTests4 : ReviewTestsBase
         _github.Merged.ShouldBeEmpty();
         Git(flight.Worktree, "rev-parse", "HEAD").ShouldNotBe(head);
         F(flight.Code).Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Passed);
-        _state.Cards(openOnly: true).ShouldNotContain(c => c.Kind == PrChecks.AutopilotMergeRefused || c.Kind == PrChecks.MergeDropped);
+        _state.Cards(openOnly: true).ShouldNotContain(c => c.Kind == PrChecks.NodeMergeRefused || c.Kind == PrChecks.MergeDropped);
     }
 
     [Fact]
@@ -1733,7 +1733,7 @@ public sealed class ReviewTests4 : ReviewTestsBase
         Git(flight.Worktree, "rev-parse", "HEAD").ShouldNotBe(head);
         F(flight.Code).Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Passed);
         F(flight.Code).MergeWhenGreen.ShouldBeNull();
-        _state.Cards(openOnly: true).ShouldNotContain(c => c.Kind == PrChecks.AutopilotMergeRefused || c.Kind == PrChecks.MergeDropped);
+        _state.Cards(openOnly: true).ShouldNotContain(c => c.Kind == PrChecks.NodeMergeRefused || c.Kind == PrChecks.MergeDropped);
     }
 
     [Fact]

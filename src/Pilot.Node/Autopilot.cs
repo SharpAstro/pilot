@@ -49,17 +49,17 @@ public sealed class Autopilot(NodeState state, IServiceProvider services)
         return state.Complete(command, $"{command.Verb} is the person's: it waits on their card {open.Id} ('{open.Title}'), and you are told what they answer");
     }
 
-    /// <summary>Says on a Handled card that <paramref name="command"/> was run on the autopilot for its session, with the message it acted on.</summary>
+    /// <summary>Says on a Handled card that <paramref name="command"/> was run by the node for its session, with the message it acted on.</summary>
     public void Handled(CommandRequest command, bool record = true)
     {
         var why = command.Why?.Trim();
-        state.RaiseCard(CardBin.Handled, CardKinds.AutopilotRan, Subject(command), $"{command.Who} {Describe(command).Done} on autopilot",
+        state.RaiseCard(CardBin.Handled, CardKinds.NodeRan, Subject(command), $"The node did for {command.Who}: {Describe(command).Done}",
             why is { Length: > 0 } ? $"Acting on: {why}" : "No message given", askedBy: command.Who, why: why is { Length: > 0 } ? why : null);
         if (record)
         {
             state.RecordDecision(Subject(command), DecisionSources.KindOf(command.Verb, command.Args) ?? DecisionKinds.Card,
-                $"Run {command.Verb} {command.Target} for {command.Who}?", [RunItOption, AskOption], RunItOption, command.Who, DecisionByKinds.Autopilot,
-                why is { Length: > 0 } ? why : "autopilot is on and no message was given");
+                $"Run {command.Verb} {command.Target} for {command.Who}?", [RunItOption, AskOption], RunItOption, command.Who, DecisionByKinds.Node,
+                why is { Length: > 0 } ? why : "the node ran it and no message was given");
         }
     }
 

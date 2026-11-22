@@ -17,7 +17,7 @@ public sealed class AutopilotMergeRefusalTests : ReviewTestsBase
 
     private PrChecks Checks(TimeProvider? clock = null) => new(_state, _github, clock ?? TimeProvider.System, _flights, _legs);
 
-    private CardRow[] Refused() => [.. _state.Cards().Where(c => c.Kind == PrChecks.AutopilotMergeRefused)];
+    private CardRow[] Refused() => [.. _state.Cards().Where(c => c.Kind == PrChecks.NodeMergeRefused)];
 
     private void NoRefusalRaised()
     {
@@ -235,7 +235,7 @@ public sealed class AutopilotMergeRefusalTests : ReviewTestsBase
 
         await Checks().LookAsync(Ct);
 
-        var card = _state.Cards().Where(c => c.Kind == PrChecks.AutopilotMergeRefused).ShouldHaveSingleItem();
+        var card = _state.Cards().Where(c => c.Kind == PrChecks.NodeMergeRefused).ShouldHaveSingleItem();
         card.Bin.ShouldBe(CardBin.Ring);
         card.Detail.ShouldNotBeNull().ShouldContain("checks fail");
         card.Detail.ShouldContain("Run the failed check again");

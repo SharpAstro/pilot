@@ -63,14 +63,14 @@ public sealed class AutopilotMergeCardTests : ReviewTestsBase
         await checks.LookAsync(Ct);
 
         _state.Merges().ShouldBeEmpty();
-        _state.Cards().ShouldNotContain(c => c.Kind == PrChecks.AutopilotMergeRefused);
+        _state.Cards().ShouldNotContain(c => c.Kind == PrChecks.NodeMergeRefused);
 
         // The leg lands: the same head is asked now, as it was never marked as tried.
         _state.PutLeg(notes with { State = LegState.Done });
         await checks.LookAsync(Ct);
 
         _state.Merges().ShouldNotBeEmpty();
-        _state.Cards().ShouldNotContain(c => c.Kind == PrChecks.AutopilotMergeRefused);
+        _state.Cards().ShouldNotContain(c => c.Kind == PrChecks.NodeMergeRefused);
     }
 
     [Fact]
@@ -86,7 +86,7 @@ public sealed class AutopilotMergeCardTests : ReviewTestsBase
 
         result.Ok.ShouldBeTrue(result.Error);
         result.Way.ShouldBe(MergeWays.Queued);
-        Open().ShouldNotContain(c => c.Kind == LegCommander.MergeFailed || c.Kind == PrChecks.AutopilotMergeRefused || c.Kind == PrChecks.MergeDropped);
+        Open().ShouldNotContain(c => c.Kind == LegCommander.MergeFailed || c.Kind == PrChecks.NodeMergeRefused || c.Kind == PrChecks.MergeDropped);
     }
 
     [Fact]

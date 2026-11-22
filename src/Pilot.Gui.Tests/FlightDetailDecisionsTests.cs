@@ -21,7 +21,7 @@ public sealed class FlightDetailDecisionsTests
 
     private static DecisionRow[] Sample() =>
     [
-        new() { Subject = "flight/TIA1611", Kind = DecisionKinds.Merge, Question = "Merge the PR?", Options = ["merge", "wait"], Choice = "merge", By = "autopilot", ByKind = DecisionByKinds.Autopilot,
+        new() { Subject = "flight/TIA1611", Kind = DecisionKinds.Merge, Question = "Merge the PR?", Options = ["merge", "wait"], Choice = "merge", By = "autopilot", ByKind = DecisionByKinds.Node,
             Reason = "checks are green and the review passed, so the queue may take it and nothing else is waiting on the branch", At = Now.AddHours(-1), Seq = 12 },
         new() { Subject = "flight/TIA1611", Kind = DecisionKinds.Design, Question = "Which ephemeris source?", Options = ["VSOP87", "SOFA", "JPL"], Choice = "SOFA", By = "sebastian", ByKind = DecisionByKinds.Person,
             Reason = "already a dependency", At = Now.AddHours(-5), Seq = 7 },

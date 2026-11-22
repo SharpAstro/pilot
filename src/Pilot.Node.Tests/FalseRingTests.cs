@@ -105,7 +105,7 @@ public sealed class FalseRingTests : ReviewTestsBase
         await Checks().LookAsync(Ct);
 
         F(flight.Code).State.ShouldBe(FlightState.Landed);
-        _state.Cards().ShouldNotContain(c => c.Kind == PrChecks.AutopilotMergeRefused);
+        _state.Cards().ShouldNotContain(c => c.Kind == PrChecks.NodeMergeRefused);
         Open().ShouldNotContain(c => c.Choices.Any(ch => ch.Verb == Verbs.Merge));
         Open().ShouldNotContain(c => c.Bin == CardBin.Ring);
         _github.Merged.ShouldBeEmpty();
@@ -442,7 +442,7 @@ public sealed class FalseRingTests : ReviewTestsBase
         await Checks().LookAsync(Ct);
 
         F(flight.Code).State.ShouldNotBe(FlightState.Landed);
-        var card = _state.Cards().Single(c => c.Kind == PrChecks.AutopilotMergeRefused);
+        var card = _state.Cards().Single(c => c.Kind == PrChecks.NodeMergeRefused);
         card.Choices.ShouldBeEmpty();
         card.Bin.ShouldBe(CardBin.ForYou);
     }
