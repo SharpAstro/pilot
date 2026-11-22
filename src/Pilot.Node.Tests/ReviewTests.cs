@@ -557,7 +557,7 @@ public sealed class ReviewTests1 : ReviewTestsBase
         await checks.LookAsync(Ct);
         _github.Merged.ShouldBeEmpty();
         var armed = F(flight.Code).MergeWhenGreen.ShouldNotBeNull();
-        (armed[0], armed[^1]).ShouldBe((_github.Pr!.Head, LegCommander.ArmedByNode));
+        (armed[0], armed[^1]).ShouldBe((_github.Pr!.Head, LegCommander.ArmedByRules));
         Open().ShouldNotContain(c => c.Kind == LegCommander.PrReady);
 
         _github.Checks = ChoiceStatus.Failing;
@@ -584,7 +584,7 @@ public sealed class ReviewTests1 : ReviewTestsBase
         _github.Checks = ChoiceStatus.Pending;
         _legs.Models = new RoleModels(new NodeSettings());
         (await Run(Verbs.Merge, $"flight/{flight.Code}", "controller", _github.Pr!.Head[..8])).Ok.ShouldBeTrue();
-        F(flight.Code).MergeWhenGreen.ShouldNotBeNull().ShouldNotContain(LegCommander.ArmedByNode);
+        F(flight.Code).MergeWhenGreen.ShouldNotBeNull().ShouldNotContain(LegCommander.ArmedByRules);
         // Choosing Merge on the card closes it.
         _state.CloseCard(Open().Single(c => c.Kind == LegCommander.PrReady).Id, "chose Merge", "controller").ShouldBeTrue();
 

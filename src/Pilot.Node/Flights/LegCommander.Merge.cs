@@ -12,7 +12,7 @@ namespace Pilot.Node.Flights;
 public sealed partial class LegCommander
 {
     /// <summary>The last item of <see cref="FlightRow.MergeWhenGreen"/> when the node armed the merge itself, on autopilot.</summary>
-    public const string ArmedByNode = "autopilot";
+    public const string ArmedByRules = "autopilot";
 
     /// <summary>The button that merges a flight's PR: two words at least, as every button says what it does (#797).</summary>
     public const string MergeLabel = "Merge the PR";
@@ -28,7 +28,7 @@ public sealed partial class LegCommander
         // at a time, and the entry says where it stands. Only a flight that may merge at all (every leg done, review passed) gets one.
         var (asked, askedHead, askedMethod) = Mergeable(command);
         var by = command.Who != "node" ? MergeBy.Hand : asked.MergeWhenGreen is null ? MergeBy.Node
-            : asked.MergeWhenGreen[^1] == ArmedByNode ? MergeBy.Node : MergeBy.Armed;
+            : asked.MergeWhenGreen[^1] == ArmedByRules ? MergeBy.Node : MergeBy.Armed;
         // A flight's entry is its one merge command's: a second ask while one is under way is refused and leaves the entry as it is.
         bool underWay;
         lock (_turns)
@@ -249,7 +249,7 @@ public sealed partial class LegCommander
         {
             (null, false) => [pr.Head, method],
             (_, false) => [pr.Head, method, how!],
-            _ => [pr.Head, method, how ?? "", ArmedByNode],
+            _ => [pr.Head, method, how ?? "", ArmedByRules],
         } });
         return (false, ArmedLine(checks, how, progress), MergeWays.Armed);
     }

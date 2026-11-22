@@ -565,7 +565,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
         {
             var (head, method) = (flight.MergeWhenGreen![0], flight.MergeWhenGreen[1]);
             var how = flight.MergeWhenGreen.ElementAtOrDefault(2) is { Length: > 0 } who ? who : null;
-            var byAutopilot = flight.MergeWhenGreen[^1] == LegCommander.ArmedByNode;
+            var byAutopilot = flight.MergeWhenGreen[^1] == LegCommander.ArmedByRules;
             var native = how == LegCommander.ArmedByGitHub;
             var number = flight.PullRequest!.Value;
             var subject = Verbs.FlightTarget(flight.Code);
