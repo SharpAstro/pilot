@@ -282,8 +282,8 @@ public sealed class LandedBranchSweepTests : IDisposable
         (await Sweeper(failing).SweepAsync(Ct)).ShouldBe(0);
 
         failing.Count("push").ShouldBe(1);
-        Enumerable.Range(1, 3).ShouldAllBe(i => OriginHas($"PIL{i}") && LocalHas($"PIL{i}") && Of(i).BranchDeletedAt == null);
-        Enumerable.Range(1, 3).ShouldAllBe(i => Of(i).BranchDeleteFailed!.Contains("remote: refused") && Of(i).BranchKept == Of(i).BranchDeleteFailed && Of(i).BranchDeleteFailedAt == Now);
+        Enumerable.Range(1, 3).All(i => OriginHas($"PIL{i}") && LocalHas($"PIL{i}") && Of(i).BranchDeletedAt == null).ShouldBeTrue();
+        Enumerable.Range(1, 3).All(i => Of(i).BranchDeleteFailed!.Contains("remote: refused") && Of(i).BranchKept == Of(i).BranchDeleteFailed && Of(i).BranchDeleteFailedAt == Now).ShouldBeTrue();
         Summaries().Single().Title.ShouldContain("3 push-failed, left until answered");
         Summaries().Single().Title.ShouldNotContain("tried again next sweep");
         var card = _state.Cards().Single(c => c.Kind == FlightCommander.BranchKeptKind);
@@ -304,7 +304,7 @@ public sealed class LandedBranchSweepTests : IDisposable
         var result = await commander.RunAsync(new CommandRequest { Verb = retry.Verb, Target = retry.Target, Args = retry.Args, Who = "test" }, Ct);
         result.Error.ShouldBeNull();
         failing.Count("push").ShouldBe(1);
-        Enumerable.Range(1, 3).ShouldAllBe(i => Of(i).BranchDeleteFailed == null && Of(i).BranchDeleteFailedAt == null);
+        Enumerable.Range(1, 3).All(i => Of(i).BranchDeleteFailed == null && Of(i).BranchDeleteFailedAt == null).ShouldBeTrue();
 
         // Meanwhile PIL1 was deleted on origin by hand: its retry counts as deleted.
         Git(_repo, "push", "origin", ":refs/heads/flight/pil1");
@@ -312,7 +312,7 @@ public sealed class LandedBranchSweepTests : IDisposable
         (await Sweeper(failing).SweepAsync(Ct)).ShouldBe(3);
 
         failing.Count("push").ShouldBe(2);
-        Enumerable.Range(1, 3).ShouldAllBe(i => !OriginHas($"PIL{i}") && Of(i).BranchDeletedAt == Now && Of(i).BranchDeleteFailed == null);
+        Enumerable.Range(1, 3).All(i => !OriginHas($"PIL{i}") && Of(i).BranchDeletedAt == Now && Of(i).BranchDeleteFailed == null).ShouldBeTrue();
     }
 
     [Fact]
