@@ -144,7 +144,11 @@ public sealed class LandingPathTests : ReviewTestsBase
                 }
                 break;
             case LandingAnswers.Shape.Refused:
-                _github.Merged.ShouldBeEmpty();
+                // The armed merge's refusal ends it; the same look's ready-card pass (the node always merges) then lands the brought-up head.
+                if (path != Path.ArmedAtGreen || !(LandingAnswers.UpdatesTheBranch(answer) || LandingAnswers.HeadMoved(answer)))
+                {
+                    _github.Merged.ShouldBeEmpty();
+                }
                 switch (path)
                 {
                     case Path.Hand:

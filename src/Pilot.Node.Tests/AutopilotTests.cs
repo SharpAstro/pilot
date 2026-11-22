@@ -87,6 +87,7 @@ public sealed class AutopilotTests
         node.GitHub.Merged.ShouldBeEmpty();
         node.State.Flights().Single().State.ShouldBe(FlightState.Flying);
         var card = Ask(node);
+        card.Kind.ShouldBe(CardKinds.AssistantAsk);
         (card.Bin, card.Title, card.Subject, card.AskedBy, card.Why).ShouldBe((CardBin.ForYou, "pilot-33 asks to merge #63 (TIA1)", "flight/TIA1", Assistant, Why));
         card.Detail.ShouldNotBeNull().ShouldContain(Why);
         card.Choices.Select(c => (c.Label, c.Verb, c.Target)).ShouldBe([("Allow it", Verbs.Merge, "flight/TIA1"), ("Deny it", Verbs.Dismiss, Verbs.CardTarget(card.Id))]);

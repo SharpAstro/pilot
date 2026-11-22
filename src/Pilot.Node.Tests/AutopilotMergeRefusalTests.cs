@@ -73,7 +73,7 @@ public sealed class AutopilotMergeRefusalTests : ReviewTestsBase
         AutopilotOn();
         _github.Checks = ChoiceStatus.Passing;
         var (flight, _) = await Passed("45");
-        _state.PutFlight(F(flight.Code) with { Holding = new FlightHolding { Reason = "waiting for a sibling", Since = DateTimeOffset.UtcNow } });
+        _state.PutFlight(F(flight.Code) with { Holding = new FlightHolding { Reason = "waiting for a sibling", Since = DateTimeOffset.UtcNow, By = "watchtower" } });
         var checks = Checks();
 
         await checks.LookAsync(Ct);
