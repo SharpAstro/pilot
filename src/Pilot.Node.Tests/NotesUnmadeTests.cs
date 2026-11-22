@@ -193,7 +193,10 @@ public sealed class NotesUnmadeTests : ReviewTestsBase
         clock.Advance(TimeSpan.FromMinutes(6));
         var card = Open().Single(c => c.Kind == LegCommander.NotesUnmadeKind);
 
-        (await Run(Verbs.Answer, Verbs.CardTarget(card.Id), "me", "Keep waiting")).Error.ShouldBeNull();
+        // Keep waiting is the card's Dismiss, which closes it as the node's dismiss command does (NodeCommands).
+        var keep = card.Choices.Single(c => c.Label == "Keep waiting");
+        keep.Verb.ShouldBe(Verbs.Dismiss);
+        _state.CloseCard(card.Id, $"dismissed: {string.Join(' ', keep.Args)}", "me").ShouldBeTrue();
         await TimedChecks(clock).LookAsync(Ct);
         await TimedChecks(clock).LookAsync(Ct);
 

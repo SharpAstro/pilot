@@ -212,16 +212,20 @@ public sealed partial class LegCommander
         // while: every look settles the hold again, so without this the card came straight back; it asks again once NotesUnmadeBound
         // has passed since it was closed, as the holding-timeout card asks again a bound after its Wait.
         var now = time.GetUtcNow();
-        if (state.Cards().Any(c => c.Kind == NotesUnmadeKind && c.Subject == subject
-            && (c.State == CardState.Open
-                || (c.ClosedAt is { } closed && flight.Holding is { } hold && closed >= hold.Since && now - closed < NotesUnmadeBound))))
+        var since = flight.Holding?.Since ?? now;
+        var asked = state.Cards().Where(c => c.Kind == NotesUnmadeKind && c.Subject == subject && (c.State == CardState.Open || c.ClosedAt >= since)).ToList();
+        if (asked.Any(c => c.State == CardState.Open || now - c.ClosedAt < NotesUnmadeBound))
         {
             return;
         }
-        var card = state.RaiseCard(CardBin.Ring, NotesUnmadeKind, subject, $"{flight.Code} has review notes nobody has made",
+        // Each ask of this hold has its own cause: the store's dismissal rule (#853) would hold a Keep waiting for a day, and here the
+        // bound above is the rule.
+        var title = $"{flight.Code} has review notes nobody has made";
+        var card = state.RaiseCard(CardBin.Ring, NotesUnmadeKind, subject, title,
             $"{why}. Notes without an end: {string.Join("; ", unmade.Select(p => $"{p.Id} {p.Text.ReplaceLineEndings(" ")}"))}. The flight does not merge with them: plan a review-notes leg, or give the owner's word with a reason (flight clear {flight.Code} <why>).",
             link: flight.PullRequestUrl,
-            summary: $"{flight.Code} holds {unmade.Count} review {(unmade.Count == 1 ? "note" : "notes")} nobody is making, and a merge is refused until each is made, not work, the node's own or deferred with a reason. Your word with a reason clears it.");
+            summary: $"{flight.Code} holds {unmade.Count} review {(unmade.Count == 1 ? "note" : "notes")} nobody is making, and a merge is refused until each is made, not work, the node's own or deferred with a reason. Your word with a reason clears it.",
+            cause: $"{title} (ask {asked.Count + 1} of the hold from {since:O})");
         state.UpdateChoices(card.Id,
         [
             new CardChoice { Label = "Clear the hold, notes unmade", Verb = Verbs.Clear, Target = subject, Args = ["the owner's word, given on the notes-unmade card"] },
