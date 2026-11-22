@@ -49,27 +49,33 @@ public sealed partial class PrReviews
             }
             keys = [.. fresh.Select(i => i.Key)];
             captured = review.FollowUpPoints ?? [];
-            if (review.FollowUpIssue is { } existing)
+            // The points are made on the PR before it merges, never filed as a follow-up issue nobody picks up (the owner, 2026-11-22, over
+            // tianwen#2431: "didn't I say we fix all of the things"). A fixer is started on them while the PR has fix rounds left and is the
+            // owner's (another author's PR is fixed only on Fix it, as for changes); its push is reviewed afresh, and the merge waits for that.
+            if (review.Fixer is { } on)
             {
-                await github.CommentIssueAsync(review.ClonePath, existing, $"More points {subject}'s reviews left:\n\n{ReviewFollowUp.Points(fresh)}", cancellationToken);
-                review = review with { FollowUpPoints = [.. captured, .. keys] };
-                state.PutPrReview(review);
-                return review;
+                await Error.WriteLineAsync($"pr reviews: {subject} is not queued while {on} makes the points its review left");
+                return null;
             }
-            var body = ReviewFollowUp.Body(review, fresh).TrimEnd() + "\n\nNo flight owns this PR, so no flight is created on this issue.";
-            var made = await github.CreateIssueWithLabelsAsync(review.ClonePath, ReviewFollowUp.Title(review), body, [DeferredRoutes.FollowUpLabel], cancellationToken);
-            // Recorded as soon as it exists: a failure after it never files a second issue.
-            review = review with { FollowUpIssue = made.Number, FollowUpPoints = keys };
+            var rounds = review.FixRound ?? 0;
+            if (rounds < FixCap(review) && (rounds > 0 || Own(review, await github.LoginAsync(cancellationToken))))
+            {
+                try
+                {
+                    var started = await StartFixerAsync(PrRef.Parse(subject)!, review, cancellationToken);
+                    await Error.WriteLineAsync($"pr reviews: {subject}'s review left {string.Join(", ", keys)}: {started}; it is queued once they are made and reviewed");
+                }
+                catch (FlightException ex)
+                {
+                    await Error.WriteLineAsync($"pr reviews: {subject}'s review left {string.Join(", ", keys)} and no fixer could start ({ex.Message}); a later sweep tries again");
+                }
+                return null;
+            }
+            // Past its fix rounds, or another author's PR: the points go on the PR itself as one comment, where its author reads them. No issue.
+            var why = rounds >= FixCap(review) ? $"its {rounds} fix rounds are spent" : $"it is {review.Author ?? "someone else"}'s PR, which the node fixes only on Fix it";
+            await github.CommentIssueAsync(review.ClonePath, review.Number, $"The review left these points, not made before the merge because {why}:\n\n{ReviewFollowUp.Points(fresh)}", cancellationToken);
+            review = review with { FollowUpPoints = [.. captured, .. keys] };
             state.PutPrReview(review);
-            try
-            {
-                // The PR links it. A comment gh refuses is no reason to hold: the issue names the PR and the row carries the number.
-                await github.CommentIssueAsync(review.ClonePath, review.Number, $"Points the review left for later are in the follow-up issue #{made.Number}.", cancellationToken);
-            }
-            catch (FlightException ex)
-            {
-                await Error.WriteLineAsync($"pr reviews: {subject} was not given the link to its follow-up issue #{made.Number}: {ex.Message}");
-            }
             return review;
         }
         catch (Exception ex) when (ex is FlightException or IOException or InvalidOperationException)

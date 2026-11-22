@@ -84,47 +84,56 @@ public sealed class PrReviewPointsTests : PrReviewTestsBase
     }
 
     [Fact]
-    public async Task APointLeftWithAReasonIsFiledAsOneFollowUpIssueBeforeTheQueueAndLinkedFromThePr()
+    public async Task APointLeftOnTheOwnersPrIsMadeByAFixerBeforeTheMergeAndNoIssueIsFiled()
     {
+        // The owner, 2026-11-22 (tianwen#2431): what a passing review left is made on the PR, never filed as a follow-up issue.
         var reviewer = await ReReview();
         _github.Queue = GhAnswers.MergeQueue("idle", _widgetHead);
         _github.Summary = GhAnswers.ChecksOf(ChoiceStatus.Passing, 1, 1);
-        var table = Table + "| R1.1 | addressed | README.md:1 |\n| R1.2 | deferred: larger than the flight | a test of the greeting needs the harness of another PR, out of this PR's scope |";
+        var table = Table + "| R1.1 | addressed | README.md:1 |\n| R1.2 | deferred: larger than the flight | a test of the greeting needs another harness |\n\n## Not blocking\n- the title could be shorter in README.md:2\n";
+        var started = _workers.Started.Count;
+        var log = new StringWriter();
+        _reviews.Error = log;
 
         (await Run(Verbs.PrVerdict, Pr7, reviewer, "approve", table)).Error.ShouldBeNull();
         await _reviews.SweepAsync(Ct);
 
-        var issue = _github.IssuesCreated.ShouldHaveSingleItem();
-        issue.Body.ShouldNotBeNull().ShouldContain("R1.2");
-        issue.Body.ShouldContain("out of this PR's scope");
-        issue.Body.ShouldNotContain("R1.1");
-        var row = Row("acme/widget", 7);
-        row.FollowUpIssue.ShouldNotBeNull();
-        row.FollowUpPoints.ShouldBe(["R1.2"]);
-        _github.IssueComments.ShouldContain(c => c.Number == 7 && c.Body.Contains($"#{row.FollowUpIssue}"));
-        _github.Merged.ShouldHaveSingleItem();
+        _github.IssuesCreated.ShouldBeEmpty();
+        _github.Merged.ShouldBeEmpty("the merge waits for the points to be made and reviewed");
+        // A fixer is asked for on what was left (this fixture has no PR branch to fix on, so the start is refused and tried again later;
+        // PrFixTests starts one): the left point and the passing round's note, by their keys.
+        log.ToString().ShouldContain("review left R1.2, N2.1");
+        log.ToString().ShouldContain("a later sweep tries again");
 
-        // Once: a later sweep files nothing more.
+        // A later sweep neither files nor merges either.
         await _reviews.SweepAsync(Ct);
-        _github.IssuesCreated.Count.ShouldBe(1);
+        _github.IssuesCreated.ShouldBeEmpty();
+        _github.Merged.ShouldBeEmpty();
     }
 
     [Fact]
-    public async Task ThePassingRoundsNotesAreFiledWithTheLeftPointBeforeTheQueue()
+    public async Task PointsLeftPastThePrsFixRoundsGoOnThePrAsOneCommentAndItMerges()
     {
         var reviewer = await ReReview();
         _github.Queue = GhAnswers.MergeQueue("idle", _widgetHead);
         _github.Summary = GhAnswers.ChecksOf(ChoiceStatus.Passing, 1, 1);
-        var table = Table + "| R1.1 | addressed | README.md:1 |\n| R1.2 | deferred: larger than the flight | out of this PR's scope |\n\n## Not blocking\n- the title could be shorter in README.md:2\n";
-
+        var table = Table + "| R1.1 | addressed | README.md:1 |\n| R1.2 | deferred: larger than the flight | out of this PR's scope |";
         (await Run(Verbs.PrVerdict, Pr7, reviewer, "approve", table)).Error.ShouldBeNull();
+        var row = Row("acme/widget", 7);
+        _state.PutPrReview(row with { FixRound = PrReviews.MaxFixRounds });
+
         await _reviews.SweepAsync(Ct);
 
-        var body = _github.IssuesCreated.ShouldHaveSingleItem().Body.ShouldNotBeNull();
-        body.ShouldContain("R1.2");
-        body.ShouldContain("the title could be shorter");
+        _github.IssuesCreated.ShouldBeEmpty();
+        var comment = _github.IssueComments.Single(c => c.Number == 7 && c.Body.Contains("R1.2"));
+        comment.Body.ShouldContain("fix rounds are spent");
+        comment.Body.ShouldContain("out of this PR's scope");
+        Row("acme/widget", 7).FollowUpPoints.ShouldBe(["R1.2"]);
+        _github.Merged.ShouldHaveSingleItem();
+
+        // Once: a later sweep says nothing more.
         await _reviews.SweepAsync(Ct);
-        _github.IssuesCreated.Count.ShouldBe(1);
+        _github.IssueComments.Count(c => c.Number == 7 && c.Body.Contains("R1.2")).ShouldBe(1);
     }
 
     [Fact]
@@ -143,22 +152,22 @@ public sealed class PrReviewPointsTests : PrReviewTestsBase
     }
 
     [Fact]
-    public async Task AFollowUpIssueThatCannotBeFiledHoldsTheQueueAndALaterSweepFilesIt()
+    public async Task PointsLeftOnAnotherAuthorsPrGoOnThePrAsACommentWithNoFixerAndNoIssue()
     {
         var reviewer = await ReReview();
+        _github.Login = "controller";
         _github.Queue = GhAnswers.MergeQueue("idle", _widgetHead);
         _github.Summary = GhAnswers.ChecksOf(ChoiceStatus.Passing, 1, 1);
-        _github.CreateIssueFails = "gh is down";
-        var table = Table + "| R1.1 | deferred: larger than the flight | the greeting is meant that way, safe as it is | \n| R1.2 | addressed | README.md:1 |";
-
+        var table = Table + "| R1.1 | deferred: larger than the flight | the greeting is meant that way | \n| R1.2 | addressed | README.md:1 |";
         (await Run(Verbs.PrVerdict, Pr7, reviewer, "approve", table)).Error.ShouldBeNull();
-        await _reviews.SweepAsync(Ct);
-        _github.Merged.ShouldBeEmpty();
-        Row("acme/widget", 7).QueueNote.ShouldBeNull();
+        var started = _workers.Started.Count;
 
-        _github.CreateIssueFails = null;
         await _reviews.SweepAsync(Ct);
-        _github.IssuesCreated.ShouldHaveSingleItem();
+
+        _github.IssuesCreated.ShouldBeEmpty();
+        Row("acme/widget", 7).Fixer.ShouldBeNull();
+        _workers.Started.Count.ShouldBe(started);
+        _github.IssueComments.Single(c => c.Number == 7 && c.Body.Contains("R1.1")).Body.ShouldContain("fixes only on Fix it");
         _github.Merged.ShouldHaveSingleItem();
     }
 }
