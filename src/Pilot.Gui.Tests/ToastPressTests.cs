@@ -42,7 +42,8 @@ public sealed class ToastPressTests
     private static CardRow Card(string label = "Start it", bool oneChoice = false) => new()
     {
         Id = "c1", Bin = CardBin.Ring, Kind = "pr-ready", Subject = "flight/ORBc1", Title = "TIA1818's PR #63 is ready to merge", Summary = "A short line on what happened.",
-        At = Live.At, State = CardState.Open,
+        // Raised after the window's first look (frame 0 at T0): a ring toasts only when it is newer than that look (#1254 N1.1).
+        At = T0.AddSeconds(0.5), State = CardState.Open,
         Choices =
         [
             new CardChoice { Label = label, Verb = Verbs.StartLeg, Target = "flight/TIA1818/web-header" },
