@@ -10,8 +10,7 @@ public static partial class NodeApp
     {
         builder.Services.AddSingleton(services =>
         {
-            var models = services.GetRequiredService<RoleModels>();
-            var press = new NodePress(services.GetRequiredService<NodeState>(), () => models.Autopilot,
+            var press = new NodePress(services.GetRequiredService<NodeState>(), () => true,
                 (command, cancellationToken) => services.GetRequiredService<NodeCommands>().RunAsync(command, cancellationToken), services.GetRequiredService<TimeProvider>())
             {
                 MayEndStray = key => services.GetService<StraySweep>()?.NodeMayEnd(key) == true,
@@ -33,7 +32,7 @@ public static partial class NodeApp
                 Error = logWriter,
             };
             // A card the node presses itself, with the autopilot on, is never sent to the ring judge.
-            services.GetRequiredService<NodeState>().NodePresses = (kind, subject, detail, choices) => models.Autopilot && press.WouldPress(kind, subject, detail, choices);
+            services.GetRequiredService<NodeState>().NodePresses = (kind, subject, detail, choices) => press.WouldPress(kind, subject, detail, choices);
             return press;
         });
         builder.Services.AddHostedService(services => services.GetRequiredService<NodePress>());

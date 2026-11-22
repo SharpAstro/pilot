@@ -234,7 +234,7 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
         // On autopilot the watchtower sees a flight's work in as the person's assistant would, whoever woke it: the person on
         // Remote Control talks to it past the node, so its turn never read as theirs and it was refused the merge they asked for
         // (#344, DE1, 2026-10-28). Its own merge and landing are then run and recorded; an ask's Allow stays the person's.
-        if (standing.Kind == StandingKind.Lookout && Standing.LookoutOnAutopilot.Contains(command.Verb) && Get<RoleModels>().Autopilot)
+        if (standing.Kind == StandingKind.Lookout && Standing.LookoutOnAutopilot.Contains(command.Verb))
         {
             standing = new Standing(StandingKind.Assistant);
             // Its fixer is marked as the autopilot's, so the node's own guards on fixers hold for it (PrReviews.FixAsync).
@@ -280,7 +280,7 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
         if (onAutopilot)
         {
             // A repo set to no-auto-merge never has its flight merged by an assistant on its own, autopilot or not: the merge waits on the person's card.
-            if (!Get<RoleModels>().Autopilot || command.Verb == Verbs.Merge && NoAutoMerge(command))
+            if (command.Verb == Verbs.Merge && NoAutoMerge(command))
             {
                 return Get<Autopilot>().Ask(command);
             }
@@ -331,13 +331,9 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
     // the person (their word in the chat, or a client of theirs), else the node.
     private string ByKindOf(CommandRequest command, Standing standing)
     {
-        if (command.Autopilot || command.Who == "node" && Get<RoleModels>().Autopilot)
+        if (command.Autopilot || command.Who == "node")
         {
             return DecisionByKinds.Autopilot;
-        }
-        if (command.PersonsWord is null && command.Who == "node")
-        {
-            return DecisionByKinds.Node;
         }
         if (command.PersonsWord is not null || standing.Kind == StandingKind.Person)
         {

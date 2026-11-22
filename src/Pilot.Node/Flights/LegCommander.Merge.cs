@@ -508,8 +508,7 @@ public sealed partial class LegCommander
                 line, [merge with { Label = MergeLabel, Status = way == MergeWays.Queued ? ChoiceStatus.Queued : ChoiceStatus.Armed, Note = note }], card.Link ?? flight?.PullRequestUrl, PrReady,
                 way == MergeWays.Queued ? $"The merge of {code} is in GitHub's merge queue. GitHub merges it by itself, with the node up or not."
                     : byGitHub ? $"The merge of {code} is armed. GitHub merges it by itself once its checks pass, with the node up or not."
-                    : Models.Autopilot ? $"On autopilot: the node waits for the checks of {code}'s PR, then queues or merges it. Nothing for you to do unless they fail."
-                    : $"Nothing is armed on GitHub: the node waits for the checks of {code}'s PR, then queues or merges it, while it is up.",
+                    : $"The node waits for the checks of {code}'s PR, then queues or merges it. Nothing for you to do unless they fail.",
                 bin: MergeCardBin());
         }
     }
@@ -518,7 +517,7 @@ public sealed partial class LegCommander
     /// The bin of a merge card: with the autopilot on the node does the merge itself, so the card is a quiet For-you card until
     /// <paramref name="ownerMustAct"/> (checks failed, queue dropped, GitHub blocks it, the node gave up); with it off, Ring as ever.
     /// </summary>
-    public CardBin MergeCardBin(bool ownerMustAct = false) => Models.Autopilot && !ownerMustAct ? CardBin.ForYou : CardBin.Ring;
+    public CardBin MergeCardBin(bool ownerMustAct = false) => !ownerMustAct ? CardBin.ForYou : CardBin.Ring;
 
     /// <summary>
     /// While the flight's merge command is under way, its open pr-ready or merge-failed cards show the Merge choice as
@@ -635,9 +634,7 @@ public sealed partial class LegCommander
         var legs = state.Legs(code);
         var legsLeft = LegWaitWords(legs);
         var waitTitle = $"{code}'s PR #{flight.PullRequest} merges once {string.Join(", ", open)} {(open.Count == 1 ? "is" : "are")} done (legs {legs.Length - open.Count}/{legs.Length} done)";
-        var waitWhy = Models.Autopilot
-            ? $"The {string.Join(", ", open)} {(open.Count == 1 ? "leg makes" : "legs make")} the review's fixes; the node merges the PR once {(open.Count == 1 ? "it lands" : "they land")}."
-            : $"The {string.Join(", ", open)} {(open.Count == 1 ? "leg makes" : "legs make")} the review's fixes; Merge is offered once {(open.Count == 1 ? "it lands" : "they land")}.";
+        var waitWhy = $"The {string.Join(", ", open)} {(open.Count == 1 ? "leg makes" : "legs make")} the review's fixes; the node merges the PR once {(open.Count == 1 ? "it lands" : "they land")}.";
         if (card.Title != waitTitle || card.Choices.Any(c => c.Verb == Verbs.Merge && (c.Status != ChoiceStatus.WaitsForLegs || c.Note != legsLeft)))
         {
             state.UpdateCard(card.Id, waitTitle, waitWhy,

@@ -16,7 +16,7 @@ public sealed partial class PrReviews
     /// </summary>
     private async Task<bool> LandOnAutopilotAsync(PrReviewRow review, PullRequest read, CancellationToken cancellationToken)
     {
-        if (!Models.Autopilot || FlightOwns(review))
+        if (FlightOwns(review))
         {
             return false;
         }

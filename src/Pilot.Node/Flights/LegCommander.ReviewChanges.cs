@@ -28,7 +28,7 @@ public sealed partial class LegCommander
     /// </summary>
     private async Task<bool> TrySendFindingsRoundAsync(FlightRow flight, string changes, CancellationToken cancellationToken)
     {
-        if (!Models.Autopilot || OnHoldRefusal(flight) is not null
+        if (OnHoldRefusal(flight) is not null
             || state.Legs(flight.Code).OrderBy(l => l.Order).LastOrDefault() is not { State: LegState.Done, ReviewGoArounds: < MaxReviewGoArounds } last)
         {
             return false;
