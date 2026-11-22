@@ -247,10 +247,10 @@ public sealed class ToastPressTests
         try
         {
             Palette.Current = Palette.Night;
-            var p = Palette.Night;
             var colors = NotificationsHost.Colors();
             // The drawn ground: the refusal line is its own node with its own fill, so the ink is measured against a ground the toast really
             // draws. (A pixel count of the card colour proves nothing here: in night it is the page's own ground, painted with no toast at all.)
+            var drawnInk = new List<RGBAColor32>();
             using (var rig = new Rig(Card(), 700, 600))
             {
                 rig.Chrome.Night.On = true;
@@ -265,11 +265,17 @@ public sealed class ToastPressTests
                 // Bg, Pad and WithTooltip are `with` copies in DIR.Lib, so the node carrying the tooltip is the filled node itself (no wrapper).
                 // An earlier red here was Palette.Current left Standard by the rig's frames, which the night frame above now fixes.
                 line[0].Node.Background.ShouldBe(colors.Card, "the refusal line is filled with the card colour its ink is measured against");
+                drawnInk.AddRange(row
+                    .Select(a => (a.Node as Layout.Node.Leaf)?.Content as Layout.Content.Text)
+                    .Where(t => t is { Value.Length: > 0 } && Why.Contains(t.Value.Trim(), StringComparison.Ordinal) && t.Value.Trim().Length > 0)
+                    .Select(t => t!.Color));
+                drawnInk.ShouldNotBeEmpty("the refusal's words are drawn as text whose colour is read here");
             }
             // Only the refusal is measured: it is the one ink the pilot draws on a ground it fills itself. The summary (p.Dim), the choices and the
             // title are drawn on the library's own tinted fill (under AA in night): a DIR.Lib issue, not a pair the pilot draws on the card colour.
-            var shown = Contrast.Readable(p.Held, colors.Card, p.Failed);
-            Contrast.Ratio(shown, colors.Card).ShouldBeGreaterThanOrEqualTo(Contrast.AA, "refusal");
+            // The ink is read off the drawn refusal text (its leaves, wrapped or not), not recomputed here, so a change of the ink the chrome passes turns this red.
+            foreach (var ink in drawnInk)
+                Contrast.Ratio(ink, colors.Card).ShouldBeGreaterThanOrEqualTo(Contrast.AA, "refusal");
         }
         finally
         {
