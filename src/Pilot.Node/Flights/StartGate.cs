@@ -157,14 +157,36 @@ public sealed class StartGate(NodeState state, TimeProvider time)
         return age < FreshFor ? $"figures read {at}{from}" : $"as of {UsageRow.Ago(age)}, read {at}{from}";
     }
 
-    private int? _weekShown;
-    private bool _weekStaleSaid;
-
     private CardRow? OpenWeekCard() => state.Cards(openOnly: true).FirstOrDefault(c => c.Kind == WeekKind);
 
+    /// <summary>This node's machine prefix (DE1), which the week card's owner is chosen by; empty raises it here, as before the fleet was considered.</summary>
+    public string Machine { get; init; } = "";
+
     /// <summary>
-    /// Rings once per 7-day window past <paramref name="weekLimit"/>; the start that asked goes ahead. The open card follows the figures: a
-    /// fresh read under the limit closes it with the new figure, a figure that moved restates it, and figures gone stale say so once.
+    /// The peers this node last read, each with the account its usage is read under (the admission's cached view): one card for an account, raised by the node
+    /// whose name sorts first among those on it, never one a node (the owner, 2026-11-22: "its also from each node, even though its the same account").
+    /// </summary>
+    public Func<IEnumerable<(string Name, string? Account)>>? PeerAccounts { get; init; }
+
+    // Whether this node raises the week card for the account its usage is read under: the first by name of this node and the peers on that account.
+    private bool OwnsWeekCard(UsageRow usage)
+    {
+        if (Machine.Length == 0 || usage.Account?.Email is not { Length: > 0 } account || PeerAccounts is null)
+        {
+            return true;
+        }
+        var same = PeerAccounts().Where(p => string.Equals(p.Account, account, StringComparison.OrdinalIgnoreCase)).Select(p => p.Name).Append(Machine);
+        return string.Equals(same.Min(StringComparer.OrdinalIgnoreCase), Machine, StringComparison.OrdinalIgnoreCase);
+    }
+
+    // The card's identity for one account and one window: a card of it closed (dismissed, or closed under the limit) is not raised again in that window.
+    private static string WeekCause(UsageRow usage, DateTimeOffset resets) =>
+        $"{usage.Account?.Email ?? "account"}:{resets.ToUnixTimeSeconds().ToString(CultureInfo.InvariantCulture)}";
+
+    /// <summary>
+    /// Rings once per account and 7-day window past <paramref name="weekLimit"/>; the start that asked goes ahead. Once: a figure that moves (91, 92, 93 %)
+    /// is no new card (each restatement was a new notification), a card dismissed is not raised again in its window (a restart included, by its cause),
+    /// and of the nodes on one account only one raises it. A fresh read under the limit closes it.
     /// </summary>
     public void RingWeek(double weekLimit)
     {
@@ -174,45 +196,35 @@ public sealed class StartGate(NodeState state, TimeProvider time)
             return;
         }
         var stale = now - usage.ReadAt >= FreshFor;
-        if (_weekRung == resets && OpenWeekCard() is { } open)
+        if (!OwnsWeekCard(usage))
         {
-            var reads = string.Create(CultureInfo.InvariantCulture, $"the 7-day window now reads {week.UsedPercent:0} %, {ReadSay(usage, now)}");
-            if (stale)
+            // Another node on this account raises it: this node's own goes, so the person sees one.
+            if (OpenWeekCard() is { } theirs)
             {
-                if (!_weekStaleSaid)
-                {
-                    Raise(week, resets, weekLimit, usage, now, open, reads);
-                }
-            }
-            else if (week.UsedPercent < weekLimit)
-            {
-                state.CloseCard(open.Id, reads, "node");
-                // It may rise again: the next time past the limit rings again.
-                _weekRung = null;
-            }
-            else if ((int)Math.Round(week.UsedPercent) != _weekShown || _weekStaleSaid)
-            {
-                Raise(week, resets, weekLimit, usage, now, open, reads);
+                state.CloseCard(theirs.Id, "another node on this account shows it", "node");
             }
             return;
         }
-        if (stale || week.UsedPercent < weekLimit || _weekRung == resets)
+        if (OpenWeekCard() is { } open)
+        {
+            if (!stale && week.UsedPercent < weekLimit)
+            {
+                state.CloseCard(open.Id, string.Create(CultureInfo.InvariantCulture, $"the 7-day window now reads {week.UsedPercent:0} %, {ReadSay(usage, now)}"), "node");
+            }
+            return;
+        }
+        var cause = WeekCause(usage, resets);
+        if (stale || week.UsedPercent < weekLimit || _weekRung == resets || state.Cards().Any(c => c.Kind == WeekKind && c.Cause == cause))
         {
             return;
         }
         _weekRung = resets;
         state.CloseCardsAbout(Verbs.NodeTarget, "a new 7-day window", WeekKind);
-        Raise(week, resets, weekLimit, usage, now, null, null);
+        Raise(week, resets, weekLimit, usage, now, cause);
     }
 
-    private void Raise(UsageWindow week, DateTimeOffset resets, double weekLimit, UsageRow usage, DateTimeOffset now, CardRow? replaces, string? restated)
+    private void Raise(UsageWindow week, DateTimeOffset resets, double weekLimit, UsageRow usage, DateTimeOffset now, string cause)
     {
-        if (replaces is not null)
-        {
-            state.CloseCard(replaces.Id, $"restated: {restated}", "node");
-        }
-        _weekShown = (int)Math.Round(week.UsedPercent);
-        _weekStaleSaid = now - usage.ReadAt >= FreshFor;
         // What the card's buttons do is what its text asks (the review of #797: c3530 told the person to pause flights and offered no
         // button to): hold each flying flight the person can spare (the owner's hold, ground), and take no new flights (maintenance).
         var why = string.Create(CultureInfo.InvariantCulture, $"the 7-day window is {week.UsedPercent:0} % spent");
@@ -226,7 +238,8 @@ public sealed class StartGate(NodeState state, TimeProvider time)
         state.RaiseCard(CardBin.ForYou, WeekKind, Verbs.NodeTarget, $"The 7-day window is {week.UsedPercent:0} % spent; it resets {resets.ToLocalTime():ddd HH:mm}",
             $"The limit for the week is {weekLimit:0} %, and it only rings: the node still starts sessions of its own, and the 5-hour limit is what holds a start. Usage: {ReadSay(usage, now)}.{more}",
             choices,
-            summary: "Nothing stops by itself: hold the flights you can spare, or take no new ones, if the week should last.");
+            summary: "Nothing stops by itself: hold the flights you can spare, or take no new ones, if the week should last.",
+            cause: cause);
     }
 
     /// <summary>How many flying flights the 7-day card offers to hold, each its own button; the rest are held from their pages.</summary>

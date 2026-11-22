@@ -636,11 +636,14 @@ public sealed partial class LegCommander
     {
         state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), "its review passed again", ReviewNotesKind);
         var action = fixerLeg is not null
-            ? $"The node planned {flight.Code}/{fixerLeg} to make them (autopilot); it starts as any planned leg and the review runs again on its result. Nothing to do but watch it."
+            ? $"The node planned {flight.Code}/{fixerLeg} to make them; it starts as any planned leg and the review runs again on its result."
             : $"Delegate: plan a review-notes leg carrying the notes (pilot leg plan, then pilot leg start) within a few minutes, and say so here. Clearing the hold is the owner's word, not yours (pilot flight clear {flight.Code} <why> is refused for the watchtower while a note has no end). "
                 + $"A fix of your own only for a one-line change in the plane ({flight.Worktree}), then pilot flight pr {flight.Code}. "
                 + $"Take the hold with pilot flight hold {flight.Code} (or commit in the plane) before the grace ends, or the node plans the review-notes leg itself, or rings the owner.";
-        state.RaiseCard(CardBin.ForYou, ReviewNotesKind, Verbs.FlightTarget(flight.Code), $"{flight.Code}'s review passed with notes",
+        // A leg the node planned makes the notes: nothing is the person's, so it is a Handled line, said as what happens (the PR's label
+        // reads changes from here, and a "passed" title beside it contradicts it). Only notes nobody makes are a card for someone.
+        state.RaiseCard(fixerLeg is not null ? CardBin.Handled : CardBin.ForYou, ReviewNotesKind, Verbs.FlightTarget(flight.Code),
+            fixerLeg is not null ? $"{flight.Code}'s review notes go to its {fixerLeg} leg" : $"{flight.Code}'s review passed with notes",
             $"PR #{flight.PullRequest}, head {(flight.Review?.ReviewedHead is { } head ? CommitRefs.Short(head) : "unknown")}. Notes: {string.Join("; ", notes)} {action}",
             link: flight.PullRequestUrl, summary: CardSummaries.ReviewNotes(flight.Code, notes, fixerLeg),
             // The title is the same for every pass with notes: the head reviewed and the notes are the cause (#853).

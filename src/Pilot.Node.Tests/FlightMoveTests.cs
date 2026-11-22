@@ -202,6 +202,18 @@ public abstract class FlightMoveTestsBase : IAsyncDisposable
         return card;
     }
 
+    /// <summary>The flight stayed on SE1 with no failure and no card: nothing was sent, no leg started.</summary>
+    private protected void StayedQuietly()
+    {
+        var flight = OnSender;
+        (flight.State, flight.MovedTo, flight.MoveFailure).ShouldBe((FlightState.Flying, null, null));
+        _sender.Legs(Code).Single(l => l.Name == "render").State.ShouldBe(LegState.Planned);
+        _senderWorkers.Started.ShouldBeEmpty();
+        _peer.Sent.ShouldBeEmpty();
+        NothingTaken();
+        _sender.Cards().ShouldNotContain(c => c.Kind == LegCommander.MoveFailedKind);
+    }
+
     private protected Task<CommandResult> Retry(CardRow card) =>
         _senderLegs.RunAsync(new CommandRequest { Verb = card.Choices[0].Verb, Target = card.Choices[0].Target, Args = card.Choices[0].Args, Who = "tests" }, Ct);
 
@@ -278,8 +290,12 @@ public abstract class FlightMoveTestsBase : IAsyncDisposable
         /// <summary>Whether the peer can be asked what it holds.</summary>
         public bool Reachable { get; set; } = true;
 
+        /// <summary>The account DE1's usage reads as signed in, when a test gives one.</summary>
+        public string? Account { get; set; }
+
         public Task<FleetLoad> LoadAsync(CancellationToken cancellationToken) =>
-            Reachable ? Task.FromResult(new FleetLoad(null, State?.Flights() ?? [], null)) : throw new TimeoutException("de1.local:47731 did not answer within 8 s");
+            Reachable ? Task.FromResult(new FleetLoad(Account is { } a ? new UsageRow { Account = new AccountRow { Email = a }, ReadAt = DateTimeOffset.UtcNow } : null, State?.Flights() ?? [], null))
+                : throw new TimeoutException("de1.local:47731 did not answer within 8 s");
 
         public async Task<CommandResult> SendAsync(CommandRequest command, CancellationToken cancellationToken)
         {
@@ -687,13 +703,49 @@ public sealed class FlightMoveTests2 : FlightMoveTestsBase
         SenderMaintenance(true);
         _peer.Maintenance = true;
 
+        // The sweep's own move finds no node: the flight waits here, held, and nobody is rung for what only the owner's maintenance made.
         await _senderLegs.AdvanceAllAsync(Ct);
+        StayedQuietly();
 
-        var card = StayedWith("TIA900 could not move: no node of the fleet takes it (DE1: in maintenance). Put one out of maintenance and willing (accept-fleet-flights on), or move it again later.");
+        // A move by hand is told why, and its failure is a card.
+        var hand = await _senderLegs.RunAsync(new CommandRequest { Verb = Verbs.MoveFlight, Target = "flight/TIA900", Who = "tests" }, Ct);
+        hand.Error.ShouldBe("TIA900 could not move: no node of the fleet takes it (DE1: in maintenance). Put one out of maintenance and willing (accept-fleet-flights on), or move it again later.");
+        var card = StayedWith(hand.Error!);
         _peer.Sent.ShouldBeEmpty();
 
         _peer.Maintenance = false;
         (await Retry(card)).Ok.ShouldBeTrue();
+        MovedAway();
+    }
+
+    [Fact]
+    public async Task TheSweepDoesNotMoveAFlightToANodeOnTheSameAccount()
+    {
+        Fly(LegState.Done);
+        SenderMaintenance(true);
+        _sender.PutUsage(new UsageRow { Account = new AccountRow { Email = "owner@example.com" }, ReadAt = DateTimeOffset.UtcNow });
+        _peer.Account = "OWNER@example.com";
+
+        await _senderLegs.AdvanceAllAsync(Ct);
+
+        // DE1 spends the same account: the move gains nothing, so none is made and nobody is told.
+        StayedQuietly();
+
+        // A hand move is the owner's word and still goes.
+        (await _senderLegs.RunAsync(new CommandRequest { Verb = Verbs.MoveFlight, Target = "flight/TIA900", Who = "tests" }, Ct)).Ok.ShouldBeTrue();
+        MovedAway();
+    }
+
+    [Fact]
+    public async Task TheSweepMovesAFlightToANodeOnAnotherAccount()
+    {
+        Fly(LegState.Done);
+        SenderMaintenance(true);
+        _sender.PutUsage(new UsageRow { Account = new AccountRow { Email = "owner@example.com" }, ReadAt = DateTimeOffset.UtcNow });
+        _peer.Account = "other@example.com";
+
+        await _senderLegs.AdvanceAllAsync(Ct);
+
         MovedAway();
     }
 
@@ -704,9 +756,12 @@ public sealed class FlightMoveTests2 : FlightMoveTestsBase
         SenderMaintenance(true);
         _senderFlights.Fleet = null;
 
+        // The sweep's own move with no node to go to waits quietly; a hand move is told why, on a card.
         await _senderLegs.AdvanceAllAsync(Ct);
-
-        StayedWith("TIA900 could not move: this node knows no other node of the fleet. Grant it one, or fly the flight on here.");
+        StayedQuietly();
+        var hand = await _senderLegs.RunAsync(new CommandRequest { Verb = Verbs.MoveFlight, Target = "flight/TIA900", Who = "tests" }, Ct);
+        StayedWith(hand.Error.ShouldNotBeNull());
+        hand.Error.ShouldBe("TIA900 could not move: this node knows no other node of the fleet. Grant it one, or fly the flight on here.");
     }
 
     [Fact]
