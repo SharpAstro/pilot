@@ -346,7 +346,9 @@ public sealed class ToastPressTests
                 // The pixels are read only inside the refusal line as the layer painted it (the node that carries the node's words on hover),
                 // and that line is shown to sit inside the refused toast: a colour the page or the toast's buttons share is never pooled in.
                 var toast = rig.ToastRect();
-                toast.ShouldNotBeNull("the refused toast is drawn on the night frame");
+                var dbg = new List<ClickableRegion>();
+                rig.Chrome.NotificationsLayer.CollectPaintedRegions(dbg);
+                toast.ShouldNotBeNull("DBG " + string.Join(" | ", dbg.Select(d => $"{d.X},{d.Y},{d.Width},{d.Height} {d.Result} tip={d.Tooltip?[..Math.Min(20, d.Tooltip.Length)]} id={NotificationsLayout.ToastIdOf(d.Result)}")));
                 var refusal = rig.PaintedRectWithTooltip(Why);
                 refusal.ShouldNotBeNull("the refusal line is painted with the node's words on hover");
                 var (t, r) = (toast.Value, refusal.Value);
