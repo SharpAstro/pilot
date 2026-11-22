@@ -259,8 +259,8 @@ public sealed class LandedBranchesTests : IAsyncDisposable
         outcomes[2].Result.ShouldBe(LandedBranchResult.Deleted);
         outcomes[1].Result.ShouldBe(LandedBranchResult.Failed);
         outcomes[1].Group.ShouldBe(LandedBranchGroups.PushFailed);
-        outcomes[1].Why.ShouldContain("no deleting pil15 here");
-        outcomes[1].Why.ShouldNotContain("To ");
+        outcomes[1].Why!.ShouldContain("no deleting pil15 here");
+        outcomes[1].Why!.ShouldNotContain("To ");
         OriginHas("flight/pil14").ShouldBeFalse();
         OriginHas("flight/pil15").ShouldBeTrue();
         LocalHas("flight/pil15").ShouldBeTrue();
