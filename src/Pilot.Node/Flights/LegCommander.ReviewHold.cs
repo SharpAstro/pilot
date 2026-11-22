@@ -172,6 +172,13 @@ public sealed partial class LegCommander
     /// <summary>The Ring card kind of a flight whose review notes have no end and no review-notes leg to make them.</summary>
     public const string NotesUnmadeKind = "notes-unmade";
 
+    /// <summary>How long a hold circles before the node asks the person about it again: the holding-timeout card's bound
+    /// (<see cref="PrChecks.HoldingBound"/>) and the wait after a notes-unmade card's Keep waiting.</summary>
+    public static readonly TimeSpan DefaultHoldingBound = TimeSpan.FromMinutes(30);
+
+    /// <summary>How long a notes-unmade card closed during a hold (Keep waiting) stays closed before the node raises it again.</summary>
+    public TimeSpan NotesUnmadeBound { get; set; } = DefaultHoldingBound;
+
     /// <summary>
     /// Under the commander's lock: plans the review-notes leg for notes with no end when none is planned or flying and the node may
     /// (unless the node does not advance); else raises one Ring card to the owner naming the notes. The hold stays either way.
@@ -201,7 +208,13 @@ public sealed partial class LegCommander
             }
             return;
         }
-        if (state.Cards(openOnly: true).Any(c => c.Kind == NotesUnmadeKind && c.Subject == subject))
+        // One card per hold: an open one is the question. One closed during this hold (Keep waiting) is the owner's answer for a
+        // while: every look settles the hold again, so without this the card came straight back; it asks again once NotesUnmadeBound
+        // has passed since it was closed, as the holding-timeout card asks again a bound after its Wait.
+        var now = time.GetUtcNow();
+        if (state.Cards().Any(c => c.Kind == NotesUnmadeKind && c.Subject == subject
+            && (c.State == CardState.Open
+                || (c.ClosedAt is { } closed && flight.Holding is { } hold && closed >= hold.Since && now - closed < NotesUnmadeBound))))
         {
             return;
         }

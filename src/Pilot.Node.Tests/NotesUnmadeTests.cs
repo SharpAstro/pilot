@@ -184,6 +184,35 @@ public sealed class NotesUnmadeTests : ReviewTestsBase
 
     [Fact]
     [Trait("Category", "Slow")]
+    public async Task KeepWaitingOnTheNotesUnmadeCardHoldsItClosedUntilTheBoundHasPassed()
+    {
+        // Review of PIL1271, R1.11: every look settles a node-held hold again, so a card closed by Keep waiting came straight back.
+        _github.Checks = ChoiceStatus.Passing;
+        var flight = await Reviewed("10", Notes);
+        var clock = new ManualTime(F(flight.Code).Holding!.Since);
+        clock.Advance(TimeSpan.FromMinutes(6));
+        var card = Open().Single(c => c.Kind == LegCommander.NotesUnmadeKind);
+
+        (await Run(Verbs.Answer, Verbs.CardTarget(card.Id), "me", "Keep waiting")).Error.ShouldBeNull();
+        await TimedChecks(clock).LookAsync(Ct);
+        await TimedChecks(clock).LookAsync(Ct);
+
+        Open().ShouldNotContain(c => c.Kind == LegCommander.NotesUnmadeKind);
+        _state.Cards(openOnly: false).Count(c => c.Kind == LegCommander.NotesUnmadeKind).ShouldBe(1);
+        F(flight.Code).Holding.ShouldNotBeNull();
+
+        // Once the bound has passed since Keep waiting, the next look asks again: one new card, the hold still on.
+        _legs.NotesUnmadeBound = TimeSpan.Zero;
+        await TimedChecks(clock).LookAsync(Ct);
+        await TimedChecks(clock).LookAsync(Ct);
+
+        Open().Single(c => c.Kind == LegCommander.NotesUnmadeKind).Id.ShouldNotBe(card.Id);
+        _state.Cards(openOnly: false).Count(c => c.Kind == LegCommander.NotesUnmadeKind).ShouldBe(2);
+        _github.Merged.ShouldBeEmpty();
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
     public async Task TheMergeRefusesANoteWithNoEndAndPassesOnceEachHasOneOrAtThePersonsAsIsMerge()
     {
         _github.Checks = ChoiceStatus.Passing;

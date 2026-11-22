@@ -840,7 +840,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
         state.Cards(openOnly: true).FirstOrDefault(c => c.Kind is LegCommander.PrReady or LegCommander.MergeFailed && c.Subject == subject && c.Choices.Any(ch => ch.Verb == Verbs.Merge));
 
     /// <summary>How long a hold the watchtower took circles before a card asks the person to merge as it is or wait.</summary>
-    public TimeSpan HoldingBound { get; init; } = TimeSpan.FromMinutes(30);
+    public TimeSpan HoldingBound { get; init; } = LegCommander.DefaultHoldingBound;
 
     /// <summary>Whether the watchtower is live now; null reads as live (a node built without one is not asked).</summary>
     public Func<bool>? WatchtowerLive { get; set; }
