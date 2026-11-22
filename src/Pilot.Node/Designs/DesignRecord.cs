@@ -304,8 +304,10 @@ public sealed partial class DesignRecord(DesignStore store, RepoCatalog repos, N
             built += $"; files: {DesignSyncText.FolderLink(info.GitHub!, row.MergeCommit!, row.Folder!)}";
         }
         var current = design.Current ?? version;
+        // Only a flight that could close the issue itself holds it open: one building this version or a newer. One building an older version only comments when
+        // it lands, so waiting for it left the issue open for good (#1197 R1.6).
         var other = state.Flights().FirstOrDefault(f => f.State != FlightState.Landed && !string.Equals(f.Code, code, StringComparison.OrdinalIgnoreCase)
-            && f.Designs.Any(x => string.Equals(x.Id, id, StringComparison.OrdinalIgnoreCase)));
+            && f.Designs.Any(x => string.Equals(x.Id, id, StringComparison.OrdinalIgnoreCase) && x.Version >= version));
         if (version < current)
         {
             await github.CommentIssueAsync(info.Path, issue, $"{built}; built v{version.ToString(CultureInfo.InvariantCulture)}; the design is at v{current.ToString(CultureInfo.InvariantCulture)}", cancellationToken);

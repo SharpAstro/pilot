@@ -617,7 +617,10 @@ public sealed partial class IdeaCommander(NodeState state, Planes planes, RepoCa
         {
             throw new FlightException($"{unpublished.Id} has no published version: publish one (pilot design publish {unpublished.Id} --why ...), or plan anyway ({Verbs.AnywayFlag})");
         }
-        if (issue.NeedsDesign && !anyway && published.Length == 0)
+        // A design another node made and published for this idea is a design it has (#1197 R1.4): no Plan anyway needed. It is not carried into the flight, as its
+        // files are on that node; the flight's planner finds it on its issue.
+        var mirroredPublished = Designs?.MirroredForIdea(NodeState.IdeaKey(name, id), state.IdeaMoves()).Any(d => d.Current is not null) == true;
+        if (issue.NeedsDesign && !anyway && published.Length == 0 && !mirroredPublished)
         {
             throw new FlightException($"{id} needs a design and has none yet: start its design (pilot idea {id} design start), or plan anyway ({Verbs.AnywayFlag})");
         }

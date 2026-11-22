@@ -290,4 +290,32 @@ public sealed class DesignIdeaLinkTests : IDisposable
         tools.Keys.ShouldContain(k => k.Contains("design", StringComparison.Ordinal) && k.Contains("link", StringComparison.Ordinal) && !k.Contains("unlink", StringComparison.Ordinal));
         tools.Keys.ShouldContain(k => k.Contains("unlink", StringComparison.Ordinal));
     }
+
+    /// <summary>
+    /// A link whose write to the design's issue failed is written again at the next sweep (#1197 R1.7): the link is kept on the node at once, and the issue's
+    /// Ideas line follows once GitHub answers, not only at the design's next published version.
+    /// </summary>
+    [Fact]
+    public async Task AnIdeasLineThatCouldNotBeWrittenIsWrittenAtTheNextSweep()
+    {
+        var de1 = NodeOf("DE1");
+        var idea = AddIdea(de1, "Ring shadows");
+        var design = de1.Store.New("pilot", "Disk alert", "brief");
+        Published(de1.Store, design.Id, 1, "first screen");
+        await de1.Sync.SyncAsync(design.Id, Ct);
+        var issue = de1.Store.Find(design.Id)!.IssueNumber!.Value;
+
+        _github.EditIssueFails = "GitHub did not answer";
+        await RunAsync(de1, Verbs.DesignLink, design.Id, IdeaIds.Id(idea));
+
+        de1.Store.Find(design.Id)!.ForIdeas.ShouldBe([$"pilot I{idea}"], "the link is kept on the node");
+        (await _github.IssueNowAsync(_repo, issue, Ct))!.Body.ShouldNotContain("Ideas:");
+        de1.Sync.IdeasDue.ShouldBe([design.Id]);
+
+        _github.EditIssueFails = null;
+        await de1.Sync.SweepAsync(Ct);
+
+        (await _github.IssueNowAsync(_repo, issue, Ct))!.Body.ShouldContain($"Ideas: SharpAstro/pilot#{idea}");
+        de1.Sync.IdeasDue.ShouldBeEmpty();
+    }
 }

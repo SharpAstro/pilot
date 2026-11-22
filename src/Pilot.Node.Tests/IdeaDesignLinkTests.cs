@@ -157,6 +157,25 @@ public sealed class IdeaDesignLinkTests : IDisposable
         GitHub.IssueComments.ShouldBeEmpty();
     }
 
+    /// <summary>
+    /// A design another node made and published for the idea, mirrored here, is a design the idea has (#1197 R1.4): the idea plans with no Plan anyway, and the
+    /// flight carries no design of this node's, as its files are on the node that made it.
+    /// </summary>
+    [Fact]
+    public async Task AMarkedIdeaWithAPublishedDesignFromAnotherNodePlansWithoutPlanAnyway()
+    {
+        await Run(Verbs.MarkDesign, Idea(1));
+        _store.Mirror(new DesignRow { Id = DesignStore.MirrorId("SharpAstro/pilot", 40), Title = "Ring shadows", Repo = "pilot", MadeOn = "SE1", ForIdeas = ["pilot I1"] },
+            1, "first screen", new Dictionary<string, byte[]> { [DesignStore.PrototypeFile] = "{\"width\":1280,\"height\":720,\"entry\":\"home\",\"screens\":[]}"u8.ToArray() });
+        _store.ForIdea("pilot I1").ShouldBeEmpty("a mirrored design is not this node's");
+        _store.MirroredForIdea("pilot I1").ShouldHaveSingleItem().Current.ShouldBe(1);
+
+        var planned = await Run(Verbs.PlanIdea, Idea(1), "v1");
+
+        planned.Ok.ShouldBeTrue(planned.Error);
+        State.Flights().Single().Designs.ShouldBeEmpty();
+    }
+
     [Fact]
     public async Task AnUnmarkedIdeaPlansWithoutADesign()
     {
@@ -254,5 +273,18 @@ public sealed class IdeaDesignLinkTests : IDisposable
         File.WriteAllText(Path.Combine(draft, DesignStore.DocumentFile), "# Rings\n\n**Objective:** A first look at the rings.\n\n## Home\n\n**Objective:** Shows the ring shadows.\n\n```screen id=home\n```\n");
         _store.Render(id);
         _store.Publish(id, "first look");
+    }
+
+    /// <summary>A design's title set through design-title shows on its idea's row at once, not at the next idea read (#1197 R1.9).</summary>
+    [Fact]
+    public async Task ATitleSetOnTheDesignShowsOnItsIdeasRowAtOnce()
+    {
+        await Run(Verbs.MarkDesign, Idea(1));
+        var id = await Start(1);
+        var commands = new DesignCommands(State, _store, null);
+
+        commands.Run(new CommandRequest { Verb = Verbs.DesignSetTitle, Target = Verbs.DesignTarget(id), Args = ["Shadow study"], Who = "tests" }).Ok.ShouldBeTrue();
+
+        Row("I1").Designs.ShouldHaveSingleItem().Title.ShouldBe("Shadow study");
     }
 }

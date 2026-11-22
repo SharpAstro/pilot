@@ -30,6 +30,9 @@ public sealed class DesignSync(DesignStore store, RepoCatalog repos, IGitHub git
     /// <summary>What GitHub is told of the flights that built a design (PIL1185); its unwritten results are retried at every sweep. Null where none is wired.</summary>
     public DesignRecord? Record { get; set; }
 
+    /// <summary>Told when a mirror read wrote a design (its title, version or idea links may have changed): the node refreshes the idea rows (#1197 R1.9).</summary>
+    public Action? Mirrored { get; set; }
+
     private readonly SemaphoreSlim _one = new(1, 1);
     private readonly Lock _kicks = new();
     private readonly List<Task> _running = [];
@@ -80,6 +83,7 @@ public sealed class DesignSync(DesignStore store, RepoCatalog repos, IGitHub git
                 await Error.WriteLineAsync($"design: {design.Id} could not be sent: {ex.Message}").ConfigureAwait(false);
             }
         }
+        await RetryIdeasLinesAsync(cancellationToken).ConfigureAwait(false);
         if (Lock is { } locks)
         {
             await locks.SweepAsync(cancellationToken).ConfigureAwait(false);
@@ -184,18 +188,10 @@ public sealed class DesignSync(DesignStore store, RepoCatalog repos, IGitHub git
         {
             using var deadline = Deadlined(cancellationToken);
             var token = deadline.Token;
-            if (design.IssueNumber is { } issue && Resolve(design.IssueRepo ?? design.Repo) is { } info)
-            {
-                issueRef = $"{info.GitHub}#{issue.ToString(CultureInfo.InvariantCulture)}";
-                if (await github.IssueNowAsync(info.Path, issue, token).ConfigureAwait(false) is { } now && now.Body is { Length: > 0 } body)
-                {
-                    var next = DesignIssueDocument.WithIdeas(body, IdeaRefs(design));
-                    if (next != body)
-                    {
-                        await github.EditIssueAsync(info.Path, issue, now.Title, next, now.UpdatedAt, token).ConfigureAwait(false);
-                    }
-                }
-            }
+            // Marked due first: the issue's Ideas line is written again at each sweep until a write of it goes through (#1197 R1.7).
+            _ideasDue[design.Id] = 0;
+            issueRef = await WriteIdeasLineAsync(design, token).ConfigureAwait(false);
+            _ideasDue.TryRemove(design.Id, out _);
             if (IdeaIds.Parse(idea).Ref is { Repo: { } name } r && Resolve(name) is { } ideaRepo)
             {
                 var where = issueRef is null ? design.Id : $"{design.Id} ({issueRef})";
@@ -205,6 +201,55 @@ public sealed class DesignSync(DesignStore store, RepoCatalog repos, IGitHub git
         catch (Exception ex) when (ex is FlightException or OperationCanceledException && !cancellationToken.IsCancellationRequested)
         {
             await Error.WriteLineAsync($"design: the link of {design.Id} to {idea} was kept, but GitHub was not told: {(ex is OperationCanceledException ? "it took longer than " + Deadline : ex.Message)}").ConfigureAwait(false);
+        }
+    }
+
+    // The designs whose issue's Ideas line a link change could not write: the sweep writes it again until it goes through. In memory: after a restart the line heals
+    // at the design's next published version, as before.
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> _ideasDue = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>The designs whose issue's Ideas line is still to be written (#1197 R1.7).</summary>
+    internal IReadOnlyCollection<string> IdeasDue => [.. _ideasDue.Keys];
+
+    // Writes the design issue's Ideas line from the design's links when it differs; the issue's reference, or null for a design with no issue here.
+    private async Task<string?> WriteIdeasLineAsync(DesignRow design, CancellationToken token)
+    {
+        if (design.IssueNumber is not { } issue || Resolve(design.IssueRepo ?? design.Repo) is not { } info)
+        {
+            return null;
+        }
+        if (await github.IssueNowAsync(info.Path, issue, token).ConfigureAwait(false) is { } now && now.Body is { Length: > 0 } body)
+        {
+            var next = DesignIssueDocument.WithIdeas(body, IdeaRefs(design));
+            // A write refused because the issue changed since it was read did not happen: it stays due, and the next sweep reads the issue again.
+            if (next != body && !await github.EditIssueAsync(info.Path, issue, now.Title, next, now.UpdatedAt, token).ConfigureAwait(false))
+            {
+                throw new FlightException($"{info.GitHub}#{issue.ToString(CultureInfo.InvariantCulture)} changed while its Ideas line was written");
+            }
+        }
+        return $"{info.GitHub}#{issue.ToString(CultureInfo.InvariantCulture)}";
+    }
+
+    // The sweep's step for the Ideas lines a link change left unwritten: each is read and written again from the design's links as they are now.
+    private async Task RetryIdeasLinesAsync(CancellationToken cancellationToken)
+    {
+        foreach (var id in _ideasDue.Keys.ToArray())
+        {
+            if (store.Find(id) is not { MadeOn: null } design)
+            {
+                _ideasDue.TryRemove(id, out _);
+                continue;
+            }
+            try
+            {
+                using var deadline = Deadlined(cancellationToken);
+                await WriteIdeasLineAsync(design, deadline.Token).ConfigureAwait(false);
+                _ideasDue.TryRemove(id, out _);
+            }
+            catch (Exception ex) when (ex is FlightException or OperationCanceledException && !cancellationToken.IsCancellationRequested)
+            {
+                await Error.WriteLineAsync($"design: the Ideas line of {id}'s issue is still not written: {(ex is OperationCanceledException ? "it took longer than " + Deadline : ex.Message)}").ConfigureAwait(false);
+            }
         }
     }
 
@@ -433,6 +478,7 @@ public sealed class DesignSync(DesignStore store, RepoCatalog repos, IGitHub git
             MadeOn = meta.Node,
             ForIdeas = ideas,
         }, meta.Version, meta.Why, files);
+        Mirrored?.Invoke();
     }
 }
 
