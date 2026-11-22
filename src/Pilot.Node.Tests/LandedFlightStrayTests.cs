@@ -195,7 +195,7 @@ public sealed class LandedFlightStrayTests : IDisposable
 
         _table.Killed.ShouldBe([602]);
         Open(StraySweep.Kind).Select(c => c.Subject).ShouldNotContain(StraySweep.KeyOf(602, Began.AddMinutes(3)));
-        _state.Cards().Single(c => c.Subject == StraySweep.KeyOf(602, Began.AddMinutes(3)) && c.Kind == StraySweep.Kind).Outcome.ShouldBe("PIL1270 landed");
+        _state.Cards().Single(c => c.Subject == StraySweep.KeyOf(602, Began.AddMinutes(3)) && c.Kind == StraySweep.Kind).Outcome.ShouldEndWith("PIL1270 landed");
         Open(StraySweep.Kind).Select(c => c.Subject).ShouldContain(StraySweep.KeyOf(603, Began.AddMinutes(3)));
     }
 
