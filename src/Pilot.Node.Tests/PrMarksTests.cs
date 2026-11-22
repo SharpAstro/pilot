@@ -119,6 +119,10 @@ public abstract class PrMarksTestsBase : IDisposable
     private protected Task<CommandResult> Verdict(string code, string verdict, string report) =>
         Run(Verbs.Review, Verbs.FlightTarget(code), Reviewer(code), verdict, Answered(code) + report);
 
+    /// <summary>The fix round the node sent itself after a changes verdict, finished by the leg's worker: <see cref="FixRounds.FinishAsync"/>.</summary>
+    private protected Task FixRound(string code) =>
+        FixRounds.FinishAsync(_legs, _state, code, ["fix.txt"], Git, Ct);
+
     /// <summary>The table a re-review opens with, answering every earlier point addressed (pilot #1107); empty before any round.</summary>
     private protected string Answered(string code) =>
         ReviewPoints.Number(F(code).ReviewRounds ?? []) is { Count: > 0 } points
@@ -222,8 +226,8 @@ public sealed class PrMarksTests1 : PrMarksTestsBase
         Pilot(_github.Labels[71]).ShouldBe(["pilot: changes"]);
         _github.Labels[71].Keys.ShouldContain("bug");
 
-        // A fresh review and its pass replace it in turn: one pilot: label throughout.
-        (await Run(Verbs.StartReview, Verbs.FlightTarget(flight.Code), "controller")).Error.ShouldBeNull();
+        // The node's fix round, then a fresh review and its pass replace it in turn: one pilot: label throughout.
+        await FixRound(flight.Code);
         Pilot(_github.Labels[71]).ShouldBe(["pilot: reviewing"]);
         (await Verdict(flight.Code, "pass", "fixed")).Error.ShouldBeNull();
         Pilot(_github.Labels[71]).ShouldBe(["pilot: passed"]);
@@ -236,7 +240,8 @@ public sealed class PrMarksTests1 : PrMarksTestsBase
     {
         var flight = await Opened();
         (await Verdict(flight.Code, "changes", "first round")).Error.ShouldBeNull();
-        (await Run(Verbs.StartReview, Verbs.FlightTarget(flight.Code), "controller")).Error.ShouldBeNull();
+        // The node sends the fix round itself; the worker's finish starts the second review.
+        await FixRound(flight.Code);
         F(flight.Code).Review!.ReviewUrl.ShouldBeNull();
         _github.Posted.Count.ShouldBe(1);
 

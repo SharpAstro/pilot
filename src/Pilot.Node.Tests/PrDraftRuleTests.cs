@@ -34,8 +34,8 @@ public sealed class PrDraftRuleTests : ReviewTestsBase
         (await Run(Verbs.Review, target, Reviewer(flight.Code), "changes", "fix the null check")).Error.ShouldBeNull();
         Agree(draft: true, "pilot: changes", "failure");
 
-        (await Run(Verbs.StartReview, target, "controller")).Error.ShouldBeNull();
-        await Started(_legs, flight.Code);
+        // The node sends the fix round itself; the worker's finish starts the second review.
+        await FixRound(flight.Code, "fix.txt");
         // The marks follow the recorded reviewer, outside the lock: a moment on a loaded machine.
         for (var i = 0; i < 2000 && _github.Pr!.Draft; i++)
         {

@@ -15,6 +15,9 @@ public sealed class CardSummaryRaiserTests : ReviewTestsBase
         var flight = await NewFlight("41", "parser");
         await Fly(flight, "parser");
         await Run(Verbs.OpenPr, Verbs.FlightTarget(flight.Code), "controller");
+        // Below the cap the node sends the round itself with no card (pilot #1271): the card is raised once the leg's rounds are spent.
+        var leg = _state.Legs(flight.Code).Single();
+        _state.PutLeg(leg with { ReviewGoArounds = LegCommander.MaxReviewGoArounds });
 
         (await Run(Verbs.Review, Verbs.FlightTarget(flight.Code), Reviewer(flight.Code), "changes", "the parser skips a case")).Ok.ShouldBeTrue();
 

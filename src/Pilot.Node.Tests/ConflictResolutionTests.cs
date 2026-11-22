@@ -122,6 +122,8 @@ public sealed class ConflictResolutionTests : ReviewTestsBase
         File.WriteAllText(Path.Combine(flight.Worktree, "README.md"), "theirs\n");
         await Fly(flight, "parser");
         await Run(Verbs.OpenPr, Verbs.FlightTarget(flight.Code), "controller");
+        // The leg's rounds spent for the verdict, so the node sends no fix round itself (pilot #1271) and the leg is done when main conflicts.
+        _state.PutLeg(_state.Legs(flight.Code).Single() with { ReviewGoArounds = LegCommander.MaxReviewGoArounds });
         (await Run(Verbs.Review, Verbs.FlightTarget(flight.Code), Reviewer(flight.Code), "changes", "## Blocking\n- the null check in src/Parser.cs is gone")).Ok.ShouldBeTrue();
         _github.Pr = _github.Pr! with { Mergeable = "CONFLICTING" };
         MainRewritesTheReadme();

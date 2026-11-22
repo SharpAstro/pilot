@@ -17,7 +17,10 @@ public sealed class ReviewLoopTests : ReviewTestsBase
         Git(worktree, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", $"fix {name}");
     }
 
-    /// <summary>A flight whose review has given <paramref name="rounds"/> rounds of changes, each after a commit and a reviewer start by the person.</summary>
+    /// <summary>
+    /// A flight whose review has given <paramref name="rounds"/> rounds of changes. Below the round limit the node sends each round
+    /// itself (pilot #1271), so each later round follows the leg's new worker committing and finishing.
+    /// </summary>
     private async Task<string> Looping(string issue, int rounds, string? lastTable = null)
     {
         var flight = await NewFlight(issue, "parser");
@@ -27,9 +30,7 @@ public sealed class ReviewLoopTests : ReviewTestsBase
         {
             if (round > 1)
             {
-                Commit(flight.Worktree, $"fix{round}.txt");
-                (await Run(Verbs.StartReview, Verbs.FlightTarget(flight.Code), "controller")).Error.ShouldBeNull();
-                await Started(_legs, flight.Code);
+                await FixRound(flight.Code, $"fix{round}.txt");
             }
             (await Run(Verbs.Review, Verbs.FlightTarget(flight.Code), Reviewer(flight.Code), "changes", (round == rounds && lastTable is not null ? lastTable : Answered(flight.Code)) + $"## Blocking\n- finding of round {round}")).Error.ShouldBeNull();
         }
@@ -80,11 +81,14 @@ public sealed class ReviewLoopTests : ReviewTestsBase
 
     [Fact]
     [Trait("Category", "Slow")]
-    public async Task TheSecondRoundWithChangesRaisesTheOrdinaryCard()
+    public async Task TheSecondRoundWithChangesIsSentRoundByTheNodeWithNoCard()
     {
-        await Looping("1", 2);
+        var code = await Looping("1", 2);
 
-        Open().ShouldContain(c => c.Kind == LegCommander.ReviewChanges);
+        // Below the round limit the node sends the round itself: the leg flies again, and neither card is raised.
+        var leg = _state.Legs(code).Single(l => l.Name == "parser");
+        (leg.State, leg.ReviewGoArounds).ShouldBe((LegState.Flying, 2));
+        Open().ShouldNotContain(c => c.Kind == LegCommander.ReviewChanges);
         Open().ShouldNotContain(c => c.Kind == LegCommander.ReviewLoopKind);
     }
 
@@ -205,9 +209,7 @@ public sealed class ReviewLoopTests : ReviewTestsBase
     private async Task<string> PassedAtTheThirdRound(string issue)
     {
         var code = await Looping(issue, 2);
-        Commit(F(code).Worktree, "fix3.txt");
-        (await Run(Verbs.StartReview, Verbs.FlightTarget(code), "controller")).Error.ShouldBeNull();
-        await Started(_legs, code);
+        await FixRound(code, "fix3.txt");
         (await Run(Verbs.Review, Verbs.FlightTarget(code), Reviewer(code), "pass", Answered(code) + "read the fixes")).Error.ShouldBeNull();
         return code;
     }

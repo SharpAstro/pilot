@@ -154,6 +154,10 @@ public abstract class ReviewTestsBase : IDisposable
         (await Run(Verbs.FinishLeg, Verbs.LegTarget(flight.Code, leg), worker, "done", report)).Error.ShouldBeNull();
     }
 
+    /// <summary>The fix round the node sent itself after a changes verdict, finished by the leg's worker: <see cref="FixRounds.FinishAsync"/>.</summary>
+    private protected Task FixRound(string code, params string[] files) =>
+        FixRounds.FinishAsync(_legs, _state, code, files, Git, Ct);
+
     /// <summary>The table a re-review opens with, answering every earlier point addressed (pilot #1107); empty before any round.</summary>
     private protected string Answered(string code) =>
         ReviewPoints.Number(F(code).ReviewRounds ?? []) is { Count: > 0 } points
@@ -543,7 +547,7 @@ public sealed class ReviewTests1 : ReviewTestsBase
 
     [Fact]
     [Trait("Category", "Slow")]
-    public async Task OnAutopilotAMergeThatWaitedForChecksWhichThenFailSendsTheLegBackAsChangesNotOntoAForYouCard()
+    public async Task AMergeTheNodeArmedWhoseChecksThenFailSendsTheLegBackAsChangesNotOntoAForYouCard()
     {
         // A failing PR is sent back from its PR-ready card; the merge the node armed itself must go round the same way.
         var (flight, pr) = await Passed("32");
@@ -576,7 +580,7 @@ public sealed class ReviewTests1 : ReviewTestsBase
 
     [Fact]
     [Trait("Category", "Slow")]
-    public async Task AMergeThePersonPressedWhileChecksRanStillDropsOntoAForYouCardWhenTheyFailOnAutopilot()
+    public async Task AMergeThePersonPressedWhileChecksRanStillDropsOntoAForYouCardWhenTheyFail()
     {
         var (flight, _) = await Passed("33");
         _github.Checks = ChoiceStatus.Pending;
@@ -595,7 +599,7 @@ public sealed class ReviewTests1 : ReviewTestsBase
 
     [Fact]
     [Trait("Category", "Slow")]
-    public async Task AnAutopilotMergeRefusedRingsOnceAndItsCardClosesWhenTheBaseIsMergedInAndItsPassCarriedOver()
+    public async Task TheNodesMergeRefusedRingsOnceAndItsCardClosesWhenTheBaseIsMergedInAndItsPassCarriedOver()
     {
         var (flight, _) = await Passed("34");
         var ready = Open().Single(c => c.Kind == LegCommander.PrReady);
@@ -1693,7 +1697,7 @@ public sealed class ReviewTests4 : ReviewTestsBase
 
     [Fact]
     [Trait("Category", "Slow")]
-    public async Task TheAutopilotsMergeOfAPrBehindMainUpdatesItAndLeavesNoRefusalCard()
+    public async Task TheNodesMergeOfAPrBehindMainUpdatesItAndLeavesNoRefusalCard()
     {
         var (flight, _) = await Passed("35");
         _github.Checks = ChoiceStatus.Passing;
