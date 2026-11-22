@@ -192,10 +192,11 @@ public sealed class AutopilotNodePressTests
         // A card of a kind the node owns, with a choice the in-memory node can run (a note), pressed by NodePress over the node's own commands.
         var card = node.State.RaiseCard(CardBin.ForYou, StraySweep.Kind, StrayKey, "Stray dotnet 4242 is still running", null,
             [new CardChoice { Label = "End process 4242", Verb = Verbs.Note, Target = Verbs.NodeTarget, Args = ["ended by the node"] }]);
+        var said = new StringWriter();
         var commands = node.App.Services.GetRequiredService<NodeCommands>();
-        var press = new NodePress(node.State, () => true, commands.RunAsync, new ManualTime(Began)) { MayEndStray = _ => true };
+        var press = new NodePress(node.State, () => true, commands.RunAsync, new ManualTime(Began)) { MayEndStray = _ => true, Error = said };
 
-        (await press.PressAsync(TestContext.Current.CancellationToken)).ShouldBe(1);
+        (await press.PressAsync(TestContext.Current.CancellationToken)).ShouldBe(1, said.ToString());
 
         node.State.Cards().Single(c => c.Id == card.Id).State.ShouldBe(CardState.Closed);
         var decision = node.State.Decisions().Single(d => d.Subject == StrayKey);
