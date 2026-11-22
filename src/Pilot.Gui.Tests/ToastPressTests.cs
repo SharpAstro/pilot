@@ -99,14 +99,18 @@ public sealed class ToastPressTests
         {
             var regions = new List<ClickableRegion>();
             Chrome.NotificationsLayer.CollectPaintedRegions(regions);
-            if (regions.FirstOrDefault(r => r.Result is NotificationHit { Part: NotificationPart.Dismiss }) is not { } dismiss)
+            var at = regions.FindIndex(r => r.Result is NotificationHit { Part: NotificationPart.Dismiss });
+            if (at < 0)
             {
                 return null;
             }
+            var dismiss = regions[at];
             var (cx, cy) = (dismiss.X + dismiss.Width / 2f, dismiss.Y + dismiss.Height / 2f);
-            return regions
+            // The Dismiss region itself contains its own centre, so this is never empty.
+            var toast = regions
                 .Where(r => r.X <= cx && cx <= r.X + r.Width && r.Y <= cy && cy <= r.Y + r.Height)
-                .MaxBy(r => r.Width * r.Height) is { } toast ? new RectF32(toast.X, toast.Y, toast.Width, toast.Height) : null;
+                .MaxBy(r => r.Width * r.Height);
+            return new RectF32(toast.X, toast.Y, toast.Width, toast.Height);
         }
 
         /// <summary>The bounds the notifications layer painted for the node that carries this hover text on the last frame, or null.</summary>
@@ -114,7 +118,8 @@ public sealed class ToastPressTests
         {
             var regions = new List<ClickableRegion>();
             Chrome.NotificationsLayer.CollectPaintedRegions(regions);
-            return regions.LastOrDefault(r => r.Tooltip == tooltip) is { } r ? new RectF32(r.X, r.Y, r.Width, r.Height) : null;
+            var at = regions.FindLastIndex(r => r.Tooltip == tooltip);
+            return at < 0 ? null : new RectF32(regions[at].X, regions[at].Y, regions[at].Width, regions[at].Height);
         }
 
         /// <summary>
