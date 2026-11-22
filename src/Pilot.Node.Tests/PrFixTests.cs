@@ -510,6 +510,36 @@ public sealed class PrFixTests3 : PrFixTestsBase
         Fixers.Length.ShouldBe(3);
     }
 
+    /// <summary>
+    /// A fixer that ended with a commit it did not push, and a file it did not commit, keeps its worktree and the work in it: the card names both and
+    /// where they are (pilot #1247: tianwen#2435's fix sat in a commit on a detached HEAD, and the worktree it was in was force-removed).
+    /// </summary>
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AFixerThatEndsWithWorkLeftKeepsItsWorktreeAndTheCardNamesTheWork()
+    {
+        RealGit();
+        await Review("acme/widget#7", "changes", "README.md:1 wrong");
+        var worktree = Row.FixWorktree.ShouldNotBeNull();
+        var git = new GitCli();
+        File.WriteAllText(Path.Combine(worktree, "fixed.txt"), "the fix\n");
+        (await git.RunAsync(["add", "fixed.txt"], worktree, Ct)).Ok.ShouldBeTrue();
+        (await git.RunAsync(["-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "make the README right"], worktree, Ct)).Ok.ShouldBeTrue();
+        File.WriteAllText(Path.Combine(worktree, "half.txt"), "not committed\n");
+        _state.PutSession(FixerSession(SessionState.Ended));
+
+        await _reviews.SweepAsync(Ct);
+
+        var card = _state.Cards(openOnly: true).Where(c => c.Kind == PrReviews.FixEndedKind).ShouldHaveSingleItem();
+        card.Detail.ShouldNotBeNull().ShouldContain($"the fixer left work in {worktree}, kept there");
+        card.Detail.ShouldContain("1 commit not pushed");
+        card.Detail.ShouldContain("make the README right");
+        card.Detail.ShouldContain("1 file not committed (half.txt)");
+        Directory.Exists(worktree).ShouldBeTrue("the work is kept, not force-removed");
+        File.Exists(Path.Combine(worktree, "half.txt")).ShouldBeTrue();
+        Row.Fixer.ShouldBeNull("the fixer is done with; its worktree stays for the person");
+    }
+
     [Fact]
     [Trait("Category", "Slow")]
     public async Task AFixerThatEndsWithoutPushingLeavesACardWithFixItAndNoReview()
