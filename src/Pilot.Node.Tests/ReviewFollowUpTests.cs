@@ -20,7 +20,7 @@ public sealed class ReviewFollowUpTests : ReviewTestsBase
         await Fly(flight, "parser");
         (await Run(Verbs.OpenPr, Verbs.FlightTarget(flight.Code), "controller")).Error.ShouldBeNull();
         (await Run(Verbs.Review, Verbs.FlightTarget(flight.Code), Reviewer(flight.Code), "changes", firstReport)).Error.ShouldBeNull();
-        File.WriteAllText(Path.Combine(F(flight.Code).Worktree, "fix.txt"), "more\n");
+        File.WriteAllText(Path.Combine(F(flight.Code).Worktree, "Parser.cs"), "more\n");
         Git(F(flight.Code).Worktree, "add", ".");
         Git(F(flight.Code).Worktree, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "fix A, B and C");
         // The node sent the fix round itself; the worker's finish pushes and starts the second review.
