@@ -195,7 +195,7 @@ public abstract class PrReviewTestsBase : IDisposable
         // gives a long grace looks at what happens during it, and waits itself.
         if (verb == Verbs.PrVerdict && _reviews.SelfFinishGrace <= TimeSpan.FromSeconds(1))
         {
-            await _reviews.GraceDone.WaitAsync(TimeSpan.FromSeconds(30), Ct);
+            await _reviews.GraceDone.WaitAsync(TimeSpan.FromSeconds(10), Ct);
         }
         return result;
     }

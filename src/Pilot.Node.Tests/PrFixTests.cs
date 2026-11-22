@@ -113,7 +113,7 @@ public abstract class PrFixTestsBase : IDisposable
         // the test's next step (the merge queue's Windows run of #1257 saw a press race it).
         if (verb == Verbs.PrVerdict)
         {
-            await _reviews.GraceDone.WaitAsync(TimeSpan.FromSeconds(30), Ct);
+            await _reviews.GraceDone.WaitAsync(TimeSpan.FromSeconds(10), Ct);
         }
         return result;
     }
