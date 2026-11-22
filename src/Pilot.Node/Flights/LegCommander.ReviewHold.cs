@@ -256,6 +256,16 @@ public sealed partial class LegCommander
             HoldForLeg(flight.Code, planned);
             return;
         }
+        if (!onWay && ReviewNotesLegsTaken(flight) >= MaxReviewNotesLegs)
+        {
+            // Past the cap the cap's card is the owner's one question: raised once, and once answered (Leave it, the owner plans by hand)
+            // not asked again by a notes-unmade card beside it.
+            if (!state.Cards().Any(c => c.Kind == ReviewNotesCapKind && c.Subject == subject))
+            {
+                RaiseReviewNotesCap(flight, [.. unmade.Select(p => p.Text)]);
+            }
+            return;
+        }
         if (state.Cards(openOnly: true).Any(c => c.Kind == NotesUnmadeKind && c.Subject == subject))
         {
             return;
