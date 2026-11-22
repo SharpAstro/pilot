@@ -636,6 +636,8 @@ public sealed class DesignsViewTests
         sent.ShouldBeEmpty("nothing is sent before a repo is chosen");
         rig.View.BuildAsking.ShouldBeTrue();
         TextsOf(rig).ShouldContain("Which repo is it built in?");
+        // A repo the node does not list is named on the command line (#1180 R1.7).
+        TextsOf(rig).ShouldContain(DesignsView<RgbaImage>.OtherRepoLine("DSN-1"));
         ActionsOf(rig).ShouldContain("designs:build-repo:pilot");
         ActionsOf(rig).ShouldContain("designs:build-repo:tianwen");
 

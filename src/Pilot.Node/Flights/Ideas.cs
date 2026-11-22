@@ -200,6 +200,27 @@ public sealed partial class IdeaCommander(NodeState state, Planes planes, RepoCa
         }
     }
 
+    /// <summary>
+    /// plan-idea for a design build (<see cref="Designs.DesignBuilds"/>): as <see cref="RunAsync"/> plans it, one verb at a time with the others, but it leaves out
+    /// its own "Designs:" comment, as the build comments the whole build text on the idea's issue and the idea is told once (#1180 R1.4).
+    /// </summary>
+    internal async Task<CommandResult> PlanForDesignBuildAsync(CommandRequest command, CancellationToken cancellationToken)
+    {
+        await _one.WaitAsync(cancellationToken);
+        try
+        {
+            return await PlanAsync(command with { Verb = Verbs.PlanIdea }, cancellationToken, saysDesigns: false);
+        }
+        catch (FlightException ex)
+        {
+            return state.Complete(command, ex.Message);
+        }
+        finally
+        {
+            _one.Release();
+        }
+    }
+
     /// <summary>The repo a verb names, by its folder name (a repo the node lists) or by any path in its checkout.</summary>
     private async Task<(string Name, string Path)> RepoOfAsync(string given, CancellationToken cancellationToken)
     {
@@ -580,7 +601,7 @@ public sealed partial class IdeaCommander(NodeState state, Planes planes, RepoCa
     /// on GitHub only once the flight is made (none named is refused, naming the open ones); a flight on the issue, which remembers its idea,
     /// and then the issue moved out of Ideas. Everything that can be refused is refused before the flight is made.
     /// </summary>
-    private async Task<CommandResult> PlanAsync(CommandRequest command, CancellationToken cancellationToken)
+    private async Task<CommandResult> PlanAsync(CommandRequest command, CancellationToken cancellationToken, bool saysDesigns = true)
     {
         var (name, path, issue) = await IdeaOfAsync(command, cancellationToken);
         var id = IdeaIds.Id(issue.Number);
@@ -661,9 +682,9 @@ public sealed partial class IdeaCommander(NodeState state, Planes planes, RepoCa
             await RefreshAsync(name, path, cancellationToken);
             throw new FlightException($"flight {code} is made on {id}, but it stays in {IdeaIds.Milestone}: {ex.Message}");
         }
-        if (published.Length > 0)
+        if (published.Length > 0 && saysDesigns)
         {
-            // One comment lists every design and its version (PIL1185).
+            // One comment lists every design and its version (PIL1185); a design build comments its own whole text instead.
             var lines = string.Join('\n', published.Select(d => $"- {d.Id} v{d.Current!.Value.ToString(CultureInfo.InvariantCulture)} ({d.Title}): pilot design show {d.Id}"));
             try
             {
