@@ -653,7 +653,7 @@ internal sealed class PilotChrome<TSurface>
             // SharpAstro/DIR.Lib toast tint and button colours (issue filed), not this flight's to change.
             if (Cards.Presses.RefusalLine(pressKey, 12f, Contrast.Readable(p.Held, colors.Card, p.Failed), 3) is { } refusal)
             {
-                var line = refusal.Pad(6f, 3f).Bg(p.Button);
+                var line = refusal.Pad(6f, 3f).Bg(colors.Card);
                 parts.Add(Cards.Presses.RefusedOf(pressKey) is { Length: > 0 } why ? line.WithTooltip(why) : line);
             }
             if (cut)
