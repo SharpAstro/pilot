@@ -129,6 +129,28 @@ public sealed partial class ChatFrameTests
         return times.Min();
     }
 
+    // The best frame of each of two pages, neither advantaged by going first (#1273): both warmed with enough frames that tiered JIT settles,
+    // then the timed frames alternate A, B, A, B and each keeps its best.
+    private static (double A, double B) BestFrameMsOf(ChatView<RgbaImage> a, ChatView<RgbaImage> b)
+    {
+        for (var i = 0; i < 40; i++)
+        {
+            a.Render(Bounds);
+            b.Render(Bounds);
+        }
+        double bestA = double.MaxValue, bestB = double.MaxValue;
+        for (var i = 0; i < 15; i++)
+        {
+            var watch = Stopwatch.StartNew();
+            a.Render(Bounds);
+            bestA = Math.Min(bestA, watch.Elapsed.TotalMilliseconds);
+            watch.Restart();
+            b.Render(Bounds);
+            bestB = Math.Min(bestB, watch.Elapsed.TotalMilliseconds);
+        }
+        return (bestA, bestB);
+    }
+
     [Fact]
     public async Task AFrameOfTwoThousandEntriesIsWithinTheBudgetAndNearOneOfTwenty()
     {
@@ -138,8 +160,7 @@ public sealed partial class ChatFrameTests
         using var big = new Held(renderer, Transcript(2000));
         await big.OpenAsync();
 
-        var few = BestFrameMs(small.Chat);
-        var many = BestFrameMs(big.Chat);
+        var (few, many) = BestFrameMsOf(small.Chat, big.Chat);
         var line = $"chat frame at 1600x900: 20 entries {few:F1} ms, 2000 entries {many:F1} ms";
         TestContext.Current.SendDiagnosticMessage(line);
         // With PILOT_FRAME_TIMES set to a file the line goes there too, as PageFrameTimeTests writes its cases (what the measurement note quotes).
