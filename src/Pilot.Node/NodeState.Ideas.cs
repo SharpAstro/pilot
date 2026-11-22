@@ -127,9 +127,10 @@ public sealed partial class NodeState
     /// </summary>
     public void PutIdeas(string repo, IEnumerable<IdeaRow> read)
     {
-        var designs = ReadDesigns();
+        var designRead = ReadDesigns();
         lock (_gate)
         {
+            var designs = Freshest(designRead);
             PutIdeasLocked([.. _ideas.Where(i => !string.Equals(i.Repo, repo, StringComparison.OrdinalIgnoreCase)), .. read], designs);
         }
     }
@@ -140,9 +141,10 @@ public sealed partial class NodeState
     /// </summary>
     public void PutIdeas(IReadOnlyCollection<string> repos, IEnumerable<IdeaRow> read)
     {
-        var designs = ReadDesigns();
+        var designRead = ReadDesigns();
         lock (_gate)
         {
+            var designs = Freshest(designRead);
             PutIdeasLocked([.. _ideas.Where(i => !repos.Contains(i.Repo, StringComparer.OrdinalIgnoreCase)), .. read], designs);
         }
     }
@@ -156,26 +158,44 @@ public sealed partial class NodeState
     /// <summary>Reads the ideas again with the designs as they are now (a design was started or published): a delta only when a row changes.</summary>
     public void RefreshIdeaDesigns()
     {
-        var designs = ReadDesigns();
+        var designRead = ReadDesigns();
         lock (_gate)
         {
+            var designs = Freshest(designRead);
             PutIdeasLocked([.. _ideas], designs);
         }
     }
 
     // The design rows, read from disk before the node's lock is taken (#1170 R1.4): every ideas refresh reads each design's row.json, which
     // held _gate, and so every other reader and writer of the node's state, for the length of tens of file reads.
-    private DesignRow[] ReadDesigns()
+    private (long Ticket, DesignRow[] Rows) ReadDesigns()
     {
+        var ticket = Interlocked.Increment(ref _designReads);
         try
         {
-            return Designs?.Invoke() ?? [];
+            return (ticket, Designs?.Invoke() ?? []);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            return [];
+            return (ticket, []);
         }
     }
+
+    // Read outside the lock, two refreshes can end out of order: the rows of the later read stand, and an earlier read that ends after them takes the
+    // later rows instead of putting its own older ones back. Called under _gate.
+    private DesignRow[] Freshest((long Ticket, DesignRow[] Rows) read)
+    {
+        if (read.Ticket >= _designsAppliedTicket)
+        {
+            _designsAppliedTicket = read.Ticket;
+            _designsApplied = read.Rows;
+        }
+        return _designsApplied;
+    }
+
+    private long _designReads;
+    private long _designsAppliedTicket;
+    private DesignRow[] _designsApplied = [];
 
     private IdeaRow[] WithDesigns(IEnumerable<IdeaRow> all, DesignRow[] designs)
     {

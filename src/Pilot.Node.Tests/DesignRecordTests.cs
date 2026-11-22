@@ -194,6 +194,29 @@ public sealed class DesignRecordTests : IDisposable
         _github.ClosedIssues.ToArray().ShouldBe([(issueA, "Built as v1 by PIL10 in #78, merged at def5678")]);
     }
 
+    /// <summary>
+    /// Two unlanded flights on one design at different versions (#1197 R1.6): the one on the current version closes the issue when it lands, as the other, on an
+    /// older version, would only comment when it lands; waiting for it left the issue open for good.
+    /// </summary>
+    [Fact]
+    public async Task TheCurrentVersionLandingClosesTheIssueThoughAFlightOnAnOlderVersionIsStillUnlanded()
+    {
+        var (a, issueA) = await DesignAsync("Disk alert", 1);
+        Published(a, 2);
+        var older = Flight("PIL9", FlightState.Flying, (a, 1)) with { PullRequest = 77 };
+        var current = Flight("PIL10", FlightState.Landed, (a, 2));
+        _state.PutFlight(older);
+        _state.PutFlight(current);
+
+        await _record.LandedAsync(current, 78, "def5678", Ct);
+
+        _github.ClosedIssues.ToArray().ShouldBe([(issueA, "Built as v2 by PIL10 in #78, merged at def5678")]);
+
+        _state.PutFlight(older with { State = FlightState.Landed });
+        await _record.LandedAsync(older, 77, "abc1234", Ct);
+        _github.IssueComments.Last().Body.ShouldContain("built v1; the design is at v2");
+    }
+
     [Fact]
     public async Task AnOlderVersionBuiltLeavesTheIssueOpenWithACommentSayingWhereTheDesignIs()
     {

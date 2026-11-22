@@ -324,9 +324,37 @@ public sealed class McpDesignResourcesTests : IAsyncLifetime
     public async Task AScreenNameThatIsNotOnePlainFileNameIsRefused()
     {
         await Published();
-        foreach (var name in new[] { "C%3Ahome", "C%3A", "home%3Astream", "..%5Chome", "a%00b" })
+        // On Windows a home.png is planted where "C:home.png" resolves (the process's folder on its drive), so the refusal is the guard's and not a file
+        // that happens to be missing: with the guard unwired from ScreenFile the read would find this file (#1204 R3.3).
+        string? planted = null;
+        if (OperatingSystem.IsWindows() && Path.GetPathRoot(Environment.CurrentDirectory) is { Length: >= 2 } root && char.IsAsciiLetter(root[0]))
         {
-            (await Refused($"pilot://designs/DSN-1/versions/1/screens/{name}")).ShouldContain("no screen");
+            planted = Path.GetFullPath($"{root[0]}:home.png");
+            if (File.Exists(planted))
+            {
+                planted = null;
+            }
+            else
+            {
+                File.Copy(Path.Combine(Version1(), "renders", "home.png"), planted);
+                // A published version's files are read-only, and the copy keeps that: made writable, so the finally can take it away.
+                File.SetAttributes(planted, FileAttributes.Normal);
+            }
+        }
+        try
+        {
+            var drive = planted is null ? "C" : planted[0].ToString();
+            foreach (var name in new[] { $"{drive}%3Ahome", $"{drive}%3A", "home%3Astream", "..%5Chome", "a%00b" })
+            {
+                (await Refused($"pilot://designs/DSN-1/versions/1/screens/{name}")).ShouldContain("no screen");
+            }
+        }
+        finally
+        {
+            if (planted is not null)
+            {
+                File.Delete(planted);
+            }
         }
     }
 

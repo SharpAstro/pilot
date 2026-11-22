@@ -193,12 +193,20 @@ public sealed class DesignStore(string dataFolder, TimeProvider? time = null)
     /// idea moves (<paramref name="moves"/>) a link and the idea asked for are both followed to where the idea is now (<see cref="IdeaIds.Follow"/>),
     /// the one rule the idea rows use too.
     /// </summary>
-    public DesignRow[] ForIdea(string idea, IEnumerable<IdeaMoveRow>? moves = null)
+    public DesignRow[] ForIdea(string idea, IEnumerable<IdeaMoveRow>? moves = null) => ForIdea(idea, moves, mirrored: false);
+
+    /// <summary>
+    /// The designs another node made for the idea <paramref name="idea"/>, mirrored here read-only from their issues (#1197 R1.4): shown on the idea, and a
+    /// published one is a design the idea has, but never carried into a flight here, as its files are on the node that made it.
+    /// </summary>
+    public DesignRow[] MirroredForIdea(string idea, IEnumerable<IdeaMoveRow>? moves = null) => ForIdea(idea, moves, mirrored: true);
+
+    private DesignRow[] ForIdea(string idea, IEnumerable<IdeaMoveRow>? moves, bool mirrored)
     {
         var all = moves?.ToArray() ?? [];
         var wanted = Followed(idea, all);
-        return [.. List().Where(d => d.MadeOn is null && d.Ideas().Any(k => string.Equals(Followed(k, all), wanted, StringComparison.OrdinalIgnoreCase)))
-            .OrderBy(d => int.Parse(d.Id.AsSpan(4), NumberStyles.None, CultureInfo.InvariantCulture))];
+        return [.. List().Where(d => (d.MadeOn is not null) == mirrored && d.Ideas().Any(k => string.Equals(Followed(k, all), wanted, StringComparison.OrdinalIgnoreCase)))
+            .OrderBy(d => mirrored ? 0 : int.Parse(d.Id.AsSpan(4), NumberStyles.None, CultureInfo.InvariantCulture)).ThenBy(d => d.Id, StringComparer.Ordinal)];
     }
 
     /// <summary>The idea key <paramref name="key"/> at the place its idea is now, after the moves; a key that is no idea reference stays as it is.</summary>

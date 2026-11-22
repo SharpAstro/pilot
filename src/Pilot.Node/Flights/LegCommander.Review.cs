@@ -410,6 +410,14 @@ public sealed partial class LegCommander
                 // Every note needs an end (pilot #1226): a later round's notes (#918) are no longer filed as they are, they go to a
                 // review-notes leg like the first round's, and each ends made, not work, the node's own or deferred with a reason.
                 // Not a return: the reviewer is still done with below (review of #935).
+                // A flight past its cap of review-notes legs (each re-review raising new notes, the PIL909 pattern) rings the owner instead of planning
+                // another (#1243 R1.7).
+                if (ReviewNotesLegsTaken(flight) >= MaxReviewNotesLegs)
+                {
+                    RaiseReviewNotesCap(FlightOf(command.Target), notes);
+                }
+                else
+                {
                 var fixer = await PlanReviewNotesLegAsync(flight, notes, cancellationToken);
                 // The hold waits on the leg that makes the notes, never on a watchtower that may not be running (PIL815).
                 if (fixer is not null)
@@ -417,6 +425,7 @@ public sealed partial class LegCommander
                     HoldForLeg(flight.Code, fixer);
                 }
                 RaiseReviewNotes(FlightOf(command.Target), notes, fixer);
+                }
             }
         }
         else if (ReviewLoopHeld(flight))
@@ -641,6 +650,32 @@ public sealed partial class LegCommander
     /// <summary>The name a review-notes leg is planned under: <c>review-notes</c>, then <c>review-notes-2</c> and on for a later round.</summary>
     public const string ReviewNotesLeg = "review-notes";
 
+    /// <summary>How many review-notes legs a flight is given: past them a pass with notes rings the owner instead of planning another (#1243 R1.7).</summary>
+    public const int MaxReviewNotesLegs = 3;
+
+    /// <summary>The card a flight past <see cref="MaxReviewNotesLegs"/> raises for a pass with notes.</summary>
+    public const string ReviewNotesCapKind = "review-notes-cap";
+
+    private int ReviewNotesLegsTaken(FlightRow flight) => state.Legs(flight.Code).Count(l => l.Name.StartsWith(ReviewNotesLeg, StringComparison.Ordinal));
+
+    // The ring for a flight whose re-reviews keep raising notes: no further leg is planned, the owner decides whether the notes are made, left or the flight lands.
+    private void RaiseReviewNotesCap(FlightRow flight, IReadOnlyList<string> notes)
+    {
+        state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), "its review passed again", ReviewNotesKind);
+        var max = MaxReviewNotesLegs.ToString(CultureInfo.InvariantCulture);
+        var card = state.RaiseCard(CardBin.Ring, ReviewNotesCapKind, Verbs.FlightTarget(flight.Code), $"{flight.Code}'s review keeps raising notes after {max} review-notes legs",
+            $"PR #{flight.PullRequest}. Its re-reviews raised new notes after each of {max} review-notes legs, so the node plans no more. Notes: {string.Join("; ", notes)}. "
+                + $"Plan one more by hand (pilot leg plan {flight.Code} ...), or clear the hold to land it with the notes unmade (pilot flight clear {flight.Code} <why>).",
+            link: flight.PullRequestUrl,
+            summary: $"{flight.Code} passed review with notes again after {max} review-notes legs; the node plans no more. Plan one by hand, or clear the hold and land it.",
+            cause: $"{flight.Review?.ReviewedHead}:{string.Join('\n', notes)}");
+        state.UpdateChoices(card.Id,
+        [
+            new CardChoice { Label = "Clear the hold, notes unmade", Verb = Verbs.Clear, Target = Verbs.FlightTarget(flight.Code), Args = ["the owner's word, given on the review-notes-cap card"] },
+            new CardChoice { Label = "Leave it for now", Verb = Verbs.Dismiss, Target = Verbs.CardTarget(card.Id), Args = ["the owner plans the next leg by hand"] },
+        ]);
+    }
+
     /// <summary>
     /// On autopilot, a pass with notes plans a review-notes leg by the same path as leg plan: one checklist item per note and a
     /// commit step, the check of the flight's last leg so the rerun covers the same build. The sweep starts it as any planned leg.
@@ -669,7 +704,7 @@ public sealed partial class LegCommander
             // Make them, not defer them: "larger than the flight" turned most notes into follow-up issues nobody picked up (65 open in pilot
             // on 2026-11-21; the owner: "I want the fixer to just fix things instead of saying these 4 things need to be done later").
             "goal=make every one of the review's not-blocking notes in this flight",
-            $"done-when=Each of the review's not-blocking notes is made in a commit: {string.Join("; ", clean)}. A note waits only when its change belongs in another repo or is a decision only the owner can make; size is no reason, so a test, a rename, a comment, a doc line or a refactor is made here. The check passes.",
+            $"done-when=Each of the review's not-blocking notes is made in a commit: {string.Join("; ", clean)}. A note waits only when its change belongs in another repo or is a decision only the owner can make; size is no reason, so a test, a rename, a comment, a doc line or a refactor is made here. A note that waits is reported in the leg's report under ## Earlier points as deferred, with its reason (another repo, or the owner's decision), and needs no commit. The check passes.",
         };
         if (legs.OrderBy(l => l.Order).LastOrDefault(l => l.Check is not null)?.Check is { } check)
         {

@@ -87,6 +87,8 @@ public sealed class DesignCommands(NodeState state, DesignStore store, Designers
                 case Verbs.DesignSetTitle:
                     // args: the title (words joined by the CLI).
                     var titled = store.SetTitle(IdOf(command), args.Length > 0 ? args[0] : "");
+                    // An idea row names its designs by title: it is refreshed at once, not at the next idea read (#1197 R1.9).
+                    state.RefreshIdeaDesigns();
                     return state.Complete(command, null, made: $"{titled.Id} title: {titled.Title}");
                 case Verbs.DesignDiscard:
                     var discarded = DesignStore.Normalise(IdOf(command));

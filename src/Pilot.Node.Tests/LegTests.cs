@@ -562,8 +562,15 @@ internal sealed class FakeGitHub : IGitHub
         return Task.FromResult(true);
     }
 
+    /// <summary>When set, EditIssueAsync fails with it, as a GitHub that did not answer.</summary>
+    public string? EditIssueFails { get; set; }
+
     public Task<bool> EditIssueAsync(string repoPath, int number, string title, string body, DateTimeOffset ifUpdatedAt, CancellationToken cancellationToken)
     {
+        if (EditIssueFails is { } why)
+        {
+            return Task.FromException<bool>(new FlightException(why));
+        }
         if (!Guard(repoPath, number, ifUpdatedAt))
         {
             return Task.FromResult(false);

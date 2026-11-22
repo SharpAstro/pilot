@@ -109,9 +109,12 @@ public sealed partial class DesignRecord(DesignStore store, RepoCatalog repos, N
                 Put(d.Id, flight.Code, d.Version, r => r with { Folder = result.Folder, Oversize = result.Note });
                 if (result.Kind == DesignPlacement.Oversized)
                 {
+                    // An earlier version this flight placed stays in the folder (it is a real build of the same design); the card says so (#1219 R1.7).
+                    var earlier = design.Record.FirstOrDefault(r => string.Equals(r.Flight, flight.Code, StringComparison.OrdinalIgnoreCase) && r.Version != d.Version && r.Folder is { Length: > 0 });
+                    var stays = earlier is null ? "" : $" Until then {earlier.Folder} holds v{earlier.Version.ToString(CultureInfo.InvariantCulture)}, placed before the flight moved.";
                     state.RaiseCard(CardBin.ForYou, OversizeKind, Verbs.FlightTarget(flight.Code), $"{flight.Code}: design {d.Id} v{d.Version.ToString(CultureInfo.InvariantCulture)} is not committed to the repo",
                         // The flight is built to the version it recorded, so a smaller one is placed only once the flight moves to it (the review of #1218).
-                        $"{result.Note}. The files stay on {DesignSyncText.Branch(design.IssueNumber!.Value)}; make the renders smaller, publish a new version, and move the flight to it with pilot flight replan-design {flight.Code} {d.Id} to have it placed.",
+                        $"{result.Note}. The files stay on {DesignSyncText.Branch(design.IssueNumber!.Value)}; make the renders smaller, publish a new version, and move the flight to it with pilot flight replan-design {flight.Code} {d.Id} to have it placed.{stays}",
                         [new CardChoice { Label = "Place the files again", Verb = Verbs.OpenPr, Target = Verbs.FlightTarget(flight.Code) }],
                         summary: $"The files of design {d.Id} v{d.Version.ToString(CultureInfo.InvariantCulture)} are over a size limit, so {flight.Code}'s PR does not carry them. Make the renders smaller, publish a new version, then move the flight to it with pilot flight replan-design.",
                         cause: $"{flight.Code}/{d.Id}/v{d.Version.ToString(CultureInfo.InvariantCulture)}");
@@ -229,6 +232,11 @@ public sealed partial class DesignRecord(DesignStore store, RepoCatalog repos, N
             {
                 // The merge is on the row before anything is said, so the sweep can finish what a failed call left.
                 Put(d.Id, flight.Code, d.Version, r => r with { Pr = r.Pr ?? pr, MergedAt = r.MergedAt ?? mergedAt, MergeCommit = r.MergeCommit ?? (mergeCommit is { Length: > 0 } ? mergeCommit : null) });
+                // Placed files are linked at the full merge commit only: with none known they are named, not linked, and the design's branch is kept (#1219 R1.4).
+                if (mergeCommit is not { Length: > 0 } && store.Find(d.Id)?.Record.FirstOrDefault(r => Is(r, flight.Code, d.Version)) is { Folder.Length: > 0, MergeCommit: null } unlinked)
+                {
+                    await Error.WriteLineAsync($"design: {d.Id} v{d.Version.ToString(CultureInfo.InvariantCulture)} landed with {flight.Code} but no full merge commit is known, so its files in {unlinked.Folder} are named, not linked, and its branch is kept");
+                }
                 await TryLandedAsync(d.Id, flight.Code, d.Version, cancellationToken);
             }
         }
@@ -304,8 +312,10 @@ public sealed partial class DesignRecord(DesignStore store, RepoCatalog repos, N
             built += $"; files: {DesignSyncText.FolderLink(info.GitHub!, row.MergeCommit!, row.Folder!)}";
         }
         var current = design.Current ?? version;
+        // Only a flight that could close the issue itself holds it open: one building this version or a newer. One building an older version only comments when
+        // it lands, so waiting for it left the issue open for good (#1197 R1.6).
         var other = state.Flights().FirstOrDefault(f => f.State != FlightState.Landed && !string.Equals(f.Code, code, StringComparison.OrdinalIgnoreCase)
-            && f.Designs.Any(x => string.Equals(x.Id, id, StringComparison.OrdinalIgnoreCase)));
+            && f.Designs.Any(x => string.Equals(x.Id, id, StringComparison.OrdinalIgnoreCase) && x.Version >= version));
         if (version < current)
         {
             await github.CommentIssueAsync(info.Path, issue, $"{built}; built v{version.ToString(CultureInfo.InvariantCulture)}; the design is at v{current.ToString(CultureInfo.InvariantCulture)}", cancellationToken);
@@ -346,6 +356,16 @@ public sealed partial class DesignRecord(DesignStore store, RepoCatalog repos, N
         var at = DesignLinkBase.OfCommit(row.MergeCommit!, row.Folder!);
         if (row.LinksWritten != true)
         {
+            // The links are asked for before they are written (#1219 R1.3): the folder, its document and each render at the merge commit. One that does not
+            // answer yet leaves the issue as it was, and the sweep tries again, so the issue never links a file that is not there.
+            var placed = store.ReadVersion(id, row.Version).Keys.Where(k => k == DesignStore.DocumentFile || k.StartsWith("renders/", StringComparison.Ordinal)).Select(at.PathOf);
+            foreach (var path in placed.Prepend(row.Folder!).Distinct(StringComparer.Ordinal))
+            {
+                if (!await github.FileAtAsync(info.Path, row.MergeCommit!, path, cancellationToken))
+                {
+                    throw new FlightException($"the link to {path} at {CommitRefs.Short(row.MergeCommit!)} does not answer yet");
+                }
+            }
             var now = await github.IssueNowAsync(info.Path, issue, cancellationToken)
                 ?? throw new FlightException($"{repo} has no issue #{issue.ToString(CultureInfo.InvariantCulture)}");
             if (DesignIssueDocument.Meta(now.Body) is { } meta)

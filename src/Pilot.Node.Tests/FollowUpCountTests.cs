@@ -492,4 +492,22 @@ public sealed class FollowUpCountTests : ReviewTestsBase
         await up.SweepAsync(Ct);
         OpenRings().ShouldHaveSingleItem().Subject.ShouldBe($"follow-up:{Repo_}#{number}");
     }
+
+    /// <summary>
+    /// The hold has a bound (#1248 N2.1): a granted peer that stays away (a laptop shut for the week) holds an issue's ring only until the issue is past
+    /// RingAfter and PeerGrace; then it rings all the same, and a younger issue is still held.
+    /// </summary>
+    [Fact]
+    public async Task APeerAwayPastTheGraceNoLongerHoldsAnOldIssuesRing()
+    {
+        var old = FollowUp(TimeSpan.FromDays(5));
+        var young = FollowUp(TimeSpan.FromDays(2));
+        FlightOn(900, "SWP1");
+        var sweep = SweepOn("SE1", new OnePeerFleet([], down: true));
+
+        await sweep.SweepAsync(Ct);
+
+        OpenRings().ShouldHaveSingleItem().Subject.ShouldBe($"follow-up:{Repo_}#{old}", "past a day and three more, the peer away holds it no longer");
+        OpenRings().ShouldNotContain(c => c.Subject == $"follow-up:{Repo_}#{young}");
+    }
 }

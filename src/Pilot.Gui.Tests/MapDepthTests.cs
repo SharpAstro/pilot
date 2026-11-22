@@ -188,6 +188,41 @@ public sealed class MapDepthTests
         ViewShouldNotMove(rig, before);
     }
 
+    /// <summary>
+    /// The other half of the Done-when (#1236 R2.2): the wheel over the open panel scrolls the panel. A panel of enough cards to overflow it is scrolled,
+    /// and the map under it stays still.
+    /// </summary>
+    [Fact]
+    public void TheWheelOverAnOverflowingOpenPanelScrollsThePanelAndNotTheMap()
+    {
+        using var rig = new Rig(BarStates.Over, CardsScreen.From([.. Enumerable.Range(1, 30).Select(i => Card($"c{i}", CardBin.Ring))]));
+        var before = rig.View;
+        var panel = rig.Chrome.CardsBounds!.Value;
+        var at = (X: panel.X + panel.Width / 2f, Y: panel.Y + panel.Height / 2f);
+        rig.Chrome.Cards.ScrollOffset.ShouldBe(0f);
+
+        rig.Send(new InputEvent.Scroll(-3f, at.X, at.Y, InputModifier.None));
+
+        rig.Chrome.Cards.ScrollOffset.ShouldBeGreaterThan(0f, "the wheel over the panel scrolls it");
+        ViewShouldNotMove(rig, before);
+    }
+
+    /// <summary>The widget list a MouseMove asks for is made once a page, not at every ask (#1236 R2.4), and made again for another page.</summary>
+    [Fact]
+    public void TheWidgetListIsMadeOnceAPage()
+    {
+        using var rig = new Rig(BarStates.Collapsed, Ringing);
+        var first = rig.Chrome.Widgets;
+        rig.Chrome.Widgets.ShouldBeSameAs(first);
+        first.ShouldContain(rig.Chrome.Flights);
+
+        rig.Chrome.Show(PilotPage.Jobs);
+
+        rig.Chrome.Widgets.ShouldNotBeSameAs(first);
+        rig.Chrome.Widgets.ShouldContain(rig.Chrome.Jobs);
+        rig.Chrome.Widgets.ShouldNotContain(rig.Chrome.Flights);
+    }
+
     private static (float X, float Y) BareMap(Rig rig, bool outsideOverlays = false)
     {
         var body = rig.Chrome.Flights.MapBody!.Value;

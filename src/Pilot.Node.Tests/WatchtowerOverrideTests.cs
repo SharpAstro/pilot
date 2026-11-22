@@ -199,6 +199,8 @@ public sealed class WatchtowerOverrideTests
 
         // Not held at a round limit here (no rounds stored), so the command refuses on its own ground; the node's override rule is not the reason.
         result.Error.ShouldNotBeNull().ShouldNotContain("is the person's call");
+        // The press ran (#1241 R1.5): its refusal is the round command's own, which only a press that reached it gives.
+        result.Error.ShouldContain("is not held at its round limit: nothing to allow");
     }
 
     [Fact]

@@ -505,9 +505,37 @@ internal sealed class PilotChrome<TSurface>
     public PilotPage Page { get; private set; } = PilotPage.Home;
 
     /// <summary>The widgets this chrome paints, back to front: what the router asks about input.</summary>
-    public IReadOnlyList<IPixelWidget> Widgets => [.. PageWidgets, More];
+    public IReadOnlyList<IPixelWidget> Widgets => Page == PilotPage.Designs ? [.. PageWidgets, More] : (_widgetsOf.Page == Page && _widgetsOf.List is { } kept ? kept : Keep(Page));
 
-    private IReadOnlyList<IPixelWidget> PageWidgets => Page switch
+    // The widget lists of the page shown, made once a page (#1236 R2.4): every MouseMove asked for them, and each ask built two arrays. The Designs page
+    // is made at each ask, as its frames' widgets come and go with the design open.
+    private (PilotPage Page, IReadOnlyList<IPixelWidget>? Pages, IReadOnlyList<IPixelWidget>? List) _widgetsOf = (PilotPage.Home, null, null);
+
+    private IReadOnlyList<IPixelWidget> Keep(PilotPage page)
+    {
+        var pages = MakePageWidgets();
+        IReadOnlyList<IPixelWidget> all = [.. pages, More];
+        _widgetsOf = (page, pages, all);
+        return all;
+    }
+
+    private IReadOnlyList<IPixelWidget> PageWidgets
+    {
+        get
+        {
+            if (Page == PilotPage.Designs)
+            {
+                return MakePageWidgets();
+            }
+            if (_widgetsOf.Page != Page || _widgetsOf.Pages is null)
+            {
+                Keep(Page);
+            }
+            return _widgetsOf.Pages!;
+        }
+    }
+
+    private IReadOnlyList<IPixelWidget> MakePageWidgets() => Page switch
     {
         PilotPage.Chat => [Nav, Rail, Chat, NotificationsLayer, Cards],
         PilotPage.Ideas => [Nav, Rail, Ideas, NotificationsLayer, Cards],

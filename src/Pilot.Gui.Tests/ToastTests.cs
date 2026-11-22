@@ -37,13 +37,14 @@ public sealed class ToastTests
         public Stream OutputStream => Stream.Null;
     }
 
-    private static CardRow Card(string id, CardBin bin, string title) => new()
+    private static CardRow Card(string id, CardBin bin, string title, DateTimeOffset? at = null) => new()
     {
-        Id = id, Bin = bin, Kind = "pr-ready", Subject = "flight/ORB" + id, Title = title, Summary = "A short line on what happened.", At = Live.At, State = CardState.Open,
+        Id = id, Bin = bin, Kind = "pr-ready", Subject = "flight/ORB" + id, Title = title, Summary = "A short line on what happened.", At = at ?? T0.AddMilliseconds(500), State = CardState.Open,
         Choices = [new CardChoice { Label = "Start web-header", Verb = Verbs.StartLeg, Target = "flight/TIA1818/web-header" }],
     };
 
-    private static CardsScreen Ringing() => CardsScreen.From([Card("c1", CardBin.Ring, "TIA1818's PR #63 is ready to merge"), Card("c2", CardBin.ForYou, "PIL795: 5 legs planned")]);
+    // Raised just after the window's first look (T0) unless given an earlier time: what a node raises while the window looks.
+    private static CardsScreen Ringing(DateTimeOffset? at = null) => CardsScreen.From([Card("c1", CardBin.Ring, "TIA1818's PR #63 is ready to merge", at), Card("c2", CardBin.ForYou, "PIL795: 5 legs planned", at)]);
 
     private static string ArtifactDir()
     {
@@ -135,16 +136,69 @@ public sealed class ToastTests
         w.Feed.History.Count.ShouldBe(2);
     }
 
+    /// <summary>
+    /// A node whose cards arrive after the window's empty first frame (a remote node, a slow start) toasts none of the rings it already had; a ring it
+    /// raises later toasts once, and a node that drops out and comes back toasts it not again (#1254 N1.1).
+    /// </summary>
+    [Fact]
+    public void ALateNodesOldRingsAndAReconnectToastNothingAndANewRingToastsOnce()
+    {
+        using var w = new Window(1920, 1080);
+        w.Frame(T0, CardsScreen.Empty);
+
+        w.Frame(T0.AddSeconds(5), Ringing(Live.At));
+        w.Toasts.Toasts.ShouldBeEmpty("rings raised before the window looked are not news, however late their node answers");
+
+        var fresh = Card("c9", CardBin.Ring, "PIL1252 is stuck", T0.AddSeconds(6));
+        w.Frame(T0.AddSeconds(7), CardsScreen.From([.. Ringing(Live.At).Open, fresh]));
+        w.Toasts.Toasts.ShouldHaveSingleItem().Notification.Title.ShouldBe("PIL1252 is stuck");
+        w.Toasts.Dismiss(w.Toasts.Toasts.Single().Notification.Id);
+
+        // The node drops out and comes back with the same cards: nothing toasts again.
+        w.Frame(T0.AddSeconds(8), CardsScreen.Empty);
+        w.Frame(T0.AddSeconds(9), CardsScreen.From([.. Ringing(Live.At).Open, fresh]));
+        w.Toasts.Toasts.ShouldBeEmpty("a ring that toasted once does not toast again on a reconnect");
+    }
+
+    /// <summary>A ring raised while the bar is open is shown by the bar, and does not toast once the bar is collapsed (#1254 N1.2).</summary>
+    [Fact]
+    public void ARingRaisedWhileTheBarIsOpenDoesNotToastWhenItIsCollapsed()
+    {
+        using var w = new Window(1920, 1080);
+        w.Frame(T0, CardsScreen.Empty);
+        w.Chrome.Notifications.Open = true;
+        w.Frame(T0.AddSeconds(1), Ringing());
+        w.Chrome.Notifications.Open = false;
+
+        w.Frame(T0.AddSeconds(2), Ringing());
+
+        w.Toasts.Toasts.ShouldBeEmpty();
+        w.Feed.NeedsYou.Count.ShouldBe(2, "the cards are on the bar and in the list");
+    }
+
+    /// <summary>An event is in the history at once, whatever open cards came after it (#1254 N1.3), and its toast stands over the page.</summary>
+    [Fact]
+    public void AnEventIsInTheHistoryAtOnceThoughCardsOpenAfterIt()
+    {
+        using var w = new Window(1920, 1080);
+        w.Frame(T0, CardsScreen.Empty);
+        w.Chrome.Notifications.PostEvent(new PilotEvent(PilotEventKind.JobEnded, "j1", "j1 finished", "took 4 min", NotificationSeverity.Success, "DE1"), null, T0.AddSeconds(1));
+        w.Frame(T0.AddSeconds(2), CardsScreen.From([Card("c5", CardBin.ForYou, "one"), Card("c6", CardBin.ForYou, "two"), Card("c7", CardBin.ForYou, "three")]));
+
+        w.Chrome.Notifications.History.ShouldContain(n => n.Title == "j1 finished");
+        Fading(w).ShouldHaveSingleItem().Title.ShouldBe("j1 finished");
+    }
+
     [Fact]
     public void WhatIsOpenAtTheWindowsFirstLookAndEveryForYouCardToastNothing()
     {
         // The owner, 2026-11-21: a window that started on 37 open cards toasted every one, three at a time, the next as each was dismissed.
         using var w = new Window(1920, 1080);
-        w.Frame(T0, Ringing());
+        w.Frame(T0, Ringing(Live.At));
         w.Toasts.Toasts.ShouldBeEmpty("what was open before the window looked is not news, a ring included");
         w.Feed.NeedsYou.Count.ShouldBe(2, "the list and the bell still have them");
 
-        var more = CardsScreen.From([.. Ringing().Open, Card("c3", CardBin.ForYou, "Follow-up issue SharpAstro/pilot#956 has had no flight for over a day")]);
+        var more = CardsScreen.From([.. Ringing(Live.At).Open, Card("c3", CardBin.ForYou, "Follow-up issue SharpAstro/pilot#956 has had no flight for over a day")]);
         w.Frame(T0.AddSeconds(1), more);
         w.Toasts.Toasts.ShouldBeEmpty("a For you card that opens later waits on the bar too");
         w.Feed.NeedsYou.Count.ShouldBe(3);
@@ -344,7 +398,7 @@ public sealed class ToastTests
     public void NoToastStandsOverTheNotificationsPage()
     {
         using var w = new Window(1920, 1080);
-        var ringing = CardsScreen.From([new CardRow { Id = "c1", Bin = CardBin.Ring, Kind = "pr-ready", Subject = "flight/X", Title = "A ringing card", Summary = "s", At = Live.At, State = CardState.Open }]);
+        var ringing = CardsScreen.From([new CardRow { Id = "c1", Bin = CardBin.Ring, Kind = "pr-ready", Subject = "flight/X", Title = "A ringing card", Summary = "s", At = T0.AddMilliseconds(500), State = CardState.Open }]);
         w.Frame(T0, ringing, job: JobState.Running);
         // A job that ended is a fading toast, the kind that declares a toast region (a staying one is chrome around its buttons).
         w.Frame(T0.AddSeconds(1), ringing, job: JobState.Succeeded);
@@ -394,7 +448,10 @@ public sealed class ToastTests
         var cards = Ringing();
         chrome.Notifications.Sync(cards.Open, _ => null, T0.AddSeconds(1));
         chrome.ObserveEvents(JobsWith(data, JobState.Succeeded), null, null, T0.AddSeconds(1));
-        chrome.Notifications.Feed.Toasts.Count.ShouldBe(3, "two cards and an event, the most there are");
+        // The list's feed holds the two cards; the event is in the history at once and stands over the page in the toast stack (#1254 N1.3).
+        chrome.Notifications.Feed.Toasts.Count.ShouldBe(2, "the two cards");
+        chrome.Notifications.History.ShouldContain(n => n.Kind == DIR.Lib.Notifications.NotificationKind.Fading, "the event is in the history at once");
+        chrome.Notifications.Toasts.Toasts.ShouldContain(t => t.Notification.Kind == DIR.Lib.Notifications.NotificationKind.Fading, "and toasts over the page");
 
         var snapshot = SessionsCapture.LoadSnapshot(SessionsCapture.SamplePath);
         var sessions = SessionsCapture.ScreenFor(snapshot, "sample");

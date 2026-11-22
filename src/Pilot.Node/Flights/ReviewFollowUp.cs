@@ -247,8 +247,37 @@ public static partial class ReviewFollowUp
         var text = new StringBuilder();
         text.AppendLine($"{review.Repo}#{review.Number} ({review.Url}) merges with these points left, each with a reason. Nothing lands open (pilot #1107): they are filed here, one issue for the PR.");
         text.AppendLine();
-        text.Append(Points(items));
+        text.AppendLine(ReportLine);
+        text.AppendLine();
+        // Keyed by the PR as a flight's are by its code (pilot1246:N2.1), so a flight made on this issue ticks its own lines, never a bare R1.2 another
+        // flight's report also names (#1243 R3.4).
+        text.Append(Points(items, KeyOf(review)));
         return text.ToString();
+    }
+
+    /// <summary>The prefix of a PR's follow-up keys: the letters of its repo's name and its number (<c>pilot1246</c>), the shape a key's prefix takes.</summary>
+    public static string KeyOf(PrReviewRow review)
+    {
+        var name = review.Repo.Contains('/') ? review.Repo[(review.Repo.LastIndexOf('/') + 1)..] : review.Repo;
+        var letters = string.Concat(name.Where(char.IsAsciiLetter));
+        return (letters.Length > 0 ? letters : "PR") + review.Number.ToString(System.Globalization.CultureInfo.InvariantCulture);
+    }
+
+    /// <summary>
+    /// The key prefix of a review's subject, a flight's code (<c>PIL12</c>) as it is or a PR (<c>SharpAstro/pilot#1246</c>) as its repo's letters and number
+    /// (<c>pilot1246</c>), for the points another repo's issue carries (#1243 R3.4).
+    /// </summary>
+    public static string KeyOf(string subject)
+    {
+        var hash = subject.LastIndexOf('#');
+        if (hash < 0)
+        {
+            return string.Concat(subject.Where(char.IsAsciiLetterOrDigit));
+        }
+        var repo = subject[..hash];
+        var name = repo.Contains('/') ? repo[(repo.LastIndexOf('/') + 1)..] : repo;
+        var letters = string.Concat(name.Where(char.IsAsciiLetter));
+        return (letters.Length > 0 ? letters : "PR") + string.Concat(subject[(hash + 1)..].Where(char.IsAsciiDigit));
     }
 
     /// <summary>The key as a checkbox line names it: in backticks.</summary>

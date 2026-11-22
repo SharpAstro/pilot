@@ -455,7 +455,7 @@ internal sealed class TextSelection<TSurface>(Renderer<TSurface> renderer)
                 _pending = false;
                 return false;
             case InputEvent.MouseUp { Button: MouseButton.Left } when _dragging:
-                _pending = false;
+                // A press sets _pending or _dragging, never both, and a drag clears _pending as it starts, so only the drag is ended here.
                 _dragging = false;
                 if (_anchor == _caret)
                 {
