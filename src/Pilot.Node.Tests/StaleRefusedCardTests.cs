@@ -45,7 +45,7 @@ public sealed class StaleRefusedCardTests
         (await Stale().CloseAsync(CancellationToken.None)).ShouldBe(2);
         StateOf(offer).ShouldBe(CardState.Closed);
         StateOf(ended).ShouldBe(CardState.Closed);
-        _state.Cards().Single(c => c.Id == offer.Id).Outcome.ShouldContain(said);
+        _state.Cards().Single(c => c.Id == offer.Id).Outcome.ShouldNotBeNull().ShouldContain(said);
     }
 
     [Fact]
