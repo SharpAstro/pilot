@@ -53,6 +53,17 @@ public sealed class HoldingPatternTests : ReviewTestsBase
         }
     }
 
+    /// <summary>Gives every unmade note of the last passed round an end (addressed, with its where), as a re-review's table or a done leg's report would.</summary>
+    private void NotesMade(string code)
+    {
+        var rounds = F(code).ReviewRounds.ShouldNotBeNull();
+        var ends = ReviewFollowUp.UnmadeNotes(rounds).Select(p => new ReviewPointAnswer(p.Id, "addressed", "fix.txt:1")).ToArray();
+        ends.ShouldNotBeEmpty();
+        var last = rounds.OrderBy(r => r.Round).Last();
+        _state.UpdateFlight(code, f => f with { ReviewRounds = [.. rounds.Where(r => r.Round != last.Round), last with { Answers = [.. last.Answers ?? [], .. ends] }] });
+        ReviewFollowUp.UnmadeNotes(F(code).ReviewRounds).ShouldBeEmpty();
+    }
+
     private PrChecks Checks() => new(_state, _github, TimeProvider.System, _flights, _legs);
 
     [Fact]
@@ -87,8 +98,9 @@ public sealed class HoldingPatternTests : ReviewTestsBase
         F(flight.Code).Holding.ShouldBeNull();
         Open().ShouldNotContain(c => c.Kind == LegCommander.ReviewNotesKind);
         _state.Cards(openOnly: false).ShouldContain(c => c.Kind == LegCommander.HoldingClearedKind);
-        // The planned review-notes leg is still not done, and a flight with a leg not done does not merge: it ends here.
+        // The planned review-notes leg is not done and its notes have no end, and autopilot merges neither: the leg's finish gives both.
         LegsDone(flight.Code);
+        NotesMade(flight.Code);
         await Checks().LookAsync(Ct);
         _github.Merged.ShouldHaveSingleItem();
     }
