@@ -178,11 +178,11 @@ public sealed class LandedFlightStrayTests : IDisposable
     [Fact]
     public void ALandingClosesTheNamedStrayCardOfItsSessionAndLeavesAnotherFlightsOpen()
     {
-        // Sessions the node did not launch: their strays are only named on a card, so the landing has a card to close and nothing to end.
-        EndedWorker("w1", "PIL1270", null);
-        _table.Add(602, 1, "pwsh.exe", Began.AddMinutes(3), folder: Plane);
+        // A process the node never ends (explorer) is only named on a card, so the landing has a card to close and nothing to end.
+        EndedWorker("w1", "PIL1270", SessionStartReasons.FlightReview);
+        _table.Add(602, 1, "explorer.exe", Began.AddMinutes(3), folder: Plane);
         _table.Add(603, 1, "pwsh.exe", Began.AddMinutes(3), folder: Other);
-        PutSession("w2", "PIL1271", null, SessionState.Ended, Began.AddMinutes(5), Other);
+        PutSession("w2", "PIL1271", SessionStartReasons.FlightReview, SessionState.Ended, Began.AddMinutes(5), Other);
         var landing = Flight("PIL1270", Plane, FlightState.Flying);
         _state.PutFlight(landing);
         _state.PutFlight(Flight("PIL1271", Other, FlightState.Flying));
