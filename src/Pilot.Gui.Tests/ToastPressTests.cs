@@ -254,13 +254,16 @@ public sealed class ToastPressTests
             using (var rig = new Rig(Card(), 700, 600))
             {
                 rig.Chrome.Night.On = true;
+                // The window sets the palette from the night switch as it draws a frame, so one is drawn before the row is read (the rig's
+                // own frames ran with night off and left the standard palette current).
+                rig.Frame(CardsScreen.From([Card()]), 2);
+                Palette.Current.ShouldBeSameAs(Palette.Night, "the frame drawn after the switch is a night frame");
                 rig.Chrome.Cards.Presses.NoteRefused(CardsView<RgbaImage>.PressKeyOf(null, "c1"), Why);
                 var row = rig.Row();
                 var line = row.Where(n => n.Node.Tooltip?.ToString() == Why).ToList();
                 line.ShouldNotBeEmpty("the refusal line carries the node's words on hover");
                 // The tooltip may sit on a wrapper of the filled node, so the fill is looked for on the node or any node drawn around it.
                 var words = line[0].Bounds;
-                line.Count.ShouldBe(-1, $"DIAG want={colors.Card} words={words} lines=[{string.Join("; ", line.Select(l => $"{l.Node.Background} {l.Bounds}"))}] all=[{string.Join("; ", row.Select(l => $"{l.Node.Background} {l.Bounds}"))}]");
                 row.ShouldContain(n => n.Node.Background == colors.Card && n.Bounds.X <= words.X + 0.5f && n.Bounds.Y <= words.Y + 0.5f
                     && n.Bounds.X + n.Bounds.Width >= words.X + words.Width - 0.5f && n.Bounds.Y + n.Bounds.Height >= words.Y + words.Height - 0.5f,
                     "the refusal line is filled with the card colour its ink is measured against");
