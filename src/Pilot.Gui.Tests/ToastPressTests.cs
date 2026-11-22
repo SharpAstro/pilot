@@ -106,6 +106,52 @@ public sealed class ToastPressTests
             return n;
         }
 
+        /// <summary>
+        /// The ground the last frame draws behind this ink: finds the pixels of exactly the ink (glyph cores hit it), then reads a small window
+        /// around each and takes the most common colour that is not the ink. Null when too few pixels carry the ink for the text to count as drawn.
+        /// Bounded: at most <paramref name="maxSamples"/> ink pixels are sampled, each over a (2r+1) square.
+        /// </summary>
+        public (RGBAColor32 Ground, int InkPixels)? GroundBehind(RGBAColor32 ink, int minInkPixels = 40, int maxSamples = 400, int radius = 4)
+        {
+            var pixels = _renderer.Surface.Pixels;
+            var inkAt = new List<(int X, int Y)>();
+            for (var y = 0; y < _height; y++)
+            {
+                for (var x = 0; x < _width; x++)
+                {
+                    var i = (y * _width + x) * 4;
+                    if (pixels[i] == ink.Red && pixels[i + 1] == ink.Green && pixels[i + 2] == ink.Blue)
+                    {
+                        inkAt.Add((x, y));
+                    }
+                }
+            }
+            if (inkAt.Count < minInkPixels)
+            {
+                return null;
+            }
+            var step = Math.Max(1, inkAt.Count / maxSamples);
+            var histogram = new Dictionary<(byte, byte, byte), int>();
+            for (var k = 0; k < inkAt.Count; k += step)
+            {
+                var (cx, cy) = inkAt[k];
+                for (var y = Math.Max(0, cy - radius); y <= Math.Min(_height - 1, cy + radius); y++)
+                {
+                    for (var x = Math.Max(0, cx - radius); x <= Math.Min(_width - 1, cx + radius); x++)
+                    {
+                        var i = (y * _width + x) * 4;
+                        var c = (pixels[i], pixels[i + 1], pixels[i + 2]);
+                        if (c != (ink.Red, ink.Green, ink.Blue))
+                        {
+                            histogram[c] = histogram.GetValueOrDefault(c) + 1;
+                        }
+                    }
+                }
+            }
+            var top = histogram.MaxBy(kv => kv.Value).Key;
+            return (new RGBAColor32(top.Item1, top.Item2, top.Item3, 255), inkAt.Count);
+        }
+
         public void Save(string name)
         {
             if (Dir() is { } dir)
@@ -247,9 +293,8 @@ public sealed class ToastPressTests
         try
         {
             Palette.Current = Palette.Night;
-            var colors = NotificationsHost.Colors();
-            // The drawn ground: the refusal line is its own node with its own fill, so the ink is measured against a ground the toast really
-            // draws. (A pixel count of the card colour proves nothing here: in night it is the page's own ground, painted with no toast at all.)
+            // The ink is the colour of the refusal's drawn text leaves; the ground is read off the night frame's own pixels around the ink's
+            // pixels. (NotificationsHost.Colors().Card proved nothing: in night it is the page's own ground, painted with no toast at all.)
             var drawnInk = new List<RGBAColor32>();
             using (var rig = new Rig(Card(), 700, 600))
             {
@@ -262,9 +307,6 @@ public sealed class ToastPressTests
                 var row = rig.Row();
                 var line = row.Where(n => n.Node.Tooltip?.ToString() == Why).ToList();
                 line.ShouldNotBeEmpty("the refusal line carries the node's words on hover");
-                // Bg, Pad and WithTooltip are `with` copies in DIR.Lib, so the node carrying the tooltip is the filled node itself (no wrapper).
-                // An earlier red here was Palette.Current left Standard by the rig's frames, which the night frame above now fixes.
-                line[0].Node.Background.ShouldBe(colors.Card, "the refusal line is filled with the card colour its ink is measured against");
                 var b = line[0].Bounds;
                 drawnInk.AddRange(row
                     .Where(a => a.Bounds.X >= b.X - 0.5f && a.Bounds.Y >= b.Y - 0.5f
@@ -273,12 +315,20 @@ public sealed class ToastPressTests
                     .Where(t => t is { } && t.Value.Trim().Length > 0)
                     .Select(t => t!.Color));
                 drawnInk.ShouldNotBeEmpty("the refusal's words are drawn as text whose colour is read here");
+                // Two frames after the refusal is noted: the toast is drawn with it, and the ground is read from those pixels.
+                rig.Frame(CardsScreen.From([Card()]), 3);
+                rig.Frame(CardsScreen.From([Card()]), 4);
+                foreach (var ink in drawnInk.Distinct())
+                {
+                    var found = rig.GroundBehind(ink);
+                    found.ShouldNotBeNull($"the refusal ink {ink} is drawn on the night frame");
+                    Contrast.Ratio(ink, found.Value.Ground).ShouldBeGreaterThanOrEqualTo(Contrast.AA,
+                        $"refusal ink {ink} on the ground the frame draws behind it, {found.Value.Ground} ({found.Value.InkPixels} ink pixels)");
+                }
             }
             // Only the refusal is measured: it is the one ink the pilot draws on a ground it fills itself. The summary (p.Dim), the choices and the
             // title are drawn on the library's own tinted fill (under AA in night): a DIR.Lib issue, not a pair the pilot draws on the card colour.
             // The ink is read off the drawn refusal text (its leaves, wrapped or not), not recomputed here, so a change of the ink the chrome passes turns this red.
-            foreach (var ink in drawnInk)
-                Contrast.Ratio(ink, colors.Card).ShouldBeGreaterThanOrEqualTo(Contrast.AA, "refusal");
         }
         finally
         {
