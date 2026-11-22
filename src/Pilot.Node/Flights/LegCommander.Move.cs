@@ -488,7 +488,7 @@ public sealed partial class LegCommander
         }
         catch (FlightException ex)
         {
-            state.RaiseCard(CardBin.Handled, "plane-left", Verbs.FlightTarget(flight.Code), $"{text}, but its plane folder is still here", $"{ex.Message}; the flight is no longer flown here, so delete the folder by hand");
+            state.RaiseCard(CardBin.Handled, "plane-left", Verbs.FlightTarget(flight.Code), $"{text}, but its plane folder is still here", $"{ex.Message}; the disk sweep tries again (a moved flight is a landed one here) and closes this once the folder is gone");
         }
         if (flights.Trackers?.Of(flight.Tracker) is { } tracker)
         {
