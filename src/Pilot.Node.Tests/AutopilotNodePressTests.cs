@@ -61,7 +61,7 @@ public sealed class AutopilotNodePressTests
     private void ShouldHavePressed(CardRow card, string label)
     {
         var command = _ran.ShouldHaveSingleItem();
-        (command.Verb, command.Target, command.Args, command.Who, command.Autopilot).ShouldBe((Verbs.Answer, Verbs.CardTarget(card.Id), [label], "node", true));
+        (command.Verb, command.Target, string.Join('|', command.Args), command.Who, command.Autopilot).ShouldBe((Verbs.Answer, Verbs.CardTarget(card.Id), label, "node", true));
         var handled = _state.Cards().Single(c => c.Kind == CardKinds.AutopilotRan);
         handled.Bin.ShouldBe(CardBin.Handled);
         var detail = handled.Detail ?? "";
