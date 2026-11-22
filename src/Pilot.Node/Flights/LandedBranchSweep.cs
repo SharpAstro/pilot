@@ -78,6 +78,7 @@ public sealed class LandedBranchSweep(NodeState state, LandedBranches branches, 
                     deleted++;
                     break;
                 case LandedBranchResult.RetryLater:
+                case LandedBranchResult.Failed:
                     retry[o.Group ?? "retry"] = retry.GetValueOrDefault(o.Group ?? "retry") + 1;
                     break;
                 default:
@@ -268,7 +269,7 @@ public sealed class LandedBranchSweep(NodeState state, LandedBranches branches, 
     /// <summary>Writes the outcome on the live row, or into the archived flight's file (only when something changed there).</summary>
     private void Record(Entry entry, LandedBranchOutcome outcome, string? head)
     {
-        if (outcome.Result == LandedBranchResult.RetryLater)
+        if (outcome.Result is LandedBranchResult.RetryLater or LandedBranchResult.Failed)
         {
             return;
         }

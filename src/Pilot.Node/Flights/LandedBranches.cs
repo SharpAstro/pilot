@@ -11,6 +11,9 @@ public enum LandedBranchResult
     Deleted,
     Kept,
     RetryLater,
+
+    /// <summary>Origin refused the delete of this branch (group push-failed); <c>Why</c> carries git's own text.</summary>
+    Failed,
 }
 
 /// <summary>The reason groups a sweep counts kept branches by.</summary>
@@ -104,32 +107,34 @@ public sealed class LandedBranches(IGit git)
         if (judged.Count > 0)
         {
             var onOrigin = judged.Where(j => j.Origin is not null).Select(j => j.Branch).ToList();
-            string? failure = null;
-            var failureGroup = LandedBranchGroups.PushFailed;
+            var originFailure = new Dictionary<string, string>(StringComparer.Ordinal);
             if (onOrigin.Count > 0)
             {
-                var push = await git.RunAsync(["push", "--quiet", "origin", "--delete", .. onOrigin], repoPath, cancellationToken);
-                if (!push.Ok && !IsRefGone(push))
+                var push = await git.RunAsync(["push", "--porcelain", "origin", .. onOrigin.Select(b => $":refs/heads/{b}")], repoPath, cancellationToken);
+                foreach (var (b, why) in ReadPushAnswers(push, onOrigin))
                 {
-                    failure = $"could not delete on origin: {push.Why}";
+                    originFailure[b] = why;
                 }
             }
-            var onDisk = judged.Where(j => j.Local is not null).Select(j => j.Branch).ToList();
-            if (failure is null && onDisk.Count > 0)
+            // Only a branch whose origin delete succeeded, or that was never on origin, goes locally.
+            var onDisk = judged.Where(j => j.Local is not null && !originFailure.ContainsKey(j.Branch)).Select(j => j.Branch).ToList();
+            string? localFailure = null;
+            if (onDisk.Count > 0)
             {
                 var del = await git.RunAsync(["branch", "-D", .. onDisk], repoPath, cancellationToken);
                 if (!del.Ok)
                 {
-                    failure = $"could not delete locally: {del.Why}";
-                    failureGroup = LandedBranchGroups.LocalDeleteFailed;
+                    localFailure = $"could not delete locally: {del.Why}";
                 }
             }
             foreach (var j in judged)
             {
                 var code = j.Candidate.Flight.Code;
-                outcomes[code] = failure is null
-                    ? new(code, j.Branch, LandedBranchResult.Deleted)
-                    : new(code, j.Branch, LandedBranchResult.RetryLater, failureGroup, failure);
+                outcomes[code] = originFailure.TryGetValue(j.Branch, out var refused)
+                    ? new(code, j.Branch, LandedBranchResult.Failed, LandedBranchGroups.PushFailed, $"could not delete on origin: {refused}")
+                    : localFailure is not null && j.Local is not null
+                        ? new(code, j.Branch, LandedBranchResult.RetryLater, LandedBranchGroups.LocalDeleteFailed, localFailure)
+                        : new(code, j.Branch, LandedBranchResult.Deleted);
             }
         }
 
@@ -178,8 +183,63 @@ public sealed class LandedBranches(IGit git)
     private static bool IsFlightBranch(FlightRow flight) =>
         flight.Branch == $"flight/{flight.Code.ToLowerInvariant()}" && flight.Branch.IndexOfAny(['*', '?', '[', ' ']) < 0;
 
-    private static bool IsRefGone(GitRun push) =>
-        (push.Error + push.Output).Contains("remote ref does not exist", StringComparison.OrdinalIgnoreCase);
+    /// <summary>
+    /// Reads a <c>git push --porcelain</c> of delete refspecs per ref: <c>-</c> is deleted, <c>!</c> is refused with its reason, and a
+    /// ref answered "remote ref does not exist" is gone already. Returns the refused branches with git's whole stderr (trimmed, the
+    /// "To" line dropped, capped); when the output names no ref at all, git failed before talking to origin and every branch carries it.
+    /// </summary>
+    private static Dictionary<string, string> ReadPushAnswers(GitRun push, IReadOnlyList<string> branches)
+    {
+        var failures = new Dictionary<string, string>(StringComparer.Ordinal);
+        if (push.Ok)
+        {
+            return failures;
+        }
+        var answered = new HashSet<string>(StringComparer.Ordinal);
+        var rejected = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var line in push.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            var parts = line.Split('\t');
+            if (parts.Length < 2 || parts[0].Length != 1 || !"-!*=+ ".Contains(parts[0][0]))
+            {
+                continue;
+            }
+            var spec = parts[1];
+            var dst = spec[(spec.IndexOf(':') + 1)..];
+            if (!dst.StartsWith("refs/heads/", StringComparison.Ordinal))
+            {
+                continue;
+            }
+            var branch = dst["refs/heads/".Length..];
+            answered.Add(branch);
+            if (parts[0] == "!" && !line.Contains("remote ref does not exist", StringComparison.OrdinalIgnoreCase))
+            {
+                rejected[branch] = line;
+            }
+        }
+        var stderr = TrimStderr(push.Error);
+        foreach (var b in branches)
+        {
+            // A ref git calls "unable to delete '<ref>': remote ref does not exist" is gone already, not refused.
+            if (push.Error.Contains($"unable to delete '{b}': remote ref does not exist", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+            if (rejected.ContainsKey(b) || answered.Count == 0)
+            {
+                failures[b] = stderr.Length > 0 ? stderr : rejected.GetValueOrDefault(b) ?? push.Why;
+            }
+        }
+        return failures;
+    }
+
+    private static string TrimStderr(string error)
+    {
+        var kept = error.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(l => !l.StartsWith("To ", StringComparison.Ordinal));
+        var text = string.Join("; ", kept);
+        return text.Length > 1000 ? text[..1000] + "..." : text;
+    }
 
     private static string Short(string sha) => sha.Length > 8 ? sha[..8] : sha;
 

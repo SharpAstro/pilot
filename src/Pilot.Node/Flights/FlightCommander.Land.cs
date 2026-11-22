@@ -531,6 +531,7 @@ public sealed partial class FlightCommander
                 state.UpdateFlight(outcome.Code, f => f with { BranchDeletedAt = now, BranchKept = null });
                 return;
             case LandedBranchResult.RetryLater:
+            case LandedBranchResult.Failed:
                 state.UpdateFlight(outcome.Code, f => f with { BranchKept = outcome.Why });
                 state.RaiseCard(CardBin.Handled, BranchKeptKind, target, $"{outcome.Code} landed, but its branch {outcome.Branch} is not deleted yet",
                     $"{outcome.Why}; the next sweep tries again");
