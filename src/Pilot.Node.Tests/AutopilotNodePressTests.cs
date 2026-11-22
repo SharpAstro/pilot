@@ -28,7 +28,7 @@ public sealed class AutopilotNodePressTests
     private NodePress Press() => new(_state, () => _autopilot, (command, _) =>
     {
         _ran.Add(command);
-        return Task.FromResult(_refuse ? new CommandResult { Ok = false, Error = "refused", Verb = command.Verb, Target = command.Target, Who = "node" } : new CommandResult { Ok = true, Verb = command.Verb, Target = command.Target, Who = "node" });
+        return Task.FromResult(_refuse ? new CommandResult { Ok = false, Error = "refused", Verb = command.Verb, Target = command.Target, Who = "node", Seq = 1 } : new CommandResult { Ok = true, Verb = command.Verb, Target = command.Target, Who = "node", Seq = 1 });
     }, new ManualTime(Began))
     {
         MayEndStray = _ => _mayEndStray,
