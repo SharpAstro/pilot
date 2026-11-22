@@ -13,7 +13,7 @@ public sealed class PrPointsToMakeTests
 {
     private static PrReviewRow Passing(string[]? followUpPoints = null, string[]? filings = null) => new()
     {
-        Repo = "acme/widget", Number = 7, Url = "https://github.com/acme/widget/pull/7", Base = "main", Head = "abc1234", ClonePath = "c:/w", Verdict = "approve",
+        Repo = "acme/widget", Number = 7, Url = "https://github.com/acme/widget/pull/7", Base = "main", Head = "abc1234", ClonePath = "c:/w", Worktree = "c:/w/review", Reviewer = "rev", State = PrReviewState.Reviewed, StartedAt = DateTimeOffset.UnixEpoch, Verdict = "approve",
         FixWorktree = "c:/w/fix", FollowUpPoints = followUpPoints, DeferredFilings = filings,
         Rounds =
         [
