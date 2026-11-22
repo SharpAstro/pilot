@@ -138,10 +138,6 @@ public static class WireframeSweepTests
     /// </summary>
     internal static readonly IReadOnlyList<AllowedTextFault> Known =
     [
-        new("notifications | long | *", @"text ""C:\Users\ada\src\example-org*",
-            "A history row's text that is one word wider than the row (the long state's folder path; a job's command with a long --filter is the "
-            + "same) is laid out whole, cut by the row with no ellipsis and run under the list's scroll bar: DIR.Lib's notifications list wraps a "
-            + "row's text at its spaces only", NotificationsWordIssue),
     ];
 
     internal static ImmutableArray<WireframeFinding> Unknown(string key, ImmutableArray<WireframeFinding> findings) =>

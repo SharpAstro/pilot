@@ -130,7 +130,8 @@ public sealed class NotificationsPageTests
         var history = texts.FindIndex(t => t.StartsWith("History", StringComparison.Ordinal));
         needs.ShouldBeGreaterThan(-1);
         history.ShouldBeGreaterThan(needs, "Needs you comes first");
-        texts.FindIndex(t => t.Contains("ready to merge", StringComparison.Ordinal)).ShouldBeInRange(needs, history);
+        // The row is the whole card, its title in words (a wrap), so the title is found by one of them.
+        texts.FindIndex(t => t.StartsWith("ready", StringComparison.Ordinal)).ShouldBeInRange(needs, history);
         var three = texts.FindIndex(t => t == "Job three finished");
         var two = texts.FindIndex(t => t == "Job two failed");
         var one = texts.FindIndex(t => t == "Job one finished");

@@ -152,7 +152,9 @@ public sealed partial class PrReviews
         var options = questions.Select((q, n) => string.Concat(q.RecommendedFirst.Select((o, i) => questions.Count > 1 || OwnWordsLabel(o) is null
             ? $" {OptionTag(questions, n, i)}: {Words(o.Text, int.MaxValue).TrimEnd('.')}{(o.Recommended ? " (recommended)" : "")}."
             : ""))).ToList();
-        string Line(int share) => string.Join(' ', questions.Select((q, n) => QuestionNumber(questions, n) + Words(q.Question, share) + options[n]));
+        // The question ends a sentence, so the view finds the tags after it and puts each option on a line of its own (CardSummaryLines).
+        string Asked(string question) => question.Length > 0 && question[^1] is '.' or '?' or '!' or '…' ? question : question + ".";
+        string Line(int share) => string.Join(' ', questions.Select((q, n) => QuestionNumber(questions, n) + Asked(Words(q.Question, share)) + options[n]));
         var why = questions.Count == 1 && questions[0].WhyRings is { } w ? $" It rings because {w}." : "";
         var whole = Line(int.MaxValue);
         if (whole.Length + why.Length <= PanelSummaryChars)
