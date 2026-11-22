@@ -28,7 +28,7 @@ public sealed class AutopilotNodePressTests
     private NodePress Press() => new(_state, () => _autopilot, (command, _) =>
     {
         _ran.Add(command);
-        return Task.FromResult(_refuse ? new CommandResult { Ok = false, Error = "refused" } : new CommandResult { Ok = true });
+        return Task.FromResult(_refuse ? new CommandResult { Ok = false, Error = "refused", Who = "node" } : new CommandResult { Ok = true, Who = "node" });
     }, new ManualTime(Began))
     {
         MayEndStray = _ => _mayEndStray,
@@ -44,10 +44,10 @@ public sealed class AutopilotNodePressTests
     private CardRow FoldCard(string pick = Verbs.OverlapPickFold, string? node = null, bool otherExists = true)
     {
         var overlap = new OverlapRow { Other = "PIL2", Node = node, Pick = pick, Why = "same goal", Answer = OverlapAnswer.Pending, At = Began };
-        _state.PutFlight(new FlightRow { Code = "PIL1", Repo = "pilot", RepoPath = @"C:\r", Issue = 1, Branch = "flight/pil1", Worktree = @"C:\r", Base = "main", State = FlightState.Planning, CreatedAt = Began, Overlaps = [overlap] });
+        _state.PutFlight(new FlightRow { Code = "PIL1", Repo = "pilot", RepoPath = @"C:\r", Issue = 1, Branch = "flight/pil1", Worktree = @"C:\r", Base = "main", State = FlightState.Flying, CreatedAt = Began, Overlaps = [overlap] });
         if (otherExists)
         {
-            _state.PutFlight(new FlightRow { Code = "PIL2", Repo = "pilot", RepoPath = @"C:\r", Issue = 2, Branch = "flight/pil2", Worktree = @"C:\r", Base = "main", State = FlightState.Planning, CreatedAt = Began });
+            _state.PutFlight(new FlightRow { Code = "PIL2", Repo = "pilot", RepoPath = @"C:\r", Issue = 2, Branch = "flight/pil2", Worktree = @"C:\r", Base = "main", State = FlightState.Flying, CreatedAt = Began });
         }
         return _state.RaiseCard(CardBin.Ring, CardKinds.Overlap, Verbs.FlightTarget("PIL1"), "Fold PIL1 into PIL2", null,
         [
@@ -64,7 +64,7 @@ public sealed class AutopilotNodePressTests
         (command.Verb, command.Target, command.Args, command.Who, command.Autopilot).ShouldBe((Verbs.Answer, Verbs.CardTarget(card.Id), [label], "node", true));
         var handled = _state.Cards().Single(c => c.Kind == CardKinds.AutopilotRan);
         handled.Bin.ShouldBe(CardBin.Handled);
-        handled.Detail.ShouldContain(card.Id);
+        handled.Detail!.ShouldContain(card.Id);
         handled.Detail.ShouldContain("rule");
     }
 
