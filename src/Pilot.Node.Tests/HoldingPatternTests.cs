@@ -44,6 +44,15 @@ public sealed class HoldingPatternTests : ReviewTestsBase
     private void NodeAdvances() =>
         _legs.Models = new RoleModels(NodeSettings.With(new NodeSettings(), NodeSettings.AutopilotKey, ["off"]).Settings!);
 
+    /// <summary>Ends every review-notes leg as done, as the leg's own finish would, so the flight's legs are all done.</summary>
+    private void LegsDone(string code)
+    {
+        foreach (var leg in _state.Legs(code).Where(l => l.Name.StartsWith(LegCommander.ReviewNotesLeg, StringComparison.Ordinal) && l.State != LegState.Done))
+        {
+            _state.PutLeg(leg with { State = LegState.Done, FinishedAt = DateTimeOffset.UtcNow });
+        }
+    }
+
     private PrChecks Checks() => new(_state, _github, TimeProvider.System, _flights, _legs);
 
     [Fact]
@@ -78,8 +87,8 @@ public sealed class HoldingPatternTests : ReviewTestsBase
         F(flight.Code).Holding.ShouldBeNull();
         Open().ShouldNotContain(c => c.Kind == LegCommander.ReviewNotesKind);
         _state.Cards(openOnly: false).ShouldContain(c => c.Kind == LegCommander.HoldingClearedKind);
-        // The planned review-notes leg is still not done, and a flight with a leg not done does not merge: the owner takes it out too.
-        await WithoutTheFixerLeg(flight.Code);
+        // The planned review-notes leg is still not done, and a flight with a leg not done does not merge: it ends here.
+        LegsDone(flight.Code);
         await Checks().LookAsync(Ct);
         _github.Merged.ShouldHaveSingleItem();
     }
@@ -158,6 +167,7 @@ public sealed class HoldingPatternTests : ReviewTestsBase
         card.Summary.ShouldContain("merge it now with its notes, or hold off and be asked again");
         _github.Merged.ShouldBeEmpty();
 
+        LegsDone(flight.Code);
         var merge = card.Choices[0];
         (await Run(merge.Verb, merge.Target, "me", [.. merge.Args])).Error.ShouldBeNull();
 
@@ -441,6 +451,7 @@ public sealed class HoldingPatternTests : ReviewTestsBase
         var moved = Git(flight.Worktree, "rev-parse", "HEAD").Trim();
         _github.Pr = _github.Pr! with { Head = moved };
 
+        LegsDone(flight.Code);
         var merge = card.Choices[0];
         var refused = await Run(merge.Verb, merge.Target, "me", [.. merge.Args]);
         await Started(_legs, flight.Code);
