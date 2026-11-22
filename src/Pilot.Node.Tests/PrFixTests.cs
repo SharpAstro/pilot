@@ -439,8 +439,14 @@ public sealed class PrFixTests2 : PrFixTestsBase
     {
         await ApprovedWithAPointLeft();
 
-        // The card of a failed or ended start presses this verb: the review passed, but it left points to make.
-        (await Run(Verbs.FixPr, "acme/widget#7", "controller")).Error.ShouldBeNull();
+        // The card of a failed or ended start presses this verb: the review passed, but it left points to make. It is never refused for having nothing to
+        // fix. The node may have started a fixer on the points itself by the time it is pressed (on a slower runner it has), and then the press is refused
+        // for that fixer, never starting a second one (#1247): one fixer, on the points, either way.
+        var pressed = await Run(Verbs.FixPr, "acme/widget#7", "controller");
+        if (pressed.Error is { } refused)
+        {
+            refused.ShouldContain("fixing it already");
+        }
 
         Fixers.ShouldHaveSingleItem().Brief.ShouldContain("the title could be shorter");
         Row.FixRound.ShouldBe(1);
