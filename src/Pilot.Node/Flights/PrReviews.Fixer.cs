@@ -276,9 +276,10 @@ public sealed partial class PrReviews
             return $"no review of {pr} here, so a review was started first ({started}); its findings are fixed when it asks for changes";
         }
         var asksDesign = review.Findings.Any(IsDesign);
-        if (review.Verdict != "changes" && !asksDesign)
+        // A passing review that left points a fixer makes (EnsureFollowUpAsync starts one) is fixed too: the card of a failed or ended start presses this.
+        if (review.Verdict != "changes" && !asksDesign && ReviewFollowUp.ToMake(review).Count == 0)
         {
-            throw new FlightException($"{pr}'s review did not ask for changes, so there is nothing to fix");
+            throw new FlightException($"{pr}'s review did not ask for changes and left no points to make, so there is nothing to fix");
         }
         var words = string.Join(' ', command.Args ?? []).Trim();
         string? given = null;
@@ -461,7 +462,9 @@ public sealed partial class PrReviews
     /// </summary>
     private async Task<string> StartFixerAsync(PrRef pr, PrReviewRow review, CancellationToken cancellationToken, DesignChoice? chose = null)
     {
-        if (review.Fixer is { } on)
+        // The row as it is now, not as the caller read it: two paths of one sweep (an ended fixer's restart and the left points') each held a row read
+        // before the other started its fixer, so both started one (tianwen#2435 had three fixers for one answer; pilot #1247).
+        if ((Of(pr) ?? review).Fixer is { } on)
         {
             throw new FlightException($"{pr} has {on} fixing it already");
         }
@@ -557,7 +560,7 @@ public sealed partial class PrReviews
         state.PutPrReview(fixing with { FixerJob = job });
         var answered = chose ?? StoredChoice(review);
         SettleDesign(pr.Repo, pr.Number, AnsweredCause(answered, "the fixer started on it"), review.Url, $"{fixer} is making the changes the answer calls for", answered);
-        state.CloseCardsAbout(Verbs.PrTarget(pr.Repo, pr.Number), "a fixer started", FixOfferKind, NoFixerKind, DesignKind, FixCappedKind, FixFailedKind);
+        state.CloseCardsAbout(Verbs.PrTarget(pr.Repo, pr.Number), "a fixer started", FixOfferKind, NoFixerKind, DesignKind, FixCappedKind, FixFailedKind, FixEndedKind);
         state.RaiseCard(CardBin.Handled, FixStartedKind, Verbs.PrTarget(pr.Repo, pr.Number),
             $"Started {fixer} on {pr}'s branch", $"It makes the changes the review asked for, on branch {branch} in {worktree}.", link: review.Url);
         return $"started {fixer} at {CommitRefs.Short(read.Head)}";

@@ -106,8 +106,17 @@ public abstract class PrFixTestsBase : IDisposable
         _testGit.Verify();
     }
 
-    private protected Task<CommandResult> Run(string verb, string pr, string who, params string[] args) =>
-        _reviews.RunAsync(new CommandRequest { Verb = verb, Target = $"pr/{pr}", Args = args, Who = who }, Ct);
+    private protected async Task<CommandResult> Run(string verb, string pr, string who, params string[] args)
+    {
+        var result = await _reviews.RunAsync(new CommandRequest { Verb = verb, Target = $"pr/{pr}", Args = args, Who = who }, Ct);
+        // A verdict's delayed sweep (a grace of a millisecond here) may start the node's own fixer: it is waited for now, so it never runs in the middle of
+        // the test's next step (the merge queue's Windows run of #1257 saw a press race it).
+        if (verb == Verbs.PrVerdict)
+        {
+            await _reviews.GraceDone.WaitAsync(TimeSpan.FromSeconds(10), Ct);
+        }
+        return result;
+    }
 
     /// <summary>The table a re-review opens with, each earlier point of the row answered addressed; empty on a first review.</summary>
     private protected static string AnswersOf(PrReviewRow row) =>
@@ -155,11 +164,14 @@ public abstract class PrFixTestsBase : IDisposable
         (await Run(Verbs.PrVerdict, "acme/widget#7", Row.Reviewer, [verdict, AnswersOf(Row) + "Round report.", .. findings])).Error.ShouldBeNull();
     }
 
-    private protected static SessionRow Session(string name, SessionState state) => new()
+    private protected static SessionRow Session(string name, SessionState state, string id = "abcd1234") => new()
     {
-        Id = "abcd1234", SessionId = "abcd1234-0000", Name = name, Kind = SessionKind.Background, Cwd = "/x", Role = SessionRole.Worker,
+        Id = id, SessionId = id + "-0000", Name = name, Kind = SessionKind.Background, Cwd = "/x", Role = SessionRole.Worker,
         ContextTokens = 0, ContextWindow = 1, State = state, SpendWeighted = 0, StartedAt = DateTimeOffset.UtcNow,
     };
+
+    /// <summary>The fixer's own session row: its name and the job it was started as, which is how the node knows it (pilot #1247).</summary>
+    private protected SessionRow FixerSession(SessionState state) => Session(Row.Fixer.ShouldNotBeNull(), state, Row.FixerJob.ShouldNotBeNull());
 }
 
 /// <summary>Part 1 of PrFixTests: the class is split so its tests run side by side, not one after another.</summary>
@@ -354,10 +366,119 @@ public sealed class PrFixTests2 : PrFixTestsBase
         Fixers.Length.ShouldBe(2);
         Fixers[1].Brief.ShouldContain("README.md:1 still wrong");
         (Row.Fixer, Row.FixRound).ShouldBe(("du1-fix-widget-7", 2));
-        _state.PutSession(Session("du1-fix-widget-7", SessionState.Working));
+        _state.PutSession(FixerSession(SessionState.Working));
         var lines = StatusMarkdown.Build(_state.Snapshot()).Split('\n').Select(l => l.TrimEnd('\r')).ToArray();
         lines[Array.FindIndex(lines, l => l.Contains("acme/widget#7")) + 1].ShouldContain("fixing, du1-fix-widget-7, round 2, working");
     }
+
+    private const string NotBlocking = "Fine.\n\n## Not blocking\n- the title could be shorter in README.md:2\n";
+
+    /// <summary>A passing review of the own PR #7 that leaves a not-blocking note, checks green and the queue idle: the points a fixer is to make.</summary>
+    private async Task<string> ApprovedWithAPointLeft()
+    {
+        _github.Summary = GhAnswers.ChecksOf(ChoiceStatus.Passing, 1, 1);
+        _github.Queue = GhAnswers.MergeQueue("idle", _github.Prs["acme/widget#7"].Head);
+        (await Run(Verbs.ReviewPr, "acme/widget#7", "controller")).Error.ShouldBeNull();
+        (await Run(Verbs.PrVerdict, "acme/widget#7", Row.Reviewer, "approve", NotBlocking)).Error.ShouldBeNull();
+        return Row.Head;
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AnApproveThatLeavesAPointOnAnOwnPrStartsOneFixerHoldsTheMergeAndMergesAfterItsPushIsReviewed()
+    {
+        var first = await ApprovedWithAPointLeft();
+
+        await _reviews.SweepAsync(Ct);
+
+        var start = Fixers.ShouldHaveSingleItem();
+        start.Brief.ShouldContain("the title could be shorter");
+        start.Brief.ShouldContain("Make them; they are your work here");
+        Row.FixRound.ShouldBe(1);
+        _github.Merged.ShouldBeEmpty("the merge waits for the fixer's push to be reviewed");
+        _github.IssuesCreated.ShouldBeEmpty();
+
+        // While it works, a sweep starts no second fixer and merges nothing.
+        await _reviews.SweepAsync(Ct);
+        Fixers.Length.ShouldBe(1);
+        _github.Merged.ShouldBeEmpty();
+
+        // The person's Merge on the card keeps the hold too, and says what is happening.
+        (await Run(Verbs.Merge, "acme/widget#7", "controller", first)).Error.ShouldNotBeNull().ShouldContain("not merged yet");
+        _github.Merged.ShouldBeEmpty();
+
+        var head = FixerPushes("made the note");
+        _github.Queue = GhAnswers.MergeQueue("idle", head);
+        await Round(head, "approve");
+        await _reviews.SweepAsync(Ct);
+
+        Fixers.Length.ShouldBe(1);
+        _github.Merged.ShouldBe([(7, head, "squash")]);
+        _github.IssuesCreated.ShouldBeEmpty();
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AFixerStartedOnAPassingReviewsPointsThatEndsWithoutAPushRingsOnceAndTheNextOneClosesTheCard()
+    {
+        await ApprovedWithAPointLeft();
+        await _reviews.SweepAsync(Ct);
+        Fixers.ShouldHaveSingleItem();
+
+        _state.PutSession(FixerSession(SessionState.Ended));
+        await _reviews.SweepAsync(Ct);
+
+        // The points are still unmade, so the next sweep's start is a second fixer, and the card that told the person to press Fix it is closed.
+        Fixers.Length.ShouldBe(2);
+        Row.FixRound.ShouldBe(2);
+        _state.Cards().Count(c => c.Kind == PrReviews.FixEndedKind).ShouldBe(1, "the no-push end rang once");
+        _state.Cards(openOnly: true).ShouldNotContain(c => c.Kind == PrReviews.FixEndedKind);
+        _github.Merged.ShouldBeEmpty();
+
+        // The first fixer's ended session is still listed under the same name, and the second's is not listed yet: the second is not taken for ended,
+        // and no third is started (tianwen#2435 had three fixers for one answer; pilot #1247).
+        await _reviews.SweepAsync(Ct);
+        Fixers.Length.ShouldBe(2);
+        Row.Fixer.ShouldNotBeNull();
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task TheFixItChoiceOnAPassingReviewsPointsStartsAFixerInsteadOfBeingRefused()
+    {
+        // The node's own start on the points fails (the verdict's sweep, waited for), so the card is up and no fixer runs when the person presses it.
+        _github.Summary = GhAnswers.ChecksOf(ChoiceStatus.Passing, 1, 1);
+        _github.Queue = GhAnswers.MergeQueue("idle", _github.Prs["acme/widget#7"].Head);
+        (await Run(Verbs.ReviewPr, "acme/widget#7", "controller")).Error.ShouldBeNull();
+        _workers.Fail = new FlightException("claude --bg did not start");
+        (await Run(Verbs.PrVerdict, "acme/widget#7", Row.Reviewer, "approve", NotBlocking)).Error.ShouldBeNull();
+        _workers.Fail = null;
+        Fixers.ShouldBeEmpty();
+        _state.Cards(openOnly: true).ShouldContain(c => c.Kind == PrReviews.FixFailedKind);
+
+        // The card of a failed start presses this verb: the review passed, but it left points to make, so the press starts a fixer and is not refused for
+        // having nothing to fix. The node's own start failed first (the verdict's sweep, waited for), which is what puts the card up.
+        (await Run(Verbs.FixPr, "acme/widget#7", "controller")).Error.ShouldBeNull();
+
+        Fixers.ShouldHaveSingleItem().Brief.ShouldContain("the title could be shorter");
+        Row.FixRound.ShouldBe(1);
+        // A press while that fixer works is refused for it, never a second fixer (#1247).
+        (await Run(Verbs.FixPr, "acme/widget#7", "controller")).Error.ShouldNotBeNull().ShouldContain("fixing it already");
+        Fixers.Length.ShouldBe(1);
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task TheFixItChoiceOnAPassingReviewWithNothingLeftIsStillRefused()
+    {
+        _github.Summary = GhAnswers.ChecksOf(ChoiceStatus.Passing, 1, 1);
+        _github.Queue = GhAnswers.MergeQueue("idle", _github.Prs["acme/widget#7"].Head);
+        (await Run(Verbs.ReviewPr, "acme/widget#7", "controller")).Error.ShouldBeNull();
+        (await Run(Verbs.PrVerdict, "acme/widget#7", Row.Reviewer, "approve", "Fine.")).Error.ShouldBeNull();
+
+        (await Run(Verbs.FixPr, "acme/widget#7", "controller")).Error.ShouldNotBeNull().ShouldContain("nothing to fix");
+    }
+
 }
 
 /// <summary>Part 3 of PrFixTests: the class is split so its tests run side by side, not one after another.</summary>
@@ -394,7 +515,7 @@ public sealed class PrFixTests3 : PrFixTestsBase
     public async Task AFixerThatEndsWithoutPushingLeavesACardWithFixItAndNoReview()
     {
         await Review("acme/widget#7", "changes", "README.md:1 wrong");
-        _state.PutSession(Session("du1-fix-widget-7", SessionState.Ended));
+        _state.PutSession(FixerSession(SessionState.Ended));
 
         await _reviews.SweepAsync(Ct);
 
@@ -445,7 +566,7 @@ public sealed class PrFixTests3 : PrFixTestsBase
         await _reviews.SweepAsync(Ct);
         _reviews.Of(new PrRef("acme", "widget", 7))!.State.ShouldBe(PrReviewState.Closed);
 
-        _state.PutSession(Session("du1-fix-widget-7", SessionState.Working));
+        _state.PutSession(FixerSession(SessionState.Working));
         var lines = StatusMarkdown.Build(_state.Snapshot()).Split('\n').Select(l => l.TrimEnd('\r')).ToArray();
         var at = Array.FindIndex(lines, l => l.Contains("acme/widget#7"));
         at.ShouldBeGreaterThanOrEqualTo(0);

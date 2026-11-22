@@ -184,14 +184,19 @@ public static partial class Briefs
     internal static void AppendAnswerTable(StringBuilder text, ReReview again, string what = "flight")
     {
         var first = ReviewPoints.Number(again.Rounds).FirstOrDefault()?.Id ?? "R1.1";
+        // A PR no flight owns files no follow-up issue (its points are made by a fixer or go on the PR); a flight's re-review keeps the filing.
+        var ownsPr = what == "PR";
         text.AppendLine();
         text.AppendLine($"This is a re-review, and its one job is the list above. The report opens with `## {ReviewPoints.AnswerHeading}`: a table with one row for every");
         text.AppendLine("point, none left out, columns `Point | Answer | Where or reason`, e.g. `| " + first + " | addressed | src/Foo.cs:42 |`. Every point ends one of four ways (pilot #1226), each answer being one of:");
         text.AppendLine("- `addressed`: fixed, with where (`file:line`, or the commit). Check it by reading the code or running it; the fixer's word is not a check.");
         text.AppendLine("- `not work: <why>`: the point asks for nothing to be done (a question, praise, a restatement, text that is fine as it is). It is settled and files nothing.");
         text.AppendLine($"- `node's own`: the {what}'s PR body, title or label. The node sets those, not a fixer; it is settled and files nothing.");
-        text.AppendLine($"- `deferred: another repo`, `deferred: owner decision` or `deferred: larger than the {what}`: the only three reasons a point may wait. Every deferred point goes");
-        text.AppendLine($"  into one follow-up issue for the {what}, which the node files from your table. A bare `left` (and any other free-text answer) is no end and is refused.");
+        text.AppendLine($"- `deferred: another repo`, `deferred: owner decision` or `deferred: larger than the {what}`: the only three reasons a point may wait.");
+        text.AppendLine(ownsPr
+            ? $"  A point deferred to another repo gets an issue there and an owner decision becomes a card; one deferred as larger than the {what} is put on the PR as one comment, no issue is filed for it."
+            : $"  Every deferred point goes into one follow-up issue for the {what}, which the node files from your table.");
+        text.AppendLine("  A bare `left` (and any other free-text answer) is no end and is refused.");
         text.AppendLine($"  `deferred: larger than the {what}` holds only for a point that needs a design or a plan of its own. A fixer that deferred a test, a rename, a comment,");
         text.AppendLine("  a doc line, a guard or a refactor of the files it touched as larger has not addressed it: answer it `not addressed`, so the next round makes it.");
         text.AppendLine("- `not addressed`: no fix and no reason. This blocks the merge.");
@@ -200,7 +205,11 @@ public static partial class Briefs
         text.AppendLine($"Then the new findings, under `## Blocking` and `## Not blocking`. A fault in the lines changed since `{again.Last.Head}` blocks as always. A new finding");
         text.AppendLine($"in text the fix round did not touch blocks only when it must: start it with `{ReviewPoints.MustBlockMarker} <kind>`, the kind being one of");
         text.AppendLine($"{string.Join(", ", ReviewPoints.MustBlockKinds)}. Any other finding in untouched text goes under `## Not blocking`: it is a note, made by a");
-        text.AppendLine("review-notes round in this PR, not a follow-up issue. Put it under `## Blocking` without the prefix only when it needs a design or a plan of its own:");
-        text.AppendLine("then give `changes`, and the node takes the round as a pass and files it as the follow-up issue.");
+        text.AppendLine(ownsPr
+            ? "fixer's round in this PR, not a follow-up issue. Put it under `## Blocking` without the prefix only when it needs a design or a plan of its own:"
+            : "review-notes round in this PR, not a follow-up issue. Put it under `## Blocking` without the prefix only when it needs a design or a plan of its own:");
+        text.AppendLine(ownsPr
+            ? "then give `changes`, and the node takes the round as a pass and puts the point on the PR as a comment (no issue is filed for a PR no flight owns)."
+            : "then give `changes`, and the node takes the round as a pass and files it as the follow-up issue.");
     }
 }

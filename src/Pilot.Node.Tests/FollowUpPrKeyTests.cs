@@ -6,8 +6,9 @@ using Xunit;
 namespace Pilot.Node.Tests;
 
 /// <summary>
-/// The follow-up of a PR no flight owns keys its points by the PR, as a flight's are keyed by its code (#1243 R3.4): a flight made on the issue ticks its own
-/// lines, never a bare R1.2 another flight's report names too, and the body says how a point is reported.
+/// The key prefix of a review's points (#1243 R3.4): a PR's is its repo's letters and number, a flight's its code, so the issues another repo is given
+/// carry keys a flight there ticks, never a bare R1.2 another flight's report names too. (A PR no flight owns files no follow-up issue: its points are
+/// made by a fixer or put on the PR, #1257.)
 /// </summary>
 public sealed class FollowUpPrKeyTests
 {
@@ -16,17 +17,6 @@ public sealed class FollowUpPrKeyTests
         Repo = repo, Number = number, Url = $"https://github.com/{repo}/pull/{number}", Base = "main", Head = "abc", ClonePath = "/c", Worktree = "/w",
         Reviewer = "r", State = PrReviewState.Reviewed, StartedAt = DateTimeOffset.UnixEpoch,
     };
-
-    [Fact]
-    public void APrsFollowUpKeysItsPointsByTheRepoAndNumberAndSaysHowToReportThem()
-    {
-        var body = ReviewFollowUp.Body(Review("SharpAstro/pilot", 1246), [new ReviewFollowUp.Item("N2.1", "found it", "left it", "settle it")]);
-
-        body.ShouldContain("- [ ] `pilot1246:N2.1`");
-        body.ShouldContain("### pilot1246:N2.1:");
-        body.ShouldContain(ReviewFollowUp.ReportLine);
-        body.ShouldNotContain("- [ ] `N2.1`");
-    }
 
     [Theory]
     [InlineData("SharpAstro/FITS.Lib", 12, "FITSLib12")]

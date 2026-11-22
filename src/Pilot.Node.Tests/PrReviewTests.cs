@@ -188,8 +188,17 @@ public abstract class PrReviewTestsBase : IDisposable
         _testGit.Verify();
     }
 
-    private protected Task<CommandResult> Run(string verb, string target, string who, params string[] args) =>
-        _reviews.RunAsync(new CommandRequest { Verb = verb, Target = target, Args = args, Who = who }, Ct);
+    private protected async Task<CommandResult> Run(string verb, string target, string who, params string[] args)
+    {
+        var result = await _reviews.RunAsync(new CommandRequest { Verb = verb, Target = target, Args = args, Who = who }, Ct);
+        // A verdict's delayed sweep is waited for at once where its grace is a test's short one, so it never runs in the middle of the next step; a test that
+        // gives a long grace looks at what happens during it, and waits itself.
+        if (verb == Verbs.PrVerdict && _reviews.SelfFinishGrace <= TimeSpan.FromSeconds(1))
+        {
+            await _reviews.GraceDone.WaitAsync(TimeSpan.FromSeconds(10), Ct);
+        }
+        return result;
+    }
 
     private protected PrReviewRow Row(string repo, int number) => _reviews.Of(new PrRef(repo.Split('/')[0], repo.Split('/')[1], number)).ShouldNotBeNull();
 
