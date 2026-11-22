@@ -29,10 +29,23 @@ public sealed class TuiKeyDeclarationTests
 
     // A per-page list switch: an arm per page that names its list or steps a list cursor by hand (the old ShownList, SurfaceCursor and
     // CellListMoved glue). A page declares its list on its rows (Node.ListOf), and the router steps it. PilotChrome's history places
-    // name ListId too but never step a cursor, so only the stepping members and the page-to-list tuple are offences.
+    // name ListId too but never step a cursor, so only the stepping members and a page mapped to its list (a tuple arm, a case label or
+    // an if on the page, #1066) are offences.
     private static readonly Regex ListSwitchOffence = new(
-        @"\b(ShownList|SurfaceCursor|CellListMoved|MoveListCursor|HandleListKey)\b|\.Step\(|\bPilotPage\.\w+\b[^\n]*=>\s*\(\s*\w+(<\w+>)?\.ListId\b",
+        @"\b(ShownList|SurfaceCursor|CellListMoved|MoveListCursor|HandleListKey)\b|\.Step\(|\bPilotPage\.\w+\b[^\n]*=>\s*\(\s*\w+(<\w+>)?\.ListId\b|\bcase\s+PilotPage\.\w+\b[^\n]*\.ListId\b|\bif\s*\([^\n]*\bPilotPage\.\w+\b[^\n]*\)[^\n]*\.ListId\b",
         RegexOptions.Compiled);
+
+    [Theory]
+    [InlineData("PilotPage.Jobs => (JobsView<TSurface>.ListId, Jobs.ListCursor),", true)]
+    [InlineData("case PilotPage.Jobs: list = JobsView<TSurface>.ListId; break;", true)]
+    [InlineData("if (Page == PilotPage.Fleet) { cursor = FleetView<TSurface>.ListId; }", true)]
+    [InlineData("MoveListCursor(1);", true)]
+    [InlineData("PilotPage.Jobs => Selection(JobsView<TSurface>.ListId, Jobs),", false)]
+    [InlineData("if (Page == PilotPage.Jobs) { Show(PilotPage.Jobs); }", false)]
+    public void TheListSwitchGuardSeesEachFormOfAPageMappedToItsList(string line, bool offence) =>
+        // #1066: the guard matched only the tuple arm; a case label or an if on the page would have slipped past it. The history's
+        // place (a page to its selection) names the list too and is no switch.
+        ListSwitchOffence.IsMatch(line).ShouldBe(offence, line);
 
     [Fact]
     public void NoPerPageListSwitchRemainsInPilotChromeOrTerminalInput()
