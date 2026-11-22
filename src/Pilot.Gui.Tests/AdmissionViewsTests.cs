@@ -339,8 +339,7 @@ public sealed class AdmissionViewsTests
         var queued = Screens(flights, legs, admission);
         var none = Screens([.. flights.Select(f => f with { Queued = null })], [], null);
 
-        var withQueue = BestFrameMs(page, mode, queued);
-        var without = BestFrameMs(page, mode, none);
+        var (withQueue, without) = BestFrameMsOf(page, mode, queued, none);
         TestContext.Current.SendDiagnosticMessage($"{which}: 60 queued {withQueue:F1} ms, none queued {without:F1} ms");
 
         withQueue.ShouldBeLessThan(FrameBudgetMs);
@@ -348,26 +347,45 @@ public sealed class AdmissionViewsTests
         withQueue.ShouldBeLessThan(without * 2 + 30);
     }
 
-    private static double BestFrameMs(PilotPage page, FlightsViewMode mode, FlightsScreen screen)
+    /// <summary>
+    /// The best frame of each of two screens, measured so that neither is advantaged by going first (#1273: the queued list frame read 52 ms
+    /// against 6.5 ms for none queued on CI, where measured in the other order it matched). Both chromes are built and each is warmed with
+    /// enough frames that tiered JIT and the first GCs settle; the timed frames then alternate A, B, A, B, so a slow moment of the machine
+    /// lands on both, and each screen keeps its best.
+    /// </summary>
+    private static (double A, double B) BestFrameMsOf(PilotPage page, FlightsViewMode mode, FlightsScreen a, FlightsScreen b)
     {
-        using var renderer = new RgbaImageRenderer(1600, 900);
+        using var rendererA = new RgbaImageRenderer(1600, 900);
+        using var rendererB = new RgbaImageRenderer(1600, 900);
+        var frameA = FrameOf(rendererA, page, mode, a);
+        var frameB = FrameOf(rendererB, page, mode, b);
+        // Tier-0 code is promoted after 30 calls plus a background delay, so a handful of frames leave the first screen timed on slow code.
+        for (var i = 0; i < 40; i++)
+        {
+            frameA();
+            frameB();
+        }
+        double bestA = double.MaxValue, bestB = double.MaxValue;
+        // The best frame, not the median: a loaded machine (other flights build and test beside this one) only ever adds to a frame's
+        // time, so the fastest of several is the page's own cost.
+        for (var i = 0; i < 15; i++)
+        {
+            var watch = Stopwatch.StartNew();
+            frameA();
+            bestA = Math.Min(bestA, watch.Elapsed.TotalMilliseconds);
+            watch.Restart();
+            frameB();
+            bestB = Math.Min(bestB, watch.Elapsed.TotalMilliseconds);
+        }
+        return (bestA, bestB);
+    }
+
+    private static Action FrameOf(RgbaImageRenderer renderer, PilotPage page, FlightsViewMode mode, FlightsScreen screen)
+    {
         var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
         chrome.Play.ShowEverything();
         chrome.Flights.Mode = mode;
         chrome.Show(page);
-        void Frame() => chrome.Render(new SessionsScreen([], "test", Now), screen, CardsScreen.Empty, new JobsScreen([], "test", Now), null, null, new RectF32(0, 0, 1600, 900));
-        // The first frames load the font and fill the caches; the page's steady state is what a person waits on.
-        Frame();
-        Frame();
-        var times = new List<double>();
-        // The best frame, not the median: a loaded machine (other flights build and test beside this one) only ever adds to a frame's
-        // time, so the fastest of several is the page's own cost, and the two pages compared are not each at the mercy of a busy moment.
-        for (var i = 0; i < 9; i++)
-        {
-            var watch = Stopwatch.StartNew();
-            Frame();
-            times.Add(watch.Elapsed.TotalMilliseconds);
-        }
-        return times.Min();
+        return () => chrome.Render(new SessionsScreen([], "test", Now), screen, CardsScreen.Empty, new JobsScreen([], "test", Now), null, null, new RectF32(0, 0, 1600, 900));
     }
 }
