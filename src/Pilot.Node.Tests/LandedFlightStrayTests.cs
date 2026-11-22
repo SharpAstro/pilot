@@ -48,7 +48,17 @@ public sealed class LandedFlightStrayTests : IDisposable
         public DateTimeOffset? StartOf(int pid) => Starts.TryGetValue(pid, out var start) ? start : null;
 
         // A kill is recorded; the process stays, as one that would not die does.
-        public void Kill(int pid) => Killed.Add(pid);
+        public void Kill(int pid)
+        {
+            if (KillThrows)
+            {
+                throw new InvalidOperationException("access denied");
+            }
+            Killed.Add(pid);
+        }
+
+        /// <summary>A process the node may not end: its kill fails.</summary>
+        public bool KillThrows { get; set; }
 
         // The finder reads a stray's start, then its CPU time: the pid is another's right after that.
         public TimeSpan? CpuTimeOf(int pid)
@@ -178,8 +188,8 @@ public sealed class LandedFlightStrayTests : IDisposable
     [Fact]
     public void ALandingClosesTheNamedStrayCardOfItsSessionAndLeavesAnotherFlightsOpen()
     {
-        // The fake table keeps a killed process alive, as one that will not die: the landing's kill does not end it, so its card is still open
-        // and the landing closes it with the landing as the outcome.
+        // The fake table records the kill and the process ends, so its card closes on the ended path ('ended: PIL1270 landed'); the other
+        // flight's stray stays open.
         EndedWorker("w1", "PIL1270", SessionStartReasons.FlightReview);
         _table.Add(602, 1, "pwsh.exe", Began.AddMinutes(3), folder: Plane);
         _table.Add(603, 1, "pwsh.exe", Began.AddMinutes(3), folder: Other);
@@ -197,6 +207,44 @@ public sealed class LandedFlightStrayTests : IDisposable
         Open(StraySweep.Kind).Select(c => c.Subject).ShouldNotContain(StraySweep.KeyOf(602, Began.AddMinutes(3)));
         _state.Cards().Single(c => c.Subject == StraySweep.KeyOf(602, Began.AddMinutes(3)) && c.Kind == StraySweep.Kind).Outcome.ShouldEndWith("PIL1270 landed");
         Open(StraySweep.Kind).Select(c => c.Subject).ShouldContain(StraySweep.KeyOf(603, Began.AddMinutes(3)));
+    }
+
+    [Fact]
+    public void AStrayTheLandingCouldNotEndHasItsCardClosedWithTheLandingAsTheOutcome()
+    {
+        EndedWorker("w1", "PIL1270", SessionStartReasons.FlightReview);
+        _table.Add(602, 1, "pwsh.exe", Began.AddMinutes(3), folder: Plane);
+        var landing = Flight("PIL1270", Plane, FlightState.Flying);
+        _state.PutFlight(landing);
+        _time.Advance(StrayFinder.EndedGrace + TimeSpan.FromMinutes(1));
+        _sweep.SweepOnce();
+        var key = StraySweep.KeyOf(602, Began.AddMinutes(3));
+        Open(StraySweep.Kind).Select(c => c.Subject).ShouldContain(key);
+        _table.KillThrows = true;
+
+        _sweep.EndOfLanded(landing).ShouldBeEmpty();
+
+        _table.Killed.ShouldBeEmpty();
+        Open(StraySweep.Kind).Select(c => c.Subject).ShouldNotContain(key);
+        _state.Cards().Single(c => c.Subject == key && c.Kind == StraySweep.Kind).Outcome.ShouldBe("PIL1270 landed");
+    }
+
+    [Fact]
+    public void AFolderStrayWhoseStartWasNeverReadIsNamedAndNeverEnded()
+    {
+        EndedWorker("w1", "PIL1270", SessionStartReasons.FlightReview);
+        _table.Add(604, 1, "node.exe", Began.AddMinutes(4), folder: Plane + @"\web");
+        _table.Starts.Remove(604);
+        var flight = Flight("PIL1270", Plane, FlightState.Flying);
+        _state.PutFlight(flight);
+        _time.Advance(StrayFinder.EndedGrace + TimeSpan.FromMinutes(1));
+
+        _sweep.EndOfLanded(flight).ShouldBeEmpty();
+        _state.PutFlight(flight with { State = FlightState.Landed, LandedAt = _time.GetUtcNow() });
+        _sweep.SweepOnce().Select(r => r.Pid).ShouldBe([604]);
+
+        _table.Killed.ShouldBeEmpty();
+        Open(StraySweep.Kind).ShouldHaveSingleItem().Subject.ShouldBe(StraySweep.KeyOf(604, null));
     }
 
     [Fact]

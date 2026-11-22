@@ -105,7 +105,7 @@ public sealed class StrayFinder(IProcessTable table, TimeProvider time, bool? wi
     /// <summary>The command a person runs to end <paramref name="pid"/> on this OS.</summary>
     public string KillCommandFor(int pid) => _windows ? $"Stop-Process -Id {pid} -Force" : $"kill -9 {pid}";
 
-    /// <param name="noGraceFor">Flight codes whose ended sessions' leftovers count at once, with no <see cref="EndedGrace"/>: the landing itself stopped those sessions (pilot #1270).</param>
+    /// <param name="noGraceFor">Flight codes whose ended sessions' leftovers count at once, with no <see cref="EndedGrace"/>: the flight is landing, so its sessions are as good as stopped (pilot #1270).</param>
     public StrayReading Find(IReadOnlyList<StrayJob> jobs, IReadOnlyList<StraySession> sessions, StrayHistory history, IReadOnlySet<string>? noGraceFor = null)
     {
         var now = time.GetUtcNow();
@@ -229,8 +229,8 @@ public sealed class StrayFinder(IProcessTable table, TimeProvider time, bool? wi
 
     private string? Judge(Owner owner, Assigned found, int pid, DateTimeOffset? start, TimeSpan? cpu, StrayHistory history, DateTimeOffset now, IReadOnlySet<string>? noGraceFor)
     {
-        // The owner ended: whatever of it is still here, past the grace, was not stopped with it. A landed flight's sessions were stopped by the
-        // landing itself, so nothing of theirs gets a grace (pilot #1270).
+        // The owner ended: whatever of it is still here, past the grace, was not stopped with it. A landed flight's sessions are stopped or about to
+        // be, so nothing of theirs gets a grace (pilot #1270).
         if (owner.EndedAt is { } ended)
         {
             var landed = owner.Flight is { } code && noGraceFor?.Contains(code) == true;
@@ -307,7 +307,7 @@ public sealed class StrayFinder(IProcessTable table, TimeProvider time, bool? wi
     }
 
     // An owner still running has no bound. One that ended can only have left what started before it ended; a start the OS would not say
-    // is accepted where the evidence is weak anyway (the folder and command line rules, which the node never ends) and refused where a process could be ended.
+    // is accepted where the evidence is weak anyway (the folder and command line rules, which the node ends only with a known start, and only in a landed flight's plane) and refused where a process could be ended.
     private static bool StartedBeforeEnd(Owner owner, DateTimeOffset? start, bool unknownCounts) =>
         owner.EndedAt is not { } ended || (start is { } at ? at <= ended + JobProcess.StartTolerance : unknownCounts);
 

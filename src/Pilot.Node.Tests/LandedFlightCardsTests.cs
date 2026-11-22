@@ -47,7 +47,7 @@ public sealed class LandedFlightCardsTests : IDisposable
         {
             info.ArgumentList.Add(arg);
         }
-        using var process = System.Diagnostics.Process.Start(info)!;
+        using var process = TestEnvironment.Start(info)!;
         process.StandardOutput.ReadToEnd();
         process.StandardError.ReadToEnd();
         process.WaitForExit();

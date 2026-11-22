@@ -11,8 +11,9 @@ namespace Pilot.Node.Flights;
 /// machine row, which <c>pilot strays</c> and <c>pilot status</c> read.
 /// </summary>
 /// <remarks>
-/// The node ends a stray itself only when it started the owner, the owner has ended, and the process descends from the owner (not merely
-/// works in its folder, as a person's editor in a plane does). Everything else is named and left to a person. Waiting is a timer
+/// The node ends a stray itself only in one case (pilot #1270): a landed flight's session, which the node started and which has ended, whose
+/// process descends from it or works in the landed plane's folder, and whose start was read. Everything else is named and left to a person,
+/// who ends it on its card or with <c>pilot strays end</c>. Waiting is a timer
 /// (<see cref="TimeProvider"/>), never a loop on the CPU, and a sweep reads the process table once.
 /// </remarks>
 public sealed class StraySweep(NodeState state, IProcessTable table, TimeProvider time) : BackgroundService
@@ -104,7 +105,7 @@ public sealed class StraySweep(NodeState state, IProcessTable table, TimeProvide
         var reading = Finder.Find(GatherJobs(now), GatherSessions(now), _history);
         _history = new StrayHistory(reading.Cpu, BusyOwners(now));
 
-        var landed = LandedFlights(null);
+        var landed = LandedFlights();
         var named = new List<MachineStray>();
         var current = new HashSet<string>(StringComparer.Ordinal);
         // The shell, the browser and Windows' own processes are never a job's or a session's: one read as a stray is a misattribution,
@@ -142,7 +143,7 @@ public sealed class StraySweep(NodeState state, IProcessTable table, TimeProvide
 
     /// <summary>
     /// A landing's own look (pilot #1270): reads the table once and ends the strays of <paramref name="flight"/>'s sessions and of its plane
-    /// folder at once, with no <see cref="StrayFinder.EndedGrace"/> (the landing stopped those sessions), before the plane is removed so
+    /// folder at once, with no <see cref="StrayFinder.EndedGrace"/> (the landing has stopped those sessions, or they had ended already), before the plane is removed so
     /// a process holding the folder no longer keeps it. Each ended stray's card closes. Returns the rows it ended; never throws.
     /// </summary>
     public IReadOnlyList<MachineStray> EndOfLanded(FlightRow flight)
@@ -214,9 +215,10 @@ public sealed class StraySweep(NodeState state, IProcessTable table, TimeProvide
     // already, through its kill-on-close Job Object (KillOnCloseJob), which knows its members exactly; nothing here guesses.
     // The one exception (pilot #1270): a stray of a node-launched session of a flight that has LANDED, or one working in a landed flight's
     // plane folder, once its owner has ended. Once the flight landed and its plane is removed, nothing of a person's runs there: a person's
-    // own session is never an owner here (the finder skips it), and a process of a flight still flying stays name-only.
+    // own session is never an owner here (the finder skips it), and a process of a flight still flying stays name-only. A stray whose start
+    // was never read is named only: the reuse check in End compares against a null start, which any process at that pid satisfies.
     private static bool CanEnd(Stray stray, IReadOnlyList<FlightRow> landed) =>
-        stray is { NodeLaunched: true, OwnerEnded: true }
+        stray is { NodeLaunched: true, OwnerEnded: true, Start: not null }
         && stray.Owner.StartsWith("session ", StringComparison.Ordinal)
         && !NeverEnded(stray.Name)
         && landed.Any(f => (stray.OwnerFlight is { } code && string.Equals(code, f.Code, StringComparison.Ordinal))
@@ -229,11 +231,11 @@ public sealed class StraySweep(NodeState state, IProcessTable table, TimeProvide
         return outer.Length > 0 && (inner.Equals(outer, StringComparison.OrdinalIgnoreCase) || inner.StartsWith(outer + "\\", StringComparison.OrdinalIgnoreCase));
     }
 
-    // The flights that have landed, and the one landing now (its row still says flying until the landing is recorded).
-    private IReadOnlyList<FlightRow> LandedFlights(FlightRow? landing) =>
-        [.. state.Flights().Where(f => f.State == FlightState.Landed && (landing is null || f.Code != landing.Code)), .. landing is null ? [] : new[] { landing }];
+    // The flights that have landed.
+    private IReadOnlyList<FlightRow> LandedFlights() =>
+        [.. state.Flights().Where(f => f.State == FlightState.Landed)];
 
-    /// <summary>The processes the sweep would never end, whatever the attribution: kept as a backstop should ending ever come back (it is off: CanEnd).</summary>
+    /// <summary>The processes the sweep would never end, whatever the attribution: a backstop for the landed-flight exception in CanEnd and for ending on a person's word.</summary>
     internal static readonly HashSet<string> NeverEnd = new(StringComparer.OrdinalIgnoreCase)
     {
         "explorer", "dwm", "sihost", "ShellExperienceHost", "StartMenuExperienceHost", "SearchHost", "SearchApp", "SearchIndexer", "TextInputHost",
@@ -275,11 +277,11 @@ public sealed class StraySweep(NodeState state, IProcessTable table, TimeProvide
 
     private void Raise(Stray stray, MachineStray row, string key)
     {
-        // The node ends nothing itself (CanEnd): each card says why the process is named, and the person decides.
+        // The node ends only a landed flight's strays itself (CanEnd): each card says why the process is named, and the person decides.
         var how = stray.NodeLaunched && stray.OwnerEnded && stray.ByFolder
             ? "It is tied to its owner by its folder or command line only (it may be a person's own): end it by hand if it is not."
             : stray.NodeLaunched && stray.OwnerEnded
-                ? "Its owner has ended, and the node never ends a process itself: end it by hand if it should not be running."
+                ? "Its owner has ended, and the node ends a process itself only for a landed flight: end it by hand if it should not be running."
                 : stray.NodeLaunched
                     ? "Its owner has not ended: end it by hand if it should not be running."
                     : "The node did not start its owner, so it only names it: end it by hand if it should not be running.";
@@ -314,6 +316,12 @@ public sealed class StraySweep(NodeState state, IProcessTable table, TimeProvide
         // The sweep still naming it is what counts (pilot #1270): a card a person dismissed stays dismissed, and the stray can still be ended.
         if (!_named.TryGetValue(key, out var stray))
         {
+            // The machine row dates a stray whose start was never read by its age, so its key there is not the sweep's (@unknown).
+            var prefix = key[..(key.LastIndexOf('@') + 1)];
+            if (prefix.Length > 0 && _named.Values.FirstOrDefault(n => n.Start is null && KeyOf(n.Pid, null).StartsWith(prefix, StringComparison.Ordinal)) is { } unknown)
+            {
+                return state.Complete(command, $"the start of process {unknown.Pid} was never read, so the node cannot tell it from another that took the pid; end it by hand if it is still the stray: {unknown.KillCommand}");
+            }
             return state.Complete(command, $"the sweep names no stray {key}: the process may be gone; 'pilot strays' lists what it names now");
         }
         if (NeverEnded(stray.Name))
@@ -335,7 +343,7 @@ public sealed class StraySweep(NodeState state, IProcessTable table, TimeProvide
         _named.TryRemove(key, out _);
         state.CloseCardsAbout(key, $"ended on {command.Who}'s word", Kind);
         state.RaiseCard(CardBin.Handled, KilledKind, key, $"Ended stray {stray.Name} {stray.Pid} of {stray.Owner}",
-            $"Ended on {command.Who}'s word from its card, with the same effect as {stray.KillCommand}.", cause: key);
+            $"Ended on {command.Who}'s word, with the same effect as {stray.KillCommand}.", cause: key);
         return state.Complete(command, null);
     }
 

@@ -153,7 +153,7 @@ public sealed class StraySweepTests
         _sweep.EndOnWord(new CommandRequest { Verb = Verbs.EndStray, Target = wrapper.Subject, Who = "gui" })
             .Error.ShouldNotBeNull().ShouldContain("may be another by now");
         _sweep.EndOnWord(new CommandRequest { Verb = Verbs.EndStray, Target = StraySweep.KeyOf(502, Began.AddMinutes(2)), Who = "gui" })
-            .Error.ShouldNotBeNull();
+            .Error.ShouldNotBeNull().ShouldContain("names no stray");  // the sweep drops a NeverEnd name before it is named, so it is never in the named set
         _table.Killed.ShouldBeEmpty();
     }
 
