@@ -137,7 +137,7 @@ public sealed class StraySweepTests
         result.Error.ShouldBeNull();
         _table.Killed.ShouldBe([501]);
         Open(StraySweep.Kind).ShouldNotContain(c => c.Subject == host.Subject);
-        _state.Cards().Single(c => c.Kind == StraySweep.KilledKind).Detail.ShouldContain("gui");
+        _state.Cards().Single(c => c.Kind == StraySweep.KilledKind).Detail.ShouldNotBeNull().ShouldContain("gui");
     }
 
     [Fact]
