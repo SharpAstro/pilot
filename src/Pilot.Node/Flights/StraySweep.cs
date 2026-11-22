@@ -131,7 +131,7 @@ public sealed class StraySweep(NodeState state, IProcessTable table, TimeProvide
     /// <summary>The card's subject for a process: its pid and its start, so a later process with the same pid is another card.</summary>
     public static string KeyOf(Stray stray) => KeyOf(stray.Pid, stray.Start);
 
-    private static string KeyOf(int pid, DateTimeOffset? start) =>
+    public static string KeyOf(int pid, DateTimeOffset? start) =>
         $"process:{pid.ToString(CultureInfo.InvariantCulture)}@{(start is { } at ? at.ToUnixTimeSeconds().ToString(CultureInfo.InvariantCulture) : "unknown")}";
 
     // The sweep ends nothing: it names a stray on a card, with its kill command, and the person decides. It used to end what it
@@ -200,6 +200,13 @@ public sealed class StraySweep(NodeState state, IProcessTable table, TimeProvide
 
     // The strays the last sweeps named on a card, by key: what end-stray may end, and nothing else.
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, Stray> _named = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Whether the node may press End on this stray's card itself on autopilot (#1269): it launched the owner, the owner has ended, and the
+    /// process is not tied to it by folder only (never kill what pilot did not launch).
+    /// </summary>
+    public bool NodeMayEnd(string key) =>
+        _named.TryGetValue(key, out var stray) && stray is { NodeLaunched: true, OwnerEnded: true, ByFolder: false } && !NeverEnded(stray.Name);
 
     /// <summary>
     /// <c>end-stray process:&lt;pid&gt;@&lt;start&gt;</c>, the person's End on a stray's card: ends the process when its card is open, the sweep

@@ -18,6 +18,50 @@ public static class ClaudePermissions
         "update", "node", "answer", "dismiss", "settings", "job", "jobs", "cancel", "leg", "flight", "review", "tell", "say", "cards", "status", "sessions",
     ];
 
+    /// <summary>
+    /// pilot's MCP server tools (<c>mcp__pilot__answer</c> and the rest), allowed as the whole server: Claude Code reads
+    /// <c>mcp__pilot</c> as every tool of that server. Only a session the node starts with these (the watchtower) gains them.
+    /// </summary>
+    public const string McpServerRule = "mcp__pilot";
+
+    /// <summary>
+    /// The verbs a watchtower session runs, each as narrow as its job: the card verbs whole, and of <c>flight</c>, <c>leg</c> only the
+    /// sub-verbs a press of a card takes (merge, clear, fold, connect; plan, start), so <c>update</c>, <c>node</c> and <c>flight withdraw</c>
+    /// stay with the auto-mode classifier.
+    /// </summary>
+    public static readonly IReadOnlyList<string> SessionVerbs =
+    [
+        "answer", "dismiss", "cards", "status", "tell", "say", "sessions", "review",
+        "flight merge", "flight clear", "flight fold", "flight connect", "leg plan", "leg start",
+    ];
+
+    /// <summary>
+    /// The rules a watchtower session starts with (<c>--allowedTools</c>), one per verb of <see cref="SessionVerbs"/> and form, never a
+    /// path-wide rule: <c>pilot &lt;verb&gt;</c> and <c>pilot.exe &lt;verb&gt;</c> as a session may write them (SE1's watchtower wrote
+    /// <c>pilot.exe answer c12854 ...</c>, matched no rule and was denied, #1269), and the CLI by full path bare, in double quotes and
+    /// (PowerShell) behind <c>&amp;</c>; each again with the node's <c>--node-socket</c> when it has one; plus pilot's MCP tools. They ride
+    /// on the session's start, so they hold on any machine whatever its settings hold. A path-wide rule would allow every verb (update,
+    /// node restart, flight withdraw).
+    /// </summary>
+    public static string[] SessionRules(string cliPath, string? socket = null)
+    {
+        var suffixes = socket is null ? new[] { "" } : ["", $" --node-socket \"{socket}\""];
+        var forms = new List<string>();
+        foreach (var verb in SessionVerbs)
+        {
+            foreach (var suffix in suffixes)
+            {
+                foreach (var name in new[] { "pilot", "pilot.exe", cliPath, $"\"{cliPath}\"" })
+                {
+                    forms.Add(Rule("Bash", $"{name}{suffix} {verb}"));
+                    forms.Add(Rule("PowerShell", $"{name}{suffix} {verb}"));
+                    forms.Add(Rule("PowerShell", $"& {name}{suffix} {verb}"));
+                }
+            }
+        }
+        return [.. forms.Distinct(), McpServerRule];
+    }
+
     /// <summary>The shell tools Claude Code runs commands through; each rule is written for both.</summary>
     public static readonly IReadOnlyList<string> Tools = ["Bash", "PowerShell"];
 
@@ -33,6 +77,8 @@ public static class ClaudePermissions
     {
         var folder = Path.GetDirectoryName(Path.GetFullPath(nodePath)) ?? "";
         var cli = Path.Combine(folder, "pilot" + Path.GetExtension(nodePath));
+        // No "pilot.exe <verb>" rules here: the watchtower, the session that wrote that form (#1269), carries its own (SessionRules) on its
+        // start, so the settings check reads no new rules missing after an update.
         var commands = Verbs.Select(v => $"pilot {v}").Append(nodePath);
         // The node's own binary may be the pilot CLI itself.
         if (!Path.GetFullPath(nodePath).Equals(cli, OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal))

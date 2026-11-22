@@ -61,6 +61,51 @@ public sealed class ClaudePermissionsTests : IDisposable
     }
 
     [Fact]
+    public void TheSettingsRulesGainNoBareExeFormSoAnUpdateReadsNoneNewlyMissing()
+    {
+        // #1269 R1.8: the bare 'pilot.exe <verb>' form rides on the watchtower's own start (SessionRules), not in the settings check.
+        Rules.ShouldNotContain(r => r.StartsWith("Bash(pilot.exe ", StringComparison.Ordinal) || r.StartsWith("PowerShell(pilot.exe ", StringComparison.Ordinal));
+        Rules.ShouldNotContain("Bash(pilot:*)");
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("/run/pilot.sock")]
+    public void TheWatchtowersOwnCommandFormsAreRuledOneVerbWide(string? socket)
+    {
+        const string cli = @"C:\Users\x\AppData\Local\Programs\pilot2\pilot.exe";
+        var rules = ClaudePermissions.SessionRules(cli, socket);
+        var suffixes = socket is null ? new[] { "" } : ["", $" --node-socket \"{socket}\""];
+        // Every verb and sub-verb a press takes, in every form a session writes: bare pilot and pilot.exe (SE1's
+        // 'pilot.exe answer c12854 1 --why ...'), the full path bare and quoted, PowerShell's call operator, each with and without the socket.
+        string[] verbs = ["answer", "dismiss", "cards", "status", "tell", "say", "sessions", "review", "flight merge", "flight clear", "flight fold", "flight connect", "leg plan", "leg start"];
+        foreach (var verb in verbs)
+        {
+            foreach (var suffix in suffixes)
+            {
+                foreach (var name in new[] { "pilot", "pilot.exe", cli, $"\"{cli}\"" })
+                {
+                    rules.ShouldContain($"Bash({name}{suffix} {verb}:*)");
+                    rules.ShouldContain($"PowerShell({name}{suffix} {verb}:*)");
+                    rules.ShouldContain($"PowerShell(& {name}{suffix} {verb}:*)");
+                }
+            }
+        }
+        rules.ShouldContain($"Bash({Pilot.Node.Flights.Briefs.Run(cli, socket)} answer:*)");
+        rules.ShouldContain("mcp__pilot");
+        // Never a rule without its verb, so update, node restart and flight withdraw stay with the classifier.
+        rules.Where(r => r != "mcp__pilot").ShouldAllBe(r => verbs.Any(v => r.EndsWith($" {v}:*)", StringComparison.Ordinal)));
+        foreach (var uncovered in new[] { "update", "node", "node restart", "flight withdraw", "flight", "leg" })
+        {
+            rules.ShouldNotContain(r => r.EndsWith($" {uncovered}:*)", StringComparison.Ordinal));
+        }
+        rules.ShouldNotContain($"Bash({cli}:*)");
+        rules.ShouldNotContain($"Bash(\"{cli}\":*)");
+        rules.ShouldNotContain("Bash(pilot:*)");
+        rules.ShouldNotContain("Bash(pilot.exe:*)");
+    }
+
+    [Fact]
     public void ABinaryNamedPilotIsNotRuledTwice() =>
         ClaudePermissions.Rules("/bin/pilot").Count.ShouldBe((16 + 1 + 1) * 2);
 

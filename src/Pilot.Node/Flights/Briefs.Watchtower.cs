@@ -380,6 +380,9 @@ public static partial class Briefs
         text.AppendLine("  these at once and records them; say whom you did it for in `--why`.");
         text.AppendLine($"- With the autopilot on: start a fixer on a PR outside a flight whose review asked for changes (`{pilot} review fix <owner/repo#n>`).");
         text.AppendLine("  The node refuses it past its third round, on a design question with no answer yet and on another author's PR not yet given Fix it: those stay the person's unless they ask for it in the chat.");
+        text.AppendLine("- With the autopilot on, three kinds of card are the node's own and you do not press them: a fold the planner asked for (both flights on this node),");
+        text.AppendLine("  Fix it on a fixer that ended without pushing (`pr-fix-ended`, inside the round cap), and End process on a stray the node launched whose owner has ended.");
+        text.AppendLine("  The node presses them itself within a minute and leaves a Handled card saying which rule let it; one still open is one its rules did not let through, so it stays the person's.");
         text.AppendLine("- Say something to a worker, to unstick it or to tell it what it is missing.");
         text.AppendLine("- Dismiss a For-you or Handled card whose thing has passed, saying why. A ring card is the controller's to close: the node");
         text.AppendLine("  refuses its dismissal from you unless they ask for it in the chat, so answer it with a redo of the leg (a go-around), a resume");

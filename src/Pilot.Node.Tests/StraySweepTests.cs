@@ -266,6 +266,36 @@ public sealed class StraySweepTests
     }
 
     [Fact]
+    public void TheNodeMayEndOnAutopilotOnlyAStrayItLaunchedWhoseOwnerEndedAndIsNotTiedByFolderOnly()
+    {
+        // Allowed: j9 ended, the test host it started lives on.
+        Job("j9", 600, Began, TimeSpan.FromHours(2), ended: _time.GetUtcNow().AddMinutes(-10));
+        _table.Add(601, 600, "testhost.exe", Began.AddMinutes(1), commandLine: "testhost.exe");
+        _known["j9"] = [new KnownProcess(601, Began.AddMinutes(1))];
+        // Refused: owner alive (j7 over its limit).
+        OverLimitJob();
+        // Refused: tied to an ended node-launched session by its folder only.
+        Session("w1", "se1-pil909-old", SessionState.Ended, SessionStartReasons.LegLaunch, ended: _time.GetUtcNow().AddMinutes(-10));
+        _table.Add(710, 1, "dotnet.exe", Began.AddHours(1), commandLine: "dotnet.exe", folder: Plane);
+        // Refused: an owner the node did not launch (a person's session ended).
+        Session("p1", "se1-sebastian", SessionState.Ended, startReason: null, ended: _time.GetUtcNow().AddMinutes(-10), cwd: @"C:\repos\other");
+        _table.Add(810, 1, "dotnet.exe", Began.AddHours(1), commandLine: "dotnet.exe", folder: @"C:\repos\other");
+
+        var named = _sweep.SweepOnce();
+
+        var keys = Open(StraySweep.Kind).ToDictionary(c => int.Parse(c.Subject.Split(':', '@')[1]), c => c.Subject);
+        _sweep.NodeMayEnd(keys[601]).ShouldBeTrue();
+        foreach (var pid in new[] { 500, 501, 710, 810 }.Where(keys.ContainsKey))
+        {
+            _sweep.NodeMayEnd(keys[pid]).ShouldBeFalse($"pid {pid}");
+        }
+        keys.Keys.ShouldContain(501, "the live owner's stray is named, and refused");
+        _sweep.NodeMayEnd("process:12345@1").ShouldBeFalse("a key the sweep never named");
+        named.ShouldNotBeEmpty();
+        _table.Killed.ShouldBeEmpty();
+    }
+
+    [Fact]
     public void AnEndedJobsWrapperPidReusedByALaterParentThatDiedDoesNotMakeItsOrphanTheJobsStray()
     {
         // j100's wrapper (pid 12345) ended thirty minutes after it started. Later a person's terminal got pid 12345, started an editor and closed:

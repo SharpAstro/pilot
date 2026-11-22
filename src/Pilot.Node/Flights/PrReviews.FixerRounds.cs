@@ -32,6 +32,9 @@ public sealed partial class PrReviews
     /// <summary>The For-you card of a fixer whose session ended with the PR's head where it was, with Fix it to try again.</summary>
     public const string FixEndedKind = "pr-fix-ended";
 
+    /// <summary>The words of a <see cref="FixEndedKind"/> card whose fixer left work in its kept worktree; the node does not press Fix it on one (#1269).</summary>
+    public const string FixLeftWorkMark = "but the fixer left work in";
+
     /// <summary>The For-you card said when a fixer's worktree could not be removed; the node tries again.</summary>
     public const string FixLeftKind = "pr-fix-left";
 
@@ -109,7 +112,7 @@ public sealed partial class PrReviews
             state.RaiseCard(CardBin.ForYou, FixEndedKind, subject, $"{pr}: {review.Fixer} ended without a push",
                 left is null
                     ? $"The PR's head is still {CommitRefs.Short(review.Head)}. Fix it starts another fixer on the same findings."
-                    : $"The PR's head is still {CommitRefs.Short(review.Head)}, but the fixer left work in {review.FixWorktree}, kept there: {left}. Push it from there, or Fix it starts another fixer on the same findings in a fresh worktree.",
+                    : $"The PR's head is still {CommitRefs.Short(review.Head)}, {FixLeftWorkMark} {review.FixWorktree}, kept there: {left}. Push it from there, or Fix it starts another fixer on the same findings in a fresh worktree.",
                 [new CardChoice { Label = FixLabel, Verb = Verbs.FixPr, Target = subject }], link: review.Url);
         }
     }

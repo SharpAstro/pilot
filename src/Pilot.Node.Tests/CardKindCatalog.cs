@@ -239,7 +239,7 @@ internal static class CardKindCatalog
         new("watchtower", "", ["NodeCommands.cs"], "WatchtowerTests.ARaiseIsACardFromWhoeverRaisedItAndATellNeedsAWatchtower"),
         new("persons-word", "Handled", ["NodeCommands.cs"], "PersonsWordTests.AFailedLegIsMarkedDoneAnywayAtThePersonsWord"),
         new("assistant-ask", "ForYou", ["Autopilot.cs"], "AutopilotTests.ASettingAnAssistantAsksForIsAskedNotSet"),
-        new("autopilot-ran", "Handled", ["Autopilot.cs", Checks], "AutopilotTests.WithAutopilotOnTheSameMergeGoesThroughRecordedWithTheSessionAndMessageAndAHandledCardSaysIt"),
+        new("autopilot-ran", "Handled", ["Autopilot.cs", Checks, "Flights/NodePress.cs"], "AutopilotTests.WithAutopilotOnTheSameMergeGoesThroughRecordedWithTheSessionAndMessageAndAHandledCardSaysIt"),
         new("grant-asked", "Ring", ["NodeLan.cs"], "NodeCardTests.AGrantAskIsARingCardWhoseChoicesSaySoInPlainWords", "the asking node's grant is not yet answered in the node's grants", [nameof(Verbs.AnswerGrant)]),
         new("update", "Ring|ForYou|Handled", ["Updates/NodeUpdater.cs", "Updates/UpdateRollback.cs"], "UpdateTests.AskRaisesACardWithUpdateOnce", "the published version is newer than the running node's, or the update record says the new version did not start twice and the node went back", [nameof(Verbs.Update), nameof(Verbs.NoteIdea)]),
         new("restart", "Handled", ["NodeSettingsCommands.cs"], "NodeRestartTests.ARestartStartsTheSuccessorStopsTheNodeAndLogsAHandledLineNamingTheCaller"),

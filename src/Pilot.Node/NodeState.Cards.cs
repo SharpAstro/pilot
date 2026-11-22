@@ -30,7 +30,7 @@ public sealed partial class NodeState
     {
         // With the brain to ask (PIL855), a card that would ring is first filed in For you, silent, and rings only on the brain's verdict
         // (RingJudge): the old path, a ring at once, is what runs with no judge, and what the judge itself falls back to.
-        if (bin != CardBin.Ring || RingJudge is not { CanJudge: true } judge || !RingJudge.Wants(kind, choices))
+        if (bin != CardBin.Ring || RingJudge is not { CanJudge: true } judge || !RingJudge.Wants(kind, choices) || NodePresses?.Invoke(kind, subject, detail, choices) == true)
         {
             return RaiseCardCore(bin, kind, subject, title, detail, choices, link, askedBy, why, summary, attachment, attachmentExt, cause, out _);
         }
@@ -51,6 +51,12 @@ public sealed partial class NodeState
 
     /// <summary>The brain's word before a ring (<see cref="Flights.RingJudge"/>); null rings at once, as before.</summary>
     public RingJudge? RingJudge { get; set; }
+
+    /// <summary>
+    /// Whether the node presses a card raised with this kind, subject, detail and choices itself now (autopilot on,
+    /// <see cref="Flights.NodePress.WouldPress"/>): such a card is never sent to the ring judge.
+    /// </summary>
+    public Func<string, string, string?, IReadOnlyList<CardChoice>?, bool>? NodePresses { get; set; }
 
     private CardRow RaiseCardCore(CardBin bin, string kind, string subject, string title, string? detail, IReadOnlyList<CardChoice>? choices, string? link, string? askedBy, string? why, string? summary, string? attachment, string? attachmentExt, string? cause, out bool created)
     {

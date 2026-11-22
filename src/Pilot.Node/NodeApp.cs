@@ -51,6 +51,7 @@ public static partial class NodeApp
         AddFlights(builder, options);
         AddRepos(builder, options, logWriter);
         AddIdeas(builder, logWriter);
+        AddNodePress(builder, logWriter);
         AddWorkers(builder, options, logWriter);
         AddAdmission(builder, options);
         AddFailureInvestigations(builder, logWriter, options);
