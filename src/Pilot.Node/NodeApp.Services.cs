@@ -237,6 +237,7 @@ public static partial class NodeApp
             flights.Say = async (id, text, ct) =>
                 (await services.GetRequiredService<NodeCommands>().RunAsync(new CommandRequest { Verb = Verbs.Say, Target = Verbs.SessionTarget(id), Args = [text], Who = LegWatch.Who }, ct)).Ok;
             flights.CancelJobs = (flight, owners, who) => services.GetRequiredService<JobRunner>().CancelFor(flight, owners, who);
+            flights.EndStrays = flight => services.GetService<StraySweep>()?.EndOfLanded(flight) ?? [];
             flights.CancelHeldJobs = (flight, who) => services.GetRequiredService<JobRunner>().CancelRunningFor(flight, who);
             flights.PumpJobs = () => services.GetRequiredService<JobRunner>().Pump();
             var models = services.GetRequiredService<RoleModels>();

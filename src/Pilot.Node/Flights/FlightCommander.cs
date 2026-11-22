@@ -32,6 +32,9 @@ public sealed partial class FlightCommander(NodeState state, Planes planes, Time
     /// <summary>Cancels the queued and running jobs of a flight and of its sessions (flight, session row ids, who); null where there is no job runner.</summary>
     public Func<string, IReadOnlyCollection<string>, string, int>? CancelJobs { get; set; }
 
+    /// <summary>Ends the strays of a landing flight's sessions and plane folder and returns the ended rows (<see cref="StraySweep.EndOfLanded"/>); null where there is no sweep (pilot #1270).</summary>
+    public Func<FlightRow, IReadOnlyList<MachineStray>>? EndStrays { get; set; }
+
     /// <summary>Cancels a held flight's running jobs other than its leg's check (a cancelled check reads as a failed one); returns how many.</summary>
     public Func<string, string, int>? CancelHeldJobs { get; set; }
 

@@ -26,7 +26,8 @@ public sealed record StraySession(
     int? Pid,
     DateTimeOffset? Start,
     string? Folder,
-    DateTimeOffset? EndedAt = null);
+    DateTimeOffset? EndedAt = null,
+    string? Flight = null);
 
 /// <summary>The CPU time one process had at <paramref name="At"/>; the start tells it from another process with the same pid.</summary>
 public sealed record CpuSample(DateTimeOffset? Start, TimeSpan Cpu, DateTimeOffset At);
@@ -47,8 +48,10 @@ public sealed record StrayHistory(IReadOnlyDictionary<int, CpuSample> Cpu, IRead
 /// <param name="NodeLaunched">Whether the node started the owner, so the node may end it itself.</param>
 /// <param name="Start">When the process started: with the pid it names the process, as a later one may reuse the pid.</param>
 /// <param name="OwnerEnded">Whether the owner has ended; the node ends a stray itself only then.</param>
+/// <param name="OwnerFlight">The code of the flight the owning session belongs to (its ledger row's flight), null for a job or a session of no flight (pilot #1270).</param>
+/// <param name="OwnerFolder">The plane folder the owning session worked in, null when it had none or was not in a plane (pilot #1270).</param>
 /// <param name="ByFolder">Whether it was tied to its owner only by its folder or command line, not by descent from the owner: a person's editor open in a plane looks the same, so the node names it and never ends it.</param>
-public sealed record Stray(int Pid, string Name, string? CommandLine, TimeSpan Age, TimeSpan? Cpu, string Owner, string Reason, string KillCommand, bool NodeLaunched, DateTimeOffset? Start = null, bool OwnerEnded = false, bool ByFolder = false);
+public sealed record Stray(int Pid, string Name, string? CommandLine, TimeSpan Age, TimeSpan? Cpu, string Owner, string Reason, string KillCommand, bool NodeLaunched, DateTimeOffset? Start = null, bool OwnerEnded = false, bool ByFolder = false, string? OwnerFlight = null, string? OwnerFolder = null);
 
 /// <summary>What one finding came to: the strays, and the CPU of every process looked at, which the next finding gets as its history.</summary>
 public sealed record StrayReading(IReadOnlyList<Stray> Strays, IReadOnlyDictionary<int, CpuSample> Cpu);
@@ -94,6 +97,7 @@ public sealed class StrayFinder(IProcessTable table, TimeProvider time, bool? wi
         public string? Folder { get; init; }
         public DateTimeOffset? EndedAt { get; init; }
         public StrayJob? Job { get; init; }
+        public string? Flight { get; init; }
     }
 
     private sealed record Assigned(Owner Owner, int Depth, string How);
@@ -101,7 +105,8 @@ public sealed class StrayFinder(IProcessTable table, TimeProvider time, bool? wi
     /// <summary>The command a person runs to end <paramref name="pid"/> on this OS.</summary>
     public string KillCommandFor(int pid) => _windows ? $"Stop-Process -Id {pid} -Force" : $"kill -9 {pid}";
 
-    public StrayReading Find(IReadOnlyList<StrayJob> jobs, IReadOnlyList<StraySession> sessions, StrayHistory history)
+    /// <param name="noGraceFor">Flight codes whose ended sessions' leftovers count at once, with no <see cref="EndedGrace"/>: the landing itself stopped those sessions (pilot #1270).</param>
+    public StrayReading Find(IReadOnlyList<StrayJob> jobs, IReadOnlyList<StraySession> sessions, StrayHistory history, IReadOnlySet<string>? noGraceFor = null)
     {
         var now = time.GetUtcNow();
         var entries = table.Snapshot();
@@ -118,6 +123,7 @@ public sealed class StrayFinder(IProcessTable table, TimeProvider time, bool? wi
             Start = s.Start,
             Folder = s.Folder,
             EndedAt = s.EndedAt,
+            Flight = s.Flight,
         }).Concat(jobs.Select(j => new Owner
         {
             Kind = Kind.Job,
@@ -211,22 +217,24 @@ public sealed class StrayFinder(IProcessTable table, TimeProvider time, bool? wi
             {
                 cpuNow[pid] = new CpuSample(start, used, now);
             }
-            if (Judge(owner, found, pid, start, cpu, history, now) is not { } reason)
+            if (Judge(owner, found, pid, start, cpu, history, now, noGraceFor) is not { } reason)
             {
                 continue;
             }
             var detail = table.DetailsOf(pid);
-            strays.Add(new Stray(pid, byPid[pid].Name, detail?.CommandLine, start is { } at ? now - at : TimeSpan.Zero, cpu, owner.Label, reason, KillCommandFor(pid), owner.NodeLaunched, start, owner.EndedAt is not null, found.How.StartsWith("it works in", StringComparison.Ordinal) || found.How.StartsWith("its command line names", StringComparison.Ordinal)));
+            strays.Add(new Stray(pid, byPid[pid].Name, detail?.CommandLine, start is { } at ? now - at : TimeSpan.Zero, cpu, owner.Label, reason, KillCommandFor(pid), owner.NodeLaunched, start, owner.EndedAt is not null, found.How.StartsWith("it works in", StringComparison.Ordinal) || found.How.StartsWith("its command line names", StringComparison.Ordinal), owner.Flight, owner.Folder));
         }
         return new StrayReading(strays, cpuNow);
     }
 
-    private string? Judge(Owner owner, Assigned found, int pid, DateTimeOffset? start, TimeSpan? cpu, StrayHistory history, DateTimeOffset now)
+    private string? Judge(Owner owner, Assigned found, int pid, DateTimeOffset? start, TimeSpan? cpu, StrayHistory history, DateTimeOffset now, IReadOnlySet<string>? noGraceFor)
     {
-        // The owner ended: whatever of it is still here, past the grace, was not stopped with it.
+        // The owner ended: whatever of it is still here, past the grace, was not stopped with it. A landed flight's sessions were stopped by the
+        // landing itself, so nothing of theirs gets a grace (pilot #1270).
         if (owner.EndedAt is { } ended)
         {
-            return now - ended > EndedGrace ? $"still running {Describe(now - ended)} after {owner.Label} ended ({found.How})" : null;
+            var landed = owner.Flight is { } code && noGraceFor?.Contains(code) == true;
+            return landed || now - ended > EndedGrace ? $"still running {Describe(now - ended)} after {owner.Label} ended ({found.How})" : null;
         }
 
         if (owner.Job is { TimeLimit: { } limit } job && now - job.StartedAt > limit + OverLimitGrace)
