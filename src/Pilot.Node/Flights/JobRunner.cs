@@ -327,7 +327,7 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
             _recovered.TrySetResult();
         }
         // The Azure deletes of lost cloud benches run beside the dispatcher and the leg watch, which wait on Recovered: a slow or
-        // failing delete holds neither (the rows end and their owners are told when it is done).
+        // failing delete holds neither (the rows end and their owners are told when it is done). LostCloud is what a test awaits.
         _lostCloud = lost;
         _ = TickAsync(stopping);
         try
@@ -655,6 +655,9 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
 
     private Task? _lostCloud;
 
+    /// <summary>The Azure deletes of the cloud benches a lost node left Running, which run beside the dispatcher after <see cref="Recovered"/> (#984); done when there were none.</summary>
+    internal Task LostCloud => _lostCloud ?? Task.CompletedTask;
+
     /// <summary>Recovery with the lost cloud benches' Azure deletes started, not awaited: the returned task ends them and tells their owners.</summary>
     private async Task<Task> RecoverCoreAsync(CancellationToken cancellationToken)
     {
@@ -703,8 +706,24 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
         {
             foreach (var job in lostCloud)
             {
-                var ended = await EndLostCloudBenchAsync(job, cancellationToken);
-                await TellAsync(ended, cancellationToken, []);
+                // One row's fault does not stop the rest (they would stay Running with no line said); a node stopping leaves the rest
+                // Running, which the next start takes up again (#984).
+                try
+                {
+                    var ended = await EndLostCloudBenchAsync(job, cancellationToken);
+                    if (ended is not null)
+                    {
+                        await TellAsync(ended, cancellationToken, []);
+                    }
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    return;
+                }
+                catch (Exception ex) when (ex is not OutOfMemoryException)
+                {
+                    await Log.WriteLineAsync($"jobs: the lost cloud bench {job.Id} could not be ended: {ex.Message.Split('\n')[0].Trim()}; it stays Running and the next start tries again");
+                }
             }
         }, CancellationToken.None);
     }
