@@ -105,8 +105,7 @@ public sealed class NodeFixRoundTests : ReviewTestsBase
         var flight = await Reviewing("5");
         for (var round = 1; round <= 3; round++)
         {
-            (await Verdict(flight.Code, Answered(flight.Code) + $"## Blocking
-- finding of round {round}")).Error.ShouldBeNull();
+            (await Verdict(flight.Code, Answered(flight.Code) + $"## Blocking\n- finding of round {round}")).Error.ShouldBeNull();
             if (round == 3)
             {
                 break;
@@ -114,8 +113,7 @@ public sealed class NodeFixRoundTests : ReviewTestsBase
             // The node sent the round: its worker fixes, finishes, and the finish starts the next review.
             await Started(_legs, flight.Code);
             var worker = Parser(flight.Code).Worker.ShouldNotBeNull();
-            File.WriteAllText(Path.Combine(flight.Worktree, $"fix{round}.txt"), "more
-");
+            File.WriteAllText(Path.Combine(flight.Worktree, $"fix{round}.txt"), "more\n");
             Git(flight.Worktree, "add", ".");
             Git(flight.Worktree, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", $"fix{round}");
             (await Run(Verbs.Check, Verbs.LegTarget(flight.Code, "parser"), worker, "1")).Ok.ShouldBeTrue();
