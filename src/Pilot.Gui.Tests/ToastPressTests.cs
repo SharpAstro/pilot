@@ -99,7 +99,7 @@ public sealed class ToastPressTests
         {
             var regions = new List<ClickableRegion>();
             Chrome.NotificationsLayer.CollectPaintedRegions(regions);
-            if (regions.FirstOrDefault(r => r.Result is HitResult.NotificationHit) is not { } dismiss)
+            if (regions.FirstOrDefault(r => r.Result is NotificationHit { Part: NotificationPart.Dismiss }) is not { } dismiss)
             {
                 return null;
             }
