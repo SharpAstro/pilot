@@ -28,7 +28,7 @@ public sealed class AutopilotNodePressTests
     private NodePress Press() => new(_state, () => _autopilot, (command, _) =>
     {
         _ran.Add(command);
-        return Task.FromResult(_refuse ? new CommandResult { Ok = false, Error = "refused", Who = "node" } : new CommandResult { Ok = true, Who = "node" });
+        return Task.FromResult(_refuse ? new CommandResult { Ok = false, Error = "refused", Verb = command.Verb, Target = command.Target, Who = "node" } : new CommandResult { Ok = true, Verb = command.Verb, Target = command.Target, Who = "node" });
     }, new ManualTime(Began))
     {
         MayEndStray = _ => _mayEndStray,
@@ -64,8 +64,9 @@ public sealed class AutopilotNodePressTests
         (command.Verb, command.Target, command.Args, command.Who, command.Autopilot).ShouldBe((Verbs.Answer, Verbs.CardTarget(card.Id), [label], "node", true));
         var handled = _state.Cards().Single(c => c.Kind == CardKinds.AutopilotRan);
         handled.Bin.ShouldBe(CardBin.Handled);
-        handled.Detail!.ShouldContain(card.Id);
-        handled.Detail.ShouldContain("rule");
+        var detail = handled.Detail ?? "";
+        detail.ShouldContain(card.Id);
+        detail.ShouldContain("rule");
     }
 
     [Fact]
