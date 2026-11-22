@@ -262,18 +262,14 @@ public sealed class ToastPressTests
                 var row = rig.Row();
                 var line = row.Where(n => n.Node.Tooltip?.ToString() == Why).ToList();
                 line.ShouldNotBeEmpty("the refusal line carries the node's words on hover");
-                // The tooltip may sit on a wrapper of the filled node, so the fill is looked for on the node or any node drawn around it.
-                var words = line[0].Bounds;
-                row.ShouldContain(n => n.Node.Background == colors.Card && n.Bounds.X <= words.X + 0.5f && n.Bounds.Y <= words.Y + 0.5f
-                    && n.Bounds.X + n.Bounds.Width >= words.X + words.Width - 0.5f && n.Bounds.Y + n.Bounds.Height >= words.Y + words.Height - 0.5f,
-                    "the refusal line is filled with the card colour its ink is measured against");
+                // Bg, Pad and WithTooltip are `with` copies in DIR.Lib, so the node carrying the tooltip is the filled node itself (no wrapper).
+                // An earlier red here was Palette.Current left Standard by the rig's frames, which the night frame above now fixes.
+                line[0].Node.Background.ShouldBe(colors.Card, "the refusal line is filled with the card colour its ink is measured against");
             }
-            // The library draws the plain choice and the title on its own tinted fill (under AA in night): a DIR.Lib issue, not measured here.
-            foreach (var (name, ink, bg) in new[] { ("dim ink", p.Dim, colors.Card), ("refusal", p.Held, colors.Card) })
-            {
-                var shown = Contrast.Readable(ink, bg, p.Failed);
-                Contrast.Ratio(shown, bg).ShouldBeGreaterThanOrEqualTo(Contrast.AA, name);
-            }
+            // Only the refusal is measured: it is the one ink the pilot draws on a ground it fills itself. The summary (p.Dim), the choices and the
+            // title are drawn on the library's own tinted fill (under AA in night): a DIR.Lib issue, not a pair the pilot draws on the card colour.
+            var shown = Contrast.Readable(p.Held, colors.Card, p.Failed);
+            Contrast.Ratio(shown, colors.Card).ShouldBeGreaterThanOrEqualTo(Contrast.AA, "refusal");
         }
         finally
         {
