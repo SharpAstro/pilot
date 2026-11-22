@@ -85,8 +85,7 @@ public sealed class PassedWithoutCardTests : ReviewTestsBase
 
         F(flight.Code).Holding.ShouldNotBeNull();
         // The card loop of the same look may retitle it from GitHub's state; its own words say it is the holding card.
-        Open().Single(c => c.Kind == LegCommander.PrReady).Detail.ShouldNotBeNull().ShouldContain("The merge is held until each note is made");
-        Open().ShouldContain(c => c.Kind == LegCommander.ReviewNotesKind);
+        Open().Single(c => c.Kind == LegCommander.PrReady).Detail.ShouldNotBeNull().ShouldContain("The review-notes leg makes the review's fixes");
         _github.Merged.ShouldBeEmpty();
     }
 

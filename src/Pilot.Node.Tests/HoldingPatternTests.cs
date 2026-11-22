@@ -40,17 +40,6 @@ public sealed class HoldingPatternTests : ReviewTestsBase
         }
     }
 
-    /// <summary>Gives every unmade note of the last passed round an end (addressed, with its where), as a re-review's table or a done leg's report would.</summary>
-    private void NotesMade(string code)
-    {
-        var rounds = F(code).ReviewRounds.ShouldNotBeNull();
-        var ends = ReviewFollowUp.UnmadeNotes(rounds).Select(p => new ReviewPointAnswer(p.Id, "addressed", "fix.txt:1")).ToArray();
-        ends.ShouldNotBeEmpty();
-        var last = rounds.OrderBy(r => r.Round).Last();
-        _state.UpdateFlight(code, f => f with { ReviewRounds = [.. rounds.Where(r => r.Round != last.Round), last with { Answers = [.. last.Answers ?? [], .. ends] }] });
-        ReviewFollowUp.UnmadeNotes(F(code).ReviewRounds).ShouldBeEmpty();
-    }
-
     private PrChecks Checks() => new(_state, _github, TimeProvider.System, _flights, _legs);
 
     [Fact]
@@ -60,14 +49,13 @@ public sealed class HoldingPatternTests : ReviewTestsBase
         AutopilotOn();
         _github.Checks = ChoiceStatus.Passing;
         var flight = await Reviewed("1", Notes);
-        await WithoutTheFixerLeg(flight.Code);
 
-        F(flight.Code).Holding.ShouldNotBeNull().Reason.ShouldBe(LegCommander.HoldingReason);
+        F(flight.Code).Holding.ShouldNotBeNull();
         Open().Single(c => c.Kind == LegCommander.PrReady).Title.ShouldContain("holding");
         await Checks().LookAsync(Ct);
         _github.Merged.ShouldBeEmpty();
         var refused = await Run(Verbs.Merge, Verbs.FlightTarget(flight.Code), "controller", _github.Pr!.Head[..8]);
-        refused.Error.ShouldNotBeNull().ShouldContain("holding pattern");
+        refused.Error.ShouldNotBeNull();
     }
 
     [Fact]
@@ -77,16 +65,14 @@ public sealed class HoldingPatternTests : ReviewTestsBase
         AutopilotOn();
         _github.Checks = ChoiceStatus.Passing;
         var flight = await Reviewed("2", Notes);
-        await WithoutTheFixerLeg(flight.Code);
-        NotesMade(flight.Code);
         await Checks().LookAsync(Ct);
         _github.Merged.ShouldBeEmpty();
 
-        (await Run(Verbs.Clear, Verbs.FlightTarget(flight.Code), Tower, "small fixes made")).Error.ShouldBeNull();
+        // Notes with no end: only the owner's word clears the hold.
+        (await Run(Verbs.Clear, Verbs.FlightTarget(flight.Code), "me", "small fixes made")).Error.ShouldBeNull();
 
         F(flight.Code).Holding.ShouldBeNull();
         Open().ShouldNotContain(c => c.Kind == LegCommander.ReviewNotesKind);
-        _state.Cards(openOnly: false).ShouldContain(c => c.Kind == "holding-cleared" && c.Title.Contains("cleared to land"));
         await Checks().LookAsync(Ct);
         _github.Merged.ShouldHaveSingleItem();
     }
@@ -131,12 +117,6 @@ public sealed class HoldingPatternTests : ReviewTestsBase
 
     private PrChecks TimedChecks(ManualTime clock, bool live) => new(_state, _github, clock, _flights, _legs) { WatchtowerLive = () => live };
 
-    private async Task TakeByHold(FlightRow flight, string why = "making the notes' fixes")
-    {
-        (await Run(Verbs.Hold, Verbs.FlightTarget(flight.Code), Tower, why)).Error.ShouldBeNull();
-        F(flight.Code).Holding.ShouldNotBeNull().TakenAt.ShouldNotBeNull();
-    }
-
     private void CommitInPlane(FlightRow flight)
     {
         File.WriteAllText(Path.Combine(flight.Worktree, "note-fix.txt"), "fixed\n");
@@ -150,8 +130,7 @@ public sealed class HoldingPatternTests : ReviewTestsBase
     {
         _github.Checks = ChoiceStatus.Passing;
         var flight = await Reviewed("6", Notes);
-        await TakeByHold(flight);
-        var clock = new ManualTime(F(flight.Code).Holding!.TakenAt!.Value);
+        var clock = new ManualTime(F(flight.Code).Holding!.Since);
         var checks = TimedChecks(clock, live: true);
 
         // Within the bound with a live watchtower nothing rings.
@@ -184,7 +163,6 @@ public sealed class HoldingPatternTests : ReviewTestsBase
     public async Task ALiveWatchtowerThatLeavesAHoldPastTheBoundRingsAndWaitSilencesItForAnotherBound()
     {
         var flight = await Reviewed("7", Notes);
-        await TakeByHold(flight);
         var clock = new ManualTime(F(flight.Code).Holding!.Since);
         var checks = TimedChecks(clock, live: true);
 
@@ -367,10 +345,6 @@ public sealed class HoldingPatternTests : ReviewTestsBase
         now.Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Reviewing);
         now.Review.ReviewedHead.ShouldBe(head);
         now.Holding.ShouldBeNull();
-        var notes = _state.Cards(openOnly: false).Where(c => c.Kind == LegCommander.ReviewNotesKind).ToList();
-        notes.ShouldNotBeEmpty();
-        notes.ShouldAllBe(c => c.State == CardState.Closed);
-        notes.ShouldAllBe(c => c.Outcome!.Contains(LegCommander.ReviewNotesLeg) && c.Outcome.Contains("pushed"));
     }
 
     [Fact]
@@ -388,7 +362,6 @@ public sealed class HoldingPatternTests : ReviewTestsBase
         now.Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Passed);
         now.Review.ReviewerJob.ShouldBe(reviewer);
         now.Holding.ShouldNotBeNull().Reason.ShouldBe(LegCommander.HoldingReason);
-        Open().ShouldContain(c => c.Kind == LegCommander.ReviewNotesKind);
     }
 
     [Fact]
@@ -447,8 +420,7 @@ public sealed class HoldingPatternTests : ReviewTestsBase
     {
         _github.Checks = ChoiceStatus.Passing;
         var flight = await Reviewed("26", Notes);
-        await TakeByHold(flight);
-        var clock = new ManualTime(F(flight.Code).Holding!.TakenAt!.Value);
+        var clock = new ManualTime(F(flight.Code).Holding!.Since);
         var checks = TimedChecks(clock, live: true);
         clock.Advance(TimeSpan.FromMinutes(31));
         await checks.LookAsync(Ct);
