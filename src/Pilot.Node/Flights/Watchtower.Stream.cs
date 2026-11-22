@@ -140,7 +140,7 @@ public sealed partial class Watchtower : IStreamRoute
     private WorkerStart StreamStartOf(string brief, string reason) =>
         new(Name, options.WatchtowerFolder, null, brief, Model: Models.Model(RoleModels.Watchtower), Effort: Models.Effort(RoleModels.Watchtower),
             // No disallowed tools: with --permission-prompt-tool stdio an AskUserQuestion reaches the chat as a question the person answers.
-            RemoteControl: false, Reason: reason);
+            RemoteControl: false, AllowedTools: AllowedTools, Reason: reason);
 
     /// <summary>
     /// Starts a fresh stream watchtower with <paramref name="start"/>'s brief as its first message; returns its row id (the first eight

@@ -911,9 +911,10 @@ public static class Verbs
     public const string Stop = "stop";
 
     /// <summary>
-    /// <c>end-stray process:&lt;pid&gt;@&lt;start&gt;</c>: ends a process the stray sweep named on a card, on the person's word only (the
-    /// sweep itself ends nothing). Refused unless the card is open and the pid still starts when the sweep saw it, so a reused pid is never
-    /// another process ended; never a process of the shell, the browser or Windows.
+    /// <c>end-stray process:&lt;pid&gt;@&lt;start&gt;</c>: ends a process the stray sweep named on a card, on the person's word (the
+    /// sweep ends only its own strays on its own: those it may end, and a landed flight's). Works on the sweep's word, not the card's: a stray whose card was dismissed can still be ended. Refused
+    /// unless the sweep currently names the stray, its start was read and the pid still starts then, so a reused pid is never another
+    /// process ended; never a process of the shell, the browser or Windows. <c>pilot strays end &lt;pid&gt;</c> sends the same verb.
     /// </summary>
     public const string EndStray = "end-stray";
 

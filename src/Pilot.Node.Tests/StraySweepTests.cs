@@ -123,6 +123,55 @@ public sealed class StraySweepTests
     }
 
     [Fact]
+    public void AStrayWhoseCardWasDismissedCanStillBeEndedOnTheWordAndTheCardStaysDismissed()
+    {
+        OverLimitJob();
+        _sweep.SweepOnce();
+        var host = Open(StraySweep.Kind).Single(c => c.Subject.StartsWith("process:501@", StringComparison.Ordinal));
+        _state.CloseCard(host.Id, "dismissed", "gui").ShouldBeTrue();
+        _sweep.SweepOnce();
+        Open(StraySweep.Kind).ShouldNotContain(c => c.Subject == host.Subject);
+
+        var result = _sweep.EndOnWord(new CommandRequest { Verb = Verbs.EndStray, Target = host.Subject, Who = "gui" });
+
+        result.Error.ShouldBeNull();
+        _table.Killed.ShouldBe([501]);
+        Open(StraySweep.Kind).ShouldNotContain(c => c.Subject == host.Subject);
+        _state.Cards().Single(c => c.Kind == StraySweep.KilledKind).Detail.ShouldNotBeNull().ShouldContain("gui");
+    }
+
+    [Fact]
+    public void ANeverEndNameAndAChangedStartAreRefusedEvenWithTheCardDismissed()
+    {
+        OverLimitJob();
+        _table.Add(502, 500, "explorer.exe", Began.AddMinutes(2), cpu: TimeSpan.FromHours(3));
+        _sweep.SweepOnce();
+        var wrapper = Open(StraySweep.Kind).Single(c => c.Subject.StartsWith("process:500@", StringComparison.Ordinal));
+        _state.CloseCard(wrapper.Id, "dismissed", "gui");
+        _table.Starts[500] = _table.Starts[500].AddMinutes(1);
+
+        _sweep.EndOnWord(new CommandRequest { Verb = Verbs.EndStray, Target = wrapper.Subject, Who = "gui" })
+            .Error.ShouldNotBeNull().ShouldContain("may be another by now");
+        _sweep.EndOnWord(new CommandRequest { Verb = Verbs.EndStray, Target = StraySweep.KeyOf(502, Began.AddMinutes(2)), Who = "gui" })
+            .Error.ShouldNotBeNull().ShouldContain("names no stray");  // the sweep drops a NeverEnd name before it is named, so it is never in the named set
+        _table.Killed.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void AStrayWhoseStartWasNeverReadIsNamedByHandAndNeverEnded()
+    {
+        // A leftover tied to an ended session by its plane folder, whose start the OS will not tell.
+        Session("w1", "se1-pil909-old", SessionState.Ended, SessionStartReasons.LegLaunch, ended: _time.GetUtcNow().AddMinutes(-10));
+        _table.Add(710, 1, "dotnet.exe", Began.AddHours(1), commandLine: "dotnet.exe", folder: Plane);
+        _table.Starts.Remove(710);
+        _sweep.SweepOnce().ShouldContain(s => s.Pid == 710);
+
+        _sweep.EndOnWord(new CommandRequest { Verb = Verbs.EndStray, Target = "process:710@12345", Who = "gui" })
+            .Error.ShouldNotBeNull().ShouldContain("never read");
+        _table.Killed.ShouldBeEmpty();
+    }
+
+    [Fact]
     public void EndingAStrayIsThePersonsAlone() => Pilot.Node.Standing.YourOnlyVerbs.ShouldContain(Verbs.EndStray);
 
     [Fact]
@@ -262,6 +311,36 @@ public sealed class StraySweepTests
         Open(StraySweep.Kind).ShouldNotContain(c => c.Subject.StartsWith("process:700@", StringComparison.Ordinal));
 
         _sweep.SweepOnce();
+        _table.Killed.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void TheNodeMayEndOnAutopilotOnlyAStrayItLaunchedWhoseOwnerEndedAndIsNotTiedByFolderOnly()
+    {
+        // Allowed: j9 ended, the test host it started lives on.
+        Job("j9", 600, Began, TimeSpan.FromHours(2), ended: _time.GetUtcNow().AddMinutes(-10));
+        _table.Add(601, 600, "testhost.exe", Began.AddMinutes(1), commandLine: "testhost.exe");
+        _known["j9"] = [new KnownProcess(601, Began.AddMinutes(1))];
+        // Refused: owner alive (j7 over its limit).
+        OverLimitJob();
+        // Refused: tied to an ended node-launched session by its folder only.
+        Session("w1", "se1-pil909-old", SessionState.Ended, SessionStartReasons.LegLaunch, ended: _time.GetUtcNow().AddMinutes(-10));
+        _table.Add(710, 1, "dotnet.exe", Began.AddHours(1), commandLine: "dotnet.exe", folder: Plane);
+        // Refused: an owner the node did not launch (a person's session ended).
+        Session("p1", "se1-sebastian", SessionState.Ended, startReason: null, ended: _time.GetUtcNow().AddMinutes(-10), cwd: @"C:\repos\other");
+        _table.Add(810, 1, "dotnet.exe", Began.AddHours(1), commandLine: "dotnet.exe", folder: @"C:\repos\other");
+
+        var named = _sweep.SweepOnce();
+
+        var keys = Open(StraySweep.Kind).ToDictionary(c => int.Parse(c.Subject.Split(':', '@')[1]), c => c.Subject);
+        _sweep.NodeMayEnd(keys[601]).ShouldBeTrue();
+        foreach (var pid in new[] { 500, 501, 710, 810 }.Where(keys.ContainsKey))
+        {
+            _sweep.NodeMayEnd(keys[pid]).ShouldBeFalse($"pid {pid}");
+        }
+        keys.Keys.ShouldContain(501, "the live owner's stray is named, and refused");
+        _sweep.NodeMayEnd("process:12345@1").ShouldBeFalse("a key the sweep never named");
+        named.ShouldNotBeEmpty();
         _table.Killed.ShouldBeEmpty();
     }
 

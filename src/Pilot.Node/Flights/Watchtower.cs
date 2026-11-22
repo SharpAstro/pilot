@@ -118,6 +118,9 @@ public sealed partial class Watchtower(
     /// <summary>How it runs the CLI, socket and all: <see cref="Briefs.Run"/>.</summary>
     public string Pilot { get; init; } = "pilot";
 
+    /// <summary>The allow rules its session starts with (<see cref="ClaudePermissions.SessionRules"/>), so its presses are never sent to the auto-mode classifier; null for none.</summary>
+    public string[]? AllowedTools { get; init; }
+
     /// <summary>Completes when the session tracker has had its first look: before it, a running watchtower looks missing.</summary>
     public Func<Task> Ready { get; init; } = () => Task.CompletedTask;
 
@@ -1115,6 +1118,7 @@ public sealed partial class Watchtower(
                 // A background session's AskUserQuestion blocks until someone answers it in claude agents, and a say to the chat is read only between tool calls: it asks in an ask block instead.
                 // The stream watchtower keeps the tool: with --permission-prompt-tool stdio the question reaches the person's chat (PIL855).
                 DisallowedTools: Streams is null ? ["AskUserQuestion"] : null,
+                AllowedTools: AllowedTools,
                 Reason: replacing is null ? SessionStartReasons.WatchtowerStart : SessionStartReasons.WatchtowerRestart);
             // The stream session is the node's own process: its brief is its first message, and its row is published from the stream.
             _job = Streams is not null ? await StartStreamAsync(start, why, cancellationToken) : await launcher.StartAsync(start, cancellationToken);

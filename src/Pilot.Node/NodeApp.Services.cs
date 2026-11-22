@@ -234,9 +234,9 @@ public static partial class NodeApp
             flights.DesignRecord = services.GetRequiredService<Pilot.Node.Designs.DesignRecord>();
             flights.Ledger = services.GetRequiredService<SessionLedger>();
             // A landing tells each live session of the flight to finish and report, then cancels the jobs of the flight and its sessions.
-            flights.Say = async (id, text, ct) =>
-                (await services.GetRequiredService<NodeCommands>().RunAsync(new CommandRequest { Verb = Verbs.Say, Target = Verbs.SessionTarget(id), Args = [text], Who = LegWatch.Who }, ct)).Ok;
+            flights.Say = async (id, text, ct) => (await services.GetRequiredService<NodeCommands>().RunAsync(new CommandRequest { Verb = Verbs.Say, Target = Verbs.SessionTarget(id), Args = [text], Who = LegWatch.Who }, ct)).Ok;
             flights.CancelJobs = (flight, owners, who) => services.GetRequiredService<JobRunner>().CancelFor(flight, owners, who);
+            flights.EndStrays = flight => services.GetService<StraySweep>()?.EndOfLanded(flight) ?? [];
             flights.CancelHeldJobs = (flight, who) => services.GetRequiredService<JobRunner>().CancelRunningFor(flight, who);
             flights.PumpJobs = () => services.GetRequiredService<JobRunner>().Pump();
             var models = services.GetRequiredService<RoleModels>();
@@ -504,7 +504,7 @@ public static partial class NodeApp
             return new Watchtower(services.GetRequiredService<NodeState>(), services.GetRequiredService<IWorkerLauncher>(), commands.RunAsync,
                 services.GetRequiredService<NodeOptions>(), services.GetRequiredService<TimeProvider>())
             {
-                Pilot = Briefs.Run(legs.Cli, legs.Socket),
+                Pilot = Briefs.Run(legs.Cli, legs.Socket), AllowedTools = ClaudePermissions.SessionRules(legs.Cli ?? "pilot", legs.Socket),
                 Ready = () => services.GetRequiredService<SessionTracker>().FirstPoll,
                 Models = services.GetRequiredService<RoleModels>(),
                 Gate = services.GetRequiredService<StartGate>(),

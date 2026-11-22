@@ -89,6 +89,9 @@ public sealed class NotificationsPageTests
         public List<string> Texts() => [.. _arranged.Where(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text })
             .OrderBy(a => a.Bounds.Y).ThenBy(a => a.Bounds.X).Select(a => ((Layout.Content.Text)((Layout.Node.Leaf)a.Node).Content).Value)];
 
+        /// <summary>The faults the page's text overlap check finds in the last frame (text over text, or past its clip).</summary>
+        public IReadOnlyList<TextFault> Faults() => TextOverlap.Faults(_arranged);
+
         public void Save(string name) => File.WriteAllBytes(Path.Combine(ArtifactDir(), name + ".png"), PngWriter.Encode(Renderer.Surface.Pixels, _width, _height));
 
         public void Dispose() => Renderer.Dispose();
@@ -251,6 +254,42 @@ public sealed class NotificationsPageTests
             w.Chrome.Show(PilotPage.Notifications);
             w.Frame(T0.AddMinutes(4), Ringing());
             w.Save($"notifications-page-{width}");
+        }
+    }
+
+    // #1259: the page's row is the whole card, which lists every choice itself, so the toast's choice buttons are not drawn beside them.
+    [Theory]
+    [InlineData(1f)]
+    [InlineData(1.25f)]
+    [InlineData(1.5f)]
+    public void ACardWithTwoLongChoicesDrawsEachOnceAndNothingReachesPastTheScroll(float dpi)
+    {
+        var card = Card("c1", CardBin.Ring, "TIA1818's PR #63 is ready to merge") with
+        {
+            Choices =
+            [
+                new CardChoice { Label = "Choice-one-a", Verb = Verbs.StartLeg, Target = "flight/TIA1818/one" },
+                new CardChoice { Label = "Choice-two-b", Verb = Verbs.StartLeg, Target = "flight/TIA1818/two" },
+            ],
+        };
+        card.Choices.ShouldAllBe(c => c.Label.Length == 12);
+        var cards = CardsScreen.From([card]);
+        using var w = new Window(500, 900, dpi);
+        w.Frame(T0, CardsScreen.Empty);
+        w.Frame(T0.AddMinutes(1), cards);
+        w.Chrome.Show(PilotPage.Notifications);
+        w.Frame(T0.AddMinutes(1), cards);
+
+        // The literal rule, independent of how Buttons is drawn: the page's notification carries none of the toast's choice buttons.
+        w.Bar.Feed.NeedsYou.ShouldHaveSingleItem().Buttons.ShouldBeNull();
+
+        var texts = w.Texts();
+        texts.Count(t => t == "Choice-one-a").ShouldBe(1, "drawn once, by the whole card");
+        texts.Count(t => t == "Choice-two-b").ShouldBe(1, "drawn once, by the whole card");
+        w.Faults().ShouldBeEmpty("no text past the list's scroll, Dismiss included");
+        if (dpi == 1.5f)
+        {
+            w.Save("notifications-page-500-long-choices-dpi1.5");
         }
     }
 

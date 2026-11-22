@@ -266,7 +266,9 @@ internal sealed class NotificationsHost
                     Buttons = CardButtons?.Invoke(card, key.Item1),
                 };
                 // The page's row is the whole card; the toast over the page keeps its short body, which says when it is cut and links here.
-                var notification = CardPage is { } page ? toast with { Row = page(card, key.Item1) } : toast;
+                // It carries none of the toast's choice Buttons: the whole card lists every choice itself, and a buttons row there does not wrap
+                // and ran Dismiss past the scroll at 500 wide and DPI 1.5 (#1259). Only the toast keeps them.
+                var notification = CardPage is { } page ? toast with { Row = page(card, key.Item1), Buttons = null } : toast with { Buttons = null };
                 _ids[key] = Feed.Post(notification, now).Id;
                 // Only a ring raised while the window looks stands over the page: what was open at the first look is not news, and a For you
                 // card waits on the bar (the handle tints, the bell counts it) without a toast. A ring raised while the bar is open is shown by the

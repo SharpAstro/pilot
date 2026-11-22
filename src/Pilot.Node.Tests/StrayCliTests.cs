@@ -34,7 +34,7 @@ public sealed class StrayCliTests
         text.ShouldContain("testhost.exe  pid 501  job j7  age 3 h 0 min  cpu 3 h 0 min");
         text.ShouldContain("why: job j7 has run 3 h 0 min, over its time limit of 10 min");
         text.ShouldContain(@"command line: testhost.exe --port 5000 C:\repos\pilot\Pilot.Node.Tests.dll");
-        text.ShouldContain("end it: Stop-Process -Id 501 -Force");
+        text.ShouldContain("end it: pilot strays end 501, or by hand: Stop-Process -Id 501 -Force");
         text.ShouldContain("pwsh.exe  pid 502  session se1-old  age 1 min");
         text.ShouldNotContain("pid 502  session se1-old  age 1 min  cpu");
     }
@@ -73,7 +73,33 @@ public sealed class StrayCliTests
 
         text.ShouldContain("# pilot strays");
         text.ShouldContain("## testhost.exe 501");
-        text.ShouldContain("- **end it** `Stop-Process -Id 501 -Force`");
+        text.ShouldContain("- **end it** `pilot strays end 501`, or by hand `Stop-Process -Id 501 -Force`");
+    }
+
+    [Fact]
+    public void StraysEndResolvesAPidToTheKeyTheSweepUsesAndTheListingNamesTheCommand()
+    {
+        var machine = Machine(Stray(501), Stray(502));
+
+        var (key, refusal) = PilotCommand.StrayToEnd(machine, 502);
+
+        refusal.ShouldBeNull();
+        key.ShouldBe(Pilot.Node.Flights.StraySweep.KeyOf(502, DateTimeOffset.UnixEpoch));
+        PilotCommand.Strays(machine).ShouldContain("pilot strays end 501");
+        PilotCommand.StraysMarkdown(machine).ShouldContain("`pilot strays end 502`");
+        PilotCommand.Strays(machine).ShouldContain("Stop-Process -Id 501 -Force");
+    }
+
+    [Fact]
+    public void StraysEndRefusesAPidTheSweepDoesNotNameAndSaysWhatItDoes()
+    {
+        var (key, refusal) = PilotCommand.StrayToEnd(Machine(Stray(501)), 999);
+
+        key.ShouldBeNull();
+        refusal.ShouldNotBeNull().ShouldContain("no stray with pid 999");
+        refusal.ShouldContain("501");
+        refusal.ShouldContain("'pilot strays'");
+        PilotCommand.StrayToEnd(null, 1).Refusal.ShouldNotBeNull();
     }
 
     [Fact]

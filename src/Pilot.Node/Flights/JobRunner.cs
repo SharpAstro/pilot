@@ -491,7 +491,7 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
                 state.PutJob(row with { RetellRung = true });
                 // Rung or settled, the row is not looked at again: its baselines go with it (#1147: they were kept for the node's life).
                 ForgetTell(row.Id);
-                if (row.State != JobState.Failed && WhatWaits(row, ownerRow) is null)
+                if (OfLandedFlight(row) || (row.State != JobState.Failed && WhatWaits(row, ownerRow) is null))
                 {
                     // A succeeded or cancelled job whose leg has finished waits on nothing: no card, and the row is not looked at again.
                     continue;
@@ -547,6 +547,10 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
 
     /// <summary>How many jobs have retell baselines kept: what a test reads to see they are pruned.</summary>
     internal int TellBaselines => _contextAtTell.Count + _busyTurnEnd.Count;
+
+    // A job of a flight that has landed gets no For-you or Ring card: the landing closed its cards and nothing is left to act on (pilot #1270).
+    private bool OfLandedFlight(JobRow row) =>
+        row.Flight is { } code && state.Flights().Any(f => f.Code == code && f.State == FlightState.Landed);
 
     private string? WhatWaits(JobRow row, SessionRow owner)
     {
@@ -1549,6 +1553,7 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
         {
             if (state.Jobs().FirstOrDefault(j => j.Id == id) is not { State: JobState.Running, Kind: not JobKind.Bench, PausedAt: null } job
                 || now - job.StartedAt < LongJobWindow
+                || OfLandedFlight(job)
                 || !_longJobTold.TryAdd(id, 0))
             {
                 continue;
