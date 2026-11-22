@@ -177,6 +177,8 @@ public sealed partial class FlightCommander
         var (_, jobs) = SessionsAndJobsOf(flight);
         var endReason = mergedHead is not null ? SessionEndReasons.Merged : SessionEndReasons.Landed;
         var endBy = mergedHead is not null ? "merge" : "land";
+        var endedStrays = new List<MachineStray>();
+        string? strayNote = null;
         var (released, consumed, leftover, landedHead) = await OffLockAsync(async () =>
         {
             // Its sessions first: a worker inside its stop grace, or a reviewer, still has the plane open, and a folder held
@@ -270,6 +272,19 @@ public sealed partial class FlightCommander
             // A landing by hand with no merged PR knows none, and its branch is never deleted. A fold has nothing of its own to delete.
             var landedHead = foldedInto is not null ? null
                 : mergedHead ?? MergedEntryHead(flight) ?? await MergedPrHeadAsync(flight, cancellationToken);
+            // Its sessions are stopped: what they left (a child by descent, a re-parented process in the plane) is ended before the plane
+            // goes, so nothing holds the folder (pilot #1270). Landed already, so a failure is said in the Handled line, never a refusal.
+            if (EndStrays is not null)
+            {
+                try
+                {
+                    endedStrays.AddRange(EndStrays(flight));
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    strayNote = $"the strays of its sessions could not be looked for: {ex.Message}";
+                }
+            }
             var leftover = await planes.RemoveAsync(flight.RepoPath, flight.Worktree, cancellationToken);
             return (released, consumed, leftover, landedHead);
         });
@@ -353,11 +368,13 @@ public sealed partial class FlightCommander
         // Its cards leave with it, and a quiet one says it is in; a folded one says where its work went.
         // A review's notes card stays open: a flight released from its hold merges with the notes, which are the person's to do or dismiss.
         state.CloseCardsAboutExcept(Verbs.FlightTarget(flight.Code), foldedInto is null ? $"{flight.Code} landed" : $"{flight.Code} folded into {foldedInto}", LegCommander.ReviewNotesKind);
+        // The cards about its sessions, its jobs and their strays are not under the flight's target: they close with it (pilot #1270).
+        CloseCardsOfLandedParts(flight, foldedInto is null ? $"{flight.Code} landed" : $"{flight.Code} folded into {foldedInto}");
         if (foldedInto is null)
         {
             // Landed needs no one: a Handled line.
             state.RaiseCard(CardBin.Handled, "landed", Verbs.FlightTarget(flight.Code), $"{flight.Code} landed",
-                $"{flight.Title ?? flight.Item.Noun}{(flight.PullRequest is { } number ? $", PR #{number}" : "")}{(flight.FollowUpIssue is { } followUp ? $"; follow-up issue #{followUp} holds the points its reviews left" : "")}{(labelNote is null ? "" : $"; {labelNote}")}", link: flight.PullRequestUrl);
+                $"{flight.Title ?? flight.Item.Noun}{(flight.PullRequest is { } number ? $", PR #{number}" : "")}{(flight.FollowUpIssue is { } followUp ? $"; follow-up issue #{followUp} holds the points its reviews left" : "")}{(labelNote is null ? "" : $"; {labelNote}")}{(endedStrays.Count == 0 ? "" : $"; ended {string.Join(", ", endedStrays.Select(s => $"{s.Name} (pid {s.Pid})"))} left by its sessions")}{(strayNote is null ? "" : $"; {strayNote}")}", link: flight.PullRequestUrl);
         }
         else
         {
