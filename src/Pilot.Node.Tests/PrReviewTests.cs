@@ -731,6 +731,8 @@ public sealed class PrReviewTests2 : PrReviewTestsBase
         _github.Merged.ShouldHaveSingleItem().ShouldBe((7, _widgetHead, "squash"));
         await _reviews.SweepAsync(Ct);
         _github.Merged.Count.ShouldBe(1);
+        // Nothing to ask the person: no merge card is raised.
+        _state.Cards().ShouldNotContain(c => c.Kind == PrReviews.MergeKind);
     }
 
     [Fact]

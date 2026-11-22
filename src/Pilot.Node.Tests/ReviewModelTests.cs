@@ -155,6 +155,8 @@ public sealed class ReviewModelTests : ReviewTestsBase
         var notes = _state.Legs(flight.Code).Single(l => l.Name == LegCommander.ReviewNotesLeg);
         notes.DoneWhen.ShouldContain("a comment is stale");
         Open().ShouldNotContain(c => c.Kind == LegCommander.ReviewChanges);
+        // Nothing asks the person: the notes card of old is not raised as a For-you card.
+        Open().ShouldNotContain(c => c.Kind == LegCommander.ReviewNotesKind && c.Bin == CardBin.ForYou);
         _state.Legs(flight.Code).Where(l => l.Name != LegCommander.ReviewNotesLeg).ShouldAllBe(l => l.GoArounds == 0 && l.ReviewGoArounds == 0);
     }
 
