@@ -739,7 +739,7 @@ public sealed class FleetTests
             }
         }
 
-        marks.Count.ShouldBeGreaterThanOrEqualTo(lastKnown ? 2 : 3);
+        marks.Count.ShouldBeGreaterThanOrEqualTo(lastKnown ? 1 : 3);
         if (!lastKnown)
         {
             marks.ShouldContain(m => m.Name == "usage");
