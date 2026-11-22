@@ -141,6 +141,17 @@ internal static class WrappedProse
     }
 
     /// <summary>
+    /// Lines of text, each its own wrapped paragraph and none cut: a list read as a list (a design card's options, a whole detail). The
+    /// caller bounds the text; <paramref name="link"/> is as in <see cref="Of"/>.
+    /// </summary>
+    public static Layout.Node Lines(IEnumerable<string> lines, float size, RGBAColor32 color, Func<string, Layout.Node?>? link = null)
+    {
+        // Each line a paragraph of its own, uncapped, the gap between them as in Paragraphs. One line is that paragraph alone.
+        var rows = lines.Where(l => !string.IsNullOrWhiteSpace(l)).Select(l => Of(l, size, color, link: link)).ToArray();
+        return rows.Length == 1 ? rows[0] : Layout.Builder.VStack(rows).WithGap(2f).WStar().HAuto();
+    }
+
+    /// <summary>
     /// Lines of text, each its own wrapped paragraph (an explicit newline stays a break), together at most
     /// <paramref name="maxLines"/> lines tall: the first paragraph gets what the others leave of the cap, the others one each.
     /// </summary>

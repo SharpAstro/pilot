@@ -934,8 +934,12 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     /// </summary>
     internal const int LineChars = 75;
 
-    /// <summary>The longest summary made into leaves (it has no line cap); its whole text is on hover past this.</summary>
-    internal const int SummaryChars = 240;
+    /// <summary>
+    /// The longest summary made into leaves (it has no line cap): the node's own ceiling on a summary (<c>CardSummaries.MaxLength</c>), so
+    /// every summary the node keeps is drawn whole, and only a longer text from elsewhere is cut, its whole text on hover. A bound all the
+    /// same, so a frame fits a bounded few leaves however long the text.
+    /// </summary>
+    internal const int SummaryChars = 600;
 
     private static Layout.Node Whole(Layout.Node node, string text, bool cut) => cut ? node.WithTooltip(text, Layout.DockSide.Left) : node;
 
@@ -984,7 +988,9 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
 
     /// <param name="closed">Closed while the panel was held: drawn where and as it was, marked closed, its buttons dead.</param>
     /// <param name="merged">A merge that finished a moment ago (<see cref="CardsScreen.Merged"/>): in the live green, marked merged, with only its Merged chip.</param>
-    private Layout.Node Card(CardRow card, NodeMark? node, bool closed = false, bool merged = false)
+    /// <param name="full">The whole card, for the Notifications page (the owner, 2026-11-22: "in the notification tab it should always show the full
+    /// thing with all options"): its detail open and uncut, with no fold to toggle, and no frame of its own, as the page's row is its frame.</param>
+    private Layout.Node Card(CardRow card, NodeMark? node, bool closed = false, bool merged = false, bool full = false)
     {
         var accent = merged ? Live : closed ? Dim : card.Bin == CardBin.Ring ? Ring : ForYou;
         var leg = CardLeg.Of(card);
@@ -1027,7 +1033,9 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         var summary = card.Summary is { Length: > 0 } said ? said : null;
         if (summary is not null)
         {
-            lines.Add(Whole(WrappedProse.Of(WrappedProse.Bound(summary, SummaryChars), 12f, Body, SummaryLines, linker(12f), lineChars: LineChars), summary, summary.Length > SummaryChars));
+            // Drawn whole, each of its lines a paragraph (CardSummaryLines): a design card's question, each option by its tag and why it
+            // rings read as a list, never run together and never cut with the rest only on hover (the owner, 2026-11-22).
+            lines.Add(Whole(WrappedProse.Lines(CardSummaryLines.Of(WrappedProse.Bound(summary, SummaryChars)), 12f, Body, linker(12f)), summary, summary.Length > SummaryChars));
         }
         // The leg's name was not in the words above: a small link row of its own, so the leg is one click away all the same.
         if (leg is { } ofLeg && !linked)
@@ -1036,8 +1044,8 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         }
         if (card.Detail is { Length: > 0 } detail && detail != summary)
         {
-            var unfolded = summary is null || Volatile.Read(ref _detailOpen).Contains(card.Id);
-            if (summary is not null)
+            var unfolded = full || summary is null || Volatile.Read(ref _detailOpen).Contains(card.Id);
+            if (summary is not null && !full)
             {
                 lines.Add(Layout.Builder.Text($"{(unfolded ? "▾" : "▸")} Detail", 11f, Dim)
                     .BgHover(CardHover)
@@ -1046,12 +1054,18 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
             }
             if (unfolded)
             {
+                if (full && summary is not null)
+                {
+                    // No fold above it to set it off: a gap, so the detail reads as its own part under the summary's list.
+                    lines.Add(Layout.Builder.Spacer().RowH(6f));
+                }
                 // Wraps within the panel, three lines at most (eight on a merge's); an explicit newline stays a break.
                 var cap = DetailLinesOf(card);
-                if (card.Kind == CardKinds.WatchtowerAsk)
+                if (card.Kind == CardKinds.WatchtowerAsk || full)
                 {
                     // An ask's detail is the whole call its Allow runs: drawn whole, uncapped, so the tail of a long command is seen (PIL855).
-                    lines.Add(WrappedProse.Of(detail, 11f, Body));
+                    // The full card draws any detail so, each of its lines a paragraph, as the panel's fold would cut it.
+                    lines.Add(full ? WrappedProse.Lines(detail.Split('\n'), 11f, Body) : WrappedProse.Of(detail, 11f, Body));
                 }
                 else
                 {
@@ -1217,6 +1231,10 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         lines.Add(Layout.Builder.Spacer().RowH(6f));
         // Wrapping: a waiting session's card has up to four buttons, more than one line of the panel holds.
         lines.Add(ButtonRows(buttons));
+        if (full)
+        {
+            return Layout.Builder.VStack([.. lines]).WStar().HAuto();
+        }
 
         // A grid, not a stack with the accent bar beside the content and the content padded: a stack measures each child against its
         // whole width, taking off neither a sibling's width nor a padding, so the detail and the buttons were measured wider than
@@ -1236,6 +1254,12 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
             .WStar()
             .HAuto();
     }
+
+    /// <summary>
+    /// The whole of a card for the Notifications page's row, every choice live; <paramref name="closed"/> for a card no longer open (the
+    /// history), drawn as it was with its buttons dead.
+    /// </summary>
+    internal Layout.Node FullCard(CardRow card, NodeMark? node, bool closed) => Card(card, node, closed || _closed.Contains(card), full: true);
 
     /// <summary>The card's title, wrapped to <see cref="TitleLines"/> lines, with the whole text on hover where the cap could cut it.</summary>
     private Layout.Node Title(CardRow card, Func<float, Func<string, Layout.Node?>> linker)

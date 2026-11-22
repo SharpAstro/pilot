@@ -239,6 +239,7 @@ internal sealed class PilotChrome<TSurface>
         More = new RailMoreMenu<TSurface>(renderer);
         Notifications.CardBody = ToastBody;
         Notifications.CardButtons = ToastButtons;
+        Notifications.CardPage = (card, node) => () => WholeCard(card, node);
         // A flight page's Merge is its card's own choice, run as the panel runs it.
         Flights.CoveredAt = DrawnAfterPage;
         Flights.OnAnswerCard = (card, number) => Cards.OnAnswer?.Invoke(card, number);
@@ -569,12 +570,42 @@ internal sealed class PilotChrome<TSurface>
     internal static string CutToastLabel(string label) =>
         label.Length <= ToastLabelChars ? label : label[..(ToastLabelChars - 1)].TrimEnd() + "…";
 
+    // The cards as the last frame was given them, whether or not the bar drew them: the Notifications page's rows are drawn from it.
+    private CardsScreen _cardsNow = CardsScreen.Empty;
+
+    // The page's row for a card: the card as it is open now (its id, on its node where two nodes share an id), else as it was, closed.
+    private Layout.Node WholeCard(CardRow card, string? node)
+    {
+        var now = _cardsNow;
+        var same = now.Open.Where(c => c.Id == card.Id).ToList();
+        var open = same.FirstOrDefault(c => now.NodeOf(c)?.Name == node) ?? (same.Count == 1 ? same[0] : null);
+        return open is not null ? Cards.FullCard(open, now.NodeOf(open), closed: false) : Cards.FullCard(card, null, closed: true);
+    }
+
+    /// <summary>What a toast's summary shows whole, three lines of a 320-wide toast at 12pt; past it the toast says it is cut.</summary>
+    internal const int ToastSummaryFits = 120;
+
+    /// <summary>The line a toast that does not show the whole card ends with: a link to the Notifications page, which does.</summary>
+    internal const string ToastCutLabel = "Cut short here: see the whole card in Notifications";
+
+    /// <summary>
+    /// Whether a card's toast leaves part of it out: a summary past what its three lines show, a detail it never shows, or a choice past the
+    /// two plain ones it carries (one that asks for words, Chat about this and Dismiss are the panel's).
+    /// </summary>
+    internal static bool ToastCuts(CardRow card, int shownChoices) =>
+        card.Summary is { Length: > ToastSummaryFits }
+        || (card.Detail is { Length: > 0 } detail && detail != card.Summary)
+        || card.Choices.Count(c => c.Status != ChoiceStatus.Unavailable && !ChoiceStatus.IsChip(c.Status)) > shownChoices;
+
     // A staying card's toast keeps its words and carries the card's own plain choices, answered as the panel answers them (Cards.OnAnswer).
+    // A toast is a glance: where it leaves part of the card out it says so, with a link to the Notifications page, which lists the whole card
+    // (the owner, 2026-11-22: "when in the toaster it should say that some parts are cropped off and provide a link").
     private Func<Layout.Node>? ToastBody(CardRow card, string? node)
     {
         var plain = card.Choices.Select((choice, i) => (choice, number: i + 1))
             .Where(c => c.choice.AsksFor is null && c.choice.Status != ChoiceStatus.Unavailable && !ChoiceStatus.IsChip(c.choice.Status)).Take(2).ToArray();
-        if (plain.Length == 0)
+        var cut = ToastCuts(card, plain.Length);
+        if (plain.Length == 0 && !cut)
         {
             return null;
         }
@@ -596,6 +627,11 @@ internal sealed class PilotChrome<TSurface>
             {
                 var line = refusal.Pad(6f, 3f).Bg(colors.Card);
                 parts.Add(Cards.Presses.RefusedOf(pressKey) is { Length: > 0 } why ? line.WithTooltip(why) : line);
+            }
+            if (cut)
+            {
+                parts.Add(WrappedProse.Of(ToastCutLabel, 11f, p.Link, selectable: false)
+                    .Follows(new HitResult.ButtonHit($"toast:{card.Id}:whole"), _ => Show(PilotPage.Notifications)));
             }
             return Layout.Builder.VStack([.. parts]).WithGap(4f).WStar();
         };
@@ -1416,6 +1452,7 @@ internal sealed class PilotChrome<TSurface>
         // Every open card is a notification in the bar's feed; its bell counts them and goes amber while one rings.
         if (cards is not null)
         {
+            _cardsNow = cards;
             Notifications.Sync(cards.Open, c => Cards.NodeOf(c)?.Name, feedNow);
         }
         var tasks = JobsGlyph(jobs, screen.AsOf);

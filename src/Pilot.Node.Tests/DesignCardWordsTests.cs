@@ -105,6 +105,51 @@ public sealed class DesignCardWordsTests
         CardsPanelFixture.ShouldMatch("c3479", card, title: false);
     }
 
+    /// <summary>
+    /// A view reads a design card's summary as a list (CardSummaryLines): the question, each option by its tag and why it rings, each on a
+    /// line of its own, not one wall of text (the owner on tianwen#2435's card, 2026-11-22). The summary stays one line on the wire.
+    /// </summary>
+    [Fact]
+    public void TheSummaryReadsAsTheQuestionThenEachOptionOnALineOfItsOwn()
+    {
+        // Each from its own summary: a second raise on the same subject is the first card again.
+        var c3483 = CardSummaryLines.Of(PrReviews.DesignSummary([C3483]));
+        c3483.ShouldBe(
+        [
+            "Which share of clear frames counts as a good night?",
+            "A: measure the share of clear frames of the archive nebula-fields over the whole session.",
+            "B: measure it per field and keep the worst of the nebula-fields.",
+        ]);
+        CardSummaryLines.Of(PrReviews.DesignSummary(C3479)).ShouldBe(
+        [
+            "1. Should a stalled worker be restarted or reminded first?",
+            "1A: remind it first (recommended).",
+            "1B: restart it at once.",
+            "2. Is a leg done when its check passes?",
+            "2A: mark it done when its check passes (recommended).",
+            "2B: wait for the review too.",
+        ]);
+    }
+
+    /// <summary>A question the reviewer did not end with a stop gets one, so its first option still starts a line of its own.</summary>
+    [Fact]
+    public void AQuestionWithNoStopGetsOneSoItsFirstOptionStartsALine()
+    {
+        var summary = Raise(new DesignQuestion(null!, "which share counts as a good night", C3483.Options)).Summary.ShouldNotBeNull();
+
+        summary.ShouldStartWith("which share counts as a good night. A: ");
+        CardSummaryLines.Of(summary)[0].ShouldBe("which share counts as a good night.");
+        CardSummaryLines.Of(summary).Skip(1).Take(2).ShouldAllBe(line => line.StartsWith("A: ") || line.StartsWith("B: "));
+    }
+
+    /// <summary>Plain prose is one line: a capital letter and a colon break only after a sentence's end.</summary>
+    [Fact]
+    public void ASummaryThatIsNoListStaysOneLine()
+    {
+        CardSummaryLines.Of("Plan A: run the check first, then land it.").ShouldBe(["Plan A: run the check first, then land it."]);
+        CardSummaryLines.Of("Two lines.\nAs written.").ShouldBe(["Two lines.", "As written."]);
+    }
+
     [Fact]
     public void ThreeQuestionsTakeAllThreeAndAQuestionWithNoRecommendedAnswerLeavesOnlyOwnWords()
     {
