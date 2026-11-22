@@ -757,8 +757,8 @@ public sealed class ReviewTests1 : ReviewTestsBase
     public async Task TheLookKeepsWhetherGitHubHasThePrAsADraftOnTheFlight()
     {
         var (flight, _) = await Passed("35");
-        // Checks still pending: the node merges a passed flight at its first look otherwise, and the draft mark is what is looked at.
-        _github.Checks = ChoiceStatus.Pending;
+        // A no-auto-merge repo: the node merges a passed flight at its first look otherwise, and the draft mark is what is looked at.
+        _legs.Models = new RoleModels(new NodeSettings { NoAutoMergeRepos = [flight.Repo] });
         var checks = new PrChecks(_state, _github, TimeProvider.System, _flights, _legs);
 
         _github.Pr = _github.Pr! with { Draft = true };
