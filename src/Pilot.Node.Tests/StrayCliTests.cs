@@ -34,7 +34,7 @@ public sealed class StrayCliTests
         text.ShouldContain("testhost.exe  pid 501  job j7  age 3 h 0 min  cpu 3 h 0 min");
         text.ShouldContain("why: job j7 has run 3 h 0 min, over its time limit of 10 min");
         text.ShouldContain(@"command line: testhost.exe --port 5000 C:\repos\pilot\Pilot.Node.Tests.dll");
-        text.ShouldContain("end it: Stop-Process -Id 501 -Force");
+        text.ShouldContain("end it: pilot strays end 501, or by hand: Stop-Process -Id 501 -Force");
         text.ShouldContain("pwsh.exe  pid 502  session se1-old  age 1 min");
         text.ShouldNotContain("pid 502  session se1-old  age 1 min  cpu");
     }
@@ -73,7 +73,7 @@ public sealed class StrayCliTests
 
         text.ShouldContain("# pilot strays");
         text.ShouldContain("## testhost.exe 501");
-        text.ShouldContain("- **end it** `Stop-Process -Id 501 -Force`");
+        text.ShouldContain("- **end it** `pilot strays end 501`, or by hand `Stop-Process -Id 501 -Force`");
     }
 
     [Fact]
