@@ -8,7 +8,7 @@ namespace Pilot.Node.Tests;
 
 /// <summary>
 /// Pilot #1226: a review that passes with not blocking notes cannot merge with a note unmade. Only the owner's word (the person's, or the
-/// watchtower carrying it, with a reason) clears the hold or removes the review-notes leg; an untaken hold plans the leg or rings the owner;
+/// watchtower carrying it, with a reason) clears the hold or removes the review-notes leg; a hold whose leg is missing has the node plan it again, or ring the owner when the node does not advance;
 /// the merge refuses a note with no end. Each runs on the in-memory node.
 /// </summary>
 public sealed class NotesUnmadeTests : ReviewTestsBase
@@ -142,7 +142,7 @@ public sealed class NotesUnmadeTests : ReviewTestsBase
 
     [Fact]
     [Trait("Category", "Slow")]
-    public async Task AnUntakenHoldPlansTheReviewNotesLegAndNeverMergesWithTheNote()
+    public async Task ARemovedReviewNotesLegIsPlannedAgainAndTheFlightNeverMergesWithTheNote()
     {
         NodeAdvances();
         _github.Checks = ChoiceStatus.Passing;

@@ -65,7 +65,7 @@ public sealed class ReviewFollowUpTests : ReviewTestsBase
 
         (await Run(Verbs.Review, Verbs.FlightTarget(code), Reviewer(code), "pass",
             Answers + "\n## Not blocking\n- E could be tidier in Lexer.cs:8\n- F deserves a comment in Parser.cs:40\n")).Error.ShouldBeNull();
-        // A pass with notes holds the flight; a person clears the hold untaken, so the notes were never made.
+        // A pass with notes holds the flight; a person clears the hold without making the notes.
         // Only the person's word clears it with the notes unmade (pilot #1226): a reason, then the as-is merge.
         (await Run(Verbs.Clear, Verbs.FlightTarget(code), "me", "to merge the notes as follow-ups")).Error.ShouldBeNull();
         Task<CommandResult> AsIs() => Run(Verbs.Merge, Verbs.FlightTarget(code), "me", _github.Pr!.Head, "squash", LegCommander.MergeAsIs);
