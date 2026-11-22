@@ -88,6 +88,45 @@ public sealed class LandingBranchTests : ReviewTestsBase
     }
 
     [Fact]
+    public async Task ALandingWithSeveralRefusedBranchesRaisesOneCardForTheRepoNamingEachOfThem()
+    {
+        var (lander, _) = await Passed("1");
+        var head = Git(lander.Worktree, "rev-parse", "HEAD");
+        var second = await NewFlight("2", "parser");
+        var third = await NewFlight("3", "parser");
+        await _flights.RetireFoldedAsync(F(second.Code), lander.Code, Ct);
+        await _flights.RetireFoldedAsync(F(third.Code), lander.Code, Ct);
+        foreach (var other in new[] { second, third })
+        {
+            Git(Repo, "branch", "-f", other.Branch, head);
+            Git(Repo, "push", "-q", "origin", $"{head}:refs/heads/{other.Branch}");
+        }
+        // Refuses every delete on origin (the new value is all zeros), whichever flight branch it is.
+        var hook = Path.Combine(Path.GetDirectoryName(Repo)!, "origin.git", "hooks", "update");
+        Directory.CreateDirectory(Path.GetDirectoryName(hook)!);
+        File.WriteAllText(hook, "#!/bin/sh
+if [ \"$3\" = \"0000000000000000000000000000000000000000\" ]; then echo \"no deleting $1 here\" >&2; exit 1; fi
+exit 0
+");
+
+        await LandMerged(lander);
+
+        foreach (var f in new[] { lander, second, third })
+        {
+            OnOrigin(f.Branch).ShouldNotBeEmpty();
+            F(f.Code).BranchDeleteFailed.ShouldNotBeNull().ShouldContain($"no deleting refs/heads/{f.Branch} here");
+        }
+        var card = Open().Single(c => c.Kind == FlightCommander.BranchKeptKind);
+        card.Bin.ShouldBe(CardBin.ForYou);
+        card.Subject.ShouldBe(Verbs.RepoTarget(F(lander.Code).RepoPath));
+        card.Detail.ShouldNotBeNull();
+        foreach (var f in new[] { lander, second, third })
+        {
+            card.Detail.ShouldContain(f.Branch);
+        }
+    }
+
+    [Fact]
     public async Task ALandedFlightWhoseLocalBranchIsOneCommitPastTheMergedHeadKeepsItAndRaisesOneCardNamingTheCommit()
     {
         var (flight, head) = await PassedDetached("1");

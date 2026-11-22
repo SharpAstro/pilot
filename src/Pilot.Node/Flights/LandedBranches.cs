@@ -5,7 +5,7 @@ namespace Pilot.Node.Flights;
 /// <summary>One landed flight to judge: its row, the head its PR merged at, and whether a session of it is still live.</summary>
 public sealed record LandedCandidate(FlightRow Flight, string MergedHead, bool LiveSession);
 
-/// <summary>How a branch fared: <see cref="Deleted"/>, <see cref="Kept"/> (with a reason group and why), or <see cref="RetryLater"/>.</summary>
+/// <summary>How a branch fared: <see cref="Deleted"/>, <see cref="Kept"/> (with a reason group and why), <see cref="RetryLater"/>, or <see cref="Failed"/> (origin refused the delete).</summary>
 public enum LandedBranchResult
 {
     Deleted,
