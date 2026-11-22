@@ -99,12 +99,14 @@ public sealed partial class LegCommander
         {
             return Due(current) is { Step.Verb: Verbs.StartLeg };
         }
-        if (NotYetToMove(current) is null)
+        // A sweep that found no node worth moving to looks again only after a while: reading every peer each sweep is waste.
+        if (NotYetToMove(current) is null
+            && (!_sweepMoveLooked.TryGetValue(current.Code, out var looked) || time.GetUtcNow() - looked >= SweepMoveLook))
         {
             // A failure is on the flight and a card already; a refusal for a flight that changed since the look is the next sweep's to see.
             try
             {
-                await MoveAsync(current.Code, cancellationToken);
+                await MoveAsync(current.Code, cancellationToken, sweep: true);
             }
             catch (FlightException)
             {
@@ -118,7 +120,7 @@ public sealed partial class LegCommander
     /// when it is not to move yet (<see cref="NotYetToMove"/>), changing nothing. Returns what moved (<c>TIA1 moved to DE1 after leg parser</c>),
     /// or why the move failed, which is then on the flight and on a card as well: the flight stays here, flown from here alone.
     /// </summary>
-    public async Task<(string? Moved, string? Failure)> MoveAsync(string code, CancellationToken cancellationToken)
+    public async Task<(string? Moved, string? Failure)> MoveAsync(string code, CancellationToken cancellationToken, bool sweep = false)
     {
         // A move whose outcome is not known is asked about first: the other node may well have the flight, which is then moved, not moved again.
         if (state.Flights().Any(f => string.Equals(f.Code, code, StringComparison.OrdinalIgnoreCase) && f.MoveUnknown is not null)
@@ -138,7 +140,15 @@ public sealed partial class LegCommander
             }
             // From here, under the lock, no session of the flight starts until it is moved or the move has failed.
             moving = _moving.TryAdd(flight.Code, true);
-            var (to, failure, unknown) = await OffLockAsync(null, () => HandOverAsync(flight, cancellationToken));
+            var (to, failure, unknown) = await OffLockAsync(null, () => HandOverAsync(flight, sweep, cancellationToken));
+            if (to is null && failure is null)
+            {
+                // The sweep's own move with no node worth moving to: the flight waits here, held as maintenance holds it, and no one is
+                // told, for there is nothing to do; the owner put the node in maintenance and takes it out.
+                _sweepMoveLooked[flight.Code] = time.GetUtcNow();
+                return (null, null);
+            }
+            _sweepMoveLooked.TryRemove(flight.Code, out _);
             if (to is null)
             {
                 RecordMoveFailure(flight, failure!, unknown);
@@ -174,13 +184,24 @@ public sealed partial class LegCommander
     /// (<see cref="FleetChoice"/>), the plane made safe, and the flight sent to each willing node in turn until one takes it. The node
     /// that took it, or null and why not.
     /// </summary>
-    private async Task<(string? To, string? Failure, FlightMoveUnknown? Unknown)> HandOverAsync(FlightRow flight, CancellationToken cancellationToken)
+    private async Task<(string? To, string? Failure, FlightMoveUnknown? Unknown)> HandOverAsync(FlightRow flight, bool sweep, CancellationToken cancellationToken)
     {
         var gitHub = RepoCatalog.GitHubOf(Path.Combine(flight.RepoPath, ".git"));
         var peers = flights.Fleet?.Peers() ?? [];
         var facts = await Task.WhenAll(peers.Select(p => FlightCommander.ReadPeerAsync(p, gitHub, time.GetUtcNow(), cancellationToken)));
         var verdicts = FleetChoice.Judge(facts.Select(f => f.Facts), gitHub);
         var willing = verdicts.Where(v => v.Reason is null).ToList();
+        if (sweep)
+        {
+            // The sweep moves a flight only to a node on another account: one on this node's account spends the same usage, so the move
+            // gains nothing. With none willing, or none on another account, there is nothing to report: null and null, and no card.
+            var mine = state.Usage()?.Account?.Email;
+            willing = [.. willing.Where(v => mine is null || !string.Equals(v.Facts.Account, mine, StringComparison.OrdinalIgnoreCase))];
+            if (willing.Count == 0)
+            {
+                return (null, null, null);
+            }
+        }
         if (willing.Count == 0)
         {
             return (null, Failed(flight, null, peers.Count == 0
@@ -339,6 +360,12 @@ public sealed partial class LegCommander
             }
         }
     }
+
+    // The flights a maintenance sweep found no node worth moving to, and when: looked at again after SweepMoveLook.
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, DateTimeOffset> _sweepMoveLooked = new(StringComparer.Ordinal);
+
+    /// <summary>How long a maintenance sweep waits before it looks again for a node to move a flight to, after finding none.</summary>
+    private static readonly TimeSpan SweepMoveLook = TimeSpan.FromMinutes(10);
 
     private static string Failed(FlightRow flight, string? to, string why) =>
         $"{flight.Code} could not move{(to is null ? "" : $" to {to}")}: {why}";
