@@ -260,6 +260,7 @@ public sealed class ToastPressTests
                 line.ShouldNotBeEmpty("the refusal line carries the node's words on hover");
                 // The tooltip may sit on a wrapper of the filled node, so the fill is looked for on the node or any node drawn around it.
                 var words = line[0].Bounds;
+                line.Count.ShouldBe(-1, $"DIAG want={colors.Card} words={words} lines=[{string.Join("; ", line.Select(l => $"{l.Node.Background} {l.Bounds}"))}] all=[{string.Join("; ", row.Select(l => $"{l.Node.Background} {l.Bounds}"))}]");
                 row.ShouldContain(n => n.Node.Background == colors.Card && n.Bounds.X <= words.X + 0.5f && n.Bounds.Y <= words.Y + 0.5f
                     && n.Bounds.X + n.Bounds.Width >= words.X + words.Width - 0.5f && n.Bounds.Y + n.Bounds.Height >= words.Y + words.Height - 0.5f,
                     "the refusal line is filled with the card colour its ink is measured against");
