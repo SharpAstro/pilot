@@ -131,7 +131,7 @@ public sealed class StraySweep(NodeState state, IProcessTable table, TimeProvide
     /// <summary>The card's subject for a process: its pid and its start, so a later process with the same pid is another card.</summary>
     public static string KeyOf(Stray stray) => KeyOf(stray.Pid, stray.Start);
 
-    private static string KeyOf(int pid, DateTimeOffset? start) =>
+    public static string KeyOf(int pid, DateTimeOffset? start) =>
         $"process:{pid.ToString(CultureInfo.InvariantCulture)}@{(start is { } at ? at.ToUnixTimeSeconds().ToString(CultureInfo.InvariantCulture) : "unknown")}";
 
     // The sweep ends nothing: it names a stray on a card, with its kill command, and the person decides. It used to end what it

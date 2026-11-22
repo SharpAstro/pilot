@@ -25,6 +25,9 @@ public sealed class NodePress(NodeState state, Func<bool> autopilotOn, Func<Comm
     /// <summary>Why no fixer may start on a PR now (<see cref="PrReviews.WhyNoFixerAsync"/>); null when one may, a text when not.</summary>
     public Func<PrRef, CancellationToken, Task<string?>> WhyNoFixer { get; init; } = (_, _) => Task.FromResult<string?>("no review is known here");
 
+    /// <summary>Closes the refused-press cards whose target is gone, at each look (<see cref="StaleRefused"/>); null closes none.</summary>
+    public StaleRefused? Stale { get; init; }
+
     /// <summary>Where the press says what it did: node.log.</summary>
     public TextWriter Error { get; init; } = TextWriter.Null;
 
@@ -60,6 +63,11 @@ public sealed class NodePress(NodeState state, Func<bool> autopilotOn, Func<Comm
     /// <summary>One look: presses each open card of the three kinds the node's rules decide; returns how many it pressed.</summary>
     public async Task<int> PressAsync(CancellationToken cancellationToken)
     {
+        // A refused press whose target is gone closes with the autopilot on or off: the look is the node's, not a press.
+        if (Stale is { } stale)
+        {
+            await stale.CloseAsync(cancellationToken);
+        }
         if (!autopilotOn())
         {
             return 0;

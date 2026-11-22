@@ -20,6 +20,15 @@ public static partial class NodeApp
                     var reviews = services.GetRequiredService<PrReviews>();
                     return reviews.Of(pr) is { } review ? await reviews.WhyNoFixerAsync(pr, review, cancellationToken) : "no review is known here";
                 },
+                Stale = new StaleRefused(services.GetRequiredService<NodeState>())
+                {
+                    PrState = async (pr, cancellationToken) => (await services.GetRequiredService<IGitHub>().PullRequestOfAsync(pr.Repo, pr.Number, cancellationToken)).State,
+                    StrayGone = key =>
+                    {
+                        var state = services.GetRequiredService<NodeState>();
+                        return services.GetService<StraySweep>() is not null && !state.Strays().Any(s => StraySweep.KeyOf(s.Pid, s.StartedAt) == key);
+                    },
+                },
                 Error = logWriter,
             };
             // A card the node presses itself, with the autopilot on, is never sent to the ring judge.
