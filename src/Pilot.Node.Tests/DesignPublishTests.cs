@@ -417,4 +417,21 @@ public sealed class DesignPublishTests : IAsyncLifetime
             (1280u, 1440u), (2560u, 1440u),
         ]);
     }
+
+    /// <summary>
+    /// The help a designer reads asks for a short why, in the CLI and in the MCP tool alike: the tool's parameters are built from the same
+    /// option, so both say "a short reason, one line, at most 120 characters" (#1162 R1.5; the brief's ask and the refusals are tested apart).
+    /// </summary>
+    [Fact]
+    public void TheCliAndMcpHelpOfPublishAskForAShortWhy()
+    {
+        const string Asked = "a short reason, one line, at most 120 characters";
+        var root = PilotCommand.Build(Path.GetTempPath(), TextWriter.Null, TextWriter.Null, "mcp", agent: true);
+        var publish = root.Subcommands.Single(c => c.Name == "design").Subcommands.Single(c => c.Name == "publish");
+        publish.Options.Single(o => o.Name == "--why").Description.ShouldNotBeNull().ShouldContain(Asked);
+
+        // The MCP tool is that very command: its schema's descriptions are the options' own (McpTests checks the schema is built so).
+        var tool = McpServer.Tools(root)["design_publish"];
+        tool.Chain[^1].ShouldBeSameAs(publish);
+    }
 }

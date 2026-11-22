@@ -74,11 +74,11 @@ public sealed class DesignCommands(NodeState state, DesignStore store, Designers
                     sync?.Kick(published.Id);
                     return state.Complete(command, null, made: $"{published.Id} v{published.Current}");
                 case Verbs.DesignEdit:
-                    // args: part, cell (empty for the design), text.
+                    // args: part, cell (empty for the design), text, and optionally the heading the cell had when the typing began (#1182 N4.1).
                     var editId = DesignStore.Normalise(IdOf(command));
                     var editPart = args.Length > 0 ? args[0] : "";
                     var editCell = args.Length > 1 ? args[1] : "";
-                    var typed = store.Edit(editId, editPart, editCell, args.Length > 2 ? args[2] : "");
+                    var typed = store.Edit(editId, editPart, editCell, args.Length > 2 ? args[2] : "", args.Length > 3 ? args[3] : null);
                     // The designer is told at its next turn, never woken for it.
                     designers?.Queue(editId, editPart.Trim().ToLowerInvariant(), editCell, typed);
                     // The owner typing has the design open for editing: the issue is labelled, in the background, and a failure never blocks the edit.

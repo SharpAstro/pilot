@@ -313,6 +313,34 @@ public sealed class DesignerTests : IDisposable
         _store.Find(id)!.DesignerIdleSince.ShouldBeNull();
     }
 
+    /// <summary>
+    /// Past the tracker's retention (a day) the ended row is gone, so a piece cannot resume it: the node starts a fresh designer whose brief
+    /// carries the design whole (the brief so far, the prototype), and the old session stays in <see cref="DesignRow.DesignerSessions"/>, so
+    /// only the warm context is lost, no design state (#1162 R1.4).
+    /// </summary>
+    [Fact]
+    public async Task APieceAfterTheEndedRowIsForgottenStartsAFreshDesignerWithTheWholeDesign()
+    {
+        var id = IdleDesigner("A night list, dark.");
+        _time.Advance(TimeSpan.FromMinutes(31));
+        _designers.Sweep();
+        await _designers.Settled;
+        _workers.StopReasons.Count.ShouldBe(1);
+        _state.RemoveSession("job00001");
+
+        Brief(id, "add a weather strip");
+        await _designers.Settled;
+
+        _said.ShouldBeEmpty("nothing is left to resume");
+        _workers.Started.Count.ShouldBe(2);
+        var fresh = _workers.Started[^1];
+        fresh.Name.ShouldBe("de1-dsn1-designer");
+        fresh.Brief.ShouldContain("A night list, dark.");
+        fresh.Brief.ShouldContain("add a weather strip");
+        fresh.Brief.ShouldContain("prototype.json");
+        _store.Find(id)!.DesignerSessions.ShouldContain("job00001-0000-4000-8000-000000000000");
+    }
+
     private string Hook(string session, string tool, string cwd, string path) =>
         JsonSerializer.Serialize(new Dictionary<string, object>
         {

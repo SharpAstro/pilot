@@ -10,7 +10,7 @@ internal sealed class DesignReads(NodeClient? client, string who, Action redraw)
 {
     /// <summary>
     /// How a command goes to the node: the client's <see cref="NodeClient.SendAsync"/>, or what a test puts in its place to see the requests the
-    /// page's chat and typing make (#1158 R1.10: the host wiring was checked only by reading).
+    /// page's chat, typing and buttons make without a node, as <see cref="NodeClient"/> is a socket (#1158 R1.10, #1170 R1.3).
     /// </summary>
     internal Func<CommandRequest, CancellationToken, Task<ResponseEnvelope<CommandResult>>> Send { get; init; } =
         (command, cancellationToken) => client is not null ? client.SendAsync(command, cancellationToken) : throw new InvalidOperationException("no node to send to");
@@ -189,9 +189,9 @@ internal sealed class DesignReads(NodeClient? client, string who, Action redraw)
             redraw();
         });
         // Typing into the design (PIL1171): design-edit, design-publish as the owner, design-discard; the page is read again at once so the draft shows.
-        designs.OnEdit = (id, part, cell, text) => _ = Task.Run(async () =>
+        designs.OnEdit = (id, part, cell, text, heading) => _ = Task.Run(async () =>
         {
-            designs.Typed(await TypeAsync(Verbs.DesignEdit, id, [part, cell, text], CancellationToken.None).ConfigureAwait(false));
+            designs.Typed(await TypeAsync(Verbs.DesignEdit, id, heading is null ? [part, cell, text] : [part, cell, text, heading], CancellationToken.None).ConfigureAwait(false));
             redraw();
         });
         designs.OnPublishTyped = (id, why, pending) => _ = Task.Run(async () =>

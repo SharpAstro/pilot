@@ -109,6 +109,7 @@ public sealed class PullRequestLinksTests
     // The page's list laid out as the window gives it (the cards panel takes the right when there are cards), with its viewport and its row <pr>'s place.
     private static (Rect<float> Viewport, Rect<float>? Row) ListOf(RgbaImageRenderer renderer, PullRequestsView<RgbaImage> page, PullRequestsScreen screen, PullRequestRow pr, bool withCards = true)
     {
+        // The page's width in a 1280 window less the rail: with the For you bar docked beside it (PIL1205), less the bar's width too; collapsed, the whole (#1196).
         var width = 1280f - 52f - (withCards ? CardsView<RgbaImage>.Width : 0f);
         var arranged = Layout.Engine.Arrange(page.Tree(screen, width), new Rect<float>(0, 0, width, Height), new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, 1f));
         var viewport = arranged.Single(a => a.Node.Scroll is not null).Bounds;

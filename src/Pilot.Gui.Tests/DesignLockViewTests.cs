@@ -39,7 +39,7 @@ public sealed class DesignLockViewTests
             Chrome = new PilotChrome<RgbaImage>(_renderer, new SessionsView<RgbaImage>(_renderer)) { FontPath = SessionsCapture.FontPath };
             Chrome.Autopilot.OnToggle = _ => Task.FromResult<string?>(null);
             Chrome.Show(PilotPage.Designs);
-            View.OnEdit = (_, _, _, _) => { };
+            View.OnEdit = (_, _, _, _, _) => { };
             View.Open(screen.Rows[0].Id);
             Paint();
         }

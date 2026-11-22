@@ -334,6 +334,13 @@ public sealed class DesignLockTests : IDisposable
         // The page says the version is held, not that it is being written.
         held.SyncHeld.ShouldBe(true);
 
+        // Another round under the same hold writes the record zero times (#1182 N4.2): it is held already, and nothing of it changed.
+        var record = Path.Combine(de1.Store.FolderOf(design.Id), Pilot.Node.Designs.DesignStore.RecordFile);
+        var longAgo = new DateTime(2000, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+        File.SetLastWriteTimeUtc(record, longAgo);
+        await de1.Sync.SyncAsync(design.Id, Ct);
+        File.GetLastWriteTimeUtc(record).ShouldBe(longAgo, "a round under a hold already shown writes nothing");
+
         _github.IssueLabels[issue].TryRemove("pilot: hold", out _);
         await de1.Sync.SweepAsync(Ct);
 

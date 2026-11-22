@@ -254,4 +254,22 @@ public sealed class DesignCliTests : IAsyncLifetime
         lines[1].ShouldStartWith("DSN-1");
         lines[1].ShouldContain("no version");
     }
+
+    /// <summary>
+    /// pilot design build's options reach the node in the positions DesignBuilds reads (version, repo, milestone; empty when not given), which the node's own
+    /// tests, calling DesignBuilds with those positions, cannot catch swapped (#1180 R1.6).
+    /// </summary>
+    [Fact]
+    public void BuildSendsTheVersionRepoAndMilestoneInTheirPositions()
+    {
+        var root = PilotCommand.Build(Path.GetTempPath(), TextWriter.Null, TextWriter.Null);
+        var build = root.Subcommands.Single(c => c.Name == "design").Subcommands.Single(c => c.Name == "build");
+        var parsed = root.Parse(["design", "build", "DSN-4", "--version", "2", "--repo", "tianwen", "--milestone", "v1"]);
+        parsed.Errors.ShouldBeEmpty();
+        int? version = parsed.GetValue<int?>("--version");
+        PilotCommand.DesignBuildArgs(version, parsed.GetValue<string?>("--repo"), parsed.GetValue<string?>("--milestone")).ShouldBe(["2", "tianwen", "v1"]);
+        PilotCommand.DesignBuildArgs(null, null, null).ShouldBe(["", "", ""]);
+        PilotCommand.DesignBuildArgs(null, null, "v1").ShouldBe(["", "", "v1"]);
+        build.Options.Select(o => o.Name).ShouldBe(["--version", "--repo", "--milestone"], ignoreOrder: true);
+    }
 }
