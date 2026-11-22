@@ -343,6 +343,24 @@ public sealed class SettingsTests : IDisposable
         result.Way.ShouldNotBeNull().ShouldContain("pilot-node setup");
     }
 
+    /// <summary>
+    /// designer-keep reaches the node's own designers through its wiring, not only when a test sets <c>Designers.Keep</c>: a saved value is in
+    /// force at the next sweep (#1162 R1.8).
+    /// </summary>
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task DesignerKeepSetOnTheNodeIsTheKeepItsDesignersUse()
+    {
+        await using var node = await NodeHarness.StartAsync(Ct);
+        var designers = node.App.Services.GetRequiredService<Pilot.Node.Designs.Designers>();
+        designers.Keep().ShouldBe(TimeSpan.FromMinutes(NodeSettings.DefaultDesignerKeep));
+
+        var set = (await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Set, Target = Verbs.NodeTarget, Args = [NodeSettings.DesignerKeepKey, "45"], Who = "tests" }, Ct)).Response.ShouldNotBeNull();
+
+        set.Ok.ShouldBeTrue(set.Error);
+        designers.Keep().ShouldBe(TimeSpan.FromMinutes(45));
+    }
+
     [Fact]
     [Trait("Category", "Slow")]
     public async Task SetSavesASettingAndThePageShowsItSavedForTheNextStart()

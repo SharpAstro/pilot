@@ -123,7 +123,7 @@ public sealed class CaretBlinkPageTests
         var chrome = Chrome(renderer, PilotPage.Designs);
         var data = PageData.For("sample");
         var screen = PageData.DesignsFor("sample", PageData.Now);
-        chrome.Designs.OnEdit = (_, _, _, _) => { };
+        chrome.Designs.OnEdit = (_, _, _, _, _) => { };
         chrome.Designs.Open("DSN-1");
         Paint(chrome, data, screen);
         // The first cell: it is on the page at this size, where a later one can lie below the fold and paint nothing.

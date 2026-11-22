@@ -145,7 +145,7 @@ public sealed class DesignPageLayoutTests
     public void AnEditableCurrentDesignWithNoObjectiveOffersAddObjective()
     {
         using var rig = new Rig(1920, 1080);
-        rig.View.OnEdit = (_, _, _, _) => { };
+        rig.View.OnEdit = (_, _, _, _, _) => { };
         Texts(rig.Arranged()).ShouldContain(t => t.Text == DesignsView<RgbaImage>.AddObjective);
     }
 }

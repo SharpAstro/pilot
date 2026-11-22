@@ -255,4 +255,27 @@ public sealed class IdeaDesignLinkTests : IDisposable
         _store.Render(id);
         _store.Publish(id, "first look");
     }
+
+    /// <summary>
+    /// The design rows an ideas refresh links are read before the node's lock is taken (#1170 R1.4): while they are read, another thread reads
+    /// the node's state without waiting.
+    /// </summary>
+    [Fact]
+    public void TheDesignRowsAreReadOutsideTheNodesLock()
+    {
+        var state = new NodeState(new InMemoryJournal(), TimeProvider.System);
+        var reads = 0;
+        state.Designs = () =>
+        {
+            reads++;
+            Task.Run(() => state.IdeaMoves()).Wait(TimeSpan.FromSeconds(5)).ShouldBeTrue("another reader of the node's state is not held up by the design read");
+            return [];
+        };
+
+        state.PutIdeas("pilot", []);
+        state.PutIdeas(["pilot"], []);
+        state.RefreshIdeaDesigns();
+
+        reads.ShouldBe(3);
+    }
 }

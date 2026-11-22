@@ -12,8 +12,12 @@ namespace Pilot.Ui;
 /// </summary>
 internal sealed partial class DesignsView<TSurface>
 {
-    /// <summary>Asked to write a typed part into the draft: the design's id, the part (objective, heading or notes), the cell as its number ("" for the design) and the text. The host sends <c>design-edit</c> and answers with <see cref="Typed"/>.</summary>
-    public Action<string, string, string, string>? OnEdit { get; set; }
+    /// <summary>
+    /// Asked to write a typed part into the draft: the design's id, the part (objective, heading or notes), the cell as its number ("" for the design), the text, and
+    /// the heading the cell had when the typing began (null for the design), which the node holds the cell to, so words typed into one cell never land on another
+    /// a newer version put at that number (#1182 N4.1). The host sends <c>design-edit</c> and answers with <see cref="Typed"/>.
+    /// </summary>
+    public Action<string, string, string, string, string?>? OnEdit { get; set; }
 
     /// <summary>Asked to publish the typed draft: the design's id, the why, and the part still unsaved (sent first), or null. The host sends <c>design-publish</c> with <c>owner</c> and answers with <see cref="Typed"/>.</summary>
     public Action<string, string, (string Part, string Cell, string Text)?>? OnPublishTyped { get; set; }
@@ -73,6 +77,9 @@ internal sealed partial class DesignsView<TSurface>
 
     // The cell in edit (-1 is the design itself) and the part of it.
     private (int Cell, string Part)? _edit;
+
+    // The heading of the cell in edit as the typing began (or as a typed heading made it), sent with each save (#1182 N4.1); null for the design's own parts.
+    private string? _editHeading;
     private string? _typedNote;
     private long _editChangedAt;
     private string _editSeen = "";
@@ -118,6 +125,7 @@ internal sealed partial class DesignsView<TSurface>
         }
         var text = part == "title" ? DesignTitle.Shown(_buildScreen.Open.Detail.Row.Title) ?? "" : PartText(document, cell, part);
         _edit = (cell, part);
+        _editHeading = cell >= 0 ? document.Cells[cell].Heading : null;
         Editor.Text = text;
         Editor.CursorPos = text.Length;
         _editSeen = _editSaved = text;
@@ -137,7 +145,12 @@ internal sealed partial class DesignsView<TSurface>
         }
         _editSaved = Editor.Text;
         _typedNote = null;
-        OnEdit(page.Detail.Row.Id, edit.Part, CellKey(edit.Cell), Editor.Text);
+        OnEdit(page.Detail.Row.Id, edit.Part, CellKey(edit.Cell), Editor.Text, _editHeading);
+        // A heading typed is the cell's heading from now on: the next save of this cell is held to it.
+        if (edit.Part == "heading" && edit.Cell >= 0)
+        {
+            _editHeading = Editor.Text.Trim();
+        }
         return true;
     }
 

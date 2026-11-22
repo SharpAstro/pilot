@@ -37,9 +37,12 @@ internal sealed record PageHeader(string Title)
     /// <summary>More lines under the source line: a node in maintenance, the LAN's state, the sync's outcome.</summary>
     public IReadOnlyList<Layout.Node> Lines { get; init; } = [];
 
-    /// <summary><c>live from the node on … · as of …</c>, the source line of the pages that list a node's things.</summary>
+    /// <summary>
+    /// <c>live from the node on … · as of …</c>, the source line of the pages that list a node's things. Its time is local, as every other time
+    /// in the window is (<see cref="PageTime"/>), so a page never reads in two zones (#1167 R1.6).
+    /// </summary>
     public static string SourceLine(string source, DateTimeOffset asOf, string? more = null) =>
-        $"{source} · as of {asOf.UtcDateTime:yyyy-MM-dd HH:mm:ss} UTC{(more is null ? "" : $" · {more}")}";
+        $"{source} · as of {PageTime.Text(asOf, "yyyy-MM-dd HH:mm:ss")}{(more is null ? "" : $" · {more}")}";
 }
 
 /// <summary>What a page's bar shares with every other page: the window's own pieces, as the chrome holds them.</summary>

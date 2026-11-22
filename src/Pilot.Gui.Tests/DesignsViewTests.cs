@@ -1,4 +1,5 @@
 using DIR.Lib;
+using Pilot.Ui;
 using DIR.Lib.Prototyping;
 using Layout = DIR.Lib.Layout;
 using Pilot.Contracts;
@@ -331,8 +332,9 @@ public sealed class DesignsViewTests
         home.ShouldNotBeSameAs(settings);
         home.CurrentScreen.Id.ShouldBe("home");
         settings.CurrentScreen.Id.ShouldBe("settings");
-        rig.Chrome.Widgets.ShouldContain(home);
-        rig.Chrome.Widgets.ShouldContain(settings);
+        // Each player is listed answering the pointer only inside its frame (FramedWidget, #1177 R1.2).
+        rig.Chrome.Widgets.OfType<FramedWidget>().Select(w => w.Widget).ShouldContain(home);
+        rig.Chrome.Widgets.OfType<FramedWidget>().Select(w => w.Widget).ShouldContain(settings);
     }
 
     [Fact]
@@ -534,6 +536,7 @@ public sealed class DesignsViewTests
         (grid.GridRect.Height / 24 / (grid.GridRect.Width / 80)).ShouldBe(2f, 0.01f);
         rig.Chrome.Widgets.ShouldContain(grid);
         rig.Chrome.Widgets.ShouldNotContain(rig.View.PlayerOf());
+        rig.Chrome.Widgets.OfType<FramedWidget>().ShouldBeEmpty("a frame of cells is the grid alone");
         TextsOf(rig).ShouldContain("Proposed design · Home · Terminal 80 x 24");
     }
 
@@ -633,6 +636,8 @@ public sealed class DesignsViewTests
         sent.ShouldBeEmpty("nothing is sent before a repo is chosen");
         rig.View.BuildAsking.ShouldBeTrue();
         TextsOf(rig).ShouldContain("Which repo is it built in?");
+        // A repo the node does not list is named on the command line (#1180 R1.7).
+        TextsOf(rig).ShouldContain(DesignsView<RgbaImage>.OtherRepoLine("DSN-1"));
         ActionsOf(rig).ShouldContain("designs:build-repo:pilot");
         ActionsOf(rig).ShouldContain("designs:build-repo:tianwen");
 
