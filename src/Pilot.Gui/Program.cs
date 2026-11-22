@@ -1388,7 +1388,8 @@ if (options.ExitAfter is { } after)
 }
 
 loop.Run(cts.Token);
-Pilot.Gui.ShutdownDrain.PumpUntilComplete(loop, ShutDownAsync(), LogLine);
+// The renderer's drain (SdlVulkan.Renderer 7.106), the one every app on it shares; its lines go to gui.log through the logger (#1213).
+SdlVulkan.Renderer.ShutdownDrain.PumpUntilComplete(loop, ShutDownAsync(), TimeProvider.System, logger);
 if (restarting && Environment.ProcessPath is { } self)
 {
     // The gate first: held, the new window would hand off to this one and leave. The binary at this path is the new one,
