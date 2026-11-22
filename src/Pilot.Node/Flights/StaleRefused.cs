@@ -36,6 +36,11 @@ public sealed class StaleRefused(NodeState state)
             state.CloseCardsAbout(card.Subject, why, card.Kind);
             closed++;
         }
+        // Keep only the PRs an open card still names, so the cache does not grow with every PR ever refused.
+        foreach (var gone in _prStates.Keys.Where(k => !prs.ContainsKey(k)).ToList())
+        {
+            _prStates.Remove(gone);
+        }
         return closed;
     }
 
@@ -67,30 +72,70 @@ public sealed class StaleRefused(NodeState state)
         {
             return PrRef.Parse(on) is { } pr ? await PrGoneAsync(pr, prs, cancellationToken) : null;
         }
+        if (IsCardId(on))
+        {
+            // 'pilot answer c12854 ...' refused: the card it pressed is the target, gone once that card is closed (by anyone).
+            return state.Cards().FirstOrDefault(c => c.Id == on) is { State: CardState.Closed } pressed ? $"card {pressed.Id} it pressed is closed" : null;
+        }
+        if (on.StartsWith("flight/", StringComparison.Ordinal))
+        {
+            on = on["flight/".Length..];
+        }
         return LooksLikeCode(on) ? FlightGone(on) : null;
     }
 
-    private static bool LooksLikeCode(string text) => text.Length >= 3 && char.IsUpper(text[0]) && char.IsDigit(text[^1]) && text.All(char.IsLetterOrDigit);
+    /// <summary>A card's id as the node writes it: <c>c</c> and its number (<c>c12854</c>).</summary>
+    private static bool IsCardId(string text) => text.Length >= 2 && text[0] == 'c' && text[1..].All(char.IsAsciiDigit);
 
-    // Landed (a fold lands the folded flight) or no longer known (withdrawn: its code is free again): its press has nothing to move.
+    // A flight code, as written in either case (PIL1269, pil1269): letters, then digits.
+    private static bool LooksLikeCode(string text) =>
+        text.Length >= 3 && char.IsAsciiLetter(text[0]) && char.IsAsciiDigit(text[^1]) && text.All(char.IsAsciiLetterOrDigit)
+        && text.SkipWhile(char.IsAsciiLetter).All(char.IsAsciiDigit);
+
+    // Landed (a fold lands the folded flight), or withdrawn here (this node's withdrawal card names it): its press has nothing to move. A code
+    // this node does not hold and never withdrew stays open: on a fleet it may be another node's flight, so its absence here proves nothing.
     private string? FlightGone(string code)
     {
         var flight = state.Flights().FirstOrDefault(f => string.Equals(f.Code, code, StringComparison.OrdinalIgnoreCase));
-        return flight is null ? $"{code} was withdrawn" : flight.State == FlightState.Landed ? $"{flight.Code} landed or was folded" : null;
+        if (flight is not null)
+        {
+            return flight.State == FlightState.Landed ? $"{flight.Code} landed or was folded" : null;
+        }
+        return state.Cards().Any(c => c.Kind == FlightCommander.WithdrawnKind && c.Title.StartsWith(code + " withdrawn by ", StringComparison.OrdinalIgnoreCase))
+            ? $"{code} was withdrawn"
+            : null;
     }
+
+    /// <summary>How long a PR's OPEN (or unknown) state is kept before GitHub is asked again; MERGED and CLOSED are kept for good.</summary>
+    public TimeSpan PrStateFor { get; init; } = TimeSpan.FromMinutes(5);
+
+    /// <summary>The clock <see cref="PrStateFor"/> is read on.</summary>
+    public TimeProvider Time { get; init; } = TimeProvider.System;
+
+    // Across looks: a PR's card is looked at every 30 s, and GitHub is asked about it at most once per PrStateFor (R1.5).
+    private readonly Dictionary<PrRef, (string? State, DateTimeOffset At)> _prStates = [];
 
     private async Task<string?> PrGoneAsync(PrRef pr, Dictionary<PrRef, string?> prs, CancellationToken cancellationToken)
     {
         if (!prs.TryGetValue(pr, out var said))
         {
-            try
+            var now = Time.GetUtcNow();
+            if (_prStates.TryGetValue(pr, out var kept) && (kept.State is "MERGED" or "CLOSED" || now - kept.At < PrStateFor))
             {
-                said = await PrState(pr, cancellationToken);
+                said = kept.State;
             }
-            catch (FlightException)
+            else
             {
-                // GitHub not answering is not a reason to close a card: the next look asks again.
-                said = null;
+                try
+                {
+                    said = await PrState(pr, cancellationToken);
+                }
+                catch (FlightException)
+                {
+                    // GitHub not answering is not a reason to close a card: the next look past PrStateFor asks again.
+                    said = null;
+                }
+                _prStates[pr] = (said, now);
             }
             prs[pr] = said;
         }

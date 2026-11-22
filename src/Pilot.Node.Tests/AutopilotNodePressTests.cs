@@ -180,9 +180,66 @@ public sealed class AutopilotNodePressTests
         NodePress.Owns(CardKinds.Overlap).ShouldBeTrue();
         NodePress.Owns(PrReviews.FixEndedKind).ShouldBeTrue();
         NodePress.Owns(PrReviews.FixOfferKind).ShouldBeFalse();
-        _state.NodePresses = kind => _autopilot && NodePress.Owns(kind);
+        var press = Press();
+        _state.NodePresses = (kind, subject, detail, choices) => _autopilot && press.WouldPress(kind, subject, detail, choices);
         var card = FoldCard();
         card.Bin.ShouldBe(CardBin.Ring);
+    }
+
+    [Fact]
+    public void OnlyACardARuleTakesSkipsTheRingJudgeNotEveryCardOfTheKind()
+    {
+        // R1.7: an overlap card the planner did not ask to fold, a stray the node may not end and a Fix it whose fixer left work go to the judge.
+        var press = Press();
+        var fold = FoldCard();
+        press.WouldPress(fold.Kind, fold.Subject, fold.Detail, fold.Choices).ShouldBeTrue();
+        _state.CloseCard(fold.Id, "test", "test");
+        var connect = FoldCard(pick: Verbs.OverlapPickConnect);
+        press.WouldPress(connect.Kind, connect.Subject, connect.Detail, connect.Choices).ShouldBeFalse();
+
+        var stray = StrayCard();
+        press.WouldPress(stray.Kind, stray.Subject, stray.Detail, stray.Choices).ShouldBeTrue();
+        _mayEndStray = false;
+        Press().WouldPress(stray.Kind, stray.Subject, stray.Detail, stray.Choices).ShouldBeFalse();
+
+        var fix = FixCard();
+        press.WouldPress(fix.Kind, fix.Subject, fix.Detail, fix.Choices).ShouldBeTrue();
+        press.WouldPress(fix.Kind, fix.Subject, LeftWorkDetail, fix.Choices).ShouldBeFalse();
+        press.WouldPress(PrReviews.FixOfferKind, PrSubject, null, fix.Choices).ShouldBeFalse();
+    }
+
+    private const string LeftWorkDetail = $"The PR's head is still abc1234, {PrReviews.FixLeftWorkMark} C:\\w\\fix, kept there: 2 files uncommitted.";
+
+    [Fact]
+    public async Task FixItIsLeftToThePersonWhenTheEndedFixerLeftWorkInItsKeptWorktree()
+    {
+        // R1.4: a fresh fixer would start beside that work; only a person says whether to push it from there.
+        _state.RaiseCard(CardBin.ForYou, PrReviews.FixEndedKind, PrSubject, "pilot#77: fixer ended without a push", LeftWorkDetail,
+            [new CardChoice { Label = PrReviews.FixLabel, Verb = Verbs.FixPr, Target = PrSubject }]);
+        (await PressedAsync()).ShouldBe(0);
+        _ran.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task AThrowWhileClosingStaleRefusedCardsDoesNotSkipThePressesOfThatLook()
+    {
+        // R1.6: the stale close is logged and the look goes on to press.
+        var log = new StringWriter();
+        var press = new NodePress(_state, () => true, (command, _) =>
+        {
+            _ran.Add(command);
+            return Task.FromResult(new CommandResult { Ok = true, Verb = command.Verb, Target = command.Target, Who = "node", Seq = 1 });
+        }, new ManualTime(Began))
+        {
+            MayEndStray = _ => true,
+            Error = log,
+            Stale = new StaleRefused(_state) { PrState = (_, _) => throw new InvalidOperationException("the store broke") },
+        };
+        _state.RaiseCard(CardBin.Ring, PrReviews.FixEndedKind, PrSubject, Watchtower.RefusedPrefix + "Fix it", null);
+        var card = StrayCard();
+        (await press.PressAsync(CancellationToken.None)).ShouldBe(1);
+        ShouldHavePressed(card, "End process 4242");
+        log.ToString().ShouldContain("the store broke");
     }
 
     [Fact]

@@ -36,6 +36,21 @@ public sealed class NodePress(NodeState state, Func<bool> autopilotOn, Func<Comm
     /// <summary>Whether a card of this kind may be pressed by the node on autopilot, so the ring judge and the watchtower leave it to the node.</summary>
     public static bool Owns(string kind) => kind is StraySweep.Kind or CardKinds.Overlap or PrReviews.FixEndedKind;
 
+    /// <summary>
+    /// Whether the node would press a card raised now with this kind, subject, detail and choices, so the ring judge leaves it to the node
+    /// (<see cref="NodeState.NodePresses"/>): only a card one of its rules takes, not every card of its three kinds. An overlap card the
+    /// planner did not ask to fold, a stray the node may not end, or a Fix it whose fixer left work still goes to the judge (R1.7). The
+    /// Fix it rule's last part (the round cap and the PR's author, asked of GitHub) is not read here, so a card that part refuses skips the
+    /// judge and is left to the person as a plain For you card.
+    /// </summary>
+    public bool WouldPress(string kind, string subject, string? detail, IReadOnlyList<CardChoice>? choices) => kind switch
+    {
+        StraySweep.Kind => StrayRule(subject, choices ?? []) is not null,
+        CardKinds.Overlap => FoldRule(subject, choices ?? []) is not null,
+        PrReviews.FixEndedKind => FixChoice(detail, choices ?? []) is not null,
+        _ => false,
+    };
+
     protected override async Task ExecuteAsync(CancellationToken stopping)
     {
         try
@@ -64,9 +79,17 @@ public sealed class NodePress(NodeState state, Func<bool> autopilotOn, Func<Comm
     public async Task<int> PressAsync(CancellationToken cancellationToken)
     {
         // A refused press whose target is gone closes with the autopilot on or off: the look is the node's, not a press.
+        // A throw from it is logged and the presses of this look still run (R1.6).
         if (Stale is { } stale)
         {
-            await stale.CloseAsync(cancellationToken);
+            try
+            {
+                await stale.CloseAsync(cancellationToken);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                await Error.WriteLineAsync($"node press: closing stale refused cards failed, trying again next time: {ex.Message}");
+            }
         }
         if (!autopilotOn())
         {
@@ -108,13 +131,11 @@ public sealed class NodePress(NodeState state, Func<bool> autopilotOn, Func<Comm
         switch (card.Kind)
         {
             case StraySweep.Kind:
-                return card.Choices.FirstOrDefault(c => c.Verb == Verbs.EndStray) is { } end && MayEndStray(card.Subject)
-                    ? new Rule(end, "the node launched the process's owner, the owner has ended, and the process descends from it (it is not tied to it by folder only)")
-                    : null;
+                return StrayRule(card.Subject, card.Choices);
             case CardKinds.Overlap:
-                return FoldRule(card);
+                return FoldRule(card.Subject, card.Choices);
             case PrReviews.FixEndedKind:
-                if (card.Choices.FirstOrDefault(c => c.Verb == Verbs.FixPr) is { } fix && PrRef.Parse(card.Subject) is { } pr
+                if (FixChoice(card.Detail, card.Choices) is { } fix && PrRef.Parse(card.Subject) is { } pr
                     && await WhyNoFixer(pr, cancellationToken) is null)
                 {
                     return new Rule(fix, "the fixer ended without pushing, and the round cap, the PR's author and its design questions let the watchtower's own review fix through");
@@ -125,13 +146,23 @@ public sealed class NodePress(NodeState state, Func<bool> autopilotOn, Func<Comm
         }
     }
 
+    private Rule? StrayRule(string subject, IReadOnlyList<CardChoice> choices) =>
+        choices.FirstOrDefault(c => c.Verb == Verbs.EndStray) is { } end && MayEndStray(subject)
+            ? new Rule(end, "the node launched the process's owner, the owner has ended, and the process descends from it (it is not tied to it by folder only)")
+            : null;
+
+    // Fix it on an ended fixer, unless the fixer left work in its kept worktree (R1.4): a fresh fixer would start beside that work, and only a
+    // person can say whether to push it from there or let it go.
+    private static CardChoice? FixChoice(string? detail, IReadOnlyList<CardChoice> choices) =>
+        detail?.Contains(PrReviews.FixLeftWorkMark, StringComparison.Ordinal) == true ? null : choices.FirstOrDefault(c => c.Verb == Verbs.FixPr);
+
     // A fold the planner asked for (its overlap row's pick is fold) of a flight into another flight of this node.
-    private Rule? FoldRule(CardRow card)
+    private Rule? FoldRule(string subject, IReadOnlyList<CardChoice> choices)
     {
-        var code = Verbs.FlightCodeOf(card.Subject);
+        var code = Verbs.FlightCodeOf(subject);
         var flights = state.Flights();
         var flight = flights.FirstOrDefault(f => string.Equals(f.Code, code, StringComparison.OrdinalIgnoreCase));
-        if (flight is null || card.Choices.FirstOrDefault(c => c.Verb == Verbs.Fold) is not { Args: [{ } other, ..] } fold)
+        if (flight is null || choices.FirstOrDefault(c => c.Verb == Verbs.Fold) is not { Args: [{ } other, ..] } fold)
         {
             return null;
         }

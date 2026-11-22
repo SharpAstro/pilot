@@ -22,6 +22,7 @@ public static partial class NodeApp
                 },
                 Stale = new StaleRefused(services.GetRequiredService<NodeState>())
                 {
+                    Time = services.GetRequiredService<TimeProvider>(),
                     PrState = async (pr, cancellationToken) => (await services.GetRequiredService<IGitHub>().PullRequestOfAsync(pr.Repo, pr.Number, cancellationToken)).State,
                     StrayGone = key =>
                     {
@@ -32,7 +33,7 @@ public static partial class NodeApp
                 Error = logWriter,
             };
             // A card the node presses itself, with the autopilot on, is never sent to the ring judge.
-            services.GetRequiredService<NodeState>().NodePresses = kind => models.Autopilot && NodePress.Owns(kind);
+            services.GetRequiredService<NodeState>().NodePresses = (kind, subject, detail, choices) => models.Autopilot && press.WouldPress(kind, subject, detail, choices);
             return press;
         });
         builder.Services.AddHostedService(services => services.GetRequiredService<NodePress>());
