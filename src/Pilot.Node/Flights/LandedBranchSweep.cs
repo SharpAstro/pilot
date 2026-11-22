@@ -314,8 +314,15 @@ public sealed class LandedBranchSweep(NodeState state, LandedBranches branches, 
                 new CardChoice { Label = "Try deleting again", Verb = Verbs.BranchRetry, Target = Verbs.FlightTarget(codes[0]), Args = [.. codes.Skip(1)] },
                 new CardChoice { Label = "Leave them", Verb = Verbs.Dismiss, Target = "" },
             ],
-            cause: $"origin refused deleting {string.Join(",", codes.Order(StringComparer.Ordinal))}");
+            // The latest failure time is in the key: a person's dismissal of this card holds a same-cause card closed for a day, and a hand
+            // retry that is refused again must still tell them, so a new refusal never matches the old dismissal.
+            cause: $"origin refused deleting {string.Join(",", codes.Order(StringComparer.Ordinal))} at {LatestFailureTicks(state, codes)}");
     }
+
+    private static long LatestFailureTicks(NodeState state, IEnumerable<string> codes) =>
+        codes.Select(code => (state.Flights().FirstOrDefault(f => string.Equals(f.Code, code, StringComparison.OrdinalIgnoreCase))
+                ?? (state.ArchivedRow(code) is { } archived ? state.Archive?.Read(archived.Code)?.Flight : null))?.BranchDeleteFailedAt?.UtcTicks ?? 0L)
+            .DefaultIfEmpty(0L).Max();
 
     private FlightRow? FindFlight(string code) =>
         state.Flights().FirstOrDefault(f => string.Equals(f.Code, code, StringComparison.OrdinalIgnoreCase))

@@ -42,7 +42,7 @@ public sealed class LandedBranchSweepTests : IDisposable
         Git(_repo, "commit", "-m", "first");
         Git(_repo, "push", "origin", "main");
         _journal = new FileJournal(Path.Combine(_root, "store"));
-        _state = new NodeState(_journal, new FakeTime()) { Archive = new FlightArchive(_root) };
+        _state = new NodeState(_journal, new FakeTime(() => _skew)) { Archive = new FlightArchive(_root) };
     }
 
     public void Dispose()
@@ -51,9 +51,12 @@ public sealed class LandedBranchSweepTests : IDisposable
         TestDirs.DeleteTree(_root);
     }
 
-    private sealed class FakeTime : TimeProvider
+    /// <summary>How far the clock has moved past <see cref="Now"/>; a test that needs a later refusal sets it.</summary>
+    private TimeSpan _skew;
+
+    private sealed class FakeTime(Func<TimeSpan> skew) : TimeProvider
     {
-        public override DateTimeOffset GetUtcNow() => Now;
+        public override DateTimeOffset GetUtcNow() => Now + skew();
     }
 
     private string Git(string cwd, params string[] args)
@@ -115,7 +118,7 @@ public sealed class LandedBranchSweepTests : IDisposable
     }
 
     private LandedBranchSweep Sweeper(IGit? git = null, int batch = 5, Func<bool>? enabled = null) =>
-        new(_state, new LandedBranches(git ?? _git), _github, new FakeTime()) { Batch = batch, Pause = TimeSpan.Zero, StartDelay = TimeSpan.FromHours(1), Enabled = enabled ?? (() => true) };
+        new(_state, new LandedBranches(git ?? _git), _github, new FakeTime(() => _skew)) { Batch = batch, Pause = TimeSpan.Zero, StartDelay = TimeSpan.FromHours(1), Enabled = enabled ?? (() => true) };
 
     private IEnumerable<CardRow> Summaries() => _state.Cards().Where(c => c.Kind == LandedBranchSweep.SummaryKind);
 
@@ -300,7 +303,7 @@ public sealed class LandedBranchSweepTests : IDisposable
 
         // The retry choice clears the record and pushes nothing itself.
         var retry = card.Choices[0];
-        var commander = new FlightCommander(_state, new Planes(failing), new FakeTime());
+        var commander = new FlightCommander(_state, new Planes(failing), new FakeTime(() => _skew));
         var result = await commander.RunAsync(new CommandRequest { Verb = retry.Verb, Target = retry.Target, Args = retry.Args, Who = "test" }, Ct);
         result.Error.ShouldBeNull();
         failing.Count("push").ShouldBe(1);
@@ -374,6 +377,30 @@ public sealed class LandedBranchSweepTests : IDisposable
         card.Detail.ShouldNotContain("PIL1 ");
         var retry = card.Choices[0];
         new[] { Verbs.FlightCodeOf(retry.Target)! }.Concat(retry.Args).Order().ShouldBe(["PIL3", "PIL4"]);
+    }
+
+    [Fact]
+    public async Task ARefusalAfterAHandRetryOfADismissedCardRaisesAFreshCardInsideTheDismissalHold()
+    {
+        Put(Row("PIL1", MakeBranch("PIL1")));
+        Put(Row("PIL2", MakeBranch("PIL2")));
+        var failing = new CountingGit(new GitCli()) { FailPush = true };
+        await Sweeper(failing).SweepAsync(Ct);
+        var first = _state.Cards(openOnly: true).Single(c => c.Kind == FlightCommander.BranchKeptKind);
+        _state.CloseCard(first.Id, "dismissed by a person", "test");
+
+        // The same two branches are retried by hand and refused again an hour later, well inside the day the dismissal holds.
+        foreach (var code in new[] { "PIL1", "PIL2" })
+        {
+            _state.UpdateFlight(code, f => f with { BranchDeleteFailed = null, BranchDeleteFailedAt = null, BranchKept = null });
+        }
+        _skew = TimeSpan.FromHours(1);
+        await Sweeper(failing).SweepAsync(Ct);
+
+        var card = _state.Cards(openOnly: true).Single(c => c.Kind == FlightCommander.BranchKeptKind);
+        card.Id.ShouldNotBe(first.Id);
+        card.Detail.ShouldNotBeNull().ShouldContain("PIL1 ");
+        card.Detail.ShouldContain("PIL2 ");
     }
 
     [Theory]

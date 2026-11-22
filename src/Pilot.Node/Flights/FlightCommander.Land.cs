@@ -506,9 +506,15 @@ public sealed partial class FlightCommander
                 }
                 return result;
             });
+            var refused = new List<LandedBranchOutcome>();
             foreach (var outcome in outcomes)
             {
-                RecordBranchOutcome(outcome);
+                RecordBranchOutcome(outcome, refused);
+            }
+            if (refused.Count > 0)
+            {
+                // One card for the whole landing, as SweepAsync raises one per repo, so no card is closed and replaced per extra branch.
+                LandedBranchSweep.RaisePushFailedCard(state, Verbs.RepoTarget(flight.RepoPath), refused);
             }
         }
         catch (Exception ex) when (ex is FlightException or IOException or InvalidOperationException or System.ComponentModel.Win32Exception)
@@ -559,7 +565,7 @@ public sealed partial class FlightCommander
     private bool LiveSessionOf(string code) =>
         state.Sessions().Any(s => s.State is not (SessionState.Ended or SessionState.Failed) && string.Equals(s.Flight, code, StringComparison.Ordinal));
 
-    private void RecordBranchOutcome(LandedBranchOutcome outcome)
+    private void RecordBranchOutcome(LandedBranchOutcome outcome, List<LandedBranchOutcome> refused)
     {
         var now = time.GetUtcNow();
         var target = Verbs.FlightTarget(outcome.Code);
@@ -570,8 +576,7 @@ public sealed partial class FlightCommander
                 return;
             case LandedBranchResult.Failed:
                 state.UpdateFlight(outcome.Code, f => f with { BranchKept = outcome.Why, BranchDeleteFailed = outcome.Why, BranchDeleteFailedAt = now });
-                var repoPath = state.Flights().FirstOrDefault(f => f.Code == outcome.Code)?.RepoPath ?? "";
-                LandedBranchSweep.RaisePushFailedCard(state, Verbs.RepoTarget(repoPath), [outcome]);
+                refused.Add(outcome);
                 return;
             case LandedBranchResult.RetryLater:
                 state.UpdateFlight(outcome.Code, f => f with { BranchKept = outcome.Why });
