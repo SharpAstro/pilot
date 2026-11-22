@@ -104,10 +104,7 @@ public sealed class LandingBranchTests : ReviewTestsBase
         // Refuses every delete on origin (the new value is all zeros), whichever flight branch it is.
         var hook = Path.Combine(Path.GetDirectoryName(Repo)!, "origin.git", "hooks", "update");
         Directory.CreateDirectory(Path.GetDirectoryName(hook)!);
-        File.WriteAllText(hook, "#!/bin/sh
-if [ \"$3\" = \"0000000000000000000000000000000000000000\" ]; then echo \"no deleting $1 here\" >&2; exit 1; fi
-exit 0
-");
+        File.WriteAllText(hook, "#!/bin/sh\nif [ \"$3\" = \"0000000000000000000000000000000000000000\" ]; then echo \"no deleting $1 here\" >&2; exit 1; fi\nexit 0\n");
 
         await LandMerged(lander);
 
