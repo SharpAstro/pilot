@@ -119,11 +119,11 @@ public sealed class RenderCostTests
     }
 
     /// <summary>
-    /// The most texts a long card may add: its text is cut to <see cref="CardsView{TSurface}.SummaryChars"/> (240, the summary)
-    /// or three lines of <see cref="CardsView{TSurface}.LineChars"/> (225, the detail), 40 and 37 six-character words; the bound
+    /// The most texts a long card may add: its text is cut to <see cref="CardsView{TSurface}.SummaryChars"/> (600, the summary)
+    /// or three lines of <see cref="CardsView{TSurface}.LineChars"/> (225, the detail), 100 and 37 six-character words; the bound
     /// leaves half again.
     /// </summary>
-    private const int LongCardAdds = 60;
+    private const int LongCardAdds = 150;
 
     /// <summary>The most a second frame of the Home page with one long card may ask (433 measured), all of it lookups.</summary>
     private const int SecondFrameAsks = 600;

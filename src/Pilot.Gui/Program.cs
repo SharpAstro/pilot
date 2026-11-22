@@ -1210,15 +1210,14 @@ void RenderFrame()
     }
 
     view.Ui.FrameId++;
-    if (designReads is not null && chrome.Page is PilotPage.Flights or PilotPage.Ideas)
+    if (designReads is not null)
     {
-        // The Flights page's notice (a design has a newer version than the flight builds) and the Ideas page's Link a design read the same list.
-        // So a design version published raises its toast only on the Designs, Flights and Ideas pages (the off-page read is carried by #1196, R1.1(i)).
+        // The list is read on every page, at most every 15 s (DesignReads.Every): the Flights page's notice and the Ideas page's Link a design read it, and a
+        // version published raises its toast whatever page is shown (#1196 R1.1(i)), as a landed flight's does.
         designReads.AskList();
     }
     if (designReads is not null && chrome.Page == PilotPage.Designs)
     {
-        designReads.AskList();
         if (chrome.Designs.OpenId is { } openDesign)
         {
             designReads.AskDesign(openDesign, designReads.Page?.Detail.Row.Id == openDesign ? designReads.Page.Version : null);

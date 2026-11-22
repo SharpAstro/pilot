@@ -224,4 +224,54 @@ public sealed class NotificationsHandleTests
         Click();
         chrome.Notifications.Open.ShouldBeFalse($"first {first}, second {again}, hit there {CellLayout.HitTest(input.Arranged, again.Column, again.Row)}, state {chrome.Notifications.State}");
     }
+
+    /// <summary>
+    /// A press on a toast in the terminal goes through TerminalInput.Handle, Console.Lib's cell router and the frame's hit test to the toast's action, as the
+    /// window's press goes through PressNotification (#1196 R2.3).
+    /// </summary>
+    [Fact]
+    public void APressOnAToastRunsItsActionThroughTheTerminalsInputPath()
+    {
+        const int columns = 160, rows = 44;
+        using var vessel = new RgbaImageRenderer(1, 1);
+        var sessions = new SessionsView<RgbaImage>(vessel);
+        var chrome = new PilotChrome<RgbaImage>(vessel, sessions);
+        var surface = new CellInputSurface(sessions.Ui);
+        var input = new TerminalInput<RgbaImage>(chrome, sessions, sessions.Ui.Focus, () => { }, () => { })
+        {
+            Router = CellInputRouter.Create(surface, new BackgroundTaskTracker(), () => { }),
+            HitTest = (tree, column, row) => CellLayout.HitTest(tree, column, row),
+        };
+        chrome.Notifications.Open = false;
+        chrome.Show(PilotPage.Jobs);
+        var opened = 0;
+        chrome.Notifications.PostEvent(new PilotEvent(PilotEventKind.JobEnded, "j1", "j1 finished", "took 4 min", DIR.Lib.Notifications.NotificationSeverity.Success, "DE1"), () => opened++, Live.At);
+
+        var rail = TerminalRail.Tree(chrome.Page, GlyphMode.Emoji, null, null, Live.At, input.Show, null, columns, input.Chords());
+        var page = Layout.Builder.Text("elsewhere", 14f, Palette.Current.Bright).WStar().RowH(16f);
+        var arranged = TerminalFrame.Build(rail, page, null, columns, rows, CellMeasureContext.PixelAuthored, null, (chrome.Notifications, chrome.Page));
+        CellLayout.Paint(new NullViewport(columns, rows), arranged, surface);
+        input.Router.AfterPaint();
+        input.Arranged = arranged;
+
+        (int Column, int Row)? toast = null;
+        for (var r = 0; r < rows && toast is null; r++)
+        {
+            for (var c = 0; c < columns; c++)
+            {
+                if (CellLayout.HitTest(arranged, c, r) is DIR.Lib.Notifications.NotificationHit { Part: DIR.Lib.Notifications.NotificationPart.Toast })
+                {
+                    toast = (c, r);
+                    break;
+                }
+            }
+        }
+        var (column, row) = toast.ShouldNotBeNull("the fading toast stands in the terminal frame");
+
+        input.Handle(new InputEvent.MouseMove(column, row), null);
+        input.Handle(new InputEvent.MouseDown(column, row, MouseButton.Left, InputModifier.None), null);
+        input.Handle(new InputEvent.MouseUp(column, row, MouseButton.Left), null);
+
+        opened.ShouldBe(1, "the toast's action ran once");
+    }
 }

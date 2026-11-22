@@ -110,6 +110,12 @@ internal sealed class NotificationsHost
     /// </summary>
     public Func<CardRow, Func<Layout.Node>?>? CardBody { get; set; }
 
+    /// <summary>
+    /// The whole card as the Notifications page lists it (the card, then the node's name), every choice and its whole detail; set by the chrome.
+    /// The page is where a card a toast cut short is read in full, so its row is never the toast's short body (the owner, 2026-11-22).
+    /// </summary>
+    public Func<CardRow, string?, Func<Layout.Node>>? CardPage { get; set; }
+
     /// <summary>What the rail's Notifications entry shows: the count of what needs the person and whether a card rings.</summary>
     public BellState Bell => new(Feed.BellCount, Ringing);
 
@@ -237,7 +243,7 @@ internal sealed class NotificationsHost
             if (!_ids.ContainsKey(key))
             {
                 Posted();
-                var notification = new Notification
+                var toast = new Notification
                 {
                     Title = card.Title,
                     Text = card.Summary ?? "",
@@ -248,12 +254,14 @@ internal sealed class NotificationsHost
                     Source = key.Item1,
                     Row = CardBody?.Invoke(card),
                 };
+                // The page's row is the whole card; the toast over the page keeps its short body, which says when it is cut and links here.
+                var notification = CardPage is { } page ? toast with { Row = page(card, key.Item1) } : toast;
                 _ids[key] = Feed.Post(notification, now).Id;
                 // Only a ring that opened while the window looks stands over the page: what was open at the first look is not news, and a
                 // For you card waits on the bar (the handle tints, the bell counts it) without a toast.
                 if (_looked && card.Bin == CardBin.Ring && !Open)
                 {
-                    _toastIds[key] = _toasts.Post(notification, now).Id;
+                    _toastIds[key] = _toasts.Post(toast, now).Id;
                 }
             }
         }
