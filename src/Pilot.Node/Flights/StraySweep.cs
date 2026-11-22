@@ -143,7 +143,7 @@ public sealed class StraySweep(NodeState state, IProcessTable table, TimeProvide
 
     /// <summary>
     /// A landing's own look (pilot #1270): reads the table once and ends the strays of <paramref name="flight"/>'s sessions and of its plane
-    /// folder at once, with no <see cref="StrayFinder.EndedGrace"/> (the landing has stopped those sessions, or they had ended already), before the plane is removed so
+    /// folder at once, with no <see cref="StrayFinder.EndedGrace"/> (the landing is about to stop those sessions, which may still be running, or they had ended already), before the plane is removed so
     /// a process holding the folder no longer keeps it. Each ended stray's card closes. Returns the rows it ended; never throws.
     /// </summary>
     public IReadOnlyList<MachineStray> EndOfLanded(FlightRow flight)

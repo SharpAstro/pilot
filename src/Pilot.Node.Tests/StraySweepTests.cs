@@ -158,6 +158,18 @@ public sealed class StraySweepTests
     }
 
     [Fact]
+    public void AStrayWhoseStartWasNeverReadIsNamedByHandAndNeverEnded()
+    {
+        OverLimitJob();
+        _table.Starts.Remove(501);
+        _sweep.SweepOnce();
+
+        _sweep.EndOnWord(new CommandRequest { Verb = Verbs.EndStray, Target = "process:501@12345", Who = "gui" })
+            .Error.ShouldNotBeNull().ShouldContain("never read");
+        _table.Killed.ShouldBeEmpty();
+    }
+
+    [Fact]
     public void EndingAStrayIsThePersonsAlone() => Pilot.Node.Standing.YourOnlyVerbs.ShouldContain(Verbs.EndStray);
 
     [Fact]
