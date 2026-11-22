@@ -2390,14 +2390,14 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
     }
 
     // The finish of a leg whose check fails after it ran, with the deadline the reply route would have answered queued at.
-    private async Task<CommandResult> FailingFinishAsync(TimeSpan runs, TimeSpan deadline, bool retried = false)
+    private async Task<CommandResult> FailingFinishAsync(TimeSpan runs, TimeSpan deadline, bool retried = false, string tail = "Failed: 2, Passed: 40")
     {
         await FlightWithTwoLegs();
         await Leg(Verbs.StartLeg, "flight/TIA1/parser");
         await Leg(Verbs.Check, "flight/TIA1/parser", "1");
         await Leg(Verbs.Check, "flight/TIA1/parser", "2");
         _legs.ReplyDeadline = () => deadline;
-        _checks.Next = new CheckRun(1, "Failed: 2, Passed: 40");
+        _checks.Next = new CheckRun(1, tail);
         if (!retried)
         {
             _checks.OnRun = () => Task.Delay(runs, Ct);
@@ -2427,6 +2427,20 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
         recheck.Outcome.ShouldContain("Failed: 2, Passed: 40");
         recheck.Outcome.ShouldContain("`leg finish done` again");
         L("parser").State.ShouldBe(LegState.Flying);
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task ALateFailedChecksOutcomeOpensWithTheHeadLineAsItsReportDoes()
+    {
+        // #1136: the late path's outcome (Recheck = late ? ... head + FailedOutcome) starts with the head line; a wrong switch for the repo's
+        // runner is told ahead of the tail, so the worker fixes the command rather than the SDK.
+        await FailingFinishAsync(TimeSpan.FromMilliseconds(250), TimeSpan.FromMilliseconds(50), tail: "MSBUILD : error MSB1001: Unknown switch.   Switch: --project");
+
+        var outcome = L("parser").Recheck.ShouldNotBeNull().Outcome.ShouldNotBeNull();
+        outcome.ShouldStartWith("This is a wrong command for this repo's test runner");
+        outcome.ShouldContain("failed (1)");
+        L("parser").Report.ShouldNotBeNull().ShouldStartWith("This is a wrong command for this repo's test runner");
     }
 
     [Fact]
