@@ -73,6 +73,8 @@ public sealed class HoldingPatternTests : ReviewTestsBase
 
         F(flight.Code).Holding.ShouldBeNull();
         Open().ShouldNotContain(c => c.Kind == LegCommander.ReviewNotesKind);
+        // The planned review-notes leg is still not done, and a flight with a leg not done does not merge: the owner takes it out too.
+        await WithoutTheFixerLeg(flight.Code);
         await Checks().LookAsync(Ct);
         _github.Merged.ShouldHaveSingleItem();
     }
