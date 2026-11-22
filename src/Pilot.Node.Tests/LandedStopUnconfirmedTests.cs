@@ -130,6 +130,20 @@ public sealed class LandedStopUnconfirmedTests : IDisposable
         card.Choices.ShouldNotBeNull().ShouldContain(c => c.Label == "End it again" && c.Verb == Verbs.EndSession && c.Target == Verbs.SessionTarget("w1"));
         Handled(code).ShouldContain("may still run");
         card.Detail.ShouldNotBeNull().ShouldContain("claude stop: refused");
+        card.Detail.ShouldContain("Tried: claude stop on its job.");
+    }
+
+    [Fact]
+    public async Task AFoldedFlightsHandledLineNamesASessionThatMayStillRun()
+    {
+        var (code, flights, flight) = await FlightAsync(stopFails: true);
+        PutSession("w1", code, flight.Worktree, SessionState.Idle);
+
+        await flights.RetireFoldedAsync(flight, "PIL9999", Ct);
+
+        Card("w1").ShouldNotBeNull().State.ShouldBe(CardState.Open);
+        var folded = _state.Cards().Single(c => c.Kind == FlightCommander.FoldedKind && c.Subject == Verbs.FlightTarget(code));
+        folded.Detail.ShouldNotBeNull().ShouldContain("de1-w1 (w1) may still run: its stop failed, its card stays open");
     }
 
     [Fact]
