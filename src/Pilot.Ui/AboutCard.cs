@@ -175,7 +175,7 @@ internal sealed class AboutCard
     /// <summary>The side of the header's square buttons (?, +) and the height of everything else on its row that is a button.</summary>
     public const float HeaderButton = 28f;
 
-    /// <summary>The room either side of a header button's word: Autopilot, Night, the node pills, the update light.</summary>
+    /// <summary>The room either side of a header button's word: Night, the node pills, the update light.</summary>
     public const float HeaderButtonPad = 10f;
 
     /// <summary>

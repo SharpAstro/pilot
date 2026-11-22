@@ -191,7 +191,6 @@ public static partial class NodeApp
                 Stream = state.Stream,
                 Maintenance = models.Maintenance,
                 Reboot = reboot.Headline,
-                Autopilot = models.Autopilot,
                 AcceptsFleetFlights = models.AcceptsFleetFlights,
                 Account = state.Usage()?.Account,
                 CanRunGui = jobRunner.GuiWhy() is null,

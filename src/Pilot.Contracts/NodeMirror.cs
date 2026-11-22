@@ -49,7 +49,7 @@ public sealed class NodeMirror
     /// <summary>Where every repo the node knows stands, as last read or marked not read yet; null before any.</summary>
     public ReposRow? Repos { get; private set; }
 
-    /// <summary>What the node says it is (maintenance, autopilot, account, watchtower); null before any.</summary>
+    /// <summary>What the node says it is (maintenance, account, watchtower); null before any.</summary>
     public NodeRow? Node { get; private set; }
 
     private readonly Dictionary<string, JobRow> _jobs = new Dictionary<string, JobRow>(StringComparer.Ordinal);

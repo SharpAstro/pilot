@@ -42,13 +42,13 @@ public sealed class NodeRowFeedTests : IAsyncDisposable
     {
         _feed.Start();
         await Until(() => _node.OpenCount == 1);
-        _node.Send(Live.Snapshot(1, "s-1") with { Node = new NodeRow { Autopilot = true } });
-        await Until(() => _feed.Node is { Autopilot: true });
+        _node.Send(Live.Snapshot(1, "s-1") with { Node = new NodeRow { AcceptsFleetFlights = true } });
+        await Until(() => _feed.Node is { AcceptsFleetFlights: true });
         _feed.Node!.Maintenance.ShouldBeFalse();
         _feed.Node.MachinePrefix.ShouldBe("SE1");
 
         var before = _feed.Version;
-        _node.Send(new NodeChangedEvent { Seq = 2, At = Live.At, Row = new NodeRow { Maintenance = true, Autopilot = true, AcceptsFleetFlights = true } });
+        _node.Send(new NodeChangedEvent { Seq = 2, At = Live.At, Row = new NodeRow { Maintenance = true, AcceptsFleetFlights = true } });
         await Until(() => _feed.Node is { Maintenance: true });
 
         _feed.Node!.AcceptsFleetFlights.ShouldBeTrue();

@@ -12,7 +12,7 @@ using PageTests = Pilot.Gui.Tests.PageButtonFeedbackTests;
 namespace Pilot.Gui.Tests;
 
 /// <summary>
-/// The Fleet, Repos, Ideas, Settings and Summary pages', the new-flight wizard's and the autopilot switch's buttons that ask the node
+/// The Fleet, Repos, Ideas, Settings and Summary pages', the new-flight wizard's buttons that ask the node
 /// (issue 461, the owner 2026-10-29: "all buttons should always have a feedback in one form or the other"): each says it is working
 /// on the frame it is pressed and takes no second press, shows the outcome when the node answers, and says a refusal in the node's
 /// words where it was pressed. Every test's node answers late, through a <see cref="TaskCompletionSource{T}"/>.
@@ -439,44 +439,5 @@ public sealed class OtherPagesButtonFeedbackTests
         await second;
         wizard.NewIssueOpen.ShouldBeFalse();
         wizard.Picks.ShouldHaveSingleItem().Issue.Number.ShouldBe(300);
-    }
-
-    // ---- The autopilot switch ----
-
-    [Fact]
-    public async Task TheAutopilotSwitchShowsTheAskedStateDimmedUntilTheNodeTakesItThenTheTakenStateOrFlipsBackWithTheRefusal()
-    {
-        using var renderer = new RgbaImageRenderer(1, 1);
-        var chrome = NewChrome(renderer);
-        var node = new LateNode();
-        chrome.Autopilot.OnToggle = on => node.Ask($"autopilot {(on ? "on" : "off")}");
-        chrome.Autopilot.On = false;
-        Layout.Node Tree() => chrome.Fleet.Tree(new FleetScreen([], Now));
-
-        // Pressed: the switch is lit (the asked state) at once and dimmed, with no hit, so no second press is taken.
-        chrome.Autopilot.Shown.ShouldBeFalse();
-        Click(Tree(), AutopilotSwitch.Action);
-        node.Asked.ShouldBe(["autopilot on"]);
-        chrome.Autopilot.Shown.ShouldBeTrue();
-        Has(Tree(), AutopilotSwitch.Action).ShouldBeFalse();
-        chrome.Autopilot.Tooltip.ShouldContain("Asking the node to turn autopilot on");
-
-        // Taken: it keeps showing the asked state until the node's own look agrees, and clicks again, to turn it off.
-        node.Answer(null);
-        await Until(() => Has(Tree(), AutopilotSwitch.Action));
-        chrome.Autopilot.Shown.ShouldBeTrue();
-        chrome.Autopilot.On = true;
-        chrome.Autopilot.Shown.ShouldBeTrue();
-        chrome.Autopilot.Presses.IsTaken(AutopilotSwitch.Action).ShouldBeFalse();
-
-        // Refused: the switch flips back to what the node says and its tooltip carries the node's words.
-        Click(Tree(), AutopilotSwitch.Action);
-        node.Asked[^1].ShouldBe("autopilot off");
-        chrome.Autopilot.Shown.ShouldBeFalse();
-        node.Answer("only the person may");
-        await Until(() => Has(Tree(), AutopilotSwitch.Action));
-        chrome.Autopilot.Shown.ShouldBeTrue();
-        chrome.Autopilot.Refused.ShouldNotBeNull().ShouldContain("only the person may");
-        chrome.Autopilot.Tooltip.ShouldContain("only the person may");
     }
 }

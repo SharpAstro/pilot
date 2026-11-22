@@ -20,7 +20,6 @@ public sealed class DesignPlayerClipTests
         using var renderer = new RgbaImageRenderer(W, H);
         var screen = PageData.WideDesigns(Now, blank);
         var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
-        chrome.Autopilot.OnToggle = _ => Task.FromResult<string?>(null);
         chrome.Show(PilotPage.Designs);
         chrome.Designs.Open("DSN-7");
         chrome.Designs.PickTarget(target).ShouldBeTrue();
@@ -72,7 +71,6 @@ public sealed class DesignPlayerClipTests
             doc["screens"] = new System.Text.Json.Nodes.JsonArray(new System.Text.Json.Nodes.JsonObject { ["id"] = "home", ["title"] = "Home", ["root"] = root });
         });
         var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
-        chrome.Autopilot.OnToggle = _ => Task.FromResult<string?>(null);
         chrome.Show(PilotPage.Designs);
         chrome.Designs.Open("DSN-7");
         chrome.Designs.PickTarget(target).ShouldBeTrue();

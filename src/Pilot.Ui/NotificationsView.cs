@@ -18,9 +18,6 @@ internal sealed class NotificationsView<TSurface>(Renderer<TSurface> renderer) :
     /// <summary>The header's ? card.</summary>
     public AboutCard? About { get; set; }
 
-    /// <summary>The header's Autopilot switch.</summary>
-    public AutopilotSwitch? Autopilot { get; set; }
-
     /// <summary>The header's Night switch.</summary>
     public NightSwitch? Night { get; set; }
 
@@ -45,7 +42,7 @@ internal sealed class NotificationsView<TSurface>(Renderer<TSurface> renderer) :
             Counts = $"{needs} need{(needs == 1 ? "s" : "")} you, {history} in the history (kept {KeepText(Host.KeepFor)})",
             CountsFit = true,
             Source = PageHeader.SourceLine(source, asOf),
-        }, new TopBarParts(Nodes, null, Autopilot, About, Night));
+        }, new TopBarParts(Nodes, null, About, Night));
         var page = Layout.Builder.VStack(header, Host.ListFrame(width).Stretch()).Bg(Palette.Current.Ground).Stretch();
         return About?.Over(page) ?? page;
     }

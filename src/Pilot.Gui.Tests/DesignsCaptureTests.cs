@@ -109,7 +109,6 @@ public sealed class DesignsCaptureTests
         using var renderer = new RgbaImageRenderer((uint)width, (uint)height);
         using var accent = Pilot.Ui.Palette.StandardForCapture(null);
         var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
-        chrome.Autopilot.OnToggle = _ => Task.FromResult<string?>(null);
         chrome.Show(PilotPage.Designs);
         chrome.Designs.Open("DSN-7");
         var data = PageData.For("sample");
@@ -167,7 +166,6 @@ public sealed class DesignsCaptureTests
             var renderer = new RgbaImageRenderer((uint)width, (uint)height);
             using var accent = Pilot.Ui.Palette.StandardForCapture(null);
             var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
-            chrome.Autopilot.OnToggle = _ => Task.FromResult<string?>(null);
             chrome.Show(PilotPage.Designs);
             chrome.Designs.Open("DSN-7");
             chrome.Designs.PickTarget(target).ShouldBeTrue();
@@ -241,7 +239,6 @@ public sealed class DesignsCaptureTests
         using var renderer = new RgbaImageRenderer((uint)width, (uint)height);
         using var accent = Pilot.Ui.Palette.StandardForCapture(null);
         var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
-        chrome.Autopilot.OnToggle = _ => Task.FromResult<string?>(null);
         chrome.Show(PilotPage.Designs);
         chrome.Designs.OnBuild = (_, _, _, _) => { };
         chrome.Designs.Open("DSN-1");
@@ -314,7 +311,6 @@ public sealed class DesignsCaptureTests
         using var renderer = new RgbaImageRenderer(width, height);
         using var accent = Pilot.Ui.Palette.StandardForCapture(null);
         var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
-        chrome.Autopilot.OnToggle = _ => Task.FromResult<string?>(null);
         chrome.Show(PilotPage.Designs);
         await PageData.OpenDesignChat(chrome.Designs, "DSN-1", PageData.DesignChatPage());
         var data = PageData.For("sample");
@@ -367,7 +363,6 @@ public sealed class DesignsCaptureTests
         using var renderer = new RgbaImageRenderer((uint)width, (uint)height);
         using var accent = Pilot.Ui.Palette.StandardForCapture(null);
         var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
-        chrome.Autopilot.OnToggle = _ => Task.FromResult<string?>(null);
         chrome.Show(PilotPage.Designs);
         await PageData.OpenDesignChat(chrome.Designs, "DSN-1", PageData.DesignChatPage(lengthen: state == "long"));
         var data = PageData.For("sample");
@@ -492,7 +487,6 @@ public sealed class DesignsCaptureTests
         using var renderer = new RgbaImageRenderer((uint)width, (uint)height);
         using var accent = Pilot.Ui.Palette.StandardForCapture(null);
         var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
-        chrome.Autopilot.OnToggle = _ => Task.FromResult<string?>(null);
         chrome.Show(PilotPage.Designs);
         chrome.Designs.OnEdit = (_, _, _, _, _) => { };
         // The open For-you bar covers the page's right edge by design; the page is captured with the bar collapsed so the chat shows whole.
@@ -540,7 +534,6 @@ public sealed class DesignsCaptureTests
         using var renderer = new RgbaImageRenderer(width, height);
         using var accent = Pilot.Ui.Palette.StandardForCapture(null);
         var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
-        chrome.Autopilot.OnToggle = _ => Task.FromResult<string?>(null);
         chrome.Show(PilotPage.Designs);
         chrome.Designs.OnEdit = (_, _, _, _, _) => { };
         chrome.Designs.Open("DSN-7");

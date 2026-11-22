@@ -176,11 +176,6 @@ public sealed record Standing(StandingKind Kind, string? Flight = null, string? 
     public string? Refusal(CommandRequest command, NodeState state)
     {
         var yourOnly = YourOnly(command, state);
-        // Autopilot is what lets an assistant do your-only things: only the person may change it, whoever asks and however.
-        if (command.Verb == Verbs.Set && Kind != StandingKind.Person && command.Args is [{ } key, ..] && string.Equals(key.Trim(), NodeSettings.AutopilotKey, StringComparison.OrdinalIgnoreCase))
-        {
-            return "autopilot is the person's to change: set it from the GUI, or from a terminal you run yourself";
-        }
         switch (Kind)
         {
             // What the watchtower asks leave for is the person's to give: a session that could answer its own prompt would have none.

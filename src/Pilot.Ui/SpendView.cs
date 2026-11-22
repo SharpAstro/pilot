@@ -138,9 +138,6 @@ internal sealed class SpendView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     /// <summary>The header's ? card.</summary>
     public AboutCard? About { get; set; }
 
-    /// <summary>The header's Autopilot switch.</summary>
-    public AutopilotSwitch? Autopilot { get; set; }
-
     /// <summary>The header's Night switch.</summary>
     public NightSwitch? Night { get; set; }
 
@@ -174,7 +171,7 @@ internal sealed class SpendView<TSurface>(Renderer<TSurface> renderer) : PilotWi
             CountsFit = true,
             Buttons = [.. SpendScreen.Windows.Select(Pill)],
             Source = PageHeader.SourceLine(screen.Source, screen.AsOf),
-        }, new TopBarParts(Nodes, null, Autopilot, About, Night));
+        }, new TopBarParts(Nodes, null, About, Night));
         var page = Layout.Builder.VStack(header, Body_(screen).Stretch()).Bg(Ground).Stretch();
         return About?.Over(page) ?? page;
     }

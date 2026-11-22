@@ -97,7 +97,7 @@ internal sealed class NodeFeed : IAsyncDisposable
     // The changing fields come from the stream's node row, over the fixed ones asked once per connection.
     private static NodeInfo? NodeOf(View view) =>
         view.Node is { } info && view.Said is { } said
-            ? info with { Maintenance = said.Maintenance, Autopilot = said.Autopilot, AcceptsFleetFlights = said.AcceptsFleetFlights, Account = said.Account, Watchtower = said.Watchtower }
+            ? info with { Maintenance = said.Maintenance, AcceptsFleetFlights = said.AcceptsFleetFlights, Account = said.Account, Watchtower = said.Watchtower }
             : view.Node;
 
     /// <summary>The node in a few counts, as the Fleet page shows each one.</summary>

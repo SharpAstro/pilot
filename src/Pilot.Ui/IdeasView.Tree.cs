@@ -119,7 +119,7 @@ internal sealed partial class IdeasView<TSurface>
                 Changed?.Invoke();
             }, P)],
             Source = Send is null ? "not live" : screen.AsOf == default ? screen.Source : PageHeader.SourceLine(screen.Source, screen.AsOf),
-        }, new TopBarParts(null, null, Autopilot, About, Night));
+        }, new TopBarParts(null, null, About, Night));
 
         // What every view starts with: the box that notes an idea, what was said, the questions the node asked.
         var head = new List<Layout.Node>();

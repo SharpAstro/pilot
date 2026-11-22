@@ -494,18 +494,6 @@ public sealed partial class RoleModels
         }
     }
 
-    /// <summary>Whether the autopilot is on (<see cref="NodeSettings.AutopilotKey"/>): in force at once, and on unless the person saved it off. A set not wired to a node (<see cref="Unset"/>) reads off, as its other defaults are absent.</summary>
-    public bool Autopilot
-    {
-        get
-        {
-            lock (_lock)
-            {
-                return _settings.Autopilot ?? _defaults;
-            }
-        }
-    }
-
     /// <summary>Whether the node is willing to take a flight another node routes to it (<see cref="NodeSettings.AcceptFleetFlightsKey"/>); off unless set.</summary>
     public bool AcceptsFleetFlights
     {
