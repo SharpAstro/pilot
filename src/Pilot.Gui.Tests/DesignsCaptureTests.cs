@@ -451,6 +451,9 @@ public sealed class DesignsCaptureTests
         var name = twoCells ? "two-cells" : "dsn1-like";
         arranged.Any(a => a.Bounds.Width == 420f && Math.Abs(a.Bounds.Right - (page.X + page.Width)) < 0.01f && a.Bounds.Height > page.Height / 2f).ShouldBeTrue($"{name}: a 420 chat at the right edge");
         arranged.Any(a => Math.Abs(a.Bounds.X - page.X) < 0.01f && Math.Abs(a.Bounds.Width - (page.Width - 420f)) < 0.01f && a.Bounds.Height > page.Height / 2f).ShouldBeTrue($"{name}: the document takes the rest");
+        // The chat's words keep off the document's scroll bar: its heading starts inside its column, not on its edge (#1210 R1.7).
+        var chatHeading = arranged.First(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text { Value: var v } } && v.StartsWith("Chat with the designer", StringComparison.Ordinal)).Bounds;
+        chatHeading.X.ShouldBeGreaterThanOrEqualTo(page.X + page.Width - 420f + 8f - 0.01f, $"{name}: the chat is inset from the document");
         for (var cell = 0; cell < (twoCells ? 2 : 1); cell++)
         {
             var key = $"design-frame:{cell}:0";

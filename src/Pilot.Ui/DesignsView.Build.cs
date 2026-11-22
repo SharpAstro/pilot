@@ -151,7 +151,8 @@ internal sealed partial class DesignsView<TSurface>
             yield break;
         }
         var row = page.Detail.Row;
-        if (!BuildOnFirstRow && !(_buildAsking && !Building) && BuildButton(page) is { } button)
+        // Shown during the ask too, as the back row's is (#1210 R1.9): the two places agree, and a second press re-asks.
+        if (!BuildOnFirstRow && BuildButton(page) is { } button)
         {
             // A page too narrow for the button beside the title and the chip has it as the document's first line instead (PIL1191).
             yield return Layout.Builder.HStack(button).WithGap(6f).RowH(26f);

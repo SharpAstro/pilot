@@ -1149,7 +1149,9 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
         }
         // In pixels the chat is a column of its own beside the document, where what the designer changes is in view. A window with no width for both puts it under the document.
         return ChatBeside
-            ? Layout.Builder.HStack(document.Pad(Gutter, 0f).WStar().HStar(), ChatPane(page).WFixed(ChatWidth).HStar()).WithGap(0f).Pad(0f, 8f).WStar().HStar()
+            // The chat keeps its column's width; inside it a gutter keeps its words off the document's scroll bar, which it touched (#1210 R1.7).
+            ? Layout.Builder.HStack(document.Pad(Gutter, 0f).WStar().HStar(),
+                Layout.Builder.HStack(Layout.Builder.Spacer().WFixed(ChatInset), ChatPane(page).WStar().HStar()).WithGap(0f).WFixed(ChatWidth).HStar()).WithGap(0f).Pad(0f, 8f).WStar().HStar()
             : Layout.Builder.VStack(document, ChatPane(page).HStar(NarrowChatShare, NarrowChatFloor, NarrowChatHeight)).WithGap(8f).Pad(Gutter, 8f).WStar().HStar();
     }
 
@@ -1450,6 +1452,9 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
         }
     }
     // The chat column: its heading with the Point at this switch, and the chat's own feed, status and box under it.
+    // The room between the document's scroll bar and the chat beside it.
+    private const float ChatInset = 8f;
+
     private Layout.Node ChatPane(DesignPage page)
     {
         return Layout.Builder.VStack(Heading("Chat with the designer"), Chat.Tree().HStar()).WithGap(4f);
