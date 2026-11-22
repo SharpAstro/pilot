@@ -78,7 +78,7 @@ public sealed class MergeRebaseFallbackGitTests() : ReviewTestsBase(realGit: tru
         MainMoves();
         _github.Pr = _github.Pr! with { Mergeable = "CONFLICTING" };
         var before = Git(flight.Worktree, "rev-parse", "HEAD");
-        var ringBefore = _state.Cards(openOnly: true).Where(c => c.Bin == CardBin.Ring && c.Subject == Verbs.FlightTarget(flight.Code)).Select(c => c.Id).ToArray();
+        var readyBefore = _state.Cards(openOnly: true).Where(c => c.Kind == LegCommander.PrReady && c.Subject == Verbs.FlightTarget(flight.Code)).Select(c => c.Id).ToArray();
 
         var merge = await Run(Verbs.Merge, Verbs.FlightTarget(flight.Code), "node", _github.Pr!.Head, "rebase");
 
@@ -93,9 +93,10 @@ public sealed class MergeRebaseFallbackGitTests() : ReviewTestsBase(realGit: tru
         entry.Open.ShouldBeTrue();
         entry.State.ShouldNotBe(MergeEntryState.Dropped);
         _github.Merged.ShouldBeEmpty();
-        // Bringing the branch up to date closes the old PR-ready card and raises it again for the new head; nothing else rings for the owner.
-        ringBefore.ShouldNotBeEmpty();
-        _state.Cards(openOnly: true).Where(c => c.Bin == CardBin.Ring && c.Subject == Verbs.FlightTarget(flight.Code)).Select(c => c.Kind).ShouldAllBe(k => k == LegCommander.PrReady);
+        // Bringing the branch up to date closes the old PR-ready card and raises it again for the new head; nothing rings for the owner,
+        // as the node merges the flight itself and its PR-ready card is a quiet For-you card.
+        readyBefore.ShouldNotBeEmpty();
+        _state.Cards(openOnly: true).Where(c => c.Bin == CardBin.Ring && c.Subject == Verbs.FlightTarget(flight.Code)).ShouldBeEmpty();
         _state.Cards().ShouldNotContain(c => c.Kind == LegCommander.MergeFailed || c.Kind == PrChecks.NodeMergeRefused);
     }
 }

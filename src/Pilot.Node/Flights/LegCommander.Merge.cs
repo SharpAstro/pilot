@@ -509,15 +509,17 @@ public sealed partial class LegCommander
                 way == MergeWays.Queued ? $"The merge of {code} is in GitHub's merge queue. GitHub merges it by itself, with the node up or not."
                     : byGitHub ? $"The merge of {code} is armed. GitHub merges it by itself once its checks pass, with the node up or not."
                     : $"The node waits for the checks of {code}'s PR, then queues or merges it. Nothing for you to do unless they fail.",
-                bin: MergeCardBin());
+                bin: MergeCardBin(flight?.Repo));
         }
     }
 
     /// <summary>
     /// The bin of a merge card: the node does the merge itself, so the card is a quiet For-you card until
-    /// <paramref name="ownerMustAct"/> (checks failed, queue dropped, GitHub blocks it, the node gave up); otherwise Ring as ever.
+    /// <paramref name="ownerMustAct"/> (checks failed, queue dropped, GitHub blocks it, the node gave up). A flight of a repo set to
+    /// no-auto-merge (<paramref name="repo"/>) is never merged by the node, so its card rings: the merge is the person's to press.
     /// </summary>
-    public CardBin MergeCardBin(bool ownerMustAct = false) => !ownerMustAct ? CardBin.ForYou : CardBin.Ring;
+    public CardBin MergeCardBin(string? repo, bool ownerMustAct = false) =>
+        !ownerMustAct && (repo is null || !Models.NoAutoMerge(repo)) ? CardBin.ForYou : CardBin.Ring;
 
     /// <summary>
     /// While the flight's merge command is under way, its open pr-ready or merge-failed cards show the Merge choice as
@@ -612,7 +614,7 @@ public sealed partial class LegCommander
             : [new CardChoice { Label = MergeLabel, Verb = Verbs.Merge, Target = card.Subject, Args = [head, .. card.Choices.FirstOrDefault(c => c.Verb == Verbs.Merge)?.Args.Skip(1) ?? []], Status = status, Note = note }];
         // The failed check's page is the link only where a failed check is what blocks it: the others keep the PR's.
         state.UpdateCard(card.Id, title, detail, choices, merge is { Kind: MergeKinds.Blocked, FailedName: not null } ? merge.FailedLink ?? link : link, PrReady, MergeSummary(code, merge),
-            MergeCardBin(merge.Kind is MergeKinds.Blocked or MergeKinds.ChangesRequested || !own && merge.DroppedFromQueue is not null));
+            MergeCardBin(flight?.Repo, merge.Kind is MergeKinds.Blocked or MergeKinds.ChangesRequested || !own && merge.DroppedFromQueue is not null));
     }
 
     /// <summary>

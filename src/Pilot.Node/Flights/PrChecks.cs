@@ -1247,12 +1247,16 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
     {
         if (legs is null || status is ChoiceStatus.Failing or ChoiceStatus.Conflicting
             || flight.Review is not { State: ReviewState.Passed } || flight.MergeWhenGreen is not null
+            // A repo whose PRs the node never merges by itself (no-auto-merge-repos): its PR-ready card is the person's to press.
+            || legs.Models.NoAutoMerge(flight.Repo)
             // A flight in a holding pattern circles: not asked, and the head not marked as tried, so it merges once cleared.
             || flight.Holding is not null
             // A leg still to fly (a review-notes leg, say) is the merge's own refusal: not asked, and the head not marked as tried, so
             // it merges once that leg lands. Asking rang "merge by the node was refused: has legs not done" (PDF446, PIL841, 2026-11-07).
             || state.OpenLegs(flight.Code).Count > 0
             || card.Choices.FirstOrDefault(c => c.Verb == Verbs.Merge) is not { } merge
+            // A merge of the flight already in the node's queue, or one that merged this head, is not asked a second time (PIL1271).
+            || MergeHeldOrDone(flight.Code, merge)
             // Another merge of its repo holds the turn: asked at a later look, and only an ask made marks the head as tried.
             || legs.TurnHeld(flight.Repo)
             || merge.Args is [{ } droppedHead, ..] && legs.DroppedForConflict(flight.Code, droppedHead))
@@ -1339,6 +1343,18 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
         _mergeTries[key] = new MergeTries(asked, time.GetUtcNow());
         RaiseMergeRefused(flight, merge, result, refusal!, asked, key, "by the node");
     }
+
+    /// <summary>
+    /// Whether the node's merge queue holds a merge of <paramref name="code"/> (waiting, updating, checks, batched, or handed to GitHub's
+    /// queue), or holds one that merged the head <paramref name="merge"/> offers. Such a merge was asked already, by hand, armed at green
+    /// or by the node, and the queue drives it: the node's own merge does not ask GitHub a second time. GitHub's read of the PR is not
+    /// what stops it, since a merge made earlier in the same look (an armed merge that joined the queue at green) is not in it yet, and
+    /// a second ask is a second merge, or a refusal of a merged PR that rings for nothing (PIL1271, MergeArmTests' [63, 63]).
+    /// </summary>
+    private bool MergeHeldOrDone(string code, CardChoice merge) =>
+        state.Merges().FirstOrDefault(m => m.Flight == code) is { } entry
+        && (entry.Open || entry.State == MergeEntryState.Merged && merge.Args is [{ Length: > 0 } head, ..] && entry.Head.Length > 0
+            && (entry.Head.StartsWith(head, StringComparison.OrdinalIgnoreCase) || head.StartsWith(entry.Head, StringComparison.OrdinalIgnoreCase)));
 
     /// <summary>
     /// The card of a refusal only a person can clear (or a passing one that did not pass in <see cref="PassingTriesBeforeRing"/> tries):

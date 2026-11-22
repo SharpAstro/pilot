@@ -568,7 +568,7 @@ public sealed partial class LegCommander
         var holding = flight.Holding is not null; var holdReason = flight.Holding?.Reason ?? HoldingReason;
         var pr = await OffLockAsync(null, () => github.PullRequestAsync(flight.RepoPath, flight.Branch, cancellationToken)) ?? throw new FlightException($"{flight.Branch} has no PR");
         var legs = state.Legs(flight.Code);
-        state.RaiseCard(MergeCardBin(), PrReady, Verbs.FlightTarget(flight.Code),
+        state.RaiseCard(MergeCardBin(flight.Repo), PrReady, Verbs.FlightTarget(flight.Code),
             holding ? $"{flight.Code}'s PR #{pr.Number} is holding: {holdReason}" : $"{flight.Code}'s PR #{pr.Number} is ready to merge",
             $"{flight.Title ?? flight.Item.Noun}: {legs.Length} {(legs.Length == 1 ? "leg" : "legs")} done, head {CommitRefs.Short(pr.Head)}. {reviewed}: {review}."
                 + (holding ? HeldDetailTail : ""),

@@ -211,7 +211,7 @@ public sealed partial class LegCommander
 
     /// <summary>A PR-ready card at the laid head, for when the queue would not take it yet: its Merge is offered there.</summary>
     private void RaiseReadyAtLaid(FlightRow flight, string laid, string why) =>
-        state.RaiseCard(MergeCardBin(), PrReady, Verbs.FlightTarget(flight.Code),
+        state.RaiseCard(MergeCardBin(flight.Repo), PrReady, Verbs.FlightTarget(flight.Code),
             $"{flight.Code}'s PR #{flight.PullRequest} is ready to merge",
             $"{flight.Title ?? flight.Item.Noun}: laid on {flight.Base} as {CommitRefs.Short(laid)}, its review carried over. The queue would not take it yet ({why}); Merge queues it once its checks pass.",
             [new CardChoice { Label = MergeLabel, Verb = Verbs.Merge, Target = Verbs.FlightTarget(flight.Code), Args = [laid] }], link: flight.PullRequestUrl,

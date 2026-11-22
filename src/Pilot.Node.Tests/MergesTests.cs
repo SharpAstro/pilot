@@ -166,6 +166,12 @@ public sealed class MergesTests
         node.GitHub.Queue = how == "closed"
             ? GhAnswers.MergeQueue("idle", PrHead, prState: "CLOSED")
             : GhAnswers.MergeQueue("dropped", PrHead, removedAt: at.AddMinutes(1), removedReason: "FAILED_CHECKS");
+        if (how == "closed")
+        {
+            // GitHub says the PR is closed wherever it is read, the PR itself as well as its queue: a PR still read open would be merged
+            // by the node at the same look, as for any passed flight.
+            node.GitHub.PrOf["flight/tia1"] = GhAnswers.PullRequestByBranch(state: "closed", number: 63, head: PrHead, url: PrUrl);
+        }
 
         await node.App.Services.GetRequiredService<PrChecks>().LookAsync(Ct);
 
