@@ -19,19 +19,31 @@ namespace Pilot.Gui.Tests;
 public sealed class ToastPressTests
 {
     private static readonly DateTimeOffset T0 = PageData.Now;
-    // The library lays Dismiss after the choices in the same row, which does not wrap: the choices leave it this much of the toast (at 100%).
-    private const float DismissRoom = 80f;
+    // The row the choices and Dismiss share, from the library's own metrics so no width is retyped here: the toast, less the padding on both
+    // sides, the card's 1-unit edge, the icon and the gap beside it.
+    private static float RowWidth =>
+        NotificationsHost.Style.ToastWidth - 2f * NotificationsHost.Style.Padding - 2f - NotificationsLayout.ToastIconSize - NotificationsHost.Style.Gap;
+
+    // The library lays Dismiss after the choices in the same row, which does not wrap: its real width, drawn as the library draws it.
+    private static float DismissWidth()
+    {
+        using var measure = new RgbaImageRenderer(1, 1);
+        var ctx = new PixelMeasureContext<RgbaImage>(measure, SessionsCapture.FontPath, 1f);
+        return Layout.Engine.Arrange(Layout.Builder.HStack([NotificationsLayout.PlainButton("Dismiss", NotificationsHost.Colors(), NotificationsHost.Style, null!, () => { })]), new Rect<float>(0, 0, RowWidth, 100f), ctx)
+            .Skip(1).Max(a => a.Bounds.X + a.Bounds.Width);
+    }
     private const string LongLabel = "Start it and then wait for the review of the whole flight before going on to land it";
     private const string Why = "refused: the flight is held, so nothing can be started on it until its owner lifts the hold";
 
-    private static CardRow Card(string label = "Start it") => new()
+    // The node's own merge and review cards carry one choice (LegCommander.Review, LegCommander.Lay): oneChoice builds a card as the node does.
+    private static CardRow Card(string label = "Start it", bool oneChoice = false) => new()
     {
         Id = "c1", Bin = CardBin.Ring, Kind = "pr-ready", Subject = "flight/ORBc1", Title = "TIA1818's PR #63 is ready to merge", Summary = "A short line on what happened.",
         At = Live.At, State = CardState.Open,
         Choices =
         [
             new CardChoice { Label = label, Verb = Verbs.StartLeg, Target = "flight/TIA1818/web-header" },
-            new CardChoice { Label = "Go around", Verb = Verbs.StartLeg, Target = "flight/TIA1818/other" },
+            .. oneChoice ? (CardChoice[])[] : [new CardChoice { Label = "Go around", Verb = Verbs.StartLeg, Target = "flight/TIA1818/other" }],
         ],
     };
 
@@ -59,20 +71,20 @@ public sealed class ToastPressTests
             Chrome.Render(_data.Sessions with { AsOf = T0.AddSeconds(seconds) }, _data.Flights, cards, _data.Jobs, _data.Fleet, _data.Repos, new RectF32(0, 0, _width, _height), _data.Machines);
 
         /// <summary>The toast's own row as the feed draws it now, arranged in a toast's width.</summary>
-        public ImmutableArray<Layout.ArrangedNode<float>> Row(float width = 340f)
+        public ImmutableArray<Layout.ArrangedNode<float>> Row(float? width = null)
         {
             var n = Chrome.Notifications.Toasts.Toasts.Single(t => t.Notification.Kind == DIR.Lib.Notifications.NotificationKind.Staying).Notification;
             // The body, then the choices as the library lays them in Dismiss's row (Notification.Buttons).
             var node = Layout.Builder.VStack(n.Row.ShouldNotBeNull()(), Layout.Builder.HStack([.. n.Buttons.ShouldNotBeNull()()]).WithGap(6f));
-            return Layout.Engine.Arrange(node, new Rect<float>(0, 0, width, 1400), new PixelMeasureContext<RgbaImage>(_measure, SessionsCapture.FontPath, 1f));
+            return Layout.Engine.Arrange(node, new Rect<float>(0, 0, width ?? RowWidth, 1400), new PixelMeasureContext<RgbaImage>(_measure, SessionsCapture.FontPath, 1f));
         }
 
         /// <summary>Only the choices' row, arranged as above, so a check on how far it runs is not met by the body's full-width nodes.</summary>
-        public ImmutableArray<Layout.ArrangedNode<float>> ButtonRow(float width = 340f)
+        public ImmutableArray<Layout.ArrangedNode<float>> ButtonRow(float? width = null)
         {
             var n = Chrome.Notifications.Toasts.Toasts.Single(t => t.Notification.Kind == DIR.Lib.Notifications.NotificationKind.Staying).Notification;
             var node = Layout.Builder.HStack([.. n.Buttons.ShouldNotBeNull()()]).WithGap(6f);
-            return Layout.Engine.Arrange(node, new Rect<float>(0, 0, width, 1400), new PixelMeasureContext<RgbaImage>(_measure, SessionsCapture.FontPath, 1f));
+            return Layout.Engine.Arrange(node, new Rect<float>(0, 0, width ?? RowWidth, 1400), new PixelMeasureContext<RgbaImage>(_measure, SessionsCapture.FontPath, 1f));
         }
 
         /// <summary>How many pixels of the last frame are exactly this colour.</summary>
@@ -155,10 +167,10 @@ public sealed class ToastPressTests
         TextOverlap.Faults(row).Select(f => f.Line).ShouldBeEmpty();
     }
 
-    [Theory]
-    [InlineData(340f)]
-    public void ALongLabelEndsInAnEllipsisInsideTheToastAndNothingOverlaps(float width)
+    [Fact]
+    public void ALongLabelEndsInAnEllipsisInsideTheToastAndNothingOverlaps()
     {
+        var width = RowWidth;
         using var rig = new Rig(Card(LongLabel));
         var row = rig.Row(width);
 
@@ -168,7 +180,7 @@ public sealed class ToastPressTests
         ArrangedText.Concat(row).ShouldNotContain("before going on to land it");
         row.Select(a => a.Node.Tooltip?.ToString()).ShouldContain(t => t != null && t.Contains(LongLabel));
         Actions(row).ShouldContain("toast:c1:1", "the tooltip on the cut button does not swallow its press");
-        rig.ButtonRow(width).Skip(1).Where(a => a.Bounds.X + a.Bounds.Width > width - DismissRoom + 0.5f).Select(a => $"{a.Node.GetType().Name}@{a.Bounds.X:0},{a.Bounds.Y:0},{a.Bounds.Width:0}x{a.Bounds.Height:0} hit={a.Node.Hit}")
+        rig.ButtonRow(width).Skip(1).Where(a => a.Bounds.X + a.Bounds.Width > width - DismissWidth() - 6f + 0.5f).Select(a => $"{a.Node.GetType().Name}@{a.Bounds.X:0},{a.Bounds.Y:0},{a.Bounds.Width:0}x{a.Bounds.Height:0} hit={a.Node.Hit}")
             .ShouldBeEmpty($"nothing runs past the toast at {width}");
         TextOverlap.Faults(row).Select(f => f.Line).ShouldBeEmpty();
     }
@@ -179,19 +191,17 @@ public sealed class ToastPressTests
         // The node's own Merge label (LegCommander.MergeLabel) is 12 characters: the cut must not turn it into "Merge the…".
         const string merge = "Merge the PR";
         PilotChrome<RgbaImage>.CutToastLabel(merge).ShouldBe(merge);
-        using var measure = new RgbaImageRenderer(1, 1);
-        var ctx = new PixelMeasureContext<RgbaImage>(measure, SessionsCapture.FontPath, 1f);
-        var colors = NotificationsHost.Colors();
+        // The toast's body row is as wide as the style makes it (RowWidth), not a round number: a looser bound would let a row overflow the real toast.
+        // The card is built as the node builds it (LegCommander.Review.cs, LegCommander.Lay.cs): one "Merge the PR" choice.
         // Dismiss is drawn by the library as a plain button after the choices in the same row: its real width is measured, not a guessed room.
-        var dismiss = Layout.Engine.Arrange(Layout.Builder.HStack([NotificationsLayout.PlainButton("Dismiss", colors, NotificationsHost.Style, null!, () => { })]), new Rect<float>(0, 0, 340f, 100f), ctx)
-            .Skip(1).Max(a => a.Bounds.X + a.Bounds.Width);
-        using var idle = new Rig(Card(merge));
+        var dismiss = DismissWidth();
+        using var idle = new Rig(Card(merge, oneChoice: true));
         var live = idle.ButtonRow().Skip(1).Max(a => a.Bounds.X + a.Bounds.Width);
-        (live + 6f + dismiss).ShouldBeLessThanOrEqualTo(340f, "the live choices and Dismiss fit one toast row");
-        using var pressed = new Rig(Card(merge));
+        (live + 6f + dismiss).ShouldBeLessThanOrEqualTo(RowWidth, "the live choice and Dismiss fit one toast row");
+        using var pressed = new Rig(Card(merge, oneChoice: true));
         pressed.Chrome.Cards.NoteWorking("c1", "card:c1:1");
         var twin = pressed.ButtonRow().Skip(1).Max(a => a.Bounds.X + a.Bounds.Width);
-        (twin + 6f + dismiss).ShouldBeLessThanOrEqualTo(340f, "the pressed twin, with its dots, is wider than the live button and still fits");
+        (twin + 6f + dismiss).ShouldBeLessThanOrEqualTo(RowWidth, "the pressed twin, with its dots, is wider than the live button and still fits");
     }
 
     [Fact]
