@@ -106,8 +106,17 @@ public abstract class PrFixTestsBase : IDisposable
         _testGit.Verify();
     }
 
-    private protected Task<CommandResult> Run(string verb, string pr, string who, params string[] args) =>
-        _reviews.RunAsync(new CommandRequest { Verb = verb, Target = $"pr/{pr}", Args = args, Who = who }, Ct);
+    private protected async Task<CommandResult> Run(string verb, string pr, string who, params string[] args)
+    {
+        var result = await _reviews.RunAsync(new CommandRequest { Verb = verb, Target = $"pr/{pr}", Args = args, Who = who }, Ct);
+        // A verdict's delayed sweep (a grace of a millisecond here) may start the node's own fixer: it is waited for now, so it never runs in the middle of
+        // the test's next step (the merge queue's Windows run of #1257 saw a press race it).
+        if (verb == Verbs.PrVerdict)
+        {
+            await _reviews.GraceDone.WaitAsync(TimeSpan.FromSeconds(30), Ct);
+        }
+        return result;
+    }
 
     /// <summary>The table a re-review opens with, each earlier point of the row answered addressed; empty on a first review.</summary>
     private protected static string AnswersOf(PrReviewRow row) =>
@@ -437,19 +446,25 @@ public sealed class PrFixTests2 : PrFixTestsBase
     [Trait("Category", "Slow")]
     public async Task TheFixItChoiceOnAPassingReviewsPointsStartsAFixerInsteadOfBeingRefused()
     {
-        await ApprovedWithAPointLeft();
+        // The node's own start on the points fails (the verdict's sweep, waited for), so the card is up and no fixer runs when the person presses it.
+        _github.Summary = GhAnswers.ChecksOf(ChoiceStatus.Passing, 1, 1);
+        _github.Queue = GhAnswers.MergeQueue("idle", _github.Prs["acme/widget#7"].Head);
+        (await Run(Verbs.ReviewPr, "acme/widget#7", "controller")).Error.ShouldBeNull();
+        _workers.Fail = new FlightException("claude --bg did not start");
+        (await Run(Verbs.PrVerdict, "acme/widget#7", Row.Reviewer, "approve", NotBlocking)).Error.ShouldBeNull();
+        _workers.Fail = null;
+        Fixers.ShouldBeEmpty();
+        _state.Cards(openOnly: true).ShouldContain(c => c.Kind == PrReviews.FixFailedKind);
 
-        // The card of a failed or ended start presses this verb: the review passed, but it left points to make. It is never refused for having nothing to
-        // fix. The node may have started a fixer on the points itself by the time it is pressed (on a slower runner it has), and then the press is refused
-        // for that fixer, never starting a second one (#1247): one fixer, on the points, either way.
-        var pressed = await Run(Verbs.FixPr, "acme/widget#7", "controller");
-        if (pressed.Error is { } refused)
-        {
-            refused.ShouldContain("fixing it already");
-        }
+        // The card of a failed start presses this verb: the review passed, but it left points to make, so the press starts a fixer and is not refused for
+        // having nothing to fix. The node's own start failed first (the verdict's sweep, waited for), which is what puts the card up.
+        (await Run(Verbs.FixPr, "acme/widget#7", "controller")).Error.ShouldBeNull();
 
         Fixers.ShouldHaveSingleItem().Brief.ShouldContain("the title could be shorter");
         Row.FixRound.ShouldBe(1);
+        // A press while that fixer works is refused for it, never a second fixer (#1247).
+        (await Run(Verbs.FixPr, "acme/widget#7", "controller")).Error.ShouldNotBeNull().ShouldContain("fixing it already");
+        Fixers.Length.ShouldBe(1);
     }
 
     [Fact]

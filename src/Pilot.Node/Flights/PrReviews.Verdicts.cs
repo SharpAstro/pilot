@@ -121,7 +121,7 @@ public sealed partial class PrReviews
         }
         if (review.ReviewerJob is not null || posted)
         {
-            _ = Task.Run(async () =>
+            GraceDone = Task.Run(async () =>
             {
                 try
                 {
