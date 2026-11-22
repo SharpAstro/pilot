@@ -1140,6 +1140,12 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
     /// <summary>Test hook: runs when a job's ending is known and before its ended row is put, where a dispatch must not find its slot free.</summary>
     internal Action<JobRow>? BeforeEndedRow { get; set; }
 
+    /// <summary>
+    /// Test hook: runs under <c>_rowLock</c> between the re-read of a job's row and the put of its ended row (#1178), where a write from another thread
+    /// must wait for the put.
+    /// </summary>
+    internal Action<JobRow>? BetweenEndReadAndPut { get; set; }
+
     /// <summary>Test hook: runs once a job's slot is free and the look for the next in line is asked for.</summary>
     internal Action<string>? SlotFreed { get; set; }
 
@@ -2844,6 +2850,7 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
                     lock (_rowLock)
                     {
                         ended = EndOf(Fresh());
+                        BetweenEndReadAndPut?.Invoke(ended);
                         state.PutJob(ended);
                     }
                     if (looks > 0)
