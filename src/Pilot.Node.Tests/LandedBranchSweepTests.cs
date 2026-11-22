@@ -267,27 +267,69 @@ public sealed class LandedBranchSweepTests : IDisposable
         Enumerable.Range(1, 12).ShouldAllBe(i => !OriginHas($"PIL{i}") && !LocalHas($"PIL{i}"));
     }
 
-    [Fact]
-    public async Task AFailedPushIsTriedAgainOnTheNextSweepAndNotInBetween()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ARefusedPushIsTriedOnceThenLeftUntilAPersonAnswersAndRetryPushesExactlyOnceMore(bool archived)
     {
         for (var i = 1; i <= 3; i++)
         {
-            Put(Row($"PIL{i}", MakeBranch($"PIL{i}")));
+            Put(Row($"PIL{i}", MakeBranch($"PIL{i}")), archived);
         }
+        FlightRow Of(int i) => archived ? Archived($"PIL{i}") : Live($"PIL{i}");
         var failing = new CountingGit(new GitCli()) { FailPush = true };
 
         (await Sweeper(failing).SweepAsync(Ct)).ShouldBe(0);
 
         failing.Count("push").ShouldBe(1);
-        Enumerable.Range(1, 3).ShouldAllBe(i => OriginHas($"PIL{i}") && LocalHas($"PIL{i}") && Live($"PIL{i}").BranchDeletedAt == null);
-        Summaries().Single().Title.ShouldContain("3 tried again next sweep: 3 push-failed");
-        failing.Count("push").ShouldBe(1);
+        Enumerable.Range(1, 3).ShouldAllBe(i => OriginHas($"PIL{i}") && LocalHas($"PIL{i}") && Of(i).BranchDeletedAt == null);
+        Enumerable.Range(1, 3).ShouldAllBe(i => Of(i).BranchDeleteFailed!.Contains("remote: refused") && Of(i).BranchKept == Of(i).BranchDeleteFailed && Of(i).BranchDeleteFailedAt == Now);
+        Summaries().Single().Title.ShouldContain("3 push-failed, left until answered");
+        Summaries().Single().Title.ShouldNotContain("tried again next sweep");
+        var card = _state.Cards().Single(c => c.Kind == FlightCommander.BranchKeptKind);
+        card.Bin.ShouldBe(CardBin.ForYou);
+        card.Detail.ShouldNotBeNull().ShouldContain("remote: refused");
+        Enumerable.Range(1, 3).ShouldAllBe(i => card.Detail!.Contains($"PIL{i} "));
+        card.Choices.Select(c => c.Verb).ShouldBe([Verbs.BranchRetry, Verbs.Dismiss]);
 
+        // Two more sweeps push nothing for them.
+        await Sweeper(failing).SweepAsync(Ct);
+        await Sweeper(failing).SweepAsync(Ct);
+        failing.Count("push").ShouldBe(1);
+        _state.Cards().Count(c => c.Kind == FlightCommander.BranchKeptKind).ShouldBe(1);
+
+        // The retry choice clears the record and pushes nothing itself.
+        var retry = card.Choices[0];
+        var commander = new FlightCommander(_state, new Planes(failing), new FakeTime());
+        var result = await commander.RunAsync(new CommandRequest { Verb = retry.Verb, Target = retry.Target, Args = retry.Args, Who = "test" }, Ct);
+        result.Error.ShouldBeNull();
+        failing.Count("push").ShouldBe(1);
+        Enumerable.Range(1, 3).ShouldAllBe(i => Of(i).BranchDeleteFailed == null && Of(i).BranchDeleteFailedAt == null);
+
+        // Meanwhile PIL1 was deleted on origin by hand: its retry counts as deleted.
+        Git(_repo, "push", "origin", ":refs/heads/flight/pil1");
         failing.FailPush = false;
         (await Sweeper(failing).SweepAsync(Ct)).ShouldBe(3);
 
         failing.Count("push").ShouldBe(2);
-        Enumerable.Range(1, 3).ShouldAllBe(i => !OriginHas($"PIL{i}") && Live($"PIL{i}").BranchDeletedAt == Now);
+        Enumerable.Range(1, 3).ShouldAllBe(i => !OriginHas($"PIL{i}") && Of(i).BranchDeletedAt == Now && Of(i).BranchDeleteFailed == null);
+    }
+
+    [Fact]
+    public async Task LeavingTheRefusedBranchesKeepsEverySweepFromPushingForThem()
+    {
+        Put(Row("PIL1", MakeBranch("PIL1")));
+        var failing = new CountingGit(new GitCli()) { FailPush = true };
+        await Sweeper(failing).SweepAsync(Ct);
+        var card = _state.Cards().Single(c => c.Kind == FlightCommander.BranchKeptKind);
+        _state.CloseCard(card.Id, "leave them", "test");
+
+        failing.FailPush = false;
+        await Sweeper(failing).SweepAsync(Ct);
+
+        failing.Count("push").ShouldBe(1);
+        OriginHas("PIL1").ShouldBeTrue();
+        Live("PIL1").BranchDeleteFailed.ShouldNotBeNull();
     }
 
     [Theory]

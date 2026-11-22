@@ -474,7 +474,7 @@ public sealed partial class FlightCommander
                     candidates.Add(new LandedCandidate(flight, landedHead, LiveSessionOf(flight.Code)));
                 }
             }
-            var folded = state.Flights().Where(f => f.State == FlightState.Landed && f.BranchDeletedAt is null
+            var folded = state.Flights().Where(f => f.State == FlightState.Landed && f.BranchDeletedAt is null && f.BranchDeleteFailed is null
                 && string.Equals(f.FoldedInto, flight.Code, StringComparison.OrdinalIgnoreCase) && f.RepoPath == flight.RepoPath).ToList();
             if (candidates.Count == 0 && folded.Count == 0)
             {
@@ -518,6 +518,40 @@ public sealed partial class FlightCommander
         }
     }
 
+    /// <summary>Clears the refused-delete record of each named landed flight, live or archived; the next sweep pushes for it once more (PIL1265).</summary>
+    private string BranchRetry(CommandRequest command)
+    {
+        var first = Verbs.FlightCodeOf(command.Target) ?? throw new FlightException($"this verb takes a flight target, {Verbs.FlightTargetPrefix}<code>, not {command.Target}");
+        var codes = new[] { first }.Concat(command.Args).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        var cleared = new List<string>();
+        foreach (var code in codes)
+        {
+            if (state.Flights().FirstOrDefault(f => string.Equals(f.Code, code, StringComparison.OrdinalIgnoreCase)) is { } live)
+            {
+                if (live.BranchDeleteFailed is null)
+                {
+                    throw new FlightException($"{live.Code} has no refused branch delete to retry");
+                }
+                state.UpdateFlight(live.Code, f => f with { BranchDeleteFailed = null, BranchDeleteFailedAt = null });
+                cleared.Add(live.Code);
+            }
+            else if (state.ArchivedRow(code) is { } row && state.Archive?.Read(row.Code) is { } whole)
+            {
+                if (whole.Flight.BranchDeleteFailed is null)
+                {
+                    throw new FlightException($"{whole.Flight.Code} has no refused branch delete to retry");
+                }
+                state.Archive.Save(whole with { Flight = whole.Flight with { BranchDeleteFailed = null, BranchDeleteFailedAt = null } });
+                cleared.Add(whole.Flight.Code);
+            }
+            else
+            {
+                throw new FlightException($"There is no flight {code}");
+            }
+        }
+        return $"the next sweep tries to delete the branch of {string.Join(", ", cleared)} once more";
+    }
+
     private bool LiveSessionOf(string code) =>
         state.Sessions().Any(s => s.State is not (SessionState.Ended or SessionState.Failed) && string.Equals(s.Flight, code, StringComparison.Ordinal));
 
@@ -528,10 +562,13 @@ public sealed partial class FlightCommander
         switch (outcome.Result)
         {
             case LandedBranchResult.Deleted:
-                state.UpdateFlight(outcome.Code, f => f with { BranchDeletedAt = now, BranchKept = null });
+                state.UpdateFlight(outcome.Code, f => f with { BranchDeletedAt = now, BranchKept = null, BranchDeleteFailed = null, BranchDeleteFailedAt = null });
+                return;
+            case LandedBranchResult.Failed:
+                state.UpdateFlight(outcome.Code, f => f with { BranchKept = outcome.Why, BranchDeleteFailed = outcome.Why, BranchDeleteFailedAt = now });
+                LandedBranchSweep.RaisePushFailedCard(state, target, [outcome]);
                 return;
             case LandedBranchResult.RetryLater:
-            case LandedBranchResult.Failed:
                 state.UpdateFlight(outcome.Code, f => f with { BranchKept = outcome.Why });
                 state.RaiseCard(CardBin.Handled, BranchKeptKind, target, $"{outcome.Code} landed, but its branch {outcome.Branch} is not deleted yet",
                     $"{outcome.Why}; the next sweep tries again");

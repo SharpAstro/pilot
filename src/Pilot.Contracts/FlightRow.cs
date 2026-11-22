@@ -149,6 +149,17 @@ public sealed record FlightRow
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? BranchKept { get; init; }
 
+    /// <summary>
+    /// What git said when the push that deletes the flight's branch on origin was refused (PIL1265); null when it was not or the failure was answered.
+    /// While set, no sweep or landing pushes for the branch: a person's answer on the card (retry) clears it.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? BranchDeleteFailed { get; init; }
+
+    /// <summary>When the refused delete was recorded in <see cref="BranchDeleteFailed"/>; null with it.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public DateTimeOffset? BranchDeleteFailedAt { get; init; }
+
     /// <summary>The number of the PR that merged without the new leg, while <see cref="MergedHead"/> says so.</summary>
     public int? MergedPullRequest { get; init; }
 

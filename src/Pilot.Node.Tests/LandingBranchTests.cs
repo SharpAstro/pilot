@@ -63,6 +63,29 @@ public sealed class LandingBranchTests : ReviewTestsBase
     }
 
     [Fact]
+    public async Task AnOriginThatRefusesTheDeleteIsPushedOnceAndTheFailureIsRecordedWithGitsTextAndNoNextSweepPromise()
+    {
+        var hook = Path.Combine(Path.GetDirectoryName(Repo)!, "origin.git", "hooks", "update");
+        Directory.CreateDirectory(Path.GetDirectoryName(hook)!);
+        File.WriteAllText(hook, "#!/bin/sh\nif [ \"$1\" = \"refs/heads/flight/tia1\" ]; then echo \"no deleting tia1 here\" >&2; exit 1; fi\nexit 0\n");
+        var (flight, _) = await Passed("1");
+
+        await LandMerged(flight);
+
+        OnOrigin(flight.Branch).ShouldNotBeEmpty();
+        var row = F(flight.Code);
+        row.BranchDeletedAt.ShouldBeNull();
+        row.BranchDeleteFailed.ShouldNotBeNull().ShouldContain("no deleting tia1 here");
+        row.BranchKept.ShouldBe(row.BranchDeleteFailed);
+        var card = Open().Single(c => c.Kind == FlightCommander.BranchKeptKind);
+        card.Bin.ShouldBe(CardBin.ForYou);
+        card.Detail.ShouldNotBeNull().ShouldContain("no deleting tia1 here");
+        card.Detail.ShouldNotContain("next sweep tries again");
+        card.Choices.Select(c => c.Verb).ShouldBe([Verbs.BranchRetry, Verbs.Dismiss]);
+        card.Choices[0].Target.ShouldBe(Verbs.FlightTarget(flight.Code));
+    }
+
+    [Fact]
     public async Task ALandedFlightWhoseLocalBranchIsOneCommitPastTheMergedHeadKeepsItAndRaisesOneCardNamingTheCommit()
     {
         var (flight, head) = await PassedDetached("1");

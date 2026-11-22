@@ -68,6 +68,7 @@ public sealed class LandedBranchSweep(NodeState state, LandedBranches branches, 
         }
         var entries = Candidates();
         var deleted = 0;
+        var failed = 0;
         var retry = new Dictionary<string, int>(StringComparer.Ordinal);
         var kept = new Dictionary<string, int>(StringComparer.Ordinal);
         void Count(LandedBranchOutcome o)
@@ -77,8 +78,10 @@ public sealed class LandedBranchSweep(NodeState state, LandedBranches branches, 
                 case LandedBranchResult.Deleted:
                     deleted++;
                     break;
-                case LandedBranchResult.RetryLater:
                 case LandedBranchResult.Failed:
+                    failed++;
+                    break;
+                case LandedBranchResult.RetryLater:
                     retry[o.Group ?? "retry"] = retry.GetValueOrDefault(o.Group ?? "retry") + 1;
                     break;
                 default:
@@ -90,9 +93,10 @@ public sealed class LandedBranchSweep(NodeState state, LandedBranches branches, 
         foreach (var repo in entries.GroupBy(e => e.Flight.RepoPath, StringComparer.OrdinalIgnoreCase))
         {
             cancellationToken.ThrowIfCancellationRequested();
+            var refused = new List<LandedBranchOutcome>();
             try
             {
-                await SweepRepoAsync(repo.Key, [.. repo], Count, cancellationToken);
+                await SweepRepoAsync(repo.Key, [.. repo], Count, refused, cancellationToken);
             }
             catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
             {
@@ -100,11 +104,15 @@ public sealed class LandedBranchSweep(NodeState state, LandedBranches branches, 
                 await Error.WriteLineAsync($"landed branch sweep: {repo.Key} not swept: {ex.Message}");
                 kept["an error"] = kept.GetValueOrDefault("an error") + repo.Count();
             }
+            if (refused.Count > 0)
+            {
+                RaisePushFailedCard(state, Verbs.RepoTarget(repo.Key), refused);
+            }
         }
 
         var keptTotal = kept.Values.Sum();
         var retryTotal = retry.Values.Sum();
-        if (deleted + retryTotal + keptTotal > 0)
+        if (deleted + retryTotal + keptTotal + failed > 0)
         {
             var parts = new List<string> { $"deleted {deleted}" };
             static string Groups(Dictionary<string, int> counts) =>
@@ -112,6 +120,10 @@ public sealed class LandedBranchSweep(NodeState state, LandedBranches branches, 
             if (retryTotal > 0)
             {
                 parts.Add($"{retryTotal} tried again next sweep: {Groups(retry)}");
+            }
+            if (failed > 0)
+            {
+                parts.Add($"{failed} push-failed, left until answered");
             }
             var groups = Groups(kept);
             var title = $"branches: {string.Join(", ", parts)}, kept {keptTotal}{(keptTotal > 0 ? ": " + groups : "")}";
@@ -128,7 +140,7 @@ public sealed class LandedBranchSweep(NodeState state, LandedBranches branches, 
     private List<Entry> Candidates()
     {
         var list = new List<Entry>();
-        foreach (var f in state.Flights().Where(f => f.State == FlightState.Landed && f.BranchDeletedAt is null && f.Branch.Length > 0))
+        foreach (var f in state.Flights().Where(f => f.State == FlightState.Landed && f.BranchDeletedAt is null && f.BranchDeleteFailed is null && f.Branch.Length > 0))
         {
             list.Add(new Entry(f, null));
         }
@@ -136,7 +148,7 @@ public sealed class LandedBranchSweep(NodeState state, LandedBranches branches, 
         {
             foreach (var row in state.ArchivedFlightRows().Where(r => r.BranchDeletedAt is null))
             {
-                if (archive.Read(row.Code) is { } whole && whole.Flight.BranchDeletedAt is null && whole.Flight.Branch.Length > 0)
+                if (archive.Read(row.Code) is { } whole && whole.Flight.BranchDeletedAt is null && whole.Flight.BranchDeleteFailed is null && whole.Flight.Branch.Length > 0)
                 {
                     list.Add(new Entry(whole.Flight, whole));
                 }
@@ -145,7 +157,7 @@ public sealed class LandedBranchSweep(NodeState state, LandedBranches branches, 
         return list;
     }
 
-    private async Task SweepRepoAsync(string repoPath, List<Entry> entries, Action<LandedBranchOutcome> count, CancellationToken cancellationToken)
+    private async Task SweepRepoAsync(string repoPath, List<Entry> entries, Action<LandedBranchOutcome> count, List<LandedBranchOutcome> refused, CancellationToken cancellationToken)
     {
         var heads = new Dictionary<string, string>(StringComparer.Ordinal);
         MergedPullRequest[]? merged = null;
@@ -156,6 +168,10 @@ public sealed class LandedBranchSweep(NodeState state, LandedBranches branches, 
         void Settle(Entry entry, LandedBranchOutcome outcome)
         {
             count(outcome);
+            if (outcome.Result == LandedBranchResult.Failed)
+            {
+                refused.Add(outcome);
+            }
             Record(entry, outcome, heads.GetValueOrDefault(entry.Flight.Code));
         }
 
@@ -259,6 +275,24 @@ public sealed class LandedBranchSweep(NodeState state, LandedBranches branches, 
         }
     }
 
+    /// <summary>
+    /// The one For-you card of a repo's refused deletes (PIL1265): every branch with git's text, and the two answers. Retry clears the
+    /// record so the next sweep pushes once more; leaving them (Mark it read) keeps the sweeps and landings from pushing for them.
+    /// </summary>
+    public static void RaisePushFailedCard(NodeState state, string subject, IReadOnlyList<LandedBranchOutcome> refused)
+    {
+        var codes = refused.Select(o => o.Code).ToArray();
+        var lines = string.Join("; ", refused.Select(o => $"{o.Code} ({o.Branch}): {o.Why}"));
+        var many = refused.Count == 1 ? "its branch" : $"{refused.Count} branches";
+        state.RaiseCard(CardBin.ForYou, FlightCommander.BranchKeptKind, subject,
+            refused.Count == 1 ? $"{codes[0]} landed, but origin refused deleting its branch {refused[0].Branch}" : $"{refused.Count} landed branches: origin refused deleting them",
+            $"Origin refused the delete of {many}, pushed once and now left until you answer: {lines}. Try deleting again lets the next sweep push once more; Leave them keeps the node from pushing for them again.",
+            [
+                new CardChoice { Label = "Try deleting again", Verb = Verbs.BranchRetry, Target = Verbs.FlightTarget(codes[0]), Args = [.. codes.Skip(1)] },
+                new CardChoice { Label = "Leave them", Verb = Verbs.Dismiss, Target = "" },
+            ]);
+    }
+
     private FlightRow? FindFlight(string code) =>
         state.Flights().FirstOrDefault(f => string.Equals(f.Code, code, StringComparison.OrdinalIgnoreCase))
         ?? (state.ArchivedRow(code) is { } row ? state.Archive?.Read(row.Code)?.Flight : null);
@@ -269,14 +303,17 @@ public sealed class LandedBranchSweep(NodeState state, LandedBranches branches, 
     /// <summary>Writes the outcome on the live row, or into the archived flight's file (only when something changed there).</summary>
     private void Record(Entry entry, LandedBranchOutcome outcome, string? head)
     {
-        if (outcome.Result is LandedBranchResult.RetryLater or LandedBranchResult.Failed)
+        if (outcome.Result is LandedBranchResult.RetryLater)
         {
             return;
         }
         var now = time.GetUtcNow();
-        FlightRow Apply(FlightRow f) => outcome.Result == LandedBranchResult.Deleted
-            ? f with { BranchDeletedAt = now, BranchKept = null, LandedHead = f.LandedHead ?? head }
-            : f with { BranchKept = outcome.Why, LandedHead = f.LandedHead ?? head };
+        FlightRow Apply(FlightRow f) => outcome.Result switch
+        {
+            LandedBranchResult.Deleted => f with { BranchDeletedAt = now, BranchKept = null, BranchDeleteFailed = null, BranchDeleteFailedAt = null, LandedHead = f.LandedHead ?? head },
+            LandedBranchResult.Failed => f with { BranchKept = outcome.Why, BranchDeleteFailed = outcome.Why, BranchDeleteFailedAt = now, LandedHead = f.LandedHead ?? head },
+            _ => f with { BranchKept = outcome.Why, LandedHead = f.LandedHead ?? head },
+        };
 
         if (entry.Whole is not { } whole)
         {
