@@ -45,7 +45,8 @@ public sealed class ReviewModelTests : ReviewTestsBase
         File.WriteAllText(Path.Combine(flight.Worktree, "fix.txt"), "more\n");
         Git(flight.Worktree, "add", ".");
         Git(flight.Worktree, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "fix");
-        (await Run(Verbs.StartReview, Verbs.FlightTarget(flight.Code), "controller")).Error.ShouldBeNull();
+        // The node sent the fix round itself; the worker's finish pushes and starts the re-review.
+        (await Run(Verbs.FinishLeg, Verbs.LegTarget(flight.Code, "parser"), _state.Legs(flight.Code).Single().Worker!, "done", "fixed")).Error.ShouldBeNull();
         await Started(_legs, flight.Code);
 
         _workers.Started.Last().Model.ShouldBe("sonnet");
@@ -67,7 +68,7 @@ public sealed class ReviewModelTests : ReviewTestsBase
         File.WriteAllText(Path.Combine(flight.Worktree, "fix.txt"), "more\n");
         Git(flight.Worktree, "add", ".");
         Git(flight.Worktree, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "fix");
-        (await Run(Verbs.StartReview, Verbs.FlightTarget(code), "controller")).Error.ShouldBeNull();
+        (await Run(Verbs.FinishLeg, Verbs.LegTarget(code, "parser"), _state.Legs(code).Single().Worker!, "done", "fixed")).Error.ShouldBeNull();
         await Started(_legs, code);
 
         var again = _workers.Started.Last();
@@ -130,12 +131,14 @@ public sealed class ReviewModelTests : ReviewTestsBase
         (await Run(Verbs.Review, Verbs.FlightTarget(flight.Code), Reviewer(flight.Code), "changes", "## Blocking\n- the parser drops the last line\n\n## Not blocking\n- a nit")).Error.ShouldBeNull();
 
         F(flight.Code).Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Changes);
-        Open().ShouldContain(c => c.Kind == LegCommander.ReviewChanges);
+        // The node sends the findings round itself: a Handled line says so and the leg flies again.
+        _state.Cards().ShouldContain(c => c.Kind == LegCommander.NodeFixRoundKind);
+        _state.Legs(flight.Code).Single().State.ShouldBe(LegState.Flying);
     }
 
     [Fact]
     [Trait("Category", "Slow")]
-    public async Task APassWithNotesRaisesTheWatchtowerCardAndSendsNoLegRound()
+    public async Task APassWithNotesPlansTheReviewNotesLegAndSendsNoFindingsRound()
     {
         var flight = await Opened("1");
         var report = "Checked the Done-when.\n\n## Not blocking\n- rename `x` to `count`\n- a comment is stale";
@@ -148,11 +151,11 @@ public sealed class ReviewModelTests : ReviewTestsBase
         var ready = Open().Single(c => c.Kind == LegCommander.PrReady);
         ready.Detail.ShouldNotBeNull().ShouldContain("passed with 2 notes");
         ready.Detail.ShouldContain("rename `x` to `count`");
-        var notes = Open().Single(c => c.Kind == LegCommander.ReviewNotesKind);
-        notes.Detail.ShouldNotBeNull().ShouldContain("a comment is stale");
-        notes.Subject.ShouldBe(Verbs.FlightTarget(flight.Code));
+        // The node plans the review-notes leg that carries the notes; no round goes back on the findings leg.
+        var notes = _state.Legs(flight.Code).Single(l => l.Name == LegCommander.ReviewNotesLeg);
+        notes.DoneWhen.ShouldContain("a comment is stale");
         Open().ShouldNotContain(c => c.Kind == LegCommander.ReviewChanges);
-        _state.Legs(flight.Code).ShouldAllBe(l => l.GoArounds == 0 && l.ReviewGoArounds == 0);
+        _state.Legs(flight.Code).Where(l => l.Name != LegCommander.ReviewNotesLeg).ShouldAllBe(l => l.GoArounds == 0 && l.ReviewGoArounds == 0);
     }
 
     [Fact]

@@ -725,14 +725,12 @@ public sealed class PrReviewTests2 : PrReviewTestsBase
     }
 
     [Fact]
-    public async Task ABaseWithoutAMergeQueueRaisesTheMergeCard()
+    public async Task ABaseWithoutAMergeQueueIsMergedDirectlyByTheNodeOnce()
     {
         await ReviewedWidget("approve", queue: false);
-        _github.Merged.ShouldBeEmpty();
-        var card = _state.Cards().Single(c => c.Kind == PrReviews.MergeKind);
-        card.Choices.ShouldHaveSingleItem().ShouldSatisfyAllConditions(c => c.Verb.ShouldBe(Verbs.Merge), c => c.Args.ShouldBe([_widgetHead]));
+        _github.Merged.ShouldHaveSingleItem().ShouldBe((7, _widgetHead, "squash"));
         await _reviews.SweepAsync(Ct);
-        _state.Cards().Count(c => c.Kind == PrReviews.MergeKind).ShouldBe(1);
+        _github.Merged.Count.ShouldBe(1);
     }
 
     [Fact]

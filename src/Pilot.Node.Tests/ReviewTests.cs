@@ -452,22 +452,15 @@ public sealed class ReviewTests1 : ReviewTestsBase
 
     [Fact]
     [Trait("Category", "Slow")]
-    public async Task OnAutopilotTheNodeMergesAPassedFlightItselfOnceItsChecksAreNotFailingAndOnlyOnce()
+    public async Task TheNodeMergesAPassedFlightItselfOnceItsChecksAreNotFailingAndOnlyOnce()
     {
-        // The watchtower may never merge, so the night's passed PRs sat for seven hours with the autopilot on (SE1, 2026-10-26).
+        // The watchtower may never merge, so the night's passed PRs sat for seven hours with the node not merging (SE1, 2026-10-26).
         var (flight, pr) = await Passed("30");
         var ready = Open().Single(c => c.Kind == LegCommander.PrReady);
         _github.Checks = ChoiceStatus.Passing;
         var checks = new PrChecks(_state, _github, TimeProvider.System, _flights, _legs);
 
-        // Off: the merge is the person's, as ever.
-        await checks.LookAsync(Ct);
-        _github.Merged.ShouldBeEmpty();
-        Open().ShouldContain(c => c.Id == ready.Id);
-
-        // On: the node merges it from its card, closes the card and says so.
-        var on = new NodeSettings();
-        _legs.Models = new RoleModels(on);
+        // The node merges it from its card, closes the card and says so.
         await checks.LookAsync(Ct);
         _github.Merged.ShouldHaveSingleItem().Item1.ShouldBe(pr);
         Open().ShouldNotContain(c => c.Id == ready.Id);
@@ -480,7 +473,7 @@ public sealed class ReviewTests1 : ReviewTestsBase
 
     [Fact]
     [Trait("Category", "Slow")]
-    public async Task OnAutopilotAFailingPrIsNotMerged()
+    public async Task AFailingPrIsNotMerged()
     {
         var (_, _) = await Passed("31");
         _github.Checks = ChoiceStatus.Failing;
@@ -764,6 +757,8 @@ public sealed class ReviewTests1 : ReviewTestsBase
     public async Task TheLookKeepsWhetherGitHubHasThePrAsADraftOnTheFlight()
     {
         var (flight, _) = await Passed("35");
+        // Checks still pending: the node merges a passed flight at its first look otherwise, and the draft mark is what is looked at.
+        _github.Checks = ChoiceStatus.Pending;
         var checks = new PrChecks(_state, _github, TimeProvider.System, _flights, _legs);
 
         _github.Pr = _github.Pr! with { Draft = true };
@@ -1103,9 +1098,10 @@ public sealed class ReviewTests2 : ReviewTestsBase
         _state.PutLeg(leg with { GoArounds = LegCommander.MaxReviewGoArounds, ReviewGoArounds = 0 });
         (await Run(Verbs.Review, "flight/TIA42", Reviewer("TIA42"), "changes", "a test is missing")).Ok.ShouldBeTrue();
 
-        var card = Open().Single(c => c.Kind == LegCommander.ReviewChanges);
-        card.Detail.ShouldNotBeNull().ShouldNotContain("yours to decide");
-        (await Run(Verbs.Review, "flight/TIA42", "du1-watchtower", "pass", "ready anyway")).Error.ShouldBeNull();
+        // Under the cap, so the node sent the round itself: the leg flies again, counted once on the review, with no card to decide.
+        var gone = _state.Legs("TIA42").Single();
+        (gone.State, gone.ReviewGoArounds).ShouldBe((LegState.Flying, 1));
+        Open().ShouldNotContain(c => c.Kind == LegCommander.ReviewChanges);
     }
 
     [Fact]
@@ -1117,8 +1113,7 @@ public sealed class ReviewTests2 : ReviewTestsBase
         await Run(Verbs.OpenPr, Verbs.FlightTarget("TIA43"), "controller");
         (await Run(Verbs.Review, "flight/TIA43", Reviewer("TIA43"), "changes", "a test is missing")).Ok.ShouldBeTrue();
 
-        (await Run(Verbs.GoAround, "flight/TIA43/parser", "du1-watchtower", "the review asked for changes")).Error.ShouldBeNull();
-
+        // The node sent the findings round itself.
         var gone = _state.Legs("TIA43").Single();
         (gone.GoArounds, gone.ReviewGoArounds).ShouldBe((1, 1));
     }
@@ -1418,8 +1413,7 @@ public sealed class ReviewTests3 : ReviewTestsBase
         await Fly(flight, "parser");
         await Run(Verbs.OpenPr, Verbs.FlightTarget("TIA16"), "controller");
         (await Run(Verbs.Review, "flight/TIA16", Reviewer("TIA16"), "changes", "naming")).Ok.ShouldBeTrue();
-        var card = Open().Single(c => c.Kind == LegCommander.ReviewChanges).Choices[0];
-        (await Run(card.Verb, card.Target, "controller", card.Args)).Error.ShouldBeNull();
+        // The node sent the findings round itself, so the leg is flying again with no card to press.
         _workers.Started.Last().Brief.ShouldContain("merge origin/<base> into the plane");
         var worker = _state.Legs("TIA16").Single().Worker!;
 
@@ -1457,8 +1451,7 @@ public sealed class ReviewTests3 : ReviewTestsBase
         await Fly(flight, "parser");
         await Run(Verbs.OpenPr, Verbs.FlightTarget(flight.Code), "controller");
         (await Run(Verbs.Review, Verbs.FlightTarget(flight.Code), Reviewer(flight.Code), "changes", "naming")).Ok.ShouldBeTrue();
-        var card = Open().Single(c => c.Kind == LegCommander.ReviewChanges).Choices[0];
-        (await Run(card.Verb, card.Target, "controller", card.Args)).Error.ShouldBeNull();
+        // The node sent the findings round itself, so the leg is flying again with no card to press.
         var leg = _state.Legs(flight.Code).Single();
         var worker = leg.Worker!;
         var started = _workers.Started.Count;
@@ -1497,8 +1490,7 @@ public sealed class ReviewTests3 : ReviewTestsBase
         await Fly(flight, "parser");
         await Run(Verbs.OpenPr, Verbs.FlightTarget(code), "controller");
         (await Run(Verbs.Review, $"flight/{code}", Reviewer(code), "changes", "naming")).Ok.ShouldBeTrue();
-        var card = Open().Single(c => c.Kind == LegCommander.ReviewChanges).Choices[0];
-        (await Run(card.Verb, card.Target, "controller", card.Args)).Error.ShouldBeNull();
+        // The node sent the findings round itself, so the leg is flying again with no card to press.
         var worker = _state.Legs(code).Single().Worker!;
 
         // GitHub's "Update branch", a committed suggestion or the controller's resolution: a push the node did not make.
@@ -1655,8 +1647,7 @@ public sealed class ReviewTests4 : ReviewTestsBase
         await Fly(flight, "parser");
         await Run(Verbs.OpenPr, Verbs.FlightTarget("TIA38"), "controller");
         (await Run(Verbs.Review, "flight/TIA38", Reviewer("TIA38"), "changes", "naming")).Ok.ShouldBeTrue();
-        var card = Open().Single(c => c.Kind == LegCommander.ReviewChanges).Choices[0];
-        (await Run(card.Verb, card.Target, "controller", card.Args)).Error.ShouldBeNull();
+        // The node sent the findings round itself, so the leg is flying again with no card to press.
         var worker = _state.Legs("TIA38").Single().Worker!;
 
         // The worker amends a commit that is already pushed: the remote's old commit is merged in, so the plain push still goes up.
@@ -1781,7 +1772,8 @@ public sealed class ReviewTests4 : ReviewTestsBase
 
         var leg = _state.Legs("TIA9").ShouldHaveSingleItem();
         leg.State.ShouldBe(LegState.Flying);
-        (leg.GoArounds, leg.ReviewGoArounds).ShouldBe((1, 0));
+        // The node sent the findings round when the verdict came; the conflict adds none.
+        (leg.GoArounds, leg.ReviewGoArounds).ShouldBe((1, 1));
         // Once a head: the same conflicting head looked at again sends no second worker and raises no card.
         var started = _workers.Started.Count;
         await checks.LookAsync(Ct);
@@ -1805,17 +1797,13 @@ public sealed class ReviewTests5 : ReviewTestsBase
 
         (await Run(Verbs.Review, "flight/TIA2", Reviewer("TIA2"), "changes", "the parser drops the last line")).Ok.ShouldBeTrue();
 
-        var card = Open().ShouldHaveSingleItem();
-        card.Kind.ShouldBe(LegCommander.ReviewChanges);
-        var fix = card.Choices.Single(c => c.Verb == Verbs.GoAround);
-        // The round and the model, never "redo": the work is kept (the owner, 2026-10-29). They are the detail's, the button says only
-        // what it does (#797).
-        fix.Label.ShouldBe("Fix the review's findings");
-        card.Detail.ShouldNotBeNull().ShouldEndWith("Next worker (round 3, on Opus at xhigh).");
-        // The golden card: what happened, what to do first, and short verbs.
-        card.Title.ShouldBe("TIA2's review found things to fix");
-        card.Summary.ShouldBe("Have a worker on parser put it right on top of the leg's work. The review of TIA2/parser found things to fix.");
-        card.Choices.Select(c => c.Label).ShouldBe(["Fix the review's findings"]);
+        // The node sent the round itself, a third go-around: the work is kept (the owner, 2026-10-29), the worker runs on Opus at xhigh.
+        Open().ShouldNotContain(c => c.Kind == LegCommander.ReviewChanges);
+        var leg = _state.Legs("TIA2").Single();
+        (leg.State, leg.GoArounds).ShouldBe((LegState.Flying, 3));
+        var start = _workers.Started.Last();
+        (start.Model, start.Effort).ShouldBe(("opus", "xhigh"));
+        start.Brief.ShouldContain("the review asked for changes: the parser drops the last line");
     }
 
     [Fact]
@@ -1828,15 +1816,9 @@ public sealed class ReviewTests5 : ReviewTestsBase
 
         (await Run(Verbs.Review, "flight/TIA2", Reviewer("TIA2"), "changes", "the parser drops the last line")).Ok.ShouldBeTrue();
 
-        var card = Open().ShouldHaveSingleItem();
-        (card.Kind, card.Detail).ShouldBe((LegCommander.ReviewChanges, "the parser drops the last line"));
-        card.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([("Fix the review's findings", Verbs.GoAround)]);
-
-        // The go-around reopens the done leg with the review's words; its finish pushes and starts a fresh review.
-        var goAround = card.Choices[0];
-        (await Run(goAround.Verb, goAround.Target, "controller", goAround.Args)).Error.ShouldBeNull();
+        // The node sent the round: the done leg is reopened with the review's words; its finish pushes and starts a fresh review.
+        Open().ShouldNotContain(c => c.Kind == LegCommander.ReviewChanges);
         _workers.Started.Last().Brief.ShouldContain("the review asked for changes: the parser drops the last line");
-        Open().ShouldBeEmpty();
         var reviewsBefore = _workers.Started.Count(s => s.Name == Reviewer("TIA2"));
 
         File.WriteAllText(Path.Combine(flight.Worktree, "fix.txt"), "fixed\n");

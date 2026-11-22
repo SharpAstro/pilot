@@ -23,7 +23,8 @@ public sealed class ReviewFollowUpTests : ReviewTestsBase
         File.WriteAllText(Path.Combine(F(flight.Code).Worktree, "fix.txt"), "more\n");
         Git(F(flight.Code).Worktree, "add", ".");
         Git(F(flight.Code).Worktree, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "fix A, B and C");
-        (await Run(Verbs.StartReview, Verbs.FlightTarget(flight.Code), "controller")).Error.ShouldBeNull();
+        // The node sent the fix round itself; the worker's finish pushes and starts the second review.
+        (await Run(Verbs.FinishLeg, Verbs.LegTarget(flight.Code, "parser"), _state.Legs(flight.Code).Single().Worker!, "done", "fixed")).Error.ShouldBeNull();
         await Started(_legs, flight.Code);
         return flight.Code;
     }

@@ -61,6 +61,7 @@ public sealed class PassedWithoutCardTests : ReviewTestsBase
     [Trait("Category", "Slow")]
     public async Task ATrulyFailedCardRaiseKeepsThePassAndOneLookRaisesTheCardOnce()
     {
+        _github.Checks = ChoiceStatus.Pending;
         var flight = await PassedWithNoCard("2", "fine");
 
         await Checks().LookAsync(Ct);
