@@ -24,6 +24,9 @@ public sealed class ToastPressTests
     private static float RowWidth =>
         NotificationsHost.Style.ToastWidth - 2f * NotificationsHost.Style.Padding - 2f - NotificationsLayout.ToastIconSize - NotificationsHost.Style.Gap;
 
+    // The gap between the choices and before Dismiss in that row: the style's own, read once so the rows built here and the width sums agree with it.
+    private static float RowGap => NotificationsHost.Style.Gap;
+
     // The library lays Dismiss after the choices in the same row, which does not wrap: its real width, drawn as the library draws it.
     private static float DismissWidth()
     {
@@ -75,7 +78,7 @@ public sealed class ToastPressTests
         {
             var n = Chrome.Notifications.Toasts.Toasts.Single(t => t.Notification.Kind == DIR.Lib.Notifications.NotificationKind.Staying).Notification;
             // The body, then the choices as the library lays them in Dismiss's row (Notification.Buttons).
-            var node = Layout.Builder.VStack(n.Row.ShouldNotBeNull()(), Layout.Builder.HStack([.. n.Buttons.ShouldNotBeNull()()]).WithGap(6f));
+            var node = Layout.Builder.VStack(n.Row.ShouldNotBeNull()(), Layout.Builder.HStack([.. n.Buttons.ShouldNotBeNull()()]).WithGap(RowGap));
             return Layout.Engine.Arrange(node, new Rect<float>(0, 0, width ?? RowWidth, 1400), new PixelMeasureContext<RgbaImage>(_measure, SessionsCapture.FontPath, 1f));
         }
 
@@ -83,7 +86,7 @@ public sealed class ToastPressTests
         public ImmutableArray<Layout.ArrangedNode<float>> ButtonRow(float? width = null)
         {
             var n = Chrome.Notifications.Toasts.Toasts.Single(t => t.Notification.Kind == DIR.Lib.Notifications.NotificationKind.Staying).Notification;
-            var node = Layout.Builder.HStack([.. n.Buttons.ShouldNotBeNull()()]).WithGap(6f);
+            var node = Layout.Builder.HStack([.. n.Buttons.ShouldNotBeNull()()]).WithGap(RowGap);
             return Layout.Engine.Arrange(node, new Rect<float>(0, 0, width ?? RowWidth, 1400), new PixelMeasureContext<RgbaImage>(_measure, SessionsCapture.FontPath, 1f));
         }
 
@@ -180,7 +183,7 @@ public sealed class ToastPressTests
         ArrangedText.Concat(row).ShouldNotContain("before going on to land it");
         row.Select(a => a.Node.Tooltip?.ToString()).ShouldContain(t => t != null && t.Contains(LongLabel));
         Actions(row).ShouldContain("toast:c1:1", "the tooltip on the cut button does not swallow its press");
-        rig.ButtonRow(width).Skip(1).Where(a => a.Bounds.X + a.Bounds.Width > width - DismissWidth() - 6f + 0.5f).Select(a => $"{a.Node.GetType().Name}@{a.Bounds.X:0},{a.Bounds.Y:0},{a.Bounds.Width:0}x{a.Bounds.Height:0} hit={a.Node.Hit}")
+        rig.ButtonRow(width).Skip(1).Where(a => a.Bounds.X + a.Bounds.Width > width - DismissWidth() - RowGap + 0.5f).Select(a => $"{a.Node.GetType().Name}@{a.Bounds.X:0},{a.Bounds.Y:0},{a.Bounds.Width:0}x{a.Bounds.Height:0} hit={a.Node.Hit}")
             .ShouldBeEmpty($"nothing runs past the toast at {width}");
         TextOverlap.Faults(row).Select(f => f.Line).ShouldBeEmpty();
     }
@@ -197,11 +200,11 @@ public sealed class ToastPressTests
         var dismiss = DismissWidth();
         using var idle = new Rig(Card(merge, oneChoice: true));
         var live = idle.ButtonRow().Skip(1).Max(a => a.Bounds.X + a.Bounds.Width);
-        (live + 6f + dismiss).ShouldBeLessThanOrEqualTo(RowWidth, "the live choice and Dismiss fit one toast row");
+        (live + RowGap + dismiss).ShouldBeLessThanOrEqualTo(RowWidth, "the live choice and Dismiss fit one toast row");
         using var pressed = new Rig(Card(merge, oneChoice: true));
         pressed.Chrome.Cards.NoteWorking("c1", "card:c1:1");
         var twin = pressed.ButtonRow().Skip(1).Max(a => a.Bounds.X + a.Bounds.Width);
-        (twin + 6f + dismiss).ShouldBeLessThanOrEqualTo(RowWidth, "the pressed twin, with its dots, is wider than the live button and still fits");
+        (twin + RowGap + dismiss).ShouldBeLessThanOrEqualTo(RowWidth, "the pressed twin, with its dots, is wider than the live button and still fits");
     }
 
     [Fact]
