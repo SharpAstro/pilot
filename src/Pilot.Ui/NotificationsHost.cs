@@ -28,7 +28,12 @@ internal sealed class NotificationsHost
     // with messages even though there's just one flight on"). Dismissing a toast closes it here only: the card stays on the bar and the list.
     private readonly NotificationFeed _toasts = new();
     private readonly Dictionary<(string? Node, string Id), long> _toastIds = [];
-    private bool _looked;
+
+    // The window's first look (the first Sync's time), and every card that has toasted. A ring toasts when it was raised after the first look, so a node
+    // whose cards arrive after an empty first frame (a remote node, a slow start) toasts none of the rings it already had; and once, so a node that drops
+    // out and comes back toasts none again (#1254 N1.1: the first look was the window's first frame, and a reconnect made every card new).
+    private DateTimeOffset? _firstLook;
+    private readonly HashSet<(string? Node, string Id)> _toasted = [];
 
     /// <summary>The toasts over the page: the ringing cards opened since the window's first look, and the events.</summary>
     internal NotificationFeed Toasts => _toasts;
@@ -232,6 +237,7 @@ internal sealed class NotificationsHost
     public void Sync(IReadOnlyList<CardRow> open, Func<CardRow, string?> nodeOf, DateTimeOffset now)
     {
         Fold();
+        var firstLook = _firstLook ??= now;
         // Runs every frame on the UI thread: the set is kept and cleared, not made anew (the review of #1194).
         var seen = _seen;
         seen.Clear();
@@ -257,15 +263,16 @@ internal sealed class NotificationsHost
                 // The page's row is the whole card; the toast over the page keeps its short body, which says when it is cut and links here.
                 var notification = CardPage is { } page ? toast with { Row = page(card, key.Item1) } : toast;
                 _ids[key] = Feed.Post(notification, now).Id;
-                // Only a ring that opened while the window looks stands over the page: what was open at the first look is not news, and a
-                // For you card waits on the bar (the handle tints, the bell counts it) without a toast.
-                if (_looked && card.Bin == CardBin.Ring && !Open)
+                // Only a ring raised while the window looks stands over the page: what was open at the first look is not news, and a For you
+                // card waits on the bar (the handle tints, the bell counts it) without a toast. A ring raised while the bar is open is shown by the
+                // bar, and does not toast when it is collapsed later (#1254 N1.2).
+                if (card.Bin == CardBin.Ring && !Open && card.At > firstLook && _toasted.Add(key))
                 {
                     _toastIds[key] = _toasts.Post(toast, now).Id;
                 }
             }
         }
-        _looked = true;
+
         // Every key seen is in _ids by now, so a card has gone only when _ids holds more: most frames allocate nothing here.
         foreach (var gone in _ids.Count > seen.Count ? _ids.Keys.Where(k => !seen.Contains(k)).ToArray() : [])
         {
@@ -297,12 +304,10 @@ internal sealed class NotificationsHost
             Source = e.Node,
             Action = open,
         };
-        var posted = Feed.Post(notification, now);
-        if (Open)
-        {
-            Feed.Dismiss(posted.Id);
-        }
-        else
+        // The history has the line at once (#1254 N1.3): the feed's own countdown ran only while the event was among its three newest, so open cards that
+        // came after it kept it out of the history until they were answered. The toast stack alone carries the toast.
+        Feed.Dismiss(Feed.Post(notification, now).Id);
+        if (!Open)
         {
             _toasts.Post(notification, now);
         }

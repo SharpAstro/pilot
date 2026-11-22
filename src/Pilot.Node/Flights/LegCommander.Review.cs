@@ -704,7 +704,7 @@ public sealed partial class LegCommander
             // Make them, not defer them: "larger than the flight" turned most notes into follow-up issues nobody picked up (65 open in pilot
             // on 2026-11-21; the owner: "I want the fixer to just fix things instead of saying these 4 things need to be done later").
             "goal=make every one of the review's not-blocking notes in this flight",
-            $"done-when=Each of the review's not-blocking notes is made in a commit: {string.Join("; ", clean)}. A note waits only when its change belongs in another repo or is a decision only the owner can make; size is no reason, so a test, a rename, a comment, a doc line or a refactor is made here. The check passes.",
+            $"done-when=Each of the review's not-blocking notes is made in a commit: {string.Join("; ", clean)}. A note waits only when its change belongs in another repo or is a decision only the owner can make; size is no reason, so a test, a rename, a comment, a doc line or a refactor is made here. A note that waits is reported in the leg's report under ## Earlier points as deferred, with its reason (another repo, or the owner's decision), and needs no commit. The check passes.",
         };
         if (legs.OrderBy(l => l.Order).LastOrDefault(l => l.Check is not null)?.Check is { } check)
         {
