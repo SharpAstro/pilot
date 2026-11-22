@@ -422,6 +422,7 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
         {
             if (row.ToldWay is "owner-ended" or "gone")
             {
+                ForgetTell(row.Id);
                 continue;
             }
             var sessions = state.Sessions();
@@ -434,6 +435,7 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
             var replacement = Sessions.SessionMessenger.ReplacedBy(ownerRow, candidates);
             if (replacement is null && OwnerEnded(ownerRow, row))
             {
+                ForgetTell(row.Id);
                 continue;
             }
             var target = replacement ?? sessions.FirstOrDefault(s => s.Id == WakeTarget(row.Owner!, row.OwnerName)) ?? ownerRow;
@@ -470,6 +472,11 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
             }
             // A session that took turns without a response the node saw (an interactive or ad hoc one) shows it by a context that grew
             // since the tell, or by any command it sent since (#1137).
+            // A compaction shrinks the context below the baseline: the baseline drops with it, so growth after it is seen (#1147).
+            if (_contextAtTell.TryGetValue(row.Id, out var baseline) && target.ContextTokens < baseline)
+            {
+                _contextAtTell[row.Id] = target.ContextTokens;
+            }
             if (target.ContextTokens > _contextAtTell.GetOrAdd(row.Id, target.ContextTokens)
                 || LastCommandAt?.Invoke(target.Name) is { } commanded && commanded > silentSince)
             {
@@ -482,6 +489,8 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
             if (row.RetoldAt is not null)
             {
                 state.PutJob(row with { RetellRung = true });
+                // Rung or settled, the row is not looked at again: its baselines go with it (#1147: they were kept for the node's life).
+                ForgetTell(row.Id);
                 if (row.State != JobState.Failed && WhatWaits(row, ownerRow) is null)
                 {
                     // A succeeded or cancelled job whose leg has finished waits on nothing: no card, and the row is not looked at again.
@@ -524,8 +533,20 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
     /// whose leg is still flying, a reviewer's job while its PR review is open, a fixer's while its fix round is open. An ad hoc,
     /// planner, leg validator or watchtower session (told once, as the issue lists only the three above), and a leg that is done, failed or gone, wait on nothing (#1137).
     /// </summary>
+    // A failure needs its session to act whoever it is (#1147, the owner's call): a planner's (and a leg validator's, which a planner runs)
+    // and a designer's are retold too. The watchtower and an ad hoc session are told once: they are the person's.
     private static bool FailedOfLeggedOwner(JobRow row, SessionRow owner) =>
-        row.State == JobState.Failed && owner.Role is SessionRole.Worker or SessionRole.Reviewer or SessionRole.Fixer;
+        row.State == JobState.Failed && owner.Role is SessionRole.Worker or SessionRole.Reviewer or SessionRole.Fixer or SessionRole.Planner or SessionRole.Designer;
+
+    /// <summary>Drops a job's retell baselines (<see cref="_contextAtTell"/>, <see cref="_busyTurnEnd"/>) once the sweep no longer looks at it.</summary>
+    private void ForgetTell(string id)
+    {
+        _contextAtTell.TryRemove(id, out _);
+        _busyTurnEnd.TryRemove(id, out _);
+    }
+
+    /// <summary>How many jobs have retell baselines kept: what a test reads to see they are pruned.</summary>
+    internal int TellBaselines => _contextAtTell.Count + _busyTurnEnd.Count;
 
     private string? WhatWaits(JobRow row, SessionRow owner)
     {
