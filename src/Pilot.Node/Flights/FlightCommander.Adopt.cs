@@ -128,6 +128,7 @@ public sealed partial class FlightCommander
             MoveUnknown = null,
         };
         state.PutFlight(sent.State == FlightState.Held ? Settle(WaitsHere(taken)) : taken);
+        RaiseDuplicateIfTwin(taken, $"adopted from {adopted.From}");
         foreach (var leg in legs)
         {
             // A leg that was flying there has no worker here: it is planned again, and restarts by the normal advance.

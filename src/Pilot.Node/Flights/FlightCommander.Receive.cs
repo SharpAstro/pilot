@@ -82,6 +82,7 @@ public sealed partial class FlightCommander
         // A held flight's waits were sent as waits on nodes (the sender's flights among them): one naming this node is a flight of its own,
         // so the flight is settled here, and flies at once when what it waited for has already landed here.
         state.PutFlight(sent.State == FlightState.Held ? Settle(WaitsHere(taken)) : taken);
+        RaiseDuplicateIfTwin(taken, $"moved here from {moved.From}");
         foreach (var leg in move.Legs.Where(l => string.Equals(l.Flight, code, StringComparison.Ordinal)))
         {
             state.PutLeg(leg);
