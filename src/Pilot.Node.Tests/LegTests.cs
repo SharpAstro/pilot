@@ -1037,8 +1037,14 @@ internal sealed class FakeGitHub : IGitHub
     /// <summary>Any repo's PRs, by <c>owner/repo#n</c>, as gh pr view -R reads them.</summary>
     public ConcurrentDictionary<string, PullRequest> Prs { get; } = new(StringComparer.OrdinalIgnoreCase);
 
-    public Task<PullRequest> PullRequestOfAsync(string repo, int number, CancellationToken cancellationToken) =>
-        Prs.TryGetValue($"{repo}#{number}", out var pr) ? Task.FromResult(pr) : Task.FromException<PullRequest>(new FlightException($"gh could not read {repo}#{number}: not found"));
+    /// <summary>How many times each PR, by <c>owner/repo#n</c>, was read by number.</summary>
+    public ConcurrentDictionary<string, int> PrReads { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+    public Task<PullRequest> PullRequestOfAsync(string repo, int number, CancellationToken cancellationToken)
+    {
+        PrReads.AddOrUpdate($"{repo}#{number}", 1, (_, n) => n + 1);
+        return Prs.TryGetValue($"{repo}#{number}", out var pr) ? Task.FromResult(pr) : Task.FromException<PullRequest>(new FlightException($"gh could not read {repo}#{number}: not found"));
+    }
 
     /// <summary>Where each repo, <c>owner/name</c>, clones from: a local bare repo standing in for GitHub.</summary>
     public Dictionary<string, string> Origins { get; } = new(StringComparer.OrdinalIgnoreCase);

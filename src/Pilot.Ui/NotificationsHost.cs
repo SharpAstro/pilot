@@ -113,7 +113,10 @@ internal sealed class NotificationsHost
     /// The buttons a staying card's toast carries, as the card's own panel answers them (null for a card with none); set by the chrome,
     /// which owns the answer path. The row replaces the toast's body, so the card keeps its look.
     /// </summary>
-    public Func<CardRow, Func<Layout.Node>?>? CardBody { get; set; }
+    public Func<CardRow, string?, Func<Layout.Node>?>? CardBody { get; set; }
+
+    /// <summary>The choices a staying card's toast carries in Dismiss's row (library buttons, DIR.Lib 11.91); null for a card with none. Set by the chrome with <see cref="CardBody"/>.</summary>
+    public Func<CardRow, string?, Func<IReadOnlyList<Layout.Node>>?>? CardButtons { get; set; }
 
     /// <summary>
     /// The whole card as the Notifications page lists it (the card, then the node's name), every choice and its whole detail; set by the chrome.
@@ -216,8 +219,9 @@ internal sealed class NotificationsHost
             Warn = p.Held,
             Error = p.Failed,
             Success = p.Ok,
-            Surface = p.HeaderBg,
-            Card = p.PanelBg,
+            // The night palette's only ink that reads at AA (Failed's red, 4.7:1) does so on its black ground and on nothing lighter.
+            Surface = ReferenceEquals(p, Palette.Night) ? p.Ground : p.HeaderBg,
+            Card = ReferenceEquals(p, Palette.Night) ? p.Ground : p.PanelBg,
             Text = p.Bright,
             Dim = p.Dim,
             Separator = p.RailSeparator,
@@ -258,7 +262,8 @@ internal sealed class NotificationsHost
                     // only, and the card stays open on the bar until it is answered (the review of #1194).
                     Kind = NotificationKind.Staying,
                     Source = key.Item1,
-                    Row = CardBody?.Invoke(card),
+                    Row = CardBody?.Invoke(card, key.Item1),
+                    Buttons = CardButtons?.Invoke(card, key.Item1),
                 };
                 // The page's row is the whole card; the toast over the page keeps its short body, which says when it is cut and links here.
                 var notification = CardPage is { } page ? toast with { Row = page(card, key.Item1) } : toast;
