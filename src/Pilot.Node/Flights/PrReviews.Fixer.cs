@@ -462,7 +462,9 @@ public sealed partial class PrReviews
     /// </summary>
     private async Task<string> StartFixerAsync(PrRef pr, PrReviewRow review, CancellationToken cancellationToken, DesignChoice? chose = null)
     {
-        if (review.Fixer is { } on)
+        // The row as it is now, not as the caller read it: two paths of one sweep (an ended fixer's restart and the left points') each held a row read
+        // before the other started its fixer, so both started one (tianwen#2435 had three fixers for one answer; pilot #1247).
+        if ((Of(pr) ?? review).Fixer is { } on)
         {
             throw new FlightException($"{pr} has {on} fixing it already");
         }

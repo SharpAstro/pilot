@@ -92,7 +92,10 @@ public sealed partial class PrReviews
             }
             return;
         }
-        var sessions = state.Sessions().Where(s => string.Equals(s.Name, review.Fixer, StringComparison.Ordinal)).ToList();
+        // The fixer's own session, by the job it was started as: every fixer of a PR has one name, so by name an earlier fixer's ended session made a
+        // fixer started a moment ago (its row not listed yet) read as ended, and another was started on it (tianwen#2435 had three; pilot #1247). A row
+        // stored before FixerJob was kept falls back to the name.
+        var sessions = state.Sessions().Where(s => review.FixerJob is { } job ? string.Equals(s.Id, job, StringComparison.Ordinal) : string.Equals(s.Name, review.Fixer, StringComparison.Ordinal)).ToList();
         if (sessions.Count > 0 && sessions.All(s => s.State == SessionState.Ended) && await EndFixerAsync(review, cancellationToken))
         {
             state.RaiseCard(CardBin.ForYou, FixEndedKind, subject, $"{pr}: {review.Fixer} ended without a push",

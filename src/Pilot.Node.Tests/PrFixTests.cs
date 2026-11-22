@@ -155,11 +155,14 @@ public abstract class PrFixTestsBase : IDisposable
         (await Run(Verbs.PrVerdict, "acme/widget#7", Row.Reviewer, [verdict, AnswersOf(Row) + "Round report.", .. findings])).Error.ShouldBeNull();
     }
 
-    private protected static SessionRow Session(string name, SessionState state) => new()
+    private protected static SessionRow Session(string name, SessionState state, string id = "abcd1234") => new()
     {
-        Id = "abcd1234", SessionId = "abcd1234-0000", Name = name, Kind = SessionKind.Background, Cwd = "/x", Role = SessionRole.Worker,
+        Id = id, SessionId = id + "-0000", Name = name, Kind = SessionKind.Background, Cwd = "/x", Role = SessionRole.Worker,
         ContextTokens = 0, ContextWindow = 1, State = state, SpendWeighted = 0, StartedAt = DateTimeOffset.UtcNow,
     };
+
+    /// <summary>The fixer's own session row: its name and the job it was started as, which is how the node knows it (pilot #1247).</summary>
+    private protected SessionRow FixerSession(SessionState state) => Session(Row.Fixer.ShouldNotBeNull(), state, Row.FixerJob.ShouldNotBeNull());
 }
 
 /// <summary>Part 1 of PrFixTests: the class is split so its tests run side by side, not one after another.</summary>
@@ -354,7 +357,7 @@ public sealed class PrFixTests2 : PrFixTestsBase
         Fixers.Length.ShouldBe(2);
         Fixers[1].Brief.ShouldContain("README.md:1 still wrong");
         (Row.Fixer, Row.FixRound).ShouldBe(("du1-fix-widget-7", 2));
-        _state.PutSession(Session("du1-fix-widget-7", SessionState.Working));
+        _state.PutSession(FixerSession(SessionState.Working));
         var lines = StatusMarkdown.Build(_state.Snapshot()).Split('\n').Select(l => l.TrimEnd('\r')).ToArray();
         lines[Array.FindIndex(lines, l => l.Contains("acme/widget#7")) + 1].ShouldContain("fixing, du1-fix-widget-7, round 2, working");
     }
@@ -413,7 +416,7 @@ public sealed class PrFixTests2 : PrFixTestsBase
         await _reviews.SweepAsync(Ct);
         Fixers.ShouldHaveSingleItem();
 
-        _state.PutSession(Session("du1-fix-widget-7", SessionState.Ended));
+        _state.PutSession(FixerSession(SessionState.Ended));
         await _reviews.SweepAsync(Ct);
 
         // The points are still unmade, so the next sweep's start is a second fixer, and the card that told the person to press Fix it is closed.
@@ -422,6 +425,12 @@ public sealed class PrFixTests2 : PrFixTestsBase
         _state.Cards().Count(c => c.Kind == PrReviews.FixEndedKind).ShouldBe(1, "the no-push end rang once");
         _state.Cards(openOnly: true).ShouldNotContain(c => c.Kind == PrReviews.FixEndedKind);
         _github.Merged.ShouldBeEmpty();
+
+        // The first fixer's ended session is still listed under the same name, and the second's is not listed yet: the second is not taken for ended,
+        // and no third is started (tianwen#2435 had three fixers for one answer; pilot #1247).
+        await _reviews.SweepAsync(Ct);
+        Fixers.Length.ShouldBe(2);
+        Row.Fixer.ShouldNotBeNull();
     }
 
     [Fact]
@@ -485,7 +494,7 @@ public sealed class PrFixTests3 : PrFixTestsBase
     public async Task AFixerThatEndsWithoutPushingLeavesACardWithFixItAndNoReview()
     {
         await Review("acme/widget#7", "changes", "README.md:1 wrong");
-        _state.PutSession(Session("du1-fix-widget-7", SessionState.Ended));
+        _state.PutSession(FixerSession(SessionState.Ended));
 
         await _reviews.SweepAsync(Ct);
 
@@ -536,7 +545,7 @@ public sealed class PrFixTests3 : PrFixTestsBase
         await _reviews.SweepAsync(Ct);
         _reviews.Of(new PrRef("acme", "widget", 7))!.State.ShouldBe(PrReviewState.Closed);
 
-        _state.PutSession(Session("du1-fix-widget-7", SessionState.Working));
+        _state.PutSession(FixerSession(SessionState.Working));
         var lines = StatusMarkdown.Build(_state.Snapshot()).Split('\n').Select(l => l.TrimEnd('\r')).ToArray();
         var at = Array.FindIndex(lines, l => l.Contains("acme/widget#7"));
         at.ShouldBeGreaterThanOrEqualTo(0);

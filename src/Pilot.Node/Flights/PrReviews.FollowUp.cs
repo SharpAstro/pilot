@@ -79,7 +79,7 @@ public sealed partial class PrReviews
                     await Error.WriteLineAsync($"pr reviews: {subject}'s review left {string.Join(", ", keys)} and no fixer could start ({ex.Message}); a later sweep tries again");
                     // Never a silent hold: the same card the changes path rings for the same failure, once.
                     RaiseOnce(PrRef.Parse(subject)!, review, CardBin.ForYou, FixFailedKind, Verbs.PrTarget(review.Repo, review.Number),
-                        $"{subject}: the fixer could not start on the points its review left: {LegCommander.OneLine(ex.Message)}", ex.Message,
+                        $"{subject}: the fixer could not start: {LegCommander.OneLine(ex.Message)}", $"It was to make the points the review left.\n{ex.Message}",
                         [new CardChoice { Label = "Start the fixer again", Verb = Verbs.FixPr, Target = Verbs.PrTarget(review.Repo, review.Number) }]);
                 }
                 return null;
