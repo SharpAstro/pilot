@@ -50,17 +50,17 @@ public sealed class LandedFlightStrayTests : IDisposable
         // A kill is recorded; the process stays, as one that would not die does.
         public void Kill(int pid) => Killed.Add(pid);
 
-        public TimeSpan? CpuTimeOf(int pid) => null;
-
-        public ProcessDetail? DetailsOf(int pid)
+        // The finder reads a stray's start, then its CPU time: the pid is another's right after that.
+        public TimeSpan? CpuTimeOf(int pid)
         {
-            ProcessDetail? detail = Details.TryGetValue(pid, out var found) ? found : null;
             if (ReusedAfterDetails is { } reuse && reuse.Pid == pid)
             {
                 Starts[pid] = reuse.NewStart;
             }
-            return detail;
+            return null;
         }
+
+        public ProcessDetail? DetailsOf(int pid) => Details.TryGetValue(pid, out var found) ? found : null;
     }
 
     private readonly FakeTable _table = new();
