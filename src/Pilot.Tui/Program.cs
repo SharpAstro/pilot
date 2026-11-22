@@ -507,12 +507,9 @@ while (!stop.IsCancellationRequested)
         {
             spendReads.Ask(chrome.Spend.Window, pages.Sessions.Source);
         }
-        if (page is PilotPage.Designs or PilotPage.Ideas or PilotPage.Flights)
-        {
-            // The Ideas page's Link a design picks from the same list of designs. A design version published raises its toast only while the
-            // Designs, Flights or Ideas page is shown, because only these read the list (the off-page read is carried by #1196, R1.1(i)).
-            designReads.AskList();
-        }
+        // The list is read on every page, at most every 15 s (DesignReads.Every): the Ideas page's Link a design picks from it, and a version published raises its
+        // toast whatever page is shown (#1196 R1.1(i)), as in the window.
+        designReads.AskList();
         if (page == PilotPage.Designs)
         {
             if (chrome.Designs.OpenId is { } openDesign)
@@ -545,7 +542,7 @@ while (!stop.IsCancellationRequested)
         // (the page is the columns less the bar's), as the pin in its header chooses. The rail's Notifications entry is the one bell. Every open card is a notification in its feed.
         var bar = chrome.Notifications;
         bar.Sync(pages.Cards.Open, card => cards.NodeOf(card)?.Name, now);
-        chrome.ObserveEvents(pages.Jobs, pages.Flights, null, now);
+        chrome.ObserveEvents(pages.Jobs, pages.Flights, designReads.Screen(pages.Sessions.Source, now, null), now);
         var cardsOver = bar.Open && (pages.Cards.HasAny || cards.CanTell && !cards.OnChatPage);
         bar.RoomUnits = NotificationsHost.TerminalRoom(columns);
         var dockedBar = bar.DockedNow && cardsOver && page != PilotPage.Notifications;
