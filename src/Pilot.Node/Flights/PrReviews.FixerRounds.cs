@@ -69,6 +69,14 @@ public sealed partial class PrReviews
         }
         if (read.Head.Length > 0 && !string.Equals(read.Head, review.Head, StringComparison.OrdinalIgnoreCase))
         {
+            // A fixer started on a passing review has had its go at the points its brief listed (ReviewFollowUp.ToMake, the same list): they are
+            // acted on, so a point it answered deferred does not start another fixer. A changes-verdict fixer's brief lists none, so none is recorded.
+            var tried = string.Equals(review.Verdict, "changes", StringComparison.OrdinalIgnoreCase) ? []
+                : ReviewFollowUp.ToMake(review).Select(i => i.Key).ToArray();
+            if (tried.Length > 0)
+            {
+                state.PutPrReview(review with { FollowUpPoints = [.. review.FollowUpPoints ?? [], .. tried] });
+            }
             if (!await EndFixerAsync(review, cancellationToken))
             {
                 return;
@@ -84,7 +92,10 @@ public sealed partial class PrReviews
             }
             return;
         }
-        var sessions = state.Sessions().Where(s => string.Equals(s.Name, review.Fixer, StringComparison.Ordinal)).ToList();
+        // The fixer's own session, by the job it was started as: every fixer of a PR has one name, so by name an earlier fixer's ended session made a
+        // fixer started a moment ago (its row not listed yet) read as ended, and another was started on it (tianwen#2435 had three; pilot #1247). A row
+        // stored before FixerJob was kept falls back to the name.
+        var sessions = state.Sessions().Where(s => review.FixerJob is { } job ? string.Equals(s.Id, job, StringComparison.Ordinal) : string.Equals(s.Name, review.Fixer, StringComparison.Ordinal)).ToList();
         if (sessions.Count > 0 && sessions.All(s => s.State == SessionState.Ended) && await EndFixerAsync(review, cancellationToken))
         {
             state.RaiseCard(CardBin.ForYou, FixEndedKind, subject, $"{pr}: {review.Fixer} ended without a push",
