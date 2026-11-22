@@ -15,7 +15,7 @@ namespace Pilot.Node.Tests;
 public sealed class FalseRingTests : ReviewTestsBase
 {
     private void AutopilotOn() =>
-        _legs.Models = new RoleModels(NodeSettings.With(new NodeSettings(), NodeSettings.AutopilotKey, ["on"]).Settings!);
+        _legs.Models = new RoleModels(new NodeSettings());
 
     private PrChecks Checks() => new(_state, _github, TimeProvider.System, _flights, _legs);
 

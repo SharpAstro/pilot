@@ -14,7 +14,7 @@ public sealed class NodeFixRoundTests : ReviewTestsBase
     private const string Findings = "## Blocking\n- the parser drops a token";
 
     private void Autopilot(bool on) =>
-        _legs.Models = new RoleModels(NodeSettings.With(new NodeSettings(), NodeSettings.AutopilotKey, [on ? "on" : "off"]).Settings!);
+        _legs.Models = new RoleModels(new NodeSettings());
 
     private CardRow[] FixCards() => [.. Open().Where(c => c.Kind == LegCommander.ReviewChanges)];
 

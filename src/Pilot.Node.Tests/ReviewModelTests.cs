@@ -17,7 +17,7 @@ public sealed class ReviewModelTests : ReviewTestsBase
     {
         Usage(20);
         var flight = await NewFlight(issue, "parser");
-        _legs.Models = new RoleModels(new NodeSettings { Autopilot = false, Roles = Roles, ReviewDeepFirst = deepFirst });
+        _legs.Models = new RoleModels(new NodeSettings { Roles = Roles, ReviewDeepFirst = deepFirst });
         await Fly(flight, "parser", lines);
         (await Run(Verbs.OpenPr, Verbs.FlightTarget(flight.Code), "controller")).Error.ShouldBeNull();
         return _workers.Started.Last();
@@ -27,7 +27,7 @@ public sealed class ReviewModelTests : ReviewTestsBase
     {
         Usage(20);
         var flight = await NewFlight(issue, "parser");
-        _legs.Models = new RoleModels(new NodeSettings { Autopilot = false, Roles = new Dictionary<string, string>(Roles) { ["reviewer-range"] = "opus" } });
+        _legs.Models = new RoleModels(new NodeSettings { Roles = new Dictionary<string, string>(Roles) { ["reviewer-range"] = "opus" } });
         await Fly(flight, "parser");
         (await Run(Verbs.OpenPr, Verbs.FlightTarget(flight.Code), "controller")).Error.ShouldBeNull();
         return flight;

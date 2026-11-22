@@ -245,7 +245,7 @@ public sealed class AutopilotNodePressTests
     [Fact]
     public async Task ThePressRunsThroughTheRealAnswerPathAsTheNodeAndTheDecisionSaysAutopilotAndTheRulesWhy()
     {
-        await using var node = await NodeHarness.StartAsync(TestContext.Current.CancellationToken, autopilotOff: false);
+        await using var node = await NodeHarness.StartAsync(TestContext.Current.CancellationToken);
         // The exact command NodePress sends (Who "node", Autopilot, Why = the rule's reason), through the real NodeCommands. The card's choice is a
         // note, which the in-memory node can run; ending a real process is StraySweep's own test.
         var card = node.State.RaiseCard(CardBin.ForYou, StraySweep.Kind, StrayKey, "Stray dotnet 4242 is still running", null,

@@ -17,7 +17,7 @@ public sealed class DecisionAutopilotMergeTests : ReviewTestsBase
     {
         var (flight, _) = await Passed("30");
         _github.Checks = ChoiceStatus.Passing;
-        var on = NodeSettings.With(new NodeSettings(), NodeSettings.AutopilotKey, ["on"]).Settings!;
+        var on = new NodeSettings();
         _legs.Models = new RoleModels(on);
 
         await new PrChecks(_state, _github, TimeProvider.System, _flights, _legs).LookAsync(Ct);
@@ -38,7 +38,7 @@ public sealed class DecisionAutopilotMergeTests : ReviewTestsBase
     {
         var (flight, _) = await Passed("32");
         _github.Checks = ChoiceStatus.Pending;
-        var on = NodeSettings.With(new NodeSettings(), NodeSettings.AutopilotKey, ["on"]).Settings!;
+        var on = new NodeSettings();
         _legs.Models = new RoleModels(on);
 
         await new PrChecks(_state, _github, TimeProvider.System, _flights, _legs).LookAsync(Ct);
@@ -57,7 +57,7 @@ public sealed class DecisionAutopilotMergeTests : ReviewTestsBase
         _github.Checks = ChoiceStatus.Passing;
         var (flight, _) = await Passed("33");
         MainMoves();
-        var on = NodeSettings.With(new NodeSettings(), NodeSettings.AutopilotKey, ["on"]).Settings!;
+        var on = new NodeSettings();
         _legs.Models = new RoleModels(on);
 
         await new PrChecks(_state, _github, TimeProvider.System, _flights, _legs).LookAsync(Ct);
@@ -163,8 +163,6 @@ public sealed class DecisionAssistantAnswerTests
         {
             await Task.Delay(50, Ct);
         }
-        (await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Set, Target = Verbs.NodeTarget, Args = ["autopilot", "on"], Who = "gui" }, Ct))
-            .Response.ShouldNotBeNull().Error.ShouldBeNull();
         var ring = node.State.RaiseCard(CardBin.Ring, "pr-ready", "flight/TIA1", "TIA1 stalled", null,
             [new CardChoice { Label = "Retry", Verb = Verbs.Raise, Target = "flight/TIA1", Args = ["for-you", "retried"] }]);
 

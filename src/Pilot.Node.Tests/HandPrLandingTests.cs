@@ -16,7 +16,7 @@ namespace Pilot.Node.Tests;
 public sealed class HandPrLandingTests : PrReviewTestsBase
 {
     private static RoleModels OnAutopilot(string method = "squash") =>
-        new(new NodeSettings { Autopilot = true, MergeMethod = method });
+        new(new NodeSettings { MergeMethod = method });
 
     [Fact]
     public async Task AReviewedGreenPrInARepoWithAQueueIsQueuedOnAutopilotWithAHandledLine()

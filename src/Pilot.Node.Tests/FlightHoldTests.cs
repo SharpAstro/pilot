@@ -17,9 +17,7 @@ public sealed class FlightHoldTests : ReviewTestsBase
     private const string Why = "waiting for the release";
 
     private void SweepsAdvance(bool autopilot = false) =>
-        _legs.Models = new RoleModels(autopilot
-            ? NodeSettings.With(new NodeSettings(), NodeSettings.AutopilotKey, ["on"]).Settings!
-            : new NodeSettings { Autopilot = false });
+        _legs.Models = new RoleModels(new NodeSettings());
 
     private PrChecks Checks() => new(_state, _github, TimeProvider.System, _flights, _legs);
 

@@ -16,7 +16,7 @@ public sealed class ReviewNotesCapTests : ReviewTestsBase
     [Fact]
     public async Task APassWithNotesPastTheCapRingsTheOwnerAndPlansNoLeg()
     {
-        _legs.Models = new RoleModels(NodeSettings.With(new NodeSettings(), NodeSettings.AutopilotKey, ["on"]).Settings!);
+        _legs.Models = new RoleModels(new NodeSettings());
         var flight = await NewFlight("9", "parser");
         await Fly(flight, "parser");
         (await Run(Verbs.OpenPr, Verbs.FlightTarget(flight.Code), "controller")).Error.ShouldBeNull();
@@ -52,7 +52,7 @@ public sealed class ReviewNotesCapTests : ReviewTestsBase
     [Fact]
     public async Task TheHoldsPathPastTheCapRingsTheCapCardOnceAndPlansNoLeg()
     {
-        _legs.Models = new RoleModels(NodeSettings.With(new NodeSettings(), NodeSettings.AutopilotKey, ["on"]).Settings!);
+        _legs.Models = new RoleModels(new NodeSettings());
         var flight = await NewFlight("10", "parser");
         await Fly(flight, "parser");
         for (var i = 1; i <= LegCommander.MaxReviewNotesLegs; i++)

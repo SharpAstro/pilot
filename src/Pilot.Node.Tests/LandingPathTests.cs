@@ -104,7 +104,7 @@ public sealed class LandingPathTests : ReviewTestsBase
                 break;
             case Path.Autopilot:
                 _github.Checks = ChoiceStatus.Passing;
-                _legs.Models = new RoleModels(NodeSettings.With(new NodeSettings(), NodeSettings.AutopilotKey, ["on"]).Settings!);
+                _legs.Models = new RoleModels(new NodeSettings());
                 await new PrChecks(_state, _github, TimeProvider.System, _flights, _legs).LookAsync(Ct);
                 break;
             case Path.Routine:
@@ -184,7 +184,7 @@ public sealed class LandingPathTests : ReviewTestsBase
         var (flight, _) = await Passed("1");
         var head = _github.Pr!.Head;
         _github.Checks = ChoiceStatus.Passing;
-        _legs.Models = new RoleModels(NodeSettings.With(new NodeSettings(), NodeSettings.AutopilotKey, ["on"]).Settings!);
+        _legs.Models = new RoleModels(new NodeSettings());
         _github.MergeScript.Enqueue("GraphQL: Repository rule violations found");
         await new PrChecks(_state, _github, TimeProvider.System, _flights, _legs).LookAsync(Ct);
         _github.MergeScript.Enqueue("GraphQL: Pull request has a merge conflict");
@@ -199,7 +199,7 @@ public sealed class LandingPathTests : ReviewTestsBase
     {
         var (_, _) = await Passed("1");
         _github.Checks = ChoiceStatus.Passing;
-        _legs.Models = new RoleModels(NodeSettings.With(new NodeSettings(), NodeSettings.AutopilotKey, ["on"]).Settings!);
+        _legs.Models = new RoleModels(new NodeSettings());
         var said = $"GraphQL: Repository rule violations found {Marker} and then a very long first line that goes on and on past what a card title should ever hold\nsecond line\nthird line";
         _github.MergeScript.Enqueue(said);
 

@@ -86,7 +86,7 @@ public sealed class AutopilotMergedPullRequestTests : PrReviewTestsBase
     [Fact]
     public async Task APrReviewMergedOnAutopilotDropsItsRow()
     {
-        _reviews.Models = new RoleModels(new NodeSettings { Autopilot = true, MergeMethod = "squash" });
+        _reviews.Models = new RoleModels(new NodeSettings { MergeMethod = "squash" });
         _state.PutPullRequests(new PullRequestsRow
         {
             ReadAt = DateTimeOffset.UtcNow,

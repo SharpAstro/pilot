@@ -11,7 +11,7 @@ namespace Pilot.Node.Tests;
 
 /// <summary>
 /// Who may do what (#208), at the node: the person, an assistant, the lookout, a flight's session and a grant, one
-/// test per row of the issue's table, and the autopilot setting only the person changes.
+/// test per row of the issue's table.
 /// </summary>
 public sealed class StandingTests
 {
@@ -36,7 +36,7 @@ public sealed class StandingTests
         node.State.PutLeg(new LegRow { Flight = code, Name = "parser", Order = 1, Goal = "g", DoneWhen = "d", State = LegState.Flying, Worker = worker });
     }
 
-    private static string? Saved(NodeHarness node) => NodeSettings.Read(node.Options.SettingsFile).Get(NodeSettings.AutopilotKey) is { } values ? string.Join(' ', values) : null;
+    private static string? Saved(NodeHarness node) => NodeSettings.Read(node.Options.SettingsFile).Get(NodeSettings.MaxJobsKey) is { } values ? string.Join(' ', values) : null;
 
     private static async Task<string?> Error(NodeHarness node, CommandRequest command) =>
         (await node.Client.SendAsync(command, Ct)).Response.ShouldNotBeNull().Error;
@@ -327,7 +327,7 @@ public sealed class StandingTests
     }
 
     [Fact]
-    public async Task AWorkersPlannersAndReviewersMergeIsRefusedWhateverAutopilotSays()
+    public async Task AWorkersPlannersAndReviewersMergeIsRefused()
     {
         await using var node = await NodeHarness.StartAsync(Ct);
         const string worker = "du1-tia1-parser";
@@ -340,9 +340,7 @@ public sealed class StandingTests
             Role = SessionRole.Planner, Flight = "TIA1", ContextTokens = 0, ContextWindow = 1, State = SessionState.Idle, SpendWeighted = 0, StartedAt = DateTimeOffset.UnixEpoch,
         });
 
-        foreach (var autopilot in new[] { "off", "on" })
         {
-            (await Error(node, Command(Verbs.Set, Verbs.NodeTarget, "gui", false, "autopilot", autopilot))).ShouldBeNull();
             foreach (var who in new[] { worker, reviewer, planner })
             {
                 // From the CLI of its plane, the flag is set too: the session is known by its name, not by the flag.
@@ -410,74 +408,10 @@ public sealed class StandingTests
         var named = await granted.SendAsync(Command(Verbs.Merge, "flight/TIA1", Lookout(node), false, "cafe0000"), Ct);
         named.Response.ShouldNotBeNull().Error.ShouldNotBeNull().ShouldContain(PastTheFence);
         named.Response.Who.ShouldBe($"se2-gui/{Lookout(node)}");
-        // Never this machine's settings, grants or autopilot, as before.
-        (await granted.SendAsync(Command(Verbs.Set, Verbs.NodeTarget, "tests", false, "autopilot", "on"), Ct)).Error.ShouldBe("set is for this machine only");
+        // Never this machine's settings or grants, as before.
+        (await granted.SendAsync(Command(Verbs.Set, Verbs.NodeTarget, "tests", false, "max-jobs", "3"), Ct)).Error.ShouldBe("set is for this machine only");
         (await granted.SendAsync(Command(Verbs.AnswerGrant, Verbs.NodeTarget, "tests", false, "x", "allow"), Ct)).Error.ShouldBe("answer-grant is for this machine only");
         Saved(node).ShouldBeNull();
-    }
-
-    [Fact]
-    public async Task AutopilotIsOnByDefaultAndSavedOffOnlyWhenThePersonSetsIt()
-    {
-        await using var node = await NodeHarness.StartAsync(Ct, autopilotOff: false);
-        var lookout = Lookout(node);
-        Fly(node, "TIA1", "du1-tia1-parser");
-
-        (await node.Client.GetNodeAsync(Ct)).Autopilot.ShouldBeTrue();
-        var row = (await node.Client.GetSettingsAsync(Ct)).Response.ShouldNotBeNull().Settings.Single(s => s.Key == NodeSettings.AutopilotKey);
-        (row.Value, row.Source).ShouldBe(("on", SettingSources.Default));
-        row.Choices.ShouldBe(["on", "off"]);
-
-        // An assistant (by its flag), the lookout and a flight's session are all refused, and nothing is saved.
-        foreach (var (who, agent) in new[] { ("pilot-33", true), ("mcp", true), ("cli", true), (lookout, false), ("du1-tia1-parser", true) })
-        {
-            (await Error(node, Command(Verbs.Set, Verbs.NodeTarget, who, agent, "autopilot", "off"))).ShouldNotBeNull().ShouldContain("autopilot is the person's to change");
-            // Taking it out is changing it too.
-            (await Error(node, Command(Verbs.Set, Verbs.NodeTarget, who, agent, "autopilot"))).ShouldNotBeNull().ShouldContain("autopilot is the person's to change");
-        }
-        Saved(node).ShouldBeNull();
-        (await node.Client.GetNodeAsync(Ct)).Autopilot.ShouldBeTrue();
-
-        // The person: the GUI, or a CLI nobody's session runs. Saved, and in force at once.
-        var set = (await node.Client.SendAsync(Command(Verbs.Set, Verbs.NodeTarget, "gui", false, "autopilot", "off"), Ct)).Response.ShouldNotBeNull();
-        set.Error.ShouldBeNull();
-        set.Way.ShouldNotBeNull().ShouldContain("in force now");
-        Saved(node).ShouldBe("off");
-        (await node.Client.GetNodeAsync(Ct)).Autopilot.ShouldBeFalse();
-        (await node.Client.GetSettingsAsync(Ct)).Response.ShouldNotBeNull().Settings.Single(s => s.Key == NodeSettings.AutopilotKey).Value.ShouldBe("off");
-
-        // An assistant cannot turn it back on either.
-        (await Error(node, Command(Verbs.Set, Verbs.NodeTarget, "pilot-33", true, "autopilot", "on"))).ShouldNotBeNull().ShouldContain("autopilot is the person's to change");
-        (await node.Client.GetNodeAsync(Ct)).Autopilot.ShouldBeFalse();
-        (await Error(node, Command(Verbs.Set, Verbs.NodeTarget, "cli", false, "autopilot", "on"))).ShouldBeNull();
-        Saved(node).ShouldBe("on");
-        (await node.Client.GetNodeAsync(Ct)).Autopilot.ShouldBeTrue();
-        (await Error(node, Command(Verbs.Set, Verbs.NodeTarget, "gui", false, "autopilot", "maybe"))).ShouldBe("autopilot takes on or off");
-    }
-
-    [Fact]
-    public async Task ANodeWithNoSavedAutopilotReadsItOnAndOneSavedOffReadsItOff()
-    {
-        await using var first = await NodeHarness.StartAsync(Ct, autopilotOff: false);
-        var models = first.App.Services.GetRequiredService<RoleModels>();
-        models.Autopilot.ShouldBeTrue();
-        models.Apply(NodeSettings.With(new NodeSettings(), NodeSettings.AutopilotKey, ["off"]).Settings.ShouldNotBeNull());
-        models.Autopilot.ShouldBeFalse();
-        models.Apply(NodeSettings.With(new NodeSettings(), NodeSettings.AutopilotKey, ["on"]).Settings.ShouldNotBeNull());
-        models.Autopilot.ShouldBeTrue();
-        new RoleModels(new NodeSettings()).Autopilot.ShouldBeTrue();
-        new RoleModels(new NodeSettings { Autopilot = false }).Autopilot.ShouldBeFalse();
-        RoleModels.Unset.Autopilot.ShouldBeFalse();
-    }
-
-    [Fact]
-    public async Task PilotStatusPrintsTheNodesAutopilot()
-    {
-        await using var node = await NodeHarness.StartAsync(Ct);
-
-        (await Status(node)).ShouldContain("autopilot  off");
-        (await Error(node, Command(Verbs.Set, Verbs.NodeTarget, "gui", false, "autopilot", "on"))).ShouldBeNull();
-        (await Status(node)).ShouldContain("autopilot  on");
     }
 
     [Fact]
@@ -485,16 +419,13 @@ public sealed class StandingTests
     {
         await using var node = await NodeHarness.StartAsync(Ct);
         // The environment is read through IsAgent's own seam, never changed: other tests run a human's CLI beside this one.
-        // A human at their own terminal: no CLAUDECODE, so the person's, and autopilot is theirs to set.
+        // A human at their own terminal: no CLAUDECODE, so the person's.
         PilotCommand.IsAgent(bySession: true, agent: null, claudeCode: null).ShouldBeFalse();
         PilotCommand.IsAgent(bySession: true, agent: null, claudeCode: "").ShouldBeFalse();
-        (await Cli(node, agent: false, "settings", "set", "autopilot", "on")).ShouldContain("ok: set");
-        (await node.Client.GetNodeAsync(Ct)).Autopilot.ShouldBeTrue();
+        (await Cli(node, agent: false, "settings", "set", "max-jobs", "3")).ShouldContain("ok: set");
 
-        // A Claude session's tool: CLAUDECODE is set, so an assistant's, and it is refused.
+        // A Claude session's tool: CLAUDECODE is set, so an assistant's.
         PilotCommand.IsAgent(bySession: true, agent: null, claudeCode: "1").ShouldBeTrue();
-        (await Cli(node, agent: true, "settings", "set", "autopilot", "off")).ShouldContain("autopilot is the person's to change");
-        (await node.Client.GetNodeAsync(Ct)).Autopilot.ShouldBeTrue();
 
         // The GUI never sets it, whatever its environment holds; an MCP client always does, whatever its does not.
         PilotCommand.IsAgent(bySession: false, agent: null, claudeCode: "1").ShouldBeFalse();
@@ -508,7 +439,7 @@ public sealed class StandingTests
     };
 
     [Fact]
-    public async Task AWorkerTheNodeResumedMergesAsItselfNotAnAssistantWithAutopilotOn()
+    public async Task AWorkerTheNodeResumedMergesAsItselfNotAnAssistant()
     {
         await using var node = await NodeHarness.StartAsync(Ct);
         const string worker = "du1-tia1-parser";
@@ -516,7 +447,6 @@ public sealed class StandingTests
         const string earlier = "a1a2a3a4-0000-4000-8000-000000000000";
         Fly(node, "TIA1", worker);
         node.State.PutSession(Session(worker, current, [earlier]));
-        (await Error(node, Command(Verbs.Set, Verbs.NodeTarget, "gui", false, "autopilot", "on"))).ShouldBeNull();
 
         // Through the real CLI sender path: the session id its tools carry, the id it has now or the one before the resume.
         foreach (var id in new[] { current, earlier })
@@ -535,7 +465,6 @@ public sealed class StandingTests
         var plane = Directory.CreateDirectory(Path.Combine(node.Folder, "TIA1")).FullName;
         node.State.PutFlight(Flight("TIA1") with { Worktree = plane });
         node.State.PutLeg(new LegRow { Flight = "TIA1", Name = "parser", Order = 1, Goal = "g", DoneWhen = "d", State = LegState.Flying, Worker = worker });
-        (await Error(node, Command(Verbs.Set, Verbs.NodeTarget, "gui", false, "autopilot", "on"))).ShouldBeNull();
 
         // No session row matches the id, so the plane says who is asking: the leg's worker.
         (await CliIn(node, agent: true, "ffffffff-0000-4000-8000-000000000000", plane, "flight", "merge", "TIA1", "cafe0000"))
@@ -543,7 +472,7 @@ public sealed class StandingTests
         (await CliIn(node, agent: true, null, Path.Combine(plane, "sub"), "flight", "land", "TIA1"))
             .ShouldContain("land is the controller's, not a flight session's");
 
-        // The same command from outside every plane is an assistant's, and runs at once with autopilot on; a human's CLI in the plane is the person's.
+        // The same command from outside every plane is an assistant's, and runs at once; a human's CLI in the plane is the person's.
         var outside = await CliIn(node, agent: true, null, node.Folder, "flight", "merge", "TIA1", "cafe0000");
         outside.ShouldNotContain("not a flight session's");
         outside.ShouldNotContain("is the controller's");
@@ -551,13 +480,12 @@ public sealed class StandingTests
     }
 
     [Fact]
-    public async Task ANewFlightsPlannerNoRowKnowsYetIsThatFlightsSessionAndMayNotMergeAnyFlightWithAutopilotOn()
+    public async Task ANewFlightsPlannerNoRowKnowsYetIsThatFlightsSessionAndMayNotMergeAnyFlight()
     {
         await using var node = await NodeHarness.StartAsync(Ct);
         var plane = Directory.CreateDirectory(Path.Combine(node.Folder, "TIA1")).FullName;
         node.State.PutFlight(Flight("TIA1") with { Worktree = plane });
         node.State.PutFlight(Flight("TIA2"));
-        (await Error(node, Command(Verbs.Set, Verbs.NodeTarget, "gui", false, "autopilot", "on"))).ShouldBeNull();
         node.State.Sessions().ShouldBeEmpty();
 
         // The CLI in the plane, no leg, no row and a session id the node has not polled: it is sent as the flight's planner.
@@ -568,7 +496,7 @@ public sealed class StandingTests
         }
         (await CliIn(node, agent: true, null, plane, "flight", "land", "TIA2")).ShouldContain("land is the controller's, not a flight session's");
 
-        // The node reads the planner's name as the flight's whether or not the CLI named it: refused with no session row and autopilot on.
+        // The node reads the planner's name as the flight's whether or not the CLI named it: refused with no session row.
         var machine = (await node.Client.GetNodeAsync(Ct)).MachinePrefix.ToLowerInvariant();
         (await Error(node, Command(Verbs.Merge, "flight/TIA2", $"{machine}-tia1-plan", true, "cafe0000"))).ShouldStartWith("merge is the controller's, not a flight session's: ");
         (await Error(node, Command(Verbs.Check, "flight/TIA2/parser", $"{machine}-tia1-plan", true, "1"))).ShouldBe("flight/TIA2/parser is not TIA1's: a flight's session acts on its own flight only");

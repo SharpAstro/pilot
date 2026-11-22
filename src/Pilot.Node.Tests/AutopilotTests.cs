@@ -211,7 +211,6 @@ public sealed class AutopilotTests
         }
 
         // Autopilot on does not lift it either: an ask raised before it was switched on is still the person's to answer.
-        (await Send(node, Command(Verbs.Set, Verbs.NodeTarget, "gui", args: ["autopilot", "on"]))).Error.ShouldBeNull();
         (await Send(node, Command(Verbs.Answer, Verbs.CardTarget(card.Id), Assistant, agent: true, args: "Allow it"))).Error.ShouldNotBeNull().ShouldContain("the person's");
         node.GitHub.Merged.ShouldBeEmpty();
         node.State.Cards(openOnly: true).ShouldHaveSingleItem().Id.ShouldBe(card.Id);
@@ -222,7 +221,6 @@ public sealed class AutopilotTests
     public async Task WithAutopilotOnAnAssistantsPressOnTheFirstRunMaintenanceCardIsDone()
     {
         await using var node = await NodeHarness.StartAsync(Ct);
-        (await Send(node, Command(Verbs.Set, Verbs.NodeTarget, "gui", args: ["autopilot", "on"]))).Error.ShouldBeNull();
         var card = node.State.RaiseCard(CardBin.ForYou, IdleMaintenance.FirstRunKind, Verbs.NodeTarget, "Run the first idle disk sweep?", null,
         [
             new CardChoice { Label = IdleMaintenance.RunLabel, Verb = Verbs.Set, Target = Verbs.NodeTarget, Args = [NodeSettings.MaintenanceEveryKey, "1d"] },
@@ -241,7 +239,6 @@ public sealed class AutopilotTests
     {
         await using var node = await NodeHarness.StartAsync(Ct);
         Ready(node);
-        (await Send(node, Command(Verbs.Set, Verbs.NodeTarget, "gui", args: ["autopilot", "on"]))).Error.ShouldBeNull();
 
         var merged = await Send(node, Command(Verbs.Merge, "flight/TIA1", Assistant, agent: true, Why, Head));
 
@@ -263,7 +260,6 @@ public sealed class AutopilotTests
     {
         await using var node = await NodeHarness.StartAsync(Ct);
         Ready(node);
-        (await Send(node, Command(Verbs.Set, Verbs.NodeTarget, "gui", args: ["autopilot", "on"]))).Error.ShouldBeNull();
         var saved = await Send(node, Command(Verbs.Set, Verbs.NodeTarget, "gui", args: ["no-auto-merge-repos", "tianwen"]));
         saved.Error.ShouldBeNull();
 
@@ -290,7 +286,6 @@ public sealed class AutopilotTests
     {
         await using var node = await NodeHarness.StartAsync(Ct);
         Ready(node);
-        (await Send(node, Command(Verbs.Set, Verbs.NodeTarget, "gui", args: ["autopilot", "on"]))).Error.ShouldBeNull();
         (await Send(node, Command(Verbs.Set, Verbs.NodeTarget, "gui", args: ["no-auto-merge-repos", "widget"]))).Error.ShouldBeNull();
 
         var asked = await Send(node, Command(Verbs.Merge, "pr/acme/widget#7", Assistant, agent: true, Why, Head));
@@ -311,7 +306,6 @@ public sealed class AutopilotTests
             Code = "TIA1", Repo = "tianwen", RepoPath = node.Folder, Issue = 1, Branch = "flight/tia1", Worktree = Path.Combine(node.Folder, "plane"), Base = "main",
             State = FlightState.Flying, CreatedAt = DateTimeOffset.UtcNow,
         });
-        (await Send(node, Command(Verbs.Set, Verbs.NodeTarget, "gui", args: ["autopilot", "on"]))).Error.ShouldBeNull();
 
         // Run, and refused by the flight (never reviewed): the black box has it as an autopilot run that failed, and no card says it was done.
         var refused = await Send(node, Command(Verbs.Merge, "flight/TIA1", Assistant, agent: true, args: Head));
@@ -332,7 +326,6 @@ public sealed class AutopilotTests
         Ready(node);
         const string worker = "du1-tia1-parser";
         node.State.PutLeg(new LegRow { Flight = "TIA1", Name = "parser", Order = 1, Goal = "g", DoneWhen = "d", State = LegState.Flying, Worker = worker });
-        (await Send(node, Command(Verbs.Set, Verbs.NodeTarget, "gui", args: ["autopilot", "on"]))).Error.ShouldBeNull();
 
         foreach (var agent in new[] { false, true })
         {

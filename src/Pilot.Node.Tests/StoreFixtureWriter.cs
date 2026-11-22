@@ -81,7 +81,7 @@ public static class StoreFixtureWriter
         state.PutUsage(Usage(40));
         state.PutMachine(Machine(30, 8L << 30));
         state.PutAdmission(Admission(2, ["a1b2c3d4 (PIL1/second)", "b2c3d4e5 (PIL2/first)"]));
-        state.PutNode(new NodeRow { Maintenance = false, Autopilot = true, AcceptsFleetFlights = true });
+        state.PutNode(new NodeRow { Maintenance = false, AcceptsFleetFlights = true });
         state.PutRepos(Repos(flights: 2));
         state.PutPullRequests(PullRequests("Ready"));
 
@@ -160,7 +160,7 @@ public static class StoreFixtureWriter
         state.PutUsage(Usage(55));
         state.PutMachine(Machine(75, 12L << 30));
         state.PutAdmission(Admission(3, ["a1b2c3d4 (PIL1/second)"]));
-        state.PutNode(new NodeRow { Maintenance = true, Autopilot = true, AcceptsFleetFlights = true });
+        state.PutNode(new NodeRow { Maintenance = true, AcceptsFleetFlights = true });
         state.PutRepos(Repos(flights: 3));
         state.PutPullRequests(PullRequests("Draft"));
 

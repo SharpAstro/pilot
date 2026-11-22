@@ -19,7 +19,7 @@ public sealed class HoldingPatternTests : ReviewTestsBase
     private const string Notes ="Checked.\n\n## Not blocking\n- rename `x` to `count`";
 
     private void AutopilotOn() =>
-        _legs.Models = new RoleModels(NodeSettings.With(new NodeSettings(), NodeSettings.AutopilotKey, ["on"]).Settings!);
+        _legs.Models = new RoleModels(new NodeSettings());
 
     private async Task<FlightRow> Reviewed(string issue, string report)
     {
@@ -40,9 +40,9 @@ public sealed class HoldingPatternTests : ReviewTestsBase
         }
     }
 
-    /// <summary>A node that advances (autopilot setting saved off) plans the review-notes leg at a pass with notes, as a running node does.</summary>
+    /// <summary>A node that advances plans the review-notes leg at a pass with notes, as a running node does.</summary>
     private void NodeAdvances() =>
-        _legs.Models = new RoleModels(NodeSettings.With(new NodeSettings(), NodeSettings.AutopilotKey, ["off"]).Settings!);
+        _legs.Models = new RoleModels(new NodeSettings());
 
     /// <summary>Ends every review-notes leg as done, as the leg's own finish would, so the flight's legs are all done.</summary>
     private void LegsDone(string code)
@@ -295,7 +295,7 @@ public sealed class HoldingPatternTests : ReviewTestsBase
     public async Task APassWithNotesPlansTheReviewNotesLegWithTheAutopilotSettingSavedOff()
     {
         // The autopilot switch is a different matter from the notes' end: a pass with notes plans the leg whatever it says (pilot #1271).
-        _legs.Models = new RoleModels(NodeSettings.With(new NodeSettings(), NodeSettings.AutopilotKey, ["off"]).Settings!);
+        _legs.Models = new RoleModels(new NodeSettings());
         var flight = await Reviewed("15", Notes);
 
         var leg = _state.Legs(flight.Code).Single(l => l.Name == LegCommander.ReviewNotesLeg);

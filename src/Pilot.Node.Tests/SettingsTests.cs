@@ -126,11 +126,51 @@ public sealed class SettingsTests : IDisposable
     [InlineData("machine", "DESKTOP", "machine takes two letters and a number, as in DE1")]
     [InlineData("update-channel", "nightly", "update-channel takes stable or beta")]
     [InlineData("max-jobs", "0", "max-jobs takes a number, 1 to 64")]
-    [InlineData("colour", "blue", "there is no setting colour; there are lan, machine, repo-roots, update-channel, update-policy, max-jobs, jobs-per-repo, gui-slots, job-memory, job-priority, job-plane-output, job-build-cache, lan-port, start-limit, priority-repos, priority-start-limit, week-limit, week-pace, spend-alert, watchtower-compact-share, watchtower-chat-messages, watchtower-compact-idle, watchtower-compact-above, merge-method, maintenance, accept-fleet-flights, autopilot, review-deep-first, user-skills, shortcut-token, repo-trackers, no-auto-merge-repos, opus-cap, review-limit, one-flight-per-repo, sub-task-repos, merge-batch, pr-watch-idle, adopt-after, archive-landed-after, maintenance-every, maintenance-idle, package-age-days, git-prune-days, maintenance-prune-hours, delete-landed-branches, max-go-arounds, scratch-days, designer-keep, disk-alert-gb, flight-ci-budget, stale-flight-hours, stale-pr-hours, stale-recheck-hours, stale-card-hours, stale-holds, stale-unreachable-hours, bench-subscription, bench-resource-group, bench-region, bench-vm-size, bench-image, bench-spot-price, bench-monthly-cap, bench-auth, bench-sp-app-id, bench-sp-tenant, bench-sp-secret, watchtower-range, worker-range, planner-range, reviewer-range, designer-range, summary-model, worker-ladder")]
+    [InlineData("colour", "blue", "there is no setting colour; there are lan, machine, repo-roots, update-channel, update-policy, max-jobs, jobs-per-repo, gui-slots, job-memory, job-priority, job-plane-output, job-build-cache, lan-port, start-limit, priority-repos, priority-start-limit, week-limit, week-pace, spend-alert, watchtower-compact-share, watchtower-chat-messages, watchtower-compact-idle, watchtower-compact-above, merge-method, maintenance, accept-fleet-flights, review-deep-first, user-skills, shortcut-token, repo-trackers, no-auto-merge-repos, opus-cap, review-limit, one-flight-per-repo, sub-task-repos, merge-batch, pr-watch-idle, adopt-after, archive-landed-after, maintenance-every, maintenance-idle, package-age-days, git-prune-days, maintenance-prune-hours, delete-landed-branches, max-go-arounds, scratch-days, designer-keep, disk-alert-gb, flight-ci-budget, stale-flight-hours, stale-pr-hours, stale-recheck-hours, stale-card-hours, stale-holds, stale-unreachable-hours, bench-subscription, bench-resource-group, bench-region, bench-vm-size, bench-image, bench-spot-price, bench-monthly-cap, bench-auth, bench-sp-app-id, bench-sp-tenant, bench-sp-secret, watchtower-range, worker-range, planner-range, reviewer-range, designer-range, summary-model, worker-ladder")]
     // Invariant: the "colour" case spells out every key, so a filtered check that adds a setting runs it too.
     [Trait("Category", InvariantTraitTests.Invariant)]
     public void ASettingRefusesWhatItDoesNotTake(string key, string value, string error)
         => NodeSettings.With(new NodeSettings(), key, [value]).ShouldBe((null, error));
+
+    /// <summary>The autopilot setting is gone (pilot #1271): a settings file an older node wrote, with the key either way, loads as if it were not there.</summary>
+    [Theory]
+    [InlineData("true")]
+    [InlineData("false")]
+    public void ASettingsFileThatStillHasTheAutopilotKeyLoadsWithoutIt(string value)
+    {
+        var file = Path.Combine(_root, "old.json");
+        File.WriteAllText(file, $$"""{ "autopilot": {{value}}, "lan": true, "max-jobs": 3 }""");
+
+        var read = NodeSettings.Read(file);
+
+        (read.Lan, read.MaxJobs).ShouldBe((true, (int?)3));
+        read.ShouldBe(NodeSettings.Read(WriteWithout(file)));
+        NodeSettings.Keys.ShouldNotContain("autopilot");
+        NodeSettings.With(read, "lan", ["off"]).Error.ShouldBeNull();
+        new RoleModels(read).ShouldNotBeNull();
+    }
+
+    private string WriteWithout(string file)
+    {
+        var plain = Path.Combine(_root, "plain.json");
+        File.WriteAllText(plain, """{ "lan": true, "max-jobs": 3 }""");
+        return plain;
+    }
+
+    [Fact]
+    public async Task SettingAutopilotIsRefusedWithWhyItIsGoneAndNothingIsSaved()
+    {
+        await using var node = await NodeHarness.StartAsync(Ct);
+
+        foreach (var args in new[] { new[] { "autopilot", "on" }, ["autopilot", "off"], ["autopilot"] })
+        {
+            var refused = (await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Set, Target = Verbs.NodeTarget, Args = args, Who = "tests" }, Ct)).Response.ShouldNotBeNull();
+            refused.Error.ShouldNotBeNull().ShouldContain("autopilot is gone");
+            refused.Error.ShouldContain("what it turned on");
+            refused.Error.ShouldContain("is what pilot always does");
+        }
+        File.Exists(node.Options.SettingsFile).ShouldBeFalse();
+    }
 
     [Fact]
     public void DeleteLandedBranchesIsOnUnsetAndSavesOnOffAndRefusesOther()

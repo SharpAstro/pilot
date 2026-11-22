@@ -18,7 +18,7 @@ public sealed class NotesUnmadeTests : ReviewTestsBase
     private const string EarlierAnswered = "## Earlier points\n| Point | Answer | Where or why |\n|---|---|---|\n| R1.1 | addressed | fix.txt:1 |\n\n";
 
     private void AutopilotOn() =>
-        _legs.Models = new RoleModels(NodeSettings.With(new NodeSettings(), NodeSettings.AutopilotKey, ["on"]).Settings!);
+        _legs.Models = new RoleModels(new NodeSettings());
 
     private async Task<FlightRow> Reviewed(string issue, string report)
     {

@@ -77,7 +77,7 @@ public sealed class CoalesceGuardTests : ReviewTestsBase
     {
         var (flight, _) = await Passed("1");
         _github.Checks = ChoiceStatus.Passing;
-        _legs.Models = new RoleModels(NodeSettings.With(new NodeSettings(), NodeSettings.AutopilotKey, ["on"]).Settings!);
+        _legs.Models = new RoleModels(new NodeSettings());
         var ready = _state.Cards(openOnly: true).Single(c => c.Kind == LegCommander.PrReady);
         var (open, reached) = HoldGitHub(nameof(IGitHub.MergeAsync));
         var merge = Ask(_legs, Verbs.Merge, flight.Code, _github.Pr!.Head);

@@ -14,7 +14,7 @@ public sealed class AutopilotMergeCardTests : ReviewTestsBase
     private static readonly string[] MergeKinds = [LegCommander.PrReady, LegCommander.MergeFailed, "autopilot-merge-refused"];
 
     private void AutopilotOn() =>
-        _legs.Models = new RoleModels(NodeSettings.With(new NodeSettings(), NodeSettings.AutopilotKey, ["on"]).Settings!);
+        _legs.Models = new RoleModels(new NodeSettings());
 
     private CardRow[] MergeCards() => [.. Open().Where(c => MergeKinds.Contains(c.Kind))];
 

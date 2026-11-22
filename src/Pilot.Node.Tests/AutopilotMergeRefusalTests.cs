@@ -13,7 +13,7 @@ namespace Pilot.Node.Tests;
 public sealed class AutopilotMergeRefusalTests : ReviewTestsBase
 {
     private void AutopilotOn() =>
-        _legs.Models = new RoleModels(NodeSettings.With(new NodeSettings(), NodeSettings.AutopilotKey, ["on"]).Settings!);
+        _legs.Models = new RoleModels(new NodeSettings());
 
     private PrChecks Checks(TimeProvider? clock = null) => new(_state, _github, clock ?? TimeProvider.System, _flights, _legs);
 

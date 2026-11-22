@@ -466,7 +466,7 @@ public sealed class ReviewTests1 : ReviewTestsBase
         Open().ShouldContain(c => c.Id == ready.Id);
 
         // On: the node merges it from its card, closes the card and says so.
-        var on = NodeSettings.With(new NodeSettings(), NodeSettings.AutopilotKey, ["on"]).Settings!;
+        var on = new NodeSettings();
         _legs.Models = new RoleModels(on);
         await checks.LookAsync(Ct);
         _github.Merged.ShouldHaveSingleItem().Item1.ShouldBe(pr);
@@ -484,7 +484,7 @@ public sealed class ReviewTests1 : ReviewTestsBase
     {
         var (_, _) = await Passed("31");
         _github.Checks = ChoiceStatus.Failing;
-        _legs.Models = new RoleModels(NodeSettings.With(new NodeSettings(), NodeSettings.AutopilotKey, ["on"]).Settings!);
+        _legs.Models = new RoleModels(new NodeSettings());
 
         await new PrChecks(_state, _github, TimeProvider.System, _flights, _legs).LookAsync(Ct);
 
@@ -498,7 +498,7 @@ public sealed class ReviewTests1 : ReviewTestsBase
         // A test that fails by chance is not a go-around: the node runs the failed runs again first (2026-10-27).
         var (flight, pr) = await Passed("33");
         _github.Checks = ChoiceStatus.Pending;
-        _legs.Models = new RoleModels(NodeSettings.With(new NodeSettings(), NodeSettings.AutopilotKey, ["on"]).Settings!);
+        _legs.Models = new RoleModels(new NodeSettings());
         var time = new ManualTime(DateTimeOffset.UtcNow);
         var checks = new PrChecks(_state, _github, time, _flights, _legs) { RerunFirst = true };
         await checks.LookAsync(Ct);
@@ -529,7 +529,7 @@ public sealed class ReviewTests1 : ReviewTestsBase
         var (flight, pr) = await Passed("34");
         _github.AutoMergeAllowed = true;
         _github.Checks = ChoiceStatus.Pending;
-        _legs.Models = new RoleModels(NodeSettings.With(new NodeSettings(), NodeSettings.AutopilotKey, ["on"]).Settings!);
+        _legs.Models = new RoleModels(new NodeSettings());
         var checks = new PrChecks(_state, _github, new ManualTime(DateTimeOffset.UtcNow), _flights, _legs) { RerunFirst = true };
         await checks.LookAsync(Ct);
         F(flight.Code).MergeWhenGreen.ShouldNotBeNull();
@@ -550,7 +550,7 @@ public sealed class ReviewTests1 : ReviewTestsBase
         // With the autopilot off a failing PR is sent back from its PR-ready card; the merge the node armed itself must go round the same way.
         var (flight, pr) = await Passed("32");
         _github.Checks = ChoiceStatus.Pending;
-        _legs.Models = new RoleModels(NodeSettings.With(new NodeSettings(), NodeSettings.AutopilotKey, ["on"]).Settings!);
+        _legs.Models = new RoleModels(new NodeSettings());
         var checks = new PrChecks(_state, _github, TimeProvider.System, _flights, _legs);
 
         // Armed by the node: its PR-ready card closes and the merge waits for the checks.
@@ -582,7 +582,7 @@ public sealed class ReviewTests1 : ReviewTestsBase
     {
         var (flight, _) = await Passed("33");
         _github.Checks = ChoiceStatus.Pending;
-        _legs.Models = new RoleModels(NodeSettings.With(new NodeSettings(), NodeSettings.AutopilotKey, ["on"]).Settings!);
+        _legs.Models = new RoleModels(new NodeSettings());
         (await Run(Verbs.Merge, $"flight/{flight.Code}", "controller", _github.Pr!.Head[..8])).Ok.ShouldBeTrue();
         F(flight.Code).MergeWhenGreen.ShouldNotBeNull().ShouldNotContain(LegCommander.ArmedByAutopilot);
         // Choosing Merge on the card closes it.
@@ -602,7 +602,7 @@ public sealed class ReviewTests1 : ReviewTestsBase
         var (flight, _) = await Passed("34");
         var ready = Open().Single(c => c.Kind == LegCommander.PrReady);
         _github.Checks = ChoiceStatus.Passing;
-        _legs.Models = new RoleModels(NodeSettings.With(new NodeSettings(), NodeSettings.AutopilotKey, ["on"]).Settings!);
+        _legs.Models = new RoleModels(new NodeSettings());
         // GitHub refuses the merge in words only a person can clear (a head that moved is the node's own wait now, and rings nothing: PIL864).
         _github.MergeAnswers = "gh: Required status check build is expected";
         var checks = new PrChecks(_state, _github, TimeProvider.System, _flights, _legs);
@@ -1701,7 +1701,7 @@ public sealed class ReviewTests4 : ReviewTestsBase
     {
         var (flight, _) = await Passed("35");
         _github.Checks = ChoiceStatus.Passing;
-        _legs.Models = new RoleModels(NodeSettings.With(new NodeSettings(), NodeSettings.AutopilotKey, ["on"]).Settings!);
+        _legs.Models = new RoleModels(new NodeSettings());
         var head = Git(flight.Worktree, "rev-parse", "HEAD");
         MainMoves();
 
@@ -1719,7 +1719,7 @@ public sealed class ReviewTests4 : ReviewTestsBase
     {
         var (flight, _) = await Passed("36");
         _github.Checks = ChoiceStatus.Pending;
-        _legs.Models = new RoleModels(NodeSettings.With(new NodeSettings(), NodeSettings.AutopilotKey, ["on"]).Settings!);
+        _legs.Models = new RoleModels(new NodeSettings());
         var checks = new PrChecks(_state, _github, TimeProvider.System, _flights, _legs);
         await checks.LookAsync(Ct);
         F(flight.Code).MergeWhenGreen.ShouldNotBeNull();

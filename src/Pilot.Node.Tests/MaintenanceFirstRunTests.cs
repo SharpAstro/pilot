@@ -230,7 +230,7 @@ public sealed class MaintenanceFirstRunTests
     [Fact]
     public async Task NoTickOfTheSweepAnswersTheCardForThePersonEvenWithTheSettingForTheAutopilotOn()
     {
-        _roles = new RoleModels(NodeSettings.With(new NodeSettings(), NodeSettings.AutopilotKey, ["on"]).Settings!);
+        _roles = new RoleModels(new NodeSettings());
         var step = new FakeStep("packages");
         var sweep = Sweep(step);
 
