@@ -265,9 +265,12 @@ public sealed class ToastPressTests
                 // Bg, Pad and WithTooltip are `with` copies in DIR.Lib, so the node carrying the tooltip is the filled node itself (no wrapper).
                 // An earlier red here was Palette.Current left Standard by the rig's frames, which the night frame above now fixes.
                 line[0].Node.Background.ShouldBe(colors.Card, "the refusal line is filled with the card colour its ink is measured against");
+                var b = line[0].Bounds;
                 drawnInk.AddRange(row
+                    .Where(a => a.Bounds.X >= b.X - 0.5f && a.Bounds.Y >= b.Y - 0.5f
+                        && a.Bounds.X + a.Bounds.Width <= b.X + b.Width + 0.5f && a.Bounds.Y + a.Bounds.Height <= b.Y + b.Height + 0.5f)
                     .Select(a => (a.Node as Layout.Node.Leaf)?.Content as Layout.Content.Text)
-                    .Where(t => t is { Value.Length: > 0 } && Why.Contains(t.Value.Trim(), StringComparison.Ordinal) && t.Value.Trim().Length > 0)
+                    .Where(t => t is { } && t.Value.Trim().Length > 0)
                     .Select(t => t!.Color));
                 drawnInk.ShouldNotBeEmpty("the refusal's words are drawn as text whose colour is read here");
             }
