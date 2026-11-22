@@ -17,6 +17,18 @@ public sealed partial class NodeState
         }
     }
 
+    /// <summary>
+    /// The account's usage as last read and when those figures were last written (<see cref="UsageWrittenAt"/>), in one read under one lock,
+    /// so a write between two calls cannot pair one write's figures with another's time (#1145).
+    /// </summary>
+    public (UsageRow? Usage, DateTimeOffset? WrittenAt) UsageAndWrittenAt()
+    {
+        lock (_gate)
+        {
+            return (WithHold(_usage), _usage is { } u ? (_usageWrittenAt is { } w && w > u.ReadAt ? w : u.ReadAt) : null);
+        }
+    }
+
     /// <summary>The account's usage as last read; null before any.</summary>
     public UsageRow? Usage()
     {
