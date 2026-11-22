@@ -77,6 +77,32 @@ public sealed class StrayCliTests
     }
 
     [Fact]
+    public void StraysEndResolvesAPidToTheKeyTheSweepUsesAndTheListingNamesTheCommand()
+    {
+        var machine = Machine(Stray(501), Stray(502));
+
+        var (key, refusal) = PilotCommand.StrayToEnd(machine, 502);
+
+        refusal.ShouldBeNull();
+        key.ShouldBe(Pilot.Node.Flights.StraySweep.KeyOf(502, DateTimeOffset.UnixEpoch));
+        PilotCommand.Strays(machine).ShouldContain("pilot strays end 501");
+        PilotCommand.StraysMarkdown(machine).ShouldContain("`pilot strays end 502`");
+        PilotCommand.Strays(machine).ShouldContain("Stop-Process -Id 501 -Force");
+    }
+
+    [Fact]
+    public void StraysEndRefusesAPidTheSweepDoesNotNameAndSaysWhatItDoes()
+    {
+        var (key, refusal) = PilotCommand.StrayToEnd(Machine(Stray(501)), 999);
+
+        key.ShouldBeNull();
+        refusal.ShouldNotBeNull().ShouldContain("no stray with pid 999");
+        refusal.ShouldContain("501");
+        refusal.ShouldContain("'pilot strays'");
+        PilotCommand.StrayToEnd(null, 1).Refusal.ShouldNotBeNull();
+    }
+
+    [Fact]
     public void TheStraysRideOnTheMachineRowOverTheWireAndARowWithoutThemReadsNone()
     {
         var row = Machine(Stray(501));

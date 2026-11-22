@@ -123,6 +123,41 @@ public sealed class StraySweepTests
     }
 
     [Fact]
+    public void AStrayWhoseCardWasDismissedCanStillBeEndedOnTheWordAndTheCardStaysDismissed()
+    {
+        OverLimitJob();
+        _sweep.SweepOnce();
+        var host = Open(StraySweep.Kind).Single(c => c.Subject.StartsWith("process:501@", StringComparison.Ordinal));
+        _state.CloseCard(host.Id, "dismissed", "gui").ShouldBeTrue();
+        _sweep.SweepOnce();
+        Open(StraySweep.Kind).ShouldNotContain(c => c.Subject == host.Subject);
+
+        var result = _sweep.EndOnWord(new CommandRequest { Verb = Verbs.EndStray, Target = host.Subject, Who = "gui" });
+
+        result.Error.ShouldBeNull();
+        _table.Killed.ShouldBe([501]);
+        Open(StraySweep.Kind).ShouldNotContain(c => c.Subject == host.Subject);
+        _state.Cards().Single(c => c.Kind == StraySweep.KilledKind).Detail.ShouldContain("gui");
+    }
+
+    [Fact]
+    public void ANeverEndNameAndAChangedStartAreRefusedEvenWithTheCardDismissed()
+    {
+        OverLimitJob();
+        _table.Add(502, 500, "explorer.exe", Began.AddMinutes(2), cpu: TimeSpan.FromHours(3));
+        _sweep.SweepOnce();
+        var wrapper = Open(StraySweep.Kind).Single(c => c.Subject.StartsWith("process:500@", StringComparison.Ordinal));
+        _state.CloseCard(wrapper.Id, "dismissed", "gui");
+        _table.Starts[500] = _table.Starts[500].AddMinutes(1);
+
+        _sweep.EndOnWord(new CommandRequest { Verb = Verbs.EndStray, Target = wrapper.Subject, Who = "gui" })
+            .Error.ShouldNotBeNull().ShouldContain("may be another by now");
+        _sweep.EndOnWord(new CommandRequest { Verb = Verbs.EndStray, Target = StraySweep.KeyOf(502, Began.AddMinutes(2)), Who = "gui" })
+            .Error.ShouldNotBeNull();
+        _table.Killed.ShouldBeEmpty();
+    }
+
+    [Fact]
     public void EndingAStrayIsThePersonsAlone() => Pilot.Node.Standing.YourOnlyVerbs.ShouldContain(Verbs.EndStray);
 
     [Fact]

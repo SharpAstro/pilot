@@ -311,9 +311,10 @@ public sealed class StraySweep(NodeState state, IProcessTable table, TimeProvide
     public CommandResult EndOnWord(CommandRequest command)
     {
         var key = command.Target;
-        if (!state.Cards(openOnly: true).Any(c => c.Kind == Kind && c.Subject == key) || !_named.TryGetValue(key, out var stray))
+        // The sweep still naming it is what counts (pilot #1270): a card a person dismissed stays dismissed, and the stray can still be ended.
+        if (!_named.TryGetValue(key, out var stray))
         {
-            return state.Complete(command, $"no open stray card is about {key}: the process may be gone, or its card was dismissed");
+            return state.Complete(command, $"the sweep names no stray {key}: the process may be gone; 'pilot strays' lists what it names now");
         }
         if (NeverEnded(stray.Name))
         {
