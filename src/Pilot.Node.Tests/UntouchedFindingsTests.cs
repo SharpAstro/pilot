@@ -98,6 +98,29 @@ public sealed class UntouchedFindingsTests : ReviewTestsBase
 
     [Fact]
     [Trait("Category", "Slow")]
+    public async Task AFailedReportAtTheSameHeadAfterARefusalIsSelfFinishedAndQuotedAsTheWorkersAnswer()
+    {
+        // #1034: FinishFromPushedAsync's path. The worker, refused once, says "failed" at the same head with why no named file needs a
+        // change; every step is ticked and the plane is at origin, so the node finishes the leg itself and the Handled card quotes it.
+        var (flight, worker) = await GoneRound(NamesAFile);
+        Commit(flight.Worktree, "src/README.md");
+        Git(flight.Worktree, "push", "-q", "origin", $"HEAD:{flight.Branch}");
+        (await Finish(flight, worker, "fixed it")).Error.ShouldNotBeNull();
+        var leg = _state.Legs(flight.Code).Single();
+        _state.PutLeg(leg with { Check = "dotnet test --filter A", Checklist = [.. leg.Checklist.Select(i => i with { Done = true })] });
+
+        await Run(Verbs.Check, Verbs.LegTarget(flight.Code, "parser"), worker, "1");
+        (await Run(Verbs.FinishLeg, Verbs.LegTarget(flight.Code, "parser"), worker, "failed", "Parser.cs already restores the check at its line 40, no change needed")).Error.ShouldBeNull();
+        await Started(_legs, flight.Code);
+
+        _state.Legs(flight.Code).Single().State.ShouldBe(LegState.Done);
+        var card = _state.Cards().Single(c => c.Kind == LegCommander.UntouchedFindingsKind);
+        card.Bin.ShouldBe(CardBin.Handled);
+        card.Detail.ShouldNotBeNull().ShouldContain("no change needed");
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
     public async Task AFinishWithNoReportIsRefusedAgainAtTheSameHead()
     {
         var (flight, worker) = await GoneRound(NamesAFile);
