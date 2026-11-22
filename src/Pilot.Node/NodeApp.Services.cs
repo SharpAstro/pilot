@@ -335,6 +335,7 @@ public static partial class NodeApp
             {
                 Outage = services.GetRequiredService<TurnOutage>(),
                 StatusLimit = services.GetRequiredService<RoleModels>().StartLimit,
+                Machine = options.Machine, PeerAccounts = () => services.GetRequiredService<AdmissionGate>().Fleet.Cached.Peers.Select(p => (p.Name, p.Load.Usage?.Account?.Email)),
             };
             services.GetRequiredService<NodeState>().HoldSource = gate.CurrentHold;
             return gate;

@@ -821,25 +821,56 @@ public sealed class AccountLimitTests
         weekCard.Outcome.ShouldBe($"the 7-day window now reads 44 %, figures read {read.ToLocalTime():HH:mm} from the server");
     }
 
+    /// <summary>
+    /// One week card per account and window (the owner, 2026-11-22: "for every fucking % we generate a new notification, even though i dismissed it"): a
+    /// figure that moves is no new card, a dismissed card is not raised again in its window, a restart of the node included, and it comes back only in the
+    /// next window.
+    /// </summary>
     [Fact]
-    public void AWeekCardMovesWithTheFigureAndSaysAsOfOnceTheFiguresAreOld()
+    public void AWeekCardIsRaisedOnceAWindowAndADismissalHoldsThroughTheWindow()
     {
         var week = Start.AddDays(2);
         _state.PutUsage(Figures(Start, 10, Start.AddHours(3), sevenDay: 92, sevenReset: week));
         _gate.RingWeek(90);
-        Open().Single(c => c.Kind == StartGate.WeekKind).Detail.ShouldNotBeNull().ShouldContain($"figures read {Start.ToLocalTime():HH:mm}");
+        var card = Open().Single(c => c.Kind == StartGate.WeekKind);
+        card.Detail.ShouldNotBeNull().ShouldContain($"figures read {Start.ToLocalTime():HH:mm}");
 
+        foreach (var figure in new[] { 93, 94, 95 })
+        {
+            _time.Advance(TimeSpan.FromMinutes(2));
+            _state.PutUsage(Figures(_time.GetUtcNow(), 10, Start.AddHours(3), sevenDay: figure, sevenReset: week));
+            _gate.RingWeek(90);
+        }
+        Open().Single(c => c.Kind == StartGate.WeekKind).Id.ShouldBe(card.Id, "a figure that moves is no new card");
+        _state.Cards().Count(c => c.Kind == StartGate.WeekKind).ShouldBe(1);
+
+        _state.CloseCard(card.Id, "dismissed", "gui");
         _time.Advance(TimeSpan.FromMinutes(2));
-        _state.PutUsage(Figures(_time.GetUtcNow(), 10, Start.AddHours(3), sevenDay: 95, sevenReset: week));
+        _state.PutUsage(Figures(_time.GetUtcNow(), 10, Start.AddHours(3), sevenDay: 96, sevenReset: week));
         _gate.RingWeek(90);
-        Open().Single(c => c.Kind == StartGate.WeekKind).Title.ShouldStartWith("The 7-day window is 95 % spent");
+        new StartGate(_state, _time) { Outage = _outage }.RingWeek(90);
+        Open().ShouldNotContain(c => c.Kind == StartGate.WeekKind, "dismissed, it stays so through its window, a restarted node's gate included");
 
-        _time.Advance(TimeSpan.FromMinutes(45));
+        _time.Advance(TimeSpan.FromDays(2.1));
+        _state.PutUsage(Figures(_time.GetUtcNow(), 10, _time.GetUtcNow().AddHours(3), sevenDay: 91, sevenReset: week.AddDays(7)));
         _gate.RingWeek(90);
-        var stale = Open().Single(c => c.Kind == StartGate.WeekKind);
-        stale.Detail.ShouldNotBeNull().ShouldContain("as of 45 min ago");
-        _gate.RingWeek(90);
-        Open().Single(c => c.Kind == StartGate.WeekKind).Id.ShouldBe(stale.Id);
+        Open().ShouldContain(c => c.Kind == StartGate.WeekKind, "a new window rings again");
+    }
+
+    /// <summary>Of the nodes on one account, only the first by name raises the week card; a node whose peer on the same account owns it shows none.</summary>
+    [Fact]
+    public void OnlyOneNodeOfAnAccountRaisesTheWeekCard()
+    {
+        _state.PutUsage(Figures(Start, 10, Start.AddHours(3), sevenDay: 92, sevenReset: Start.AddDays(2)));
+
+        new StartGate(_state, _time) { Outage = _outage, Machine = "SE1", PeerAccounts = () => [("DE1", Mail)] }.RingWeek(90);
+        Open().ShouldNotContain(c => c.Kind == StartGate.WeekKind, "DE1 is on the same account and sorts first");
+
+        new StartGate(_state, _time) { Outage = _outage, Machine = "SE1", PeerAccounts = () => [("DE1", "someone@else")] }.RingWeek(90);
+        Open().ShouldContain(c => c.Kind == StartGate.WeekKind, "a peer on another account does not own this one's card");
+
+        new StartGate(_state, _time) { Outage = _outage, Machine = "SE1", PeerAccounts = () => [("DE1", Mail)] }.RingWeek(90);
+        Open().ShouldNotContain(c => c.Kind == StartGate.WeekKind, "once a peer on the account owns it, this node's own goes");
     }
 
     [Theory]
