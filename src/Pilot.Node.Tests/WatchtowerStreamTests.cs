@@ -164,6 +164,7 @@ public sealed class WatchtowerStreamTests : IDisposable
     private Watchtower NewTower(FakeLauncher? launcher = null, string pilot = "pilot") => new(_state, _workers, Run, _options, _time)
     {
         Pilot = pilot,
+        AllowedTools = ClaudePermissions.SessionRules("/bin/pilot.exe"),
         Streams = launcher ?? _launcher,
         Ledger = _ledger,
         Error = _log,
@@ -261,6 +262,12 @@ public sealed class WatchtowerStreamTests : IDisposable
         // Its questions reach the person's chat through --permission-prompt-tool stdio: the tool is not taken away on any start.
         arguments.ShouldNotContain("--disallowedTools");
         arguments.ShouldContain("--permission-prompt-tool");
+        // Its own allow rules ride on the start, so a press is never sent to the auto-mode classifier (#1269).
+        var allowed = arguments.SkipWhile(a => a != "--allowedTools").Skip(1).First().Split(',');
+        allowed.ShouldContain("Bash(pilot.exe answer:*)");
+        allowed.ShouldContain("PowerShell(pilot.exe answer:*)");
+        allowed.ShouldContain("PowerShell(\"/bin/pilot.exe\":*)");
+        allowed.ShouldContain("mcp__pilot");
         folder.ShouldBe(_options.WatchtowerFolder);
         File.ReadAllText(_tower.RulesFile).ShouldContain("The AskUserQuestion tool works too");
         // The rules are read in its own folder, where the stream allows a call without asking the person.

@@ -56,13 +56,31 @@ public sealed class ClaudePermissionsTests : IDisposable
         Rules.ShouldContain($"PowerShell({cli}:*)");
         Rules.ShouldContain($"Bash(\"{cli}\":*)");
         Rules.ShouldContain($"PowerShell(\"{NodePath}\":*)");
-        Rules.Count.ShouldBe((16 + 2 + 2) * 2);
+        Rules.Count.ShouldBe((16 + 16 + 2 + 2) * 2);
         Rules.Distinct().Count().ShouldBe(Rules.Count);
     }
 
     [Fact]
+    public void TheBareExeFormSE1sWatchtowerWroteIsRuledOneVerbWide()
+    {
+        // #1269: 'pilot.exe answer c12854 1 --why ...' matched no 'pilot <verb>' rule, so it went to the auto-mode classifier.
+        foreach (var verb in new[] { "answer", "dismiss", "flight", "leg", "review", "tell", "say", "cards", "status" })
+        {
+            Rules.ShouldContain($"Bash(pilot.exe {verb}:*)");
+            Rules.ShouldContain($"PowerShell(pilot.exe {verb}:*)");
+        }
+        Rules.ShouldNotContain("Bash(pilot:*)");
+        Rules.ShouldNotContain("Bash(pilot.exe:*)");
+        Rules.ShouldContain($"PowerShell(\"{NodePath}\":*)");
+    }
+
+    [Fact]
+    public void ASessionsRulesAreTheRulesPlusPilotsMcpServer() =>
+        ClaudePermissions.SessionRules(NodePath).ShouldBe([.. Rules, "mcp__pilot"]);
+
+    [Fact]
     public void ABinaryNamedPilotIsNotRuledTwice() =>
-        ClaudePermissions.Rules("/bin/pilot").Count.ShouldBe((16 + 1 + 1) * 2);
+        ClaudePermissions.Rules("/bin/pilot").Count.ShouldBe((16 + 16 + 1 + 1) * 2);
 
     [Theory]
     [InlineData("")]

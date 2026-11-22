@@ -505,6 +505,7 @@ public static partial class NodeApp
                 services.GetRequiredService<NodeOptions>(), services.GetRequiredService<TimeProvider>())
             {
                 Pilot = Briefs.Run(legs.Cli, legs.Socket),
+                AllowedTools = ClaudePermissions.SessionRules(legs.Cli ?? "pilot"),
                 Ready = () => services.GetRequiredService<SessionTracker>().FirstPoll,
                 Models = services.GetRequiredService<RoleModels>(),
                 Gate = services.GetRequiredService<StartGate>(),

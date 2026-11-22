@@ -10,7 +10,7 @@ namespace Pilot.Node.Flights;
 /// (worktree folder name) it enters, if any, its brief, and how it runs; with Remote Control on, for the watchtower.
 /// </summary>
 public sealed record WorkerStart(string Name, string RepoPath, string? Plane, string Brief, string? Model, string? Effort, bool RemoteControl = false, string[]? DisallowedTools = null,
-    string? Reason = null, int? Pr = null, string? McpConfig = null, string? Settings = null);
+    string? Reason = null, int? Pr = null, string? McpConfig = null, string? Settings = null, string[]? AllowedTools = null);
 
 /// <summary>Starting and stopping a leg's background worker, so a test decides what Claude Code does.</summary>
 public interface IWorkerLauncher
@@ -70,7 +70,7 @@ public sealed partial class ClaudeWorkerLauncher(
 
     /// <summary>
     /// The options a session keeps for its life: Remote Control, name, permission mode, <c>--strict-mcp-config</c>, model,
-    /// effort and disallowed tools. A start passes them, and a resume of a session Claude Code no longer has them on file
+    /// effort, disallowed tools and allowed tools. A start passes them, and a resume of a session Claude Code no longer has them on file
     /// for passes them again (<see cref="ClaudeCliDelivery.ResumeArguments"/>).
     /// </summary>
     public static IReadOnlyList<string> SessionArguments(WorkerStart start)
@@ -107,6 +107,11 @@ public sealed partial class ClaudeWorkerLauncher(
         if (start.DisallowedTools is { Length: > 0 } denied)
         {
             args.AddRange(["--disallowedTools", string.Join(',', denied)]);
+        }
+        if (start.AllowedTools is { Length: > 0 } allowed)
+        {
+            // The watchtower's own allow rules: a press it makes never reaches the auto-mode classifier, whatever the machine's settings hold.
+            args.AddRange(["--allowedTools", string.Join(',', allowed)]);
         }
         return args;
     }

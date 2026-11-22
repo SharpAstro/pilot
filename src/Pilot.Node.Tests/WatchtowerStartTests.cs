@@ -42,7 +42,20 @@ public sealed class WatchtowerStartTests : IDisposable
     }
 
     private Watchtower Tower(IWorkerLauncher? launcher = null) =>
-        new(_state, launcher ?? _workers, _workers.EndingRun(_state), _options, _time) { Pilot = "pilot" };
+        new(_state, launcher ?? _workers, _workers.EndingRun(_state), _options, _time) { Pilot = "pilot", AllowedTools = ClaudePermissions.SessionRules("/bin/pilot.exe") };
+
+    [Fact]
+    public async Task OnlyTheWatchtowersStartCarriesAllowRulesAndAResumeOfItPassesThemAgain()
+    {
+        await Tower().RestartAsync("test", Ct);
+
+        var start = _workers.Started.ShouldHaveSingleItem();
+        var args = ClaudeWorkerLauncher.Arguments(start);
+        args.SkipWhile(a => a != "--allowedTools").Skip(1).First().ShouldContain("Bash(pilot.exe answer:*)");
+        ClaudeWorkerLauncher.SessionArguments(new WorkerStart("de1-pil1-worker", "/r", "pil1", "b", "sonnet", "low")).ShouldNotContain("--allowedTools");
+        var request = new ResumeRequest("4dca1bea-1111-2222-3333-444455556666", start.Name, "/w", "text", StartOptions: [.. ClaudeWorkerLauncher.SessionArguments(start)]);
+        ClaudeCliDelivery.ResumeArguments(request).ShouldContain("--allowedTools");
+    }
 
     private void Row(string id, SessionState state = SessionState.Idle) =>
         _state.PutSession(new SessionRow
