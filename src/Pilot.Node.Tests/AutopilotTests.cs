@@ -200,7 +200,8 @@ public sealed class AutopilotTests
 
         foreach (var (who, agent) in new[] { (Assistant, true), ("mcp", true), (lookout, false), (lookout, true) })
         {
-            var refusal = who == lookout ? "not the watchtower's" : "the person's";
+            // The lookout's answer runs as an assistant's now, so the ask's own refusal is the one it meets.
+            var refusal = "the person's";
             foreach (var choice in new[] { "Allow it", "Deny it" })
             {
                 (await Send(node, Command(Verbs.Answer, Verbs.CardTarget(card.Id), who, agent, args: choice))).Error.ShouldNotBeNull().ShouldContain(refusal);

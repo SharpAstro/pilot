@@ -122,7 +122,8 @@ public sealed class NodeFixRoundTests : ReviewTestsBase
         }
 
         Open().ShouldContain(c => c.Kind == LegCommander.ReviewLoopKind && c.Bin == CardBin.Ring);
-        _state.Cards().ShouldNotContain(c => c.Kind == LegCommander.NodeFixRoundKind);
+        // Only the two rounds the node did send have their Handled card: the third was not sent.
+        _state.Cards().Count(c => c.Kind == LegCommander.NodeFixRoundKind).ShouldBe(2);
         Parser(flight.Code).GoArounds.ShouldBe(2);
     }
 

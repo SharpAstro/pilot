@@ -78,14 +78,13 @@ public sealed class StandingTests
 
         var ring = node.State.RaiseCard(CardBin.Ring, "pr-ready", "flight/TIA1", "TIA1's PR is ready");
         var forYou = node.State.RaiseCard(CardBin.ForYou, "landed", "flight/TIA1", "TIA1 landed");
-        (await Error(node, Command(Verbs.Dismiss, Verbs.CardTarget(ring.Id), lookout))).ShouldNotBeNull().ShouldContain("dismiss is the controller's");
+        // A card's dismissal runs directly as the assistant's, a ring card's too.
+        (await Error(node, Command(Verbs.Dismiss, Verbs.CardTarget(ring.Id), lookout))).ShouldBeNull();
         (await Error(node, Command(Verbs.Dismiss, Verbs.CardTarget(forYou.Id), lookout))).ShouldBeNull();
-        node.State.Cards(openOnly: true).ShouldHaveSingleItem().Id.ShouldBe(ring.Id);
+        node.State.Cards(openOnly: true).ShouldNotContain(c => c.Id == ring.Id || c.Id == forYou.Id);
 
         // An agent-run command named for the lookout is the lookout's still: the flag does not lift it.
         (await Error(node, Command(Verbs.Set, Verbs.NodeTarget, lookout, true, "maintenance", "on"))).ShouldNotBeNull().ShouldContain("not the watchtower's");
-        // The person may dismiss the ring card.
-        (await Error(node, Command(Verbs.Dismiss, Verbs.CardTarget(ring.Id), "gui"))).ShouldBeNull();
     }
 
     [Fact]
@@ -148,8 +147,8 @@ public sealed class StandingTests
         error.ShouldNotBeNull().ShouldContain("a go-around is for a leg flying or failed");
         error.ShouldNotContain("controller's");
 
-        // Its dismissal of a ring card stays the controller's.
-        (await Error(node, Command(Verbs.Dismiss, Verbs.CardTarget(around.Id), lookout, true))).ShouldNotBeNull().ShouldContain("dismiss is the controller's, not the watchtower's");
+        // Its dismissal of a ring card runs directly, as the assistant's.
+        (await Error(node, Command(Verbs.Dismiss, Verbs.CardTarget(around.Id), lookout, true))).ShouldBeNull();
     }
 
     [Fact]

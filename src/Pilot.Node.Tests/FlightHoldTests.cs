@@ -234,8 +234,8 @@ public sealed class FlightHoldTests : ReviewTestsBase
         await Fly(flight, "parser");
         (await Run(Verbs.OpenPr, Verbs.FlightTarget(code), "controller")).Error.ShouldBeNull();
         (await Run(Verbs.Review, Verbs.FlightTarget(code), Reviewer(code), "changes", "naming")).Ok.ShouldBeTrue();
-        var card = Open().Single(c => c.Kind == LegCommander.ReviewChanges).Choices[0];
-        (await Run(card.Verb, card.Target, "controller", card.Args)).Error.ShouldBeNull();
+        // The node sends the fix round itself: the go-around's worker is started with the findings.
+        await Started(_legs, code);
         var worker = _state.Legs(code).Single().Worker!;
         var pr = F(code).PullRequest!.Value;
         var pushedBefore = Git(Repo, "ls-remote", "origin", flight.Branch);
