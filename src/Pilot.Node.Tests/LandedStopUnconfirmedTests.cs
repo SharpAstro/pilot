@@ -100,7 +100,7 @@ public sealed class LandedStopUnconfirmedTests : IDisposable
     public async Task AFailedStopOfALiveSessionKeepsItsOpenCardAndNamesItInTheHandledLine()
     {
         var (code, flights, flight) = await FlightAsync(stopFails: true);
-        PutSession("w1", code, flight.Worktree, SessionState.Running);
+        PutSession("w1", code, flight.Worktree, SessionState.Idle);
         _state.RaiseCard(CardBin.Ring, SessionMessenger.StopUnconfirmedKind, Verbs.SessionTarget("w1"), "earlier");
 
         await LandAsync(flights, code);
@@ -113,7 +113,7 @@ public sealed class LandedStopUnconfirmedTests : IDisposable
     public async Task AFailedStopWithNoCardRaisesOneWithAnEndItAgainChoice()
     {
         var (code, flights, flight) = await FlightAsync(stopFails: true);
-        PutSession("w1", code, flight.Worktree, SessionState.Running);
+        PutSession("w1", code, flight.Worktree, SessionState.Idle);
 
         await LandAsync(flights, code);
 
@@ -128,7 +128,7 @@ public sealed class LandedStopUnconfirmedTests : IDisposable
     public async Task ASuccessfulStopClosesTheCardWithLanded()
     {
         var (code, flights, flight) = await FlightAsync(stopFails: false);
-        PutSession("w1", code, flight.Worktree, SessionState.Running);
+        PutSession("w1", code, flight.Worktree, SessionState.Idle);
         _state.RaiseCard(CardBin.Ring, SessionMessenger.StopUnconfirmedKind, Verbs.SessionTarget("w1"), "earlier");
 
         await LandAsync(flights, code);
