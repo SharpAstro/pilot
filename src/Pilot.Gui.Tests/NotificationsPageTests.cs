@@ -280,6 +280,9 @@ public sealed class NotificationsPageTests
         w.Chrome.Show(PilotPage.Notifications);
         w.Frame(T0.AddMinutes(1), cards);
 
+        // The literal rule, independent of how Buttons is drawn: the page's notification carries none of the toast's choice buttons.
+        w.Bar.Feed.NeedsYou.ShouldHaveSingleItem().Buttons.ShouldBeNull();
+
         var texts = w.Texts();
         texts.Count(t => t == "Choice-one-a").ShouldBe(1, "drawn once, by the whole card");
         texts.Count(t => t == "Choice-two-b").ShouldBe(1, "drawn once, by the whole card");
