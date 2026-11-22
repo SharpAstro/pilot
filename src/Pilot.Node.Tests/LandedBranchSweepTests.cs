@@ -42,7 +42,7 @@ public sealed class LandedBranchSweepTests : IDisposable
         Git(_repo, "commit", "-m", "first");
         Git(_repo, "push", "origin", "main");
         _journal = new FileJournal(Path.Combine(_root, "store"));
-        _state = new NodeState(_journal, new FakeTime()) { Archive = new FlightArchive(_root) };
+        _state = new NodeState(_journal, new FakeTime(() => _skew)) { Archive = new FlightArchive(_root) };
     }
 
     public void Dispose()
@@ -51,9 +51,12 @@ public sealed class LandedBranchSweepTests : IDisposable
         TestDirs.DeleteTree(_root);
     }
 
-    private sealed class FakeTime : TimeProvider
+    /// <summary>How far the clock has moved past <see cref="Now"/>; a test that needs a later refusal sets it.</summary>
+    private TimeSpan _skew;
+
+    private sealed class FakeTime(Func<TimeSpan> skew) : TimeProvider
     {
-        public override DateTimeOffset GetUtcNow() => Now;
+        public override DateTimeOffset GetUtcNow() => Now + skew();
     }
 
     private string Git(string cwd, params string[] args)
@@ -115,7 +118,7 @@ public sealed class LandedBranchSweepTests : IDisposable
     }
 
     private LandedBranchSweep Sweeper(IGit? git = null, int batch = 5, Func<bool>? enabled = null) =>
-        new(_state, new LandedBranches(git ?? _git), _github, new FakeTime()) { Batch = batch, Pause = TimeSpan.Zero, StartDelay = TimeSpan.FromHours(1), Enabled = enabled ?? (() => true) };
+        new(_state, new LandedBranches(git ?? _git), _github, new FakeTime(() => _skew)) { Batch = batch, Pause = TimeSpan.Zero, StartDelay = TimeSpan.FromHours(1), Enabled = enabled ?? (() => true) };
 
     private IEnumerable<CardRow> Summaries() => _state.Cards().Where(c => c.Kind == LandedBranchSweep.SummaryKind);
 
@@ -267,27 +270,137 @@ public sealed class LandedBranchSweepTests : IDisposable
         Enumerable.Range(1, 12).ShouldAllBe(i => !OriginHas($"PIL{i}") && !LocalHas($"PIL{i}"));
     }
 
-    [Fact]
-    public async Task AFailedPushIsTriedAgainOnTheNextSweepAndNotInBetween()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ARefusedPushIsTriedOnceThenLeftUntilAPersonAnswersAndRetryPushesExactlyOnceMore(bool archived)
     {
         for (var i = 1; i <= 3; i++)
         {
-            Put(Row($"PIL{i}", MakeBranch($"PIL{i}")));
+            Put(Row($"PIL{i}", MakeBranch($"PIL{i}")), archived);
         }
+        FlightRow Of(int i) => archived ? Archived($"PIL{i}") : Live($"PIL{i}");
         var failing = new CountingGit(new GitCli()) { FailPush = true };
 
         (await Sweeper(failing).SweepAsync(Ct)).ShouldBe(0);
 
         failing.Count("push").ShouldBe(1);
-        Enumerable.Range(1, 3).ShouldAllBe(i => OriginHas($"PIL{i}") && LocalHas($"PIL{i}") && Live($"PIL{i}").BranchDeletedAt == null);
-        Summaries().Single().Title.ShouldContain("3 tried again next sweep: 3 push-failed");
-        failing.Count("push").ShouldBe(1);
+        Enumerable.Range(1, 3).All(i => OriginHas($"PIL{i}") && LocalHas($"PIL{i}") && Of(i).BranchDeletedAt == null).ShouldBeTrue();
+        Enumerable.Range(1, 3).All(i => Of(i).BranchDeleteFailed!.Contains("remote: refused") && Of(i).BranchKept == Of(i).BranchDeleteFailed && Of(i).BranchDeleteFailedAt == Now).ShouldBeTrue();
+        Summaries().Single().Title.ShouldContain("3 push-failed, left until answered");
+        Summaries().Single().Title.ShouldNotContain("tried again next sweep");
+        var card = _state.Cards().Single(c => c.Kind == FlightCommander.BranchKeptKind);
+        card.Bin.ShouldBe(CardBin.ForYou);
+        card.Detail.ShouldNotBeNull().ShouldContain("remote: refused");
+        Enumerable.Range(1, 3).ShouldAllBe(i => card.Detail!.Contains($"PIL{i} "));
+        card.Choices.Select(c => c.Verb).ShouldBe([Verbs.BranchRetry, Verbs.Dismiss]);
 
+        // Two more sweeps push nothing for them.
+        await Sweeper(failing).SweepAsync(Ct);
+        await Sweeper(failing).SweepAsync(Ct);
+        failing.Count("push").ShouldBe(1);
+        _state.Cards().Count(c => c.Kind == FlightCommander.BranchKeptKind).ShouldBe(1);
+
+        // The retry choice clears the record and pushes nothing itself.
+        var retry = card.Choices[0];
+        var commander = new FlightCommander(_state, new Planes(failing), new FakeTime(() => _skew));
+        var result = await commander.RunAsync(new CommandRequest { Verb = retry.Verb, Target = retry.Target, Args = retry.Args, Who = "test" }, Ct);
+        result.Error.ShouldBeNull();
+        failing.Count("push").ShouldBe(1);
+        Enumerable.Range(1, 3).All(i => Of(i).BranchDeleteFailed == null && Of(i).BranchDeleteFailedAt == null).ShouldBeTrue();
+
+        // Meanwhile PIL1 was deleted on origin by hand: its retry counts as deleted.
+        Git(_repo, "push", "origin", ":refs/heads/flight/pil1");
         failing.FailPush = false;
         (await Sweeper(failing).SweepAsync(Ct)).ShouldBe(3);
 
         failing.Count("push").ShouldBe(2);
-        Enumerable.Range(1, 3).ShouldAllBe(i => !OriginHas($"PIL{i}") && Live($"PIL{i}").BranchDeletedAt == Now);
+        Enumerable.Range(1, 3).All(i => !OriginHas($"PIL{i}") && Of(i).BranchDeletedAt == Now && Of(i).BranchDeleteFailed == null).ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task LeavingTheRefusedBranchesKeepsEverySweepFromPushingForThem()
+    {
+        Put(Row("PIL1", MakeBranch("PIL1")));
+        var failing = new CountingGit(new GitCli()) { FailPush = true };
+        await Sweeper(failing).SweepAsync(Ct);
+        var card = _state.Cards().Single(c => c.Kind == FlightCommander.BranchKeptKind);
+        _state.CloseCard(card.Id, "leave them", "test");
+
+        failing.FailPush = false;
+        await Sweeper(failing).SweepAsync(Ct);
+
+        failing.Count("push").ShouldBe(1);
+        OriginHas("PIL1").ShouldBeTrue();
+        Live("PIL1").BranchDeleteFailed.ShouldNotBeNull();
+    }
+
+    [Fact]
+    public async Task ALaterRefusalInTheRepoWhileTheCardIsOpenIsNamedOnOneReplacingCardWithEveryCodeInRetry()
+    {
+        Put(Row("PIL1", MakeBranch("PIL1")));
+        var failing = new CountingGit(new GitCli()) { FailPush = true };
+        await Sweeper(failing).SweepAsync(Ct);
+        var first = _state.Cards().Single(c => c.Kind == FlightCommander.BranchKeptKind);
+
+        Put(Row("PIL2", MakeBranch("PIL2")), archived: true);
+        await Sweeper(failing).SweepAsync(Ct);
+
+        var open = _state.Cards(openOnly: true).Where(c => c.Kind == FlightCommander.BranchKeptKind).ToList();
+        var card = open.ShouldHaveSingleItem();
+        card.Id.ShouldNotBe(first.Id);
+        card.Detail.ShouldNotBeNull().ShouldContain("PIL1 ");
+        card.Detail.ShouldContain("PIL2 ");
+        card.Detail.ShouldContain("remote: refused");
+        card.Detail.ShouldContain("pilot flight branch-retry");
+        var retry = card.Choices[0];
+        new[] { Verbs.FlightCodeOf(retry.Target)! }.Concat(retry.Args).Order().ShouldBe(["PIL1", "PIL2"]);
+        _state.Cards().Single(c => c.Id == first.Id).State.ShouldBe(CardState.Closed);
+    }
+
+    [Fact]
+    public async Task ALaterRefusalAfterLeavingThemRaisesAFreshCardForTheNewBranchesOnly()
+    {
+        Put(Row("PIL1", MakeBranch("PIL1")));
+        Put(Row("PIL2", MakeBranch("PIL2")));
+        var failing = new CountingGit(new GitCli()) { FailPush = true };
+        await Sweeper(failing).SweepAsync(Ct);
+        _state.CloseCard(_state.Cards(openOnly: true).Single(c => c.Kind == FlightCommander.BranchKeptKind).Id, "leave them", "test");
+
+        Put(Row("PIL3", MakeBranch("PIL3")));
+        Put(Row("PIL4", MakeBranch("PIL4")));
+        await Sweeper(failing).SweepAsync(Ct);
+
+        var card = _state.Cards(openOnly: true).Single(c => c.Kind == FlightCommander.BranchKeptKind);
+        card.Detail.ShouldNotBeNull().ShouldContain("PIL3 ");
+        card.Detail.ShouldContain("PIL4 ");
+        card.Detail.ShouldNotContain("PIL1 ");
+        var retry = card.Choices[0];
+        new[] { Verbs.FlightCodeOf(retry.Target)! }.Concat(retry.Args).Order().ShouldBe(["PIL3", "PIL4"]);
+    }
+
+    [Fact]
+    public async Task ARefusalAfterAHandRetryOfADismissedCardRaisesAFreshCardInsideTheDismissalHold()
+    {
+        Put(Row("PIL1", MakeBranch("PIL1")));
+        Put(Row("PIL2", MakeBranch("PIL2")));
+        var failing = new CountingGit(new GitCli()) { FailPush = true };
+        await Sweeper(failing).SweepAsync(Ct);
+        var first = _state.Cards(openOnly: true).Single(c => c.Kind == FlightCommander.BranchKeptKind);
+        _state.CloseCard(first.Id, "dismissed by a person", "test");
+
+        // The same two branches are retried by hand and refused again an hour later, well inside the day the dismissal holds.
+        foreach (var code in new[] { "PIL1", "PIL2" })
+        {
+            _state.UpdateFlight(code, f => f with { BranchDeleteFailed = null, BranchDeleteFailedAt = null, BranchKept = null });
+        }
+        _skew = TimeSpan.FromHours(1);
+        await Sweeper(failing).SweepAsync(Ct);
+
+        var card = _state.Cards(openOnly: true).Single(c => c.Kind == FlightCommander.BranchKeptKind);
+        card.Id.ShouldNotBe(first.Id);
+        card.Detail.ShouldNotBeNull().ShouldContain("PIL1 ");
+        card.Detail.ShouldContain("PIL2 ");
     }
 
     [Theory]

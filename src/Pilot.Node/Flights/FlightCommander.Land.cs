@@ -451,7 +451,7 @@ public sealed partial class FlightCommander
     /// Deletes the branch of the landed <paramref name="flight"/> through <see cref="LandedBranches"/>, locally and on origin, once its
     /// plane is gone, and judges the flights folded into it the same way (a fold keeps its branch until now). Off when the
     /// delete-landed-branches setting is. A branch holding commits past the merged head is kept with a For-you card naming them; any
-    /// other reason is one Handled line; a failed push is left for the next sweep. Never throws: the flight has landed.
+    /// other reason is one Handled line; a refused push is recorded and left until a person answers its card. Never throws: the flight has landed.
     /// </summary>
     private async Task DeleteLandedBranchesAsync(FlightRow flight, string? landedHead, string? leftover, CancellationToken cancellationToken)
     {
@@ -474,7 +474,7 @@ public sealed partial class FlightCommander
                     candidates.Add(new LandedCandidate(flight, landedHead, LiveSessionOf(flight.Code)));
                 }
             }
-            var folded = state.Flights().Where(f => f.State == FlightState.Landed && f.BranchDeletedAt is null
+            var folded = state.Flights().Where(f => f.State == FlightState.Landed && f.BranchDeletedAt is null && f.BranchDeleteFailed is null
                 && string.Equals(f.FoldedInto, flight.Code, StringComparison.OrdinalIgnoreCase) && f.RepoPath == flight.RepoPath).ToList();
             if (candidates.Count == 0 && folded.Count == 0)
             {
@@ -506,9 +506,15 @@ public sealed partial class FlightCommander
                 }
                 return result;
             });
+            var refused = new List<LandedBranchOutcome>();
             foreach (var outcome in outcomes)
             {
-                RecordBranchOutcome(outcome);
+                RecordBranchOutcome(outcome, refused);
+            }
+            if (refused.Count > 0)
+            {
+                // One card for the whole landing, as SweepAsync raises one per repo, so no card is closed and replaced per extra branch.
+                LandedBranchSweep.RaisePushFailedCard(state, Verbs.RepoTarget(flight.RepoPath), refused);
             }
         }
         catch (Exception ex) when (ex is FlightException or IOException or InvalidOperationException or System.ComponentModel.Win32Exception)
@@ -518,17 +524,59 @@ public sealed partial class FlightCommander
         }
     }
 
+    /// <summary>Clears the refused-delete record of each named landed flight, live or archived; the next sweep pushes for it once more (PIL1265).</summary>
+    private string BranchRetry(CommandRequest command)
+    {
+        var first = Verbs.FlightCodeOf(command.Target) ?? throw new FlightException($"this verb takes a flight target, {Verbs.FlightTargetPrefix}<code>, not {command.Target}");
+        var codes = new[] { first }.Concat(command.Args).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        var cleared = new List<string>();
+        var missing = new List<string>();
+        foreach (var code in codes)
+        {
+            if (state.Flights().FirstOrDefault(f => string.Equals(f.Code, code, StringComparison.OrdinalIgnoreCase)) is { } live)
+            {
+                if (live.BranchDeleteFailed is not null)
+                {
+                    state.UpdateFlight(live.Code, f => f with { BranchDeleteFailed = null, BranchDeleteFailedAt = null });
+                    cleared.Add(live.Code);
+                }
+            }
+            else if (state.ArchivedRow(code) is { } row && state.Archive?.Read(row.Code) is { } whole)
+            {
+                if (whole.Flight.BranchDeleteFailed is not null)
+                {
+                    state.Archive.Save(whole with { Flight = whole.Flight with { BranchDeleteFailed = null, BranchDeleteFailedAt = null } });
+                    cleared.Add(whole.Flight.Code);
+                }
+            }
+            else
+            {
+                missing.Add(code);
+            }
+        }
+        // A code with nothing to retry (cleared by hand, or deleted since) is skipped, so a card's choice never half-works.
+        if (cleared.Count == 0)
+        {
+            throw new FlightException(missing.Count > 0 ? $"There is no flight {string.Join(", ", missing)}" : $"{string.Join(", ", codes)} has no refused branch delete to retry");
+        }
+        return $"the next sweep tries to delete the branch of {string.Join(", ", cleared)} once more";
+    }
+
     private bool LiveSessionOf(string code) =>
         state.Sessions().Any(s => s.State is not (SessionState.Ended or SessionState.Failed) && string.Equals(s.Flight, code, StringComparison.Ordinal));
 
-    private void RecordBranchOutcome(LandedBranchOutcome outcome)
+    private void RecordBranchOutcome(LandedBranchOutcome outcome, List<LandedBranchOutcome> refused)
     {
         var now = time.GetUtcNow();
         var target = Verbs.FlightTarget(outcome.Code);
         switch (outcome.Result)
         {
             case LandedBranchResult.Deleted:
-                state.UpdateFlight(outcome.Code, f => f with { BranchDeletedAt = now, BranchKept = null });
+                state.UpdateFlight(outcome.Code, f => f with { BranchDeletedAt = now, BranchKept = null, BranchDeleteFailed = null, BranchDeleteFailedAt = null });
+                return;
+            case LandedBranchResult.Failed:
+                state.UpdateFlight(outcome.Code, f => f with { BranchKept = outcome.Why, BranchDeleteFailed = outcome.Why, BranchDeleteFailedAt = now });
+                refused.Add(outcome);
                 return;
             case LandedBranchResult.RetryLater:
                 state.UpdateFlight(outcome.Code, f => f with { BranchKept = outcome.Why });
