@@ -149,6 +149,9 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
     /// <summary>The node log: one line per tell with its outcome and the target session's state (#756).</summary>
     public TextWriter Log { get; init; } = TextWriter.Null;
 
+    /// <summary>The most a job's artifacts may total before none is kept (<see cref="JobArtifact.ByteLimit"/>); a test sets a small one to see the row's note come from the runner (#1085).</summary>
+    internal long ArtifactByteLimit { get; set; } = JobArtifact.ByteLimit;
+
     private void LogTell(JobRow job, string target, SessionRow? targetRow, string outcome)
     {
         try
@@ -2005,9 +2008,9 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
     public const string ArtifactsVariable = "PILOT_JOB_ARTIFACTS";
 
     /// <summary>The row with what its artifacts directory holds, read as it ends; a job with no such directory is unchanged.</summary>
-    private static JobRow WithArtifacts(JobRow ended)
+    private JobRow WithArtifacts(JobRow ended)
     {
-        var (files, note) = JobArtifacts.Collect(ArtifactsOf(ended));
+        var (files, note) = JobArtifacts.Collect(ArtifactsOf(ended), ArtifactByteLimit);
         return files is null && note is null ? ended : ended with { Artifacts = files, ArtifactsNote = note };
     }
 
@@ -2803,7 +2806,7 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
             var cancelled = _cancelled.TryRemove(job.Id, out var by);
             var forced = cancelled && _forced.TryRemove(job.Id, out _);
             // The slow file reads stay outside the lock: the artifacts directory is the job's own, not part of the row.
-            var (artifactFiles, artifactsNote) = JobArtifacts.Collect(ArtifactsOf(job));
+            var (artifactFiles, artifactsNote) = JobArtifacts.Collect(ArtifactsOf(job), ArtifactByteLimit);
             var endedAt = time.GetUtcNow();
             JobRow EndOf(JobRow current)
             {
