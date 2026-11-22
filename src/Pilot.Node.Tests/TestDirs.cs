@@ -28,6 +28,18 @@ internal static class TestDirs
         }
     }
 
+    /// <summary>Writes a git hook script and makes it executable where that is a file mode: on Linux git skips a hook without the
+    /// execute bit (only a hint on stderr), so a test whose hook refuses passes on Windows and sees nothing refused on ubuntu.</summary>
+    public static void WriteHook(string path, string script)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllText(path, script);
+        if (!OperatingSystem.IsWindows())
+        {
+            File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        }
+    }
+
     /// <summary>Clears a file's read-only flag so the tree can be deleted. A file that is already gone (a git child removed it
     /// mid-walk, #1063) has nothing to make writable and is skipped.</summary>
     internal static void MakeWritable(string file)

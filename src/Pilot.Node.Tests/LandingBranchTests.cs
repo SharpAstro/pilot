@@ -63,6 +63,66 @@ public sealed class LandingBranchTests : ReviewTestsBase
     }
 
     [Fact]
+    public async Task AnOriginThatRefusesTheDeleteIsPushedOnceAndTheFailureIsRecordedWithGitsTextAndNoNextSweepPromise()
+    {
+        var (flight, _) = await Passed("1");
+        // Installed after the flight's own push, and refusing only the delete (the new value is all zeros).
+        TestDirs.WriteHook(Path.Combine(Path.GetDirectoryName(Repo)!, "origin.git", "hooks", "update"), "#!/bin/sh\nif [ \"$1\" = \"refs/heads/flight/tia1\" ] && [ \"$3\" = \"0000000000000000000000000000000000000000\" ]; then echo \"no deleting tia1 here\" >&2; exit 1; fi\nexit 0\n");
+
+        await LandMerged(flight);
+
+        OnOrigin(flight.Branch).ShouldNotBeEmpty();
+        var row = F(flight.Code);
+        row.BranchDeletedAt.ShouldBeNull();
+        row.BranchDeleteFailed.ShouldNotBeNull().ShouldContain("no deleting tia1 here");
+        row.BranchKept.ShouldBe(row.BranchDeleteFailed);
+        var card = Open().Single(c => c.Kind == FlightCommander.BranchKeptKind);
+        card.Bin.ShouldBe(CardBin.ForYou);
+        card.Detail.ShouldNotBeNull().ShouldContain("no deleting tia1 here");
+        card.Detail.ShouldNotContain("next sweep tries again");
+        card.Choices.Select(c => c.Verb).ShouldBe([Verbs.BranchRetry, Verbs.Dismiss]);
+        card.Choices[0].Target.ShouldBe(Verbs.FlightTarget(flight.Code));
+        card.Subject.ShouldBe(Verbs.RepoTarget(F(flight.Code).RepoPath));
+    }
+
+    [Fact]
+    public async Task ALandingWithSeveralRefusedBranchesRaisesOneCardForTheRepoNamingEachOfThem()
+    {
+        var (lander, _) = await Passed("1");
+        var head = Git(lander.Worktree, "rev-parse", "HEAD");
+        var second = await NewFlight("2", "parser");
+        var third = await NewFlight("3", "parser");
+        await _flights.RetireFoldedAsync(F(second.Code), lander.Code, Ct);
+        await _flights.RetireFoldedAsync(F(third.Code), lander.Code, Ct);
+        foreach (var other in new[] { second, third })
+        {
+            Git(Repo, "branch", "-f", other.Branch, head);
+            Git(Repo, "push", "-q", "origin", $"{head}:refs/heads/{other.Branch}");
+        }
+        // Refuses every delete on origin (the new value is all zeros), whichever flight branch it is.
+        TestDirs.WriteHook(Path.Combine(Path.GetDirectoryName(Repo)!, "origin.git", "hooks", "update"), "#!/bin/sh\nif [ \"$3\" = \"0000000000000000000000000000000000000000\" ]; then echo \"no deleting $1 here\" >&2; exit 1; fi\nexit 0\n");
+
+        await LandMerged(lander);
+
+        foreach (var f in new[] { lander, second, third })
+        {
+            OnOrigin(f.Branch).ShouldNotBeEmpty();
+            F(f.Code).BranchDeleteFailed.ShouldNotBeNull().ShouldContain($"no deleting refs/heads/{f.Branch} here");
+        }
+        // Every card of the kind, closed ones included: a card raised per refused branch would close and replace the one
+        // before it and still end with one open card, so only this count shows the landing raised one.
+        _state.Cards().Count(c => c.Kind == FlightCommander.BranchKeptKind && c.Subject == Verbs.RepoTarget(F(lander.Code).RepoPath)).ShouldBe(1);
+        var card = Open().Single(c => c.Kind == FlightCommander.BranchKeptKind);
+        card.Bin.ShouldBe(CardBin.ForYou);
+        card.Subject.ShouldBe(Verbs.RepoTarget(F(lander.Code).RepoPath));
+        card.Detail.ShouldNotBeNull();
+        foreach (var f in new[] { lander, second, third })
+        {
+            card.Detail.ShouldContain(f.Branch);
+        }
+    }
+
+    [Fact]
     public async Task ALandedFlightWhoseLocalBranchIsOneCommitPastTheMergedHeadKeepsItAndRaisesOneCardNamingTheCommit()
     {
         var (flight, head) = await PassedDetached("1");

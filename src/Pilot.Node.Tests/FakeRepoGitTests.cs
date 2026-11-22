@@ -245,6 +245,34 @@ public sealed class FakeRepoGitTests : IDisposable
     }
 
     [Fact]
+    public void APorcelainDeleteAnswersARefALineAndAPreReceiveRefusalKeepsEveryRef()
+    {
+        // The landed-branch sweep's delete (PIL1265): git push --porcelain origin :refs/heads/a :refs/heads/b, read per ref.
+        MakePlane();
+        Commit(Plane, "a.txt", "one\n", "add a");
+        Run(Plane, "push", "-q", "origin", "HEAD:flight/x", "HEAD:flight/y");
+        _git.Run(["rev-parse", "--verify", "--quiet", "refs/remotes/origin/flight/x"], Plane).Ok.ShouldBeTrue();
+        _git.PreReceive = r => r == "refs/heads/flight/y" ? ["no deleting y here"] : null;
+
+        // A pre-receive hook takes the whole push or none of it: x is refused with y.
+        var refused = _git.Run(["push", "--porcelain", "origin", ":refs/heads/flight/x", ":refs/heads/flight/y"], Plane);
+        refused.ExitCode.ShouldBe(1);
+        refused.Output.ShouldContain("!\t:refs/heads/flight/x\t[remote rejected] (pre-receive hook declined)");
+        refused.Output.ShouldContain("!\t:refs/heads/flight/y\t[remote rejected] (pre-receive hook declined)");
+        refused.Error.ShouldContain("remote: no deleting y here");
+        Run(Plane, "ls-remote", "origin", "flight/x").ShouldNotBeEmpty();
+
+        // Let through, each ref says deleted, a ref origin never had included, and the remote-tracking ref goes too.
+        _git.PreReceive = null;
+        var deleted = _git.Run(["push", "--porcelain", "origin", ":refs/heads/flight/x", ":refs/heads/flight/y", ":refs/heads/flight/never"], Plane);
+        deleted.Ok.ShouldBeTrue(deleted.Error);
+        deleted.Output.ReplaceLineEndings("\n").Trim().Split('\n')[1..].ShouldBe(
+            ["-\t:refs/heads/flight/x\t[deleted]", "-\t:refs/heads/flight/y\t[deleted]", "-\t:refs/heads/flight/never\t[deleted]", "Done"]);
+        Run(Plane, "ls-remote", "origin", "flight/x").ShouldBeEmpty();
+        _git.Run(["rev-parse", "--verify", "--quiet", "refs/remotes/origin/flight/x"], Plane).Ok.ShouldBeFalse();
+    }
+
+    [Fact]
     public void AWorktreeWhoseFolderWentIsListedPrunableAndPruneForgetsIt()
     {
         MakePlane();
@@ -297,9 +325,11 @@ public sealed class FakeRepoGitTests : IDisposable
         Commit(Plane, "a.txt", "one\n", "add a");
         Run(Plane, "push", "-u", "origin", "flight/x");
 
-        // --delete is modelled since PIL1101 (the landed-branch sweep pushes it); --mirror and --tags are still not.
+        // --delete is modelled since PIL1101 and --porcelain of full-ref deletes since PIL1265 (the landed-branch sweep pushes them);
+        // --mirror, --tags and a porcelain push of anything but a delete are still not.
         Should.Throw<NotSupportedException>(() => _git.Run(["push", "--mirror", "origin"], Plane));
         Should.Throw<NotSupportedException>(() => _git.Run(["push", "--tags", "origin"], Plane));
+        Should.Throw<NotSupportedException>(() => _git.Run(["push", "--porcelain", "origin", "flight/x"], Plane));
         _git.Run(["push", "--quiet", "--set-upstream", "origin", "flight/x"], Plane).Ok.ShouldBeTrue();
     }
 
@@ -619,6 +649,10 @@ public sealed class FakeRepoGitTests : IDisposable
         Save("plane", "commit", "-q", "--amend", "-m", "plane edits readme, rewritten"),
         Do("plane", "push", "-u", "origin", "flight/x"),
         Ask("plane", "merge-base", "--is-ancestor", "refs/remotes/origin/flight/x", "HEAD"),
+        // The landed-branch sweep's delete (PIL1265): a porcelain line a ref, and one origin never had still comes back deleted.
+        Ask("plane", "push", "--porcelain", "origin", ":refs/heads/flight/x", ":refs/heads/flight/never"),
+        Ask("plane", "ls-remote", "origin", "flight/x"),
+        Ask("plane", "rev-parse", "--verify", "--quiet", "refs/remotes/origin/flight/x"),
         Ask("repo", "worktree", "remove", "--force", "{plane}"),
         Ask("repo", "worktree", "list", "--porcelain"),
         Ask("repo", "rev-parse", "--verify", "--quiet", "refs/heads/flight/x"),

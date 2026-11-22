@@ -84,8 +84,10 @@ public sealed class FileJournal : INodeJournal, IDisposable
     /// 9: the <c>followUpsChanged</c> event in the journal (PIL1226). An older node would fail on that kind in <c>journal.jsonl</c>.
     /// 10: <c>followUpFlight</c> and <c>deferredFilings</c> on a flight, <c>deferredFilings</c> on a PR review row, and <c>reason</c> on a review point answer (#1226).
     /// Rounds also store the new answer words <c>deferred</c>, <c>not work</c> and <c>node's own</c>, which an older node reads as unknown.
+    /// 11: <c>branchDeleteFailed</c> and <c>branchDeleteFailedAt</c> on a flight (PIL1265). An older node would lose them when it compacts the snapshot,
+    /// and would then push the refused delete again at each sweep.
     /// </remarks>
-    public const int StoreContract = 10;
+    public const int StoreContract = 11;
 
     private static readonly byte[] NewLine = "\n"u8.ToArray();
 
