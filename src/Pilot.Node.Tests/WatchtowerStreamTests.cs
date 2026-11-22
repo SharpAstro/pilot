@@ -266,7 +266,8 @@ public sealed class WatchtowerStreamTests : IDisposable
         var allowed = arguments.SkipWhile(a => a != "--allowedTools").Skip(1).First().Split(',');
         allowed.ShouldContain("Bash(pilot.exe answer:*)");
         allowed.ShouldContain("PowerShell(pilot.exe answer:*)");
-        allowed.ShouldContain("PowerShell(\"/bin/pilot.exe\":*)");
+        allowed.ShouldContain("PowerShell(& \"/bin/pilot.exe\" answer:*)");
+        allowed.ShouldNotContain("PowerShell(\"/bin/pilot.exe\":*)");
         allowed.ShouldContain("mcp__pilot");
         folder.ShouldBe(_options.WatchtowerFolder);
         File.ReadAllText(_tower.RulesFile).ShouldContain("The AskUserQuestion tool works too");

@@ -24,13 +24,24 @@ public static class ClaudePermissions
     /// </summary>
     public const string McpServerRule = "mcp__pilot";
 
-    /// <summary>The card verbs a watchtower session runs by the CLI's full path; one rule per verb, never the whole path.</summary>
-    public static readonly IReadOnlyList<string> SessionVerbs = ["answer", "dismiss", "cards", "status", "tell", "say", "sessions"];
+    /// <summary>
+    /// The verbs a watchtower session runs, each as narrow as its job: the card verbs whole, and of <c>flight</c>, <c>leg</c> only the
+    /// sub-verbs a press of a card takes (merge, clear, fold, connect; plan, start), so <c>update</c>, <c>node</c> and <c>flight withdraw</c>
+    /// stay with the auto-mode classifier.
+    /// </summary>
+    public static readonly IReadOnlyList<string> SessionVerbs =
+    [
+        "answer", "dismiss", "cards", "status", "tell", "say", "sessions", "review",
+        "flight merge", "flight clear", "flight fold", "flight connect", "leg plan", "leg start",
+    ];
 
     /// <summary>
-    /// The rules a watchtower session starts with (<c>--allowedTools</c>), per card verb and never a path-wide rule: the CLI by full path as
-    /// written bare, in double quotes and (PowerShell) behind <c>&amp;</c>, each again with the node's <c>--node-socket</c> when it has one,
-    /// plus pilot's MCP tools. A path-wide rule would allow every verb (update, node restart, flight withdraw).
+    /// The rules a watchtower session starts with (<c>--allowedTools</c>), one per verb of <see cref="SessionVerbs"/> and form, never a
+    /// path-wide rule: <c>pilot &lt;verb&gt;</c> and <c>pilot.exe &lt;verb&gt;</c> as a session may write them (SE1's watchtower wrote
+    /// <c>pilot.exe answer c12854 ...</c>, matched no rule and was denied, #1269), and the CLI by full path bare, in double quotes and
+    /// (PowerShell) behind <c>&amp;</c>; each again with the node's <c>--node-socket</c> when it has one; plus pilot's MCP tools. They ride
+    /// on the session's start, so they hold on any machine whatever its settings hold. A path-wide rule would allow every verb (update,
+    /// node restart, flight withdraw).
     /// </summary>
     public static string[] SessionRules(string cliPath, string? socket = null)
     {
@@ -40,13 +51,12 @@ public static class ClaudePermissions
         {
             foreach (var suffix in suffixes)
             {
-                var bare = cliPath + suffix;
-                var quoted = $"\"{cliPath}\"" + suffix;
-                forms.Add(Rule("Bash", $"{bare} {verb}"));
-                forms.Add(Rule("Bash", $"{quoted} {verb}"));
-                forms.Add(Rule("PowerShell", $"{bare} {verb}"));
-                forms.Add(Rule("PowerShell", $"{quoted} {verb}"));
-                forms.Add(Rule("PowerShell", $"& {quoted} {verb}"));
+                foreach (var name in new[] { "pilot", "pilot.exe", cliPath, $"\"{cliPath}\"" })
+                {
+                    forms.Add(Rule("Bash", $"{name}{suffix} {verb}"));
+                    forms.Add(Rule("PowerShell", $"{name}{suffix} {verb}"));
+                    forms.Add(Rule("PowerShell", $"& {name}{suffix} {verb}"));
+                }
             }
         }
         return [.. forms.Distinct(), McpServerRule];
@@ -67,9 +77,9 @@ public static class ClaudePermissions
     {
         var folder = Path.GetDirectoryName(Path.GetFullPath(nodePath)) ?? "";
         var cli = Path.Combine(folder, "pilot" + Path.GetExtension(nodePath));
-        // The bare "pilot.exe <verb>" form is ruled too: a rule matches the command's text as written, so SE1's watchtower running
-        // 'pilot.exe answer c12854 1 --why ...' matched no "pilot <verb>" rule, went to the auto-mode classifier and was denied (#1269).
-        var commands = Verbs.Select(v => $"pilot {v}").Concat(Verbs.Select(v => $"pilot.exe {v}")).Append(nodePath);
+        // No "pilot.exe <verb>" rules here: the watchtower, the session that wrote that form (#1269), carries its own (SessionRules) on its
+        // start, so the settings check reads no new rules missing after an update.
+        var commands = Verbs.Select(v => $"pilot {v}").Append(nodePath);
         // The node's own binary may be the pilot CLI itself.
         if (!Path.GetFullPath(nodePath).Equals(cli, OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal))
         {
@@ -77,7 +87,7 @@ public static class ClaudePermissions
         }
         // A path is also ruled in quotes, as a shell writes it ("C:\…\pilot.exe" answer …): a rule matches the command's text as
         // written, so the unquoted rule misses the quoted call and it goes to the auto-mode classifier, which denies it (#896).
-        var paths = commands.Where(c => !c.StartsWith("pilot ", StringComparison.Ordinal) && !c.StartsWith("pilot.exe ", StringComparison.Ordinal)).ToList();
+        var paths = commands.Where(c => !c.StartsWith("pilot ", StringComparison.Ordinal)).ToList();
         commands = commands.Concat(paths.Select(p => $"\"{p}\""));
         return commands.SelectMany(c => Tools.Select(t => Rule(t, c))).ToList();
     }
@@ -159,8 +169,7 @@ public static class ClaudePermissions
             return true;
         }
         var (tool, command) = Split(rule);
-        return allowed.Contains(tool) || (command.StartsWith("pilot ", StringComparison.Ordinal) && allowed.Contains(Rule(tool, "pilot")))
-            || (command.StartsWith("pilot.exe ", StringComparison.Ordinal) && allowed.Contains(Rule(tool, "pilot.exe")));
+        return allowed.Contains(tool) || (command.StartsWith("pilot ", StringComparison.Ordinal) && allowed.Contains(Rule(tool, "pilot")));
     }
 
     private static (string Tool, string Command) Split(string rule)

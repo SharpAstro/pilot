@@ -56,22 +56,16 @@ public sealed class ClaudePermissionsTests : IDisposable
         Rules.ShouldContain($"PowerShell({cli}:*)");
         Rules.ShouldContain($"Bash(\"{cli}\":*)");
         Rules.ShouldContain($"PowerShell(\"{NodePath}\":*)");
-        Rules.Count.ShouldBe((16 + 16 + 2 + 2) * 2);
+        Rules.Count.ShouldBe((16 + 2 + 2) * 2);
         Rules.Distinct().Count().ShouldBe(Rules.Count);
     }
 
     [Fact]
-    public void TheBareExeFormSE1sWatchtowerWroteIsRuledOneVerbWide()
+    public void TheSettingsRulesGainNoBareExeFormSoAnUpdateReadsNoneNewlyMissing()
     {
-        // #1269: 'pilot.exe answer c12854 1 --why ...' matched no 'pilot <verb>' rule, so it went to the auto-mode classifier.
-        foreach (var verb in new[] { "answer", "dismiss", "flight", "leg", "review", "tell", "say", "cards", "status" })
-        {
-            Rules.ShouldContain($"Bash(pilot.exe {verb}:*)");
-            Rules.ShouldContain($"PowerShell(pilot.exe {verb}:*)");
-        }
+        // #1269 R1.8: the bare 'pilot.exe <verb>' form rides on the watchtower's own start (SessionRules), not in the settings check.
+        Rules.ShouldNotContain(r => r.StartsWith("Bash(pilot.exe ", StringComparison.Ordinal) || r.StartsWith("PowerShell(pilot.exe ", StringComparison.Ordinal));
         Rules.ShouldNotContain("Bash(pilot:*)");
-        Rules.ShouldNotContain("Bash(pilot.exe:*)");
-        Rules.ShouldContain($"PowerShell(\"{NodePath}\":*)");
     }
 
     [Theory]
@@ -81,23 +75,39 @@ public sealed class ClaudePermissionsTests : IDisposable
     {
         const string cli = @"C:\Users\x\AppData\Local\Programs\pilot2\pilot.exe";
         var rules = ClaudePermissions.SessionRules(cli, socket);
-        var pilot = Pilot.Node.Flights.Briefs.Run(cli, socket);
-        var quoted = socket is null ? $"\"{cli}\"" : $"\"{cli}\" --node-socket \"{socket}\"";
-        // Each form is matched as written: bare, quoted, and PowerShell's call operator.
-        rules.ShouldContain($"Bash({pilot} answer:*)");
-        rules.ShouldContain($"PowerShell({pilot} answer:*)");
-        rules.ShouldContain($"Bash({quoted} answer:*)");
-        rules.ShouldContain($"PowerShell(& {quoted} answer:*)");
+        var suffixes = socket is null ? new[] { "" } : ["", $" --node-socket \"{socket}\""];
+        // Every verb and sub-verb a press takes, in every form a session writes: bare pilot and pilot.exe (SE1's
+        // 'pilot.exe answer c12854 1 --why ...'), the full path bare and quoted, PowerShell's call operator, each with and without the socket.
+        string[] verbs = ["answer", "dismiss", "cards", "status", "tell", "say", "sessions", "review", "flight merge", "flight clear", "flight fold", "flight connect", "leg plan", "leg start"];
+        foreach (var verb in verbs)
+        {
+            foreach (var suffix in suffixes)
+            {
+                foreach (var name in new[] { "pilot", "pilot.exe", cli, $"\"{cli}\"" })
+                {
+                    rules.ShouldContain($"Bash({name}{suffix} {verb}:*)");
+                    rules.ShouldContain($"PowerShell({name}{suffix} {verb}:*)");
+                    rules.ShouldContain($"PowerShell(& {name}{suffix} {verb}:*)");
+                }
+            }
+        }
+        rules.ShouldContain($"Bash({Pilot.Node.Flights.Briefs.Run(cli, socket)} answer:*)");
         rules.ShouldContain("mcp__pilot");
-        // Never a rule without a verb, so update, node restart and flight withdraw stay with the classifier.
-        rules.Where(r => r != "mcp__pilot").ShouldAllBe(r => ClaudePermissions.SessionVerbs.Any(v => r.EndsWith($" {v}:*)", StringComparison.Ordinal)));
+        // Never a rule without its verb, so update, node restart and flight withdraw stay with the classifier.
+        rules.Where(r => r != "mcp__pilot").ShouldAllBe(r => verbs.Any(v => r.EndsWith($" {v}:*)", StringComparison.Ordinal)));
+        foreach (var uncovered in new[] { "update", "node", "node restart", "flight withdraw", "flight", "leg" })
+        {
+            rules.ShouldNotContain(r => r.EndsWith($" {uncovered}:*)", StringComparison.Ordinal));
+        }
         rules.ShouldNotContain($"Bash({cli}:*)");
         rules.ShouldNotContain($"Bash(\"{cli}\":*)");
+        rules.ShouldNotContain("Bash(pilot:*)");
+        rules.ShouldNotContain("Bash(pilot.exe:*)");
     }
 
     [Fact]
     public void ABinaryNamedPilotIsNotRuledTwice() =>
-        ClaudePermissions.Rules("/bin/pilot").Count.ShouldBe((16 + 16 + 1 + 1) * 2);
+        ClaudePermissions.Rules("/bin/pilot").Count.ShouldBe((16 + 1 + 1) * 2);
 
     [Theory]
     [InlineData("")]
