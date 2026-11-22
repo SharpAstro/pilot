@@ -67,9 +67,7 @@ public sealed class LandingBranchTests : ReviewTestsBase
     {
         var (flight, _) = await Passed("1");
         // Installed after the flight's own push, and refusing only the delete (the new value is all zeros).
-        var hook = Path.Combine(Path.GetDirectoryName(Repo)!, "origin.git", "hooks", "update");
-        Directory.CreateDirectory(Path.GetDirectoryName(hook)!);
-        File.WriteAllText(hook, "#!/bin/sh\nif [ \"$1\" = \"refs/heads/flight/tia1\" ] && [ \"$3\" = \"0000000000000000000000000000000000000000\" ]; then echo \"no deleting tia1 here\" >&2; exit 1; fi\nexit 0\n");
+        TestDirs.WriteHook(Path.Combine(Path.GetDirectoryName(Repo)!, "origin.git", "hooks", "update"), "#!/bin/sh\nif [ \"$1\" = \"refs/heads/flight/tia1\" ] && [ \"$3\" = \"0000000000000000000000000000000000000000\" ]; then echo \"no deleting tia1 here\" >&2; exit 1; fi\nexit 0\n");
 
         await LandMerged(flight);
 
@@ -102,9 +100,7 @@ public sealed class LandingBranchTests : ReviewTestsBase
             Git(Repo, "push", "-q", "origin", $"{head}:refs/heads/{other.Branch}");
         }
         // Refuses every delete on origin (the new value is all zeros), whichever flight branch it is.
-        var hook = Path.Combine(Path.GetDirectoryName(Repo)!, "origin.git", "hooks", "update");
-        Directory.CreateDirectory(Path.GetDirectoryName(hook)!);
-        File.WriteAllText(hook, "#!/bin/sh\nif [ \"$3\" = \"0000000000000000000000000000000000000000\" ]; then echo \"no deleting $1 here\" >&2; exit 1; fi\nexit 0\n");
+        TestDirs.WriteHook(Path.Combine(Path.GetDirectoryName(Repo)!, "origin.git", "hooks", "update"), "#!/bin/sh\nif [ \"$3\" = \"0000000000000000000000000000000000000000\" ]; then echo \"no deleting $1 here\" >&2; exit 1; fi\nexit 0\n");
 
         await LandMerged(lander);
 

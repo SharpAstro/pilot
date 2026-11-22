@@ -249,9 +249,7 @@ public sealed class LandedBranchesTests : IAsyncDisposable
         var a = MakeBranch("PIL14");
         var b = MakeBranch("PIL15");
         var c = MakeBranch("PIL16");
-        var hook = Path.Combine(_origin, "hooks", "update");
-        Directory.CreateDirectory(Path.GetDirectoryName(hook)!);
-        File.WriteAllText(hook, "#!/bin/sh\nif [ \"$1\" = \"refs/heads/flight/pil15\" ]; then echo \"no deleting pil15 here\" >&2; exit 1; fi\nexit 0\n");
+        TestDirs.WriteHook(Path.Combine(_origin, "hooks", "update"), "#!/bin/sh\nif [ \"$1\" = \"refs/heads/flight/pil15\" ]; then echo \"no deleting pil15 here\" >&2; exit 1; fi\nexit 0\n");
 
         var outcomes = await Sweep(new LandedCandidate(Row("PIL14"), a, false), new LandedCandidate(Row("PIL15"), b, false), new LandedCandidate(Row("PIL16"), c, false));
 

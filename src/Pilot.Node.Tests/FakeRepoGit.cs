@@ -1020,6 +1020,15 @@ internal sealed class FakeRepoGit : IGit
             }
             return deleted;
         }
+        // git push --porcelain origin :refs/heads/a :refs/heads/b: the landed-branch sweep's delete (PIL1265). Only delete refspecs of a full ref are modelled.
+        if (a.Remove("--porcelain"))
+        {
+            if (a is not ["origin", _, ..] || a.Skip(1).Any(x => !x.StartsWith(":refs/", StringComparison.Ordinal)))
+            {
+                throw new NotSupportedException("push --porcelain form");
+            }
+            return PorcelainDelete([.. a.Skip(1).Select(x => x[1..])]);
+        }
         var force = a.Any(x => x is "--force" or "-f") || a.Any(x => x.StartsWith('+'));
         string? lease = a.FirstOrDefault(x => x.StartsWith("--force-with-lease=", StringComparison.Ordinal));
         // Anything else starting with a dash (--delete, --tags, --mirror, --all, ...) changes what the push does: the model must not read it as a plain push.
@@ -1044,6 +1053,46 @@ internal sealed class FakeRepoGit : IGit
             }
         }
         return result;
+    }
+
+    /// <summary>
+    /// Deletes full refs on origin and answers per ref on stdout as <c>git push --porcelain</c> does: "To &lt;origin&gt;", one tab-separated
+    /// line a ref (<c>-  :refs/heads/a  [deleted]</c>, or <c>!  :refs/heads/a  [remote rejected] (pre-receive hook declined)</c>), then "Done".
+    /// A ref origin does not have is still sent and comes back deleted (receive-pack only warns), as git's t5516 holds. The pre-receive hook
+    /// is asked for every ref and refuses the whole push or none of it; its lines come back on stderr as "remote: ..." and nothing moves.
+    /// </summary>
+    private GitRun PorcelainDelete(IReadOnlyList<string> refs)
+    {
+        // One answer per ref, asked once: a hook may count or mark what it saw (QueuedPushTests' refuses only once).
+        var answers = refs.Select(r => _preReceive?.Invoke(r)).ToList();
+        var refused = answers.Any(x => x is not null);
+        var refusal = answers.OfType<IReadOnlyList<string>>().SelectMany(l => l).ToList();
+        var stdout = new StringBuilder($"To {_bare!.Path}\n");
+        var stderr = new StringBuilder();
+        foreach (var dstRef in refs)
+        {
+            if (refused)
+            {
+                stdout.Append($"!\t:{dstRef}\t[remote rejected] (pre-receive hook declined)\n");
+                continue;
+            }
+            if (!OriginRefs.Remove(dstRef))
+            {
+                stderr.Append("remote: warning: deleting a non-existent ref\n");
+            }
+            if (dstRef.StartsWith("refs/heads/", StringComparison.Ordinal))
+            {
+                Refs.Remove("refs/remotes/origin/" + dstRef["refs/heads/".Length..]);
+            }
+            stdout.Append($"-\t:{dstRef}\t[deleted]\n");
+        }
+        stdout.Append("Done\n");
+        if (refused)
+        {
+            stderr.Append(string.Concat(refusal.Select(l => "remote: " + l + "\n")));
+            stderr.Append($"error: failed to push some refs to '{_bare!.Path}'\n");
+        }
+        return new GitRun(refused ? 1 : 0, stdout.ToString(), stderr.ToString());
     }
 
     private GitRun PushOne(string spec, Worktree wt, bool force, string? lease)
