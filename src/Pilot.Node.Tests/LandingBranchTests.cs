@@ -113,6 +113,9 @@ public sealed class LandingBranchTests : ReviewTestsBase
             OnOrigin(f.Branch).ShouldNotBeEmpty();
             F(f.Code).BranchDeleteFailed.ShouldNotBeNull().ShouldContain($"no deleting refs/heads/{f.Branch} here");
         }
+        // Every card of the kind, closed ones included: a card raised per refused branch would close and replace the one
+        // before it and still end with one open card, so only this count shows the landing raised one.
+        _state.Cards().Count(c => c.Kind == FlightCommander.BranchKeptKind && c.Subject == Verbs.RepoTarget(F(lander.Code).RepoPath)).ShouldBe(1);
         var card = Open().Single(c => c.Kind == FlightCommander.BranchKeptKind);
         card.Bin.ShouldBe(CardBin.ForYou);
         card.Subject.ShouldBe(Verbs.RepoTarget(F(lander.Code).RepoPath));
