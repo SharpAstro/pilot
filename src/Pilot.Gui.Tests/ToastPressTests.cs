@@ -92,26 +92,21 @@ public sealed class ToastPressTests
         }
 
         /// <summary>
-        /// The toast on the last frame: the bounds of every point of a 2-pixel grid over the frame that the notifications layer hits as a toast.
-        /// Null when no point is a toast's. Bounded: one hit test per grid point.
+        /// The toast on the last frame: the largest region the notifications layer painted around the toast's own Dismiss (the one part a hit
+        /// names as a toast; a staying toast's card itself is a plain chrome region). Null when no toast's Dismiss is painted.
         /// </summary>
         public RectF32? ToastRect()
         {
-            float left = float.MaxValue, top = float.MaxValue, right = float.MinValue, bottom = float.MinValue;
-            for (var y = 0; y < _height; y += 2)
+            var regions = new List<ClickableRegion>();
+            Chrome.NotificationsLayer.CollectPaintedRegions(regions);
+            if (regions.FirstOrDefault(r => r.Result is HitResult.NotificationHit) is not { } dismiss)
             {
-                for (var x = 0; x < _width; x += 2)
-                {
-                    if (NotificationsLayout.ToastIdOf(Chrome.NotificationsLayer.HitTest(x, y)) is not null)
-                    {
-                        left = Math.Min(left, x);
-                        top = Math.Min(top, y);
-                        right = Math.Max(right, x + 2);
-                        bottom = Math.Max(bottom, y + 2);
-                    }
-                }
+                return null;
             }
-            return left <= right ? new RectF32(left, top, right - left, bottom - top) : null;
+            var (cx, cy) = (dismiss.X + dismiss.Width / 2f, dismiss.Y + dismiss.Height / 2f);
+            return regions
+                .Where(r => r.X <= cx && cx <= r.X + r.Width && r.Y <= cy && cy <= r.Y + r.Height)
+                .MaxBy(r => r.Width * r.Height) is { } toast ? new RectF32(toast.X, toast.Y, toast.Width, toast.Height) : null;
         }
 
         /// <summary>The bounds the notifications layer painted for the node that carries this hover text on the last frame, or null.</summary>
@@ -346,9 +341,8 @@ public sealed class ToastPressTests
                 // The pixels are read only inside the refusal line as the layer painted it (the node that carries the node's words on hover),
                 // and that line is shown to sit inside the refused toast: a colour the page or the toast's buttons share is never pooled in.
                 var toast = rig.ToastRect();
-                var dbg = new List<ClickableRegion>();
-                rig.Chrome.NotificationsLayer.CollectPaintedRegions(dbg);
-                toast.ShouldNotBeNull("DBG " + string.Join(" | ", dbg.Select(d => $"{d.X},{d.Y},{d.Width},{d.Height} {d.Result} tip={d.Tooltip?[..Math.Min(20, d.Tooltip.Length)]} id={NotificationsLayout.ToastIdOf(d.Result)}")));
+                toast.ShouldNotBeNull("the refused toast is drawn on the night frame");
+                toast.Value.Width.ShouldBeGreaterThan(NotificationsHost.Style.ToastWidth * 0.9f, "the region read as the toast is the whole card, not its Dismiss");
                 var refusal = rig.PaintedRectWithTooltip(Why);
                 refusal.ShouldNotBeNull("the refusal line is painted with the node's words on hover");
                 var (t, r) = (toast.Value, refusal.Value);
