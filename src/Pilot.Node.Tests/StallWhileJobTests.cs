@@ -384,7 +384,9 @@ public sealed class StallWhileJobTests
 
         await LookEvery(TimeSpan.FromMinutes(5), 8);
 
+        // Every act of the watch is a command through Run (a tell, a restart, a replacement), so none said is none of them, and nothing was stopped (#1241 R1.6).
         _said.ShouldBeEmpty();
+        _stopped.ShouldBeEmpty();
         Open().ShouldNotContain(c => c.Kind == LegWatch.ReviewStalled);
     }
 
@@ -428,7 +430,9 @@ public sealed class StallWhileJobTests
 
         await LookEvery(TimeSpan.FromMinutes(5), 6);
 
+        // Every act of the watch is a command through Run (a tell, a restart, a replacement), so none said is none of them, and nothing was stopped (#1241 R1.6).
         _said.ShouldBeEmpty();
+        _stopped.ShouldBeEmpty();
         Open().ShouldNotContain(c => c.Kind == LegWatch.PlanStalled);
     }
 

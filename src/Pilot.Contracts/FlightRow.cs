@@ -512,6 +512,9 @@ public sealed record FlightOnHold
     /// <summary>True when the <c>pilot: hold</c> label on the issue holds this flight (read by the repo sweep), alone or beside <see cref="Own"/>. Null reads as not from the label.</summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public bool? FromLabel { get; init; }
+
+    /// <summary>The reason a hold read from the label carries when no hold comment says one: a status line leaves it out, the label says as much.</summary>
+    public const string LabelReason = "held on GitHub";
 }
 
 /// <summary>A move whose outcome is not known yet (<see cref="FlightRow.MoveUnknown"/>).</summary>
@@ -685,10 +688,14 @@ public static class FlightWaiting
     /// <summary>What a flight in a holding pattern says in place of its merge stage (<c>holding: the watchtower is making the review's small fixes</c>); null when it is not holding.</summary>
     public static string? HoldingText(FlightRow flight) => flight.Holding is { } holding ? $"holding: {holding.Reason}" : null;
 
-    /// <summary>What a flight on the owner's hold says in a status line (<c>on hold by seb: waiting for the release</c>); null when it is not on hold.</summary>
+    /// <summary>
+    /// What a flight on the owner's hold says in a status line (<c>on hold by seb: waiting for the release</c>; from the label,
+    /// <c>on hold by the label pilot: hold on #7 (seb: waiting for the release)</c>); null when it is not on hold.
+    /// </summary>
     public static string? OnHoldText(FlightRow flight) => flight.OnHold is not { } hold ? null
         : hold is { FromLabel: true, Own: true } ? $"on hold by the label pilot: hold on {flight.Item.Display} and by {hold.By}: {hold.Reason}"
-        : hold.FromLabel == true ? $"on hold by the label pilot: hold on {flight.Item.Display}"
+        // The label read from GitHub keeps who and why its newest hold comment named (#1130: they were on the row, not in the line).
+        : hold.FromLabel == true ? $"on hold by the label pilot: hold on {flight.Item.Display}{(hold.Reason is { Length: > 0 } why && why != FlightOnHold.LabelReason ? $" ({hold.By}: {why})" : "")}"
         : hold.Own == true ? $"on hold by {hold.By} (this flight only): {hold.Reason}"
         : $"on hold by {hold.By}: {hold.Reason}";
 

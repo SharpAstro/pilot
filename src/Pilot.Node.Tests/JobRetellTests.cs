@@ -337,6 +337,61 @@ public sealed class JobRetellTests : IDisposable
     }
 
     [Fact]
+    public async Task AContextThatGrewAfterACompactionShrankItCountsAsActing()
+    {
+        // #1147: the baseline only moved up, so growth after a compaction, still under the old size, was not seen and the worker was retold.
+        _context = 50_000;
+        Session(SessionState.Idle, _clock.GetUtcNow().AddHours(-1));
+        await TellNowAsync();
+
+        _clock.Advance(TimeSpan.FromMinutes(1));
+        _context = 20_000;
+        Session(SessionState.Idle, _clock.GetUtcNow().AddHours(-1));
+        (await Sweep()).ShouldBeFalse("too soon to retell; the sweep notes the compaction");
+        _clock.Advance(TimeSpan.FromMinutes(1));
+        _context = 30_000;
+        Session(SessionState.Idle, _clock.GetUtcNow().AddHours(-1));
+        _clock.Advance(After * 3);
+
+        (await Sweep()).ShouldBeFalse();
+        _said.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task ARowThatRangDropsItsRetellBaselines()
+    {
+        // #1147: a row's baselines were kept for the node's life; once it rings the sweep never looks at it again.
+        await TellNowAsync();
+        _clock.Advance(After);
+        (await Sweep()).ShouldBeTrue();
+        _jobs.TellBaselines.ShouldBeGreaterThan(0);
+
+        _clock.Advance(After);
+        await Sweep();
+
+        _state.Cards().ShouldHaveSingleItem().Kind.ShouldBe(JobRunner.UnansweredKind);
+        _jobs.TellBaselines.ShouldBe(0);
+    }
+
+    [Theory]
+    [InlineData(SessionRole.Planner, true)]
+    [InlineData(SessionRole.Designer, true)]
+    [InlineData(SessionRole.Watchtower, false)]
+    public async Task AFailedJobIsRetoldForAPlannerOrDesignerButToldOnceForTheWatchtower(SessionRole role, bool retold)
+    {
+        // #1147 R1.6, the owner's call: a failure needs its session to act, so a planner's (a validator's runs in a planner) and a designer's
+        // failed job is retold as a worker's is; the watchtower is the person's and is told once.
+        _role = role;
+        Session(SessionState.Idle, _clock.GetUtcNow().AddHours(-1));
+        await TellNowAsync();
+        _state.PutJob(_state.Jobs().Single() with { State = JobState.Failed, Error = "boom" });
+        _clock.Advance(After);
+
+        (await Sweep()).ShouldBe(retold);
+        _said.Count.ShouldBe(retold ? 1 : 0);
+    }
+
+    [Fact]
     public async Task AWorkerThatSentAnyCommandAfterTheTellIsNotRetoldNorRungFor()
     {
         await TellNowAsync();

@@ -285,8 +285,10 @@ public sealed class TurnOutage(NodeState state)
 
     private (double UsedPercent, DateTimeOffset ReadAt)? FiguresEnd(UsageRow? usage, DateTimeOffset until)
     {
-        // The write time of the figures, rewrites included: the held row's ReadAt moves only when they change.
-        var written = state.UsageWrittenAt() ?? usage?.ReadAt;
+        // The write time of the figures, rewrites included: the held row's ReadAt moves only when they change. Read with the held figures in
+        // one call and taken only when they are the figures judged here (#1145: two reads could pair one write's figures with another's time).
+        var (held, heldWrittenAt) = state.UsageAndWrittenAt();
+        var written = held is not null && usage is not null && held.ReadAt == usage.ReadAt ? heldWrittenAt ?? usage.ReadAt : usage?.ReadAt;
         if (_limitWindowFiveHour is not { } fiveHour || _limitSeenAt is not { } seen || _limitAccount is not { } account
             || usage is not { HasFigures: true, Account: { } who } || written is not { } wroteAt
             || !string.Equals(who.Email, account, StringComparison.OrdinalIgnoreCase) || wroteAt <= seen)

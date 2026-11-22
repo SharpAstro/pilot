@@ -676,6 +676,13 @@ public sealed class AccountLimitTests
         await _watch.LookAsync(Ct);
         _outage.LimitUntil.ShouldBe(again);
         _state.Usage()!.ReadAt.ShouldBe(reading.ReadAt);
+
+        // #1145: that holds until the status line next writes those same figures. The rewrite is newer than the new sighting and its window is
+        // the new end's, so it ends the limit again: the figures win, as R1.1 of #1143 has it.
+        _time.Advance(TimeSpan.FromMinutes(1));
+        _state.PutUsage(Figures(_time.GetUtcNow(), 1, Start.AddHours(5)));
+        await _watch.LookAsync(Ct);
+        _outage.LimitUntil.ShouldBeNull();
     }
 
     [Fact]

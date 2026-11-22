@@ -68,5 +68,10 @@ public sealed class InvariantBriefTests
         brief.ShouldContain("larger than the PR");
         brief.ShouldContain("Left");
         brief.ShouldContain("the reviewer refuses it");
+        // The newer text (#1254 N1.4): every point is made where it can be, the not-blocking ones too, and size is no reason to defer.
+        brief.ShouldContain("Make every point you can, the not-blocking ones too");
+        brief.ShouldContain("the owner wants");
+        brief.ShouldContain("fixed, not filed");
+        brief.ShouldContain("is made here, however many there are");
     }
 }

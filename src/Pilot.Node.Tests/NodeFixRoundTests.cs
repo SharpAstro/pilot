@@ -79,6 +79,9 @@ public sealed class NodeFixRoundTests : ReviewTestsBase
         await Started(_legs, flight.Code);
         Parser(flight.Code).State.ShouldBe(LegState.Done);
         F(flight.Code).Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Reviewing);
+        // Done with: the reviewer of the round before was stopped, and the round's review is another's (#1241 R1.4).
+        _workers.Stopped.ShouldContain(reviewer);
+        F(flight.Code).Review.ShouldNotBeNull().ReviewerJob.ShouldNotBe(reviewer);
     }
 
     [Fact]
@@ -166,15 +169,19 @@ public sealed class NodeFixRoundTests : ReviewTestsBase
     }
 
     [Fact]
-    public async Task AFlightOnHoldIsNotSentRoundAndKeepsItsCard()
+    public async Task AVerdictOnAFlightOnHoldIsRefusedNamingTheHoldAndSendsNoRound()
     {
         Autopilot(true);
         var flight = await Reviewing("8");
         (await Run(Verbs.Ground, Verbs.FlightTarget(flight.Code), "me", "the", "owner", "holds", "it")).Error.ShouldBeNull();
 
-        await Verdict(flight.Code);
+        // The hold refuses the verdict itself, before any round could be sent; so it is the hold that kept the round, and no card is raised for a
+        // verdict that was never taken (#1241 R1.3: the old name claimed a card it never asserted).
+        var verdict = await Verdict(flight.Code);
 
+        verdict.Error.ShouldNotBeNull().ShouldContain($"{flight.Code} is on hold");
         _state.Cards().ShouldNotContain(c => c.Kind == LegCommander.NodeFixRoundKind);
+        FixCards().ShouldBeEmpty();
         Parser(flight.Code).State.ShouldBe(LegState.Done);
         Parser(flight.Code).GoArounds.ShouldBe(0);
     }

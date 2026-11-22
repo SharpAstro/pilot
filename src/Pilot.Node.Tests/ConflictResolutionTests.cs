@@ -113,6 +113,47 @@ public sealed class ConflictResolutionTests : ReviewTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AConflictRoundOnALegWhoseReviewAskedForChangesFinishesWithoutTouchingTheNamedFiles()
+    {
+        // #1034: the untouched-findings gate (pilot #1024) skips a conflict round, which answers the base, not the review: its worker's
+        // resolution changes none of the files the review's blocking findings name, and the finish must not be refused for it.
+        var flight = await NewFlight("44", "parser");
+        File.WriteAllText(Path.Combine(flight.Worktree, "README.md"), "theirs\n");
+        await Fly(flight, "parser");
+        await Run(Verbs.OpenPr, Verbs.FlightTarget(flight.Code), "controller");
+        (await Run(Verbs.Review, Verbs.FlightTarget(flight.Code), Reviewer(flight.Code), "changes", "## Blocking\n- the null check in src/Parser.cs is gone")).Ok.ShouldBeTrue();
+        _github.Pr = _github.Pr! with { Mergeable = "CONFLICTING" };
+        MainRewritesTheReadme();
+        // The leg already went round once on the review, so a go-around on it is one the gate looks at.
+        _state.PutLeg(_state.Legs(flight.Code).Single() with { GoArounds = 1, ReviewGoArounds = 1 });
+        var started = _workers.Started.Count;
+
+        await new PrChecks(_state, _github, TimeProvider.System, legs: _legs).LookAsync(Ct);
+        _workers.Started.Count.ShouldBe(started + 1);
+        var leg = _state.Legs(flight.Code).Single();
+        leg.State.ShouldBe(LegState.Flying);
+        (leg.GoArounds, leg.ReviewGoArounds).ShouldBe((2, 1), "a conflict round is a go-around, not an answer to the review");
+
+        // The resolution touches the README only, none of the named src/Parser.cs.
+        // As a conflict worker resolves it: main merged in, the README's conflict settled, the merge committed and pushed.
+        Git(flight.Worktree, "fetch", "-q", "origin");
+        Should.Throw<InvalidOperationException>(() => Git(flight.Worktree, "merge", "-q", "origin/main"), "the README conflicts");
+        File.WriteAllText(Path.Combine(flight.Worktree, "README.md"), "ours and theirs\n");
+        Git(flight.Worktree, "add", ".");
+        Git(flight.Worktree, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "--no-edit");
+        Git(flight.Worktree, "push", "-q", "origin", $"HEAD:{flight.Branch}");
+        var worker = leg.Worker.ShouldNotBeNull();
+        await Run(Verbs.Check, Verbs.LegTarget(flight.Code, "parser"), worker, "1");
+        var finish = await Run(Verbs.FinishLeg, Verbs.LegTarget(flight.Code, "parser"), worker, "done", "resolved the conflict with main");
+
+        finish.Error.ShouldBeNull();
+        await Started(_legs, flight.Code);
+        _state.Legs(flight.Code).Single().State.ShouldBe(LegState.Done);
+        _state.Cards().ShouldNotContain(c => c.Kind == LegCommander.UntouchedFindingsKind);
+    }
+
+    [Fact]
     public async Task AQueueDropForAConflictSendsTheLastLegRoundWithTheBriefAndRaisesNoCard()
     {
         var flight = await Conflicted("43");

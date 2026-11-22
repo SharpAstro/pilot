@@ -129,6 +129,46 @@ public sealed class DesignRendersMcpTests : IAsyncLifetime
         all.ShouldContain("DSN-1 draft screen home");
     }
 
+    /// <summary>
+    /// The branches of #1201's notes round (#1202 N2.1): a scaled picture is a box average (columns of black and white become grey, not one of them), an
+    /// unreadable file over the byte cap is named as not sent and never sent unscaled, and a version that is no number is a refusal naming it.
+    /// </summary>
+    [Fact]
+    public async Task AScaledPictureIsABoxAverageAnUnreadableOversizeFileIsNotSentAndABadVersionIsRefused()
+    {
+        await MadeAsync(_node, publish: false);
+        var renders = Path.Combine(_node.Options.DataFolder, "designs", "DSN-1", "draft", "renders");
+        var stripes = new byte[3200 * 100 * 4];
+        for (var i = 0; i < 3200 * 100; i++)
+        {
+            var white = (i % 3200) % 2 == 0;
+            stripes[i * 4] = stripes[i * 4 + 1] = stripes[i * 4 + 2] = white ? (byte)255 : (byte)0;
+            stripes[i * 4 + 3] = 255;
+        }
+        await File.WriteAllBytesAsync(Path.Combine(renders, "home.png"), PngWriter.Encode(stripes, 3200, 100), Ct);
+        foreach (var settings in Directory.GetFiles(renders, "settings*.png"))
+        {
+            await File.WriteAllBytesAsync(settings, new byte[global::Pilot.Contracts.DesignRenderCaps.Bytes + 10], Ct);
+        }
+
+        var replies = await McpTests.Serve(Server(), McpTests.Initialize, McpTests.Call(2, "design_renders", """{"design":"DSN-1","draft":true,"screen":"home"}"""),
+            McpTests.Call(3, "design_renders", """{"design":"DSN-1","draft":true,"screen":"settings"}"""));
+
+        var content = ContentOf(replies[1]);
+        string.Join(' ', TextsOf(ContentOf(replies[2]))).ShouldContain("settings (design): too large to send and could not be scaled down");
+        ImagesOf(ContentOf(replies[2])).ShouldBeEmpty("an unreadable file over the cap is never sent unscaled");
+        var home = Convert.FromBase64String(ImagesOf(content).First().GetProperty("data").GetString()!);
+        SharpAstro.Codecs.ImageCodecs.TryReadInfo(home, out var info).ShouldBeTrue();
+        info.Width.ShouldBe(global::Pilot.Contracts.DesignRenderCaps.LongestSide);
+        var rgba = new byte[info.Width * info.Height * 4];
+        SharpAstro.Codecs.ImageCodecs.TryDecodeIntoRgba8(home, rgba).ShouldBeTrue();
+        var middle = (info.Height / 2 * info.Width + info.Width / 2) * 4;
+        ((int)rgba[middle]).ShouldBeInRange(100, 155, "a pair of a white and a black column averages to grey");
+        // The node's own refusal (the CLI's option is an int, so it never sends one): a version too large for an int names it, never an OverflowException.
+        var refused = (await _node.Client.SendAsync(new global::Pilot.Contracts.CommandRequest { Verb = global::Pilot.Contracts.Verbs.DesignRenders, Target = global::Pilot.Contracts.Verbs.DesignTarget("DSN-1"), Args = ["v99999999999"], Who = "tests" }, Ct)).Response.ShouldNotBeNull();
+        refused.Error.ShouldNotBeNull().ShouldContain("'v99999999999' is not a version number");
+    }
+
     [Fact]
     public async Task DesignShowSaysDesignRendersGivesThePictures()
     {
@@ -218,5 +258,42 @@ public sealed class DesignRendersMcpTests : IAsyncLifetime
             // Its own deadline: the process is gone, so its stderr ends, but a stuck read must not hold the test (the review of #1201).
             await stderr.WaitAsync(TimeSpan.FromSeconds(20), TestContext.Current.CancellationToken);
         }
+    }
+}
+
+/// <summary>The path segment a render's names are made into (#1202 N2.3): two names never meet in one file, and Windows can make every one of them.</summary>
+public sealed class RenderFileNameTests
+{
+    [Theory]
+    [InlineData("home")]
+    [InlineData("DSN-1")]
+    [InlineData("80x24")]
+    [InlineData("v1.2")]
+    public void ANameThatIsFitAlreadyIsKept(string name) => Pilot.Commands.PilotCommand.SafeName(name).ShouldBe(name);
+
+    [Fact]
+    public void NamesThatChangeIntoTheSameTextStayTwo()
+    {
+        var spaced = Pilot.Commands.PilotCommand.SafeName("a b");
+        var slashed = Pilot.Commands.PilotCommand.SafeName("a/b");
+        spaced.ShouldStartWith("a_b-");
+        slashed.ShouldStartWith("a_b-");
+        spaced.ShouldNotBe(slashed);
+        spaced.ShouldNotBe("a_b", "a name that changed never takes the text another name keeps as it is");
+    }
+
+    [Theory]
+    [InlineData("CON")]
+    [InlineData("nul")]
+    [InlineData("com1")]
+    [InlineData("LPT9.png")]
+    [InlineData("..")]
+    [InlineData("home.")]
+    public void AWindowsDeviceNameADotsOnlyNameAndATrailingDotAreMadeSafe(string name)
+    {
+        var safe = Pilot.Commands.PilotCommand.SafeName(name);
+        safe.ShouldNotEndWith(".");
+        safe.Split('.')[0].ToUpperInvariant().ShouldNotBeOneOf("CON", "PRN", "AUX", "NUL", "COM1", "LPT9");
+        safe.Trim('.').ShouldNotBeEmpty();
     }
 }

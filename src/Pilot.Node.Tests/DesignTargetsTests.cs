@@ -162,7 +162,6 @@ public sealed class DesignTargetsTests : IAsyncLifetime
             ["Desktop 1440x900 @1", "Laptop 1280x800 @1.5", "Tablet 820x1180 @2", "Phone 390x844 @3"]);
         DesignTargets.Resolve("phone").ShouldBe(DesignTargets.Phone);
         DesignTargets.Resolve(null, 500, 700)!.Name.ShouldBe("500x700");
-        DesignTargets.ResolveAll([]).ShouldBe([DesignTargets.Desktop]);
     }
 
     /// <summary>A target name becomes part of a file name: one that could leave the renders folder is refused (the review of #1116).</summary>

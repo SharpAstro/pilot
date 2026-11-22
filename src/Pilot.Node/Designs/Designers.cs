@@ -105,6 +105,11 @@ public sealed class Designers(NodeState state, DesignStore store, IWorkerLaunche
         {
             if (row.DesignerState is DesignerStates.Held || row.DesignerPending.Length > 0)
             {
+                // A say the designer's session refused waits out its back-off rather than going again at each 30 s sweep (#1158 R1.4).
+                if (_sayFailures.TryGetValue(row.Id, out var failed) && time.GetUtcNow() < failed.At + SayBackOff(failed.Count))
+                {
+                    continue;
+                }
                 await AskAsync(row.Id, null).ConfigureAwait(false);
             }
             else if (row.DesignerName is { Length: > 0 } name && state.Sessions().FirstOrDefault(s => string.Equals(s.Name, name, StringComparison.OrdinalIgnoreCase)) is { } listed)
@@ -155,6 +160,38 @@ public sealed class Designers(NodeState state, DesignStore store, IWorkerLaunche
         Locks?.Release(id);
     }
 
+    // A refused say to a designer, per design: how many in a row and when the last was (#1158 R1.4). In memory: a restart tries at once.
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, (int Count, DateTimeOffset At)> _sayFailures = new(StringComparer.Ordinal);
+
+    /// <summary>The card a design's designer could not be told on: raised at <see cref="SayFailuresToCard"/> refusals in a row, closed by the next say that goes.</summary>
+    public const string SayFailedKind = "designer-say-failed";
+
+    /// <summary>How many refused says in a row raise <see cref="SayFailedKind"/>.</summary>
+    public const int SayFailuresToCard = 3;
+
+    /// <summary>How long a design waits after its <paramref name="count"/>th refused say in a row: 30 s, doubling, at most 15 minutes.</summary>
+    public static TimeSpan SayBackOff(int count) => TimeSpan.FromSeconds(Math.Min(30 * Math.Pow(2, Math.Max(0, count - 1)), 15 * 60));
+
+    private void NoteSayFailed(string id, string why)
+    {
+        var now = time.GetUtcNow();
+        var failed = _sayFailures.AddOrUpdate(id, _ => (1, now), (_, was) => (was.Count + 1, now));
+        if (failed.Count == SayFailuresToCard)
+        {
+            state.RaiseCard(CardBin.ForYou, SayFailedKind, Verbs.DesignTarget(id), $"The designer of {id} cannot be told what waits for it",
+                $"Its session refused {failed.Count} says in a row: {why}. The node tries again after {SayBackOff(failed.Count).TotalMinutes:0} min, then at most every 15; or it can be told at once.",
+                [new CardChoice { Label = "Try again now", Verb = Verbs.DesignSay, Target = Verbs.DesignTarget(id), Args = ["Carry on with what waits for you."] }]);
+        }
+    }
+
+    private void NoteSaid(string id)
+    {
+        if (_sayFailures.TryRemove(id, out _))
+        {
+            state.CloseCardsAbout(Verbs.DesignTarget(id), "the designer was told", SayFailedKind);
+        }
+    }
+
     private async Task AskAsync(string id, string? piece)
     {
         try
@@ -202,9 +239,12 @@ public sealed class Designers(NodeState state, DesignStore store, IWorkerLaunche
                 if (!said.Ok)
                 {
                     // Kept for the next sweep, with the reason on the design.
-                    store.Update(row.Id, r => r with { DesignerState = DesignerStates.Failed, DesignerWhy = said.Error ?? "the say was refused", DesignerPending = pending, DesignerTyped = [] });
+                    var why = said.Error ?? "the say was refused";
+                    store.Update(row.Id, r => r with { DesignerState = DesignerStates.Failed, DesignerWhy = why, DesignerPending = pending, DesignerTyped = [] });
+                    NoteSayFailed(row.Id, why);
                     return;
                 }
+                NoteSaid(row.Id);
             }
             store.Update(row.Id, r => r with { DesignerJob = live.Id, DesignerState = DesignerStates.Working, DesignerIdleSince = null, DesignerHeldUntil = null, DesignerWhy = null, DesignerPending = [], DesignerTyped = [], DesignerSessions = WithSession(r.DesignerSessions, live.SessionId), DesignerPhase = pending.Length > 0 ? DesignerPhases.Drafting : r.DesignerPhase,
                 DesignerTurnStartedAt = pending.Length > 0 ? time.GetUtcNow() : r.DesignerTurnStartedAt, DesignerTurnPublished = pending.Length > 0 ? null : r.DesignerTurnPublished });

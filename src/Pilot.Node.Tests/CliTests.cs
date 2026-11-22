@@ -817,6 +817,18 @@ public sealed class CliTests : IAsyncLifetime
     };
 
     [Fact]
+    public void StatusSaysWhetherThisNodeRunsGuiJobsAndWhyNot()
+    {
+        // #1085: the node's CanRunGui and GuiReason (from JobRunner.GuiWhy) reach the status's gui line; an older node sends neither.
+        PilotCommand.Status(SnapshotWith(null), canRunGui: true).ShouldContain("gui  this node can run GUI jobs (pilot run --gui)");
+        PilotCommand.Status(SnapshotWith(null), canRunGui: false, guiReason: "the GUI lane is off (gui-slots is 0)")
+            .ShouldContain("gui  this node cannot run GUI jobs: the GUI lane is off (gui-slots is 0)");
+        PilotCommand.Status(SnapshotWith(null)).ShouldNotContain("gui  ");
+        // A flight's own status is about the flight: no node line.
+        PilotCommand.Status(SnapshotWith(null), code: "PIL1", canRunGui: true).ShouldNotContain("gui  ");
+    }
+
+    [Fact]
     public void StatusSaysTheMachineInALineWithItsGpu()
     {
         const long Gb = 1L << 30;

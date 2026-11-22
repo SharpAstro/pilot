@@ -112,9 +112,13 @@ public sealed partial class GhCli
         }
     }
 
+    // The line the listing starts with when GitHub cut it: no path can be this (a path has no spaces at its start and ends).
+    internal const string TreeTruncated = "<the listing is truncated>";
+
     public async Task<IReadOnlyDictionary<string, byte[]>?> FolderFilesAtAsync(string repoPath, string commit, string folder, CancellationToken cancellationToken)
     {
-        var (exit, output, error) = await RunAsync(["api", $"repos/{{owner}}/{{repo}}/git/trees/{commit}?recursive=1", "--jq", ".tree[] | select(.type == \"blob\") | .path"], repoPath, cancellationToken);
+        // The listing says first whether GitHub cut it (past 100,000 entries): a cut listing could miss the folder's files, so it is an error, never a partial folder (#1219 R1.9).
+        var (exit, output, error) = await RunAsync(["api", $"repos/{{owner}}/{{repo}}/git/trees/{commit}?recursive=1", "--jq", $"(if .truncated then \"{TreeTruncated}\" else empty end), (.tree[] | select(.type == \"blob\") | .path)"], repoPath, cancellationToken);
         if (ParseFound(exit, error) is false)
         {
             return null;
@@ -122,6 +126,10 @@ public sealed partial class GhCli
         if (exit != 0)
         {
             throw new FlightException($"gh could not list the files at {commit}: {error.Trim()}");
+        }
+        if (output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).FirstOrDefault() == TreeTruncated)
+        {
+            throw new FlightException($"GitHub cut the file listing at {commit} (over its limit of entries), so the files of {folder} cannot be read from it");
         }
         var prefix = folder.TrimEnd('/') + "/";
         var files = new Dictionary<string, byte[]>(StringComparer.Ordinal);

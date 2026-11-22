@@ -36,9 +36,9 @@ public sealed class ToastSurfaceTests
         public void Advance(TimeSpan by) => _now += by;
     }
 
-    private static CardRow Card(string id, CardBin bin, string title) => new()
+    private static CardRow Card(string id, CardBin bin, string title, DateTimeOffset? at = null) => new()
     {
-        Id = id, Bin = bin, Kind = "pr-ready", Subject = "flight/ORB" + id, Title = title, Summary = "A short line on what happened.", At = Live.At, State = CardState.Open,
+        Id = id, Bin = bin, Kind = "pr-ready", Subject = "flight/ORB" + id, Title = title, Summary = "A short line on what happened.", At = at ?? T0.AddMilliseconds(500), State = CardState.Open,
         Choices = [new CardChoice { Label = "Start web-header", Verb = Verbs.StartLeg, Target = "flight/TIA1818/web-header" }],
     };
 

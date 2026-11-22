@@ -50,8 +50,11 @@ internal sealed class ScriptedCloudBench : ICloudBench
             Cleanups.Add(request);
         }
         request.Log("$ az vm delete --name pilot-bench-j7-vm --yes");
-        return Task.FromResult(Cleanup(request));
+        return CleanupAsync is { } held ? held(request, cancellationToken) : Task.FromResult(Cleanup(request));
     }
+
+    /// <summary>A cleanup that takes its time (a gate the test opens, or the node stopping): set, it answers in place of <see cref="Cleanup"/>.</summary>
+    public Func<CloudCleanupRequest, CancellationToken, Task<CloudCleanupResult>>? CleanupAsync { get; set; }
 
     public static CloudBenchResult Result(CloudBenchOutcome outcome = CloudBenchOutcome.Succeeded, double minutes = 42.5, double? cost = 0.0496, int evictions = 0, int? exit = 0,
         string? error = null, CloudBenchStage stage = CloudBenchStage.Done, IReadOnlyList<string>? leaked = null) => new()

@@ -124,13 +124,13 @@ internal static class DeferredRoutes
             if (existing is { } there)
             {
                 number = there.Issue;
-                await off(() => c.Github.CommentIssueAsync(path, number, $"More points {c.Subject}'s review deferred to this repo:\n\n{ReviewFollowUp.Points(list)}", cancellationToken));
+                await off(() => c.Github.CommentIssueAsync(path, number, $"More points {c.Subject}'s review deferred to this repo:\n\n{ReviewFollowUp.Points(list, ReviewFollowUp.KeyOf(c.Subject))}", cancellationToken));
                 Add([.. keys.Select(k => Line(OwnReason, repo, number, k))]);
                 continue;
             }
             IssueInfo issue = null!;
             await off(async () => issue = await c.Github.CreateIssueWithLabelsAsync(path, $"{c.Subject}: {(list.Count == 1 ? "a point its review" : "points its review")} deferred to {repo}",
-                $"{c.Subject} merges with {(list.Count == 1 ? "this point" : "these points")} deferred to this repo, because the change belongs here (pilot #1226).\n\n{ReviewFollowUp.Points(list)}", [FrameworkLabel], cancellationToken));
+                $"{c.Subject} merges with {(list.Count == 1 ? "this point" : "these points")} deferred to this repo, because the change belongs here (pilot #1226).\n\n{ReviewFollowUp.Points(list, ReviewFollowUp.KeyOf(c.Subject))}", [FrameworkLabel], cancellationToken));
             number = issue.Number;
             Add([.. keys.Select(k => Line(OwnReason, repo, number, k))]);
             if (c.PullRequest is { } pr)
