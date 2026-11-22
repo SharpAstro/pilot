@@ -176,6 +176,27 @@ public sealed class LandedFlightStrayTests : IDisposable
     }
 
     [Fact]
+    public void ALandingClosesTheNamedStrayCardOfItsSessionAndLeavesAnotherFlightsOpen()
+    {
+        // Sessions the node did not launch: their strays are only named on a card, so the landing has a card to close and nothing to end.
+        EndedWorker("w1", "PIL1270", null);
+        _table.Add(602, 1, "pwsh.exe", Began.AddMinutes(3), folder: Plane);
+        _table.Add(603, 1, "pwsh.exe", Began.AddMinutes(3), folder: Other);
+        PutSession("w2", "PIL1271", null, SessionState.Ended, Began.AddMinutes(5), Other);
+        _time.Advance(TimeSpan.FromMinutes(1));
+        _sweep.SweepOnce();
+        Open(StraySweep.Kind).Select(c => c.Subject).ShouldContain(StraySweep.KeyOf(602, Began.AddMinutes(3)));
+        var landing = Flight("PIL1270", Plane, FlightState.Flying);
+
+        _sweep.EndOfLanded(landing);
+
+        _table.Killed.ShouldBeEmpty();
+        Open(StraySweep.Kind).Select(c => c.Subject).ShouldNotContain(StraySweep.KeyOf(602, Began.AddMinutes(3)));
+        _state.Cards().Single(c => c.Subject == StraySweep.KeyOf(602, Began.AddMinutes(3)) && c.Kind == StraySweep.Kind).Outcome.ShouldBe("PIL1270 landed");
+        Open(StraySweep.Kind).Select(c => c.Subject).ShouldContain(StraySweep.KeyOf(603, Began.AddMinutes(3)));
+    }
+
+    [Fact]
     public void AnotherFlightsStrayIsLeftAloneWhenOnlyThisOneLands()
     {
         EndedWorker("w1", "PIL1271", SessionStartReasons.FlightReview, cwd: Other);

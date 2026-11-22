@@ -368,6 +368,8 @@ public sealed partial class FlightCommander
         // Its cards leave with it, and a quiet one says it is in; a folded one says where its work went.
         // A review's notes card stays open: a flight released from its hold merges with the notes, which are the person's to do or dismiss.
         state.CloseCardsAboutExcept(Verbs.FlightTarget(flight.Code), foldedInto is null ? $"{flight.Code} landed" : $"{flight.Code} folded into {foldedInto}", LegCommander.ReviewNotesKind);
+        // The cards about its sessions, its jobs and their strays are not under the flight's target: they close with it (pilot #1270).
+        CloseCardsOfLandedParts(flight, foldedInto is null ? $"{flight.Code} landed" : $"{flight.Code} folded into {foldedInto}");
         if (foldedInto is null)
         {
             // Landed needs no one: a Handled line.

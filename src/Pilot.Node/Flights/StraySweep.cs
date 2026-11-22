@@ -172,6 +172,7 @@ public sealed class StraySweep(NodeState state, IProcessTable table, TimeProvide
                     }
                 }
                 state.PutStrays([.. state.Strays().Where(m => !ended.Any(e => e.Pid == m.Pid && e.StartedAt == m.StartedAt))]);
+                CloseCardsOf(flight, $"{flight.Code} landed");
                 return ended;
             }
         }
@@ -179,6 +180,25 @@ public sealed class StraySweep(NodeState state, IProcessTable table, TimeProvide
         {
             Error.WriteLine($"stray sweep: the look at {flight.Code}'s landing failed: {ex.Message}");
             return [];
+        }
+    }
+
+    /// <summary>
+    /// Closes the open stray cards of processes owned by <paramref name="flight"/>'s sessions or working in its plane (pilot #1270): a landed
+    /// flight has no owner left to answer for them. A process still running is named again by a later sweep only if the node may not end it.
+    /// </summary>
+    public void CloseCardsOf(FlightRow flight, string outcome)
+    {
+        lock (_gate)
+        {
+            foreach (var (key, stray) in _named.ToList())
+            {
+                if (string.Equals(stray.OwnerFlight, flight.Code, StringComparison.Ordinal)
+                    || (stray.OwnerFolder is { Length: > 0 } folder && InFolder(folder, flight.Worktree)))
+                {
+                    state.CloseCardsAbout(key, outcome, Kind);
+                }
+            }
         }
     }
 
