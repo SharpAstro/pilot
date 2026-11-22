@@ -132,7 +132,7 @@ public sealed class SettingsTests : IDisposable
     public void ASettingRefusesWhatItDoesNotTake(string key, string value, string error)
         => NodeSettings.With(new NodeSettings(), key, [value]).ShouldBe((null, error));
 
-    /// <summary>The autopilot setting is gone (pilot #1271): a settings file an older node wrote, with the key either way, loads as if it were not there.</summary>
+    /// <summary>The old switch's setting is gone (pilot #1271): a settings file an older node wrote, with the key either way, loads as if it were not there.</summary>
     [Theory]
     [InlineData("true")]
     [InlineData("false")]

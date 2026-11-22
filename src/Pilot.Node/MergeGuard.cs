@@ -87,7 +87,7 @@ public static partial class MergeGuard
     /// <summary>
     /// Whether a session in <paramref name="folder"/> is one the node started, whose merges are the node's: a worker, planner,
     /// validator or reviewer in a plane (<c>.claude/worktrees/&lt;name&gt;</c>, a flight's or a PR review's), or the watchtower in
-    /// its folder. The person's own session, and one they steer, merges as they say: on autopilot a reviewed, passed PR is
+    /// its folder. The person's own session, and one they steer, merges as they say: a reviewed, passed PR is
     /// theirs to merge from anywhere, and a guard on every session sent the night's passed PRs nowhere (SE1, 2026-10-26).
     /// </summary>
     public static bool Guarded(string folder)

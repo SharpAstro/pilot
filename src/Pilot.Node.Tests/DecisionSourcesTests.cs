@@ -8,7 +8,7 @@ using Xunit;
 
 namespace Pilot.Node.Tests;
 
-/// <summary>The autopilot's own merge of a passed flight is a decision in the black box, with the rule that fired as the reason (PIL583).</summary>
+/// <summary>The node's own merge of a passed flight is a decision in the black box, with the rule that fired as the reason (PIL583).</summary>
 public sealed class DecisionAutopilotMergeTests : ReviewTestsBase
 {
     [Fact]
@@ -147,7 +147,7 @@ public sealed class DecisionGoAroundTests : IDisposable
     }
 }
 
-/// <summary>An assistant on autopilot answering a ring card is one decision, the card's own, read as the autopilot's (no second row from its Handled line).</summary>
+/// <summary>An assistant answering a ring card is one decision, the card's own, read as the node's (no second row from its Handled line).</summary>
 public sealed class DecisionAssistantAnswerTests
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;

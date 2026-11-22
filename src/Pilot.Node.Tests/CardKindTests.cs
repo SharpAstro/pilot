@@ -188,7 +188,7 @@ public sealed class CardKindTests
     /// whose choices were all dropped, or never written, fails here). Dismissing alone is no choice: every card has it. A kind with no
     /// verb to press is a For-you card or a Handled line, not a Ring.
     /// This is the static half: it reads the source, so it guards against drift and proves nothing about a card at runtime. The runtime
-    /// half is the one kind that can raise a Ring with no choice, the autopilot's refused merge on a PR that is closed: it is raised
+    /// half is the one kind that can raise a Ring with no choice, the node's refused merge on a PR that is closed: it is raised
     /// For you then, pinned by <c>FalseRingTests.AnAutopilotMergeRefusedOnAClosedPrIsAForYouCardWithNothingToPress_c17100</c>.
     /// </summary>
     [Fact]

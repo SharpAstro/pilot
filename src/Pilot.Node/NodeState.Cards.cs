@@ -53,8 +53,8 @@ public sealed partial class NodeState
     public RingJudge? RingJudge { get; set; }
 
     /// <summary>
-    /// Whether the node presses a card raised with this kind, subject, detail and choices itself now (autopilot on,
-    /// <see cref="Flights.NodePress.WouldPress"/>): such a card is never sent to the ring judge.
+    /// Whether the node presses a card raised with this kind, subject, detail and choices itself now
+    /// (<see cref="Flights.NodePress.WouldPress"/>): such a card is never sent to the ring judge.
     /// </summary>
     public Func<string, string, string?, IReadOnlyList<CardChoice>?, bool>? NodePresses { get; set; }
 

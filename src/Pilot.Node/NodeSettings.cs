@@ -408,7 +408,7 @@ public sealed record NodeSettings
     /// <summary>Per repo (its folder name), the tracker a bare number means (<see cref="RepoTrackersKey"/>), each entry <c>repo=shortcut</c> or <c>repo=github</c>; a repo left out means GitHub.</summary>
     public IReadOnlyList<string>? RepoTrackers { get; init; }
 
-    /// <summary>The repos (folder names) whose PRs the node never merges by itself (<see cref="NoAutoMergeReposKey"/>), autopilot or not: an assistant's merge raises a card, and a passed flight rings.</summary>
+    /// <summary>The repos (folder names) whose PRs the node never merges by itself (<see cref="NoAutoMergeReposKey"/>): an assistant's merge raises a card, and a passed flight rings.</summary>
     public IReadOnlyList<string>? NoAutoMergeRepos { get; init; }
 
     /// <summary>The repos (folder names) whose flights write their legs to the work item as sub-tasks (<see cref="SubTaskReposKey"/>); a repo left out writes nothing to its tracker.</summary>

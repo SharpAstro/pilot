@@ -7,7 +7,7 @@ namespace Pilot.Node.Flights;
 /// "Press refused" card keeps the kind and the subject of the card it was (pr-fix-offer, pr-fix-ended, overlap, stray-process), and a
 /// refused pilot command rings a <see cref="Watchtower.RefusedKind"/> card naming a flight or a PR. Nothing else closed a Fix it card
 /// when its PR merged, so c12593, c12639 and c12731 waited a day for PRs that had merged. It is looked at where the node already looks
-/// for a card to press (<see cref="NodePress"/>), autopilot or not; no loop of its own.
+/// for a card to press (<see cref="NodePress"/>); no loop of its own.
 /// </summary>
 public sealed class StaleRefused(NodeState state)
 {

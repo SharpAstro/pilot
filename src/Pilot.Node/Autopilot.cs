@@ -5,11 +5,11 @@ using Pilot.Node.Sessions;
 namespace Pilot.Node;
 
 /// <summary>
-/// What becomes of an assistant's your-only command (#208, see <see cref="Standing"/>): with the autopilot off the node does not
-/// run it but raises a For-you card, <c>&lt;session&gt; asks to merge #63 (TIA1): Allow · Deny</c>, whose Allow runs the same
-/// command as whoever presses it (the person: answering it is theirs alone) and whose Deny closes it, and either way the
-/// asking session is told what the person answered; with it on the command runs at once, recorded with the session and the
-/// message it acted on, and a Handled card says what was done.
+/// What becomes of an assistant's your-only command (#208, see <see cref="Standing"/>): it runs at once, recorded with the session
+/// and the message it acted on, and a Handled card says what was done (<see cref="Handled"/>). The one exception is a merge in a
+/// no-auto-merge repo: the node does not run it but raises a For-you card, <c>&lt;session&gt; asks to merge #63 (TIA1): Allow · Deny</c>,
+/// whose Allow runs the same command as whoever presses it (the person: answering it is theirs alone) and whose Deny closes it, and
+/// either way the asking session is told what the person answered.
 /// </summary>
 public sealed class Autopilot(NodeState state, IServiceProvider services)
 {

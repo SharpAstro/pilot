@@ -6,7 +6,9 @@ namespace Pilot.Node.Tests;
 
 /// <summary>
 /// PIL1271: "autopilot" stays free for a real autopilot feature, so nothing a person reads (docs, briefs, card text, UI and
-/// command strings) calls the node's normal behaviour that. File reads only; runs in milliseconds.
+/// command strings) calls the node's normal behaviour that. The docs, the skills, the brief files, the card summaries and the card
+/// catalog are read whole, comments included; the other sources of Pilot.Ui, Pilot.Commands and Pilot.Node by their string literals
+/// only, so an identifier kept for old stores does not count. File reads only; runs in milliseconds.
 /// </summary>
 [Trait("Category", InvariantTraitTests.Invariant)]
 public sealed partial class NormalBehaviourWordTests
@@ -25,10 +27,18 @@ public sealed partial class NormalBehaviourWordTests
         "pilot settings set autopilot",      // README: the refused command
         "GoneAutopilotKey",                  // identifier of the refused key's constant
         "`autopilot`",                       // README: the stored word of MergeBy / the refused key
-        "Autopilot.cs",                      // file name of the assistant commands, named in the card catalog
-        "AutopilotTests.",                   // test classes are not renamed (PIL1271), the catalog names their tests
-        "AutopilotMergeRefusalTests.",       // ditto
         "<c>autopilot</c>",                  // doc comment on the stored word
+    ];
+
+    /// <summary>
+    /// Names the card catalog holds and only it: the file and test classes a kind's pin points at. They are taken out of the
+    /// catalog's text alone, so they cannot hide a real hit in another file.
+    /// </summary>
+    private static readonly string[] AllowedInCatalog =
+    [
+        "Autopilot.cs",                      // file name of the assistant commands, which the catalog names as a kind's source
+        "AutopilotTests.",                   // test classes are not renamed (PIL1271), and the catalog names their tests
+        "AutopilotMergeRefusalTests.",       // ditto
     ];
 
     [Fact]
@@ -45,8 +55,10 @@ public sealed partial class NormalBehaviourWordTests
         {
             var name = Path.GetFileName(file);
             var text = File.ReadAllText(file);
-            if (name.StartsWith("Briefs", StringComparison.Ordinal) || name is "CardSummaries.cs" or "CardKindCatalog.cs")
-                Scan(root, file, StripComments(text), hits);
+            if (name == "CardKindCatalog.cs")
+                Scan(root, file, Without(text, AllowedInCatalog), hits);
+            else if (name.StartsWith("Briefs", StringComparison.Ordinal) || name is "CardSummaries.cs")
+                Scan(root, file, text, hits);
             else
                 Scan(root, file, string.Join('\n', LiteralPattern().Matches(text).Select(m => m.Value)), hits);
         }
@@ -54,10 +66,16 @@ public sealed partial class NormalBehaviourWordTests
         hits.ShouldBeEmpty("the word autopilot is reserved for a real autopilot feature; say the node did it");
     }
 
+    private static string Without(string text, IEnumerable<string> allowed)
+    {
+        foreach (var word in allowed)
+            text = text.Replace(word, "", StringComparison.OrdinalIgnoreCase);
+        return text;
+    }
+
     private static void Scan(string root, string file, string text, List<string> hits)
     {
-        foreach (var allowed in Allowed)
-            text = text.Replace(allowed, "", StringComparison.OrdinalIgnoreCase);
+        text = Without(text, Allowed);
         foreach (var line in text.Split('\n'))
         {
             var trimmed = line.Trim();
@@ -65,15 +83,6 @@ public sealed partial class NormalBehaviourWordTests
                 hits.Add($"{Path.GetRelativePath(root, file)}: {trimmed[..Math.Min(trimmed.Length, 120)]}");
         }
     }
-
-    // Whole-file scan of the brief and card text files still ignores identifiers (a constant's name is not text a person reads)
-    // by looking at string literals only when a line has no literal and is a comment-free code line; the simple rule here is
-    // to drop comment lines and scan the rest.
-    private static string StripComments(string text) =>
-        string.Join('\n', text.Split('\n').Where(l => !l.TrimStart().StartsWith("//", StringComparison.Ordinal)).Select(LiteralsOnly));
-
-    private static string LiteralsOnly(string line) =>
-        string.Join(' ', LiteralPattern().Matches(line).Select(m => m.Value));
 
     [GeneratedRegex("\"(?:[^\"\\\\\\r\\n]|\\\\.)*\"")]
     private static partial Regex LiteralPattern();

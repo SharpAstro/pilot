@@ -8,9 +8,9 @@ using Xunit;
 namespace Pilot.Node.Tests;
 
 /// <summary>
-/// An assistant's your-only request and the autopilot rule (#208): off, it raises a For-you confirm card the person allows or
-/// denies and the asking session is told which; on, it runs at once, recorded with the session and the message it acted on,
-/// and said on a Handled card. A worker's is refused either way, and the person's own commands are as they were.
+/// An assistant's your-only request (#208): it runs at once, recorded with the session and the message it acted on, and said on a
+/// Handled card; a no-auto-merge repo's merge raises a For-you confirm card the person allows or denies, and the asking session is
+/// told which. A worker's is refused, and the person's own commands are as they were.
 /// </summary>
 [Trait("Category", "Slow")]
 public sealed class AutopilotTests
@@ -118,7 +118,7 @@ public sealed class AutopilotTests
         told.Name.ShouldBe(Assistant);
         told.Text.ShouldContain("gui allowed your request to merge #63 (TIA1)");
         told.Text.ShouldContain("done");
-        // The merge ran as the person's, not as the assistant: nothing of it is marked autopilot.
+        // The merge ran as the person's, not as the assistant: nothing of it is marked as the node's.
         BlackBox(node).Single(l => l.Verb == Verbs.Merge && l.Ok).ShouldSatisfyAllConditions(l => l.Who.ShouldBe("gui"), l => l.Autopilot.ShouldBeFalse());
     }
 
@@ -210,13 +210,13 @@ public sealed class AutopilotTests
             (await Send(node, Command(Verbs.Dismiss, Verbs.CardTarget(card.Id), who, agent))).Ok.ShouldBeFalse();
         }
 
-        // Autopilot on does not lift it either: an ask raised before it was switched on is still the person's to answer.
+        // An assistant may not answer it either: an open ask is the person's to answer.
         (await Send(node, Command(Verbs.Answer, Verbs.CardTarget(card.Id), Assistant, agent: true, args: "Allow it"))).Error.ShouldNotBeNull().ShouldContain("the person's");
         node.GitHub.Merged.ShouldBeEmpty();
         node.State.Cards(openOnly: true).ShouldHaveSingleItem().Id.ShouldBe(card.Id);
     }
 
-    /// <summary>With the autopilot on, an assistant's press of the first-run maintenance card is done, as the README says (the review of #1126).</summary>
+    /// <summary>An assistant's press of the first-run maintenance card is done, as the README says (the review of #1126).</summary>
     [Fact]
     public async Task WithAutopilotOnAnAssistantsPressOnTheFirstRunMaintenanceCardIsDone()
     {
@@ -275,7 +275,7 @@ public sealed class AutopilotTests
         (await Send(node, Command(Verbs.Answer, Verbs.CardTarget(card.Id), "gui", args: "Allow it"))).Error.ShouldBeNull();
         node.GitHub.Merged.Single().Number.ShouldBe(63);
 
-        // Another repo's flight still goes through on autopilot.
+        // Another repo's flight still goes through at the assistant's word.
         Ready(node, "TIA2", 64);
         node.State.PutFlight(node.State.Flights().Single(f => f.Code == "TIA2") with { Repo = "orbit" });
         (await Send(node, Command(Verbs.Merge, "flight/TIA2", Assistant, agent: true, Why, Head))).Error.ShouldBeNull();
@@ -307,7 +307,7 @@ public sealed class AutopilotTests
             State = FlightState.Flying, CreatedAt = DateTimeOffset.UtcNow,
         });
 
-        // Run, and refused by the flight (never reviewed): the black box has it as an autopilot run that failed, and no card says it was done.
+        // Run, and refused by the flight (never reviewed): the black box has it as an assistant's run that failed, and no card says it was done.
         var refused = await Send(node, Command(Verbs.Merge, "flight/TIA1", Assistant, agent: true, args: Head));
 
         refused.Error.ShouldNotBeNull().ShouldContain("has not been reviewed");

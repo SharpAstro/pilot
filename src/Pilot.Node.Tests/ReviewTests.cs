@@ -47,6 +47,11 @@ public abstract class ReviewTestsBase : IDisposable
 
     private protected string Repo => Path.Combine(_root, "tianwen");
 
+    /// <summary>Gives the test's commander a running node's models, so a flight goes on by itself once a leg is done (it plans the
+    /// review-notes leg at a pass with notes, sends a findings round, merges a passed flight), as every real node does.</summary>
+    private protected void NodeAdvances() =>
+        _legs.Models = new RoleModels(new NodeSettings());
+
     /// <summary>
     /// Runs this test on git itself: for a test, or a case of a theory, that checks what git does (a rebase, a conflict, a clone) in a
     /// class that otherwise checks what the node decides. Called first, before the test has used the repo: the model's folders are
@@ -540,7 +545,7 @@ public sealed class ReviewTests1 : ReviewTestsBase
     [Trait("Category", "Slow")]
     public async Task OnAutopilotAMergeThatWaitedForChecksWhichThenFailSendsTheLegBackAsChangesNotOntoAForYouCard()
     {
-        // With the autopilot off a failing PR is sent back from its PR-ready card; the merge the node armed itself must go round the same way.
+        // A failing PR is sent back from its PR-ready card; the merge the node armed itself must go round the same way.
         var (flight, pr) = await Passed("32");
         _github.Checks = ChoiceStatus.Pending;
         _legs.Models = new RoleModels(new NodeSettings());

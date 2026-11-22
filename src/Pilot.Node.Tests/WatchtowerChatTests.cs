@@ -692,7 +692,7 @@ public sealed partial class WatchtowerChatTests : IDisposable
 
         // Its own CLI, as every other command of the brief, never a bare pilot.
         brief.ShouldContain("`C:/p/pilot.exe --node-socket s review fix <owner/repo#n>`");
-        // And the fixer is among what it may do on autopilot.
+        // And the fixer is among what it may do.
         brief.ShouldContain("start a fixer on a PR outside a flight whose review asked for changes (`C:/p/pilot.exe --node-socket s review fix <owner/repo#n>`)");
         brief.ShouldContain("The node refuses it past its third round, on a design question with no answer yet and on another author's PR not yet given Fix it");
         // Nothing promised that the node refuses it: a design question and a capped flight stay the person's unless they ask

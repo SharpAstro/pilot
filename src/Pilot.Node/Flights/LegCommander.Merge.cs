@@ -11,7 +11,7 @@ namespace Pilot.Node.Flights;
 /// </summary>
 public sealed partial class LegCommander
 {
-    /// <summary>The last item of <see cref="FlightRow.MergeWhenGreen"/> when the node armed the merge itself,.</summary>
+    /// <summary>The last item of <see cref="FlightRow.MergeWhenGreen"/> when the node armed the merge itself by its own rules (stored as "autopilot" for old stores).</summary>
     public const string ArmedByRules = "autopilot";
 
     /// <summary>The button that merges a flight's PR: two words at least, as every button says what it does (#797).</summary>

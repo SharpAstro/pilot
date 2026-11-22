@@ -5,7 +5,7 @@ namespace Pilot.Node;
 
 public static partial class NodeApp
 {
-    /// <summary>The node's own the node press of the cards its rules decide (<see cref="NodePress"/>, pilot #1269).</summary>
+    /// <summary>The node's own press of the cards its rules decide (<see cref="NodePress"/>, pilot #1269).</summary>
     private static void AddNodePress(WebApplicationBuilder builder, LogWriter logWriter)
     {
         builder.Services.AddSingleton(services =>

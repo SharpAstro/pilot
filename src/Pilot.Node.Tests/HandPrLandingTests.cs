@@ -6,9 +6,9 @@ using Xunit;
 namespace Pilot.Node.Tests;
 
 /// <summary>
-/// A hand-made PR pilot reviewed and passed, with green checks, is landed on autopilot like a flight's PR through
+/// A hand-made PR pilot reviewed and passed, with green checks, is landed by the node like a flight's PR through
 /// <see cref="LegCommander.LandPrAsync"/> (PIL716): queued in a repo with a merge queue, merged by the repo's method where
-/// there is none. With the autopilot off nothing is merged by the node (a base with no queue keeps its Merge card). A review that
+/// there is none. A review that
 /// asked for changes, pending or failing checks, a head that moved since the review and a draft are not landed, and a refusal ends
 /// in one card holding GitHub's whole text.
 /// </summary>
@@ -48,8 +48,8 @@ public sealed class HandPrLandingTests : PrReviewTestsBase
         _github.Merged.Count.ShouldBe(1);
     }
 
-    // Not part of PIL716's landing on autopilot: a repo with a merge queue has always had a reviewed, green hand PR queued by the node
-    // (#279), autopilot or not, since the queue is what gates the merge. This pins that, so a change to it is a choice, not an accident.
+    // Not part of PIL716's landing: a repo with a merge queue has always had a reviewed, green hand PR queued by the node
+    // (#279) since the queue is what gates the merge. This pins that, so a change to it is a choice, not an accident.
     [Fact]
     public async Task AReviewedGreenPrInARepoWithAQueueIsQueuedEvenWithAutopilotOffAsBefore()
     {

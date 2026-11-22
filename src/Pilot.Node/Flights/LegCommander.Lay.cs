@@ -112,7 +112,7 @@ public sealed partial class LegCommander
     public bool DroppedForConflict(string code, string head) => _droppedHeads.ContainsKey($"{code} {head}");
 
     /// <summary>
-    /// A PR the merge queue dropped for a conflict, as the node first meets it: the head is marked so no path (the autopilot's merge, a
+    /// A PR the merge queue dropped for a conflict, as the node first meets it: the head is marked so no path (the node's own merge, a
     /// Merge card, the entry kept by a refused merge) queues it again unchanged. When the base brings nothing new (it is merged in
     /// already, so a base merge would leave the head as it was) the cause is looked for: a PR whose merge is clean but whose rebase
     /// is not is laid on its base and queued once; otherwise one Ring card says why and the head is not queued. Returns false when the

@@ -436,7 +436,7 @@ public static partial class NodeApp
         builder.Services.AddHostedService(services => services.GetRequiredService<PrReviews>());
     }
 
-    /// <summary>The commands the node takes, the autopilot, and the LAN: the grants and, when announced, its discovery.</summary>
+    /// <summary>The commands the node takes, the assistant's commands it runs, and the LAN: the grants and, when announced, its discovery.</summary>
     private static void AddCommands(WebApplicationBuilder builder, NodeOptions options)
     {
         builder.Services.AddSingleton<Autopilot>();

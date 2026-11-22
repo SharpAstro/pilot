@@ -97,7 +97,7 @@ public sealed class MergeFixtureCardTests
 
         var card = Card(node, ready);
         card.State.ShouldBe(CardState.Open);
-        // A mark, not a button: Blocked, naming the leg, with the reviewed head kept for the autopilot and the holding bound.
+        // A mark, not a button: Blocked, naming the leg, with the reviewed head kept for the node's own merge and the holding bound.
         var mark = card.Choices.Single(c => c.Verb == Verbs.Merge);
         (mark.Status, mark.Note, mark.Args[0]).ShouldBe((ChoiceStatus.WaitsForLegs, "review-notes", PrHead));
         var legs = node.State.Legs("TIA1");

@@ -89,7 +89,7 @@ public sealed class RetryAndHoldTests : IDisposable
         _state.PutLeg(new LegRow { Flight = code, Name = "a", Order = 1, Goal = "g", DoneWhen = "d", State = leg, Check = "dotnet test" });
     }
 
-    // A flight whose merge the autopilot armed, at a head whose checks fail.
+    // A flight whose merge the node armed by its own rules, at a head whose checks fail.
     private void CiFlight(string code, int pr, char head, long run, string? log = null, string[]? files = null)
     {
         Flight(code, pr, armed: [Head(head), "squash", LegCommander.ArmedByRules]);

@@ -29,7 +29,7 @@ public sealed class ChatRowTests
         new() { Index = 6, Kind = TranscriptKind.User, Text = Answer, At = At.AddMinutes(7) },
         new() { Index = 7, Kind = TranscriptKind.ToolUse, Tool = "Bash", Text = "gh pr checks 390", Description = "Check CI on PR 390", ToolUseId = "t3", At = At.AddMinutes(7) },
         new() { Index = 8, Kind = TranscriptKind.ToolResult, Text = "ok", ToolUseId = "t3" },
-        new() { Index = 9, Kind = TranscriptKind.Assistant, Text = "PIL383's PR #390 is already queued to merge, so I changed nothing. The autopilot closed c1727 itself and will merge once its last check passes. Two of the three checks are done and green. Nothing more is needed from you for it.", At = At.AddMinutes(8) },
+        new() { Index = 9, Kind = TranscriptKind.Assistant, Text = "PIL383's PR #390 is already queued to merge, so I changed nothing. The node closed c1727 itself and will merge once its last check passes. Two of the three checks are done and green. Nothing more is needed from you for it.", At = At.AddMinutes(8) },
     ];
 
     private static async Task<ChatView<RgbaImage>> Chat(RgbaImageRenderer renderer)

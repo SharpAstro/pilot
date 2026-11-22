@@ -7,8 +7,8 @@ using Xunit;
 namespace Pilot.Node.Tests;
 
 /// <summary>
-/// PIL678: a review that passes with not blocking notes puts the flight in a holding pattern: autopilot's merge and the card's Merge
-/// are held until the watchtower clears it or pushes its fixes. A pass with no notes merges at once.
+/// PIL678: a review that passes with not blocking notes puts the flight in a holding pattern: the node's own merge and the card's Merge
+/// are held until the review-notes leg makes the notes or the owner's word clears the hold. A pass with no notes merges at once.
 /// </summary>
 public sealed class HoldingPatternTests : ReviewTestsBase
 {
@@ -17,9 +17,6 @@ public sealed class HoldingPatternTests : ReviewTestsBase
     private const string EarlierAnswered = "## Earlier points\n| Point | Answer | Where or why |\n|---|---|---|\n| R1.1 | addressed | fix.txt:1 |\n\n";
 
     private const string Notes ="Checked.\n\n## Not blocking\n- rename `x` to `count`";
-
-    private void AutopilotOn() =>
-        _legs.Models = new RoleModels(new NodeSettings());
 
     private async Task<FlightRow> Reviewed(string issue, string report)
     {
@@ -30,7 +27,7 @@ public sealed class HoldingPatternTests : ReviewTestsBase
         return flight;
     }
 
-    /// <summary>On autopilot the node plans a review-notes leg at a pass with notes; a test of the hold's own mechanics takes it out, as a watchtower that clears or fixes by itself would.</summary>
+    /// <summary>The node plans a review-notes leg at a pass with notes; a test of the hold's own mechanics takes it out, as a watchtower that clears or fixes by itself would.</summary>
     private async Task WithoutTheFixerLeg(string code)
     {
         // Pilot #1226: while a note has no end only the owner's word takes the leg out, so it is the person's.
@@ -39,10 +36,6 @@ public sealed class HoldingPatternTests : ReviewTestsBase
             (await Run(Verbs.RemoveLeg, Verbs.LegTarget(code, leg.Name), "me", "the hold's own mechanics are under test")).Error.ShouldBeNull();
         }
     }
-
-    /// <summary>A node that advances plans the review-notes leg at a pass with notes, as a running node does.</summary>
-    private void NodeAdvances() =>
-        _legs.Models = new RoleModels(new NodeSettings());
 
     /// <summary>Ends every review-notes leg as done, as the leg's own finish would, so the flight's legs are all done.</summary>
     private void LegsDone(string code)
@@ -70,7 +63,7 @@ public sealed class HoldingPatternTests : ReviewTestsBase
     [Trait("Category", "Slow")]
     public async Task APassWithNotesHoldsAutopilotsMergeAndTheCardsMerge()
     {
-        AutopilotOn();
+        NodeAdvances();
         _github.Checks = ChoiceStatus.Passing;
         var flight = await Reviewed("1", Notes);
 
@@ -86,7 +79,7 @@ public sealed class HoldingPatternTests : ReviewTestsBase
     [Trait("Category", "Slow")]
     public async Task ClearByTheWatchtowerLetsTheNodeMergeIt()
     {
-        AutopilotOn();
+        NodeAdvances();
         _github.Checks = ChoiceStatus.Passing;
         var flight = await Reviewed("2", Notes);
         await Checks().LookAsync(Ct);
@@ -98,7 +91,7 @@ public sealed class HoldingPatternTests : ReviewTestsBase
         F(flight.Code).Holding.ShouldBeNull();
         Open().ShouldNotContain(c => c.Kind == LegCommander.ReviewNotesKind);
         _state.Cards(openOnly: false).ShouldContain(c => c.Kind == LegCommander.HoldingClearedKind);
-        // The planned review-notes leg is not done and its notes have no end, and autopilot merges neither: the leg's finish gives both.
+        // The planned review-notes leg is not done and its notes have no end, and the node merges neither: the leg's finish gives both.
         LegsDone(flight.Code);
         NotesMade(flight.Code);
         await Checks().LookAsync(Ct);
@@ -124,7 +117,7 @@ public sealed class HoldingPatternTests : ReviewTestsBase
     [Trait("Category", "Slow")]
     public async Task APushViaFlightPrEndsTheHoldAndAPassingReviewThenMerges()
     {
-        AutopilotOn();
+        NodeAdvances();
         _github.Checks = ChoiceStatus.Passing;
         var flight = await Reviewed("4", Notes);
         F(flight.Code).Holding.ShouldNotBeNull();
@@ -226,7 +219,7 @@ public sealed class HoldingPatternTests : ReviewTestsBase
     {
         // #918: PIL909's #910 went round three times for notes that held nothing. Pilot #1226: they are not filed as they are either;
         // each needs an end, so the flight holds for a second review-notes leg.
-        AutopilotOn();
+        NodeAdvances();
         var flight = await Reviewed("11", "Checked.\n\n## Not blocking\n- rename `x` to `count`");
         var first = _state.Legs(flight.Code).Single(l => l.Name == LegCommander.ReviewNotesLeg);
         _state.PutLeg(first with { State = LegState.Done, FinishedAt = DateTimeOffset.UtcNow });
@@ -249,7 +242,7 @@ public sealed class HoldingPatternTests : ReviewTestsBase
     [Trait("Category", "Slow")]
     public async Task OnAutopilotAPassWithNotesPlansAReviewNotesLegCarryingTheNotesAndTheLastChecksCheck()
     {
-        AutopilotOn();
+        NodeAdvances();
         var err = new StringWriter();
         _legs.Error = err;
         var flight = await Reviewed("10", "Checked.\n\n## Not blocking\n- rename `x` to `count`\n- a comment is stale");
@@ -279,7 +272,7 @@ public sealed class HoldingPatternTests : ReviewTestsBase
     [Trait("Category", "Slow")]
     public async Task ASecondPassWithNotesWhileAReviewNotesLegIsOnItsWayPlansNoSecondLeg()
     {
-        AutopilotOn();
+        NodeAdvances();
         var flight = await Reviewed("12", Notes);
         _state.Legs(flight.Code).Count(l => l.Name.StartsWith("review-notes")).ShouldBe(1);
 
@@ -294,8 +287,8 @@ public sealed class HoldingPatternTests : ReviewTestsBase
     [Trait("Category", "Slow")]
     public async Task APassWithNotesPlansTheReviewNotesLegWithTheAutopilotSettingSavedOff()
     {
-        // The autopilot switch is a different matter from the notes' end: a pass with notes plans the leg whatever it says (pilot #1271).
-        _legs.Models = new RoleModels(new NodeSettings());
+        // The switch's old setting is gone (pilot #1271): a running node's models plan the leg at a pass with notes.
+        NodeAdvances();
         var flight = await Reviewed("15", Notes);
 
         var leg = _state.Legs(flight.Code).Single(l => l.Name == LegCommander.ReviewNotesLeg);
@@ -317,7 +310,7 @@ public sealed class HoldingPatternTests : ReviewTestsBase
     [Trait("Category", "Slow")]
     public async Task APassWithNoNotesMergesAtOnce()
     {
-        AutopilotOn();
+        NodeAdvances();
         _github.Checks = ChoiceStatus.Passing;
         var flight = await Reviewed("5", "fine");
 
@@ -326,7 +319,7 @@ public sealed class HoldingPatternTests : ReviewTestsBase
         _github.Merged.ShouldHaveSingleItem();
     }
 
-    /// <summary>The review-notes leg of a holding flight (planned by hand, autopilot off), started: returns its worker.</summary>
+    /// <summary>The review-notes leg of a holding flight (planned by hand, on a commander that does not advance), started: returns its worker.</summary>
     private async Task<string> StartedNotesLeg(FlightRow flight)
     {
         (await Run(Verbs.PlanLeg, Verbs.FlightTarget(flight.Code), "controller", $"name={LegCommander.ReviewNotesLeg}", "goal=make the notes", "done-when=Notes made", "item=The step")).Error.ShouldBeNull();
@@ -400,7 +393,7 @@ public sealed class HoldingPatternTests : ReviewTestsBase
     public async Task TheSweepStartsTheReviewOfAPassedHoldingFlightWhosePlaneMovedPastTheReviewedHead()
     {
         var flight = await Reviewed("23", Notes);
-        AutopilotOn();
+        NodeAdvances();
         var reviewed = F(flight.Code).Review!.ReviewedHead!;
         CommitFix(flight);
         Git(flight.Worktree, "push", "-q", "origin", $"flight/{flight.Code.ToLowerInvariant()}");
@@ -496,7 +489,7 @@ public sealed class HoldingPatternTests : ReviewTestsBase
     [Trait("Category", "Slow")]
     public async Task AHoldIsLeftToALiveWatchtowerAndToAReviewNotesLegStillOnItsWay()
     {
-        AutopilotOn();
+        NodeAdvances();
         _github.Checks = ChoiceStatus.Passing;
         var flight = await Reviewed("34", Notes);
         var clock = new ManualTime(F(flight.Code).Holding!.Since);
@@ -517,7 +510,7 @@ public sealed class HoldingPatternTests : ReviewTestsBase
     [Trait("Category", "Slow")]
     public async Task AReviewNotesLegPlannedAndNeverStartedStillRingsPastTheHoldingBound()
     {
-        AutopilotOn();
+        NodeAdvances();
         _github.Checks = ChoiceStatus.Passing;
         var flight = await Reviewed("36", Notes);
         // The leg is Planned and nothing starts it (the sweep is not run): the hold names it.

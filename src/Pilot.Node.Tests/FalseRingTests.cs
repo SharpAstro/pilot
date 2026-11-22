@@ -14,8 +14,6 @@ namespace Pilot.Node.Tests;
 /// </summary>
 public sealed class FalseRingTests : ReviewTestsBase
 {
-    private void AutopilotOn() =>
-        _legs.Models = new RoleModels(new NodeSettings());
 
     private PrChecks Checks() => new(_state, _github, TimeProvider.System, _flights, _legs);
 
@@ -91,8 +89,8 @@ public sealed class FalseRingTests : ReviewTestsBase
     {
         var (flight, number) = await Passed("2037");
         _github.Checks = ChoiceStatus.Passing;
-        AutopilotOn();
-        // The PR reads open at the look and merged when the autopilot's merge asks: GitHub merged it in between.
+        NodeAdvances();
+        // The PR reads open at the look and merged when the node's own merge asks: GitHub merged it in between.
         _github.OnCall = call =>
         {
             if (call == nameof(IGitHub.PullRequestAsync) && _state.Merges().Any(m => m.Open) && _github.Pr is { State: "OPEN" } open)
@@ -428,8 +426,8 @@ public sealed class FalseRingTests : ReviewTestsBase
     {
         var (flight, _) = await Passed("2039");
         _github.Checks = ChoiceStatus.Passing;
-        AutopilotOn();
-        // The PR was closed without a merge between the look and the autopilot's merge: there is nothing to merge.
+        NodeAdvances();
+        // The PR was closed without a merge between the look and the node's own merge: there is nothing to merge.
         _github.OnCall = call =>
         {
             if (call == nameof(IGitHub.PullRequestAsync) && _state.Merges().Any(m => m.Open) && _github.Pr is { State: "OPEN" } open)

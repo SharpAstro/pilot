@@ -20,7 +20,7 @@ public sealed class LandingPathTests : ReviewTestsBase
     {
         /// <summary>The merge verb pressed by a person (the card's Merge, pilot flight merge).</summary>
         Hand,
-        /// <summary>The node's own merge on autopilot (PrChecks.MergeOnAutopilotAsync).</summary>
+        /// <summary>The node's own merge of a passed flight (PrChecks.MergePassedFlightAsync).</summary>
         Autopilot,
         /// <summary>The routine itself (LegCommander.LandPrAsync), as every caller reaches it.</summary>
         Routine,

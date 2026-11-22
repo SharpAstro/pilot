@@ -49,7 +49,7 @@ public sealed partial class LegCommander
     }
 
     /// <summary>
-    /// The held leg's package is up: the hold is cleared and the leg starts afresh (the autopilot's start, so the 5-hour window
+    /// The held leg's package is up: the hold is cleared and the leg starts afresh (the node's own start, so the 5-hour window
     /// still holds it and a flight that does not advance by itself is offered it on a card). <paramref name="version"/> is the
     /// one nuget.org serves.
     /// </summary>

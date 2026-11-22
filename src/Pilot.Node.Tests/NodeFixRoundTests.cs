@@ -6,15 +6,12 @@ using Xunit;
 namespace Pilot.Node.Tests;
 
 /// <summary>
-/// PIL1229, Decision 2: with the autopilot on, a review that asks for changes under the loop limit and the go-around cap is sent round
+/// PIL1229, Decision 2: a review that asks for changes under the loop limit and the go-around cap is sent round
 /// by the node itself (the press the watchtower made 205 times); in every other case the card is raised as before.
 /// </summary>
 public sealed class NodeFixRoundTests : ReviewTestsBase
 {
     private const string Findings = "## Blocking\n- the parser drops a token";
-
-    private void Autopilot(bool on) =>
-        _legs.Models = new RoleModels(new NodeSettings());
 
     private CardRow[] FixCards() => [.. Open().Where(c => c.Kind == LegCommander.ReviewChanges)];
 
@@ -35,7 +32,7 @@ public sealed class NodeFixRoundTests : ReviewTestsBase
     [Fact]
     public async Task AChangesVerdictSendsTheLastLegRoundAsTheNodeWithTheFindingsAsItsBrief()
     {
-        Autopilot(true);
+        NodeAdvances();
         var flight = await Reviewing("1");
 
         (await Verdict(flight.Code)).Error.ShouldBeNull();
@@ -59,7 +56,7 @@ public sealed class NodeFixRoundTests : ReviewTestsBase
     [Fact]
     public async Task TheReviewerIsStillDoneWithAndTheRoundsResultIsReviewedAsAfterAPressedGoAround()
     {
-        Autopilot(true);
+        NodeAdvances();
         var flight = await Reviewing("2");
         var reviewer = F(flight.Code).Review.ShouldNotBeNull().ReviewerJob.ShouldNotBeNull();
 
@@ -87,7 +84,7 @@ public sealed class NodeFixRoundTests : ReviewTestsBase
     [Fact]
     public async Task AtTheGoAroundCapTheCardIsRaisedAndNoRoundIsSent()
     {
-        Autopilot(true);
+        NodeAdvances();
         var flight = await Reviewing("4");
         _state.PutLeg(Parser(flight.Code) with { ReviewGoArounds = LegCommander.MaxReviewGoArounds });
 
@@ -130,7 +127,7 @@ public sealed class NodeFixRoundTests : ReviewTestsBase
     [Fact]
     public async Task AReviewThatDidNotStartStillRaisesItsCardOnAutopilot()
     {
-        Autopilot(true);
+        NodeAdvances();
         var flight = await NewFlight("6", "parser");
         await Fly(flight, "parser");
         _workers.Fail = new FlightException("claude --bg did not start: folder not trusted");
@@ -146,7 +143,7 @@ public sealed class NodeFixRoundTests : ReviewTestsBase
     public async Task APrThatFailsItsChecksStillRaisesItsCardOnAutopilot()
     {
         var (flight, _) = await Passed("7");
-        Autopilot(true);
+        NodeAdvances();
         _github.Checks = ChoiceStatus.Failing;
 
         await new PrChecks(_state, _github, TimeProvider.System, _flights, _legs).LookAsync(Ct);
@@ -160,7 +157,7 @@ public sealed class NodeFixRoundTests : ReviewTestsBase
     [Fact]
     public async Task AVerdictOnAFlightOnHoldIsRefusedNamingTheHoldAndSendsNoRound()
     {
-        Autopilot(true);
+        NodeAdvances();
         var flight = await Reviewing("8");
         (await Run(Verbs.Ground, Verbs.FlightTarget(flight.Code), "me", "the", "owner", "holds", "it")).Error.ShouldBeNull();
 

@@ -195,13 +195,13 @@ public sealed class StandingTests
         (await Error(node, Command(Verbs.Tell, Verbs.WatchtowerTarget, "gui", false, "merge TIA1"))).ShouldBeNull();
         (await Error(node, Command(Verbs.Merge, "flight/TIA1", lookout, true, "cafe0000") with { Why = why })).ShouldNotBeNull().ShouldContain(PastTheFence);
 
-        // The node's own message to it (a card it says) starts a turn that is not the person's: the lookout again, which on
-        // autopilot merges all the same (the person on Remote Control talks to it past the node, #344).
+        // The node's own message to it (a card it says) starts a turn that is not the person's: the lookout again, which
+        // merges all the same (the person on Remote Control talks to it past the node, #344).
         (await Error(node, Command(Verbs.Say, Verbs.SessionTarget(row.Id), "node", false, "a card opened"))).ShouldBeNull();
         (await Error(node, Command(Verbs.Merge, "flight/TIA1", lookout, true, "cafe0000"))).ShouldNotBeNull().ShouldContain(PastTheFence);
         // So does a fixer on a PR whose review asked for changes, which was the lookout's never (DE1, 2026-10-29), but only within the
-        // node's own fixer guards: the node marks it as the autopilot's, so another author's PR without Fix it is refused as the
-        // person's (the review of #470; without that mark the refusal would be the untracked repo's, not the autopilot's).
+        // node's own fixer guards: the node marks it as the node's own, so another author's PR without Fix it is refused as the
+        // person's (the review of #470; without that mark the refusal would be the untracked repo's, not the node's).
         node.State.PutPrReview(new PrReviewRow
         {
             Repo = "acme/widget", Number = 7, Author = "someone-else", Url = "https://github.com/acme/widget/pull/7", Base = "main", Head = "cafe0000",

@@ -8,8 +8,8 @@ using Xunit;
 namespace Pilot.Node.Tests;
 
 /// <summary>
-/// The node's own autopilot press (pilot #1269) over an in-memory state and a fake command path: each of the three card kinds is pressed
-/// with the autopilot on and left alone with it off, and each refusal case is left to the person. No process, no wall-clock wait.
+/// The node's own press (pilot #1269) over an in-memory state and a fake command path: each of the three card kinds is pressed by
+/// the node, and each refusal case is left to the person. No process, no wall-clock wait.
 /// </summary>
 public sealed class AutopilotNodePressTests
 {

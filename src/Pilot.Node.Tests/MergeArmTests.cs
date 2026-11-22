@@ -27,7 +27,7 @@ public sealed class MergeArmTests
 
     /// <summary>
     /// TIA1 with its one leg done, its review passed and PR #63 open at <see cref="PrHead"/>, and the PR-ready card offering the merge
-    /// on it. No plane on disk, as in the autopilot's tests: a merge needs nothing more.
+    /// on it. No plane on disk, as in the node's own merge tests: a merge needs nothing more.
     /// </summary>
     private static CardRow Ready(NodeHarness node)
     {

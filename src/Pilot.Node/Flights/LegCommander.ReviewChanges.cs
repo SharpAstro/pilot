@@ -18,13 +18,12 @@ public sealed partial class LegCommander
         ReviewNotStarted,
     }
 
-    /// <summary>The Handled card of a findings round the node sent itself on autopilot.</summary>
+    /// <summary>The Handled card of a findings round the node sent itself.</summary>
     public const string NodeFixRoundKind = "review-fix-round";
 
     /// <summary>
-    /// With the autopilot on, sends the flight's last leg round on the review's findings as the card's "Fix the review's findings" press
-    /// would, as the node (<see cref="LegWatch.Who"/>), and says so in a Handled line. False, with nothing sent, when the autopilot is off,
-    /// the leg is at its review go-around cap, the flight is on hold or the go-around is refused; the caller then raises the card.
+    /// Sends the flight's last leg round on the review's findings as the card's "Fix the review's findings" press would, as the node
+    /// (<see cref="LegWatch.Who"/>), and says so in a Handled line. False, with nothing sent, when the leg is at its review go-around cap, the flight is on hold or the go-around is refused; the caller then raises the card.
     /// </summary>
     private async Task<bool> TrySendFindingsRoundAsync(FlightRow flight, string changes, CancellationToken cancellationToken)
     {

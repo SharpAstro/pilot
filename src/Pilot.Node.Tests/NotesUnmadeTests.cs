@@ -17,9 +17,6 @@ public sealed class NotesUnmadeTests : ReviewTestsBase
     private const string Notes = "Checked.\n\n## Not blocking\n- rename `x` to `count`";
     private const string EarlierAnswered = "## Earlier points\n| Point | Answer | Where or why |\n|---|---|---|\n| R1.1 | addressed | fix.txt:1 |\n\n";
 
-    private void AutopilotOn() =>
-        _legs.Models = new RoleModels(new NodeSettings());
-
     private async Task<FlightRow> Reviewed(string issue, string report)
     {
         var flight = await NewFlight(issue, "parser");
@@ -53,7 +50,7 @@ public sealed class NotesUnmadeTests : ReviewTestsBase
     [Trait("Category", "Slow")]
     public async Task TheWatchtowerMayNotRemoveTheReviewNotesLegWhileANoteIsUnmade()
     {
-        AutopilotOn();
+        NodeAdvances();
         var flight = await Reviewed("2", Notes);
         var leg = _state.Legs(flight.Code).Single(l => l.Name == LegCommander.ReviewNotesLeg);
 
@@ -68,7 +65,7 @@ public sealed class NotesUnmadeTests : ReviewTestsBase
     [Trait("Category", "Slow")]
     public async Task AReviewerSessionWithAReasonMayNotRemoveTheReviewNotesLegWhileANoteIsUnmade()
     {
-        AutopilotOn();
+        NodeAdvances();
         var flight = await Reviewed("2", Notes);
         var leg = _state.Legs(flight.Code).Single(l => l.Name == LegCommander.ReviewNotesLeg);
 
@@ -99,7 +96,7 @@ public sealed class NotesUnmadeTests : ReviewTestsBase
     [Trait("Category", "Slow")]
     public async Task ThePersonRemovesTheReviewNotesLegWithAReasonAndWithoutOneIsRefused()
     {
-        AutopilotOn();
+        NodeAdvances();
         var flight = await Reviewed("4", Notes);
         var target = Verbs.LegTarget(flight.Code, LegCommander.ReviewNotesLeg);
 
@@ -114,7 +111,7 @@ public sealed class NotesUnmadeTests : ReviewTestsBase
     [Trait("Category", "Slow")]
     public async Task TheWatchtowerAtThePersonsWordClearsTheHoldAndRemovesTheLegWithAReason()
     {
-        AutopilotOn();
+        NodeAdvances();
         var flight = await Reviewed("5", Notes);
         var target = Verbs.LegTarget(flight.Code, LegCommander.ReviewNotesLeg);
 
@@ -133,7 +130,7 @@ public sealed class NotesUnmadeTests : ReviewTestsBase
     [Trait("Category", "Slow")]
     public async Task TheWatchtowerClearsOnceEveryNoteHasAnEndFromAReviewNotesLegsReport()
     {
-        AutopilotOn();
+        NodeAdvances();
         var flight = await Reviewed("6", Notes);
         var leg = _state.Legs(flight.Code).Single(l => l.Name == LegCommander.ReviewNotesLeg);
         _state.PutLeg(leg with { State = LegState.Done, FinishedAt = DateTimeOffset.UtcNow, Report = EarlierAnswered + "made" });
@@ -147,7 +144,7 @@ public sealed class NotesUnmadeTests : ReviewTestsBase
     [Trait("Category", "Slow")]
     public async Task AnUntakenHoldPlansTheReviewNotesLegAndNeverMergesWithTheNote()
     {
-        AutopilotOn();
+        NodeAdvances();
         _github.Checks = ChoiceStatus.Passing;
         var flight = await Reviewed("7", Notes);
         (await Run(Verbs.RemoveLeg, Verbs.LegTarget(flight.Code, LegCommander.ReviewNotesLeg), "me", "taking the leg out to see the node plan it again")).Error.ShouldBeNull();
@@ -227,7 +224,7 @@ public sealed class NotesUnmadeTests : ReviewTestsBase
     public async Task ALaterRoundsNotesAreNotFiledAsTheyAreAndNeedAnEndInstead()
     {
         // #918 filed a later round's notes as they were; pilot #1226: each needs an end, and the flight holds for the leg of them.
-        AutopilotOn();
+        NodeAdvances();
         _github.Checks = ChoiceStatus.Passing;
         var flight = await Reviewed("11", Notes);
         var first = _state.Legs(flight.Code).Single(l => l.Name == LegCommander.ReviewNotesLeg);

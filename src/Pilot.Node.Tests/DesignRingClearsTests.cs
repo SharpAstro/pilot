@@ -7,7 +7,7 @@ namespace Pilot.Node.Tests;
 
 /// <summary>
 /// An open design ring clears itself once a solution is found (pilot #800): a newer review of the PR that decides an option itself, a
-/// newer review or head that no longer asks the question, or an answer given by the card, the watchtower on autopilot or the PR's
+/// newer review or head that no longer asks the question, or an answer given by the card, the watchtower or the PR's
 /// conversation. The card closes as settled, a Handled notice saying what was chosen and why, not as "the head moved" or "a newer
 /// review started"; a question with no option that reaches the criteria keeps ringing, once.
 /// </summary>

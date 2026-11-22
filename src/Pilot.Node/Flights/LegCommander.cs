@@ -465,7 +465,7 @@ public sealed partial class LegCommander(
                 }
                 if (command.Who == "node" && command.Verb == Verbs.Merge)
                 {
-                    // The node's own merge (autopilot, an armed merge at green, a recheck) is not refused for it: the update is what it did,
+                    // The node's own merge (by its rules, an armed merge at green, a recheck) is not refused for it: the update is what it did,
                     // a conflict GitHub saw that the base merged in cleanly as much as a branch behind its base.
                     made = updated;
                     error = null;

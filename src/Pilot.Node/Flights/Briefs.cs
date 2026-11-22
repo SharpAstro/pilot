@@ -166,7 +166,7 @@ public static partial class Briefs
         "`dotnet build` gives. A check that cannot match CI says why in the Done-when, before it fails.";
 
     /// <summary>
-    /// The line the planner and the worker are told, in autopilot as much as out of it: the machine is the person's, so nothing
+    /// The line the planner and the worker are told, the node running unattended as much as watched: the machine is the person's, so nothing
     /// loads it on purpose without their okay on a card. TIA1910 ran a 24-process CPU burner to imitate a busy CI runner while
     /// it measured a flaky test (DE1 2026-10-29), and the person found it in Task Manager.
     /// </summary>

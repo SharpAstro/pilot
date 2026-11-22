@@ -439,7 +439,7 @@ public sealed partial class LegCommander
         }
         else
         {
-            // On autopilot the node sends the last leg round itself, as the card's button would (PIL1229, Decision 2); the card is the fallback.
+            // The node sends the last leg round itself, as the card's button would (PIL1229, Decision 2); the card is the fallback.
             call.Dispose();
             if (!await TrySendFindingsRoundAsync(flight, report, cancellationToken))
             {
@@ -692,7 +692,7 @@ public sealed partial class LegCommander
     /// </summary>
     private async Task<string?> PlanReviewNotesLegAsync(FlightRow flight, IReadOnlyList<string> notes, CancellationToken cancellationToken)
     {
-        // Advances is on for every real node; the autopilot setting does not matter: planning the leg is pilot's normal behaviour (#1271).
+        // Advances is on for every real node: planning the leg is pilot's normal behaviour (#1271).
         if (!Models.Advances)
         {
             return null;

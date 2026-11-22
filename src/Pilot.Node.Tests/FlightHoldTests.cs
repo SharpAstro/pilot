@@ -16,9 +16,6 @@ public sealed class FlightHoldTests : ReviewTestsBase
 {
     private const string Why = "waiting for the release";
 
-    private void SweepsAdvance(bool autopilot = false) =>
-        _legs.Models = new RoleModels(new NodeSettings());
-
     private PrChecks Checks() => new(_state, _github, TimeProvider.System, _flights, _legs);
 
     private async Task<FlightRow> Reviewed(string issue, string report = "Checked.")
@@ -68,7 +65,7 @@ public sealed class FlightHoldTests : ReviewTestsBase
     [Trait("Category", "Slow")]
     public async Task AHeldFlightRefusesEveryStepWithWordsNamingTheHoldAndTheSweepTakesNone()
     {
-        SweepsAdvance();
+        NodeAdvances();
         var flight = await NewFlight("2", "parser");
         var target = Verbs.FlightTarget(flight.Code);
         var leg = Verbs.LegTarget(flight.Code, "parser");
@@ -100,7 +97,7 @@ public sealed class FlightHoldTests : ReviewTestsBase
     {
         var flight = await NewFlight("3", "parser");
         await Fly(flight, "parser");
-        SweepsAdvance();
+        NodeAdvances();
         (await Hold(flight)).Error.ShouldBeNull();
 
         // Its legs are done and no PR is open: that is the next step, and a hold takes none.
@@ -123,7 +120,7 @@ public sealed class FlightHoldTests : ReviewTestsBase
     [Trait("Category", "Slow")]
     public async Task HoldTakesAPassedFlightOutOfTheNodesMergeAndUnholdMergesItAgain()
     {
-        SweepsAdvance(autopilot: true);
+        NodeAdvances();
         _github.Checks = ChoiceStatus.Passing;
         var flight = await Reviewed("4");
         // The fake PR's head is a fixed one: it stands for the head the review read, as GitHub shows it.
@@ -171,7 +168,7 @@ public sealed class FlightHoldTests : ReviewTestsBase
     public async Task TheReviewHoldSweepWritesNothingOnAHeldFlightsPrAndKeepsItsReviewHoldOnceUnheldWhileTheNoteIsUnmade()
     {
         _github.Checks = ChoiceStatus.Passing;
-        // Autopilot off: no review-notes leg is planned, the review hold is the node's, and with no watchtower the sweep looks at it
+        // A commander that does not advance: no review-notes leg is planned, the review hold is the node's, and with no watchtower the sweep looks at it
         // (before pilot #1226 it released the hold and merged with the notes; now an unmade note keeps it and rings the owner).
         var flight = await Reviewed("10", "Checked.\n\n## Not blocking\n- rename `x` to `count`");
         var since = F(flight.Code).Holding.ShouldNotBeNull().Since;
@@ -193,7 +190,7 @@ public sealed class FlightHoldTests : ReviewTestsBase
         await checks.LookAsync(Ct);
 
         // pilot #1226: a hold nobody takes never merges the flight with notes that have no end. The review hold stays (unholding the
-        // flight does not end the note), the node (autopilot off here, so no review-notes leg) raises one Ring card to the owner naming
+        // flight does not end the note), the node (not advancing here, so no review-notes leg) raises one Ring card to the owner naming
         // the note, and nothing is written on the PR.
         F(flight.Code).Holding.ShouldNotBeNull();
         _github.IssueComments.Where(ReviewNotes).ShouldBeEmpty();
@@ -204,7 +201,7 @@ public sealed class FlightHoldTests : ReviewTestsBase
     [Trait("Category", "Slow")]
     public async Task ARunningSessionStillReportsOnAHeldFlightAndNothingFollowsItsFinish()
     {
-        SweepsAdvance();
+        NodeAdvances();
         var flight = await NewFlight("6", "parser");
         (await Run(Verbs.StartLeg, Verbs.LegTarget(flight.Code, "parser"), "controller")).Error.ShouldBeNull();
         var worker = _state.Legs(flight.Code).Single().Worker!;
@@ -225,7 +222,7 @@ public sealed class FlightHoldTests : ReviewTestsBase
     [Trait("Category", "Slow")]
     public async Task AGoAroundsFinishOnAHeldFlightMergesNoBaseAndTouchesNothingOnGitHubAndTheReleaseBringsTheBaseInAndPushes()
     {
-        SweepsAdvance();
+        NodeAdvances();
         _github.AutoMergeAllowed = true;
         var flight = await NewFlight("12", "parser");
         var code = flight.Code;

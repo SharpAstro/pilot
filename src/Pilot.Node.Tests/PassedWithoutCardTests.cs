@@ -14,9 +14,6 @@ public sealed class PassedWithoutCardTests : ReviewTestsBase
 {
     private const string Notes = "Checked.\n\n## Not blocking\n- rename `x` to `count`";
 
-    private void AutopilotOn() =>
-        _legs.Models = new RoleModels(new NodeSettings());
-
     private PrChecks Checks() => new(_state, _github, TimeProvider.System, _flights, _legs);
 
     private async Task<FlightRow> OpenPr(string issue)
@@ -45,7 +42,7 @@ public sealed class PassedWithoutCardTests : ReviewTestsBase
     [Trait("Category", "Slow")]
     public async Task AFlightPassedWithNoCardGetsOneAndTheNodeMergesIt()
     {
-        AutopilotOn();
+        NodeAdvances();
         _github.Checks = ChoiceStatus.Passing;
         var flight = await PassedWithNoCard("1", "fine");
         _ = flight;
@@ -78,7 +75,7 @@ public sealed class PassedWithoutCardTests : ReviewTestsBase
     [Trait("Category", "Slow")]
     public async Task AHoldingFlightGetsTheHoldingCardAndItsNotesCardAndIsNotMerged()
     {
-        AutopilotOn();
+        NodeAdvances();
         _github.Checks = ChoiceStatus.Passing;
         var flight = await PassedWithNoCard("3", Notes);
         F(flight.Code).Holding.ShouldNotBeNull();
@@ -134,7 +131,7 @@ public sealed class PassedWithoutCardTests : ReviewTestsBase
     [Trait("Category", "Slow")]
     public async Task APrReadyCardThePersonDismissedIsNotRaisedAgain()
     {
-        AutopilotOn();
+        NodeAdvances();
         _github.Checks = ChoiceStatus.Passing;
         var flight = await OpenPr("7");
         (await Run(Verbs.Review, Verbs.FlightTarget(flight.Code), Reviewer(flight.Code), "pass", "fine")).Error.ShouldBeNull();
