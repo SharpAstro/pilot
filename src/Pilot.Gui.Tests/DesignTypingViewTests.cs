@@ -35,7 +35,7 @@ public sealed class DesignTypingViewTests
             Chrome = new PilotChrome<RgbaImage>(_renderer, new SessionsView<RgbaImage>(_renderer)) { FontPath = SessionsCapture.FontPath };
             Chrome.Autopilot.OnToggle = _ => Task.FromResult<string?>(null);
             Chrome.Show(PilotPage.Designs);
-            View.OnEdit = (id, part, cell, text) => Edits.Add((id, part, cell, text));
+            View.OnEdit = (id, part, cell, text, _) => Edits.Add((id, part, cell, text));
             View.OnPublishTyped = (id, why, pending) => Published.Add((id, why, pending));
             View.OnDiscard = Discarded.Add;
             View.Open("DSN-1");
@@ -91,6 +91,37 @@ public sealed class DesignTypingViewTests
         // The cell that was not typed in keeps its published tag.
         texts.ShouldContain("published in v2");
         TextOverlap.Faults([.. all]).Select(f => f.Line).ShouldBeEmpty();
+    }
+
+    /// <summary>
+    /// Each save of a cell's part carries the heading the cell had when the typing began, which the node holds the cell to (#1182 N4.1); a heading typed is the
+    /// one held from then on, and the design's own parts carry none.
+    /// </summary>
+    [Fact]
+    public void ASaveCarriesTheHeadingOfTheCellItWasTypedInto()
+    {
+        using var rig = new Rig();
+        var headings = new List<string?>();
+        rig.View.OnEdit = (_, _, _, _, heading) => headings.Add(heading);
+        var first = rig.Screen.Open!.Notebook!.Cells[1].Heading;
+
+        rig.View.BeginEdit(1, "objective").ShouldBeTrue();
+        rig.View.Editor.Text = "Lists the settings, newest first.";
+        rig.View.SaveEdit().ShouldBeTrue();
+        rig.View.EndEdit();
+
+        rig.View.BeginEdit(1, "heading").ShouldBeTrue();
+        rig.View.Editor.Text = "All the settings";
+        rig.View.SaveEdit().ShouldBeTrue();
+        rig.View.Editor.Text = "Every setting";
+        rig.View.SaveEdit().ShouldBeTrue();
+        rig.View.EndEdit();
+
+        rig.View.BeginEdit(-1, "objective").ShouldBeTrue();
+        rig.View.Editor.Text = "The design's own words.";
+        rig.View.SaveEdit().ShouldBeTrue();
+
+        headings.ShouldBe([first, first, "All the settings", null]);
     }
 
     [Fact]
@@ -357,7 +388,7 @@ public sealed class DesignTypingViewTests
         chrome.WithoutScrollBars();
         chrome.Show(PilotPage.Designs);
         chrome.Designs.Terminal = (columns, rows);
-        chrome.Designs.OnEdit = (_, _, _, _) => { };
+        chrome.Designs.OnEdit = (_, _, _, _, _) => { };
         chrome.Designs.OnPublishTyped = (_, _, _) => { };
         chrome.Designs.OnDiscard = _ => { };
         chrome.Designs.Open("DSN-1");

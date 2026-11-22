@@ -93,7 +93,7 @@ internal static class LabelHold
     /// </summary>
     public static async Task<bool> ApplyAsync(NodeState state, IGitHub github, TimeProvider time, string code, string[]? comments, CancellationToken cancellationToken)
     {
-        var why = "held on GitHub";
+        var why = FlightOnHold.LabelReason;
         var by = LegCommander.TheOwner;
         if (comments is { Length: > 0 } && comments[^1] is var newest && newest.IndexOf(": ", PilotMarks.HoldCommentStart.Length, StringComparison.Ordinal) is var colon and >= 0
             && newest[(colon + 2)..].Trim() is { Length: > 0 } said)

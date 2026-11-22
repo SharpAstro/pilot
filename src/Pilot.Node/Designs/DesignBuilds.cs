@@ -85,7 +85,7 @@ public sealed class DesignBuilds(NodeState state, DesignStore store, RepoCatalog
             // The first build of an idea-born design: the idea's own issue is the build's: plan-idea makes its flight (and refuses with the open milestones when none is named); no second issue is filed.
             var repoOfIdea = from.Repo ?? (Arg(1).Length > 0 ? Arg(1) : design.Repo) ?? IdeaIds.DefaultRepo;
             var (name, path) = await RepoOfAsync(repoOfIdea, cancellationToken);
-            var planned = await ideas.RunAsync(command with
+            var planned = await ideas.PlanForDesignBuildAsync(command with
             {
                 Verb = Verbs.PlanIdea,
                 Target = IdeaIds.Target(name, from.Number),

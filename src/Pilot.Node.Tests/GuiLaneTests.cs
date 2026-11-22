@@ -110,6 +110,15 @@ public sealed class GuiLaneTests : JobTestsBase
         _state.Jobs().ShouldBeEmpty();
     }
 
+    [Theory]
+    [InlineData(0, null, "the GUI lane is off (gui-slots is 0)")]
+    [InlineData(0, "no interactive desktop", "the GUI lane is off (gui-slots is 0)")]
+    [InlineData(1, "no interactive desktop", "no interactive desktop")]
+    [InlineData(1, null, null)]
+    public void GuiWhyIsTheLaneOffAtZeroSlotsElseTheDesktopsAnswer(int slots, string? desktop, string? why) =>
+        // #1085: what NodeApp puts in NodeInfo.CanRunGui and GuiReason, which pilot status's gui line reads (CliTests).
+        Lane(desktop, slots).GuiWhy().ShouldBe(why);
+
     [Fact]
     public void AGuiJobWithGuiSlotsZeroIsRefusedAtOnceAndNeverQueued()
     {

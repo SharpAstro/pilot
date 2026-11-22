@@ -129,6 +129,13 @@ public static partial class PilotCommand
     }
 
     /// <summary>One design whole: its record, its brief as written and where its folders are.</summary>
+    /// <summary>
+    /// design-build's args as the node reads them (DesignBuilds): the version, the repo, the milestone, in that order, each empty when not given. One place,
+    /// so a swapped position is caught by its test (#1180 R1.6).
+    /// </summary>
+    internal static string[] DesignBuildArgs(int? version, string? repo, string? milestone) =>
+        [version?.ToString(CultureInfo.InvariantCulture) ?? "", repo ?? "", milestone ?? ""];
+
     internal static string DesignShown(DesignDetail design)
     {
         var row = design.Row;
@@ -269,7 +276,7 @@ public static partial class PilotCommand
             var buildMilestone = new Option<string?>("--milestone") { Description = "For a design that came from an idea: the open milestone to plan the idea into" };
             var designBuild = Action(new Command("build", "Build a version: file one issue holding its brief, notes, renders and prototype hash, and make one flight on it that remembers the design and version (a design from an idea plans that idea instead); refused while a flight of that version is in the air") { Arguments = { buildId }, Options = { buildVersion, buildRepo, buildMilestone } },
                 (p, client, ct) => Send(client, Verbs.DesignBuild, Verbs.DesignTarget(p.GetValue(buildId)!),
-                    [p.GetValue(buildVersion)?.ToString(CultureInfo.InvariantCulture) ?? "", p.GetValue(buildRepo) ?? "", p.GetValue(buildMilestone) ?? ""], who, ct));
+                    DesignBuildArgs(p.GetValue(buildVersion), p.GetValue(buildRepo), p.GetValue(buildMilestone)), who, ct));
 
             var showId = Arg("design", "The design's id, DSN-<n>");
             var designShow = Action(new Command("show", "Show a design: its record, its brief and the paths of its folders") { Arguments = { showId } },

@@ -230,12 +230,7 @@ public sealed partial class FlightCommander
                 $"{command.Who} overrode the one-flight rule: {live.Code} was not landed ({live.State}) when {code} was created.\n\nWhy: {duplicateWhy}");
             // Two live flights on one issue: one card offers to withdraw the newer, beside steering the other (a duplicate is withdrawn
             // only by this button or a person's word, never by the node or the watchtower on its own).
-            state.RaiseCard(CardBin.ForYou, DuplicateFlightsKind, $"flight/{code}", $"{code} and {live.Code} both fly {item.Display}",
-                $"{live.Code} ({live.State}) and {code} are live on {item.Noun}. {code} was made anyway: {duplicateWhy}. If it was a mistake and has done no work, withdraw it; otherwise steer {live.Code} and keep both.",
-                [
-                    new CardChoice { Label = $"Withdraw {code}", Verb = Verbs.WithdrawFlight, Target = $"flight/{code}", Args = [$"a duplicate of {live.Code}, made by mistake"] },
-                    new CardChoice { Label = "Keep both", Verb = Verbs.Dismiss, Target = "" },
-                ]);
+            RaiseDuplicate(code, live, item, $"made anyway: {duplicateWhy}");
         }
         await LabelAsync(repoPath, item, code, otherNode, cancellationToken);
         return (code, null);
@@ -281,4 +276,29 @@ public sealed partial class FlightCommander
     }
 
     private readonly RepoSetup _setup = new(state);
+
+    /// <summary>
+    /// The For you card of two live flights on one work item of one repo: withdraw <paramref name="code"/> (the one that came second) or keep
+    /// both. <paramref name="how"/> says how it came (made anyway, adopted, received).
+    /// </summary>
+    private void RaiseDuplicate(string code, FlightRow live, WorkItem item, string how) =>
+        state.RaiseCard(CardBin.ForYou, DuplicateFlightsKind, $"flight/{code}", $"{code} and {live.Code} both fly {item.Display}",
+            $"{live.Code} ({live.State}) and {code} are live on {item.Noun}. {code} was {how}. If it was a mistake and has done no work, withdraw it; otherwise steer {live.Code} and keep both.",
+            [
+                new CardChoice { Label = $"Withdraw {code}", Verb = Verbs.WithdrawFlight, Target = $"flight/{code}", Args = [$"a duplicate of {live.Code}, made by mistake"] },
+                new CardChoice { Label = "Keep both", Verb = Verbs.Dismiss, Target = "" },
+            ]);
+
+    /// <summary>
+    /// A flight that came here by adopt-flight or receive-flight on an item a live flight of this repo already flies here gets the same
+    /// duplicate card as create --anyway (#1130: only the create path raised it, and a second flight reached here no other way said nothing).
+    /// </summary>
+    private void RaiseDuplicateIfTwin(FlightRow arrived, string how)
+    {
+        if (state.Flights().FirstOrDefault(f => f.Code != arrived.Code && f.State != FlightState.Landed && f.Issue == arrived.Issue && f.Tracker == arrived.Tracker
+                && string.Equals(f.Repo, arrived.Repo, StringComparison.OrdinalIgnoreCase)) is { } live)
+        {
+            RaiseDuplicate(arrived.Code, live, arrived.Item, how);
+        }
+    }
 }

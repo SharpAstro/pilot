@@ -287,4 +287,61 @@ public sealed class IdeaDesignLinkTests : IDisposable
 
         Row("I1").Designs.ShouldHaveSingleItem().Title.ShouldBe("Shadow study");
     }
+
+    /// <summary>
+    /// The design rows an ideas refresh links are read before the node's lock is taken (#1170 R1.4): while they are read, another thread reads
+    /// the node's state without waiting.
+    /// </summary>
+    [Fact]
+    public void TheDesignRowsAreReadOutsideTheNodesLock()
+    {
+        var state = new NodeState(new InMemoryJournal(), TimeProvider.System);
+        var reads = 0;
+        state.Designs = () =>
+        {
+            reads++;
+            Task.Run(() => state.IdeaMoves()).Wait(TimeSpan.FromSeconds(5)).ShouldBeTrue("another reader of the node's state is not held up by the design read");
+            return [];
+        };
+
+        state.PutIdeas("pilot", []);
+        state.PutIdeas(["pilot"], []);
+        state.RefreshIdeaDesigns();
+
+        reads.ShouldBe(3);
+    }
+
+    /// <summary>
+    /// Read outside the lock, two refreshes can end out of order: an earlier read that ends after a later one never puts its older rows back over the newer
+    /// ones (the idea row keeps the design the later read found).
+    /// </summary>
+    [Fact]
+    public async Task AnEarlierDesignReadThatEndsLaterDoesNotPutOlderRowsBack()
+    {
+        var state = new NodeState(new InMemoryJournal(), TimeProvider.System);
+        state.PutIdeas("pilot", [new IdeaRow { Id = "I1", Repo = "pilot", Title = "Ring shadows", State = IdeaState.Noted }]);
+        var linked = new DesignRow { Id = "DSN-1", Title = "Shadows", ForIdeas = ["pilot I1"] };
+        using var firstEntered = new ManualResetEventSlim();
+        using var releaseFirst = new ManualResetEventSlim();
+        var calls = 0;
+        state.Designs = () =>
+        {
+            if (Interlocked.Increment(ref calls) == 1)
+            {
+                firstEntered.Set();
+                releaseFirst.Wait(TimeSpan.FromSeconds(10)).ShouldBeTrue();
+                return [];
+            }
+            return [linked];
+        };
+
+        var first = Task.Run(state.RefreshIdeaDesigns, Ct);
+        firstEntered.Wait(TimeSpan.FromSeconds(10), Ct).ShouldBeTrue();
+        state.RefreshIdeaDesigns();
+        state.Ideas().Single().Designs.Select(d => d.Id).ShouldBe(["DSN-1"]);
+        releaseFirst.Set();
+        await first.WaitAsync(TimeSpan.FromSeconds(10), Ct);
+
+        state.Ideas().Single().Designs.Select(d => d.Id).ShouldBe(["DSN-1"], "the earlier read, ended later, did not put its older rows back");
+    }
 }

@@ -134,6 +134,46 @@ public sealed class DesignsWaitingIdeasTests
         chrome.Designs.OpenId.ShouldBe("DSN-9");
     }
 
+    /// <summary>
+    /// The hosts' wiring of the button (DesignReads.Follow, one for the window and the terminal) sends <c>design-from-idea</c> to the idea's target and
+    /// opens the design the node made; the view tests above stop at the callback (#1170 R1.3). The node is a recording Send, as NodeClient is a socket.
+    /// </summary>
+    [Fact]
+    public async Task TheHostsWiringSendsDesignFromIdeaAndOpensTheMadeDesign()
+    {
+        using var host = new Host(false);
+        var chrome = host.Make();
+        var sent = new TaskCompletionSource<CommandRequest>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var reads = new DesignReads(null, "gui", () => { })
+        {
+            Send = (command, _) =>
+            {
+                if (command.Verb == Verbs.DesignFromIdea)
+                {
+                    sent.TrySetResult(command);
+                    return Task.FromResult(ResponseEnvelope<CommandResult>.Ok(new CommandResult { Seq = 1, Verb = command.Verb, Target = command.Target, Who = command.Who, Ok = true, Made = "DSN-9" }));
+                }
+                return Task.FromResult(ResponseEnvelope<CommandResult>.Ok(new CommandResult { Seq = 1, Verb = command.Verb, Target = command.Target, Who = command.Who, Ok = false, Error = "not in this test" }));
+            },
+        };
+        reads.Follow(chrome.Designs, null, () => { });
+        var screen = Sample();
+
+        host.Hits(chrome, screen).Single(h => h.Action == "designs:idea-start:pilot I382").Press();
+
+        var command = await sent.Task.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
+        command.Verb.ShouldBe(Verbs.DesignFromIdea);
+        command.Target.ShouldBe(IdeaIds.Target("pilot", 382));
+        command.Who.ShouldBe("gui");
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+        while (chrome.Designs.OpenId is null && DateTime.UtcNow < deadline)
+        {
+            host.Nodes(chrome, screen);
+            await Task.Delay(20, TestContext.Current.CancellationToken);
+        }
+        chrome.Designs.OpenId.ShouldBe("DSN-9");
+    }
+
     [Theory]
     [MemberData(nameof(Hosts))]
     public void ARefusalIsSaidUnderTheIdeaAndTheButtonComesBack(bool terminal)

@@ -501,4 +501,21 @@ public sealed class UnrelatedFailureTests : LegCommanderTestsBase
         UnrelatedFailures.Excluding(check, ["Z"])!.ShouldBe(
             "dotnet test A --filter '(FullyQualifiedName~X)&FullyQualifiedName!~Z' && dotnet test B --filter-class Y --filter-not-class *.Z");
     }
+
+    [Fact]
+    public void ExcludingLeavesAFilterQuerySegmentWhereItIsBesideAVsTestSegmentItRewrites()
+    {
+        // #1092: the shape the offsets must survive: a segment left as it is ahead of one that grows, and one after it.
+        var check = "dotnet test A --filter-query /*/*/Foo/* && dotnet test B --filter 'FullyQualifiedName~X' && dotnet test C --filter-query /*/*/Bar/*";
+        UnrelatedFailures.Excluding(check, ["Z"])!.ShouldBe(
+            "dotnet test A --filter-query /*/*/Foo/* && dotnet test B --filter '(FullyQualifiedName~X)&FullyQualifiedName!~Z' && dotnet test C --filter-query /*/*/Bar/*");
+    }
+
+    [Fact]
+    public void ExcludingANestedClassLeavesItOutByItsWholeName()
+    {
+        // #1092: a nested class's runner name is Outer+Inner; the VSTest form excludes by that name, the platform form by *.Outer+Inner.
+        UnrelatedFailures.Excluding("dotnet test A --filter 'FullyQualifiedName~X'", ["Outer+Inner"])!.ShouldBe(
+            "dotnet test A --filter '(FullyQualifiedName~X)&FullyQualifiedName!~Outer+Inner'");
+    }
 }

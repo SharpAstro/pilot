@@ -575,8 +575,23 @@ if (feed is not null && client is not null && clients is not null)
     // A page that draws text over text raises one for-you card on this window's node (the check's own once-per-page rule): through
     // the tracker, as a click's command goes, never on the render thread that found it.
     chrome.TextCheck.Who = GuiSay.Who;
-    chrome.TextCheck.Send = request => tracker.Run(async () =>
+    // The card carries the page as drawn (#423): drawn again on the CPU from the arranged nodes the check read, uploaded first, then
+    // named as the raise's attachment. A failed upload still raises the card, with no picture.
+    chrome.TextCheck.Capture = (nodes, dpi) => PageCapture.Of(nodes, chrome.FontPath, dpi, Pilot.Ui.Palette.Current.Ground);
+    chrome.TextCheck.Send = (request, image) => tracker.Run(async () =>
     {
+        if (image is not null)
+        {
+            var uploaded = await client.UploadAttachmentAsync(PngWriter.Encode(image.Rgba, image.Width, image.Height), "png", cts.Token);
+            if (uploaded is { Success: true, Response: { Length: > 0 } id })
+            {
+                request = request with { Attachment = $"{id}.png" };
+            }
+            else
+            {
+                System.Console.WriteLine($"pilot-gui: could not upload the capture for '{request.Args?[1]}': {uploaded.Error}; the card goes without it");
+            }
+        }
         var result = await client.SendAsync(request, cts.Token);
         System.Console.WriteLine($"pilot-gui: raised '{request.Args?[1]}': {(!result.Success ? result.Error : result.Response is { Ok: false } answer ? answer.Error : "done")}");
     }, "raise a text-overlap card");
@@ -1210,15 +1225,14 @@ void RenderFrame()
     }
 
     view.Ui.FrameId++;
-    if (designReads is not null && chrome.Page is PilotPage.Flights or PilotPage.Ideas)
+    if (designReads is not null)
     {
-        // The Flights page's notice (a design has a newer version than the flight builds) and the Ideas page's Link a design read the same list.
-        // So a design version published raises its toast only on the Designs, Flights and Ideas pages (the off-page read is carried by #1196, R1.1(i)).
+        // The list is read on every page, at most every 15 s (DesignReads.Every): the Flights page's notice and the Ideas page's Link a design read it, and a
+        // version published raises its toast whatever page is shown (#1196 R1.1(i)), as a landed flight's does.
         designReads.AskList();
     }
     if (designReads is not null && chrome.Page == PilotPage.Designs)
     {
-        designReads.AskList();
         if (chrome.Designs.OpenId is { } openDesign)
         {
             designReads.AskDesign(openDesign, designReads.Page?.Detail.Row.Id == openDesign ? designReads.Page.Version : null);

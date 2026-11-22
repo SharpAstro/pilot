@@ -52,6 +52,9 @@ public static class DecisionKinds
     /// <summary>A flight created with <c>--anyway</c> over another node's label.</summary>
     public const string CreateAnyway = "create-anyway";
 
+    /// <summary>An idea planned with <c>--anyway</c> although its design has no published version, or it needs one and has none (#1170 R1.7).</summary>
+    public const string PlanAnyway = "plan-anyway";
+
     /// <summary>Any other card choice.</summary>
     public const string Card = "card";
 }

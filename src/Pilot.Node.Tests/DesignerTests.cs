@@ -23,6 +23,7 @@ public sealed class DesignerTests : IDisposable
     private readonly DesignStore _store;
     private readonly FakeWorkers _workers = new();
     private readonly List<CommandRequest> _said = [];
+    private string? _refuse;
     private readonly Designers _designers;
     private readonly DesignCommands _commands;
 
@@ -36,7 +37,7 @@ public sealed class DesignerTests : IDisposable
             Say = (command, _) =>
             {
                 _said.Add(command);
-                return Task.FromResult(_state.Complete(command, null));
+                return Task.FromResult(_state.Complete(command, _refuse));
             },
         };
         _commands = new DesignCommands(_state, _store, _designers);
@@ -172,6 +173,46 @@ public sealed class DesignerTests : IDisposable
         _store.Find(id)!.DesignerState.ShouldBe(DesignerStates.Working);
     }
 
+    [Fact]
+    public async Task ARefusedSayBacksOffDoublingAndRingsAForYouCardAtTheThirdThenClosesItOnceItGoes()
+    {
+        // #1158 R1.4: a refused say was tried again at every 30 s sweep, with no back-off and no card.
+        var id = IdleDesigner();
+        _refuse = "the session is gone";
+        Brief(id, "one more change");
+        await _designers.Settled;
+        _said.Count.ShouldBe(1);
+        _store.Find(id)!.DesignerState.ShouldBe(DesignerStates.Failed);
+
+        async Task SweepAt(TimeSpan after)
+        {
+            _time.Advance(after);
+            _designers.Sweep();
+            await _designers.Settled;
+        }
+
+        // Inside the first back-off (30 s): no try.
+        await SweepAt(TimeSpan.FromSeconds(20));
+        _said.Count.ShouldBe(1);
+        // Past it: the second try, then the third only after 60 s more.
+        await SweepAt(TimeSpan.FromSeconds(11));
+        _said.Count.ShouldBe(2);
+        await SweepAt(TimeSpan.FromSeconds(31));
+        _said.Count.ShouldBe(2);
+        await SweepAt(TimeSpan.FromSeconds(30));
+        _said.Count.ShouldBe(3);
+        var card = _state.Cards(openOnly: true).Single(c => c.Kind == Designers.SayFailedKind);
+        (card.Bin, card.Subject).ShouldBe((CardBin.ForYou, Verbs.DesignTarget(id)));
+        card.Detail.ShouldNotBeNull().ShouldContain("the session is gone");
+        Designers.SayBackOff(20).ShouldBe(TimeSpan.FromMinutes(15));
+
+        // The next say that goes closes the card.
+        _refuse = null;
+        await SweepAt(Designers.SayBackOff(3));
+        _said.Count.ShouldBe(4);
+        _state.Cards(openOnly: true).ShouldNotContain(c => c.Kind == Designers.SayFailedKind);
+    }
+
     private string IdleDesigner(string brief = "first words")
     {
         var id = New(brief);
@@ -270,6 +311,34 @@ public sealed class DesignerTests : IDisposable
         _said.ShouldHaveSingleItem().Args[0].ShouldContain("after the end");
         _store.Find(id)!.DesignerState.ShouldBe(DesignerStates.Working);
         _store.Find(id)!.DesignerIdleSince.ShouldBeNull();
+    }
+
+    /// <summary>
+    /// Past the tracker's retention (a day) the ended row is gone, so a piece cannot resume it: the node starts a fresh designer whose brief
+    /// carries the design whole (the brief so far, the prototype), and the old session stays in <see cref="DesignRow.DesignerSessions"/>, so
+    /// only the warm context is lost, no design state (#1162 R1.4).
+    /// </summary>
+    [Fact]
+    public async Task APieceAfterTheEndedRowIsForgottenStartsAFreshDesignerWithTheWholeDesign()
+    {
+        var id = IdleDesigner("A night list, dark.");
+        _time.Advance(TimeSpan.FromMinutes(31));
+        _designers.Sweep();
+        await _designers.Settled;
+        _workers.StopReasons.Count.ShouldBe(1);
+        _state.RemoveSession("job00001");
+
+        Brief(id, "add a weather strip");
+        await _designers.Settled;
+
+        _said.ShouldBeEmpty("nothing is left to resume");
+        _workers.Started.Count.ShouldBe(2);
+        var fresh = _workers.Started[^1];
+        fresh.Name.ShouldBe("de1-dsn1-designer");
+        fresh.Brief.ShouldContain("A night list, dark.");
+        fresh.Brief.ShouldContain("add a weather strip");
+        fresh.Brief.ShouldContain("prototype.json");
+        _store.Find(id)!.DesignerSessions.ShouldContain("job00001-0000-4000-8000-000000000000");
     }
 
     private string Hook(string session, string tool, string cwd, string path) =>

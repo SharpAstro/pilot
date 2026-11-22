@@ -222,6 +222,9 @@ internal sealed partial class DesignsView<TSurface>
             _ => Label("Building…", Dim).WithTooltip($"Building v{version} of {row.Id}")).WAuto().HFixed(BackRowH);
     }
 
+    /// <summary>The line under the repo question for a repo the node does not list: the command that builds into any repo.</summary>
+    internal static string OtherRepoLine(string id) => $"Another repo: pilot design build {id} --repo <name>";
+
     // The question before the send: the repos of the node (a design with no repo), then the open milestones of the idea's repo, as chips of one row height.
     private IEnumerable<Layout.Node> BuildAsk(DesignRow row)
     {
@@ -241,6 +244,9 @@ internal sealed partial class DesignsView<TSurface>
                     yield return Chip(chosen, $"designs:build-repo:{chosen}", $"Build in {chosen}", () => { PickBuildRepo(chosen); });
                 }
             }
+            // The chips are the repos the node tracks; one nothing has flown in yet is named on the command line (the review of #1179, #1180 R1.7).
+            var other = OtherRepoLine(row.Id);
+            yield return WrappedProse.OneLine(other, 11f, Dim).RowH(20f).Whole(other);
         }
         else
         {

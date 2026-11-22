@@ -47,7 +47,7 @@ public sealed class DesignTypingViewTestsNotes
             Chrome = new PilotChrome<RgbaImage>(_renderer, new SessionsView<RgbaImage>(_renderer)) { FontPath = SessionsCapture.FontPath };
             Chrome.Autopilot.OnToggle = _ => Task.FromResult<string?>(null);
             Chrome.Show(PilotPage.Designs);
-            View.OnEdit = (_, _, _, _) => { };
+            View.OnEdit = (_, _, _, _, _) => { };
             View.OnPublishTyped = (_, _, _) => { };
             View.OnLinkIssue = (id, reference) => Links.Add((id, reference));
             View.Open(screen.Rows[0].Id);
@@ -207,7 +207,7 @@ public sealed class DesignTypingViewTestsNotes
         var screen = WithNotes();
         chrome.Show(PilotPage.Designs);
         chrome.Designs.Terminal = (columns, rows);
-        chrome.Designs.OnEdit = (_, _, _, _) => { };
+        chrome.Designs.OnEdit = (_, _, _, _, _) => { };
         chrome.Designs.OnPublishTyped = (_, _, _) => { };
         chrome.Designs.Open(screen.Open!.Detail.Row.Id);
         var rail = TerminalRail.Tree(PilotPage.Designs, GlyphMode.Emoji, null, null, PageData.Now, _ => { }, null, columns);

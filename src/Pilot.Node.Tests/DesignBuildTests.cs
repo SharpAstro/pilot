@@ -146,7 +146,8 @@ public sealed class DesignBuildTests : IDisposable
         var flight = _state.Flights().ShouldHaveSingleItem();
         var recorded = flight.Designs.ShouldHaveSingleItem();
         (flight.FromIdea, recorded.Id, recorded.Version, recorded.Sha256).ShouldBe(("I1", design.Id, 1, design.PrototypeSha256));
-        _github.IssueComments.Any(c => c.Number == 1 && c.Body.Contains(design.PrototypeSha256!)).ShouldBeTrue();
+        // One comment on the idea's issue, the build's whole text: plan-idea's own "Designs:" line is left out for a build (#1180 R1.4).
+        _github.IssueComments.Where(c => c.Number == 1).ShouldHaveSingleItem().Body.ShouldContain(design.PrototypeSha256!);
         _store.Find(design.Id)!.Builds.ShouldHaveSingleItem().Issue.ShouldBe(1);
     }
 

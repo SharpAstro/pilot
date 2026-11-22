@@ -1,4 +1,5 @@
 using DIR.Lib;
+using Pilot.Ui;
 using Layout = DIR.Lib.Layout;
 using Shouldly;
 using Xunit;
@@ -32,5 +33,49 @@ public sealed class TopBarCountsAlignmentTests
         text.HAlign.ShouldBe(TextAlign.Far, "the counts line is right-aligned");
         text.VAlign.ShouldBe(TextAlign.Far, "and bottom-aligned");
         (counts.Bounds.X + counts.Bounds.Width).ShouldBe(prepared.Rect.X + prepared.Rect.Width - 16f, 1f, "its right edge meets the bar's right padding");
+    }
+
+    // Every node under a node, read through whatever property holds a child or children.
+    private static IEnumerable<Layout.Node> Nodes(Layout.Node node) =>
+        new[] { node }.Concat(node.GetType().GetProperties().Where(p => p.GetIndexParameters().Length == 0).SelectMany(p => p.GetValue(node) switch
+        {
+            Layout.Node child => Nodes(child),
+            IEnumerable<Layout.Node> children => children.SelectMany(Nodes),
+            _ => [],
+        }));
+
+    /// <summary>
+    /// A counts line over 80 characters, on a page that fits it and does not ask for a cut, is words in a wrap capped at one line, which ends in an
+    /// ellipsis where the bar is narrower, with the whole line on hover: the path the pull requests sample only returned early on (#1167 R2.3).
+    /// </summary>
+    [Fact]
+    public void ALongCountsLineIsWordsInAOneLineWrapWithTheWholeLineOnHover()
+    {
+        var counts = string.Join(" · ", Enumerable.Range(1, 8).Select(i => $"{i * 3} pull requests in state {i}"));
+        counts.Length.ShouldBeGreaterThan(80);
+
+        var bar = TopBar.Build(new PageHeader("pull requests") { Counts = counts, CountsFit = true, CountsCut = false }, new TopBarParts(null, null, null, null));
+
+        var nodes = Nodes(bar).ToList();
+        nodes.ShouldContain(n => n.Tooltip == counts, "the whole line is on hover");
+        var wrap = nodes.OfType<Layout.Node.Wrap>().Single(w => w.Children.Length > 1 && string.Concat(w.Children.OfType<Layout.Node.Leaf>()
+            .Select(l => ((Layout.Content.Text)l.Content).Value)).Replace(" ", "") == counts.Replace(" ", ""));
+        wrap.MaxLines.ShouldBe(1);
+    }
+
+    /// <summary>The source line's time is local, as every other time in the window (#1167 R1.6): not UTC on one line and local on the next.</summary>
+    [Fact]
+    public void TheSourceLinesTimeIsLocal()
+    {
+        PageTime.Zone = TimeZoneInfo.CreateCustomTimeZone("plus11", TimeSpan.FromHours(11), "plus11", "plus11");
+        try
+        {
+            PageHeader.SourceLine("live from the node on DE1", new DateTimeOffset(2026, 10, 28, 3, 0, 0, TimeSpan.Zero))
+                .ShouldBe("live from the node on DE1 · as of 2026-10-28 14:00:00");
+        }
+        finally
+        {
+            PageTime.Zone = null!;
+        }
     }
 }
