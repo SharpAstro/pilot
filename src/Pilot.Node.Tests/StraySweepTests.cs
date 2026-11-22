@@ -160,11 +160,13 @@ public sealed class StraySweepTests
     [Fact]
     public void AStrayWhoseStartWasNeverReadIsNamedByHandAndNeverEnded()
     {
-        OverLimitJob();
-        _table.Starts.Remove(501);
-        _sweep.SweepOnce();
+        // A leftover tied to an ended session by its plane folder, whose start the OS will not tell.
+        Session("w1", "se1-pil909-old", SessionState.Ended, SessionStartReasons.LegLaunch, ended: _time.GetUtcNow().AddMinutes(-10));
+        _table.Add(710, 1, "dotnet.exe", Began.AddHours(1), commandLine: "dotnet.exe", folder: Plane);
+        _table.Starts.Remove(710);
+        _sweep.SweepOnce().ShouldContain(s => s.Pid == 710);
 
-        _sweep.EndOnWord(new CommandRequest { Verb = Verbs.EndStray, Target = "process:501@12345", Who = "gui" })
+        _sweep.EndOnWord(new CommandRequest { Verb = Verbs.EndStray, Target = "process:710@12345", Who = "gui" })
             .Error.ShouldNotBeNull().ShouldContain("never read");
         _table.Killed.ShouldBeEmpty();
     }
