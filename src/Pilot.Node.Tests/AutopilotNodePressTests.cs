@@ -225,7 +225,7 @@ public sealed class AutopilotNodePressTests
     {
         // R1.6: the stale close is logged and the look goes on to press.
         var log = new StringWriter();
-        var press = new NodePress(_state, () => true, (command, _) =>
+        var press = new NodePress(_state, (command, _) =>
         {
             _ran.Add(command);
             return Task.FromResult(new CommandResult { Ok = true, Verb = command.Verb, Target = command.Target, Who = "node", Seq = 1 });

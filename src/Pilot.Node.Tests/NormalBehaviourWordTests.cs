@@ -25,6 +25,9 @@ public sealed partial class NormalBehaviourWordTests
         "pilot settings set autopilot",      // README: the refused command
         "GoneAutopilotKey",                  // identifier of the refused key's constant
         "`autopilot`",                       // README: the stored word of MergeBy / the refused key
+        "Autopilot.cs",                      // file name of the assistant commands, named in the card catalog
+        "AutopilotTests.",                   // test classes are not renamed (PIL1271), the catalog names their tests
+        "AutopilotMergeRefusalTests.",       // ditto
         "<c>autopilot</c>",                  // doc comment on the stored word
     ];
 
@@ -37,7 +40,8 @@ public sealed partial class NormalBehaviourWordTests
         foreach (var file in DocFiles(root))
             Scan(root, file, File.ReadAllText(file), hits);
 
-        foreach (var file in CodeFiles(root))
+        var catalog = Path.Combine(root, "src", "Pilot.Node.Tests", "CardKindCatalog.cs");
+        foreach (var file in CodeFiles(root).Append(catalog))
         {
             var name = Path.GetFileName(file);
             var text = File.ReadAllText(file);

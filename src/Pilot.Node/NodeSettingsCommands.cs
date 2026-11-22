@@ -36,10 +36,10 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         return new SetupChecks { Checks = checks, CheckedAt = at };
     }
 
-    /// <summary><c>set node &lt;key&gt; [value…]</c>: saves it, then restarts the node to run with it.</summary>
     /// <summary>The setting that was removed (PIL1271): a stored file holding it loads, ignoring it, and a set of it is refused with why.</summary>
     private const string GoneAutopilotKey = "autopilot";
 
+    /// <summary><c>set node &lt;key&gt; [value…]</c>: saves it, then restarts the node to run with it.</summary>
     public CommandResult Set(CommandRequest command)
     {
         var args = command.Args ?? [];

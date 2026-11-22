@@ -73,20 +73,20 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
         return new FailureDecision(FailureAnswer.Unknown);
     }
 
-    // A flight and head the autopilot has asked to merge: once, not every look.
+    // A flight and head the node has asked to merge: once, not every look.
     private readonly HashSet<string> _autoMerged = new(StringComparer.Ordinal);
 
-    // Each ask the autopilot made of a flight and head (by the same key as _autoMerged), when, and the next one a passing refusal
+    // Each ask the node made of a flight and head (by the same key as _autoMerged), when, and the next one a passing refusal
     // allows: the node's own backoff on its TimeProvider, so no job sleeps for it (PIL864).
     private readonly Dictionary<string, MergeTries> _mergeTries = new(StringComparer.Ordinal);
 
-    // The card of a refusal a person acts on outside the node (approve on GitHub), by the key above: once it is closed the autopilot asks again.
+    // The card of a refusal a person acts on outside the node (approve on GitHub), by the key above: once it is closed the node asks again.
     private readonly Dictionary<string, string> _refusedCards = new(StringComparer.Ordinal);
 
     private sealed record MergeTries(List<DateTimeOffset> At, DateTimeOffset NextTry);
 
     /// <summary>
-    /// The waits between the asks (the autopilot's, and an armed merge's) while GitHub's refusal passes by itself (a 5xx, a busy
+    /// The waits between the asks (the node's, and an armed merge's) while GitHub's refusal passes by itself (a 5xx, a busy
     /// queue, a branch to bring up to date): one after the first failure, one after the second. The third ask that still fails is a
     /// person's, so there is no wait after it: <see cref="PassingTriesBeforeRing"/>.
     /// </summary>
@@ -659,7 +659,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             if (checksFailed && byAutopilot && legs is not null)
             {
                 // The node armed this merge itself, so no person is waiting on a card for it: its failed checks send the leg
-                // round as they do with the autopilot off and the PR-ready card open, not onto a For-you card the leg never reads.
+                // round as they do and the PR-ready card open, not onto a For-you card the leg never reads.
                 state.PutFlight(flight with { MergeWhenGreen = null });
                 legs.DropMerge(flight.Code, $"#{number}'s checks failed on {CommitRefs.Short(head)}: sent back as changes");
                 if (_failed.Add($"{flight.Code} {head}") && await legs.ChecksFailedAsync(flight.Code, head, cancellationToken) is { } why)
@@ -695,7 +695,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                 if (refusal is { Class: MergeRefusalClass.Passing })
                 {
                     // A refusal that passes by itself (GitHub's 5xx, a busy queue, a branch the node brings up to date): asked again on the
-                    // same backoff as the autopilot's own merge, so a stuck merge is not unnoticed. The third failure lets the merge go and rings.
+                    // same backoff as the node's own merge, so a stuck merge is not unnoticed. The third failure lets the merge go and rings.
                     var tries = _mergeTries.TryGetValue(armedKey, out var armedBefore) ? new List<DateTimeOffset>(armedBefore.At) : new List<DateTimeOffset>();
                     tries.Add(time.GetUtcNow());
                     if (tries.Count < PassingTriesBeforeRing)
@@ -912,7 +912,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
 
     /// <summary>
     /// A flight whose review passed at its PR's head, every leg done, with no merge card open and none closed for that head, is
-    /// given its PR-ready card (holding-aware): autopilot merges only from one, and a node that restarted between the stored
+    /// given its PR-ready card (holding-aware): the node merges only from one, and a node that restarted between the stored
     /// verdict and the card left PIL682 flying for six hours (2026-11-03).
     /// </summary>
     private async Task RestorePassedWithoutCardAsync(CancellationToken cancellationToken)
@@ -1091,7 +1091,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                 }
                 var outcome = merged ? $"merged on GitHub as #{number}" : $"#{number} closed on GitHub without a merge";
                 state.CloseCard(card.Id, outcome, "github");
-                // The autopilot's refused merge of this PR has nothing left to offer.
+                // The the node's refused merge of this PR has nothing left to offer.
                 state.CloseCardsAbout(card.Subject, outcome, NodeMergeRefused);
                 if (merged && flights is not null)
                 {
@@ -1231,14 +1231,14 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
         }
     }
 
-    /// <summary>The card a merge the autopilot asked for and GitHub or the node refused: why, with Merge to try again.</summary>
+    /// <summary>The card a merge the node asked for and GitHub or the node refused: why, with Merge to try again.</summary>
     public const string NodeMergeRefused = "autopilot-merge-refused";
 
     /// <summary>
-    /// With the autopilot on, a flight whose review passed is merged by the node itself, from its PR-ready card, once its checks
+    /// A flight whose review passed is merged by the node itself, from its PR-ready card, once its checks
     /// are not failing: green, or still running, when the merge waits for them (<see cref="FlightRow.MergeWhenGreen"/>). The
-    /// autopilot was read as "an assistant's merge runs at once", and the watchtower may never merge, so the night's passed
-    /// PRs sat for seven hours with the autopilot on until the person pressed Merge (SE1, 2026-10-26). A refusal is acted on by its
+    /// it was read as "an assistant's merge runs at once", and the watchtower may never merge, so the night's passed
+    /// PRs sat for seven hours until the person pressed Merge (SE1, 2026-10-26). A refusal is acted on by its
     /// class (PIL864): the node's own wait is no card and the head is asked again once it ends; a refusal that passes by itself is
     /// asked again on <see cref="PassingBackoff"/> and rings only at the <see cref="PassingTriesBeforeRing"/>th failure; only a
     /// person's refusal rings at once, naming what failed, what was tried and the one thing to do.
@@ -1326,7 +1326,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
         if (result.Ok && result.Way == MergeWays.InProgress)
         {
             // Another merge of this flight is running: the card stays open, and that first merge's own result updates it. This
-            // head is already in _autoMerged, so the autopilot does not ask again for it.
+            // head is already in _autoMerged, so the node does not ask again for it.
             return;
         }
         if (result.Ok)
@@ -1345,7 +1345,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
     /// what failed (GitHub's or the node's words, whole), what the node tried and when, and the one thing to do. Its one choice names
     /// that action, never a merge again while the cause holds. With no action to take (a closed PR, GitHub's own text) it is a fact to
     /// read, filed For you with no choice when it is a closed PR, and a ring when the node simply could not classify it (an unknown
-    /// failure is not quieter than a known one). <paramref name="how"/> says how the merge was asked: <c>on autopilot</c>, or <c>armed</c>.
+    /// failure is not quieter than a known one). <paramref name="how"/> says how the merge was asked: <c>by the node</c>, or <c>armed</c>.
     /// </summary>
     private void RaiseMergeRefused(FlightRow flight, CardChoice merge, CommandResult result, MergeRefusal refusal, List<DateTimeOffset> asked, string key, string how)
     {
@@ -1393,7 +1393,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
         var raised = state.RaiseCard(refusal.Action == MergeAction.PrClosed ? CardBin.ForYou : CardBin.Ring, NodeMergeRefused, subject, title, detail, choices, link: flight.PullRequestUrl, summary: summary);
         if (choices.Count == 1 && verb == Verbs.Dismiss)
         {
-            // Done on GitHub or on another card: pressing says so and closes this one, and the autopilot asks again at the next look.
+            // Done on GitHub or on another card: pressing says so and closes this one, and the node asks again at the next look.
             state.UpdateChoices(raised.Id, [choices[0] with { Target = Verbs.CardTarget(raised.Id) }]);
         }
         if (doneElsewhere)

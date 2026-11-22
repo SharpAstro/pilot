@@ -13,7 +13,7 @@ public sealed partial class LegCommander
 
     /// <summary>
     /// The watchtower's word, or the person's, that a flight in a holding pattern is cleared to land: the hold ends, the notes card
-    /// closes and a Handled card says so. Autopilot then merges it at its next look as for any passed review.
+    /// closes and a Handled card says so. The node then merges it at its next look as for any passed review.
     /// </summary>
     private void ClearHolding(CommandRequest command)
     {

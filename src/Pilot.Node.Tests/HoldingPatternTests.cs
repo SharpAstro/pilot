@@ -84,7 +84,7 @@ public sealed class HoldingPatternTests : ReviewTestsBase
 
     [Fact]
     [Trait("Category", "Slow")]
-    public async Task ClearByTheWatchtowerLetsAutopilotMergeIt()
+    public async Task ClearByTheWatchtowerLetsTheNodeMergeIt()
     {
         AutopilotOn();
         _github.Checks = ChoiceStatus.Passing;

@@ -235,7 +235,7 @@ public sealed class AutopilotTests
     }
 
     [Fact]
-    public async Task WithAutopilotOnTheSameMergeGoesThroughRecordedWithTheSessionAndMessageAndAHandledCardSaysIt()
+    public async Task TheSameMergeGoesThroughRecordedWithTheSessionAndMessageAndAHandledCardSaysIt()
     {
         await using var node = await NodeHarness.StartAsync(Ct);
         Ready(node);

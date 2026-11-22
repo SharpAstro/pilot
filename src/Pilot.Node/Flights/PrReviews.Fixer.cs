@@ -301,7 +301,7 @@ public sealed partial class PrReviews
         {
             return await ActOnAnswerAsync(pr, review, given!, command.Who, command.PersonsWord, command.Autopilot, words, cancellationToken, command);
         }
-        // The watchtower's fixer by the node keeps the guards the node's own fixer keeps (the review of #470): no fourth round, no
+        // The watchtower's fixer keeps the guards the node's own fixer keeps (the review of #470): no fourth round, no
         // design question, and no push to another author's PR until the person has chosen Fix it. Those stay the person's.
         if (command.Autopilot && await WhyNoFixerAsync(pr, review, cancellationToken) is { } why)
         {

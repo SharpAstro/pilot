@@ -358,7 +358,7 @@ public sealed record FlightRow
     public FlightMoveUnknown? MoveUnknown { get; init; }
 
     /// <summary>
-    /// Set while the flight circles in a holding pattern: its review passed with not blocking notes, and the watchtower is making
+    /// Set while the flight circles in a holding pattern: its review passed with not blocking notes, and the review-notes leg is making
     /// the small fixes. The node's merge and the PR-ready card's Merge are held until the watchtower (or the person) clears it
     /// (<c>flight clear</c>) or pushes (<c>flight pr</c>). Null otherwise. Optional, so the wire version does not move.
     /// </summary>
@@ -484,10 +484,8 @@ public sealed record FlightHolding
     public string? By { get; init; }
 
     /// <summary>
-    /// When the watchtower took the hold: it committed in the plane after the review's head, or said <c>flight hold</c>. Null while
-    /// nobody has: the node releases such a hold after a short grace (or at once with no live watchtower) and the flight merges at
-    /// the reviewed head, its notes left on a For-you card. Only a taken hold keeps the merge held, until it is cleared or rings
-    /// after the holding bound. Optional, so the wire version does not move.
+    /// Never set any more (PIL1271: the node plans the review-notes leg and no longer waits for a watchtower to take the hold). Kept
+    /// so a stored row that has it still loads. Optional, so the wire version does not move.
     /// </summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public DateTimeOffset? TakenAt { get; init; }

@@ -214,7 +214,7 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
     {
         // Who sends it decides what it may do (Standing): the lookout and a flight's session are fenced from what is the
         // person's alone (a merge or a landing by any route, a card's included; the node's settings and setup; a review posted to
-        // GitHub in the person's name; the answer to an overlap), a flight's session from other flights too, and the autopilot
+        // GitHub in the person's name; the answer to an overlap), a flight's session from other flights too, and the node
         // setting is the person's to change.
         // The watchtower is the lookout on its own, and an assistant while it acts on a message the person sent it in its chat.
         var watchtower = Get<Watchtower>();
@@ -231,13 +231,13 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
             wordRecord = (named, ChosenOf(command, named), words);
         }
         var standing = command.PersonsWord is not null ? Standing.Person : Standing.Of(command, state, watchtower.Name, watchtower.ActingForPerson);
-        // On autopilot the watchtower sees a flight's work in as the person's assistant would, whoever woke it: the person on
+        // The watchtower sees a flight's work in as the person's assistant would, whoever woke it: the person on
         // Remote Control talks to it past the node, so its turn never read as theirs and it was refused the merge they asked for
         // (#344, DE1, 2026-10-28). Its own merge and landing are then run and recorded; an ask's Allow stays the person's.
         if (standing.Kind == StandingKind.Lookout && Standing.LookoutOnAutopilot.Contains(command.Verb))
         {
             standing = new Standing(StandingKind.Assistant);
-            // Its fixer is marked as the autopilot's, so the node's own guards on fixers hold for it (PrReviews.FixAsync).
+            // Its fixer is marked as the node's, so the node's own guards on fixers hold for it (PrReviews.FixAsync).
             if (command.Verb == Verbs.FixPr)
             {
                 command = command with { Autopilot = true };
@@ -274,12 +274,12 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
         {
             watchtower.NoteMessage(fromPerson: standing.Kind == StandingKind.Person && command.Who != LegWatch.Who, string.Join(' ', command.Args));
         }
-        // An assistant's your-only command follows the autopilot rule: off, it waits on the person's card (Allow runs it as
+        // An assistant's your-only command follows the node rule: off, it waits on the person's card (Allow runs it as
         // them, Deny closes it); on, it runs at once, recorded with its session and message, and a Handled card says so.
         var onAutopilot = standing.Kind == StandingKind.Assistant && Standing.YourOnly(command, state);
         if (onAutopilot)
         {
-            // A repo set to no-auto-merge never has its flight merged by an assistant on its own, autopilot or not: the merge waits on the person's card.
+            // A repo set to no-auto-merge never has its flight merged by an assistant on its own, or not: the merge waits on the person's card.
             if (command.Verb == Verbs.Merge && NoAutoMerge(command))
             {
                 return Get<Autopilot>().Ask(command);
@@ -287,7 +287,7 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
             command = command with { Autopilot = true };
         }
         // A choice a card's answer runs is recorded by that answer, once; a decision verb given straight is recorded here. An assistant's
-        // your-only command run on autopilot is recorded by Autopilot.Handled.
+        // your-only command run is recorded by the node.Handled.
         var fromCard = _fromCard.Value;
         _fromCard.Value = false;
         mark.HandlerStarted = Clock.GetUtcNow();
@@ -306,7 +306,7 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
         if (onAutopilot && result.Ok)
         {
             // A command queued behind a lock is no done command yet: its Handled line follows once it has run.
-            // A card's answer, an Answer or a Dismiss is recorded as the card's own row, which reads (autopilot).
+            // A card's answer, an Answer or a Dismiss is recorded as the card's own row, which reads (the node).
             var record = !fromCard && command.Verb is not (Verbs.Answer or Verbs.Dismiss);
             if (result.Later is { } later)
             {
@@ -327,7 +327,7 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
     // Set around the command a card's answer runs, so that command's own run does not record a second decision (it flows with the call).
     private static readonly AsyncLocal<bool> _fromCard = new();
 
-    // As what a command's sender chose: the autopilot (its flag, or the node's own path with autopilot on), the watchtower on its own,
+    // As what a command's sender chose: the node (its flag, or the node's own path with the node on), the watchtower on its own,
     // the person (their word in the chat, or a client of theirs), else the node.
     private string ByKindOf(CommandRequest command, Standing standing)
     {

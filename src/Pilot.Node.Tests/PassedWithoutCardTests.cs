@@ -43,7 +43,7 @@ public sealed class PassedWithoutCardTests : ReviewTestsBase
 
     [Fact]
     [Trait("Category", "Slow")]
-    public async Task AFlightPassedWithNoCardGetsOneAndAutopilotMergesIt()
+    public async Task AFlightPassedWithNoCardGetsOneAndTheNodeMergesIt()
     {
         AutopilotOn();
         _github.Checks = ChoiceStatus.Passing;

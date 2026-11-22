@@ -117,7 +117,7 @@ public static partial class Briefs
         text.AppendLine("Sort every finding under one of two headings. `## Blocking`: what must change before the merge (a Done-when that does");
         text.AppendLine("not hold, a bug, a regression, a test that proves nothing, something the issue asked for that is missing). `## Not blocking`:");
         text.AppendLine("nits and suggestions (naming, style, a comment, a small tidy-up), which a review-notes round makes in this PR. Findings that are all not blocking are a");
-        text.AppendLine("pass with notes: the flight holds its merge while the watchtower makes the small ones in the plane; no leg goes round.");
+        text.AppendLine("pass with notes: the node plans a review-notes leg that makes the small ones in this PR.");
         if (again is null)
         {
             text.AppendLine();

@@ -11,7 +11,7 @@ namespace Pilot.Node.Flights;
 /// autopilot decision, and a Handled card names the card and the rule that let the node press it. With the autopilot off nothing
 /// here runs. A card the node tried and was refused is not tried again (the person's card stays open).
 /// </summary>
-public sealed class NodePress(NodeState state, Func<bool> autopilotOn, Func<CommandRequest, CancellationToken, Task<CommandResult>> run, TimeProvider time) : BackgroundService
+public sealed class NodePress(NodeState state, Func<CommandRequest, CancellationToken, Task<CommandResult>> run, TimeProvider time) : BackgroundService
 {
     /// <summary>The name the press is made under.</summary>
     public const string Who = "node";
@@ -33,7 +33,7 @@ public sealed class NodePress(NodeState state, Func<bool> autopilotOn, Func<Comm
 
     private readonly HashSet<string> _tried = new(StringComparer.Ordinal);
 
-    /// <summary>Whether a card of this kind may be pressed by the node by the node, so the ring judge and the watchtower leave it to the node.</summary>
+    /// <summary>Whether a card of this kind may be pressed by the node, so the ring judge and the watchtower leave it to the node.</summary>
     public static bool Owns(string kind) => kind is StraySweep.Kind or CardKinds.Overlap or PrReviews.FixEndedKind;
 
     /// <summary>
@@ -90,10 +90,6 @@ public sealed class NodePress(NodeState state, Func<bool> autopilotOn, Func<Comm
             {
                 await Error.WriteLineAsync($"node press: closing stale refused cards failed, trying again next time: {ex.Message}");
             }
-        }
-        if (!autopilotOn())
-        {
-            return 0;
         }
         var pressed = 0;
         var open = state.Cards(openOnly: true).Where(c => Owns(c.Kind)).ToList();

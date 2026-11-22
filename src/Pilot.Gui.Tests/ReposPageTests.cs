@@ -197,7 +197,7 @@ public sealed class ReposPageTests
 
         // Sync, All repos and the others each stood their own height beside the ? (SE1, 2026-10-25).
         var help = Of("about:toggle");
-        foreach (var action in new[] { "repos:sync", "repos:all", "about:restart" })
+        foreach (var action in new[] { "repos:sync", "repos:all", "about:toggle" })
         {
             (Of(action).Y, Of(action).Height).ShouldBe((help.Y, help.Height), action);
         }

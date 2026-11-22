@@ -33,7 +33,7 @@ public sealed class NodeFixRoundTests : ReviewTestsBase
         Run(Verbs.Review, Verbs.FlightTarget(code), Reviewer(code), "changes", report);
 
     [Fact]
-    public async Task OnAutopilotAChangesVerdictSendsTheLastLegRoundAsTheNodeWithTheFindingsAsItsBrief()
+    public async Task AChangesVerdictSendsTheLastLegRoundAsTheNodeWithTheFindingsAsItsBrief()
     {
         Autopilot(true);
         var flight = await Reviewing("1");

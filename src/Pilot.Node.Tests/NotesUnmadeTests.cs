@@ -166,7 +166,7 @@ public sealed class NotesUnmadeTests : ReviewTestsBase
 
     [Fact]
     [Trait("Category", "Slow")]
-    public async Task AnUntakenHoldWithAutopilotOffRingsTheOwnerOnceAndKeepsTheHold()
+    public async Task ANodeThatDoesNotAdvanceRingsTheOwnerAtOnceAndKeepsTheHold()
     {
         _github.Checks = ChoiceStatus.Passing;
         var flight = await Reviewed("8", Notes);

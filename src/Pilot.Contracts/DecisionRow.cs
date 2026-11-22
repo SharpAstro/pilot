@@ -21,7 +21,7 @@ public sealed record DecisionRow
     /// <summary>The one taken.</summary>
     public required string Choice { get; init; }
 
-    /// <summary>Who chose: the node (by its rules), the watchtower, the person or the node.</summary>
+    /// <summary>Who chose: the node (by its rules), the watchtower or the person.</summary>
     public required string By { get; init; }
 
     /// <summary>As what: one of <see cref="DecisionByKinds"/>.</summary>

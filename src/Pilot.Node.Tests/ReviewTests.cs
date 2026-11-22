@@ -493,7 +493,7 @@ public sealed class ReviewTests1 : ReviewTestsBase
 
     [Fact]
     [Trait("Category", "Slow")]
-    public async Task OnAutopilotFailedChecksRunAgainOnceAHeadBeforeTheLegIsSentRound()
+    public async Task FailedChecksRunAgainOnceAHeadBeforeTheLegIsSentRound()
     {
         // A test that fails by chance is not a go-around: the node runs the failed runs again first (2026-10-27).
         var (flight, pr) = await Passed("33");
