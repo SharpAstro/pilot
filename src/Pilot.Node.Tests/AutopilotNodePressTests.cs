@@ -19,14 +19,13 @@ public sealed class AutopilotNodePressTests
 
     private readonly NodeState _state;
     private readonly List<CommandRequest> _ran = [];
-    private bool _autopilot = true;
     private bool _mayEndStray = true;
     private string? _whyNoFixer;
     private bool _refuse;
 
     public AutopilotNodePressTests() => _state = new NodeState(new InMemoryJournal(), new ManualTime(Began));
 
-    private NodePress Press() => new(_state, () => _autopilot, (command, _) =>
+    private NodePress Press() => new(_state, (command, _) =>
     {
         _ran.Add(command);
         return Task.FromResult(_refuse ? new CommandResult { Ok = false, Error = "refused", Verb = command.Verb, Target = command.Target, Who = "node", Seq = 1 } : new CommandResult { Ok = true, Verb = command.Verb, Target = command.Target, Who = "node", Seq = 1 });
@@ -140,18 +139,6 @@ public sealed class AutopilotNodePressTests
     }
 
     [Fact]
-    public async Task WithTheAutopilotOffNothingIsPressed()
-    {
-        _autopilot = false;
-        StrayCard();
-        FixCard();
-        FoldCard();
-        (await PressedAsync()).ShouldBe(0);
-        _ran.ShouldBeEmpty();
-        _state.Cards().ShouldNotContain(c => c.Kind == CardKinds.NodeRan);
-    }
-
-    [Fact]
     public async Task AnAnswerTheCardRefusedIsNotRepeatedAndLeavesNoHandledCard()
     {
         _refuse = true;
@@ -181,7 +168,7 @@ public sealed class AutopilotNodePressTests
         NodePress.Owns(PrReviews.FixEndedKind).ShouldBeTrue();
         NodePress.Owns(PrReviews.FixOfferKind).ShouldBeFalse();
         var press = Press();
-        _state.NodePresses = (kind, subject, detail, choices) => _autopilot && press.WouldPress(kind, subject, detail, choices);
+        _state.NodePresses = (kind, subject, detail, choices) => press.WouldPress(kind, subject, detail, choices);
         var card = FoldCard();
         card.Bin.ShouldBe(CardBin.Ring);
     }
