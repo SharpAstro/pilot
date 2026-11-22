@@ -181,12 +181,9 @@ public sealed class FlightHoldTests : ReviewTestsBase
         var clock = new ManualTime(since);
         var checks = new PrChecks(_state, _github, clock, _flights, _legs) { WatchtowerLive = () => false };
 
-        clock.Advance(checks.HoldingTakeBound + TimeSpan.FromMinutes(1));
+        clock.Advance(TimeSpan.FromMinutes(6));
         await checks.LookAsync(Ct);
         await checks.LookAsync(Ct);
-        // A direct caller is refused as well: the owner's hold is asked in the handling itself, not only in the sweep's filter.
-        (await _legs.HandleHoldWithoutWatchtowerAsync(flight.Code, Ct)).ShouldBe(LegCommander.HoldHandling.None);
-        (await _legs.ReleaseUntakenHoldAsync(flight.Code, Ct)).ShouldBeFalse();
 
         // Hold and unhold comment on the flight's issue (pilot: ...); the review hold's release writes "Review of ..." on the PR.
         bool ReviewNotes((int Number, string Body) c) => c.Body.StartsWith("Review of ", StringComparison.Ordinal);

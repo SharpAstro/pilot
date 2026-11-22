@@ -124,7 +124,6 @@ internal static class CardKindCatalog
         new("human-verification", "ForYou", [HumanVerification], "HumanVerificationFilingTests.AFlaggedPassFilesEachItemInTheMilestoneAndRaisesOneCard"),
         new("human-verification-refused", "Handled", [HumanVerification], "HumanVerificationFilingTests.ARefusedGhCallKeepsTheVerdictAndRaisesAHandledCard"),
         new("holding-cleared", "Handled", [LegReviewHold], "HoldingPatternTests.ClearByTheWatchtowerLetsAutopilotMergeIt"),
-        new("hold-released", "Handled", [LegHoldRelease], "HoldingPatternTests.AHoldWhoseWatchtowerEndedIsReleasedWithItsNotesOnThePrAndMergesOnAutopilot"),
         new("pr-ready-restored", "Handled", [LegReview], "PassedWithoutCardTests.AFlightPassedWithNoCardGetsOneAndAutopilotMergesIt"),
         new("holding-timeout", "Ring", [Checks], "HoldingPatternTests.PastTheBoundTheTimeoutCardRingsAndMergeAsItIsMerges", "the flight's holding pattern on its row is past its timeout and its PR is still open on GitHub", [nameof(Verbs.Merge), nameof(Verbs.Land)]),
         new("owner-decision", "ForYou", ["Flights/LegCommander.FollowUp.cs", "Flights/PrReviews.FollowUp.cs"], "DeferredPointTests.AnOwnerDecisionPointRaisesACardWithTheQuestionAndCreatesNoIssue"),
