@@ -188,6 +188,15 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
     /// <summary>The kind of the Ring card a stop that was not confirmed raises.</summary>
     public const string StopUnconfirmedKind = "stop-unconfirmed";
 
+    /// <summary>
+    /// Raises the one Ring card per session for a stop that was not confirmed: which session, which process, what was tried, and an
+    /// End-it-again choice. Shared by a stop that failed here and by a landing whose own stop of a session failed (PIL1270:R1.9).
+    /// </summary>
+    public static CardRow RaiseStopUnconfirmed(NodeState state, SessionRow row, string message, string why) =>
+        state.RaiseCard(CardBin.Ring, StopUnconfirmedKind, Verbs.SessionTarget(row.Id), $"{row.Name} was told to stop and did not",
+            $"{message} Tried: claude stop on its job, then ending its process by pid, then waiting for it to go.",
+            [new CardChoice { Label = "End it again", Verb = Verbs.EndSession, Target = Verbs.SessionTarget(row.Id), Args = [why] }]);
+
     /// <summary>Cancels the queued and running jobs a session owns, by its row ids and who asked; set by the node. Null: none are cancelled.</summary>
     public Func<IReadOnlyCollection<string>, string, int>? CancelJobs { get; init; }
 
@@ -243,10 +252,7 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
         {
             var pid = tracker.PidOf(row.Id);
             var message = $"{row.Name} ({row.Id}{(pid is { } p ? $", process {p}" : "")}) could not be stopped: {ex.Message}. Not confirmed: the session may still run.";
-            // One card per session: the person sees which session, which process, what was tried, and ends it again from the card.
-            state.RaiseCard(CardBin.Ring, StopUnconfirmedKind, Verbs.SessionTarget(row.Id), $"{row.Name} was told to stop and did not",
-                $"{message} Tried: claude stop on its job, then ending its process by pid, then waiting for it to go.",
-                [new CardChoice { Label = "End it again", Verb = Verbs.EndSession, Target = Verbs.SessionTarget(row.Id), Args = [why ?? "stop again"] }]);
+            RaiseStopUnconfirmed(state, row, message, why ?? "stop again");
             return state.Complete(command, message);
         }
         string[] ids = [row.SessionId, row.Id, .. row.EarlierSessionIds ?? []];
