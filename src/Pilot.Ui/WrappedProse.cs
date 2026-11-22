@@ -76,7 +76,7 @@ internal static class WrappedProse
 
     /// <summary>
     /// A word as the leaves that draw it, each ending in its space as Markdown's paragraphs are, except that a long one is
-    /// broken after its separators (<c>, + / \ . : _ -</c>), the leaves of a piece running on without a space, so a long check
+    /// broken after its separators (<c>, + / \ . : _ - | ~</c>), the leaves of a piece running on without a space, so a long check
     /// name or path wraps instead of running past the box (ui-changes.md section 3).
     /// </summary>
     private static IEnumerable<string> Pieces(string word)
@@ -94,7 +94,7 @@ internal static class WrappedProse
     }
 
     /// <summary>
-    /// <paramref name="word"/> cut after each of its separators (<c>, + / \ . : _ -</c>), a separator that ends it left with it;
+    /// <paramref name="word"/> cut after each of its separators (<c>, + / \ . : _ - | ~</c>; the last two are a test filter's), a separator that ends it left with it;
     /// the pieces joined are the word, so the copy of a run of them has no space the text did not. A piece still longer than
     /// <see cref="LongWord"/> (a type's name, a long identifier) is cut again at its humps (<c>fooBar</c> into <c>foo</c> and
     /// <c>Bar</c>), and one with none every <see cref="LongWord"/> characters: a piece wider than the page is a line cut by the clip.
@@ -104,7 +104,7 @@ internal static class WrappedProse
         var start = 0;
         for (var i = 0; i + 1 < word.Length; i++)
         {
-            if (word[i] is ',' or '+' or '/' or '\\' or '.' or ':' or '_' or '-')
+            if (word[i] is ',' or '+' or '/' or '\\' or '.' or ':' or '_' or '-' or '|' or '~')
             {
                 foreach (var piece in Shorter(word[start..(i + 1)]))
                 {
