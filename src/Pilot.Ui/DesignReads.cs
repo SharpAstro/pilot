@@ -6,8 +6,15 @@ namespace Pilot.Ui;
 /// What the Designs page reads from the node: the list through the <c>designs</c> command and an open design through <c>design-show</c>, whose paths the
 /// page's files are read from. A read runs on the pool, is kept for <see cref="Every"/> and asked for again once older, as <see cref="SpendReads"/> is.
 /// </summary>
-internal sealed class DesignReads(NodeClient client, string who, Action redraw)
+internal sealed class DesignReads(NodeClient? client, string who, Action redraw)
 {
+    /// <summary>
+    /// How a command reaches the node: the client's send. A test gives its own (#1170 R1.3), to see what the page's buttons send without a
+    /// node, as <see cref="NodeClient"/> is a socket.
+    /// </summary>
+    internal Func<CommandRequest, CancellationToken, Task<ResponseEnvelope<CommandResult>>> Send { get; init; } =
+        (command, ct) => (client ?? throw new InvalidOperationException("no node client and no Send given")).SendAsync(command, ct);
+
     public static readonly TimeSpan Every = TimeSpan.FromSeconds(15);
 
     private DesignRow[]? _rows;
@@ -30,14 +37,14 @@ internal sealed class DesignReads(NodeClient client, string who, Action redraw)
     /// <summary>The designs the node lists, read once; null when it did not answer with a list. A capture reads this as the window's pool read does.</summary>
     public async Task<DesignRow[]?> ListAsync(CancellationToken cancellationToken)
     {
-        var answer = await client.SendAsync(new CommandRequest { Verb = Verbs.Designs, Target = Verbs.NodeTarget, Who = who }, cancellationToken).ConfigureAwait(false);
+        var answer = await Send(new CommandRequest { Verb = Verbs.Designs, Target = Verbs.NodeTarget, Who = who }, cancellationToken).ConfigureAwait(false);
         return answer is { Success: true, Response: { Ok: true, Designs: { } list } } ? list.Rows : null;
     }
 
     /// <summary>Design <paramref name="id"/>'s page at <paramref name="version"/> (null: the current one), read once; null when the node did not answer with the design.</summary>
     public async Task<DesignPage?> PageAsync(string id, int? version, CancellationToken cancellationToken)
     {
-        var answer = await client.SendAsync(new CommandRequest { Verb = Verbs.DesignShow, Target = Verbs.DesignTarget(id), Who = who }, cancellationToken).ConfigureAwait(false);
+        var answer = await Send(new CommandRequest { Verb = Verbs.DesignShow, Target = Verbs.DesignTarget(id), Who = who }, cancellationToken).ConfigureAwait(false);
         return answer is { Success: true, Response: { Ok: true, Design: { } design } } ? DesignPages.Load(design, version) : null;
     }
 
@@ -78,7 +85,7 @@ internal sealed class DesignReads(NodeClient client, string who, Action redraw)
     {
         try
         {
-            var answer = await client.SendAsync(new CommandRequest { Verb = Verbs.DesignNew, Target = Verbs.NodeTarget, Args = ["", "", brief], Who = who }, cancellationToken).ConfigureAwait(false);
+            var answer = await Send(new CommandRequest { Verb = Verbs.DesignNew, Target = Verbs.NodeTarget, Args = ["", "", brief], Who = who }, cancellationToken).ConfigureAwait(false);
             if (answer.Response is { Ok: true, Made: { Length: > 0 } id })
             {
                 AskList(force: true);
@@ -100,7 +107,7 @@ internal sealed class DesignReads(NodeClient client, string who, Action redraw)
     {
         try
         {
-            var answer = await client.SendAsync(new CommandRequest { Verb = Verbs.DesignFromIdea, Target = IdeaIds.Target(idea.Repo, idea.Number), Who = who }, cancellationToken).ConfigureAwait(false);
+            var answer = await Send(new CommandRequest { Verb = Verbs.DesignFromIdea, Target = IdeaIds.Target(idea.Repo, idea.Number), Who = who }, cancellationToken).ConfigureAwait(false);
             if (answer.Response is { Ok: true, Made: { Length: > 0 } id })
             {
                 AskList(force: true);
@@ -123,7 +130,7 @@ internal sealed class DesignReads(NodeClient client, string who, Action redraw)
         try
         {
             var args = new[] { version.ToString(System.Globalization.CultureInfo.InvariantCulture), repo ?? "", milestone ?? "" };
-            var answer = await client.SendAsync(new CommandRequest { Verb = Verbs.DesignBuild, Target = Verbs.DesignTarget(id), Args = args, Who = who }, cancellationToken).ConfigureAwait(false);
+            var answer = await Send(new CommandRequest { Verb = Verbs.DesignBuild, Target = Verbs.DesignTarget(id), Args = args, Who = who }, cancellationToken).ConfigureAwait(false);
             if (answer.Response is { Ok: true, Made: { Length: > 0 } code })
             {
                 AskDesign(id, version, force: true);
@@ -148,7 +155,7 @@ internal sealed class DesignReads(NodeClient client, string who, Action redraw)
     /// </summary>
     public async Task<ChatPage> ChatAsync(string id, int after, CancellationToken cancellationToken)
     {
-        var answer = await client.SendAsync(new CommandRequest
+        var answer = await Send(new CommandRequest
         {
             Verb = Verbs.DesignChat,
             Target = Verbs.DesignTarget(id),
@@ -243,7 +250,7 @@ internal sealed class DesignReads(NodeClient client, string who, Action redraw)
         try
         {
             string[] args = picture is { } p ? [text, p.Name, Convert.ToBase64String(p.Bytes)] : [text];
-            var answer = await client.SendAsync(new CommandRequest { Verb = Verbs.DesignSay, Target = Verbs.DesignTarget(id), Args = args, Who = who }, cancellationToken).ConfigureAwait(false);
+            var answer = await Send(new CommandRequest { Verb = Verbs.DesignSay, Target = Verbs.DesignTarget(id), Args = args, Who = who }, cancellationToken).ConfigureAwait(false);
             return answer.Response is { Ok: true } ? null : answer.Response?.Error ?? answer.Error ?? "the node did not answer";
         }
         catch (Exception e) when (e is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
@@ -257,7 +264,7 @@ internal sealed class DesignReads(NodeClient client, string who, Action redraw)
     {
         try
         {
-            var answer = await client.SendAsync(new CommandRequest { Verb = verb, Target = Verbs.DesignTarget(id), Args = args, Who = who }, cancellationToken).ConfigureAwait(false);
+            var answer = await Send(new CommandRequest { Verb = verb, Target = Verbs.DesignTarget(id), Args = args, Who = who }, cancellationToken).ConfigureAwait(false);
             AskDesign(id, null, force: true);
             return answer.Response is { Ok: true } ? null : answer.Response?.Error ?? answer.Error ?? "the node did not answer";
         }

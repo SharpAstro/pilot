@@ -840,16 +840,17 @@ public sealed partial class IdeaCommander(NodeState state, Planes planes, RepoCa
         var (name, _, issue) = await IdeaOfAsync(command, cancellationToken);
         var id = IdeaIds.Id(issue.Number);
         var key = NodeState.IdeaKey(name, id);
-        // The question that sent Start its design names the linked designs with no published version: the oldest of those is answered, else the design the idea is satisfied by.
-        if ((store.ForIdea(key, state.IdeaMoves()).FirstOrDefault(d => d.Current is null) ?? store.FindByIdea(key, state.IdeaMoves())) is { } existing)
-        {
-            return state.Complete(command, null, made: existing.Id);
-        }
+        // The question that sent Start its design names the linked designs with no published version: the oldest of those is answered, else the
+        // design the idea is satisfied by, else a new one; the look and the make are one step of the store's.
         var brief = issue.Body.Length > 0 ? $"{issue.Title}\n\n{issue.Body}" : issue.Title;
         DesignRow row;
         try
         {
-            row = store.New(name, issue.Title, brief, null, key);
+            (row, var made) = store.ForIdeaOrNew(key, state.IdeaMoves(), name, issue.Title, brief);
+            if (!made)
+            {
+                return state.Complete(command, null, made: row.Id);
+            }
         }
         catch (DesignException ex)
         {

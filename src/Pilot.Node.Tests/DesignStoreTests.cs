@@ -221,4 +221,21 @@ public sealed class DesignStoreTests : IDisposable
 
         store.List().Select(r => r.Id).Take(3).ShouldBe(["DSN-11", "DSN-10", "DSN-9"]);
     }
+
+    /// <summary>
+    /// Start its design looks for the idea's design and makes one in one step of the store's (#1170 R1.5): starts at once make one design, and a
+    /// later start answers it.
+    /// </summary>
+    [Fact]
+    public void StartsOfOneIdeaAtOnceMakeOneDesign()
+    {
+        var store = Store();
+        var results = new System.Collections.Concurrent.ConcurrentBag<(DesignRow Row, bool Made)>();
+        Parallel.For(0, 8, _ => results.Add(store.ForIdeaOrNew("pilot I10", null, "pilot", "A night list", "the idea's words")));
+
+        results.Count(r => r.Made).ShouldBe(1);
+        results.Select(r => r.Row.Id).Distinct().ShouldHaveSingleItem();
+        store.ForIdeaOrNew("pilot I10", null, "pilot", "A night list", "the idea's words").Made.ShouldBeFalse();
+        store.List().ShouldHaveSingleItem().ForIdeas.ShouldBe(["pilot I10"]);
+    }
 }

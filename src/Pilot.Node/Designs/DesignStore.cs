@@ -216,6 +216,24 @@ public sealed class DesignStore(string dataFolder, TimeProvider? time = null)
     public DesignRow? FindByIdea(string fromIdea, IEnumerable<IdeaMoveRow>? moves = null) =>
         ForIdea(fromIdea, moves) is { Length: > 0 } all ? all.FirstOrDefault(d => d.Current is not null) ?? all[0] : null;
 
+    /// <summary>
+    /// The design to answer Start its design on the idea <paramref name="idea"/> with: the oldest linked one with no published version, else the
+    /// one <see cref="FindByIdea"/> finds, else a new one made from <paramref name="brief"/>. The look and the make are one step under the store's
+    /// lock, so two starts never make two designs, whatever serialises the callers (#1170 R1.5).
+    /// </summary>
+    public (DesignRow Row, bool Made) ForIdeaOrNew(string idea, IEnumerable<IdeaMoveRow>? moves, string? repo, string? title, string brief)
+    {
+        var all = moves?.ToArray() ?? [];
+        lock (_lock)
+        {
+            if ((ForIdea(idea, all).FirstOrDefault(d => d.Current is null) ?? FindByIdea(idea, all)) is { } existing)
+            {
+                return (existing, false);
+            }
+            return (New(repo, title, brief, null, idea), true);
+        }
+    }
+
     /// <summary>Links design <paramref name="id"/> to the idea <paramref name="idea"/> (qualified); a link there already is no change. Returns the record and whether it changed.</summary>
     public (DesignRow Row, bool Changed) Link(string id, string idea)
     {
