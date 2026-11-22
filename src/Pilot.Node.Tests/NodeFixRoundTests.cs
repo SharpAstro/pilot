@@ -85,22 +85,6 @@ public sealed class NodeFixRoundTests : ReviewTestsBase
     }
 
     [Fact]
-    public async Task WithTheAutopilotOffTheRingCardIsRaisedAsBefore()
-    {
-        Autopilot(false);
-        var flight = await Reviewing("3");
-
-        (await Verdict(flight.Code)).Error.ShouldBeNull();
-
-        var card = FixCards().ShouldHaveSingleItem();
-        card.Bin.ShouldBe(CardBin.Ring);
-        card.Title.ShouldBe($"{flight.Code}'s review found things to fix");
-        _state.Cards().ShouldNotContain(c => c.Kind == LegCommander.NodeFixRoundKind);
-        Parser(flight.Code).State.ShouldBe(LegState.Done);
-        Parser(flight.Code).GoArounds.ShouldBe(0);
-    }
-
-    [Fact]
     public async Task AtTheGoAroundCapTheCardIsRaisedAndNoRoundIsSent()
     {
         Autopilot(true);
@@ -121,21 +105,27 @@ public sealed class NodeFixRoundTests : ReviewTestsBase
         var flight = await Reviewing("5");
         for (var round = 1; round <= 3; round++)
         {
-            Autopilot(round == 3);
-            if (round > 1)
+            (await Verdict(flight.Code, Answered(flight.Code) + $"## Blocking
+- finding of round {round}")).Error.ShouldBeNull();
+            if (round == 3)
             {
-                File.WriteAllText(Path.Combine(flight.Worktree, $"fix{round}.txt"), "more\n");
-                Git(flight.Worktree, "add", ".");
-                Git(flight.Worktree, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", $"fix{round}");
-                (await Run(Verbs.StartReview, Verbs.FlightTarget(flight.Code), "controller")).Error.ShouldBeNull();
-                await Started(_legs, flight.Code);
+                break;
             }
-            (await Verdict(flight.Code, Answered(flight.Code) + $"## Blocking\n- finding of round {round}")).Error.ShouldBeNull();
+            // The node sent the round: its worker fixes, finishes, and the finish starts the next review.
+            await Started(_legs, flight.Code);
+            var worker = Parser(flight.Code).Worker.ShouldNotBeNull();
+            File.WriteAllText(Path.Combine(flight.Worktree, $"fix{round}.txt"), "more
+");
+            Git(flight.Worktree, "add", ".");
+            Git(flight.Worktree, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", $"fix{round}");
+            (await Run(Verbs.Check, Verbs.LegTarget(flight.Code, "parser"), worker, "1")).Ok.ShouldBeTrue();
+            (await Run(Verbs.FinishLeg, Verbs.LegTarget(flight.Code, "parser"), worker, "done", "fixed it")).Error.ShouldBeNull();
+            await Started(_legs, flight.Code);
         }
 
         Open().ShouldContain(c => c.Kind == LegCommander.ReviewLoopKind && c.Bin == CardBin.Ring);
         _state.Cards().ShouldNotContain(c => c.Kind == LegCommander.NodeFixRoundKind);
-        Parser(flight.Code).GoArounds.ShouldBe(0);
+        Parser(flight.Code).GoArounds.ShouldBe(2);
     }
 
     [Fact]

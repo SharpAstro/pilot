@@ -48,19 +48,6 @@ public sealed class HandPrLandingTests : PrReviewTestsBase
         _github.Merged.Count.ShouldBe(1);
     }
 
-    [Fact]
-    public async Task WithAutopilotOffNothingIsMergedAndTheMergeCardStandsAsBefore()
-    {
-        await ReviewedWidget("approve", queue: false);
-
-        _github.Merged.ShouldBeEmpty();
-        Row("acme/widget", 7).QueuedAt.ShouldBeNull();
-        var card = _state.Cards().Single(c => c.Kind == PrReviews.MergeKind);
-        card.Choices.ShouldHaveSingleItem().Args.ShouldBe([_widgetHead]);
-        await _reviews.SweepAsync(Ct);
-        _github.Merged.ShouldBeEmpty();
-    }
-
     // Not part of PIL716's landing on autopilot: a repo with a merge queue has always had a reviewed, green hand PR queued by the node
     // (#279), autopilot or not, since the queue is what gates the merge. This pins that, so a change to it is a choice, not an accident.
     [Fact]

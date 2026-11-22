@@ -61,8 +61,6 @@ public sealed class StandingTests
 
         foreach (var (verb, target, args) in new (string, string, string[])[]
         {
-            (Verbs.Merge, "flight/TIA1", ["cafe0000"]),
-            (Verbs.Land, "flight/TIA1", []),
             (Verbs.Set, Verbs.NodeTarget, ["maintenance", "on"]),
             (Verbs.Setup, Verbs.NodeTarget, ["firewall"]),
             (Verbs.AnswerGrant, Verbs.NodeTarget, ["x", "allow"]),
@@ -85,7 +83,7 @@ public sealed class StandingTests
         node.State.Cards(openOnly: true).ShouldHaveSingleItem().Id.ShouldBe(ring.Id);
 
         // An agent-run command named for the lookout is the lookout's still: the flag does not lift it.
-        (await Error(node, Command(Verbs.Merge, "flight/TIA1", lookout, true, "cafe0000"))).ShouldNotBeNull().ShouldContain("not the watchtower's");
+        (await Error(node, Command(Verbs.Set, Verbs.NodeTarget, lookout, true, "maintenance", "on"))).ShouldNotBeNull().ShouldContain("not the watchtower's");
         // The person may dismiss the ring card.
         (await Error(node, Command(Verbs.Dismiss, Verbs.CardTarget(ring.Id), "gui"))).ShouldBeNull();
     }
@@ -109,10 +107,10 @@ public sealed class StandingTests
         (await Error(node, Command(Verbs.Answer, Verbs.CardTarget(ring.Id), worker, false, "Retry"))).ShouldNotBeNull().ShouldContain("answer is the controller's, not a flight session's");
         node.State.Cards().Single(c => c.Id == ring.Id).State.ShouldBe(CardState.Open);
 
-        // The lookout may answer a ring card with a choice it could send itself; the choice is run again as the lookout's, so a merge is refused and the card stays open.
-        (await Error(node, Command(Verbs.Answer, Verbs.CardTarget(ring.Id), lookout, false, "Merge"))).ShouldNotBeNull().ShouldContain("merge is the controller's, not the watchtower's");
+        // The lookout may answer a ring card with a choice it could send itself; the choice is run again as the lookout's, which merges as the assistant's would: the flight refuses it (a leg is not done) and the card stays open.
+        (await Error(node, Command(Verbs.Answer, Verbs.CardTarget(ring.Id), lookout, false, "Merge"))).ShouldNotBeNull().ShouldContain("legs not done");
         node.State.Cards().Single(c => c.Id == ring.Id).State.ShouldBe(CardState.Open);
-        (await Error(node, Command(Verbs.Answer, Verbs.CardTarget(forYou.Id), lookout, false, "Merge"))).ShouldNotBeNull().ShouldContain("merge is the controller's, not the watchtower's");
+        (await Error(node, Command(Verbs.Answer, Verbs.CardTarget(forYou.Id), lookout, false, "Merge"))).ShouldNotBeNull().ShouldContain("legs not done");
         (await Error(node, Command(Verbs.Answer, Verbs.CardTarget(ring.Id), lookout, false, "Retry"))).ShouldBeNull();
         node.State.Cards().Single(c => c.Id == ring.Id).State.ShouldBe(CardState.Closed);
 
@@ -168,11 +166,9 @@ public sealed class StandingTests
             node.State.Cards(openOnly: true).ShouldBeEmpty($"{who}'s update --check");
         }
 
-        // An install is still the person's: the lookout and a flight's session are refused, and an assistant's waits on a card.
+        // An install is still the person's: the lookout and a flight's session are refused.
         (await Error(node, Command(Verbs.Update, Verbs.NodeTarget, Lookout(node), true, "install"))).ShouldNotBeNull().ShouldContain("controller's");
         (await Error(node, Command(Verbs.Update, Verbs.NodeTarget, worker, true, "install"))).ShouldNotBeNull().ShouldContain("controller's");
-        (await Error(node, Command(Verbs.Update, Verbs.NodeTarget, "pilot-33", true, "install"))).ShouldNotBeNull().ShouldContain("waits on their card");
-        node.State.Cards(openOnly: true).ShouldHaveSingleItem().Kind.ShouldBe(CardKinds.AssistantAsk);
     }
 
     private static async Task<SessionRow> Listed(NodeHarness node, string name)
@@ -194,18 +190,10 @@ public sealed class StandingTests
         var row = await Listed(node, lookout);
         const string why = "the person asked me in the chat to merge TIA1";
 
-        // On its own, a merge is refused outright, with no card.
-        (await Error(node, Command(Verbs.Merge, "flight/TIA1", lookout, true, "cafe0000"))).ShouldNotBeNull().ShouldContain("not the watchtower's");
+        // The lookout's merge runs as the assistant's whoever woke it (as far as the flight's own fence), with no card.
+        (await Error(node, Command(Verbs.Merge, "flight/TIA1", lookout, true, "cafe0000"))).ShouldNotBeNull().ShouldContain(PastTheFence);
         node.State.Cards().ShouldBeEmpty();
-
-        // The person tells it in the chat: the same ask is an assistant's, with the autopilot off a card for the person to Allow.
         (await Error(node, Command(Verbs.Tell, Verbs.WatchtowerTarget, "gui", false, "merge TIA1"))).ShouldBeNull();
-        (await Error(node, Command(Verbs.Merge, "flight/TIA1", lookout, true, "cafe0000") with { Why = why })).ShouldNotBeNull().ShouldContain("waits on their card");
-        var ask = node.State.Cards(openOnly: true).ShouldHaveSingleItem();
-        (ask.Kind, ask.AskedBy, ask.Why).ShouldBe((CardKinds.AssistantAsk, lookout, why));
-
-        // With the autopilot on it runs at once (here as far as the flight's own fence).
-        (await Error(node, Command(Verbs.Set, Verbs.NodeTarget, "gui", false, "autopilot", "on"))).ShouldBeNull();
         (await Error(node, Command(Verbs.Merge, "flight/TIA1", lookout, true, "cafe0000") with { Why = why })).ShouldNotBeNull().ShouldContain(PastTheFence);
 
         // The node's own message to it (a card it says) starts a turn that is not the person's: the lookout again, which on
@@ -226,12 +214,6 @@ public sealed class StandingTests
         fix.ShouldContain("not started on the autopilot");
         // The node's settings stay the person's.
         (await Error(node, Command(Verbs.Set, Verbs.NodeTarget, lookout, true, "maintenance", "on"))).ShouldNotBeNull().ShouldContain("not the watchtower's");
-
-        // With the autopilot off, the lookout's merge is refused again.
-        (await Error(node, Command(Verbs.Set, Verbs.NodeTarget, "gui", false, "autopilot", "off"))).ShouldBeNull();
-        (await Error(node, Command(Verbs.Merge, "flight/TIA1", lookout, true, "cafe0000"))).ShouldNotBeNull().ShouldContain("not the watchtower's");
-        // And so is its fixer: only the autopilot lets the lookout start one.
-        (await Error(node, Command(Verbs.FixPr, Verbs.PrTarget("SharpAstro/pilot", 467), lookout, true))).ShouldNotBeNull().ShouldContain("not the watchtower's");
     }
 
     [Fact]
@@ -243,7 +225,8 @@ public sealed class StandingTests
         node.Agents.Json = AgentRows.List(AgentRows.Interactive(AgentRows.SessionA, 4242, lookout, status: "busy"));
         await Listed(node, lookout);
         (await Error(node, Command(Verbs.Tell, Verbs.WatchtowerTarget, "gui", false, "merge TIA1"))).ShouldBeNull();
-        (await Error(node, Command(Verbs.Merge, "flight/TIA1", lookout, true, "cafe0000"))).ShouldNotBeNull().ShouldContain("waits on their card");
+        // A hold is an assistant's by the person's word, so it runs.
+        (await Error(node, Command(Verbs.Ground, "flight/TIA1", lookout, true, "the person asked me to hold it"))).ShouldBeNull();
 
         // Its turn over (the session is idle again), what it sends is its own.
         node.Agents.Json = AgentRows.List(AgentRows.Interactive(AgentRows.SessionA, 4242, lookout, status: "idle"));
@@ -251,7 +234,7 @@ public sealed class StandingTests
         for (var i = 0; i < 100 && !error.Contains("not the watchtower's", StringComparison.Ordinal); i++)
         {
             await Task.Delay(50, Ct);
-            error = await Error(node, Command(Verbs.Merge, "flight/TIA1", lookout, true, "cafe0000")) ?? "";
+            error = await Error(node, Command(Verbs.Unground, "flight/TIA1", lookout, true)) ?? "";
         }
         error.ShouldContain("not the watchtower's");
     }
@@ -316,7 +299,7 @@ public sealed class StandingTests
     }
 
     [Fact]
-    public async Task HoldAndUnholdAreThePersonsAloneAndAnAssistantsByTheAutopilotRule()
+    public async Task HoldAndUnholdAreThePersonsAloneAndAnAssistantsRunDirectly()
     {
         await using var node = await NodeHarness.StartAsync(Ct);
         const string worker = "du1-tia1-parser";
@@ -331,17 +314,13 @@ public sealed class StandingTests
         }
         node.State.Flights().Single().OnHold.ShouldBeNull();
 
-        // An assistant's hold waits on a card with the autopilot off, and runs with it on.
-        (await Error(node, Command(Verbs.Ground, "flight/TIA1", "pilot-33", true, "the owner is away"))).ShouldNotBeNull().ShouldContain("waits on their card");
-        node.State.Flights().Single().OnHold.ShouldBeNull();
-        (await Error(node, Command(Verbs.Set, Verbs.NodeTarget, "gui", false, "autopilot", "on"))).ShouldBeNull();
+        // An assistant's hold runs.
         (await Error(node, Command(Verbs.Ground, "flight/TIA1", "pilot-33", true, "the owner is away"))).ShouldBeNull();
         node.State.Flights().Single().OnHold.ShouldNotBeNull().By.ShouldBe("pilot-33");
         (await Error(node, Command(Verbs.Unground, "flight/TIA1", "pilot-33", true))).ShouldBeNull();
         node.State.Flights().Single().OnHold.ShouldBeNull();
 
-        // The person holds and releases as they please, with the autopilot off too.
-        (await Error(node, Command(Verbs.Set, Verbs.NodeTarget, "gui", false, "autopilot", "off"))).ShouldBeNull();
+        // The person holds and releases as they please.
         (await Error(node, Command(Verbs.Ground, "flight/TIA1", "gui", false, "back on", "Monday"))).ShouldBeNull();
         node.State.Flights().Single().OnHold.ShouldNotBeNull().Reason.ShouldBe("back on Monday");
         (await Error(node, Command(Verbs.Unground, "flight/TIA1", "gui"))).ShouldBeNull();

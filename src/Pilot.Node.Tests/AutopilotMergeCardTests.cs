@@ -124,21 +124,4 @@ public sealed class AutopilotMergeCardTests : ReviewTestsBase
         cards.ShouldNotBeEmpty();
         cards.ShouldAllBe(c => c.Bin == CardBin.Ring);
     }
-
-    [Fact]
-    [Trait("Category", "Slow")]
-    public async Task WithAutopilotOffAPendingMergeCardRingsWithItsMergeChoice()
-    {
-        _github.Checks = ChoiceStatus.Pending;
-        var (flight, _) = await Passed("42");
-        var checks = new PrChecks(_state, _github, TimeProvider.System, _flights, _legs);
-        await checks.LookAsync(Ct);
-
-        var card = MergeCards().ShouldHaveSingleItem();
-        (card.Kind, card.Bin).ShouldBe((LegCommander.PrReady, CardBin.Ring));
-        card.Choices.ShouldContain(c => c.Verb == Verbs.Merge);
-
-        (await Run(Verbs.Merge, $"flight/{flight.Code}", "controller", _github.Pr!.Head[..8])).Ok.ShouldBeTrue();
-        MergeCards().ShouldAllBe(c => c.Bin == CardBin.Ring);
-    }
 }

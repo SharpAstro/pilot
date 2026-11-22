@@ -69,11 +69,16 @@ public sealed class AutopilotTests
         return [.. box.ReadToEnd().Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(l => System.Text.Json.JsonSerializer.Deserialize(l, PilotJsonContext.Default.BlackBoxLine)!)];
     }
 
+    /// <summary>The one case an assistant's your-only command still waits on a card: a merge in a repo set to no-auto-merge.</summary>
+    private static async Task NoAutoMergeAsync(NodeHarness node) =>
+        (await Send(node, Command(Verbs.Set, Verbs.NodeTarget, "gui", args: ["no-auto-merge-repos", "tianwen"]))).Error.ShouldBeNull();
+
     [Fact]
-    public async Task WithAutopilotOffAnAssistantsMergeRaisesAForYouConfirmCardAndDoesNotMerge()
+    public async Task ANoAutoMergeReposAssistantsMergeRaisesAForYouConfirmCardAndDoesNotMerge()
     {
         await using var node = await NodeHarness.StartAsync(Ct);
         Ready(node);
+        await NoAutoMergeAsync(node);
 
         var asked = await Send(node, Command(Verbs.Merge, "flight/TIA1", Assistant, agent: true, Why, Head));
 
@@ -96,6 +101,7 @@ public sealed class AutopilotTests
     {
         await using var node = await NodeHarness.StartAsync(Ct);
         Ready(node);
+        await NoAutoMergeAsync(node);
         await ListAssistantAsync(node);
         await Send(node, Command(Verbs.Merge, "flight/TIA1", Assistant, agent: true, Why, Head));
         var card = Ask(node);
@@ -120,6 +126,7 @@ public sealed class AutopilotTests
     {
         await using var node = await NodeHarness.StartAsync(Ct);
         Ready(node);
+        await NoAutoMergeAsync(node);
         await ListAssistantAsync(node);
         await Send(node, Command(Verbs.Merge, "flight/TIA1", Assistant, agent: true, Why, Head));
         var card = Ask(node);
@@ -142,6 +149,7 @@ public sealed class AutopilotTests
         const string Other = "pilot-34";
         await using var node = await NodeHarness.StartAsync(Ct);
         Ready(node);
+        await NoAutoMergeAsync(node);
         node.Agents.Json = AgentRows.List(AgentRows.Interactive(AgentRows.SessionA, 4242, Assistant), AgentRows.Interactive(AgentRows.SessionB, 4243, Other));
         for (var i = 0; i < 100 && (await node.Client.GetSessionsAsync(Ct)).Length < 2; i++)
         {
@@ -170,6 +178,7 @@ public sealed class AutopilotTests
     {
         await using var node = await NodeHarness.StartAsync(Ct);
         Ready(node);
+        await NoAutoMergeAsync(node);
         await ListAssistantAsync(node);
         await Send(node, Command(Verbs.Merge, "flight/TIA1", Assistant, agent: true, Why, Head));
 
@@ -180,61 +189,11 @@ public sealed class AutopilotTests
     }
 
     [Fact]
-    public async Task AnAssistantsAskToDismissARingCardIsAllowedByAllowAndLeavesTheRingOpenOnDeny()
-    {
-        await using var node = await NodeHarness.StartAsync(Ct);
-        await ListAssistantAsync(node);
-        var ring = node.State.RaiseCard(CardBin.Ring, "pr-ready", "flight/TIA1", "TIA1's PR is ready");
-
-        // Autopilot off: the assistant's dismissal of a ring card is asked, not done.
-        (await Send(node, Command(Verbs.Dismiss, Verbs.CardTarget(ring.Id), Assistant, agent: true, Why))).Error.ShouldNotBeNull().ShouldContain("waits on their card");
-        node.State.Cards().Single(c => c.Id == ring.Id).State.ShouldBe(CardState.Open);
-        var denied = AskAmong(node);
-        // Allow is the dismissal of the ring card, Deny the dismissal of the ask itself: the verb is the same, the target is not.
-        denied.Choices.Select(c => (c.Label, c.Verb, c.Target)).ShouldBe([("Allow it", Verbs.Dismiss, Verbs.CardTarget(ring.Id)), ("Deny it", Verbs.Dismiss, Verbs.CardTarget(denied.Id))]);
-
-        (await Send(node, Command(Verbs.Answer, Verbs.CardTarget(denied.Id), "gui", args: "Deny it"))).Error.ShouldBeNull();
-        node.State.Cards().Single(c => c.Id == ring.Id).State.ShouldBe(CardState.Open);
-        node.Delivery.Relays.ShouldHaveSingleItem().Text.ShouldContain("gui denied your request to dismiss");
-
-        // Asked again and allowed: the ring card is closed, and the session is told it was done.
-        await Send(node, Command(Verbs.Dismiss, Verbs.CardTarget(ring.Id), Assistant, agent: true, Why));
-        var allowed = AskAmong(node);
-        allowed.Id.ShouldNotBe(denied.Id);
-        (await Send(node, Command(Verbs.Answer, Verbs.CardTarget(allowed.Id), "gui", args: "Allow it"))).Error.ShouldBeNull();
-
-        node.State.Cards().Single(c => c.Id == ring.Id).State.ShouldBe(CardState.Closed);
-        node.State.Cards().Single(c => c.Id == allowed.Id).Outcome.ShouldBe("Allow it");
-        var told = node.Delivery.Relays.Last();
-        told.Text.ShouldContain("gui allowed your request to dismiss");
-        told.Text.ShouldContain("done");
-    }
-
-    [Fact]
-    public async Task AnAssistantsAnswerToARingCardIsAskedAndRunsTheChosenButtonOnAllow()
-    {
-        await using var node = await NodeHarness.StartAsync(Ct);
-        await ListAssistantAsync(node);
-        var ring = node.State.RaiseCard(CardBin.Ring, "pr-ready", "flight/TIA1", "TIA1 stalled", null,
-            [new CardChoice { Label = "Retry", Verb = Verbs.Raise, Target = "flight/TIA1", Args = ["for-you", "retried"] }]);
-
-        (await Send(node, Command(Verbs.Answer, Verbs.CardTarget(ring.Id), Assistant, agent: true, Why, "Retry"))).Error.ShouldNotBeNull().ShouldContain("waits on their card");
-        node.State.Cards().Single(c => c.Id == ring.Id).State.ShouldBe(CardState.Open);
-        node.State.Cards(openOnly: true).ShouldNotContain(c => c.Title == "retried");
-        var ask = AskAmong(node);
-        ask.Title.ShouldContain("asks to answer");
-
-        (await Send(node, Command(Verbs.Answer, Verbs.CardTarget(ask.Id), "gui", args: "Allow it"))).Error.ShouldBeNull();
-        node.State.Cards().Single(c => c.Id == ring.Id).State.ShouldBe(CardState.Closed);
-        node.State.Cards(openOnly: true).ShouldContain(c => c.Title == "retried");
-        node.Delivery.Relays.ShouldHaveSingleItem().Text.ShouldContain("allowed your request to answer");
-    }
-
-    [Fact]
     public async Task AnAssistantOrTheLookoutPressingAllowOrDenyIsRefused()
     {
         await using var node = await NodeHarness.StartAsync(Ct);
         Ready(node);
+        await NoAutoMergeAsync(node);
         await Send(node, Command(Verbs.Merge, "flight/TIA1", Assistant, agent: true, Why, Head));
         var card = Ask(node);
         var lookout = Lookout(node);
@@ -254,28 +213,6 @@ public sealed class AutopilotTests
         (await Send(node, Command(Verbs.Answer, Verbs.CardTarget(card.Id), Assistant, agent: true, args: "Allow it"))).Error.ShouldNotBeNull().ShouldContain("the person's");
         node.GitHub.Merged.ShouldBeEmpty();
         node.State.Cards(openOnly: true).ShouldHaveSingleItem().Id.ShouldBe(card.Id);
-    }
-
-    [Fact]
-    public async Task WithAutopilotOffAnAssistantsPressOnTheFirstRunMaintenanceCardIsAskedNotDone()
-    {
-        await using var node = await NodeHarness.StartAsync(Ct);
-        var card = node.State.RaiseCard(CardBin.ForYou, IdleMaintenance.FirstRunKind, Verbs.NodeTarget, "Run the first idle disk sweep?", null,
-        [
-            new CardChoice { Label = IdleMaintenance.RunLabel, Verb = Verbs.Set, Target = Verbs.NodeTarget, Args = [NodeSettings.MaintenanceEveryKey, "1d"] },
-            new CardChoice { Label = IdleMaintenance.KeepOffLabel, Verb = Verbs.Set, Target = Verbs.NodeTarget, Args = [NodeSettings.MaintenanceEveryKey, "off"] },
-        ]);
-
-        foreach (var label in new[] { IdleMaintenance.RunLabel, IdleMaintenance.KeepOffLabel })
-        {
-            var pressed = await Send(node, Command(Verbs.Answer, Verbs.CardTarget(card.Id), Assistant, agent: true, Why, label));
-            pressed.Ok.ShouldBeFalse();
-            pressed.Error.ShouldNotBeNull().ShouldContain("waits on their card");
-        }
-
-        node.State.Cards().Single(c => c.Id == card.Id).State.ShouldBe(CardState.Open);
-        node.State.Cards().ShouldContain(c => c.Kind == CardKinds.AssistantAsk);
-        node.State.Cards().ShouldNotContain(c => c.Kind == CardKinds.AutopilotRan);
     }
 
     /// <summary>With the autopilot on, an assistant's press of the first-run maintenance card is done, as the README says (the review of #1126).</summary>
@@ -423,6 +360,7 @@ public sealed class AutopilotTests
     {
         await using var node = await NodeHarness.StartAsync(Ct);
         Ready(node);
+        await NoAutoMergeAsync(node);
         await Send(node, Command(Verbs.Merge, "flight/TIA1", "mcp", agent: true, args: Head));
         var card = Ask(node);
 
@@ -438,6 +376,7 @@ public sealed class AutopilotTests
     {
         await using var node = await NodeHarness.StartAsync(Ct);
         Ready(node);
+        await NoAutoMergeAsync(node);
         await ListAssistantAsync(node);
         await Send(node, Command(Verbs.Merge, "flight/TIA1", Assistant, agent: true, args: "def56789"));
         var card = Ask(node);
@@ -448,39 +387,6 @@ public sealed class AutopilotTests
         node.GitHub.Merged.ShouldBeEmpty();
         Ask(node).Id.ShouldBe(card.Id);
         node.Delivery.Calls.ShouldBeEmpty();
-    }
-
-    [Fact]
-    public async Task AnotherYourOnlyAskAboutTheSameFlightReplacesTheOpenOne()
-    {
-        await using var node = await NodeHarness.StartAsync(Ct);
-        Ready(node);
-        await Send(node, Command(Verbs.Merge, "flight/TIA1", Assistant, agent: true, args: Head));
-        var first = Ask(node);
-
-        await Send(node, Command(Verbs.Land, "flight/TIA1", Assistant, agent: true));
-
-        var open = Ask(node);
-        open.Id.ShouldNotBe(first.Id);
-        open.Title.ShouldBe("pilot-33 asks to land #63 (TIA1)");
-        node.State.Cards().Single(c => c.Id == first.Id).Outcome.ShouldBe("replaced by a newer ask");
-    }
-
-    [Fact]
-    public async Task ASettingAnAssistantAsksForIsAskedNotSet()
-    {
-        await using var node = await NodeHarness.StartAsync(Ct);
-
-        var asked = await Send(node, Command(Verbs.Set, Verbs.NodeTarget, Assistant, agent: true, "the user wants the cap raised", "max-jobs", "6"));
-
-        asked.Error.ShouldNotBeNull().ShouldContain("waits on their card");
-        var card = Ask(node);
-        card.Title.ShouldBe("pilot-33 asks to set max-jobs 6");
-        // A different key is its own ask; the same key's would be this one.
-        await Send(node, Command(Verbs.Set, Verbs.NodeTarget, Assistant, agent: true, null, "lan", "on"));
-        node.State.Cards(openOnly: true).Count(c => c.Kind == CardKinds.AssistantAsk).ShouldBe(2);
-        // Autopilot is never among them: an assistant asking to change it is refused outright.
-        (await Send(node, Command(Verbs.Set, Verbs.NodeTarget, Assistant, agent: true, null, "autopilot", "on"))).Error.ShouldNotBeNull().ShouldContain("autopilot is the person's to change");
     }
 
     [Fact]
