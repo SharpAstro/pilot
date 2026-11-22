@@ -94,6 +94,10 @@ public static partial class PilotCommand
             var allowRound = Action(new Command("allow-round", "Allow one more review round on a flight whose review loop was held at its third round with changes") { Arguments = { code, allowWhy } },
                 (p, client, ct) => Send(client, Verbs.AllowRound, Verbs.FlightTarget(p.GetValue(code)!), p.GetValue(allowWhy) ?? [], who, ct));
 
+            var retryMore = new Argument<string[]>("more") { Description = "More landed flights' codes", Arity = ArgumentArity.ZeroOrMore };
+            var branchRetry = Action(new Command("branch-retry", "Let the node push the delete of a landed flight's branch again after origin refused it (the next sweep tries once more)") { Arguments = { code, retryMore } },
+                (p, client, ct) => Send(client, Verbs.BranchRetry, Verbs.FlightTarget(p.GetValue(code)!), p.GetValue(retryMore) ?? [], who, ct));
+
             var ciAnswer = new Argument<string>("answer") { Description = "continue (raise the cap by one budget), land-green (land what is green) or split (split the flight)" };
             ciAnswer.AcceptOnlyFromAmong(Verbs.CiContinue, Verbs.CiLandGreen, Verbs.CiSplit);
             var ciBudget = Action(new Command("ci-budget", "Answer a flight whose CI spend passed flight-ci-budget: continue, land what is green, or split") { Arguments = { code, ciAnswer } },
@@ -178,7 +182,7 @@ public static partial class PilotCommand
                         : throw new UsageException("archive takes a flight's code, or --landed");
                 });
             var flight = new Command("flight", "Flights: create, plan, check what they touch, overlap, connect, disconnect, fly past a package wait, open a PR, review, merge, land")
-                { Subcommands = { create, planFlight, designReplan, planned, touches, overlap, separate, connectOverlap, connect, disconnect, fly, priority, move, adopt, pr, reviewStart, allowRound, ciBudget, hold, clear, ground, unground, merge, land, withdraw, archive } };
+                { Subcommands = { create, planFlight, designReplan, planned, touches, overlap, separate, connectOverlap, connect, disconnect, fly, priority, move, adopt, pr, reviewStart, allowRound, ciBudget, branchRetry, hold, clear, ground, unground, merge, land, withdraw, archive } };
 
             return flight;
         }

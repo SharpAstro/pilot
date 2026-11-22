@@ -268,6 +268,12 @@ public static class Verbs
     public const string FlyAnyway = "fly-anyway";
 
     /// <summary>
+    /// <c>branch-retry flight/&lt;code&gt; [more codes]</c> (PIL1265): clears the refused-delete record of each named landed flight, live or archived,
+    /// so the next landed-branch sweep pushes its delete once more. It pushes nothing itself.
+    /// </summary>
+    public const string BranchRetry = "branch-retry";
+
+    /// <summary>
     /// <c>flight-priority flight/&lt;code&gt; &lt;urgent|high|medium|low|none&gt;</c>: writes the Priority field of the flight's issue
     /// (<c>none</c> clears it) and puts the level on the flight's row. Refused, naming the <c>pilot: priority</c> label, where the repo has no field.
     /// </summary>

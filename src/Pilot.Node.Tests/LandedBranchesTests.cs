@@ -226,10 +226,55 @@ public sealed class LandedBranchesTests : IAsyncDisposable
         // The sweep reads origin first, so make the push fail after that read: the observing git removes origin at the push.
         var failing = new CountingGit(new GitCli()) { BeforePush = () => TestDirs.DeleteTree(_origin) };
         var outcome = (await new LandedBranches(failing).SweepAsync(_repo, [new LandedCandidate(Row("PIL11"), head, false)], Ct)).Single();
-        outcome.Result.ShouldBe(LandedBranchResult.RetryLater);
+        outcome.Result.ShouldBe(LandedBranchResult.Failed);
         outcome.Group.ShouldBe(LandedBranchGroups.PushFailed);
+        outcome.Why.ShouldStartWith("could not delete on origin: ");
         failing.Count("push").ShouldBe(1);
         LocalHas("flight/pil11").ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task ThePushUsesExplicitRefspecsAndPorcelain()
+    {
+        var a = MakeBranch("PIL12");
+        var b = MakeBranch("PIL13");
+        await Sweep(new LandedCandidate(Row("PIL12"), a, false), new LandedCandidate(Row("PIL13"), b, false));
+        _git.Pushes.Count.ShouldBe(1);
+        _git.Pushes[0].ShouldBe(["push", "--porcelain", "origin", ":refs/heads/flight/pil12", ":refs/heads/flight/pil13"]);
+    }
+
+    [Fact]
+    public async Task ARefusedRefFailsAloneWithGitsOwnTextAndTheOthersAreDeleted()
+    {
+        var a = MakeBranch("PIL14");
+        var b = MakeBranch("PIL15");
+        var c = MakeBranch("PIL16");
+        TestDirs.WriteHook(Path.Combine(_origin, "hooks", "update"), "#!/bin/sh\nif [ \"$1\" = \"refs/heads/flight/pil15\" ]; then echo \"no deleting pil15 here\" >&2; exit 1; fi\nexit 0\n");
+
+        var outcomes = await Sweep(new LandedCandidate(Row("PIL14"), a, false), new LandedCandidate(Row("PIL15"), b, false), new LandedCandidate(Row("PIL16"), c, false));
+
+        outcomes[0].Result.ShouldBe(LandedBranchResult.Deleted);
+        outcomes[2].Result.ShouldBe(LandedBranchResult.Deleted);
+        outcomes[1].Result.ShouldBe(LandedBranchResult.Failed);
+        outcomes[1].Group.ShouldBe(LandedBranchGroups.PushFailed);
+        outcomes[1].Why!.ShouldContain("no deleting pil15 here");
+        outcomes[1].Why!.ShouldNotContain("To " + _origin, Case.Sensitive);
+        outcomes[1].Why!.ShouldNotContain("; To ", Case.Sensitive);
+        OriginHas("flight/pil14").ShouldBeFalse();
+        OriginHas("flight/pil15").ShouldBeTrue();
+        LocalHas("flight/pil15").ShouldBeTrue();
+        LocalHas("flight/pil14").ShouldBeFalse();
+        LocalHas("flight/pil16").ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task ARefGoneOnOriginBetweenTheReadAndThePushCountsAsDeleted()
+    {
+        var head = MakeBranch("PIL17");
+        var racing = new CountingGit(new GitCli()) { BeforePush = () => Git(_origin, "branch", "-D", "flight/pil17") };
+        var outcome = (await new LandedBranches(racing).SweepAsync(_repo, [new LandedCandidate(Row("PIL17"), head, false)], Ct)).Single();
+        outcome.Result.ShouldBe(LandedBranchResult.Deleted);
+        LocalHas("flight/pil17").ShouldBeFalse();
     }
 
     /// <summary>Counts the git verbs run, and can act just before a push.</summary>
@@ -238,6 +283,8 @@ public sealed class LandedBranchesTests : IAsyncDisposable
         private readonly Dictionary<string, int> _counts = [];
 
         public Action? BeforePush { get; init; }
+
+        public List<string[]> Pushes { get; } = [];
 
         public string? FailVerb { get; set; }
 
@@ -252,6 +299,7 @@ public sealed class LandedBranchesTests : IAsyncDisposable
             }
             if (args[0] == "push")
             {
+                Pushes.Add([.. args]);
                 BeforePush?.Invoke();
             }
             return inner.RunAsync(args, cwd, cancellationToken);
