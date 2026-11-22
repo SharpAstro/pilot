@@ -54,7 +54,7 @@ public sealed class LandedFlightStrayTests : IDisposable
 
         public ProcessDetail? DetailsOf(int pid)
         {
-            var detail = Details.TryGetValue(pid, out var found) ? found : null;
+            ProcessDetail? detail = Details.TryGetValue(pid, out var found) ? found : null;
             if (ReusedAfterDetails is { } reuse && reuse.Pid == pid)
             {
                 Starts[pid] = reuse.NewStart;
@@ -301,7 +301,8 @@ public sealed class LandedFlightStrayTests : IDisposable
         landed.Ok.ShouldBeTrue(landed.Error);
         _table.Killed.Order().ToArray().ShouldBe([601, 602]);
         var card = _state.Cards().Single(c => c.Kind == "landed");
-        card.Detail.ShouldContain("testhost.exe (pid 601)");
-        card.Detail.ShouldContain("pwsh.exe (pid 602)");
+        var detail = card.Detail ?? "";
+        detail.ShouldContain("testhost.exe (pid 601)");
+        detail.ShouldContain("pwsh.exe (pid 602)");
     }
 }
