@@ -74,9 +74,26 @@ public sealed class ClaudePermissionsTests : IDisposable
         Rules.ShouldContain($"PowerShell(\"{NodePath}\":*)");
     }
 
-    [Fact]
-    public void ASessionsRulesAreTheRulesPlusPilotsMcpServer() =>
-        ClaudePermissions.SessionRules(NodePath).ShouldBe([.. Rules, "mcp__pilot"]);
+    [Theory]
+    [InlineData(null)]
+    [InlineData("/run/pilot.sock")]
+    public void TheWatchtowersOwnCommandFormsAreRuledOneVerbWide(string? socket)
+    {
+        const string cli = @"C:\Users\x\AppData\Local\Programs\pilot2\pilot.exe";
+        var rules = ClaudePermissions.SessionRules(cli, socket);
+        var pilot = Pilot.Node.Flights.Briefs.Run(cli, socket);
+        var quoted = socket is null ? $"\"{cli}\"" : $"\"{cli}\" --node-socket \"{socket}\"";
+        // Each form is matched as written: bare, quoted, and PowerShell's call operator.
+        rules.ShouldContain($"Bash({pilot} answer:*)");
+        rules.ShouldContain($"PowerShell({pilot} answer:*)");
+        rules.ShouldContain($"Bash({quoted} answer:*)");
+        rules.ShouldContain($"PowerShell(& {quoted} answer:*)");
+        rules.ShouldContain("mcp__pilot");
+        // Never a rule without a verb, so update, node restart and flight withdraw stay with the classifier.
+        rules.Where(r => r != "mcp__pilot").ShouldAllBe(r => ClaudePermissions.SessionVerbs.Any(v => r.EndsWith($" {v}:*)", StringComparison.Ordinal)));
+        rules.ShouldNotContain($"Bash({cli}:*)");
+        rules.ShouldNotContain($"Bash(\"{cli}\":*)");
+    }
 
     [Fact]
     public void ABinaryNamedPilotIsNotRuledTwice() =>

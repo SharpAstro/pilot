@@ -24,8 +24,33 @@ public static class ClaudePermissions
     /// </summary>
     public const string McpServerRule = "mcp__pilot";
 
-    /// <summary>The rules a watchtower session starts with (<c>--allowedTools</c>): <see cref="Rules"/> for the node's binary, plus pilot's MCP tools.</summary>
-    public static string[] SessionRules(string nodePath) => [.. Rules(nodePath), McpServerRule];
+    /// <summary>The card verbs a watchtower session runs by the CLI's full path; one rule per verb, never the whole path.</summary>
+    public static readonly IReadOnlyList<string> SessionVerbs = ["answer", "dismiss", "cards", "status", "tell", "say", "sessions"];
+
+    /// <summary>
+    /// The rules a watchtower session starts with (<c>--allowedTools</c>), per card verb and never a path-wide rule: the CLI by full path as
+    /// written bare, in double quotes and (PowerShell) behind <c>&amp;</c>, each again with the node's <c>--node-socket</c> when it has one,
+    /// plus pilot's MCP tools. A path-wide rule would allow every verb (update, node restart, flight withdraw).
+    /// </summary>
+    public static string[] SessionRules(string cliPath, string? socket = null)
+    {
+        var suffixes = socket is null ? new[] { "" } : ["", $" --node-socket \"{socket}\""];
+        var forms = new List<string>();
+        foreach (var verb in SessionVerbs)
+        {
+            foreach (var suffix in suffixes)
+            {
+                var bare = cliPath + suffix;
+                var quoted = $"\"{cliPath}\"" + suffix;
+                forms.Add(Rule("Bash", $"{bare} {verb}"));
+                forms.Add(Rule("Bash", $"{quoted} {verb}"));
+                forms.Add(Rule("PowerShell", $"{bare} {verb}"));
+                forms.Add(Rule("PowerShell", $"{quoted} {verb}"));
+                forms.Add(Rule("PowerShell", $"& {quoted} {verb}"));
+            }
+        }
+        return [.. forms.Distinct(), McpServerRule];
+    }
 
     /// <summary>The shell tools Claude Code runs commands through; each rule is written for both.</summary>
     public static readonly IReadOnlyList<string> Tools = ["Bash", "PowerShell"];

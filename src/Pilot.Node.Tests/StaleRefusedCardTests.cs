@@ -88,6 +88,19 @@ public sealed class StaleRefusedCardTests
     }
 
     [Fact]
+    public async Task ARefusedRedoLegOnAFailedLegOfAFlyingFlightStaysAndClosesWithTheFlight()
+    {
+        Flight("PIL1", FlightState.Flying);
+        var card = Refused("leg-failed", Verbs.FlightTarget("PIL1") + "/check");
+        (await Stale().CloseAsync(CancellationToken.None)).ShouldBe(0);
+        StateOf(card).ShouldBe(CardState.Open);
+
+        Flight("PIL1", FlightState.Landed);
+        (await Stale().CloseAsync(CancellationToken.None)).ShouldBe(1);
+        StateOf(card).ShouldBe(CardState.Closed);
+    }
+
+    [Fact]
     public async Task ARefusedStrayEndWhoseProcessIsGoneCloses()
     {
         var card = Refused(StraySweep.Kind, StrayKey);

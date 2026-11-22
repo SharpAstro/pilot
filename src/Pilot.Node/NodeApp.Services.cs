@@ -504,7 +504,7 @@ public static partial class NodeApp
             return new Watchtower(services.GetRequiredService<NodeState>(), services.GetRequiredService<IWorkerLauncher>(), commands.RunAsync,
                 services.GetRequiredService<NodeOptions>(), services.GetRequiredService<TimeProvider>())
             {
-                Pilot = Briefs.Run(legs.Cli, legs.Socket), AllowedTools = ClaudePermissions.SessionRules(legs.Cli ?? "pilot"),
+                Pilot = Briefs.Run(legs.Cli, legs.Socket), AllowedTools = ClaudePermissions.SessionRules(legs.Cli ?? "pilot", legs.Socket),
                 Ready = () => services.GetRequiredService<SessionTracker>().FirstPoll,
                 Models = services.GetRequiredService<RoleModels>(),
                 Gate = services.GetRequiredService<StartGate>(),

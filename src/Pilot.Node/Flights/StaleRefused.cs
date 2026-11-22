@@ -45,9 +45,11 @@ public sealed class StaleRefused(NodeState state)
         {
             return await PrGoneAsync(pr, prs, cancellationToken);
         }
-        if (Verbs.FlightCodeOf(subject) is { Length: > 0 } code)
+        if (Verbs.FlightCodeOf(subject) is { Length: > 0 } target)
         {
-            return FlightGone(code);
+            // A leg's subject is flight/<code>/<leg>: the flight is the part up to the first slash.
+            var slash = target.IndexOf('/');
+            return FlightGone(slash < 0 ? target : target[..slash]);
         }
         return subject.StartsWith("process:", StringComparison.Ordinal) && StrayGone(subject) ? "the process is gone" : null;
     }
