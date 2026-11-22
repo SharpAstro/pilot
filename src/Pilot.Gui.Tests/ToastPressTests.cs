@@ -91,19 +91,90 @@ public sealed class ToastPressTests
             return Layout.Engine.Arrange(node, new Rect<float>(0, 0, width ?? RowWidth, 1400), new PixelMeasureContext<RgbaImage>(_measure, SessionsCapture.FontPath, 1f));
         }
 
-        /// <summary>How many pixels of the last frame are exactly this colour.</summary>
-        public int Count(RGBAColor32 color)
+        /// <summary>
+        /// The toast on the last frame: the largest region the notifications layer painted around the toast's own Dismiss (the one part a hit
+        /// names as a toast; a staying toast's card itself is a plain chrome region). Null when no toast's Dismiss is painted.
+        /// </summary>
+        public RectF32? ToastRect()
+        {
+            var regions = new List<ClickableRegion>();
+            Chrome.NotificationsLayer.CollectPaintedRegions(regions);
+            var at = regions.FindIndex(r => r.Result is NotificationHit { Part: NotificationPart.Dismiss });
+            if (at < 0)
+            {
+                return null;
+            }
+            var dismiss = regions[at];
+            var (cx, cy) = (dismiss.X + dismiss.Width / 2f, dismiss.Y + dismiss.Height / 2f);
+            // The Dismiss region itself contains its own centre, so this is never empty.
+            var toast = regions
+                .Where(r => r.X <= cx && cx <= r.X + r.Width && r.Y <= cy && cy <= r.Y + r.Height)
+                .MaxBy(r => r.Width * r.Height);
+            return new RectF32(toast.X, toast.Y, toast.Width, toast.Height);
+        }
+
+        /// <summary>The bounds the notifications layer painted for the node that carries this hover text on the last frame, or null.</summary>
+        public RectF32? PaintedRectWithTooltip(string tooltip)
+        {
+            var regions = new List<ClickableRegion>();
+            Chrome.NotificationsLayer.CollectPaintedRegions(regions);
+            var at = regions.FindLastIndex(r => r.Tooltip == tooltip);
+            return at < 0 ? null : new RectF32(regions[at].X, regions[at].Y, regions[at].Width, regions[at].Height);
+        }
+
+        /// <summary>
+        /// The ground the last frame draws behind this ink inside <paramref name="within"/>: finds the pixels of exactly the ink there (glyph
+        /// cores hit it), then reads a small window around each, clipped to the same rect, and takes the most common colour that is not the ink.
+        /// Null when too few pixels there carry the ink for the text to count as drawn, or when no other colour is around them.
+        /// Bounded: at most <paramref name="maxSamples"/> ink pixels are sampled, each over a (2r+1) square.
+        /// </summary>
+        public (RGBAColor32 Ground, int InkPixels)? GroundBehind(RGBAColor32 ink, RectF32 within, int minInkPixels = 40, int maxSamples = 400, int radius = 4)
         {
             var pixels = _renderer.Surface.Pixels;
-            var n = 0;
-            for (var i = 0; i + 3 < pixels.Length; i += 4)
+            var x0 = Math.Max(0, (int)MathF.Ceiling(within.X));
+            var y0 = Math.Max(0, (int)MathF.Ceiling(within.Y));
+            var x1 = Math.Min(_width - 1, (int)MathF.Floor(within.X + within.Width) - 1);
+            var y1 = Math.Min(_height - 1, (int)MathF.Floor(within.Y + within.Height) - 1);
+            var inkAt = new List<(int X, int Y)>();
+            for (var y = y0; y <= y1; y++)
             {
-                if (pixels[i] == color.Red && pixels[i + 1] == color.Green && pixels[i + 2] == color.Blue)
+                for (var x = x0; x <= x1; x++)
                 {
-                    n++;
+                    var i = (y * _width + x) * 4;
+                    if (pixels[i] == ink.Red && pixels[i + 1] == ink.Green && pixels[i + 2] == ink.Blue)
+                    {
+                        inkAt.Add((x, y));
+                    }
                 }
             }
-            return n;
+            if (inkAt.Count < minInkPixels)
+            {
+                return null;
+            }
+            var step = Math.Max(1, inkAt.Count / maxSamples);
+            var histogram = new Dictionary<(byte, byte, byte), int>();
+            for (var k = 0; k < inkAt.Count; k += step)
+            {
+                var (cx, cy) = inkAt[k];
+                for (var y = Math.Max(y0, cy - radius); y <= Math.Min(y1, cy + radius); y++)
+                {
+                    for (var x = Math.Max(x0, cx - radius); x <= Math.Min(x1, cx + radius); x++)
+                    {
+                        var i = (y * _width + x) * 4;
+                        var c = (pixels[i], pixels[i + 1], pixels[i + 2]);
+                        if (c != (ink.Red, ink.Green, ink.Blue))
+                        {
+                            histogram[c] = histogram.GetValueOrDefault(c) + 1;
+                        }
+                    }
+                }
+            }
+            if (histogram.Count == 0)
+            {
+                return null;
+            }
+            var top = histogram.MaxBy(kv => kv.Value).Key;
+            return (new RGBAColor32(top.Item1, top.Item2, top.Item3, 255), inkAt.Count);
         }
 
         public void Save(string name)
@@ -247,9 +318,8 @@ public sealed class ToastPressTests
         try
         {
             Palette.Current = Palette.Night;
-            var colors = NotificationsHost.Colors();
-            // The drawn ground: the refusal line is its own node with its own fill, so the ink is measured against a ground the toast really
-            // draws. (A pixel count of the card colour proves nothing here: in night it is the page's own ground, painted with no toast at all.)
+            // The ink is the colour of the refusal's drawn text leaves; the ground is read off the night frame's own pixels around the ink's
+            // pixels. (NotificationsHost.Colors().Card proved nothing: in night it is the page's own ground, painted with no toast at all.)
             var drawnInk = new List<RGBAColor32>();
             using (var rig = new Rig(Card(), 700, 600))
             {
@@ -262,9 +332,6 @@ public sealed class ToastPressTests
                 var row = rig.Row();
                 var line = row.Where(n => n.Node.Tooltip?.ToString() == Why).ToList();
                 line.ShouldNotBeEmpty("the refusal line carries the node's words on hover");
-                // Bg, Pad and WithTooltip are `with` copies in DIR.Lib, so the node carrying the tooltip is the filled node itself (no wrapper).
-                // An earlier red here was Palette.Current left Standard by the rig's frames, which the night frame above now fixes.
-                line[0].Node.Background.ShouldBe(colors.Card, "the refusal line is filled with the card colour its ink is measured against");
                 var b = line[0].Bounds;
                 drawnInk.AddRange(row
                     .Where(a => a.Bounds.X >= b.X - 0.5f && a.Bounds.Y >= b.Y - 0.5f
@@ -273,12 +340,30 @@ public sealed class ToastPressTests
                     .Where(t => t is { } && t.Value.Trim().Length > 0)
                     .Select(t => t!.Color));
                 drawnInk.ShouldNotBeEmpty("the refusal's words are drawn as text whose colour is read here");
+                // Two frames after the refusal is noted: the toast is drawn with it, and the ground is read from those pixels.
+                rig.Frame(CardsScreen.From([Card()]), 3);
+                rig.Frame(CardsScreen.From([Card()]), 4);
+                // The pixels are read only inside the refusal line as the layer painted it (the node that carries the node's words on hover),
+                // and that line is shown to sit inside the refused toast: a colour the page or the toast's buttons share is never pooled in.
+                var toast = rig.ToastRect();
+                toast.ShouldNotBeNull("the refused toast is drawn on the night frame");
+                toast.Value.Width.ShouldBeGreaterThan(NotificationsHost.Style.ToastWidth * 0.9f, "the region read as the toast is the whole card, not its Dismiss");
+                var refusal = rig.PaintedRectWithTooltip(Why);
+                refusal.ShouldNotBeNull("the refusal line is painted with the node's words on hover");
+                var (t, r) = (toast.Value, refusal.Value);
+                (r.X >= t.X - 2f && r.Y >= t.Y - 2f && r.X + r.Width <= t.X + t.Width + 2f && r.Y + r.Height <= t.Y + t.Height + 2f)
+                    .ShouldBeTrue($"the refusal line {r} lies inside the refused toast {t}");
+                // Only the refusal is measured: it is the one ink the pilot draws on a ground it fills itself. The summary (p.Dim), the choices and the
+                // title are drawn on the library's own tinted fill (under AA in night): a DIR.Lib issue, not a pair the pilot draws on the card colour.
+                // The ink is read off the drawn refusal text (its leaves, wrapped or not), not recomputed here, so a change of the ink the chrome passes turns this red.
+                foreach (var ink in drawnInk.Distinct())
+                {
+                    var found = rig.GroundBehind(ink, r);
+                    found.ShouldNotBeNull($"the refusal ink {ink} is drawn inside the refusal line {r} of the toast {t}");
+                    Contrast.Ratio(ink, found.Value.Ground).ShouldBeGreaterThanOrEqualTo(Contrast.AA,
+                        $"refusal ink {ink} on the ground the frame draws behind it inside the refusal line {r} of the toast {t}, {found.Value.Ground} ({found.Value.InkPixels} ink pixels there)");
+                }
             }
-            // Only the refusal is measured: it is the one ink the pilot draws on a ground it fills itself. The summary (p.Dim), the choices and the
-            // title are drawn on the library's own tinted fill (under AA in night): a DIR.Lib issue, not a pair the pilot draws on the card colour.
-            // The ink is read off the drawn refusal text (its leaves, wrapped or not), not recomputed here, so a change of the ink the chrome passes turns this red.
-            foreach (var ink in drawnInk)
-                Contrast.Ratio(ink, colors.Card).ShouldBeGreaterThanOrEqualTo(Contrast.AA, "refusal");
         }
         finally
         {
