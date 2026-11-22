@@ -9,10 +9,10 @@ public sealed partial class FlightCommander
     /// Closes the open cards a landing settles beyond those under <see cref="Verbs.FlightTarget"/> (pilot #1270): the cards about the flight's
     /// sessions (<see cref="Verbs.SessionTarget"/> of each session row), about its jobs (<see cref="Verbs.JobTarget"/>), and the stray-process
     /// cards owned by its sessions. Cards about other subjects stay open. A session that may still run (its stop in <paramref name="failedStops"/>
-    /// threw, or a stop-unconfirmed card about it is open, and its row is not Ended or Failed) keeps that card open, raised when none is
+    /// threw, and its row is not Ended or Failed) keeps that card open, raised when none is
     /// (PIL1270:R1.9); those sessions are returned.
     /// </summary>
-    private IReadOnlyList<SessionRow> CloseCardsOfLandedParts(FlightRow flight, string outcome, IReadOnlyCollection<string> failedStops)
+    private IReadOnlyList<SessionRow> CloseCardsOfLandedParts(FlightRow flight, string outcome, IReadOnlyDictionary<string, string> failedStops)
     {
         var (sessions, legJobs) = SessionsAndJobsOf(flight);
         var sessionIds = state.Sessions().Where(s => string.Equals(s.Flight, flight.Code, StringComparison.Ordinal)).Select(s => s.Id)
@@ -28,12 +28,13 @@ public sealed partial class FlightCommander
             var target = Verbs.SessionTarget(id);
             var row = state.Sessions().FirstOrDefault(s => string.Equals(s.Id, id, StringComparison.Ordinal));
             var unconfirmedOpen = state.Cards(openOnly: true).Any(c => c.Kind == SessionMessenger.StopUnconfirmedKind && c.Subject == target);
-            if (row is not null && row.State is not (SessionState.Ended or SessionState.Failed) && (failedStops.Contains(id, StringComparer.Ordinal) || unconfirmedOpen))
+            if (row is not null && row.State is not (SessionState.Ended or SessionState.Failed) && failedStops.TryGetValue(id, out var why))
             {
                 stillRunning.Add(row);
                 if (!unconfirmedOpen)
                 {
-                    SessionMessenger.RaiseStopUnconfirmed(state, row, $"{row.Name} ({row.Id}) could not be stopped by the landing. Not confirmed: the session may still run.", "stop again");
+                    SessionMessenger.RaiseStopUnconfirmed(state, row, $"{row.Name} ({row.Id}) could not be stopped by the landing: {why}. Not confirmed: the session may still run.",
+                        "claude stop on its job.", "stop again");
                 }
                 state.CloseCardsAboutExcept(target, outcome, SessionMessenger.StopUnconfirmedKind);
                 continue;

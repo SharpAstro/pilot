@@ -178,7 +178,7 @@ public sealed partial class FlightCommander
         var endReason = mergedHead is not null ? SessionEndReasons.Merged : SessionEndReasons.Landed;
         var endBy = mergedHead is not null ? "merge" : "land";
         var endedStrays = new List<MachineStray>();
-        var failedStops = new List<string>();
+        var failedStops = new Dictionary<string, string>(StringComparer.Ordinal);
         string? strayNote = null;
         var (released, consumed, leftover, landedHead) = await OffLockAsync(async () =>
         {
@@ -216,7 +216,7 @@ public sealed partial class FlightCommander
                     catch (Exception ex) when (ex is FlightException or IOException or InvalidOperationException or System.ComponentModel.Win32Exception)
                     {
                         // Gone already, or not stopped: told apart after the landing by its row (PIL1270:R1.9).
-                        failedStops.Add(job);
+                        failedStops[job] = ex.Message;
                     }
                 }
                 // Nothing of its own is left queued or running: its jobs, and those of its sessions.
@@ -383,7 +383,7 @@ public sealed partial class FlightCommander
         {
             state.RaiseCard(CardBin.Handled, FoldedKind, Verbs.FlightTarget(flight.Code), $"{flight.Code} folded into {foldedInto}",
                 // The number follows a title only: an untitled flight's noun already holds it (the review of #1129).
-                $"{(flight.Title is { } title ? $"{title} ({flight.Item.Display})" : flight.Item.Noun)} is now {foldedInto}'s: its PR closes it, and {foldedInto}'s planner plans its points{(labelNote is null ? "" : $"; {labelNote}")}");
+                $"{(flight.Title is { } title ? $"{title} ({flight.Item.Display})" : flight.Item.Noun)} is now {foldedInto}'s: its PR closes it, and {foldedInto}'s planner plans its points{(labelNote is null ? "" : $"; {labelNote}")}{string.Concat(stillRunning.Select(r => $"; {r.Name} ({r.Id}) may still run: its stop failed, its card stays open"))}");
         }
 
         // Its branch goes once its plane has, and so do those of the flights folded into it (PIL1101).

@@ -19,7 +19,7 @@ public sealed class LandedStopUnconfirmedTests : IDisposable
 
     private static readonly DateTimeOffset Began = new(2026, 11, 20, 8, 0, 0, TimeSpan.Zero);
 
-    private sealed class Stops(bool fail, NodeState state) : IWorkerLauncher
+    private sealed class Stops(bool fail) : IWorkerLauncher
     {
         public Task<string> StartAsync(WorkerStart start, CancellationToken cancellationToken) => throw new NotSupportedException();
 
@@ -29,11 +29,7 @@ public sealed class LandedStopUnconfirmedTests : IDisposable
             {
                 return Task.FromException(new InvalidOperationException("claude stop: refused"));
             }
-            // A stop that worked ends the session's row, as the tracker does once the process is gone.
-            if (state.Sessions().FirstOrDefault(r => r.Id == job) is { } row)
-            {
-                state.PutSession(row with { State = SessionState.Ended });
-            }
+            // A stop that worked leaves the row as it was: the tracker ends it on a later poll, as in production.
             return Task.CompletedTask;
         }
     }
@@ -84,7 +80,7 @@ public sealed class LandedStopUnconfirmedTests : IDisposable
         File.WriteAllText(Path.Combine(repo, "README.md"), "hello\n");
         Git(repo, "add", ".");
         Git(repo, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "first");
-        var flights = new FlightCommander(_state, new Planes(new GitCli()), _time, new Stops(stopFails, _state)) { FinishGrace = TimeSpan.Zero };
+        var flights = new FlightCommander(_state, new Planes(new GitCli()), _time, new Stops(stopFails)) { FinishGrace = TimeSpan.Zero };
         var made = await flights.RunAsync(new CommandRequest { Verb = Verbs.CreateFlight, Target = Verbs.RepoTarget(repo), Args = ["1282", "Stops"], Who = "tests" }, Ct);
         made.Ok.ShouldBeTrue(made.Error);
         var flight = _state.Flights().Single();
@@ -133,6 +129,7 @@ public sealed class LandedStopUnconfirmedTests : IDisposable
         card.Bin.ShouldBe(CardBin.Ring);
         card.Choices.ShouldNotBeNull().ShouldContain(c => c.Label == "End it again" && c.Verb == Verbs.EndSession && c.Target == Verbs.SessionTarget("w1"));
         Handled(code).ShouldContain("may still run");
+        card.Detail.ShouldNotBeNull().ShouldContain("claude stop: refused");
     }
 
     [Fact]
