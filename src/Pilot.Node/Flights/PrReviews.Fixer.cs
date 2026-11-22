@@ -557,7 +557,7 @@ public sealed partial class PrReviews
         state.PutPrReview(fixing with { FixerJob = job });
         var answered = chose ?? StoredChoice(review);
         SettleDesign(pr.Repo, pr.Number, AnsweredCause(answered, "the fixer started on it"), review.Url, $"{fixer} is making the changes the answer calls for", answered);
-        state.CloseCardsAbout(Verbs.PrTarget(pr.Repo, pr.Number), "a fixer started", FixOfferKind, NoFixerKind, DesignKind, FixCappedKind, FixFailedKind);
+        state.CloseCardsAbout(Verbs.PrTarget(pr.Repo, pr.Number), "a fixer started", FixOfferKind, NoFixerKind, DesignKind, FixCappedKind, FixFailedKind, FixEndedKind);
         state.RaiseCard(CardBin.Handled, FixStartedKind, Verbs.PrTarget(pr.Repo, pr.Number),
             $"Started {fixer} on {pr}'s branch", $"It makes the changes the review asked for, on branch {branch} in {worktree}.", link: review.Url);
         return $"started {fixer} at {CommitRefs.Short(read.Head)}";

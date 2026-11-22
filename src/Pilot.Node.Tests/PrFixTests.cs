@@ -358,6 +358,71 @@ public sealed class PrFixTests2 : PrFixTestsBase
         var lines = StatusMarkdown.Build(_state.Snapshot()).Split('\n').Select(l => l.TrimEnd('\r')).ToArray();
         lines[Array.FindIndex(lines, l => l.Contains("acme/widget#7")) + 1].ShouldContain("fixing, du1-fix-widget-7, round 2, working");
     }
+
+    private const string NotBlocking = "Fine.\n\n## Not blocking\n- the title could be shorter in README.md:2\n";
+
+    /// <summary>A passing review of the own PR #7 that leaves a not-blocking note, checks green and the queue idle: the points a fixer is to make.</summary>
+    private async Task<string> ApprovedWithAPointLeft()
+    {
+        _github.Summary = GhAnswers.ChecksOf(ChoiceStatus.Passing, 1, 1);
+        _github.Queue = GhAnswers.MergeQueue("idle", Row.Head);
+        (await Run(Verbs.ReviewPr, "acme/widget#7", "controller")).Error.ShouldBeNull();
+        (await Run(Verbs.PrVerdict, "acme/widget#7", Row.Reviewer, "approve", NotBlocking)).Error.ShouldBeNull();
+        return Row.Head;
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AnApproveThatLeavesAPointOnAnOwnPrStartsOneFixerHoldsTheMergeAndMergesAfterItsPushIsReviewed()
+    {
+        var first = await ApprovedWithAPointLeft();
+
+        await _reviews.SweepAsync(Ct);
+
+        var start = Fixers.ShouldHaveSingleItem();
+        start.Brief.ShouldContain("the title could be shorter");
+        start.Brief.ShouldContain("Make them; they are your work here");
+        Row.FixRound.ShouldBe(1);
+        _github.Merged.ShouldBeEmpty("the merge waits for the fixer's push to be reviewed");
+        _github.IssuesCreated.ShouldBeEmpty();
+
+        // While it works, a sweep starts no second fixer and merges nothing.
+        await _reviews.SweepAsync(Ct);
+        Fixers.Length.ShouldBe(1);
+        _github.Merged.ShouldBeEmpty();
+
+        // The person's Merge on the card keeps the hold too, and says what is happening.
+        (await Run(Verbs.Merge, "acme/widget#7", "controller", first)).Error.ShouldNotBeNull().ShouldContain("not merged yet");
+        _github.Merged.ShouldBeEmpty();
+
+        var head = FixerPushes("made the note");
+        _github.Queue = GhAnswers.MergeQueue("idle", head);
+        await Round(head, "approve");
+        await _reviews.SweepAsync(Ct);
+
+        Fixers.Length.ShouldBe(1);
+        _github.Merged.ShouldBe([(7, head, "squash")]);
+        _github.IssuesCreated.ShouldBeEmpty();
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AFixerStartedOnAPassingReviewsPointsThatEndsWithoutAPushRingsOnceAndTheNextOneClosesTheCard()
+    {
+        await ApprovedWithAPointLeft();
+        await _reviews.SweepAsync(Ct);
+        Fixers.ShouldHaveSingleItem();
+
+        _state.PutSession(Session("du1-fix-widget-7", SessionState.Ended));
+        await _reviews.SweepAsync(Ct);
+
+        // The points are still unmade, so the next sweep's start is a second fixer, and the card that told the person to press Fix it is closed.
+        Fixers.Length.ShouldBe(2);
+        Row.FixRound.ShouldBe(2);
+        _state.Cards(openOnly: true).ShouldNotContain(c => c.Kind == PrReviews.FixEndedKind);
+        _github.Merged.ShouldBeEmpty();
+    }
+
 }
 
 /// <summary>Part 3 of PrFixTests: the class is split so its tests run side by side, not one after another.</summary>

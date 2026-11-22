@@ -69,6 +69,13 @@ public sealed partial class PrReviews
         }
         if (read.Head.Length > 0 && !string.Equals(read.Head, review.Head, StringComparison.OrdinalIgnoreCase))
         {
+            // The fixer has had its go at the points its review left: they are acted on, so a point it answered deferred does not start another fixer.
+            var tried = ReviewFollowUp.Read(review.Rounds).Items.Concat(ReviewFollowUp.LastRoundNotes(review.Rounds)).Select(i => i.Key)
+                .Except(review.FollowUpPoints ?? [], StringComparer.OrdinalIgnoreCase).ToArray();
+            if (tried.Length > 0)
+            {
+                state.PutPrReview(review with { FollowUpPoints = [.. review.FollowUpPoints ?? [], .. tried] });
+            }
             if (!await EndFixerAsync(review, cancellationToken))
             {
                 return;

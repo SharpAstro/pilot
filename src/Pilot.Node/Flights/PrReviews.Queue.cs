@@ -99,8 +99,8 @@ public sealed partial class PrReviews
                 summary: $"Merge it when you are ready: {why}, so the node leaves it to you.");
             return;
         }
-        // Nothing lands open (pilot #1107): the points its reviews left are filed as the PR's one follow-up issue before the queue or an autopilot merge.
-        // A flight's PR has its own (the flight's); a failure holds the PR with no note, so a later sweep files it again.
+        // Nothing lands open (pilot #1107): the points its reviews left are made by a fixer (or put on the PR as one comment when none can be) before the
+        // queue or an autopilot merge. A flight's PR has its own legs; a hold (a fixer working, or none able to start) leaves no note, so a later sweep goes on.
         if (!FlightOwns(review))
         {
             if (await EnsureFollowUpAsync(review, cancellationToken) is not { } filed)
@@ -163,11 +163,12 @@ public sealed partial class PrReviews
         {
             throw new FlightException($"{pr}'s head is newer than the review ({CommitRefs.Short(read.Head)} · reviewed {CommitRefs.Short(head)}): review it again");
         }
-        // The card's Merge is a merge too: the points left are filed first (pilot #1107).
+        // The card's Merge is a merge too: the points left are made first (pilot #1107). It keeps the hold the sweep keeps: a fixer is started on them
+        // (or is on them) and the PR merges once its push is reviewed; the owner's decision, 2026-11-22.
         if (!FlightOwns(review))
         {
             review = await EnsureFollowUpAsync(review, cancellationToken)
-                ?? throw new FlightException($"{pr}'s follow-up issue for the points its review left could not be filed, or an earlier point is not addressed, so it is not merged: see the node log");
+                ?? throw new FlightException($"{pr} is not merged yet: its review left points that are made first. A fixer was started on them or is making them now, and the PR merges once its push is reviewed; or no fixer could start, or an earlier point is not addressed (see the node log and the PR's cards)");
         }
         var outcome = await LegCommander.LandPrAsync(github, review.ClonePath, pr.Number, read.Head, Models.MergeMethod, cancellationToken);
         if (outcome.Kind == LandKind.RetryLater)
