@@ -583,7 +583,7 @@ public sealed class DesignStore(string dataFolder, TimeProvider? time = null)
     /// draft's DESIGN.md through <see cref="DesignDocument"/>, so the rest of the document is as <see cref="DesignDocument.Format"/> writes it; a frame's source is not
     /// reachable from here. With no draft, the draft is made from the current version first. Returns the text the part now reads.
     /// </summary>
-    public string Edit(string id, string part, string cell, string text)
+    public string Edit(string id, string part, string cell, string text, string? heading = null)
     {
         part = part.Trim().ToLowerInvariant();
         if (!EditParts.Contains(part, StringComparer.Ordinal))
@@ -642,6 +642,11 @@ public sealed class DesignStore(string dataFolder, TimeProvider? time = null)
             else
             {
                 var index = CellIndex(document, cell.Trim());
+                // Typed into the cell that had this heading: a newer version that put another cell at this number refuses the words rather than take them (#1182 N4.1).
+                if (heading is { } was && !string.Equals(document.Cells[index].Heading.Trim(), was.Trim(), StringComparison.Ordinal))
+                {
+                    throw new DesignException($"cell {cell.Trim()} is now '{document.Cells[index].Heading}', not '{was.Trim()}': the draft moved its cells since the typing began, so the words were not written; type them again on the cell they belong to");
+                }
                 var cells = document.Cells.ToList();
                 cells[index] = part switch
                 {

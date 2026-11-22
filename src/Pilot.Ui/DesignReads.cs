@@ -189,9 +189,9 @@ internal sealed class DesignReads(NodeClient? client, string who, Action redraw)
             redraw();
         });
         // Typing into the design (PIL1171): design-edit, design-publish as the owner, design-discard; the page is read again at once so the draft shows.
-        designs.OnEdit = (id, part, cell, text) => _ = Task.Run(async () =>
+        designs.OnEdit = (id, part, cell, text, heading) => _ = Task.Run(async () =>
         {
-            designs.Typed(await TypeAsync(Verbs.DesignEdit, id, [part, cell, text], CancellationToken.None).ConfigureAwait(false));
+            designs.Typed(await TypeAsync(Verbs.DesignEdit, id, heading is null ? [part, cell, text] : [part, cell, text, heading], CancellationToken.None).ConfigureAwait(false));
             redraw();
         });
         designs.OnPublishTyped = (id, why, pending) => _ = Task.Run(async () =>

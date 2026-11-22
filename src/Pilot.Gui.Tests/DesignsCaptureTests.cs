@@ -494,7 +494,7 @@ public sealed class DesignsCaptureTests
         var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
         chrome.Autopilot.OnToggle = _ => Task.FromResult<string?>(null);
         chrome.Show(PilotPage.Designs);
-        chrome.Designs.OnEdit = (_, _, _, _) => { };
+        chrome.Designs.OnEdit = (_, _, _, _, _) => { };
         // The open For-you bar covers the page's right edge by design; the page is captured with the bar collapsed so the chat shows whole.
         chrome.Notifications.Open = false;
         chrome.Designs.Open("DSN-7");
@@ -539,7 +539,7 @@ public sealed class DesignsCaptureTests
         var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
         chrome.Autopilot.OnToggle = _ => Task.FromResult<string?>(null);
         chrome.Show(PilotPage.Designs);
-        chrome.Designs.OnEdit = (_, _, _, _) => { };
+        chrome.Designs.OnEdit = (_, _, _, _, _) => { };
         chrome.Designs.Open("DSN-7");
         var data = PageData.For("sample");
         chrome.Render(data.Sessions, data.Flights, data.Cards, data.Jobs, data.Fleet, data.Repos, data.PullRequests, new RectF32(0, 0, width, height), data.Machines, null, data.Spend, screen);
