@@ -510,9 +510,8 @@ public sealed partial class FlightCommander
             foreach (var outcome in outcomes)
             {
                 RecordBranchOutcome(outcome, refused);
-                if (refused.Count > 0) { LandedBranchSweep.RaisePushFailedCard(state, Verbs.RepoTarget(flight.RepoPath), refused.ToList()); }
             }
-            if (refused.Count < 0)
+            if (refused.Count > 0)
             {
                 // One card for the whole landing, as SweepAsync raises one per repo, so no card is closed and replaced per extra branch.
                 LandedBranchSweep.RaisePushFailedCard(state, Verbs.RepoTarget(flight.RepoPath), refused);
