@@ -221,4 +221,60 @@ public sealed class DesignStoreTests : IDisposable
 
         store.List().Select(r => r.Id).Take(3).ShouldBe(["DSN-11", "DSN-10", "DSN-9"]);
     }
+
+    /// <summary>
+    /// Start its design looks for the idea's design and makes one in one step of the store's (#1170 R1.5): starts at once make one design, and a
+    /// later start answers it.
+    /// </summary>
+    [Fact]
+    public void StartsOfOneIdeaAtOnceMakeOneDesign()
+    {
+        var store = Store();
+        var results = new System.Collections.Concurrent.ConcurrentBag<(DesignRow Row, bool Made)>();
+        Parallel.For(0, 8, _ => results.Add(store.ForIdeaOrNew("pilot I10", null, "pilot", "A night list", "the idea's words")));
+
+        results.Count(r => r.Made).ShouldBe(1);
+        results.Select(r => r.Row.Id).Distinct().ShouldHaveSingleItem();
+        store.ForIdeaOrNew("pilot I10", null, "pilot", "A night list", "the idea's words").Made.ShouldBeFalse();
+        store.List().ShouldHaveSingleItem().ForIdeas.ShouldBe(["pilot I10"]);
+    }
+
+    // A design with version 1 of one cell, "Threshold", that can be typed into.
+    private static string TypedDesign(DesignStore store)
+    {
+        var id = store.New("pilot", "Disk alert", "Let the owner set a threshold").Id;
+        var folder = Path.Combine(store.FolderOf(id), "versions", "v1");
+        Directory.CreateDirectory(Path.Combine(folder, "screens"));
+        File.WriteAllText(Path.Combine(folder, "DESIGN.md"), """
+            # Disk alert
+
+            **Objective:** Lets the owner set how little free space rings a card.
+
+            ## Threshold
+
+            **Objective:** Shows the setting before a change.
+
+            ```screen id=home size=Phone
+            The dialog on a phone
+            ```
+            """);
+        File.WriteAllText(Path.Combine(folder, "prototype.json"), """{"width":1280,"height":720,"entry":"home","screens":[]}""");
+        File.WriteAllText(Path.Combine(folder, "screens", "home.json"), """{"id":"home"}""");
+        store.Update(id, r => r with { Current = 1, Versions = 1, Why = "first", History = [new DesignVersionRow { Number = 1, Why = "first", At = new DateTimeOffset(2026, 11, 19, 9, 0, 0, TimeSpan.Zero) }] });
+        return id;
+    }
+
+    /// <summary>
+    /// Words typed into a cell carry the heading the cell had when the typing began: the draft takes them while that cell still has it, and refuses them once
+    /// a newer draft put another cell at the number (#1182 N4.1), rather than write them into the wrong cell.
+    /// </summary>
+    [Fact]
+    public void AnEditHeldToItsCellsHeadingIsRefusedWhenTheDraftMovedTheCells()
+    {
+        var store = Store();
+        var id = TypedDesign(store);
+        store.Edit(id, "notes", "1", "Typed into the first cell.", "Threshold").ShouldBe("Typed into the first cell.");
+        Should.Throw<DesignException>(() => store.Edit(id, "notes", "1", "Typed into a cell since moved.", "A heading the cell no longer has")).Message.ShouldContain("not 'A heading the cell no longer has'");
+        store.Edit(id, "notes", "1", "No heading given is not held.").ShouldBe("No heading given is not held.");
+    }
 }

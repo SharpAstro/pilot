@@ -281,5 +281,9 @@ public sealed class StoreCompatibilityTests : IDisposable
         kinds.Except(written).Select(t => t.Name).Order().ShouldBeEmpty("the fixture writer leaves out a delta of each of these kinds");
 
         journal.Decisions().ShouldNotBeEmpty();
+
+        // Contract 6 (#1144): a stored round's passedBy survives the journal, so the next release's fixture gives it something to read.
+        history.Deltas.OfType<FlightAddedEvent>().Select(d => d.Flight).Where(f => f.Code == "PIL6")
+            .ShouldHaveSingleItem().ReviewRounds.ShouldNotBeNull().ShouldHaveSingleItem().PassedBy.ShouldBe("controller");
     }
 }

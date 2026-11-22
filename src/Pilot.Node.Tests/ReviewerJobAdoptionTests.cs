@@ -216,6 +216,37 @@ public sealed class ReviewerJobAdoptionTests : ReviewTestsBase
         await jobs.StopAsync(CancellationToken.None);
     }
 
+    /// <summary>
+    /// The re-read of a job's row and the put of its ended row are one step under _rowLock (#1178): an adoption from another thread in between waits
+    /// for the put, then finds the row ended and leaves it so. Without the lock it would check Running before the put and put its Running copy after.
+    /// </summary>
+    [Fact]
+    public async Task AnAdoptionFromAnotherThreadBetweenTheReReadAndThePutWaitsForThePut()
+    {
+        var jobs = StartJobs();
+        var before = Session("old00006", "du1-z3-review", DateTimeOffset.UtcNow.AddMinutes(-10), SessionState.Ended);
+        var running = Queue(jobs, Verbs.SessionTarget(before.Id), "sleep 60; echo slept");
+        await Until(running, j => j.State == JobState.Running);
+        var after = Session("new00006", "du1-z3-review", DateTimeOffset.UtcNow);
+        Task? adoption = null;
+        bool? waited = null;
+        jobs.BetweenEndReadAndPut = _ =>
+        {
+            adoption = Task.Run(() => jobs.Dispatch(new JobRunner.Adopted(running, after.Id, after.Name, null, null)), Ct);
+            waited = !adoption.Wait(TimeSpan.FromMilliseconds(300), Ct);
+        };
+        var freed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        jobs.SlotFreed = id => { if (id == running) freed.TrySetResult(); };
+
+        jobs.Cancel(new CommandRequest { Verb = Verbs.CancelJob, Target = Verbs.JobTarget(running), Who = "test" });
+        await freed.Task.WaitAsync(Ceiling, Ct);
+        await adoption.ShouldNotBeNull().WaitAsync(Ceiling, Ct);
+
+        waited.ShouldBe(true, "the adoption waited on _rowLock while the ended row was being made");
+        _state.Jobs().Single(j => j.Id == running).State.ShouldBe(JobState.Cancelled, "the adoption that came after the put left the row ended");
+        await jobs.StopAsync(CancellationToken.None);
+    }
+
     [Fact]
     public async Task AnAdoptionDispatchedJustAfterTheEndedRowIsPutLeavesTheRowEnded()
     {

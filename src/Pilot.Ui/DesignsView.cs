@@ -314,6 +314,8 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
         public PrototypeCellGrid<TSurface>? RealGrid { get; set; }
         public PrototypeCellGrid<TSurface>? Grid { get; set; }
         public DesignSurface? ShownTarget { get; set; }
+        // The player as the window lists it: answering the pointer only inside its frame (FramedWidget), kept so a drag stays with one widget.
+        public FramedWidget? Framed { get; set; }
     }
 
     private readonly Dictionary<(int Cell, int Frame), FramePlay> _plays = [];
@@ -336,7 +338,10 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
 
     /// <summary>The widgets the frames are in the window: each frame's player, or its grid of cells for a frame of a terminal size; none where the page is drawn in cells. The chrome lists them after the page.</summary>
     internal IEnumerable<IPixelWidget> FrameWidgets() =>
-        Terminal is not null ? [] : _plays.OrderBy(p => p.Key).Select(p => p.Value.Cells is not null && p.Value.Grid is { } grid ? (IPixelWidget)grid : p.Value.Shown);
+        Terminal is not null ? [] : _plays.OrderBy(p => p.Key).Select(p => p.Value.Cells is not null && p.Value.Grid is { } grid ? (IPixelWidget)grid
+            : p.Value.Framed ??= new FramedWidget(() => p.Value.Shown, FrameOf(p.Key)));
+
+    private Func<RectF32?> FrameOf((int Cell, int Frame) key) => () => FrameRectOf(key.Cell, key.Frame);
 
     // The size a frame is played at: its block's built-in target, or the terminal it names (which the window draws as a grid of cells and the terminal as the cells themselves),
     // else the one the page shows the design at (the design's own size unless the window chose another).
@@ -1149,7 +1154,9 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
         }
         // In pixels the chat is a column of its own beside the document, where what the designer changes is in view. A window with no width for both puts it under the document.
         return ChatBeside
-            ? Layout.Builder.HStack(document.Pad(Gutter, 0f).WStar().HStar(), ChatPane(page).WFixed(ChatWidth).HStar()).WithGap(0f).Pad(0f, 8f).WStar().HStar()
+            // The chat keeps its column's width; inside it a gutter keeps its words off the document's scroll bar, which it touched (#1210 R1.7).
+            ? Layout.Builder.HStack(document.Pad(Gutter, 0f).WStar().HStar(),
+                Layout.Builder.HStack(Layout.Builder.Spacer().WFixed(ChatInset), ChatPane(page).WStar().HStar()).WithGap(0f).WFixed(ChatWidth).HStar()).WithGap(0f).Pad(0f, 8f).WStar().HStar()
             : Layout.Builder.VStack(document, ChatPane(page).HStar(NarrowChatShare, NarrowChatFloor, NarrowChatHeight)).WithGap(8f).Pad(Gutter, 8f).WStar().HStar();
     }
 
@@ -1450,6 +1457,9 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
         }
     }
     // The chat column: its heading with the Point at this switch, and the chat's own feed, status and box under it.
+    // The room between the document's scroll bar and the chat beside it.
+    private const float ChatInset = 8f;
+
     private Layout.Node ChatPane(DesignPage page)
     {
         return Layout.Builder.VStack(Heading("Chat with the designer"), Chat.Tree().HStar()).WithGap(4f);

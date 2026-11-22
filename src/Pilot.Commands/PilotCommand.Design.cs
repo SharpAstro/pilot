@@ -69,12 +69,34 @@ public static partial class PilotCommand
         return text.ToString();
     }
 
-    /// <summary>A string the node sent, made fit to be one path segment: only letters, digits, '-', '_' and '.', and never '.' or '..' alone.</summary>
+    /// <summary>
+    /// A string the node sent, made fit to be one path segment: only letters, digits, '-', '_' and '.', never '.' or '..' alone, never ending in '.', and never a
+    /// Windows device name (CON, NUL, COM1 ...), which Windows will not make a file of whatever its extension. A name that had to change carries the start of a
+    /// hash of what it was, so two names that change into the same text ("a b", "a_b") stay two files (#1202 N2.3).
+    /// </summary>
     internal static string SafeName(string name)
     {
         var safe = string.Concat(name.Select(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_' or '.' ? c : '_'));
-        return safe.Trim('.').Length == 0 ? "_" : safe;
+        if (safe.Trim('.').Length == 0)
+        {
+            safe = "_";
+        }
+        safe = safe.TrimEnd('.');
+        if (WindowsDevice(safe.Split('.')[0]))
+        {
+            safe = "_" + safe;
+        }
+        if (safe == name)
+        {
+            return safe;
+        }
+        var hash = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(name)))[..8];
+        return $"{safe}-{hash}";
     }
+
+    private static bool WindowsDevice(string stem) =>
+        stem.ToUpperInvariant() is "CON" or "PRN" or "AUX" or "NUL"
+        || stem.Length == 4 && (stem.StartsWith("COM", StringComparison.OrdinalIgnoreCase) || stem.StartsWith("LPT", StringComparison.OrdinalIgnoreCase)) && stem[3] is >= '1' and <= '9';
 
     /// <summary>Plain output: a line per picture, then the tail.</summary>
     internal static string DesignRendersPlain(DesignRenders renders)
@@ -107,6 +129,13 @@ public static partial class PilotCommand
     }
 
     /// <summary>One design whole: its record, its brief as written and where its folders are.</summary>
+    /// <summary>
+    /// design-build's args as the node reads them (DesignBuilds): the version, the repo, the milestone, in that order, each empty when not given. One place,
+    /// so a swapped position is caught by its test (#1180 R1.6).
+    /// </summary>
+    internal static string[] DesignBuildArgs(int? version, string? repo, string? milestone) =>
+        [version?.ToString(CultureInfo.InvariantCulture) ?? "", repo ?? "", milestone ?? ""];
+
     internal static string DesignShown(DesignDetail design)
     {
         var row = design.Row;
@@ -247,7 +276,7 @@ public static partial class PilotCommand
             var buildMilestone = new Option<string?>("--milestone") { Description = "For a design that came from an idea: the open milestone to plan the idea into" };
             var designBuild = Action(new Command("build", "Build a version: file one issue holding its brief, notes, renders and prototype hash, and make one flight on it that remembers the design and version (a design from an idea plans that idea instead); refused while a flight of that version is in the air") { Arguments = { buildId }, Options = { buildVersion, buildRepo, buildMilestone } },
                 (p, client, ct) => Send(client, Verbs.DesignBuild, Verbs.DesignTarget(p.GetValue(buildId)!),
-                    [p.GetValue(buildVersion)?.ToString(CultureInfo.InvariantCulture) ?? "", p.GetValue(buildRepo) ?? "", p.GetValue(buildMilestone) ?? ""], who, ct));
+                    DesignBuildArgs(p.GetValue(buildVersion), p.GetValue(buildRepo), p.GetValue(buildMilestone)), who, ct));
 
             var showId = Arg("design", "The design's id, DSN-<n>");
             var designShow = Action(new Command("show", "Show a design: its record, its brief and the paths of its folders") { Arguments = { showId } },

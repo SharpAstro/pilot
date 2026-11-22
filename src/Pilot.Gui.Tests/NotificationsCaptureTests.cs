@@ -193,7 +193,7 @@ public sealed class NotificationsCaptureTests
         Enumerable.Range(0, rows).Select(r => CellLayout.HitTest(arranged, columns - 1, r)).Any(h => h is NotificationHit { Part: NotificationPart.Bell }).ShouldBeFalse("no bell at the right edge");
         if (!open)
         {
-            Enumerable.Range(0, rows).Count(r => CellLayout.HitTest(arranged, columns - 1, r) is HitResult.ButtonHit { Action: NotificationsHost.HandleAction }).ShouldBeGreaterThan(0, "the one-cell handle is on the right edge");
+            Enumerable.Range(0, rows).Count(r => CellLayout.HitTest(arranged, columns - 1, r) is HitResult.ButtonHit { Action: NotificationsHost.HandleAction }).ShouldBeGreaterThan(0, "the handle (26 by 80 units, a few cells in the terminal) is on the right edge");
         }
         var pageRect = arranged.First(a => a.Node == page).Bounds;
         var barColumns = (int)Math.Ceiling(CardsView<RgbaImage>.Width / 8f);

@@ -69,6 +69,14 @@ public sealed partial class PrReviews
         }
         if (read.Head.Length > 0 && !string.Equals(read.Head, review.Head, StringComparison.OrdinalIgnoreCase))
         {
+            // A fixer started on a passing review has had its go at the points its brief listed (ReviewFollowUp.ToMake, the same list): they are
+            // acted on, so a point it answered deferred does not start another fixer. A changes-verdict fixer's brief lists none, so none is recorded.
+            var tried = string.Equals(review.Verdict, "changes", StringComparison.OrdinalIgnoreCase) ? []
+                : ReviewFollowUp.ToMake(review).Select(i => i.Key).ToArray();
+            if (tried.Length > 0)
+            {
+                state.PutPrReview(review with { FollowUpPoints = [.. review.FollowUpPoints ?? [], .. tried] });
+            }
             if (!await EndFixerAsync(review, cancellationToken))
             {
                 return;
@@ -84,12 +92,58 @@ public sealed partial class PrReviews
             }
             return;
         }
-        var sessions = state.Sessions().Where(s => string.Equals(s.Name, review.Fixer, StringComparison.Ordinal)).ToList();
-        if (sessions.Count > 0 && sessions.All(s => s.State == SessionState.Ended) && await EndFixerAsync(review, cancellationToken))
+        // The fixer's own session, by the job it was started as: every fixer of a PR has one name, so by name an earlier fixer's ended session made a
+        // fixer started a moment ago (its row not listed yet) read as ended, and another was started on it (tianwen#2435 had three; pilot #1247). A row
+        // stored before FixerJob was kept falls back to the name.
+        var sessions = state.Sessions().Where(s => review.FixerJob is { } job ? string.Equals(s.Id, job, StringComparison.Ordinal) : string.Equals(s.Name, review.Fixer, StringComparison.Ordinal)).ToList();
+        if (sessions.Count > 0 && sessions.All(s => s.State == SessionState.Ended))
         {
+            // What it left: a fixer that ended with its fix uncommitted, or committed and not pushed (a detached HEAD, a push that failed), had its worktree
+            // force-removed with the work in it (pilot #1247: tianwen#2435's fix sat in a commit nothing pointed to). Its worktree is kept then, and the card
+            // says where the work is and what it is.
+            var left = await LeftWorkAsync(review, cancellationToken);
+            if (!await EndFixerAsync(left is null ? review : review with { FixWorktreeBorrowed = true }, cancellationToken))
+            {
+                return;
+            }
             state.RaiseCard(CardBin.ForYou, FixEndedKind, subject, $"{pr}: {review.Fixer} ended without a push",
-                $"The PR's head is still {CommitRefs.Short(review.Head)}. Fix it starts another fixer on the same findings.",
+                left is null
+                    ? $"The PR's head is still {CommitRefs.Short(review.Head)}. Fix it starts another fixer on the same findings."
+                    : $"The PR's head is still {CommitRefs.Short(review.Head)}, but the fixer left work in {review.FixWorktree}, kept there: {left}. Push it from there, or Fix it starts another fixer on the same findings in a fresh worktree.",
                 [new CardChoice { Label = FixLabel, Verb = Verbs.FixPr, Target = subject }], link: review.Url);
+        }
+    }
+
+    /// <summary>
+    /// What an ended fixer left in its worktree that the PR does not have: its uncommitted files and its commits past the PR's head, in a line; null when
+    /// nothing (or no worktree of its own, or git cannot read it).
+    /// </summary>
+    private async Task<string?> LeftWorkAsync(PrReviewRow review, CancellationToken cancellationToken)
+    {
+        if (review.FixWorktree is not { } worktree || review.FixWorktreeBorrowed == true || !Directory.Exists(worktree))
+        {
+            return null;
+        }
+        try
+        {
+            var status = await git.RunAsync(["status", "--porcelain"], worktree, cancellationToken);
+            var ahead = await git.RunAsync(["log", "--format=%h %s", $"{review.Head}..HEAD"], worktree, cancellationToken);
+            var files = status.Ok ? status.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) : [];
+            var commits = ahead.Ok ? ahead.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) : [];
+            var parts = new List<string>();
+            if (commits.Length > 0)
+            {
+                parts.Add($"{commits.Length} commit{(commits.Length == 1 ? "" : "s")} not pushed ({string.Join("; ", commits.Take(3))}{(commits.Length > 3 ? "; ..." : "")})");
+            }
+            if (files.Length > 0)
+            {
+                parts.Add($"{files.Length} file{(files.Length == 1 ? "" : "s")} not committed ({string.Join(", ", files.Take(5).Select(f => f.Length > 3 ? f[3..] : f))}{(files.Length > 5 ? ", ..." : "")})");
+            }
+            return parts.Count > 0 ? string.Join(", and ", parts) : null;
+        }
+        catch (Exception ex) when (ex is FlightException or System.ComponentModel.Win32Exception or IOException)
+        {
+            return null;
         }
     }
 

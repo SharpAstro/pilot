@@ -37,7 +37,7 @@ public sealed class CardWholeInNotificationsTests
     private static CardRow Design(string id = "c26885") => new()
     {
         Id = id, Bin = CardBin.Ring, Kind = "pr-design", Subject = "pr/SharpAstro/tianwen#2435", Title = "SharpAstro/tianwen#2435: the review asks a question of design",
-        Summary = Summary, Detail = Detail, At = Live.At, State = CardState.Open,
+        Summary = Summary, Detail = Detail, At = T0.AddMilliseconds(500), State = CardState.Open,
         Choices =
         [
             new CardChoice { Label = "Pick option A", Verb = "answer", Target = "pr/SharpAstro/tianwen#2435" },

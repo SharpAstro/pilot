@@ -78,6 +78,7 @@ public sealed class FlightArchiveSweepTests : IDisposable
         Has(state.Snapshot(), "TIA1").ShouldBeFalse();
         Has(state.Snapshot(), "TIA2").ShouldBeTrue();
         state.ArchivedFlightRows().Select(r => r.Code).ShouldBe(["TIA1"]);
+        state.ArchivedFlightCount().ShouldBe(1, "the count the node row carries, without the sort");
         state.Archive!.Read("TIA1").ShouldNotBeNull().Legs.Length.ShouldBe(1);
     }
 
@@ -127,6 +128,7 @@ public sealed class FlightArchiveSweepTests : IDisposable
 
         state.Flights().Single().Code.ShouldBe("TIA1");
         state.ArchivedFlightRows().ShouldBeEmpty();
+        state.ArchivedFlightCount().ShouldBe(0, "nothing was archived");
     }
 
     [Fact]
@@ -162,6 +164,7 @@ public sealed class FlightArchiveSweepTests : IDisposable
         _output.WriteLine($"snapshot before the sweep: {before} bytes (352 flights); after: {after} bytes (2 flights)");
         state.Snapshot().Flights.Select(f => f.Code).Order().ShouldBe(["TIA351", "TIA352"]);
         state.ArchivedFlightRows().Length.ShouldBe(350);
+        state.ArchivedFlightCount().ShouldBe(350);
         after.ShouldBeLessThan(before / 10);
     }
 

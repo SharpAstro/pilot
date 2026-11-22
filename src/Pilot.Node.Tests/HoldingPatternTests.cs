@@ -291,6 +291,8 @@ public sealed class HoldingPatternTests : ReviewTestsBase
         var before = _state.Legs(flight.Code).Single(l => l.Name == "parser");
         leg.Goal.ShouldBe("make every one of the review's not-blocking notes in this flight");
         leg.DoneWhen.ShouldContain("size is no reason", Case.Sensitive, "a note is made, not deferred as larger than the flight");
+        // A note that waits says so in the report, as the hold reads it (#1254 N1.4).
+        leg.DoneWhen.ShouldContain("reported in the leg's report under ## Earlier points as deferred, with its reason", Case.Sensitive);
         leg.Checklist.Select(i => i.Text).ShouldContain(t => t.Contains("rename `x` to `count`"));
         leg.Checklist.Select(i => i.Text).ShouldContain(t => t.Contains("a comment is stale"));
         leg.Checklist.Last().Text.ShouldContain("Commit");

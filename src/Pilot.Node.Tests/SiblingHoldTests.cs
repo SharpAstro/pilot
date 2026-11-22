@@ -62,7 +62,9 @@ public sealed class SiblingHoldTests : ReviewTestsBase
         var row = new FlightRow { Code = "TIA1", Repo = "tianwen", RepoPath = "/r", Issue = 7, Branch = "b", Worktree = "/w", Base = "origin/main", State = FlightState.Flying, CreatedAt = DateTimeOffset.UnixEpoch };
         FlightOnHold Hold(bool? own, bool? label) => new() { Reason = "why", Since = DateTimeOffset.UnixEpoch, By = "me", Own = own, FromLabel = label };
 
-        FlightWaiting.OnHoldText(row with { OnHold = Hold(null, true) }).ShouldBe("on hold by the label pilot: hold on #7");
+        FlightWaiting.OnHoldText(row with { OnHold = Hold(null, true) }).ShouldBe("on hold by the label pilot: hold on #7 (me: why)");
+        // With no hold comment the label's default reason is left out: the label already says it.
+        FlightWaiting.OnHoldText(row with { OnHold = Hold(null, true) with { By = "the owner", Reason = FlightOnHold.LabelReason } }).ShouldBe("on hold by the label pilot: hold on #7");
         FlightWaiting.OnHoldText(row with { OnHold = Hold(true, true) }).ShouldNotBeNull().ShouldContain("the label pilot: hold on #7 and by me");
         FlightWaiting.OnHoldText(row with { OnHold = Hold(true, null) }).ShouldNotBeNull().ShouldContain("this flight only");
         FlightWaiting.OnHoldText(row with { OnHold = Hold(null, null) }).ShouldBe("on hold by me: why");

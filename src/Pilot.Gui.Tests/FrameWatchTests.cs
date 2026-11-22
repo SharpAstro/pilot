@@ -357,6 +357,6 @@ public partial class FrameWatchTests
         return (text, FrameWatch.Fingerprint(pages, data.Fleet, at, shown, version: 1, header, FrameWatch.LanLine(chrome.Flights.Lan, at)));
     }
 
-    [System.Text.RegularExpressions.GeneratedRegex(@"as of\s+\d{4}-\d\d-\d\d\s+\d\d:\d\d:\d\d\s+UTC")]
+    [System.Text.RegularExpressions.GeneratedRegex(@"as of\s+\d{4}-\d\d-\d\d\s+\d\d:\d\d:\d\d")]
     private static partial System.Text.RegularExpressions.Regex AsOf();
 }

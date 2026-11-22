@@ -61,6 +61,33 @@ public sealed class GuiArtifactsTests : JobTestsBase
     }
 
     [Fact]
+    public async Task ArtifactsOverTheRunnersLimitAreRemovedAndTheRowSaysSoFromTheRunner()
+    {
+        // #1085: the over-limit note comes from the runner's own collect at the job's end, not a hand-written row: a small limit set here.
+        var jobs = Idle().Jobs;
+        jobs.MaxRunning = 2;
+        jobs.SiblingsOf = _ => [];
+        jobs.GuiSlots = 1;
+        jobs.DesktopProbe = () => null;
+        jobs.ArtifactByteLimit = 1;
+        var cwd = Path.Combine(_root, "tianwen");
+        Directory.CreateDirectory(Path.Combine(cwd, ".git"));
+        var id = jobs.Run(new CommandRequest { Verb = Verbs.Run, Target = "session/a1b2c3d4", Args = [Verbs.GuiArg, cwd, "0", Sleep(30)], Who = "se1-tia1-parser" }).Made!;
+        jobs.Dispatch(new JobRunner.HandedOver(_state.Jobs().Single(j => j.Id == id)));
+        await Until(id, j => j.State == JobState.Running);
+        var dir = Fake!.Job(id).Launch.Environment.ShouldNotBeNull()[JobRunner.ArtifactsVariable];
+        await File.WriteAllBytesAsync(Path.Combine(dir, "main.png"), Png, Ct);
+        Png.Length.ShouldBeGreaterThan(1);
+
+        jobs.Cancel(new CommandRequest { Verb = Verbs.CancelJob, Target = Verbs.JobTarget(id), Who = "controller" });
+        var ended = await Until(id, j => j.EndedAt is not null);
+
+        ended.Artifacts.ShouldBeNull();
+        ended.ArtifactsNote.ShouldNotBeNull().ShouldContain("over the per-job limit of 1 B");
+        File.Exists(Path.Combine(dir, "main.png")).ShouldBeFalse("they were removed, none is kept");
+    }
+
+    [Fact]
     public async Task TheRouteReturnsAnArtifactsBytesAsImagePngAndRefusesNamesThatEscape()
     {
         await using var node = await NodeHarness.StartAsync(Ct);

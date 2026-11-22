@@ -116,7 +116,7 @@ public sealed class DesignQueueTests : PrFixTestsBase
         var row = await Review("acme/widget#7", "comment", Question);
         Green(row.Head);
         (await Run(Verbs.FixPr, "acme/widget#7", "controller", "Keep", "it", "a", "library")).Error.ShouldBeNull();
-        _state.PutSession(Session("du1-fix-widget-7", SessionState.Ended));
+        _state.PutSession(FixerSession(SessionState.Ended));
 
         await _reviews.SweepAsync(Ct);
         await _reviews.SweepAsync(Ct);

@@ -247,3 +247,20 @@ public sealed class DecisionDesignAnswerTests : PrFixTestsBase
         decision.Reason.ShouldBe("Keep it a library, no service");
     }
 }
+
+/// <summary>plan-idea --anyway is kept as a decision, as create-flight --anyway is (#1170 R1.7): the person planned past a design gate.</summary>
+public sealed class PlanAnywayDecisionTests
+{
+    [Fact]
+    public void PlanIdeaAnywayIsADirectDecisionWithItsOwnKindChoiceAndQuestion()
+    {
+        string[] args = ["Ideas", Verbs.AnywayFlag];
+        DecisionSources.KindOf(Verbs.PlanIdea, args).ShouldBe(DecisionKinds.PlanAnyway);
+        DecisionSources.IsDirect(Verbs.PlanIdea, args).ShouldBeTrue();
+        var command = new CommandRequest { Verb = Verbs.PlanIdea, Target = "pilot I10", Args = args, Who = "gui" };
+        DecisionSources.ChoiceOf(command).ShouldBe("Plan it anyway");
+        DecisionSources.QuestionOf(command).ShouldBe("Plan pilot I10 although its design has no published version?");
+
+        DecisionSources.KindOf(Verbs.PlanIdea, ["Ideas"]).ShouldBeNull("a plan within the gate is no decision to keep");
+    }
+}

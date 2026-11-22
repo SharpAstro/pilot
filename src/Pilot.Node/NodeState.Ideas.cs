@@ -127,9 +127,11 @@ public sealed partial class NodeState
     /// </summary>
     public void PutIdeas(string repo, IEnumerable<IdeaRow> read)
     {
+        var designRead = ReadDesigns();
         lock (_gate)
         {
-            PutIdeasLocked([.. _ideas.Where(i => !string.Equals(i.Repo, repo, StringComparison.OrdinalIgnoreCase)), .. read]);
+            var designs = Freshest(designRead);
+            PutIdeasLocked([.. _ideas.Where(i => !string.Equals(i.Repo, repo, StringComparison.OrdinalIgnoreCase)), .. read], designs);
         }
     }
 
@@ -139,9 +141,11 @@ public sealed partial class NodeState
     /// </summary>
     public void PutIdeas(IReadOnlyCollection<string> repos, IEnumerable<IdeaRow> read)
     {
+        var designRead = ReadDesigns();
         lock (_gate)
         {
-            PutIdeasLocked([.. _ideas.Where(i => !repos.Contains(i.Repo, StringComparer.OrdinalIgnoreCase)), .. read]);
+            var designs = Freshest(designRead);
+            PutIdeasLocked([.. _ideas.Where(i => !repos.Contains(i.Repo, StringComparer.OrdinalIgnoreCase)), .. read], designs);
         }
     }
 
@@ -154,24 +158,48 @@ public sealed partial class NodeState
     /// <summary>Reads the ideas again with the designs as they are now (a design was started or published): a delta only when a row changes.</summary>
     public void RefreshIdeaDesigns()
     {
+        var designRead = ReadDesigns();
         lock (_gate)
         {
-            PutIdeasLocked([.. _ideas]);
+            var designs = Freshest(designRead);
+            PutIdeasLocked([.. _ideas], designs);
         }
     }
 
-    private IdeaRow[] WithDesigns(IEnumerable<IdeaRow> all)
+    // The design rows, read from disk before the node's lock is taken (#1170 R1.4): every ideas refresh reads each design's row.json, which
+    // held _gate, and so every other reader and writer of the node's state, for the length of tens of file reads.
+    private (long Ticket, DesignRow[] Rows) ReadDesigns()
     {
-        var rows = all.ToArray();
-        DesignRow[] designs;
+        var ticket = Interlocked.Increment(ref _designReads);
         try
         {
-            designs = Designs?.Invoke() ?? [];
+            return (ticket, Designs?.Invoke() ?? []);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            designs = [];
+            return (ticket, []);
         }
+    }
+
+    // Read outside the lock, two refreshes can end out of order: the rows of the later read stand, and an earlier read that ends after them takes the
+    // later rows instead of putting its own older ones back. Called under _gate.
+    private DesignRow[] Freshest((long Ticket, DesignRow[] Rows) read)
+    {
+        if (read.Ticket >= _designsAppliedTicket)
+        {
+            _designsAppliedTicket = read.Ticket;
+            _designsApplied = read.Rows;
+        }
+        return _designsApplied;
+    }
+
+    private long _designReads;
+    private long _designsAppliedTicket;
+    private DesignRow[] _designsApplied = [];
+
+    private IdeaRow[] WithDesigns(IEnumerable<IdeaRow> all, DesignRow[] designs)
+    {
+        var rows = all.ToArray();
         // List() is newest first; an idea lists its designs oldest first. A link follows its idea through a move or a fold (IdeaIds.Follow), so it is looked up by where the idea is now.
         var moves = _ideaMoves;
         var byIdea = new Dictionary<string, List<DesignRow>>(StringComparer.OrdinalIgnoreCase);
@@ -198,9 +226,9 @@ public sealed partial class NodeState
         })];
     }
 
-    private void PutIdeasLocked(IEnumerable<IdeaRow> all)
+    private void PutIdeasLocked(IEnumerable<IdeaRow> all, DesignRow[] designs)
     {
-        var next = IdeaIds.Order(WithDesigns(all)).ToArray();
+        var next = IdeaIds.Order(WithDesigns(all, designs)).ToArray();
         // Age moves with the clock alone: a read that changes nothing else is no delta.
         if (next.Length != _ideas.Length || next.Zip(_ideas).Any(pair => pair.First with { Age = "", Images = [], Designs = [] } != pair.Second with { Age = "", Images = [], Designs = [] } || !pair.First.Designs.SequenceEqual(pair.Second.Designs)))
         {

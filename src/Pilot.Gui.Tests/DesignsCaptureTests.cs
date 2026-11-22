@@ -424,6 +424,61 @@ public sealed class DesignsCaptureTests
         return screen with { Open = screen.Open! with { Doc = new DesignDocument("Targets", twoCells ? "A home screen and a settings screen." : null, cells) } };
     }
 
+    /// <summary>
+    /// A design's bottom-docked bar (DSN-3's screens dock a 60 high bar at the bottom) is painted at the bottom of the played frame, inside it, at
+    /// the design's own size: not under the frame (#1167 R1.8, seen in j6918's own-size captures). The bar's colour is read just inside the frame's
+    /// bottom edge and the body's colour above it; nothing of the bar is drawn below the frame.
+    /// </summary>
+    [Fact]
+    public void ABottomDockedBarIsPaintedAtTheFramesBottomEdgeInsideTheFrame()
+    {
+        PageTime.Zone = TimeZoneInfo.Utc;
+        static System.Text.Json.Nodes.JsonObject Bar(string side, int size, string background) => new()
+        {
+            ["kind"] = "hstack", ["side"] = side, ["size"] = size, ["background"] = background,
+            ["children"] = new System.Text.Json.Nodes.JsonArray(new System.Text.Json.Nodes.JsonObject { ["kind"] = "spacer", ["width"] = "star" }),
+        };
+        var screen = PageData.TargetsDesigns(Now, doc =>
+        {
+            doc.Remove("targets");
+            doc["width"] = 1920;
+            doc["height"] = 1080;
+            var root = new System.Text.Json.Nodes.JsonObject
+            {
+                ["kind"] = "dock", ["background"] = "ContentBg",
+                ["children"] = new System.Text.Json.Nodes.JsonArray(Bar("top", 52, "HeaderBg"), Bar("bottom", 60, "Accent"), new System.Text.Json.Nodes.JsonObject { ["kind"] = "vstack" }),
+            };
+            doc["screens"] = new System.Text.Json.Nodes.JsonArray(new System.Text.Json.Nodes.JsonObject { ["id"] = "home", ["title"] = "Home", ["root"] = root });
+        });
+        screen = screen with { Open = screen.Open! with { Doc = new DesignDocument("Targets", null, [new DesignCell("Home", null, [new DesignFrame("home")], "")]) } };
+        const int width = 1920, height = 1080;
+        using var renderer = new RgbaImageRenderer(width, height);
+        var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
+        chrome.Show(PilotPage.Designs);
+        chrome.Notifications.Open = false;
+        chrome.Designs.Open("DSN-7");
+        var data = PageData.For("sample");
+        chrome.Render(data.Sessions, data.Flights, null, data.Jobs, data.Fleet, data.Repos, data.PullRequests, new RectF32(0, 0, width, height), data.Machines, null, data.Spend, screen);
+        Keep("after-design-bottom-bar-pilot-gui-1920.png", SharpAstro.Png.PngWriter.Encode(renderer.Surface.Pixels, width, height));
+
+        var frame = chrome.Designs.FrameRectOf(0, 0).ShouldNotBeNull();
+        var surface = chrome.Designs.FrameSurfaceOf(0, 0).ShouldNotBeNull();
+        var perUnit = frame.Height / surface.Height;
+        byte[] pixels = [.. renderer.Surface.Pixels];
+        uint At(float x, float y) => BitConverter.ToUInt32(pixels, ((int)y * width + (int)x) * 4);
+        var middle = frame.X + frame.Width / 2f;
+        var bar = At(middle, frame.Y + frame.Height - 30f * perUnit);
+        var body = At(middle, frame.Y + frame.Height / 2f);
+        var header = At(middle, frame.Y + 26f * perUnit);
+        bar.ShouldNotBe(body, "the bottom bar is painted at the frame's bottom, over the body's colour");
+        bar.ShouldNotBe(header);
+        At(middle, frame.Y + frame.Height - 70f * perUnit).ShouldBe(body, "above the 60 high bar is the body");
+        if (frame.Y + frame.Height + 40f < height)
+        {
+            At(middle, frame.Y + frame.Height + 30f).ShouldNotBe(bar, "nothing of the bar is drawn under the frame");
+        }
+    }
+
     /// <summary>The design page of DSN-1's shape (one cell, one 640 x 240 frame, Markdown notes, no objective) and of a design with two cells, at both window sizes: PNGs for the controller to set beside DSN-3 v3's opened.png.</summary>
     [Theory]
     [InlineData(false, 1920, 1080)]
@@ -439,7 +494,7 @@ public sealed class DesignsCaptureTests
         var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
         chrome.Autopilot.OnToggle = _ => Task.FromResult<string?>(null);
         chrome.Show(PilotPage.Designs);
-        chrome.Designs.OnEdit = (_, _, _, _) => { };
+        chrome.Designs.OnEdit = (_, _, _, _, _) => { };
         // The open For-you bar covers the page's right edge by design; the page is captured with the bar collapsed so the chat shows whole.
         chrome.Notifications.Open = false;
         chrome.Designs.Open("DSN-7");
@@ -451,6 +506,9 @@ public sealed class DesignsCaptureTests
         var name = twoCells ? "two-cells" : "dsn1-like";
         arranged.Any(a => a.Bounds.Width == 420f && Math.Abs(a.Bounds.Right - (page.X + page.Width)) < 0.01f && a.Bounds.Height > page.Height / 2f).ShouldBeTrue($"{name}: a 420 chat at the right edge");
         arranged.Any(a => Math.Abs(a.Bounds.X - page.X) < 0.01f && Math.Abs(a.Bounds.Width - (page.Width - 420f)) < 0.01f && a.Bounds.Height > page.Height / 2f).ShouldBeTrue($"{name}: the document takes the rest");
+        // The chat's words keep off the document's scroll bar: its heading starts inside its column, not on its edge (#1210 R1.7).
+        var chatHeading = arranged.First(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text { Value: var v } } && v.StartsWith("Chat with the designer", StringComparison.Ordinal)).Bounds;
+        chatHeading.X.ShouldBeGreaterThanOrEqualTo(page.X + page.Width - 420f + 8f - 0.01f, $"{name}: the chat is inset from the document");
         for (var cell = 0; cell < (twoCells ? 2 : 1); cell++)
         {
             var key = $"design-frame:{cell}:0";
@@ -484,7 +542,7 @@ public sealed class DesignsCaptureTests
         var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
         chrome.Autopilot.OnToggle = _ => Task.FromResult<string?>(null);
         chrome.Show(PilotPage.Designs);
-        chrome.Designs.OnEdit = (_, _, _, _) => { };
+        chrome.Designs.OnEdit = (_, _, _, _, _) => { };
         chrome.Designs.Open("DSN-7");
         var data = PageData.For("sample");
         chrome.Render(data.Sessions, data.Flights, data.Cards, data.Jobs, data.Fleet, data.Repos, data.PullRequests, new RectF32(0, 0, width, height), data.Machines, null, data.Spend, screen);

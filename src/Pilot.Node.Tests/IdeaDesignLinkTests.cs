@@ -157,6 +157,25 @@ public sealed class IdeaDesignLinkTests : IDisposable
         GitHub.IssueComments.ShouldBeEmpty();
     }
 
+    /// <summary>
+    /// A design another node made and published for the idea, mirrored here, is a design the idea has (#1197 R1.4): the idea plans with no Plan anyway, and the
+    /// flight carries no design of this node's, as its files are on the node that made it.
+    /// </summary>
+    [Fact]
+    public async Task AMarkedIdeaWithAPublishedDesignFromAnotherNodePlansWithoutPlanAnyway()
+    {
+        await Run(Verbs.MarkDesign, Idea(1));
+        _store.Mirror(new DesignRow { Id = DesignStore.MirrorId("SharpAstro/pilot", 40), Title = "Ring shadows", Repo = "pilot", MadeOn = "SE1", ForIdeas = ["pilot I1"] },
+            1, "first screen", new Dictionary<string, byte[]> { [DesignStore.PrototypeFile] = "{\"width\":1280,\"height\":720,\"entry\":\"home\",\"screens\":[]}"u8.ToArray() });
+        _store.ForIdea("pilot I1").ShouldBeEmpty("a mirrored design is not this node's");
+        _store.MirroredForIdea("pilot I1").ShouldHaveSingleItem().Current.ShouldBe(1);
+
+        var planned = await Run(Verbs.PlanIdea, Idea(1), "v1");
+
+        planned.Ok.ShouldBeTrue(planned.Error);
+        State.Flights().Single().Designs.ShouldBeEmpty();
+    }
+
     [Fact]
     public async Task AnUnmarkedIdeaPlansWithoutADesign()
     {
@@ -254,5 +273,75 @@ public sealed class IdeaDesignLinkTests : IDisposable
         File.WriteAllText(Path.Combine(draft, DesignStore.DocumentFile), "# Rings\n\n**Objective:** A first look at the rings.\n\n## Home\n\n**Objective:** Shows the ring shadows.\n\n```screen id=home\n```\n");
         _store.Render(id);
         _store.Publish(id, "first look");
+    }
+
+    /// <summary>A design's title set through design-title shows on its idea's row at once, not at the next idea read (#1197 R1.9).</summary>
+    [Fact]
+    public async Task ATitleSetOnTheDesignShowsOnItsIdeasRowAtOnce()
+    {
+        await Run(Verbs.MarkDesign, Idea(1));
+        var id = await Start(1);
+        var commands = new DesignCommands(State, _store, null);
+
+        commands.Run(new CommandRequest { Verb = Verbs.DesignSetTitle, Target = Verbs.DesignTarget(id), Args = ["Shadow study"], Who = "tests" }).Ok.ShouldBeTrue();
+
+        Row("I1").Designs.ShouldHaveSingleItem().Title.ShouldBe("Shadow study");
+    }
+
+    /// <summary>
+    /// The design rows an ideas refresh links are read before the node's lock is taken (#1170 R1.4): while they are read, another thread reads
+    /// the node's state without waiting.
+    /// </summary>
+    [Fact]
+    public void TheDesignRowsAreReadOutsideTheNodesLock()
+    {
+        var state = new NodeState(new InMemoryJournal(), TimeProvider.System);
+        var reads = 0;
+        state.Designs = () =>
+        {
+            reads++;
+            Task.Run(() => state.IdeaMoves()).Wait(TimeSpan.FromSeconds(5)).ShouldBeTrue("another reader of the node's state is not held up by the design read");
+            return [];
+        };
+
+        state.PutIdeas("pilot", []);
+        state.PutIdeas(["pilot"], []);
+        state.RefreshIdeaDesigns();
+
+        reads.ShouldBe(3);
+    }
+
+    /// <summary>
+    /// Read outside the lock, two refreshes can end out of order: an earlier read that ends after a later one never puts its older rows back over the newer
+    /// ones (the idea row keeps the design the later read found).
+    /// </summary>
+    [Fact]
+    public async Task AnEarlierDesignReadThatEndsLaterDoesNotPutOlderRowsBack()
+    {
+        var state = new NodeState(new InMemoryJournal(), TimeProvider.System);
+        state.PutIdeas("pilot", [new IdeaRow { Id = "I1", Repo = "pilot", Title = "Ring shadows", State = IdeaState.Noted }]);
+        var linked = new DesignRow { Id = "DSN-1", Title = "Shadows", ForIdeas = ["pilot I1"] };
+        using var firstEntered = new ManualResetEventSlim();
+        using var releaseFirst = new ManualResetEventSlim();
+        var calls = 0;
+        state.Designs = () =>
+        {
+            if (Interlocked.Increment(ref calls) == 1)
+            {
+                firstEntered.Set();
+                releaseFirst.Wait(TimeSpan.FromSeconds(10)).ShouldBeTrue();
+                return [];
+            }
+            return [linked];
+        };
+
+        var first = Task.Run(state.RefreshIdeaDesigns, Ct);
+        firstEntered.Wait(TimeSpan.FromSeconds(10), Ct).ShouldBeTrue();
+        state.RefreshIdeaDesigns();
+        state.Ideas().Single().Designs.Select(d => d.Id).ShouldBe(["DSN-1"]);
+        releaseFirst.Set();
+        await first.WaitAsync(TimeSpan.FromSeconds(10), Ct);
+
+        state.Ideas().Single().Designs.Select(d => d.Id).ShouldBe(["DSN-1"], "the earlier read, ended later, did not put its older rows back");
     }
 }

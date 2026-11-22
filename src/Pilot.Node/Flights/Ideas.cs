@@ -200,6 +200,27 @@ public sealed partial class IdeaCommander(NodeState state, Planes planes, RepoCa
         }
     }
 
+    /// <summary>
+    /// plan-idea for a design build (<see cref="Designs.DesignBuilds"/>): as <see cref="RunAsync"/> plans it, one verb at a time with the others, but it leaves out
+    /// its own "Designs:" comment, as the build comments the whole build text on the idea's issue and the idea is told once (#1180 R1.4).
+    /// </summary>
+    internal async Task<CommandResult> PlanForDesignBuildAsync(CommandRequest command, CancellationToken cancellationToken)
+    {
+        await _one.WaitAsync(cancellationToken);
+        try
+        {
+            return await PlanAsync(command with { Verb = Verbs.PlanIdea }, cancellationToken, saysDesigns: false);
+        }
+        catch (FlightException ex)
+        {
+            return state.Complete(command, ex.Message);
+        }
+        finally
+        {
+            _one.Release();
+        }
+    }
+
     /// <summary>The repo a verb names, by its folder name (a repo the node lists) or by any path in its checkout.</summary>
     private async Task<(string Name, string Path)> RepoOfAsync(string given, CancellationToken cancellationToken)
     {
@@ -580,7 +601,7 @@ public sealed partial class IdeaCommander(NodeState state, Planes planes, RepoCa
     /// on GitHub only once the flight is made (none named is refused, naming the open ones); a flight on the issue, which remembers its idea,
     /// and then the issue moved out of Ideas. Everything that can be refused is refused before the flight is made.
     /// </summary>
-    private async Task<CommandResult> PlanAsync(CommandRequest command, CancellationToken cancellationToken)
+    private async Task<CommandResult> PlanAsync(CommandRequest command, CancellationToken cancellationToken, bool saysDesigns = true)
     {
         var (name, path, issue) = await IdeaOfAsync(command, cancellationToken);
         var id = IdeaIds.Id(issue.Number);
@@ -617,7 +638,10 @@ public sealed partial class IdeaCommander(NodeState state, Planes planes, RepoCa
         {
             throw new FlightException($"{unpublished.Id} has no published version: publish one (pilot design publish {unpublished.Id} --why ...), or plan anyway ({Verbs.AnywayFlag})");
         }
-        if (issue.NeedsDesign && !anyway && published.Length == 0)
+        // A design another node made and published for this idea is a design it has (#1197 R1.4): no Plan anyway needed. It is not carried into the flight, as its
+        // files are on that node; the flight's planner finds it on its issue.
+        var mirroredPublished = Designs?.MirroredForIdea(NodeState.IdeaKey(name, id), state.IdeaMoves()).Any(d => d.Current is not null) == true;
+        if (issue.NeedsDesign && !anyway && published.Length == 0 && !mirroredPublished)
         {
             throw new FlightException($"{id} needs a design and has none yet: start its design (pilot idea {id} design start), or plan anyway ({Verbs.AnywayFlag})");
         }
@@ -661,9 +685,9 @@ public sealed partial class IdeaCommander(NodeState state, Planes planes, RepoCa
             await RefreshAsync(name, path, cancellationToken);
             throw new FlightException($"flight {code} is made on {id}, but it stays in {IdeaIds.Milestone}: {ex.Message}");
         }
-        if (published.Length > 0)
+        if (published.Length > 0 && saysDesigns)
         {
-            // One comment lists every design and its version (PIL1185).
+            // One comment lists every design and its version (PIL1185); a design build comments its own whole text instead.
             var lines = string.Join('\n', published.Select(d => $"- {d.Id} v{d.Current!.Value.ToString(CultureInfo.InvariantCulture)} ({d.Title}): pilot design show {d.Id}"));
             try
             {
@@ -840,16 +864,17 @@ public sealed partial class IdeaCommander(NodeState state, Planes planes, RepoCa
         var (name, _, issue) = await IdeaOfAsync(command, cancellationToken);
         var id = IdeaIds.Id(issue.Number);
         var key = NodeState.IdeaKey(name, id);
-        // The question that sent Start its design names the linked designs with no published version: the oldest of those is answered, else the design the idea is satisfied by.
-        if ((store.ForIdea(key, state.IdeaMoves()).FirstOrDefault(d => d.Current is null) ?? store.FindByIdea(key, state.IdeaMoves())) is { } existing)
-        {
-            return state.Complete(command, null, made: existing.Id);
-        }
+        // The question that sent Start its design names the linked designs with no published version: the oldest of those is answered, else the
+        // design the idea is satisfied by, else a new one; the look and the make are one step of the store's.
         var brief = issue.Body.Length > 0 ? $"{issue.Title}\n\n{issue.Body}" : issue.Title;
         DesignRow row;
         try
         {
-            row = store.New(name, issue.Title, brief, null, key);
+            (row, var made) = store.ForIdeaOrNew(key, state.IdeaMoves(), name, issue.Title, brief);
+            if (!made)
+            {
+                return state.Complete(command, null, made: row.Id);
+            }
         }
         catch (DesignException ex)
         {

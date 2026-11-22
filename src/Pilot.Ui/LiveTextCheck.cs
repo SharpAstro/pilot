@@ -37,8 +37,14 @@ internal sealed class LiveTextCheck
     /// <summary>Who the commands say they are from (the host's: the node shows it on the card's Handled line).</summary>
     public string Who { get; set; } = "gui";
 
-    /// <summary>Takes the raise command; null where there is no node to tell (the check then only logs).</summary>
-    public Action<CommandRequest>? Send { get; set; }
+    /// <summary>
+    /// Takes the raise command and the page as drawn (null when no <see cref="Capture"/> is set or it drew nothing): the host uploads the
+    /// picture and sends the raise with it as the card's attachment (#423). Null where there is no node to tell (the check then only logs).
+    /// </summary>
+    public Action<CommandRequest, PageImage?>? Send { get; set; }
+
+    /// <summary>Draws the faulty page again for the card, from its arranged nodes at the DPI given; null takes no picture.</summary>
+    public Func<ImmutableArray<Layout.ArrangedNode<float>>, float, PageImage?>? Capture { get; set; }
 
     /// <summary>A line for the console, for every fault found.</summary>
     public Action<string>? Log { get; set; }
@@ -96,13 +102,23 @@ internal sealed class LiveTextCheck
         {
             return;
         }
+        // Drawn once per page per run (the raise above is), so the CPU pass costs nothing on a steady window.
+        PageImage? image = null;
+        try
+        {
+            image = Capture?.Invoke(arranged, dpi);
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            Log?.Invoke($"GUI could not capture the {page} page for its text-over-text card: {ex.Message}");
+        }
         Send(new CommandRequest
         {
             Verb = Verbs.Raise,
             Target = Verbs.NodeTarget,
             Args = ["for-you", $"GUI drew text over text on {page}", detail],
             Who = Who,
-        });
+        }, image);
     }
 
     // The words of the text leaves a check reads (the first MaxLeaves), and how many there are: what a page says changes when its

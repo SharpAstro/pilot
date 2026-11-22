@@ -26,6 +26,9 @@ public sealed class FollowUpSweep(NodeState state, IGitHub? github, TimeProvider
 
     public TimeSpan RingAfter { get; init; } = TimeSpan.FromDays(1);
 
+    /// <summary>How much longer than <see cref="RingAfter"/> a granted peer that does not answer holds an issue's ring (#1248 N2.1).</summary>
+    public TimeSpan PeerGrace { get; init; } = TimeSpan.FromDays(3);
+
     public TextWriter Error { get; set; } = TextWriter.Null;
 
     private readonly HashSet<string> _rung = new(StringComparer.OrdinalIgnoreCase);
@@ -33,7 +36,10 @@ public sealed class FollowUpSweep(NodeState state, IGitHub? github, TimeProvider
     /// <summary>This node's name, as its pull request reads stamp it; empty rings for every repo, as before the fleet was considered.</summary>
     public string Machine { get; init; } = "";
 
-    /// <summary>The fleet whose flights count too; null, or a peer that cannot be reached, counts this node's flights only.</summary>
+    /// <summary>
+    /// The fleet whose flights count too. A granted peer that cannot be reached holds new rings (it may hold the flight) until it answers, or until an issue is
+    /// past <see cref="RingAfter"/> and <see cref="PeerGrace"/>; null counts this node's flights only.
+    /// </summary>
     public Func<IFleet?>? Fleet { get; init; }
 
     protected override async Task ExecuteAsync(CancellationToken stopping)
@@ -117,8 +123,10 @@ public sealed class FollowUpSweep(NodeState state, IGitHub? github, TimeProvider
             rows.Add(new FollowUpRepoRow { Repo = repo, Open = issues.Count, NoFlight = [.. none.Select(i => i.Number)] });
             var owns = OwnsRing(repo);
             var due = owns ? none.Where(i => i.CreatedAt is { } at && now - at > RingAfter).ToList() : [];
-            // A granted peer that did not answer may hold the flight: ring nothing new, and keep the rings already open, until it answers.
-            foreach (var issue in peersComplete ? due : [])
+            // A granted peer that did not answer may hold the flight: ring nothing new, and keep the rings already open, until it answers. Not for ever:
+            // an issue past RingAfter and PeerGrace rings all the same, as a peer away that long (a laptop shut for the week) holds no flight it will fly
+            // soon (#1248 N2.1).
+            foreach (var issue in peersComplete ? due : due.Where(i => i.CreatedAt is { } at && now - at > RingAfter + PeerGrace))
             {
                 Ring(repo, path, issue.Number, issue.Title);
             }

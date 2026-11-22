@@ -129,7 +129,7 @@ public static partial class NodeApp
         builder.Services.AddSingleton(services => new Pilot.Node.Designs.DesignChat(services.GetRequiredService<Pilot.Node.Designs.DesignStore>(), services.GetRequiredService<TranscriptBook>(), () => services.GetRequiredService<NodeState>().Sessions()));
         builder.Services.AddSingleton(services => new Pilot.Node.Designs.DesignBuilds(services.GetRequiredService<NodeState>(), services.GetRequiredService<Pilot.Node.Designs.DesignStore>(), services.GetRequiredService<RepoCatalog>(), services.GetRequiredService<Planes>(), services.GetRequiredService<IGitHub>(), services.GetRequiredService<FlightCommander>(), services.GetRequiredService<IdeaCommander>(), services.GetRequiredService<TimeProvider>()) { Error = logWriter });
         builder.Services.AddSingleton(services => new Pilot.Node.Designs.DesignRecord(services.GetRequiredService<Pilot.Node.Designs.DesignStore>(), services.GetRequiredService<RepoCatalog>(), services.GetRequiredService<NodeState>(), services.GetRequiredService<IGitHub>()) { Error = logWriter, Git = services.GetRequiredService<IGit>() });
-        builder.Services.AddSingleton(services => new Pilot.Node.Designs.DesignSync(services.GetRequiredService<Pilot.Node.Designs.DesignStore>(), services.GetRequiredService<RepoCatalog>(), services.GetRequiredService<IGitHub>(), services.GetRequiredService<TimeProvider>(), options.Machine) { Error = logWriter, Lock = services.GetRequiredService<Pilot.Node.Designs.DesignLock>(), Record = services.GetRequiredService<Pilot.Node.Designs.DesignRecord>() });
+        builder.Services.AddSingleton(services => new Pilot.Node.Designs.DesignSync(services.GetRequiredService<Pilot.Node.Designs.DesignStore>(), services.GetRequiredService<RepoCatalog>(), services.GetRequiredService<IGitHub>(), services.GetRequiredService<TimeProvider>(), options.Machine) { Error = logWriter, Lock = services.GetRequiredService<Pilot.Node.Designs.DesignLock>(), Record = services.GetRequiredService<Pilot.Node.Designs.DesignRecord>(), Mirrored = () => services.GetRequiredService<NodeState>().RefreshIdeaDesigns() });
         builder.Services.AddHostedService(services => new Pilot.Node.Designs.DesignSyncSweep(services.GetRequiredService<Pilot.Node.Designs.DesignSync>()));
         builder.Services.AddSingleton(services => new Pilot.Node.Designs.DesignCommands(services.GetRequiredService<NodeState>(), services.GetRequiredService<Pilot.Node.Designs.DesignStore>(), services.GetRequiredService<Pilot.Node.Designs.Designers>(), services.GetRequiredService<Pilot.Node.Designs.DesignChat>(), services.GetRequiredService<Pilot.Node.Designs.DesignSync>(), services.GetRequiredService<Pilot.Node.Designs.DesignLock>()));
         builder.Services.AddSingleton(services => new RemovalQueue(RemovalQueue.FileIn(options.DataFolder), services.GetRequiredService<TimeProvider>()) { Error = logWriter });
@@ -620,7 +620,7 @@ public static partial class NodeApp
                     Account = state.Usage()?.Account,
                     CanRunGui = services.GetRequiredService<JobRunner>().GuiWhy() is null,
                     GuiReason = services.GetRequiredService<JobRunner>().GuiWhy(),
-                    ArchivedFlights = state.ArchivedFlightRows().Length,
+                    ArchivedFlights = state.ArchivedFlightCount(),
                     Watchtower = watchtower.Health(),
                 }, services.GetRequiredService<TimeProvider>())
                 {

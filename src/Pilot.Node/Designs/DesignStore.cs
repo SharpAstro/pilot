@@ -193,12 +193,20 @@ public sealed class DesignStore(string dataFolder, TimeProvider? time = null)
     /// idea moves (<paramref name="moves"/>) a link and the idea asked for are both followed to where the idea is now (<see cref="IdeaIds.Follow"/>),
     /// the one rule the idea rows use too.
     /// </summary>
-    public DesignRow[] ForIdea(string idea, IEnumerable<IdeaMoveRow>? moves = null)
+    public DesignRow[] ForIdea(string idea, IEnumerable<IdeaMoveRow>? moves = null) => ForIdea(idea, moves, mirrored: false);
+
+    /// <summary>
+    /// The designs another node made for the idea <paramref name="idea"/>, mirrored here read-only from their issues (#1197 R1.4): shown on the idea, and a
+    /// published one is a design the idea has, but never carried into a flight here, as its files are on the node that made it.
+    /// </summary>
+    public DesignRow[] MirroredForIdea(string idea, IEnumerable<IdeaMoveRow>? moves = null) => ForIdea(idea, moves, mirrored: true);
+
+    private DesignRow[] ForIdea(string idea, IEnumerable<IdeaMoveRow>? moves, bool mirrored)
     {
         var all = moves?.ToArray() ?? [];
         var wanted = Followed(idea, all);
-        return [.. List().Where(d => d.MadeOn is null && d.Ideas().Any(k => string.Equals(Followed(k, all), wanted, StringComparison.OrdinalIgnoreCase)))
-            .OrderBy(d => int.Parse(d.Id.AsSpan(4), NumberStyles.None, CultureInfo.InvariantCulture))];
+        return [.. List().Where(d => (d.MadeOn is not null) == mirrored && d.Ideas().Any(k => string.Equals(Followed(k, all), wanted, StringComparison.OrdinalIgnoreCase)))
+            .OrderBy(d => mirrored ? 0 : int.Parse(d.Id.AsSpan(4), NumberStyles.None, CultureInfo.InvariantCulture)).ThenBy(d => d.Id, StringComparer.Ordinal)];
     }
 
     /// <summary>The idea key <paramref name="key"/> at the place its idea is now, after the moves; a key that is no idea reference stays as it is.</summary>
@@ -215,6 +223,24 @@ public sealed class DesignStore(string dataFolder, TimeProvider? time = null)
     /// <summary>The design for the idea <paramref name="fromIdea"/> to answer with: the oldest one with a published version, else the oldest; null when there is none.</summary>
     public DesignRow? FindByIdea(string fromIdea, IEnumerable<IdeaMoveRow>? moves = null) =>
         ForIdea(fromIdea, moves) is { Length: > 0 } all ? all.FirstOrDefault(d => d.Current is not null) ?? all[0] : null;
+
+    /// <summary>
+    /// The design to answer Start its design on the idea <paramref name="idea"/> with: the oldest linked one with no published version, else the
+    /// one <see cref="FindByIdea"/> finds, else a new one made from <paramref name="brief"/>. The look and the make are one step under the store's
+    /// lock, so two starts never make two designs, whatever serialises the callers (#1170 R1.5).
+    /// </summary>
+    public (DesignRow Row, bool Made) ForIdeaOrNew(string idea, IEnumerable<IdeaMoveRow>? moves, string? repo, string? title, string brief)
+    {
+        var all = moves?.ToArray() ?? [];
+        lock (_lock)
+        {
+            if ((ForIdea(idea, all).FirstOrDefault(d => d.Current is null) ?? FindByIdea(idea, all)) is { } existing)
+            {
+                return (existing, false);
+            }
+            return (New(repo, title, brief, null, idea), true);
+        }
+    }
 
     /// <summary>Links design <paramref name="id"/> to the idea <paramref name="idea"/> (qualified); a link there already is no change. Returns the record and whether it changed.</summary>
     public (DesignRow Row, bool Changed) Link(string id, string idea)
@@ -565,7 +591,7 @@ public sealed class DesignStore(string dataFolder, TimeProvider? time = null)
     /// draft's DESIGN.md through <see cref="DesignDocument"/>, so the rest of the document is as <see cref="DesignDocument.Format"/> writes it; a frame's source is not
     /// reachable from here. With no draft, the draft is made from the current version first. Returns the text the part now reads.
     /// </summary>
-    public string Edit(string id, string part, string cell, string text)
+    public string Edit(string id, string part, string cell, string text, string? heading = null)
     {
         part = part.Trim().ToLowerInvariant();
         if (!EditParts.Contains(part, StringComparer.Ordinal))
@@ -624,6 +650,11 @@ public sealed class DesignStore(string dataFolder, TimeProvider? time = null)
             else
             {
                 var index = CellIndex(document, cell.Trim());
+                // Typed into the cell that had this heading: a newer version that put another cell at this number refuses the words rather than take them (#1182 N4.1).
+                if (heading is { } was && !string.Equals(document.Cells[index].Heading.Trim(), was.Trim(), StringComparison.Ordinal))
+                {
+                    throw new DesignException($"cell {cell.Trim()} is now '{document.Cells[index].Heading}', not '{was.Trim()}': the draft moved its cells since the typing began, so the words were not written; type them again on the cell they belong to");
+                }
                 var cells = document.Cells.ToList();
                 cells[index] = part switch
                 {

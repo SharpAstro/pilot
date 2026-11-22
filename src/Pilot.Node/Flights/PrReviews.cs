@@ -113,6 +113,12 @@ public sealed partial class PrReviews(
     /// <summary>How long a reviewer that gave its verdict has to end its turn before it is stopped.</summary>
     public TimeSpan SelfFinishGrace { get; init; } = TimeSpan.FromSeconds(90);
 
+    /// <summary>
+    /// The last verdict's delayed task (its grace, then the sweep or the reviewer's stop), so a test waits for it at a known point instead of racing it: with
+    /// a grace of a millisecond its sweep, which may start the node's own fixer, ran at a random moment of the test (the merge queue's Windows run of #1257).
+    /// </summary>
+    internal Task GraceDone { get; private set; } = Task.CompletedTask;
+
     /// <summary>Whether a verdict on a PR still open is posted by the node at once; off, it waits on its card's Post, as a test of that path has it.</summary>
     public bool PostsItself { get; init; } = true;
 

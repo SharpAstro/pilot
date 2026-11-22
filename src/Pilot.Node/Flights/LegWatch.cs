@@ -2059,7 +2059,10 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
 
     /// <summary>The detail's closing sentence on the next worker's round and model once it is a second round or later; empty before that.</summary>
     // The note joins the detail with a full stop only when the detail does not end in one (the review of #797: a detail ending in a stop got "..").
-    private string NextWorker(LegRow leg, string detail) => Models.NextWorkerNote(leg) is { } note ? $"{(detail.TrimEnd().EndsWith('.') ? "" : ".")} {note}" : "";
+    private string NextWorker(LegRow leg, string detail) => NoteAfter(detail, Models.NextWorkerNote(leg));
+
+    /// <summary>What follows <paramref name="detail"/> to add <paramref name="note"/> as its next sentence: one full stop between them, never two (PIL797's ".."); empty with no note.</summary>
+    internal static string NoteAfter(string detail, string? note) => note is null ? "" : $"{(detail.TrimEnd().EndsWith('.') ? "" : ".")} {note}";
     private static string Clip(string text) => text.Length <= 70 ? text : text[..67].TrimEnd() + "...";
 
     private static string Subject(LegRow leg) => Verbs.LegTarget(leg.Flight, leg.Name);
