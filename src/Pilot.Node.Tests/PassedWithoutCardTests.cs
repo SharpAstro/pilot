@@ -61,8 +61,9 @@ public sealed class PassedWithoutCardTests : ReviewTestsBase
     [Trait("Category", "Slow")]
     public async Task ATrulyFailedCardRaiseKeepsThePassAndOneLookRaisesTheCardOnce()
     {
-        _github.Checks = ChoiceStatus.Pending;
         var flight = await PassedWithNoCard("2", "fine");
+        // A no-auto-merge repo: the card is the person's to press, so the node does not merge it at the look.
+        _legs.Models = new RoleModels(new NodeSettings { NoAutoMergeRepos = [flight.Repo] });
 
         await Checks().LookAsync(Ct);
         await Checks().LookAsync(Ct);
