@@ -238,17 +238,35 @@ public static partial class ReviewFollowUp
     /// <summary>The one line above the first point: how the follow-up flight reports a point so the node ticks its line.</summary>
     public const string ReportLine = "Report each point in the leg's report under a `## Earlier points` heading, one table row a point (the key as its line names it): `| PIL12:R1.2 | addressed | file:line |`, or `| PIL12:R1.2 | not work | why |`. A report without that heading and those rows ticks nothing.";
 
-    /// <summary>The title of the one follow-up issue of a PR no flight owns.</summary>
-    public static string Title(PrReviewRow review) => $"Follow-up of {review.Repo}#{review.Number}: points its review left for later";
-
-    /// <summary>The body for a PR no flight owns: each point with its file and line, what was found, why it was left and what would settle it.</summary>
-    public static string Body(PrReviewRow review, IReadOnlyList<Item> items)
+    /// <summary>
+    /// The points of a PR no flight owns that the node has not acted on yet: the standing points and the last passed round's notes, one a key, minus
+    /// those already acted on (<see cref="PrReviewRow.FollowUpPoints"/>) and those already routed (<see cref="PrReviewRow.DeferredFilings"/>).
+    /// </summary>
+    public static IReadOnlyList<Item> Pending(PrReviewRow review)
     {
-        var text = new StringBuilder();
-        text.AppendLine($"{review.Repo}#{review.Number} ({review.Url}) merges with these points left, each with a reason. Nothing lands open (pilot #1107): they are filed here, one issue for the PR.");
-        text.AppendLine();
-        text.Append(Points(items));
-        return text.ToString();
+        var captured = review.FollowUpPoints ?? [];
+        var routedKeys = DeferredRoutes.Keys(review.DeferredFilings).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return [.. Read(review.Rounds).Items.Concat(LastRoundNotes(review.Rounds)).GroupBy(i => i.Key, StringComparer.OrdinalIgnoreCase).Select(g => g.Last())
+            .Where(i => !captured.Contains(i.Key, StringComparer.OrdinalIgnoreCase) && !routedKeys.Contains(i.Key))];
+    }
+
+    /// <summary>Whether the node routes the point out of the PR (an issue in another repo, or a card for the owner) instead of having it made.</summary>
+    public static bool IsRouted(Item item) => item.Kind is ReviewPoints.DeferReason.OtherRepo or ReviewPoints.DeferReason.OwnerDecision;
+
+    /// <summary>The points a fixer is told to make, and the node acts on: <see cref="Pending"/> minus the routed ones. The one list the brief and the node share.</summary>
+    public static IReadOnlyList<Item> ToMake(PrReviewRow review) => [.. Pending(review).Where(i => !IsRouted(i))];
+
+    /// <summary>
+    /// The points a fixer had its round on and the review still holds deferred (larger than the PR, or left with no reason): acted on, not
+    /// made, and not yet said on the PR. The node puts them there as one comment before the merge.
+    /// </summary>
+    public static IReadOnlyList<Item> FixerDeferred(PrReviewRow review)
+    {
+        var captured = review.FollowUpPoints ?? [];
+        var said = review.PointsOnPr ?? [];
+        var routedKeys = DeferredRoutes.Keys(review.DeferredFilings).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return [.. Read(review.Rounds).Items.Where(i => !IsRouted(i) && captured.Contains(i.Key, StringComparer.OrdinalIgnoreCase)
+            && !said.Contains(i.Key, StringComparer.OrdinalIgnoreCase) && !routedKeys.Contains(i.Key))];
     }
 
     /// <summary>The key as a checkbox line names it: in backticks.</summary>

@@ -10,8 +10,8 @@ public sealed partial class PrReviews
     /// <c>framework</c>; an owner's decision becomes a card. The rest (larger than the flight, every point with no reason, or answered left in a
     /// re-review, and the last passed round's not-blocking notes nobody made, pilot #1148) is made on the PR itself, never filed as a follow-up issue:
     /// a fixer is started on them while the PR is the owner's and has fix rounds left, and the merge waits for its push to be reviewed afresh. Each
-    /// point gets one fixer round: its key is recorded in <see cref="PrReviewRow.FollowUpPoints"/> when the fixer pushes (TendFixerAsync), so a point the
-    /// fixer answered deferred does not start another; a fixer that ends without a push records nothing, and the points stay to be made. Past its fix rounds, or on another author's PR (which the node does not fix unasked), the points go on the PR
+    /// point gets one fixer round: its key is recorded in <see cref="PrReviewRow.FollowUpPoints"/> when a fixer started on a passing review pushes (TendFixerAsync),
+    /// so a point the fixer answered deferred does not start another; the points it deferred go on the PR as one comment before the merge. A fixer that ends without a push records nothing, and the points stay to be made. Past its fix rounds, or on another author's PR (which the node does not fix unasked), the points go on the PR
     /// as one comment and it goes on. This method files no issue for them.
     /// Returns the row as it stands, or null when the PR must not go on yet: an earlier point is still not addressed, a fixer was started or is making the
     /// points, none could start (a card says so), or the comment or a route failed (said in the log; a later sweep tries again).
@@ -31,10 +31,8 @@ public sealed partial class PrReviews
         {
             await DeferredRoutes.MakeNodesOwnAsync(ctx, ReviewFollowUp.NodesOwn(review.Rounds), call => call(), cancellationToken);
             var captured = review.FollowUpPoints ?? [];
-            var routedKeys = DeferredRoutes.Keys(review.DeferredFilings).ToHashSet(StringComparer.OrdinalIgnoreCase);
-            var fresh = standing.Items.Concat(ReviewFollowUp.LastRoundNotes(review.Rounds)).GroupBy(i => i.Key, StringComparer.OrdinalIgnoreCase).Select(g => g.Last())
-                .Where(i => !captured.Contains(i.Key, StringComparer.OrdinalIgnoreCase) && !routedKeys.Contains(i.Key)).ToList();
-            var routed = fresh.Where(i => i.Kind is ReviewPoints.DeferReason.OtherRepo or ReviewPoints.DeferReason.OwnerDecision).ToList();
+            var fresh = ReviewFollowUp.Pending(review).ToList();
+            var routed = fresh.Where(ReviewFollowUp.IsRouted).ToList();
             if (routed.Count > 0)
             {
                 await DeferredRoutes.RouteAsync(ctx, routed, review.DeferredFilings, "No flight owns this PR.",
@@ -48,9 +46,17 @@ public sealed partial class PrReviews
             }
             if (fresh.Count == 0)
             {
+                // What a fixer had its round on and answered deferred is never made on this PR and never filed: it goes on the PR as one comment, once.
+                var deferred = ReviewFollowUp.FixerDeferred(review);
+                if (deferred.Count > 0)
+                {
+                    await github.CommentIssueAsync(review.ClonePath, review.Number, $"A fixer made the review's points it could and deferred these, not made before the merge:\n\n{ReviewFollowUp.Points(deferred)}", cancellationToken);
+                    review = review with { PointsOnPr = [.. (review.PointsOnPr ?? []), .. deferred.Select(i => i.Key)] };
+                    state.PutPrReview(review);
+                }
                 return review;
             }
-            keys = [.. fresh.Select(i => i.Key)];
+            keys =[.. fresh.Select(i => i.Key)];
             captured = review.FollowUpPoints ?? [];
             // The points are made on the PR before it merges, never filed as a follow-up issue nobody picks up (the owner, 2026-11-22, over
             // tianwen#2431: "didn't I say we fix all of the things"). A fixer is started on them while the PR has fix rounds left and is the
@@ -81,7 +87,7 @@ public sealed partial class PrReviews
             // Past its fix rounds, or another author's PR: the points go on the PR itself as one comment, where its author reads them. No issue.
             var why = rounds >= FixCap(review) ? $"its {rounds} fix rounds are spent" : $"it is {review.Author ?? "someone else"}'s PR, which the node does not fix unasked";
             await github.CommentIssueAsync(review.ClonePath, review.Number, $"The review left these points, not made before the merge because {why}:\n\n{ReviewFollowUp.Points(fresh)}", cancellationToken);
-            review = review with { FollowUpPoints = [.. captured, .. keys] };
+            review = review with { FollowUpPoints = [.. captured, .. keys], PointsOnPr = [.. (review.PointsOnPr ?? []), .. keys] };
             state.PutPrReview(review);
             return review;
         }

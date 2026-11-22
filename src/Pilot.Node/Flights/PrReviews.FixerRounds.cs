@@ -69,9 +69,10 @@ public sealed partial class PrReviews
         }
         if (read.Head.Length > 0 && !string.Equals(read.Head, review.Head, StringComparison.OrdinalIgnoreCase))
         {
-            // The fixer has had its go at the points its review left: they are acted on, so a point it answered deferred does not start another fixer.
-            var tried = ReviewFollowUp.Read(review.Rounds).Items.Concat(ReviewFollowUp.LastRoundNotes(review.Rounds)).Select(i => i.Key)
-                .Except(review.FollowUpPoints ?? [], StringComparer.OrdinalIgnoreCase).ToArray();
+            // A fixer started on a passing review has had its go at the points its brief listed (ReviewFollowUp.ToMake, the same list): they are
+            // acted on, so a point it answered deferred does not start another fixer. A changes-verdict fixer's brief lists none, so none is recorded.
+            var tried = string.Equals(review.Verdict, "changes", StringComparison.OrdinalIgnoreCase) ? []
+                : ReviewFollowUp.ToMake(review).Select(i => i.Key).ToArray();
             if (tried.Length > 0)
             {
                 state.PutPrReview(review with { FollowUpPoints = [.. review.FollowUpPoints ?? [], .. tried] });

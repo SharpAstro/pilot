@@ -6,7 +6,7 @@ using Xunit;
 namespace Pilot.Node.Tests;
 
 /// <summary>
-/// A PR no flight owns gets the same list, table and follow-up issue as a flight (pilot #1107): its reviews keep their earlier rounds, a
+/// A PR no flight owns gets the same list and table as a flight, but no follow-up issue (pilot #1107): its reviews keep their earlier rounds, a
 /// re-review after a fixer's push answers each point, and what is left is made by a fixer before the node queues the PR (a comment when none can), never filed as an issue.
 /// In-memory node, fake reviewer and fake GitHub.
 /// </summary>
@@ -100,7 +100,7 @@ public sealed class PrReviewPointsTests : PrReviewTestsBase
         _github.IssuesCreated.ShouldBeEmpty();
         _github.Merged.ShouldBeEmpty("the merge waits for the points to be made and reviewed");
         // A fixer is asked for on what was left (this fixture has no PR branch to fix on, so the start is refused and tried again later;
-        // PrFixTests1 starts one): the left point and the passing round's note, by their keys. The refusal rings a card, once.
+        // PrFixTests2 starts one): the left point and the passing round's note, by their keys. The refusal rings a card, once.
         log.ToString().ShouldContain("review left R1.2, N2.1");
         log.ToString().ShouldContain("a later sweep tries again");
         _state.Cards(openOnly: true).Count(c => c.Kind == PrReviews.FixFailedKind).ShouldBe(1);

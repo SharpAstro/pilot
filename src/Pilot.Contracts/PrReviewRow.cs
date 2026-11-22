@@ -128,6 +128,9 @@ public sealed record PrReviewRow
     /// <summary>The keys of the points already acted on (a fixer started on them, or they went on the PR as a comment), so a later round acts only on new ones; null while none was.</summary>
     public string[]? FollowUpPoints { get; init; }
 
+    /// <summary>The keys of the points the node put on the PR as a comment (a fixer deferred them as larger than the PR, or the PR was past its fix rounds), so each is said there once; null while none was.</summary>
+    public string[]? PointsOnPr { get; init; }
+
     /// <summary>Where each deferred point went (pilot #1226), one line per point as <c>reason|repo|issue|key</c>; null while none was routed.</summary>
     public string[]? DeferredFilings { get; init; }
 

@@ -31,7 +31,8 @@ public static partial class Briefs
         {
             text.AppendLine($"Work in this folder ({review.FixWorktree}), a worktree on the PR's own branch `{branch}`. A reviewer read the PR at");
         }
-        text.AppendLine($"{shortHead} and asked for changes. Its report:");
+        var passed = !string.Equals(review.Verdict, "changes", StringComparison.OrdinalIgnoreCase);
+        text.AppendLine($"{shortHead} and {(passed ? "passed it, leaving points" : "asked for changes")}. Its report:");
         text.AppendLine();
         text.AppendLine((review.Report ?? "").Trim());
         if (review.Findings.Length > 0)
@@ -43,11 +44,10 @@ public static partial class Briefs
                 text.AppendLine($"- {finding.Path}:{finding.Line} {finding.Body}");
             }
         }
-        if (!string.Equals(review.Verdict, "changes", StringComparison.OrdinalIgnoreCase))
+        if (passed)
         {
-            // A passing review's points: earlier rounds' left points and its not-blocking notes, which the Report may not repeat.
-            var left = ReviewFollowUp.Read(review.Rounds).Items.Concat(ReviewFollowUp.LastRoundNotes(review.Rounds))
-                .GroupBy(i => i.Key, StringComparer.OrdinalIgnoreCase).Select(g => g.Last()).ToList();
+            // A passing review's points: the ones the node acts on (ReviewFollowUp.ToMake, the list it records as tried), not those it routed to another repo or a card.
+            var left = ReviewFollowUp.ToMake(review);
             if (left.Count > 0)
             {
                 text.AppendLine();
@@ -77,7 +77,7 @@ public static partial class Briefs
         text.AppendLine("finding was a behaviour.");
         text.AppendLine("Every point of the review ends one of four ways, and your comment says which for each: made (with where); not work (with why: it asks for nothing);");
         text.AppendLine("the node's own (a point about the PR body, title or a label, which the node sets, not you); or deferred, for one of three reasons only: another repo,");
-        text.AppendLine("the owner's decision, or larger than the PR. \"Left\" with free text is no end: the reviewer refuses it, and a deferred point is left unmade on the PR.");
+        text.AppendLine("the owner's decision, or larger than the PR. \"Left\" with free text is no end: the reviewer refuses it, and a deferred point is put on the PR as a comment.");
         text.AppendLine("Make every point you can, the not-blocking ones too: a deferred point waits for a flight of its own, and the owner wants");
         text.AppendLine("them fixed, not filed. \"Larger than the PR\" is only for a point that needs a design or a plan of its own (a new feature, a new subsystem);");
         text.AppendLine("a test, a rename, a comment, a doc line, an error message, a guard or a refactor of the files you touch is made here, however many there are.");

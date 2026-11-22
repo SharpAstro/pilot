@@ -84,6 +84,7 @@ public sealed partial class PrReviews
             Rounds = fixOn?.Rounds,
             FollowUpIssue = fixOn?.FollowUpIssue,
             FollowUpPoints = fixOn?.FollowUpPoints,
+            PointsOnPr = fixOn?.PointsOnPr,
             StartedAt = time.GetUtcNow(),
         };
         var commits = await git.RunAsync(["log", "--oneline", $"origin/{read.Base}..HEAD"], worktree, cancellationToken);

@@ -419,8 +419,34 @@ public sealed class PrFixTests2 : PrFixTestsBase
         // The points are still unmade, so the next sweep's start is a second fixer, and the card that told the person to press Fix it is closed.
         Fixers.Length.ShouldBe(2);
         Row.FixRound.ShouldBe(2);
+        _state.Cards().Count(c => c.Kind == PrReviews.FixEndedKind).ShouldBe(1, "the no-push end rang once");
         _state.Cards(openOnly: true).ShouldNotContain(c => c.Kind == PrReviews.FixEndedKind);
         _github.Merged.ShouldBeEmpty();
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task TheFixItChoiceOnAPassingReviewsPointsStartsAFixerInsteadOfBeingRefused()
+    {
+        await ApprovedWithAPointLeft();
+
+        // The card of a failed or ended start presses this verb: the review passed, but it left points to make.
+        (await Run(Verbs.FixPr, "acme/widget#7", "controller")).Error.ShouldBeNull();
+
+        Fixers.ShouldHaveSingleItem().Brief.ShouldContain("the title could be shorter");
+        Row.FixRound.ShouldBe(1);
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task TheFixItChoiceOnAPassingReviewWithNothingLeftIsStillRefused()
+    {
+        _github.Summary = GhAnswers.ChecksOf(ChoiceStatus.Passing, 1, 1);
+        _github.Queue = GhAnswers.MergeQueue("idle", _github.Prs["acme/widget#7"].Head);
+        (await Run(Verbs.ReviewPr, "acme/widget#7", "controller")).Error.ShouldBeNull();
+        (await Run(Verbs.PrVerdict, "acme/widget#7", Row.Reviewer, "approve", "Fine.")).Error.ShouldBeNull();
+
+        (await Run(Verbs.FixPr, "acme/widget#7", "controller")).Error.ShouldNotBeNull().ShouldContain("nothing to fix");
     }
 
 }
