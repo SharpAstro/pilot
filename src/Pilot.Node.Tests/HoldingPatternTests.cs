@@ -40,6 +40,10 @@ public sealed class HoldingPatternTests : ReviewTestsBase
         }
     }
 
+    /// <summary>A node that advances (autopilot setting saved off) plans the review-notes leg at a pass with notes, as a running node does.</summary>
+    private void NodeAdvances() =>
+        _legs.Models = new RoleModels(NodeSettings.With(new NodeSettings(), NodeSettings.AutopilotKey, ["off"]).Settings!);
+
     private PrChecks Checks() => new(_state, _github, TimeProvider.System, _flights, _legs);
 
     [Fact]
@@ -73,6 +77,7 @@ public sealed class HoldingPatternTests : ReviewTestsBase
 
         F(flight.Code).Holding.ShouldBeNull();
         Open().ShouldNotContain(c => c.Kind == LegCommander.ReviewNotesKind);
+        _state.Cards(openOnly: false).ShouldContain(c => c.Kind == LegCommander.HoldingClearedKind);
         // The planned review-notes leg is still not done, and a flight with a leg not done does not merge: the owner takes it out too.
         await WithoutTheFixerLeg(flight.Code);
         await Checks().LookAsync(Ct);
@@ -131,6 +136,7 @@ public sealed class HoldingPatternTests : ReviewTestsBase
     public async Task PastTheBoundTheTimeoutCardRingsAndMergeAsItIsMerges()
     {
         _github.Checks = ChoiceStatus.Passing;
+        NodeAdvances();
         var flight = await Reviewed("6", Notes);
         var clock = new ManualTime(F(flight.Code).Holding!.Since);
         var checks = TimedChecks(clock, live: true);
@@ -164,6 +170,7 @@ public sealed class HoldingPatternTests : ReviewTestsBase
     [Trait("Category", "Slow")]
     public async Task ALiveWatchtowerThatLeavesAHoldPastTheBoundRingsAndWaitSilencesItForAnotherBound()
     {
+        NodeAdvances();
         var flight = await Reviewed("7", Notes);
         var clock = new ManualTime(F(flight.Code).Holding!.Since);
         var checks = TimedChecks(clock, live: true);
@@ -421,6 +428,7 @@ public sealed class HoldingPatternTests : ReviewTestsBase
     public async Task TheTimeoutCardsMergeOnAHoldingFlightWhoseHeadMovedStartsTheReviewOfTheNewHead()
     {
         _github.Checks = ChoiceStatus.Passing;
+        NodeAdvances();
         var flight = await Reviewed("26", Notes);
         var clock = new ManualTime(F(flight.Code).Holding!.Since);
         var checks = TimedChecks(clock, live: true);
