@@ -38,9 +38,9 @@ public sealed record LandedBranchOutcome(string Code, string Branch, LandedBranc
 
 /// <summary>
 /// Judges whether a landed flight's branch is safe to delete and deletes the safe ones of one repo (PIL1101): locally with one
-/// <c>git branch -D a b c</c> and on origin with one <c>git push origin --delete a b c</c>. Safe means the row's own branch, local and
+/// <c>git branch -D a b c</c> and on origin with one <c>git push --porcelain origin :refs/heads/a ...</c>. Safe means the row's own branch, local and
 /// origin tips both equal to the merged head (a missing branch counts as gone), checked out nowhere, and no live session of the flight.
-/// A failed push deletes nothing on origin and returns the branches as <see cref="LandedBranchResult.RetryLater"/>, never retried here.
+/// Each ref's own answer is read: a refused one comes back as <see cref="LandedBranchResult.Failed"/> with git's text, and is never retried here.
 /// </summary>
 public sealed class LandedBranches(IGit git)
 {

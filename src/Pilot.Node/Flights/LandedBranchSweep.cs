@@ -6,7 +6,7 @@ namespace Pilot.Node.Flights;
 /// Deletes the branches of flights that landed before the node did it at landing (PIL1101): every <see cref="Interval"/> it walks the landed
 /// and the archived flights whose branch is not yet recorded as deleted, finds each one's merged head (the row's own, else its merged
 /// merge entry's, else GitHub's list of merged PRs, read once per repo per sweep), and has <see cref="LandedBranches"/> judge them a few at
-/// a time per repo, with a pause between batches and the state's lock never held. A failed push leaves its branches for the next sweep. One
+/// a time per repo, with a pause between batches and the state's lock never held. A refused push is recorded on the row and raised as one For-you card per repo; no later sweep pushes for it until a person answers. One
 /// Handled line counts the outcome by reason, repeated only when it changes. Off while the delete-landed-branches setting is; the first
 /// sweep waits <see cref="StartDelay"/>, so starting never competes with it.
 /// </summary>
@@ -281,16 +281,40 @@ public sealed class LandedBranchSweep(NodeState state, LandedBranches branches, 
     /// </summary>
     public static void RaisePushFailedCard(NodeState state, string subject, IReadOnlyList<LandedBranchOutcome> refused)
     {
-        var codes = refused.Select(o => o.Code).ToArray();
-        var lines = string.Join("; ", refused.Select(o => $"{o.Code} ({o.Branch}): {o.Why}"));
-        var many = refused.Count == 1 ? "its branch" : $"{refused.Count} branches";
+        // The card covers every refused flight of the repo not yet answered: the ones an open card of the repo still names join this sweep's,
+        // and that card is closed as replaced, since RaiseCard would hand it back unchanged and drop the new branches.
+        var all = refused.ToList();
+        foreach (var open in state.Cards(openOnly: true).Where(c => c.Kind == FlightCommander.BranchKeptKind && c.Subject == subject && c.Choices.Any(ch => ch.Verb == Verbs.BranchRetry)).ToList())
+        {
+            var retry = open.Choices.First(ch => ch.Verb == Verbs.BranchRetry);
+            foreach (var code in new[] { Verbs.FlightCodeOf(retry.Target) }.Concat(retry.Args))
+            {
+                if (code is null || all.Any(o => string.Equals(o.Code, code, StringComparison.OrdinalIgnoreCase)))
+                {
+                    continue;
+                }
+                var row = state.Flights().FirstOrDefault(f => string.Equals(f.Code, code, StringComparison.OrdinalIgnoreCase))
+                    ?? (state.ArchivedRow(code) is { } archived ? state.Archive?.Read(archived.Code)?.Flight : null);
+                if (row?.BranchDeleteFailed is { } why)
+                {
+                    all.Add(new LandedBranchOutcome(row.Code, row.Branch, LandedBranchResult.Failed, null, why));
+                }
+            }
+            state.CloseCard(open.Id, "replaced by a card naming every refused branch of the repo", "node");
+        }
+        var codes = all.Select(o => o.Code).ToArray();
+        // git's text is the push's, so every ref of one push carries the same: say it once.
+        var lines = string.Join(" ", all.GroupBy(o => o.Why ?? "", StringComparer.Ordinal)
+            .Select(g => $"{string.Join(", ", g.Select(o => $"{o.Code} ({o.Branch})"))}: {g.Key}"));
+        var many = all.Count == 1 ? "its branch" : $"{all.Count} branches";
         state.RaiseCard(CardBin.ForYou, FlightCommander.BranchKeptKind, subject,
-            refused.Count == 1 ? $"{codes[0]} landed, but origin refused deleting its branch {refused[0].Branch}" : $"{refused.Count} landed branches: origin refused deleting them",
-            $"Origin refused the delete of {many}, pushed once and now left until you answer: {lines}. Try deleting again lets the next sweep push once more; Leave them keeps the node from pushing for them again.",
+            all.Count == 1 ? $"{codes[0]} landed, but origin refused deleting its branch {all[0].Branch}" : $"{all.Count} landed branches: origin refused deleting them",
+            $"Origin refused the delete of {many}, pushed once and now left until you answer. {lines} Try deleting again lets the next sweep push once more; Leave them keeps the node from pushing for them again, and `pilot flight branch-retry {string.Join(" ", codes)}` is the way back after that.",
             [
                 new CardChoice { Label = "Try deleting again", Verb = Verbs.BranchRetry, Target = Verbs.FlightTarget(codes[0]), Args = [.. codes.Skip(1)] },
                 new CardChoice { Label = "Leave them", Verb = Verbs.Dismiss, Target = "" },
-            ]);
+            ],
+            cause: $"origin refused deleting {string.Join(",", codes.Order(StringComparer.Ordinal))}");
     }
 
     private FlightRow? FindFlight(string code) =>

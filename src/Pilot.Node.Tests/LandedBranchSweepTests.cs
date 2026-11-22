@@ -332,6 +332,50 @@ public sealed class LandedBranchSweepTests : IDisposable
         Live("PIL1").BranchDeleteFailed.ShouldNotBeNull();
     }
 
+    [Fact]
+    public async Task ALaterRefusalInTheRepoWhileTheCardIsOpenIsNamedOnOneReplacingCardWithEveryCodeInRetry()
+    {
+        Put(Row("PIL1", MakeBranch("PIL1")));
+        var failing = new CountingGit(new GitCli()) { FailPush = true };
+        await Sweeper(failing).SweepAsync(Ct);
+        var first = _state.Cards().Single(c => c.Kind == FlightCommander.BranchKeptKind);
+
+        Put(Row("PIL2", MakeBranch("PIL2")), archived: true);
+        await Sweeper(failing).SweepAsync(Ct);
+
+        var open = _state.Cards(openOnly: true).Where(c => c.Kind == FlightCommander.BranchKeptKind).ToList();
+        var card = open.ShouldHaveSingleItem();
+        card.Id.ShouldNotBe(first.Id);
+        card.Detail.ShouldNotBeNull().ShouldContain("PIL1 ");
+        card.Detail.ShouldContain("PIL2 ");
+        card.Detail.ShouldContain("remote: refused");
+        card.Detail.ShouldContain("pilot flight branch-retry");
+        var retry = card.Choices[0];
+        new[] { Verbs.FlightCodeOf(retry.Target)! }.Concat(retry.Args).Order().ShouldBe(["PIL1", "PIL2"]);
+        _state.Cards().Single(c => c.Id == first.Id).State.ShouldBe(CardState.Closed);
+    }
+
+    [Fact]
+    public async Task ALaterRefusalAfterLeavingThemRaisesAFreshCardForTheNewBranchesOnly()
+    {
+        Put(Row("PIL1", MakeBranch("PIL1")));
+        Put(Row("PIL2", MakeBranch("PIL2")));
+        var failing = new CountingGit(new GitCli()) { FailPush = true };
+        await Sweeper(failing).SweepAsync(Ct);
+        _state.CloseCard(_state.Cards(openOnly: true).Single(c => c.Kind == FlightCommander.BranchKeptKind).Id, "leave them", "test");
+
+        Put(Row("PIL3", MakeBranch("PIL3")));
+        Put(Row("PIL4", MakeBranch("PIL4")));
+        await Sweeper(failing).SweepAsync(Ct);
+
+        var card = _state.Cards(openOnly: true).Single(c => c.Kind == FlightCommander.BranchKeptKind);
+        card.Detail.ShouldNotBeNull().ShouldContain("PIL3 ");
+        card.Detail.ShouldContain("PIL4 ");
+        card.Detail.ShouldNotContain("PIL1 ");
+        var retry = card.Choices[0];
+        new[] { Verbs.FlightCodeOf(retry.Target)! }.Concat(retry.Args).Order().ShouldBe(["PIL3", "PIL4"]);
+    }
+
     [Theory]
     [InlineData("ls-remote")]
     [InlineData("for-each-ref")]

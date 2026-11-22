@@ -84,6 +84,7 @@ public sealed class LandingBranchTests : ReviewTestsBase
         card.Detail.ShouldNotContain("next sweep tries again");
         card.Choices.Select(c => c.Verb).ShouldBe([Verbs.BranchRetry, Verbs.Dismiss]);
         card.Choices[0].Target.ShouldBe(Verbs.FlightTarget(flight.Code));
+        card.Subject.ShouldBe(Verbs.RepoTarget(F(flight.Code).RepoPath));
     }
 
     [Fact]
