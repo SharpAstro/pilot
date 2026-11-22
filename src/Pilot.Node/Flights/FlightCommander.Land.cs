@@ -178,6 +178,7 @@ public sealed partial class FlightCommander
         var endReason = mergedHead is not null ? SessionEndReasons.Merged : SessionEndReasons.Landed;
         var endBy = mergedHead is not null ? "merge" : "land";
         var endedStrays = new List<MachineStray>();
+        var failedStops = new Dictionary<string, string>(StringComparer.Ordinal);
         string? strayNote = null;
         var (released, consumed, leftover, landedHead) = await OffLockAsync(async () =>
         {
@@ -214,7 +215,8 @@ public sealed partial class FlightCommander
                     }
                     catch (Exception ex) when (ex is FlightException or IOException or InvalidOperationException or System.ComponentModel.Win32Exception)
                     {
-                        // Gone already.
+                        // Gone already, or not stopped: told apart after the landing by its row (PIL1270:R1.9).
+                        failedStops[job] = ex.Message;
                     }
                 }
                 // Nothing of its own is left queued or running: its jobs, and those of its sessions.
@@ -369,18 +371,19 @@ public sealed partial class FlightCommander
         // A review's notes card stays open: a flight released from its hold merges with the notes, which are the person's to do or dismiss.
         state.CloseCardsAboutExcept(Verbs.FlightTarget(flight.Code), foldedInto is null ? $"{flight.Code} landed" : $"{flight.Code} folded into {foldedInto}", LegCommander.ReviewNotesKind);
         // The cards about its sessions, its jobs and their strays are not under the flight's target: they close with it (pilot #1270).
-        CloseCardsOfLandedParts(flight, foldedInto is null ? $"{flight.Code} landed" : $"{flight.Code} folded into {foldedInto}");
+        // A session whose stop failed and that is not seen ended keeps its stop-unconfirmed card open (raised when none is).
+        var stillRunning = CloseCardsOfLandedParts(flight, foldedInto is null ? $"{flight.Code} landed" : $"{flight.Code} folded into {foldedInto}", failedStops);
         if (foldedInto is null)
         {
             // Landed needs no one: a Handled line.
             state.RaiseCard(CardBin.Handled, "landed", Verbs.FlightTarget(flight.Code), $"{flight.Code} landed",
-                $"{flight.Title ?? flight.Item.Noun}{(flight.PullRequest is { } number ? $", PR #{number}" : "")}{(flight.FollowUpIssue is { } followUp ? $"; follow-up issue #{followUp} holds the points its reviews left" : "")}{(labelNote is null ? "" : $"; {labelNote}")}{(endedStrays.Count == 0 ? "" : $"; ended {string.Join(", ", endedStrays.Select(s => $"{s.Name} (pid {s.Pid})"))} left by its sessions")}{(strayNote is null ? "" : $"; {strayNote}")}", link: flight.PullRequestUrl);
+                $"{flight.Title ?? flight.Item.Noun}{(flight.PullRequest is { } number ? $", PR #{number}" : "")}{(flight.FollowUpIssue is { } followUp ? $"; follow-up issue #{followUp} holds the points its reviews left" : "")}{(labelNote is null ? "" : $"; {labelNote}")}{(endedStrays.Count == 0 ? "" : $"; ended {string.Join(", ", endedStrays.Select(s => $"{s.Name} (pid {s.Pid})"))} left by its sessions")}{(strayNote is null ? "" : $"; {strayNote}")}{string.Concat(stillRunning.Select(r => $"; {r.Name} ({r.Id}) may still run: its stop failed, its card stays open"))}", link: flight.PullRequestUrl);
         }
         else
         {
             state.RaiseCard(CardBin.Handled, FoldedKind, Verbs.FlightTarget(flight.Code), $"{flight.Code} folded into {foldedInto}",
                 // The number follows a title only: an untitled flight's noun already holds it (the review of #1129).
-                $"{(flight.Title is { } title ? $"{title} ({flight.Item.Display})" : flight.Item.Noun)} is now {foldedInto}'s: its PR closes it, and {foldedInto}'s planner plans its points{(labelNote is null ? "" : $"; {labelNote}")}");
+                $"{(flight.Title is { } title ? $"{title} ({flight.Item.Display})" : flight.Item.Noun)} is now {foldedInto}'s: its PR closes it, and {foldedInto}'s planner plans its points{(labelNote is null ? "" : $"; {labelNote}")}{string.Concat(stillRunning.Select(r => $"; {r.Name} ({r.Id}) may still run: its stop failed, its card stays open"))}");
         }
 
         // Its branch goes once its plane has, and so do those of the flights folded into it (PIL1101).
