@@ -183,10 +183,12 @@ public sealed class LandedFlightStrayTests : IDisposable
         _table.Add(602, 1, "pwsh.exe", Began.AddMinutes(3), folder: Plane);
         _table.Add(603, 1, "pwsh.exe", Began.AddMinutes(3), folder: Other);
         PutSession("w2", "PIL1271", null, SessionState.Ended, Began.AddMinutes(5), Other);
-        _time.Advance(TimeSpan.FromMinutes(1));
+        var landing = Flight("PIL1270", Plane, FlightState.Flying);
+        _state.PutFlight(landing);
+        _state.PutFlight(Flight("PIL1271", Other, FlightState.Flying));
+        _time.Advance(StrayFinder.EndedGrace + TimeSpan.FromMinutes(1));
         _sweep.SweepOnce();
         Open(StraySweep.Kind).Select(c => c.Subject).ShouldContain(StraySweep.KeyOf(602, Began.AddMinutes(3)));
-        var landing = Flight("PIL1270", Plane, FlightState.Flying);
 
         _sweep.EndOfLanded(landing);
 
