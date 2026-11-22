@@ -120,7 +120,7 @@ public sealed partial record ReviewFindings(bool Structured, IReadOnlyList<strin
             {
                 blockingLines.Add(line);
             }
-            if (into is not null && IsItem(line))
+            if (into is not null && IsItem(line) && !SaysNone(line))
             {
                 into.Add(line.Trim());
             }
@@ -148,6 +148,21 @@ public sealed partial record ReviewFindings(bool Structured, IReadOnlyList<strin
         var bare = text.TrimEnd(':').Trim();
         return bare.Equals("blocking", StringComparison.OrdinalIgnoreCase) || bare.Equals("not blocking", StringComparison.OrdinalIgnoreCase) || bare.Equals("human verification", StringComparison.OrdinalIgnoreCase) ? bare : null;
     }
+
+    /// <summary>
+    /// Whether an item says there is nothing under its heading ("- None new. The diff since ... is the test only", "- Nothing",
+    /// "- No new notes"): no finding, so no point to make. PIL1252 ran 20 review-notes rounds on one such line, each read as a note.
+    /// </summary>
+    internal static bool SaysNone(string line)
+    {
+        var text = line.Trim().TrimStart('-', '*', '+', ' ').Trim('*', '_', ' ');
+        var match = NoneItem().Match(text);
+        return match.Success;
+    }
+
+    // "None", "None new", "Nothing (new)", "No (new) notes|findings|points|issues", "N/A", alone or ended by punctuation before an explanation.
+    [GeneratedRegex(@"^(?:none(?:\s+new)?|nothing(?:\s+new)?(?:\s+to\s+(?:add|report|note))?|no\s+(?:new\s+|further\s+|other\s+)?(?:notes?|findings?|points?|issues?|nits?)|n/?a)\s*(?:$|[.,;:(\u2014-])", RegexOptions.IgnoreCase)]
+    private static partial Regex NoneItem();
 
     private static bool IsItem(string line)
     {
