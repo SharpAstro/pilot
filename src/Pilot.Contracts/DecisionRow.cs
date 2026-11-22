@@ -62,7 +62,7 @@ public static class DecisionKinds
 /// <summary>Who a decision's <see cref="DecisionRow.By"/> is.</summary>
 public static class DecisionByKinds
 {
-    public const string Node = "autopilot";
+    public const string NodeRules = "autopilot";
     public const string Watchtower = "watchtower";
     public const string Person = "person";
     public const string Node = "node";

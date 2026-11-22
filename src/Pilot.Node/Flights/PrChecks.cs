@@ -1302,7 +1302,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                     _ => ("Merge", rule),
                 };
             state.RecordDecision(Verbs.FlightTarget(flight.Code), DecisionKinds.Merge, $"Merge {flight.Code}'s PR #{flight.PullRequest} now, or wait?",
-                ["Merge", "Arm the merge", "Join the merge queue", "Bring the branch up to date", "Wait"], choice, "node", DecisionByKinds.Node, reason);
+                ["Merge", "Arm the merge", "Join the merge queue", "Bring the branch up to date", "Wait"], choice, "node", DecisionByKinds.NodeRules, reason);
         }
         if (retry)
         {

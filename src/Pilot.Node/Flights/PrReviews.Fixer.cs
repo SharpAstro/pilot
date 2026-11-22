@@ -414,7 +414,7 @@ public sealed partial class PrReviews
         var options = questions.Count > 1 ? DesignQuestion.OptionLabels(questions) : state.Cards().Where(c => c.Kind == DesignKind && c.Subject == target)
             // The option's words are the answer its button sends: the label is only its letter (Pick option A).
             .SelectMany(c => c.Choices).Where(c => c.AsksFor is null).Select(c => c.Args.FirstOrDefault() ?? c.Label).Distinct().ToArray();
-        var byKind = command.Autopilot ? DecisionByKinds.Node
+        var byKind = command.Autopilot ? DecisionByKinds.NodeRules
             : command.PersonsWord is not null || Standing.Of(command, state, "").Kind == StandingKind.Person ? DecisionByKinds.Person
             : DecisionByKinds.Node;
         return PostDesignDecisionAsync(pr, flight, review, given, command.Who, byKind, words.Length > 0 ? words : "the author's answer on the PR", options, cancellationToken);

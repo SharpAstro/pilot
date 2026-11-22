@@ -260,7 +260,7 @@ public sealed class AutopilotNodePressTests
         result.Ok.ShouldBeTrue(result.Error);
         node.State.Cards().Single(c => c.Id == card.Id).State.ShouldBe(CardState.Closed);
         var decision = node.State.Decisions().Single(d => d.Subject == StrayKey);
-        (decision.By, decision.ByKind).ShouldBe(("node", DecisionByKinds.Node));
+        (decision.By, decision.ByKind).ShouldBe(("node", DecisionByKinds.NodeRules));
         decision.Reason.ShouldContain(why);
     }
 }

@@ -333,7 +333,7 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
     {
         if (command.Autopilot || command.Who == "node")
         {
-            return DecisionByKinds.Node;
+            return DecisionByKinds.NodeRules;
         }
         if (command.PersonsWord is not null || standing.Kind == StandingKind.Person)
         {

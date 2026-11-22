@@ -58,7 +58,7 @@ public sealed class Autopilot(NodeState state, IServiceProvider services)
         if (record)
         {
             state.RecordDecision(Subject(command), DecisionSources.KindOf(command.Verb, command.Args) ?? DecisionKinds.Card,
-                $"Run {command.Verb} {command.Target} for {command.Who}?", [RunItOption, AskOption], RunItOption, command.Who, DecisionByKinds.Node,
+                $"Run {command.Verb} {command.Target} for {command.Who}?", [RunItOption, AskOption], RunItOption, command.Who, DecisionByKinds.NodeRules,
                 why is { Length: > 0 } ? why : "the node ran it and no message was given");
         }
     }
