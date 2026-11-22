@@ -99,8 +99,9 @@ public sealed partial class JobRunner
         if (cloud is null)
         {
             // Cloud benches are not set up at all: a bench is as it was before them, with nothing new on its row or card. A cloud set up
-            // by half (one of the subscription and resource group, or a service principal short of a part) says why it is off.
-            var halfSet = benchSettings.BenchSubscription is { Length: > 0 } || benchSettings.BenchResourceGroup is { Length: > 0 };
+            // by half (any bench key set: the subscription, the resource group, the auth, the region, size, image, price or cap; #984) says
+            // why it is off.
+            var halfSet = NodeSettings.BenchKeys.Any(key => benchSettings.Get(key) is { Count: > 0 } values && values.Any(v => v.Length > 0));
             return halfSet ? new Route(null, whyNot, SayWhy: true) : new Route(null, null, SayWhy: false);
         }
         if (CloudBench is null)
@@ -182,6 +183,8 @@ public sealed partial class JobRunner
     {
         CloudBenchResult? result = null;
         string? crashed = null;
+        // Whether the runner was asked for a VM: a bench that ended before (while its plan was read) had none and costs nothing (#984).
+        var asked = false;
         var tail = new CircularBuffer<string>(TailLines);
         using var timeout = new CancellationTokenSource(job.Timeout, time);
         using var limit = CancellationTokenSource.CreateLinkedTokenSource(run.Token, timeout.Token);
@@ -234,6 +237,7 @@ public sealed partial class JobRunner
                 TmpFolder = CloudTmpOf(options.DataFolder, job.Id),
                 Log = OnLine,
             };
+            asked = true;
             result = await CloudBench!.RunWithRetryAsync(request, CloudAttempts, limit.Token);
         }
         catch (OperationCanceledException) when (limit.IsCancellationRequested)
@@ -245,7 +249,7 @@ public sealed partial class JobRunner
             crashed = $"the cloud bench could not run: {ex.Message.Split('\n')[0].Trim()}";
         }
         string[] last = [.. tail.Snapshot];
-        EndCloud(job, cloud, run, result, crashed, last, log);
+        EndCloud(job, cloud, run, result, crashed, last, log, asked);
         log?.Dispose();
         await TellAsync(state.Jobs().FirstOrDefault(j => j.Id == job.Id) ?? job, _stopping, last);
     }
@@ -262,7 +266,7 @@ public sealed partial class JobRunner
     }
 
     // The row of a cloud bench that ended: how, with the VM it ran on. Told to its owner by the caller, once it is on the stream.
-    private void EndCloud(JobRow job, BenchCloud cloud, CloudRun run, CloudBenchResult? result, string? crashed, string[] last, CloudLogWriter? log)
+    private void EndCloud(JobRow job, BenchCloud cloud, CloudRun run, CloudBenchResult? result, string? crashed, string[] last, CloudLogWriter? log, bool asked)
     {
         var now = time.GetUtcNow();
         var outcome = JobState.Failed;
@@ -326,7 +330,7 @@ public sealed partial class JobRunner
                 Error = error,
                 Step = StepOf(last, job),
                 EndedAt = now,
-                BenchVm = result?.Vm ?? Billed(latest.BenchVm, job.StartedAt, cloud, now),
+                BenchVm = result?.Vm ?? (asked ? Billed(latest.BenchVm, job.StartedAt, cloud, now) : Unbilled(latest.BenchVm)),
             };
             state.PutJob(ended);
             Finish(ended, last);
@@ -346,6 +350,9 @@ public sealed partial class JobRunner
         var price = vm.PricePerHour ?? cloud?.SpotPricePerHour ?? NodeSettings.DefaultBenchSpotPrice;
         return vm with { Minutes = minutes, Cost = minutes / 60 * price, PricePerHour = price, PriceIsUpperBound = true };
     }
+
+    // A bench that ended before the runner was asked for a VM had none: no minutes and no cost, so the month's spend is not charged for it.
+    internal static BenchVm? Unbilled(BenchVm? vm) => vm is { Cost: null } ? vm with { Minutes = 0, Cost = 0, PriceIsUpperBound = false } : vm;
 
     // A bench that cannot go to a VM (its folder is no clean checkout) is handed over again as one for this machine, which waits and holds as ever.
     private void BackToThisMachine(JobRow job, CloudRun run, string why)
@@ -395,7 +402,8 @@ public sealed partial class JobRunner
 
     // A bench row a node that stopped or crashed left Running on a VM: its watch is gone with that node, but the names of what it made follow from the
     // job id and the subscription and resource group are in the settings, so this node deletes them (the same delete by name and sweep by prefix) and says what happened.
-    private async Task<JobRow> EndLostCloudBenchAsync(JobRow job, CancellationToken cancellationToken)
+    // Null when this node stopped during the delete: the row stays Running for the next start.
+    private async Task<JobRow?> EndLostCloudBenchAsync(JobRow job, CancellationToken cancellationToken)
     {
         var settings = BenchSettings();
         var prefix = CloudBenchNames.For(job.Id).Prefix;
@@ -420,6 +428,13 @@ public sealed partial class JobRunner
                     TmpFolder = CloudTmpOf(options.DataFolder, job.Id),
                     Log = line => { lock (lines) { lines.Add(line); } },
                 }, cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                // This node is stopping too: the row stays Running and the next start deletes the resources again (a delete by name is
+                // safe to repeat), rather than ending it "may still be running" for a delete that never finished (#984).
+                AppendLog(job.LogPath, [$"=== this node stopped while it deleted the Azure resources named {prefix}*; the next start tries again ===", .. lines]);
+                return null;
             }
             catch (Exception ex) when (ex is not OutOfMemoryException)
             {

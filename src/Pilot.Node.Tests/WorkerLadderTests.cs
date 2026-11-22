@@ -178,4 +178,13 @@ public sealed class WorkerLadderTests : LegCommanderTestsBase
     [InlineData(2, "Next worker (round 3, on Opus at xhigh).")]
     public void TheNextWorkerNoteNamesTheNextAttemptOnceItIsASecondRedoOrLater(int goArounds, string? note) =>
         Models().NextWorkerNote(new LegRow { Flight = "TIA1", Name = "parser", Order = 1, Goal = "g", DoneWhen = "d", State = LegState.Flying, GoArounds = goArounds }).ShouldBe(note);
+
+    [Theory]
+    [InlineData("stuck again", "Next worker (round 2, on Opus).", "stuck again. Next worker (round 2, on Opus).")]
+    [InlineData("stuck again.", "Next worker (round 2, on Opus).", "stuck again. Next worker (round 2, on Opus).")]
+    [InlineData("stuck again.  ", "Next worker (round 2, on Opus).", "stuck again.   Next worker (round 2, on Opus).")]
+    [InlineData("stuck again", null, "stuck again")]
+    public void TheNextWorkerNoteFollowsACardsDetailWithOneFullStopNeverTwo(string detail, string? note, string card) =>
+        // PIL797: a detail that ended in a stop got ".." before the note; none of the ladder tests ended one in a stop.
+        (detail + Pilot.Node.Flights.LegWatch.NoteAfter(detail, note)).ShouldBe(card);
 }

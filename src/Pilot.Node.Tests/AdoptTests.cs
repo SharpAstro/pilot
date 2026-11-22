@@ -157,6 +157,37 @@ public sealed class AdoptTests : IDisposable
     }
 
     [Fact]
+    public async Task AFlightAdoptedOntoAnIssueALiveFlightHereAlreadyFliesRaisesTheDuplicateCard()
+    {
+        // #1130: create --anyway raised the duplicate card, adopt-flight and receive-flight said nothing of a second live flight.
+        _state.PutFlight(Theirs("PIL900a") with { RepoPath = Repo, Worktree = Path.Combine(Repo, ".claude", "worktrees", "pil900a") });
+        HeardOnce();
+        _clock.Now = Start.AddHours(2);
+
+        (await Adopt()).Ok.ShouldBeTrue();
+        await _flights.WhenAdvancedAsync();
+
+        var card = _state.Cards().Single(c => c.Kind == FlightCommander.DuplicateFlightsKind);
+        card.Bin.ShouldBe(CardBin.ForYou);
+        card.Subject.ShouldBe(Verbs.FlightTarget(Code));
+        card.Title.ShouldBe($"{Code} and PIL900a both fly #900");
+        card.Detail.ShouldNotBeNull().ShouldContain($"{Code} was adopted from DE1");
+        card.Choices.Select(c => (c.Label, c.Verb)).ShouldBe([($"Withdraw {Code}", Verbs.WithdrawFlight), ("Keep both", Verbs.Dismiss)]);
+    }
+
+    [Fact]
+    public async Task AFlightAdoptedOntoAnIssueWithNoOtherLiveFlightRaisesNoDuplicateCard()
+    {
+        HeardOnce();
+        _clock.Now = Start.AddHours(2);
+
+        (await Adopt()).Ok.ShouldBeTrue();
+        await _flights.WhenAdvancedAsync();
+
+        _state.Cards().ShouldNotContain(c => c.Kind == FlightCommander.DuplicateFlightsKind);
+    }
+
+    [Fact]
     public async Task ANodeStillHeardFromWithinAdoptAfterRefusesAndSaysWhenItWasLastHeard()
     {
         HeardOnce();

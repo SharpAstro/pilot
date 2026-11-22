@@ -269,7 +269,8 @@ public sealed class DesignChatTests : IDisposable
         Run(Verbs.DesignChat, id).DesignChat!.Working.ShouldBeFalse();
 
         _store.Update(id, r => r with { DesignerState = DesignerStates.Held, DesignerHeldUntil = Start.AddHours(2).AddMinutes(30) });
-        Status(id).ShouldBe("held until 11:30 UTC");
+        // In the node's local time, as every other held time pilot says (#1158 R1.5: the chat alone said UTC).
+        Status(id).ShouldBe($"held until {Start.AddHours(2).AddMinutes(30).ToLocalTime():HH:mm}");
     }
 
     private string? Status(string id) => Run(Verbs.DesignChat, id).DesignChat!.Status;
@@ -284,7 +285,7 @@ public sealed class DesignChatTests : IDisposable
         await _designers.Settled;
 
         _said.ShouldBeEmpty();
-        Status(id).ShouldStartWith("held until 11:00");
+        Status(id).ShouldStartWith($"held until {Start.AddHours(2).ToLocalTime():HH:mm}");
         _store.Find(id)!.DesignerPending.ShouldBe(["while held"]);
         Run(Verbs.DesignChat, id).DesignChat!.Entries.Skip(1).ShouldHaveSingleItem().Text.ShouldBe("while held");
 

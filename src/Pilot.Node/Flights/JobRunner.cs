@@ -149,6 +149,9 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
     /// <summary>The node log: one line per tell with its outcome and the target session's state (#756).</summary>
     public TextWriter Log { get; init; } = TextWriter.Null;
 
+    /// <summary>The most a job's artifacts may total before none is kept (<see cref="JobArtifact.ByteLimit"/>); a test sets a small one to see the row's note come from the runner (#1085).</summary>
+    internal long ArtifactByteLimit { get; set; } = JobArtifact.ByteLimit;
+
     private void LogTell(JobRow job, string target, SessionRow? targetRow, string outcome)
     {
         try
@@ -327,7 +330,7 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
             _recovered.TrySetResult();
         }
         // The Azure deletes of lost cloud benches run beside the dispatcher and the leg watch, which wait on Recovered: a slow or
-        // failing delete holds neither (the rows end and their owners are told when it is done).
+        // failing delete holds neither (the rows end and their owners are told when it is done). LostCloud is what a test awaits.
         _lostCloud = lost;
         _ = TickAsync(stopping);
         try
@@ -419,6 +422,7 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
         {
             if (row.ToldWay is "owner-ended" or "gone")
             {
+                ForgetTell(row.Id);
                 continue;
             }
             var sessions = state.Sessions();
@@ -431,6 +435,7 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
             var replacement = Sessions.SessionMessenger.ReplacedBy(ownerRow, candidates);
             if (replacement is null && OwnerEnded(ownerRow, row))
             {
+                ForgetTell(row.Id);
                 continue;
             }
             var target = replacement ?? sessions.FirstOrDefault(s => s.Id == WakeTarget(row.Owner!, row.OwnerName)) ?? ownerRow;
@@ -467,6 +472,11 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
             }
             // A session that took turns without a response the node saw (an interactive or ad hoc one) shows it by a context that grew
             // since the tell, or by any command it sent since (#1137).
+            // A compaction shrinks the context below the baseline: the baseline drops with it, so growth after it is seen (#1147).
+            if (_contextAtTell.TryGetValue(row.Id, out var baseline) && target.ContextTokens < baseline)
+            {
+                _contextAtTell[row.Id] = target.ContextTokens;
+            }
             if (target.ContextTokens > _contextAtTell.GetOrAdd(row.Id, target.ContextTokens)
                 || LastCommandAt?.Invoke(target.Name) is { } commanded && commanded > silentSince)
             {
@@ -479,6 +489,8 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
             if (row.RetoldAt is not null)
             {
                 state.PutJob(row with { RetellRung = true });
+                // Rung or settled, the row is not looked at again: its baselines go with it (#1147: they were kept for the node's life).
+                ForgetTell(row.Id);
                 if (row.State != JobState.Failed && WhatWaits(row, ownerRow) is null)
                 {
                     // A succeeded or cancelled job whose leg has finished waits on nothing: no card, and the row is not looked at again.
@@ -521,8 +533,20 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
     /// whose leg is still flying, a reviewer's job while its PR review is open, a fixer's while its fix round is open. An ad hoc,
     /// planner, leg validator or watchtower session (told once, as the issue lists only the three above), and a leg that is done, failed or gone, wait on nothing (#1137).
     /// </summary>
+    // A failure needs its session to act whoever it is (#1147, the owner's call): a planner's (and a leg validator's, which a planner runs)
+    // and a designer's are retold too. The watchtower and an ad hoc session are told once: they are the person's.
     private static bool FailedOfLeggedOwner(JobRow row, SessionRow owner) =>
-        row.State == JobState.Failed && owner.Role is SessionRole.Worker or SessionRole.Reviewer or SessionRole.Fixer;
+        row.State == JobState.Failed && owner.Role is SessionRole.Worker or SessionRole.Reviewer or SessionRole.Fixer or SessionRole.Planner or SessionRole.Designer;
+
+    /// <summary>Drops a job's retell baselines (<see cref="_contextAtTell"/>, <see cref="_busyTurnEnd"/>) once the sweep no longer looks at it.</summary>
+    private void ForgetTell(string id)
+    {
+        _contextAtTell.TryRemove(id, out _);
+        _busyTurnEnd.TryRemove(id, out _);
+    }
+
+    /// <summary>How many jobs have retell baselines kept: what a test reads to see they are pruned.</summary>
+    internal int TellBaselines => _contextAtTell.Count + _busyTurnEnd.Count;
 
     private string? WhatWaits(JobRow row, SessionRow owner)
     {
@@ -655,6 +679,9 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
 
     private Task? _lostCloud;
 
+    /// <summary>The Azure deletes of the cloud benches a lost node left Running, which run beside the dispatcher after <see cref="Recovered"/> (#984); done when there were none.</summary>
+    internal Task LostCloud => _lostCloud ?? Task.CompletedTask;
+
     /// <summary>Recovery with the lost cloud benches' Azure deletes started, not awaited: the returned task ends them and tells their owners.</summary>
     private async Task<Task> RecoverCoreAsync(CancellationToken cancellationToken)
     {
@@ -703,8 +730,24 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
         {
             foreach (var job in lostCloud)
             {
-                var ended = await EndLostCloudBenchAsync(job, cancellationToken);
-                await TellAsync(ended, cancellationToken, []);
+                // One row's fault does not stop the rest (they would stay Running with no line said); a node stopping leaves the rest
+                // Running, which the next start takes up again (#984).
+                try
+                {
+                    var ended = await EndLostCloudBenchAsync(job, cancellationToken);
+                    if (ended is not null)
+                    {
+                        await TellAsync(ended, cancellationToken, []);
+                    }
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    return;
+                }
+                catch (Exception ex) when (ex is not OutOfMemoryException)
+                {
+                    await Log.WriteLineAsync($"jobs: the lost cloud bench {job.Id} could not be ended: {ex.Message.Split('\n')[0].Trim()}; it stays Running and the next start tries again");
+                }
             }
         }, CancellationToken.None);
     }
@@ -1992,9 +2035,9 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
     public const string ArtifactsVariable = "PILOT_JOB_ARTIFACTS";
 
     /// <summary>The row with what its artifacts directory holds, read as it ends; a job with no such directory is unchanged.</summary>
-    private static JobRow WithArtifacts(JobRow ended)
+    private JobRow WithArtifacts(JobRow ended)
     {
-        var (files, note) = JobArtifacts.Collect(ArtifactsOf(ended));
+        var (files, note) = JobArtifacts.Collect(ArtifactsOf(ended), ArtifactByteLimit);
         return files is null && note is null ? ended : ended with { Artifacts = files, ArtifactsNote = note };
     }
 
@@ -2790,7 +2833,7 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
             var cancelled = _cancelled.TryRemove(job.Id, out var by);
             var forced = cancelled && _forced.TryRemove(job.Id, out _);
             // The slow file reads stay outside the lock: the artifacts directory is the job's own, not part of the row.
-            var (artifactFiles, artifactsNote) = JobArtifacts.Collect(ArtifactsOf(job));
+            var (artifactFiles, artifactsNote) = JobArtifacts.Collect(ArtifactsOf(job), ArtifactByteLimit);
             var endedAt = time.GetUtcNow();
             JobRow EndOf(JobRow current)
             {

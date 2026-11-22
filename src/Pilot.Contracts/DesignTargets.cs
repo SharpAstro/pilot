@@ -13,7 +13,7 @@ public sealed record DesignSurface(string Name, int Width, int Height, double Sc
 /// <summary>
 /// The built-in targets of a design (PIL1097), one catalogue the node's check and render and the GUI's Designs page both read: Desktop 1440x900 at 1,
 /// Laptop 1280x800 at 1.5, Tablet 820x1180 at 2 and Phone 390x844 at 3. A document's <c>targets</c> entry gives a name and its own size: DIR.Lib's
-/// parser refuses an entry with a name alone, so a built-in name with no size is not yet a target (the review of #1116 left that for a follow-up).
+/// parser refuses an entry with a name alone, so a built-in name with no size is not yet a target (SharpAstro/DIR.Lib#306).
 /// </summary>
 public static class DesignTargets
 {
@@ -44,13 +44,6 @@ public static class DesignTargets
         return new DesignSurface(
             string.IsNullOrWhiteSpace(name) ? $"{width}x{height}" : known?.Name ?? name,
             width.Value, height.Value, scale is > 0 ? scale.Value : known?.Scale ?? 1);
-    }
-
-    /// <summary>The surfaces of a document's entries, in order; Desktop alone when the document names none.</summary>
-    public static DesignSurface[] ResolveAll(IEnumerable<DesignSurface?> entries)
-    {
-        var resolved = entries.OfType<DesignSurface>().ToArray();
-        return resolved.Length == 0 ? [Desktop] : resolved;
     }
 
     /// <summary>

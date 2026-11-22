@@ -9,11 +9,11 @@ namespace Pilot.Ui;
 internal sealed class DesignReads(NodeClient? client, string who, Action redraw)
 {
     /// <summary>
-    /// How a command reaches the node: the client's send. A test gives its own (#1170 R1.3), to see what the page's buttons send without a
-    /// node, as <see cref="NodeClient"/> is a socket.
+    /// How a command goes to the node: the client's <see cref="NodeClient.SendAsync"/>, or what a test puts in its place to see the requests the
+    /// page's chat, typing and buttons make without a node, as <see cref="NodeClient"/> is a socket (#1158 R1.10, #1170 R1.3).
     /// </summary>
     internal Func<CommandRequest, CancellationToken, Task<ResponseEnvelope<CommandResult>>> Send { get; init; } =
-        (command, ct) => (client ?? throw new InvalidOperationException("no node client and no Send given")).SendAsync(command, ct);
+        (command, cancellationToken) => client is not null ? client.SendAsync(command, cancellationToken) : throw new InvalidOperationException("no node to send to");
 
     public static readonly TimeSpan Every = TimeSpan.FromSeconds(15);
 

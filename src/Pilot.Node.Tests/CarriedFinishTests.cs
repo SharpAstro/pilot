@@ -192,6 +192,25 @@ public sealed class CarriedFinishTests() : LegCommanderTestsBase(realGit: true)
     }
 
     [Fact(Timeout = 120_000)]
+    public async Task ALateRerunThatFailsOnAnUnknownSwitchSaysThatFirstInItsOutcome()
+    {
+        // #1136: the late path's outcome (LegCommander.Finish's Recheck = late ? ... head + FailedOutcome) starts with the head line, as the
+        // report does: a wrong switch for the repo's runner is said ahead of the tail, so the worker fixes the command, not the SDK.
+        var check = Echoing("MSBUILD : error MSB1001: Unknown switch.   Switch: --project", 1);
+        await using var node = await RestartedAsync(check, flight => Queued(check, flight));
+
+        await node.Watch.LookAsync(Ct);
+        await UntilToldAsync(node);
+
+        node.Parser.State.ShouldBe(LegState.Flying);
+        var said = node.Said.ShouldHaveSingleItem().Args[0];
+        // The worker is told the outcome inside the node's own sentence; the outcome itself opens with the head line, ahead of the tail.
+        said.ShouldContain("This is a wrong command for this repo's test runner");
+        said.ShouldContain("failed (1)");
+        said.IndexOf("This is a wrong command", StringComparison.Ordinal).ShouldBeLessThan(said.LastIndexOf("failed (1)", StringComparison.Ordinal));
+    }
+
+    [Fact(Timeout = 120_000)]
     public async Task ACheckJobACrashEndedIsRerunByTheNodeAndTheLegFinished()
     {
         // What a crash leaves: the check's row still Running, its process gone, and no exit file (RestartedOutcome's case).

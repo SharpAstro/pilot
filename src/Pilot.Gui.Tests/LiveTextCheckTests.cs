@@ -41,7 +41,7 @@ public sealed class LiveTextCheckTests
         var page = new OverlappingPage(renderer) { FontPath = SessionsCapture.FontPath };
         var sent = new List<CommandRequest>();
         var logged = new List<string>();
-        var check = new LiveTextCheck { Send = sent.Add, Log = logged.Add, Time = new Clock() };
+        var check = new LiveTextCheck { Send = (request, _) => sent.Add(request), Log = logged.Add, Time = new Clock() };
         page.Arranged = nodes => check.Observe(name, nodes, page.DpiScale);
         return (page, check, sent, logged, renderer);
     }
@@ -182,6 +182,60 @@ public sealed class LiveTextCheckTests
     }
 
     [Fact]
+    public void TheCardCarriesThePageAsDrawnCutToThePagesRect()
+    {
+        // #423: the card's attachment is the faulty page drawn again from the same arranged nodes, the page's rect cut out of the frame.
+        var renderer = new RgbaImageRenderer(900, 600);
+        using var r = renderer;
+        var page = new OverlappingPage(renderer) { FontPath = SessionsCapture.FontPath };
+        var images = new List<PageImage?>();
+        var ground = new RGBAColor32(0x10, 0x20, 0x30, 0xff);
+        var check = new LiveTextCheck
+        {
+            Send = (_, image) => images.Add(image),
+            Capture = (nodes, dpi) => PageCapture.Of(nodes, SessionsCapture.FontPath, dpi, ground),
+            Time = new Clock(),
+        };
+        page.Arranged = nodes => check.Observe("overlapping", nodes, page.DpiScale);
+        page.Render(new RectF32(100, 50, 700, 500));
+
+        var image = images.ShouldHaveSingleItem().ShouldNotBeNull();
+        (image.Width, image.Height).ShouldBe((700, 500), "the page's own rect, not the window's frame");
+        image.Rgba.Length.ShouldBe(700 * 500 * 4);
+        // The corners are the ground; the texts (drawn one over the other at the page's middle row) are ink on it.
+        image.Rgba.AsSpan(0, 4).ToArray().ShouldBe(new byte[] { 0x10, 0x20, 0x30, 0xff });
+        image.Rgba.AsSpan(((499 * 700) + 699) * 4, 4).ToArray().ShouldBe(new byte[] { 0x10, 0x20, 0x30, 0xff });
+        var inked = 0;
+        for (var at = 0; at < image.Rgba.Length; at += 4)
+        {
+            inked += image.Rgba[at] != 0x10 || image.Rgba[at + 1] != 0x20 || image.Rgba[at + 2] != 0x30 ? 1 : 0;
+        }
+        inked.ShouldBeGreaterThan(50, "the overlapping texts are in the picture");
+    }
+
+    [Fact]
+    public void ACaptureThatThrowsStillRaisesTheCardWithNoPicture()
+    {
+        var renderer = new RgbaImageRenderer(900, 600);
+        using var r = renderer;
+        var page = new OverlappingPage(renderer) { FontPath = SessionsCapture.FontPath };
+        var sent = new List<(CommandRequest Request, PageImage? Image)>();
+        var logged = new List<string>();
+        var check = new LiveTextCheck
+        {
+            Send = (request, image) => sent.Add((request, image)),
+            Capture = (_, _) => throw new InvalidOperationException("no surface"),
+            Log = logged.Add,
+            Time = new Clock(),
+        };
+        page.Arranged = nodes => check.Observe("overlapping", nodes, page.DpiScale);
+        page.Render(new RectF32(0, 0, 900, 600));
+
+        sent.ShouldHaveSingleItem().Image.ShouldBeNull();
+        logged.ShouldContain(l => l.Contains("could not capture the overlapping page") && l.Contains("no surface"));
+    }
+
+    [Fact]
     public void WithNoNodeToSendThroughAFaultIsOnlyLogged()
     {
         var (page, check, _, logged, renderer) = Setup();
@@ -198,7 +252,7 @@ public sealed class LiveTextCheckTests
         using var renderer = new RgbaImageRenderer(1300, 900);
         var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath, DpiScale = 1f };
         var sent = new List<CommandRequest>();
-        chrome.TextCheck.Send = sent.Add;
+        chrome.TextCheck.Send = (request, _) => sent.Add(request);
         var data = PageData.For("sample");
         chrome.Show(PilotPage.Home);
         for (var i = 0; i < 3; i++)

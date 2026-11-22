@@ -8,6 +8,15 @@ public sealed partial class NodeState
     /// <summary>The archive store landed flights are moved to (PIL1083); null where the node keeps none (a test that archives nothing), and archiving is then refused.</summary>
     public FlightArchive? Archive { get; set; }
 
+    /// <summary>How many flights <see cref="ArchivedFlightRows"/> would list, counted without copying or sorting them (the node row's count, #1090).</summary>
+    public int ArchivedFlightCount()
+    {
+        lock (_gate)
+        {
+            return Archive?.CountOf(code => !_flights.ContainsKey(code)) ?? 0;
+        }
+    }
+
     /// <summary>
     /// The archived flights' light rows, newest landed first. A row whose flight is live again (a crash between the archive's file and its
     /// event left the file behind) is left out: the live flight is the one that counts.

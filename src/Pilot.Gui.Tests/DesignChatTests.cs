@@ -100,7 +100,7 @@ public sealed class DesignChatTests
 
     [Theory]
     [InlineData("drafting")]
-    [InlineData("held until 22:00 UTC")]
+    [InlineData("held until 22:00")]
     public async Task TheStatusLineIsTheFeedsOwnWords(string status)
     {
         using var rig = new Rig(PageData.DesignChatPage(status));

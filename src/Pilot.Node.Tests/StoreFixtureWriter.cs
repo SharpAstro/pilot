@@ -136,6 +136,13 @@ public static class StoreFixtureWriter
         state.PutFlight(Flight("PIL5", FlightState.Flying, 5));
         state.WithdrawFlight("PIL5");
 
+        // A flight whose review a person passed over the reviewer's changes: its round names who passed it (contract 6, #1144). Each release's
+        // fixture from here on holds a stored passedBy, which StoreCompatibilityTests then reads back.
+        state.PutFlight(Flight("PIL6", FlightState.Flying, 6) with
+        {
+            ReviewRounds = [new ReviewRound { Round = 1, Head = new string('6', 40), Verdict = ReviewState.Passed, Findings = "## Blocking\n- a point the person passed over", PassedBy = "controller" }],
+        });
+
         // Cards: one raised, one changed.
         var raised = state.RaiseCard(CardBin.Ring, "worker", "flight/PIL3/only", "a worker stopped", "in the journal");
         state.AddAsker(raised.Id, "fixture");
