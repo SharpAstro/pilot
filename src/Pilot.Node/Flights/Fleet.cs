@@ -94,7 +94,7 @@ public sealed record FleetLoad(UsageRow? Usage, FlightRow[] Flights, PrReviewRow
 /// <param name="Checkout">The path of the peer's checkout of the repo's GitHub remote; null when it has none.</param>
 /// <param name="Headroom">What is left of its 5-hour window, in percent; null when it has no figures.</param>
 /// <param name="InTheAir">How many of its flights are flying.</param>
-public sealed record FleetPeerFacts(string Name, bool Reached, bool Granted, bool Maintenance, bool AcceptsFleetFlights, string? Checkout, double? Headroom, int InTheAir);
+public sealed record FleetPeerFacts(string Name, bool Reached, bool Granted, bool Maintenance, bool AcceptsFleetFlights, string? Checkout, double? Headroom, int InTheAir, string? Account = null);
 
 /// <summary>A peer judged: willing, or why not.</summary>
 /// <param name="Reason">Why it does not qualify; null when it does.</param>

@@ -299,7 +299,10 @@ public sealed class HoldingPatternTests : ReviewTestsBase
         leg.DoneWhen.ShouldContain("a comment is stale");
         leg.Check.ShouldBe(before.Check);
         leg.State.ShouldBeOneOf(LegState.Planned, LegState.Flying);
-        var card = Open().Single(c => c.Kind == LegCommander.ReviewNotesKind);
+        // The planned leg makes the notes, so nothing is the person's: a Handled line, never a card asking for anything.
+        Open().ShouldNotContain(c => c.Kind == LegCommander.ReviewNotesKind && c.Bin != CardBin.Handled);
+        var card = _state.Cards().Single(c => c.Kind == LegCommander.ReviewNotesKind);
+        (card.Bin, card.Title).ShouldBe((CardBin.Handled, $"{flight.Code}'s review notes go to its review-notes leg"));
         card.Summary.ShouldNotBeNull().ShouldContain("fixer leg review-notes");
         card.Detail.ShouldNotBeNull().ShouldContain($"{flight.Code}/review-notes");
     }
@@ -541,7 +544,6 @@ public sealed class HoldingPatternTests : ReviewTestsBase
 
         F(flight.Code).Holding.ShouldNotBeNull();
         _github.Merged.ShouldBeEmpty();
-        Open().ShouldContain(c => c.Kind == LegCommander.ReviewNotesKind);
         (await Run(Verbs.Merge, Verbs.FlightTarget(flight.Code), "controller", _github.Pr!.Head[..8])).Error.ShouldNotBeNull().ShouldContain("holding pattern");
         // Cleared by the watchtower once every note has an end, it lands as for any passed review.
         NotesMade(flight.Code);
