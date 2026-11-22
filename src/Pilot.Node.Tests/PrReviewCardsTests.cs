@@ -161,6 +161,28 @@ public sealed class PrReviewCardsTests : PrFixTestsBase
     }
 
     [Fact]
+    public async Task AMergeReadStampIsKeyedByTheCardIdSoANewMergeCardRaisedBetweenSweepsIsReadAtOnce()
+    {
+        await Review("acme/widget#7", "changes", Design);
+        _state.CloseCard(OpenDesign(_state)!.Id, "dismissed", "controller");
+        var subject = Verbs.PrTarget("acme/widget", 7);
+        CardChoice[] choices = [new CardChoice { Label = "Merge", Verb = Verbs.ReviewPr, Target = subject }];
+        var merge = _state.RaiseCard(CardBin.ForYou, PrReviews.MergeKind, subject, "Merge", "detail", choices);
+        var (reviews, _) = OnAFakeClock();
+        _github.PrReads.Clear();
+
+        await reviews.SweepAsync(Ct);
+        _github.PrReads["acme/widget#7"].ShouldBe(1);
+
+        // No sweep between the close and the new card: the prune never sees the gap, so only the card id tells the two cards apart.
+        _state.CloseCard(merge.Id, "answered elsewhere", "node");
+        _state.RaiseCard(CardBin.ForYou, PrReviews.MergeKind, subject, "Merge", "detail", choices);
+        await reviews.SweepAsync(Ct);
+
+        _github.PrReads["acme/widget#7"].ShouldBe(2, "the new card has a new id, so the old card's stamp does not hold its read off");
+    }
+
+    [Fact]
     public async Task AMergeReadThatFailsLeavesNoStampSoTheNextSweepReadsItAgain()
     {
         await Review("acme/widget#7", "changes", Design);

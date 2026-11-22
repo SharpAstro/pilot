@@ -248,18 +248,18 @@ public sealed class ToastPressTests
             Palette.Current = Palette.Night;
             var p = Palette.Night;
             var colors = NotificationsHost.Colors();
-            // The drawn ground: the night CPU render of a refused toast paints the toast on the colour the host hands the library, so the ink is
-            // measured against a ground that is on the page. The count is of the card colour over the page's own, which differs in night.
+            // The drawn ground: the refusal line is its own node with its own fill, so the ink is measured against a ground the toast really
+            // draws. (A pixel count of the card colour proves nothing here: in night it is the page's own ground, painted with no toast at all.)
             using (var rig = new Rig(Card(), 700, 600))
             {
                 rig.Chrome.Night.On = true;
                 rig.Chrome.Cards.Presses.NoteRefused(CardsView<RgbaImage>.PressKeyOf(null, "c1"), Why);
-                rig.Frame(CardsScreen.From([Card()]), 2);
-                rig.Frame(CardsScreen.From([Card()]), 3);
-                rig.Count(colors.Card).ShouldBeGreaterThan(300, "the toast is drawn on the card colour the contrast is measured against");
+                var line = rig.Row().Where(n => n.Node.Tooltip?.ToString() == Why).ToList();
+                line.ShouldNotBeEmpty("the refusal line carries the node's words on hover");
+                line.ShouldContain(n => n.Node.Background == colors.Card, "the refusal line is filled with the card colour its ink is measured against");
             }
             // The library draws the plain choice and the title on its own tinted fill (under AA in night): a DIR.Lib issue, not measured here.
-            foreach (var (name, ink, bg) in new[] { ("dead twin", p.Dim, colors.Card), ("refusal", p.Held, colors.Card) })
+            foreach (var (name, ink, bg) in new[] { ("dim ink", p.Dim, colors.Card), ("refusal", p.Held, colors.Card) })
             {
                 var shown = Contrast.Readable(ink, bg, p.Failed);
                 Contrast.Ratio(shown, bg).ShouldBeGreaterThanOrEqualTo(Contrast.AA, name);
