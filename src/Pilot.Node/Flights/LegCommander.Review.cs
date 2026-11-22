@@ -419,12 +419,17 @@ public sealed partial class LegCommander
                 else
                 {
                 var fixer = await PlanReviewNotesLegAsync(flight, notes, cancellationToken);
-                // The hold waits on the leg that makes the notes, never on a watchtower that may not be running (PIL815).
                 if (fixer is not null)
                 {
+                    // The hold waits on the leg that makes the notes, never on a watchtower that may not be running (PIL815).
                     HoldForLeg(flight.Code, fixer);
+                    RaiseReviewNotes(FlightOf(command.Target), notes, fixer);
                 }
-                RaiseReviewNotes(FlightOf(command.Target), notes, fixer);
+                else if (UnmadeNotesOf(FlightOf(command.Target)) is { Count: > 0 } unmade)
+                {
+                    // No leg could be planned (a node that does not advance): the notes ring as notes-unmade.
+                    await PlanOrRingForNotesAsync(FlightOf(command.Target), unmade, "no review-notes leg could be planned", cancellationToken);
+                }
                 }
             }
         }
@@ -608,7 +613,12 @@ public sealed partial class LegCommander
             await RaisePrReadyAsync(flight, report, notes.Count > 0 ? $"{phrase}, passed with {notes.Count} {(notes.Count == 1 ? "note" : "notes")}" : phrase, cancellationToken);
             if (flight.Holding is not null && notes.Count > 0 && !state.Cards(openOnly: true).Any(c => c.Subject == subject && c.Kind == ReviewNotesKind))
             {
-                RaiseReviewNotes(FlightOf(subject), notes);
+                // The notes' end is the node's own leg, or a notes-unmade ring: never a For-you card (pilot #1271).
+                call.Dispose();
+                if (UnmadeNotesOf(FlightOf(subject)) is { Count: > 0 } unmade)
+                {
+                    await PlanOrRingForNotesAsync(FlightOf(subject), unmade, "its review passed with notes and the node restarted before they had an end", cancellationToken);
+                }
             }
             state.RaiseCard(CardBin.Handled, PrReadyRestoredKind, subject, $"{code}'s PR-ready card was restored",
                 "its review passed but no merge card was open (the node went away between the verdict and the card)");
@@ -629,22 +639,16 @@ public sealed partial class LegCommander
     public const int MaxReviewGoArounds = LegRow.MaxReviewGoArounds;
 
     /// <summary>
-    /// A pass with notes: the not blocking findings go to the watchtower as a card, to make the small ones in the plane and
-    /// commit them. No leg goes round, and the merge card stays as it is.
+    /// A pass with notes whose review-notes leg the node planned: a Handled line saying where the notes go (the PR's label reads changes
+    /// from here, and a "passed" title beside it contradicts it). Notes nobody makes are never a For-you card: they ring as notes-unmade
+    /// or review-notes-cap (pilot #1271).
     /// </summary>
-    private void RaiseReviewNotes(FlightRow flight, IReadOnlyList<string> notes, string? fixerLeg = null)
+    private void RaiseReviewNotes(FlightRow flight, IReadOnlyList<string> notes, string fixerLeg)
     {
         state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), "its review passed again", ReviewNotesKind);
-        var action = fixerLeg is not null
-            ? $"The node planned {flight.Code}/{fixerLeg} to make them; it starts as any planned leg and the review runs again on its result."
-            : $"Delegate: plan a review-notes leg carrying the notes (pilot leg plan, then pilot leg start) within a few minutes, and say so here. Clearing the hold is the owner's word, not yours (pilot flight clear {flight.Code} <why> is refused for the watchtower while a note has no end). "
-                + $"A fix of your own only for a one-line change in the plane ({flight.Worktree}), then pilot flight pr {flight.Code}. "
-                + $"Take the hold with pilot flight hold {flight.Code} (or commit in the plane) before the grace ends, or the node plans the review-notes leg itself, or rings the owner.";
-        // A leg the node planned makes the notes: nothing is the person's, so it is a Handled line, said as what happens (the PR's label
-        // reads changes from here, and a "passed" title beside it contradicts it). Only notes nobody makes are a card for someone.
-        state.RaiseCard(fixerLeg is not null ? CardBin.Handled : CardBin.ForYou, ReviewNotesKind, Verbs.FlightTarget(flight.Code),
-            fixerLeg is not null ? $"{flight.Code}'s review notes go to its {fixerLeg} leg" : $"{flight.Code}'s review passed with notes",
-            $"PR #{flight.PullRequest}, head {(flight.Review?.ReviewedHead is { } head ? CommitRefs.Short(head) : "unknown")}. Notes: {string.Join("; ", notes)} {action}",
+        state.RaiseCard(CardBin.Handled, ReviewNotesKind, Verbs.FlightTarget(flight.Code), $"{flight.Code}'s review notes go to its {fixerLeg} leg",
+            $"PR #{flight.PullRequest}, head {(flight.Review?.ReviewedHead is { } head ? CommitRefs.Short(head) : "unknown")}. Notes: {string.Join("; ", notes)} "
+                + $"The node planned {flight.Code}/{fixerLeg} to make them; it starts as any planned leg and the review runs again on its result.",
             link: flight.PullRequestUrl, summary: CardSummaries.ReviewNotes(flight.Code, notes, fixerLeg),
             // The title is the same for every pass with notes: the head reviewed and the notes are the cause (#853).
             cause: $"{flight.Review?.ReviewedHead}:{string.Join('\n', notes)}");
@@ -680,16 +684,16 @@ public sealed partial class LegCommander
     }
 
     /// <summary>
-    /// On autopilot, a pass with notes plans a review-notes leg by the same path as leg plan: one checklist item per note and a
+    /// A pass with notes plans a review-notes leg by the same path as leg plan: one checklist item per note and a
     /// commit step, the check of the flight's last leg so the rerun covers the same build. The sweep starts it as any planned leg.
     /// Planned while the review is Passed and a PR is open: plan-leg has no guard against either (more work on a flight whose merge
     /// is armed takes the merge back), so nothing is bypassed. No second leg is planned while one is planned or flying.
-    /// Returns the leg's name, or null when none was planned (autopilot off, or past <see cref="MaxReviewNotesLegs"/>).
+    /// Returns the leg's name, or null when none was planned (the node does not advance, or past <see cref="MaxReviewNotesLegs"/>).
     /// </summary>
     private async Task<string?> PlanReviewNotesLegAsync(FlightRow flight, IReadOnlyList<string> notes, CancellationToken cancellationToken)
     {
-        // Advances is on for every real node; the owner's autopilot setting is what this waits on.
-        if (!Models.Advances || !Models.Autopilot)
+        // Advances is on for every real node; the autopilot setting does not matter: planning the leg is pilot's normal behaviour (#1271).
+        if (!Models.Advances)
         {
             return null;
         }

@@ -3,8 +3,8 @@ using Pilot.Contracts;
 namespace Pilot.Node.Flights;
 
 /// <summary>
-/// The holding pattern of a review that passed with notes: clearing it, the leg or the watchtower holding it, its end past a
-/// review or a push, and the release of a hold the watchtower did not take (PIL716).
+/// The holding pattern of a review that passed with notes: clearing it, the leg holding it, its end past a
+/// review or a push, and the settling of a hold no leg holds.
 /// </summary>
 public sealed partial class LegCommander
 {
@@ -129,89 +129,18 @@ public sealed partial class LegCommander
     }
 
     /// <summary>
-    /// The watchtower's word, or the person's, that it is working on a held flight's notes in the plane: the hold is taken, so the
-    /// merge stays held (and rings after the holding bound) instead of being released by the node after its grace.
+    /// A hold no leg makes the fixes of never merges the flight with notes that have no end (pilot #1226): the node plans the review-notes
+    /// leg when none is planned or flying (the hold then waits on it), else raises one Ring card to the owner; the hold stays. With no unmade
+    /// note left (each has an end) the hold is released. False when the hold is gone or another hold than the one looked at
+    /// (<paramref name="since"/>), or when it stays.
     /// </summary>
-    private void TakeHolding(CommandRequest command)
+    internal async Task<bool> SettleNodeHoldAsync(string code, DateTimeOffset since, CancellationToken cancellationToken)
     {
-        var flight = FlightOf(command.Target);
-        if (!IsWatchtower(command.Who) && !IsPerson(flight, command.Who))
-        {
-            throw new FlightException("only the watchtower or the person may take a flight in a holding pattern");
-        }
-        if (flight.Holding is null)
-        {
-            throw new FlightException($"{flight.Code} is not in a holding pattern: nothing to take (it was cleared, or released to merge)");
-        }
-        var why = string.Join(' ', command.Args ?? []).Trim();
-        Record(flight.Code, f => f with
-        {
-            Holding = f.Holding is { } held ? held with { TakenAt = time.GetUtcNow(), Reason = why.Length > 0 ? $"{HoldingReason}: {why}" : held.Reason } : null,
-        });
-    }
-
-    /// <summary>
-    /// Whether the plane holds a commit the review did not read (past the reviewed head; or, with no reviewed head to compare, newer
-    /// than <paramref name="since"/>): the watchtower is making the notes' fixes. Asks git, so never under the lock.
-    /// </summary>
-    private async Task<bool> PlaneCommittedSinceAsync(FlightRow flight, DateTimeOffset since, CancellationToken cancellationToken)
-    {
-        if (!Directory.Exists(flight.Worktree))
-        {
-            return false;
-        }
-        if (flight.Review?.ReviewedHead is { Length: > 0 } reviewed
-            && (await git.RunAsync(["rev-parse", "--verify", "--quiet", $"{reviewed}^{{commit}}"], flight.Worktree, cancellationToken)).Ok)
-        {
-            // First parent, no merges: the node's own merge of the base into the plane, and the base's commits it brings in, are no sign
-            // the watchtower is making the notes' fixes; only the plane's own commits are.
-            var past = await git.RunAsync(["rev-list", "--first-parent", "--no-merges", "--count", $"{reviewed}..HEAD"], flight.Worktree, cancellationToken);
-            return past.Ok && int.TryParse(past.Output.Trim(), out var count) && count > 0;
-        }
-        var last = await git.RunAsync(["log", "-1", "--format=%ct", "HEAD"], flight.Worktree, cancellationToken);
-        return last.Ok && long.TryParse(last.Output.Trim(), out var seconds) && seconds > since.ToUnixTimeSeconds();
-    }
-
-    /// <summary>
-    /// A hold not yet taken whose plane holds a commit past the reviewed head is taken now (<see cref="FlightHolding.TakenAt"/>).
-    /// Returns the hold as it stands then, or null when it is not held, was taken already, or the plane holds nothing new.
-    /// </summary>
-    internal async Task<FlightHolding?> NoteHoldTakenAsync(string code, CancellationToken cancellationToken)
-    {
-        if (state.Flights().FirstOrDefault(f => f.Code == code) is not { State: not FlightState.Landed, Holding: { TakenAt: null } first } seen
-            || !await PlaneCommittedSinceAsync(seen, first.Since, cancellationToken))
-        {
-            return null;
-        }
-        var call = await EnterAsync(code, "having its hold noted as taken", cancellationToken);
-        try
-        {
-            if (state.Flights().FirstOrDefault(f => f.Code == code) is not { State: not FlightState.Landed, Holding: { TakenAt: null } now } || now.Since != first.Since)
-            {
-                return null;
-            }
-            return Record(code, f => f with { Holding = f.Holding is { } held ? held with { TakenAt = time.GetUtcNow() } : null })?.Holding;
-        }
-        finally
-        {
-            call.Dispose();
-            _one.Release();
-        }
-    }
-
-    /// <summary>
-    /// A hold the watchtower did not take (<paramref name="why"/> says so) never merges the flight with its notes (pilot #1226): the
-    /// node plans the review-notes leg when none is planned or flying (the hold then waits on it), else raises a Ring card to the owner;
-    /// the hold stays. With no unmade note left (each has an end) the hold is released as before. False when the hold is gone, taken,
-    /// or another hold than the one looked at (<paramref name="since"/>), or when it stays.
-    /// </summary>
-    internal async Task<bool> ReleaseHoldNotTakenAsync(string code, DateTimeOffset since, string why, CancellationToken cancellationToken)
-    {
-        var call = await EnterAsync(code, "having its untaken hold looked at", cancellationToken);
+        var call = await EnterAsync(code, "having its hold settled", cancellationToken);
         try
         {
             var subject = Verbs.FlightTarget(code);
-            if (state.Flights().FirstOrDefault(f => f.Code == code) is not { State: not FlightState.Landed, Holding: { TakenAt: null } held } flight || held.Since != since)
+            if (state.Flights().FirstOrDefault(f => f.Code == code) is not { State: not FlightState.Landed, Holding: { } held } flight || held.Since != since)
             {
                 return false;
             }
@@ -219,12 +148,12 @@ public sealed partial class LegCommander
             {
                 // The flight is let go for the plan, as plan-leg refuses a flight with a call out (Dispose is safe twice).
                 call.Dispose();
-                await PlanOrRingForNotesAsync(flight, unmade, why, cancellationToken);
+                await PlanOrRingForNotesAsync(flight, unmade, "no review-notes leg is making them", cancellationToken);
                 return false;
             }
             Record(code, f => f with { Holding = null });
-            state.RaiseCard(CardBin.Handled, HoldingClearedKind, subject, $"{code}'s hold was released: {why}",
-                $"{why}, and every note has an end, so the node released the hold");
+            state.RaiseCard(CardBin.Handled, HoldingClearedKind, subject, $"{code}'s hold was released",
+                "every note has an end, so the node released the hold");
             // The PR-ready card says it is ready, not holding; the notes card says the flight merges with them.
             if (state.Cards(openOnly: true).FirstOrDefault(c => c.Kind == PrReady && c.Subject == subject) is { } ready && flight.PullRequest is { } number)
             {
@@ -245,18 +174,24 @@ public sealed partial class LegCommander
 
     /// <summary>
     /// Under the commander's lock: plans the review-notes leg for notes with no end when none is planned or flying and the node may
-    /// (autopilot); else raises one Ring card to the owner naming the notes. The hold stays either way.
+    /// (unless the node does not advance); else raises one Ring card to the owner naming the notes. The hold stays either way.
     /// </summary>
     internal async Task PlanOrRingForNotesAsync(FlightRow flight, IReadOnlyList<ReviewPoints.Point> unmade, string why, CancellationToken cancellationToken)
     {
         var subject = Verbs.FlightTarget(flight.Code);
         var onWay = state.Legs(flight.Code).Any(l => l.Name.StartsWith(ReviewNotesLeg, StringComparison.Ordinal) && l.State is LegState.Planned or LegState.Flying);
-        if (!onWay && await PlanReviewNotesLegAsync(flight, [.. unmade.Select(p => p.Text)], cancellationToken) is { } planned)
+        if (onWay)
+        {
+            // A leg is on the way: the hold waits on it, nothing is asked of anyone.
+            HoldForLeg(flight.Code, state.Legs(flight.Code).First(l => l.Name.StartsWith(ReviewNotesLeg, StringComparison.Ordinal) && l.State is LegState.Planned or LegState.Flying).Name);
+            return;
+        }
+        if (await PlanReviewNotesLegAsync(flight, [.. unmade.Select(p => p.Text)], cancellationToken) is { } planned)
         {
             HoldForLeg(flight.Code, planned);
             return;
         }
-        if (!onWay && ReviewNotesLegsTaken(flight) >= MaxReviewNotesLegs)
+        if (ReviewNotesLegsTaken(flight) >= MaxReviewNotesLegs)
         {
             // Past the cap the cap's card is the owner's one question: raised once, and once answered (Leave it, the owner plans by hand)
             // not asked again by a notes-unmade card beside it.

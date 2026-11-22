@@ -842,28 +842,17 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
     /// <summary>How long a hold the watchtower took circles before a card asks the person to merge as it is or wait.</summary>
     public TimeSpan HoldingBound { get; init; } = TimeSpan.FromMinutes(30);
 
-    /// <summary>How long a hold may wait for the watchtower to take it (<c>flight hold</c>, or a commit in the plane) before the node handles it itself (PIL815): released with the notes, or the plane's commits pushed.</summary>
-    public TimeSpan HoldingTakeBound { get; init; } = TimeSpan.FromMinutes(5);
-
     /// <summary>Whether the watchtower is live now; null reads as live (a node built without one is not asked).</summary>
     public Func<bool>? WatchtowerLive { get; set; }
 
     // When the holding-timeout card of a hold (flight code and Holding.Since) was last raised: once per hold, again only a bound after a Wait.
     private readonly Dictionary<string, DateTimeOffset> _holdingRung = new(StringComparer.Ordinal);
 
-    // The holds the node already handled on, once each (flight code and Holding.Since): a push that did not end the hold is not repeated each look.
-    private readonly HashSet<string> _holdHandled = new(StringComparer.Ordinal);
-
     /// <summary>
-    /// A flight in a holding pattern holds only while the watchtower is working in the plane. A hold nobody took (no
-    /// <c>flight hold</c>, no commit in the plane past the reviewed head) within <see cref="HoldingTakeBound"/> is released by the node
-    /// and the flight merges as for any passed review, the notes on a For-you card. With no live watchtower, once the hold is older than
-    /// <see cref="HoldingTakeBound"/> (a tell resumes or starts the watchtower, PIL815), the node handles it itself: commits past the
-    /// reviewed head in the plane are pushed as <c>flight pr</c> does (which ends the hold, and a fresh review gates the merge), and with
-    /// none the hold is released with the review's notes written on the PR. A hold the watchtower took and left rings once it is older
-    /// than <see cref="HoldingBound"/> (or at once when the watchtower is not live and the node could do nothing): a Ring card asks the
-    /// person to merge as it is or wait. Closed when the hold ends. A flight on the owner's hold (#771) is left alone, its review hold
-    /// untouched (no comment, no push, no card) and its once-only handling not spent, until it is released.
+    /// A flight in a holding pattern holds while its review-notes leg makes the fixes. A hold no leg makes the fixes of is settled by the node
+    /// (<see cref="LegCommander.SettleNodeHoldAsync"/>): it plans the leg, rings the owner, or releases a hold whose notes all have an end. A hold
+    /// whose leg was planned and never started, or that nobody clears, rings once it is older than <see cref="HoldingBound"/>: a Ring card asks
+    /// the person to merge as it is or wait. Closed when the hold ends. A flight on the owner's hold (#771) is left alone until it is released.
     /// </summary>
     private async Task LookAtHoldsAsync(CancellationToken cancellationToken)
     {
@@ -890,40 +879,16 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             {
                 continue;
             }
-            var live = WatchtowerLive?.Invoke() ?? true;
-            // A hold a leg made (its By names a leg, flying, planned or stopped) is taken by definition: only a hold waiting on the watchtower can go untaken.
+            // A hold no leg makes the fixes of (By is the node) is the node's to settle: it plans the review-notes leg, rings the owner once
+            // when it cannot, or releases the hold when every note has an end (pilot #1271: no watchtower grace, no taking of the hold).
             var legHeld = holding.By is { Length: > 0 } heldBy && heldBy != "node";
-            if (!live)
+            if (!legHeld && legs is not null)
             {
-                // Told, and given the bound to take it up (a tell resumes or starts the watchtower); then the node does what a watchtower would not be there to.
-                if (now - holding.Since < HoldingTakeBound)
-                {
-                    continue;
-                }
-                if (legs is not null && _holdHandled.Add(key)
-                    && await legs.HandleHoldWithoutWatchtowerAsync(flight.Code, cancellationToken) != LegCommander.HoldHandling.None)
-                {
-                    continue;
-                }
+                await legs.SettleNodeHoldAsync(flight.Code, holding.Since, cancellationToken);
+                continue;
             }
-            else
-            {
-                if (holding.TakenAt is null && !legHeld && legs is not null)
-                {
-                    // A commit in the plane past the reviewed head is the watchtower at work: the hold is taken.
-                    holding = await legs.NoteHoldTakenAsync(flight.Code, cancellationToken) ?? holding;
-                }
-                if (holding.TakenAt is null && !legHeld)
-                {
-                    if (legs is not null && now - holding.Since >= HoldingTakeBound)
-                    {
-                        await legs.ReleaseHoldNotTakenAsync(flight.Code, holding.Since, $"the watchtower did not take it within {(int)HoldingTakeBound.TotalMinutes} minutes", cancellationToken);
-                    }
-                    continue;
-                }
-            }
-            // Taken: the bound counts from when the watchtower took it, not from the review.
-            if ((live && now - (holding.TakenAt ?? holding.Since) < HoldingBound)
+            // The bound counts from the review.
+            if (now - holding.Since < HoldingBound
                 || cards.Any(c => c.Subject == subject)
                 || (_holdingRung.TryGetValue(key, out var rung) && now - rung < HoldingBound)
                 || state.Cards(openOnly: true).FirstOrDefault(c => c.Kind == LegCommander.PrReady && c.Subject == subject)?.Choices.FirstOrDefault(c => c.Verb == Verbs.Merge) is not { Args: [{ } head, ..] })
@@ -932,7 +897,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             }
             _holdingRung[key] = now;
             var why = holder is not null ? $"its {holder.Name} leg was planned and never started in {(int)HoldingBound.TotalMinutes} minutes"
-                : live ? $"the watchtower has not cleared it in {(int)HoldingBound.TotalMinutes} minutes" : "there is no live watchtower to clear it";
+                : $"nobody has cleared it in {(int)HoldingBound.TotalMinutes} minutes";
             var card = state.RaiseCard(CardBin.Ring, LegCommander.HoldingTimeoutKind, subject, $"{flight.Code}'s PR #{flight.PullRequest} is still on hold",
                 $"{holding.Reason}. Merging lands the PR at the reviewed head, notes and all; waiting keeps it on hold and asks again in {(int)HoldingBound.TotalMinutes} minutes.",
                 link: flight.PullRequestUrl,
