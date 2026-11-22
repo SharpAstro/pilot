@@ -129,4 +129,31 @@ public class ReviewFindingsTests
         f.BlockingFiles.ShouldNotBeEmpty();
         f.Touches(["src/A/Foo.cs", "Foo.cs", named.TrimStart('/')]).ShouldBeFalse();
     }
+    [Theory]
+    [InlineData("- None new. The diff since `0f0d307` is `src/Pilot.Gui.Tests/ToastPressTests.cs` only; no busy wait, no process start.")]
+    [InlineData("- None")]
+    [InlineData("- none.")]
+    [InlineData("- Nothing new")]
+    [InlineData("- Nothing to add.")]
+    [InlineData("- No new notes: the fix is the test only")]
+    [InlineData("- No findings")]
+    [InlineData("- N/A")]
+    [InlineData("* **None.**")]
+    public void AnItemThatSaysThereIsNothingIsNoFinding(string item)
+    {
+        // PIL1252 ran 20 review-notes rounds on "None new." read as a note, each round changing nothing.
+        var f = ReviewFindings.Read($"Passed.\n\n## Blocking\n{item}\n\n## Not blocking\n{item}\n");
+        (f.Structured, f.Blocking.Count, f.NotBlocking.Count, f.HasBlocking).ShouldBe((true, 0, 0, false));
+    }
+
+    [Theory]
+    [InlineData("- Nonexistent file is read as empty in `Foo.cs:12`")]
+    [InlineData("- Nothingness check in `Bar.cs` returns early")]
+    [InlineData("- No test pins the prune alone")]
+    [InlineData("- None of the three callers checks the result (`Baz.cs:40`)")]
+    public void AFindingThatOnlyStartsLikeNothingIsKept(string item)
+    {
+        var f = ReviewFindings.Read($"## Not blocking\n{item}\n");
+        f.NotBlocking.ShouldHaveSingleItem();
+    }
 }
