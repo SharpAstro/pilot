@@ -282,6 +282,9 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
 
     protected override IEnumerable<ListScrollController> PageScrolls => [_scroll];
 
+    /// <summary>How far the panel's list is scrolled, for a test that the wheel over it scrolls it.</summary>
+    internal float ScrollOffset => _scroll.Offset;
+
     /// <summary>Called with the card and the choice's number from 1 when its button is clicked.</summary>
     public Action<CardRow, int>? OnAnswer { get; set; }
 
