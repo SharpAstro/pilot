@@ -255,16 +255,16 @@ public sealed class PrFixTests1 : PrFixTestsBase
 
     [Fact]
     [Trait("Category", "Slow")]
-    public async Task TheWatchtowersFixerOnAutopilotKeepsTheGuardsTheNodesOwnFixerKeeps()
+    public async Task TheWatchtowersFixerKeepsTheGuardsTheNodesOwnFixerKeeps()
     {
         // The review of #470: review fix from the watchtower must not start what the node's own fixer would not.
-        Task<CommandResult> OnAutopilot(string pr) =>
+        Task<CommandResult> WatchtowersFix(string pr) =>
             _reviews.RunAsync(new CommandRequest { Verb = Verbs.FixPr, Target = $"pr/{pr}", Args = [], Who = "du1-watchtower", Autopilot = true }, Ct);
 
         // Another author's PR, Fix it not chosen: refused, and the person's card stays.
         _github.Login = "controller";
         await Review("acme/widget#7", "changes", "README.md:1 wrong");
-        (await OnAutopilot("acme/widget#7")).Error.ShouldNotBeNull().ShouldContain("Fix it has not been chosen");
+        (await WatchtowersFix("acme/widget#7")).Error.ShouldNotBeNull().ShouldContain("Fix it has not been chosen");
         Fixers.ShouldBeEmpty();
         _state.Cards(openOnly: true).ShouldContain(c => c.Kind == PrReviews.FixOfferKind);
     }

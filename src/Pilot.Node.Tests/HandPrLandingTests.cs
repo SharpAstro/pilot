@@ -15,13 +15,13 @@ namespace Pilot.Node.Tests;
 [Trait("Category", "Slow")]
 public sealed class HandPrLandingTests : PrReviewTestsBase
 {
-    private static RoleModels OnAutopilot(string method = "squash") =>
+    private static RoleModels NodeModels(string method = "squash") =>
         new(new NodeSettings { MergeMethod = method });
 
     [Fact]
-    public async Task AReviewedGreenPrInARepoWithAQueueIsQueuedOnAutopilotWithAHandledLine()
+    public async Task AReviewedGreenPrInARepoWithAQueueIsQueuedByTheNodeWithAHandledLine()
     {
-        _reviews.Models = OnAutopilot();
+        _reviews.Models = NodeModels();
         _github.Queues = true;
         await ReviewedWidget("approve");
 
@@ -34,9 +34,9 @@ public sealed class HandPrLandingTests : PrReviewTestsBase
     }
 
     [Fact]
-    public async Task AReviewedGreenPrInARepoWithNoQueueIsMergedByTheReposMethodOnAutopilotWithAHandledLine()
+    public async Task AReviewedGreenPrInARepoWithNoQueueIsMergedByTheReposMethodWithAHandledLine()
     {
-        _reviews.Models = OnAutopilot("rebase");
+        _reviews.Models = NodeModels("rebase");
         await ReviewedWidget("comment", queue: false);
 
         _github.Merged.ShouldBe([(7, _widgetHead, "rebase")]);
@@ -51,7 +51,7 @@ public sealed class HandPrLandingTests : PrReviewTestsBase
     // Not part of PIL716's landing: a repo with a merge queue has always had a reviewed, green hand PR queued by the node
     // (#279) since the queue is what gates the merge. This pins that, so a change to it is a choice, not an accident.
     [Fact]
-    public async Task AReviewedGreenPrInARepoWithAQueueIsQueuedEvenWithAutopilotOffAsBefore()
+    public async Task AReviewedGreenPrInARepoWithAQueueIsQueuedOnANodeWithNoSettingsAsBefore()
     {
         _github.Queues = true;
         await ReviewedWidget("approve");
@@ -64,7 +64,7 @@ public sealed class HandPrLandingTests : PrReviewTestsBase
     [Fact]
     public async Task AReviewThatAskedForChangesIsNotLanded()
     {
-        _reviews.Models = OnAutopilot();
+        _reviews.Models = NodeModels();
         await ReviewedWidget("changes", queue: false);
 
         _github.Merged.ShouldBeEmpty();
@@ -74,7 +74,7 @@ public sealed class HandPrLandingTests : PrReviewTestsBase
     [Fact]
     public async Task PendingChecksAreNotLandedUntilTheyAreGreen()
     {
-        _reviews.Models = OnAutopilot();
+        _reviews.Models = NodeModels();
         await ReviewedWidget("approve", checks: ChoiceStatus.Pending, queue: false);
         _github.Merged.ShouldBeEmpty();
 
@@ -86,7 +86,7 @@ public sealed class HandPrLandingTests : PrReviewTestsBase
     [Fact]
     public async Task FailingChecksAreNotLanded()
     {
-        _reviews.Models = OnAutopilot();
+        _reviews.Models = NodeModels();
         await ReviewedWidget("approve", checks: ChoiceStatus.Failing, queue: false);
 
         _github.Merged.ShouldBeEmpty();
@@ -96,7 +96,7 @@ public sealed class HandPrLandingTests : PrReviewTestsBase
     [Fact]
     public async Task AHeadThatMovedSinceTheReviewIsNotLanded()
     {
-        _reviews.Models = OnAutopilot();
+        _reviews.Models = NodeModels();
         await ReviewedWidget("approve", checks: ChoiceStatus.Pending, queue: false);
         _github.Prs["acme/widget#7"] = _github.Prs["acme/widget#7"] with { Head = new string('a', 40) };
         _github.Summary = GhAnswers.ChecksOf(ChoiceStatus.Passing, 1, 1);
@@ -109,7 +109,7 @@ public sealed class HandPrLandingTests : PrReviewTestsBase
     [Fact]
     public async Task ADraftIsNotLanded()
     {
-        _reviews.Models = OnAutopilot();
+        _reviews.Models = NodeModels();
         _github.Login = "ada";
         _github.Queue = null;
         _github.Summary = GhAnswers.ChecksOf(ChoiceStatus.Passing, 1, 1);
@@ -126,7 +126,7 @@ public sealed class HandPrLandingTests : PrReviewTestsBase
     [Fact]
     public async Task AGitHubRefusalIsOneCardHoldingTheWholeTextAndIsNotAskedAgain()
     {
-        _reviews.Models = OnAutopilot();
+        _reviews.Models = NodeModels();
         var answer = $"GraphQL: Repository rule violations found {LandingAnswers.Marker}\n{LandingAnswers.SecondLine}";
         _github.MergeScript.Enqueue(answer);
         await ReviewedWidget("approve", queue: false);

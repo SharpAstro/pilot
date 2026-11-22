@@ -228,7 +228,7 @@ public sealed class MaintenanceFirstRunTests
     }
 
     [Fact]
-    public async Task NoTickOfTheSweepAnswersTheCardForThePersonEvenWithTheSettingForTheAutopilotOn()
+    public async Task NoTickOfTheSweepAnswersTheCardForThePersonOnARunningNode()
     {
         _roles = new RoleModels(new NodeSettings());
         var step = new FakeStep("packages");

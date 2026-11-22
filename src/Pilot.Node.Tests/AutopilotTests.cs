@@ -218,7 +218,7 @@ public sealed class AutopilotTests
 
     /// <summary>An assistant's press of the first-run maintenance card is done, as the README says (the review of #1126).</summary>
     [Fact]
-    public async Task WithAutopilotOnAnAssistantsPressOnTheFirstRunMaintenanceCardIsDone()
+    public async Task AnAssistantsPressOnTheFirstRunMaintenanceCardIsDone()
     {
         await using var node = await NodeHarness.StartAsync(Ct);
         var card = node.State.RaiseCard(CardBin.ForYou, IdleMaintenance.FirstRunKind, Verbs.NodeTarget, "Run the first idle disk sweep?", null,
@@ -256,7 +256,7 @@ public sealed class AutopilotTests
 
     [Fact]
     [Trait("Category", "Slow")]
-    public async Task ANoAutoMergeReposFlightIsAskedNotMergedByAnAssistantEvenWithAutopilotOnButThePersonsOwnMergeWorks()
+    public async Task ANoAutoMergeReposFlightIsAskedNotMergedByAnAssistantButThePersonsOwnMergeWorks()
     {
         await using var node = await NodeHarness.StartAsync(Ct);
         Ready(node);
@@ -282,7 +282,7 @@ public sealed class AutopilotTests
     }
 
     [Fact]
-    public async Task ANoAutoMergeReposPrMergeIsAskedNotRunByAnAssistantEvenWithAutopilotOn()
+    public async Task ANoAutoMergeReposPrMergeIsAskedNotRunByAnAssistant()
     {
         await using var node = await NodeHarness.StartAsync(Ct);
         Ready(node);
@@ -298,7 +298,7 @@ public sealed class AutopilotTests
     }
 
     [Fact]
-    public async Task AutopilotOnWithNoMessageSaysSoAndARefusedCommandLeavesNoHandledCard()
+    public async Task AnAssistantsCommandWithNoMessageSaysSoAndARefusedCommandLeavesNoHandledCard()
     {
         await using var node = await NodeHarness.StartAsync(Ct);
         node.State.PutFlight(new FlightRow
@@ -320,7 +320,7 @@ public sealed class AutopilotTests
     }
 
     [Fact]
-    public async Task AWorkersMergeIsStillRefusedWithAutopilotOn()
+    public async Task AWorkersMergeIsStillRefused()
     {
         await using var node = await NodeHarness.StartAsync(Ct);
         Ready(node);
@@ -337,7 +337,7 @@ public sealed class AutopilotTests
     }
 
     [Fact]
-    public async Task AHumanRunCliMergeWorksAsNowWithAutopilotOffAndNoCardIsRaised()
+    public async Task AHumanRunCliMergeRunsAsThePersonsAndNoCardIsRaised()
     {
         await using var node = await NodeHarness.StartAsync(Ct);
         Ready(node);

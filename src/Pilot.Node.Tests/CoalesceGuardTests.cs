@@ -73,7 +73,7 @@ public sealed class CoalesceGuardTests : ReviewTestsBase
     }
 
     [Fact]
-    public async Task TheAutopilotLookingWhileTheFlightsMergeRunsNeitherClosesTheCardNorSaysMergedNorRings()
+    public async Task TheNodesLookWhileTheFlightsMergeRunsNeitherClosesTheCardNorSaysMergedNorRings()
     {
         var (flight, _) = await Passed("1");
         _github.Checks = ChoiceStatus.Passing;

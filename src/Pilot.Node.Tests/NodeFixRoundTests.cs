@@ -125,7 +125,7 @@ public sealed class NodeFixRoundTests : ReviewTestsBase
     }
 
     [Fact]
-    public async Task AReviewThatDidNotStartStillRaisesItsCardOnAutopilot()
+    public async Task AReviewThatDidNotStartStillRaisesItsCard()
     {
         NodeAdvances();
         var flight = await NewFlight("6", "parser");
@@ -140,7 +140,7 @@ public sealed class NodeFixRoundTests : ReviewTestsBase
     }
 
     [Fact]
-    public async Task APrThatFailsItsChecksStillRaisesItsCardOnAutopilot()
+    public async Task APrThatFailsItsChecksStillRaisesItsCard()
     {
         var (flight, _) = await Passed("7");
         NodeAdvances();

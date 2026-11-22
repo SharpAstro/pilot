@@ -61,7 +61,7 @@ public sealed class HoldingPatternTests : ReviewTestsBase
 
     [Fact]
     [Trait("Category", "Slow")]
-    public async Task APassWithNotesHoldsAutopilotsMergeAndTheCardsMerge()
+    public async Task APassWithNotesHoldsTheNodesMergeAndTheCardsMerge()
     {
         NodeAdvances();
         _github.Checks = ChoiceStatus.Passing;
@@ -240,7 +240,7 @@ public sealed class HoldingPatternTests : ReviewTestsBase
 
     [Fact]
     [Trait("Category", "Slow")]
-    public async Task OnAutopilotAPassWithNotesPlansAReviewNotesLegCarryingTheNotesAndTheLastChecksCheck()
+    public async Task APassWithNotesPlansAReviewNotesLegCarryingTheNotesAndTheLastChecksCheck()
     {
         NodeAdvances();
         var err = new StringWriter();
@@ -285,7 +285,7 @@ public sealed class HoldingPatternTests : ReviewTestsBase
 
     [Fact]
     [Trait("Category", "Slow")]
-    public async Task APassWithNotesPlansTheReviewNotesLegWithTheAutopilotSettingSavedOff()
+    public async Task APassWithNotesPlansTheReviewNotesLegOnARunningNodesDefaultSettings()
     {
         // The switch's old setting is gone (pilot #1271): a running node's models plan the leg at a pass with notes.
         NodeAdvances();

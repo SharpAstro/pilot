@@ -84,7 +84,7 @@ public sealed class MergedPullRequestTests : LegCommanderTestsBase
 public sealed class AutopilotMergedPullRequestTests : PrReviewTestsBase
 {
     [Fact]
-    public async Task APrReviewMergedOnAutopilotDropsItsRow()
+    public async Task APrReviewTheNodeMergedDropsItsRow()
     {
         _reviews.Models = new RoleModels(new NodeSettings { MergeMethod = "squash" });
         _state.PutPullRequests(new PullRequestsRow

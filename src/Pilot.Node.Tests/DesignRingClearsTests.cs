@@ -152,7 +152,7 @@ public sealed class DesignRingClearsTests : PrFixTestsBase
     }
 
     [Fact]
-    public async Task TheWatchtowersReviewFixWithAnOptionOnAutopilotSettlesTheRingNamingTheChoiceAndThatItWasTheWatchtowers()
+    public async Task TheWatchtowersReviewFixWithAnOptionSettlesTheRingNamingTheChoiceAndThatItWasTheWatchtowers()
     {
         var ring = await Asked();
 

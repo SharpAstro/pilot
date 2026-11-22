@@ -202,7 +202,7 @@ public sealed partial class LegCommander
         {
             // Past the cap the cap's card is the owner's one question: raised once, and once answered (Leave it, the owner plans by hand)
             // not asked again by a notes-unmade card beside it.
-            if (!state.Cards().Any(c => c.Kind == ReviewNotesCapKind && c.Subject == subject))
+            if (state.CardsOf(ReviewNotesCapKind, subject).Length == 0)
             {
                 RaiseReviewNotesCap(flight, [.. unmade.Select(p => p.Text)]);
             }
@@ -213,7 +213,7 @@ public sealed partial class LegCommander
         // has passed since it was closed, as the holding-timeout card asks again a bound after its Wait.
         var now = time.GetUtcNow();
         var since = flight.Holding?.Since ?? now;
-        var asked = state.Cards().Where(c => c.Kind == NotesUnmadeKind && c.Subject == subject && (c.State == CardState.Open || c.ClosedAt >= since)).ToList();
+        var asked = state.CardsOf(NotesUnmadeKind, subject).Where(c => c.State == CardState.Open || c.ClosedAt >= since).ToList();
         if (asked.Any(c => c.State == CardState.Open || now - c.ClosedAt < NotesUnmadeBound))
         {
             return;

@@ -517,9 +517,10 @@ public static class Verbs
     public const string Clear = "clear";
 
     /// <summary>
-    /// <c>hold flight/&lt;code&gt; [why…]</c>: the watchtower's word (or the person's) that it is working on a flight held in a holding
-    /// pattern. A hold nobody takes is released by the node after a short grace and the flight merges with its notes; a taken one
-    /// keeps the merge held until <see cref="Clear"/>, a push, or the holding bound rings.
+    /// <c>hold flight/&lt;code&gt; [why…]</c>: refused by the node, with the reason. It once let the watchtower take a flight held in a
+    /// holding pattern and make its notes in the plane; since pilot #1271 the node plans a review-notes leg for every review that passed
+    /// with notes, so there is no hold to take. The verb stays so an older client's command is answered with that reason rather than as
+    /// unknown, and <c>FlightHolding.TakenAt</c> stays readable on rows an older node stored.
     /// </summary>
     public const string Hold = "hold";
 

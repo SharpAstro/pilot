@@ -13,7 +13,7 @@ public sealed class DecisionAutopilotMergeTests : ReviewTestsBase
 {
     [Fact]
     [Trait("Category", "Slow")]
-    public async Task DecisionRecordedWhenTheAutopilotMergesAPassedFlightFromItsPrReadyCard()
+    public async Task DecisionRecordedWhenTheNodeMergesAPassedFlightFromItsPrReadyCard()
     {
         var (flight, _) = await Passed("30");
         _github.Checks = ChoiceStatus.Passing;
@@ -34,7 +34,7 @@ public sealed class DecisionAutopilotMergeTests : ReviewTestsBase
 
     [Fact]
     [Trait("Category", "Slow")]
-    public async Task OneDecisionNamingTheArmWhenTheAutopilotsMergeWaitsOnPendingChecks()
+    public async Task OneDecisionNamingTheArmWhenTheNodesMergeWaitsOnPendingChecks()
     {
         var (flight, _) = await Passed("32");
         _github.Checks = ChoiceStatus.Pending;
@@ -52,7 +52,7 @@ public sealed class DecisionAutopilotMergeTests : ReviewTestsBase
 
     [Fact]
     [Trait("Category", "Slow")]
-    public async Task OneDecisionBringingTheBranchUpToDateWhenTheAutopilotsMergeFindsItBehindItsBase()
+    public async Task OneDecisionBringingTheBranchUpToDateWhenTheNodesMergeFindsItBehindItsBase()
     {
         _github.Checks = ChoiceStatus.Passing;
         var (flight, _) = await Passed("33");
@@ -127,7 +127,7 @@ public sealed class DecisionGoAroundTests : IDisposable
     }
 
     [Fact]
-    public async Task DecisionLabelledNodeForTheNodesOwnMergeWithAutopilotOff()
+    public async Task DecisionLabelledAsTheNodesRulesForTheNodesOwnMerge()
     {
         await using var node = await NodeHarness.StartAsync(Ct, git: _repos.Git);
         node.State.PutFlight(new FlightRow
@@ -143,7 +143,10 @@ public sealed class DecisionGoAroundTests : IDisposable
         result.Error.ShouldBeNull();
         var decision = node.State.Decisions().ShouldHaveSingleItem();
         decision.Kind.ShouldBe(DecisionKinds.Merge);
-        (decision.By, decision.ByKind).ShouldBe(("node", DecisionByKinds.Node));
+        // The node's own merge is decided by its rules (pilot #1271: there is no switch-off case any more), stored under the old word
+        // and shown as the node's.
+        (decision.By, decision.ByKind).ShouldBe(("node", DecisionByKinds.NodeRules));
+        DecisionByKinds.Shown(decision.ByKind).ShouldBe("node");
     }
 }
 
@@ -155,7 +158,7 @@ public sealed class DecisionAssistantAnswerTests
     private const string Assistant = "pilot-33";
 
     [Fact]
-    public async Task DecisionRecordedOnceWhenAnAssistantOnAutopilotAnswersARingCard()
+    public async Task DecisionRecordedOnceWhenAnAssistantAnswersARingCard()
     {
         await using var node = await NodeHarness.StartAsync(Ct);
         node.Agents.Json = AgentRows.List(AgentRows.Interactive(AgentRows.SessionA, 4242, Assistant));

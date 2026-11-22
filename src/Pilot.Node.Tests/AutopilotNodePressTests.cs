@@ -161,7 +161,7 @@ public sealed class AutopilotNodePressTests
     }
 
     [Fact]
-    public void TheNodeOwnsExactlyTheThreeKindsAndOnAutopilotTheRingJudgeNeverSeesThem()
+    public void TheNodeOwnsExactlyTheThreeKindsAndTheRingJudgeNeverSeesThem()
     {
         NodePress.Owns(StraySweep.Kind).ShouldBeTrue();
         NodePress.Owns(CardKinds.Overlap).ShouldBeTrue();
@@ -230,7 +230,7 @@ public sealed class AutopilotNodePressTests
     }
 
     [Fact]
-    public async Task ThePressRunsThroughTheRealAnswerPathAsTheNodeAndTheDecisionSaysAutopilotAndTheRulesWhy()
+    public async Task ThePressRunsThroughTheRealAnswerPathAsTheNodeAndTheDecisionSaysTheNodesRulesAndWhy()
     {
         await using var node = await NodeHarness.StartAsync(TestContext.Current.CancellationToken);
         // The exact command NodePress sends (Who "node", Autopilot, Why = the rule's reason), through the real NodeCommands. The card's choice is a

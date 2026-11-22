@@ -315,7 +315,7 @@ public sealed class StraySweepTests
     }
 
     [Fact]
-    public void TheNodeMayEndOnAutopilotOnlyAStrayItLaunchedWhoseOwnerEndedAndIsNotTiedByFolderOnly()
+    public void TheNodeMayEndByItselfOnlyAStrayItLaunchedWhoseOwnerEndedAndIsNotTiedByFolderOnly()
     {
         // Allowed: j9 ended, the test host it started lives on.
         Job("j9", 600, Began, TimeSpan.FromHours(2), ended: _time.GetUtcNow().AddMinutes(-10));

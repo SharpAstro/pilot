@@ -19,7 +19,7 @@ public sealed class AutopilotMergeCardTests : ReviewTestsBase
 
     [Fact]
     [Trait("Category", "Slow")]
-    public async Task OnAutopilotAMergeWaitingForChecksThenQueuedNeverRings()
+    public async Task TheNodesMergeWaitingForChecksThenQueuedNeverRings()
     {
         NodeAdvances();
         _github.Checks = ChoiceStatus.Pending;
@@ -46,7 +46,7 @@ public sealed class AutopilotMergeCardTests : ReviewTestsBase
 
     [Fact]
     [Trait("Category", "Slow")]
-    public async Task OnAutopilotAFlightWithALegStillFlyingIsNotMergedNorRungAndMergesOnceTheLegLands()
+    public async Task AFlightWithALegStillFlyingIsNotMergedNorRungAndMergesOnceTheLegLands()
     {
         // PDF446 and PIL841, 2026-11-07: the review passed while a review-notes leg still flew, the node asked for the merge, the
         // merge refused it ("has legs not done: review-notes") and a ring offered "Merge once more". The leg is the merge's own wait.
@@ -103,7 +103,7 @@ public sealed class AutopilotMergeCardTests : ReviewTestsBase
 
     [Fact]
     [Trait("Category", "Slow")]
-    public async Task OnAutopilotAMergeWhoseChecksFailRings()
+    public async Task TheNodesMergeWhoseChecksFailRings()
     {
         NodeAdvances();
         _github.Checks = ChoiceStatus.Pending;

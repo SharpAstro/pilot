@@ -422,7 +422,7 @@ public sealed class FalseRingTests : ReviewTestsBase
 
     [Fact]
     [Trait("Category", "Slow")]
-    public async Task AnAutopilotMergeRefusedOnAClosedPrIsAForYouCardWithNothingToPress_c17100()
+    public async Task TheNodesMergeRefusedOnAClosedPrIsAForYouCardWithNothingToPress_c17100()
     {
         var (flight, _) = await Passed("2039");
         _github.Checks = ChoiceStatus.Passing;

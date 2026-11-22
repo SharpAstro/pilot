@@ -686,7 +686,7 @@ public sealed partial class WatchtowerChatTests : IDisposable
     }
 
     [Fact]
-    public void TheBriefGivesTheWatchtowerAFixerOnAutopilotThroughItsOwnCliAndLeavesWhatTheNodeRefusesToThePerson()
+    public void TheBriefGivesTheWatchtowerAFixerThroughItsOwnCliAndLeavesWhatTheNodeRefusesToThePerson()
     {
         var brief = Briefs.WatchtowerRules("de1-watchtower", "C:/p/pilot.exe --node-socket s", "DE1");
 
