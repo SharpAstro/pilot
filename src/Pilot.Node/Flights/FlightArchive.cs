@@ -71,6 +71,20 @@ public sealed class FlightArchive
         }
     }
 
+    /// <summary>How many archived flights <paramref name="keep"/> takes by code, with no copy and no sort (#1090: the node row's count sorted every row).</summary>
+    public int CountOf(Func<string, bool> keep)
+    {
+        lock (_lock)
+        {
+            var count = 0;
+            foreach (var code in _index.Keys)
+            {
+                count += keep(code) ? 1 : 0;
+            }
+            return count;
+        }
+    }
+
     /// <summary>Every archived flight's light row, newest landed first.</summary>
     public ArchivedFlightRow[] Rows()
     {

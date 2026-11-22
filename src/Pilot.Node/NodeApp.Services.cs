@@ -620,7 +620,7 @@ public static partial class NodeApp
                     Account = state.Usage()?.Account,
                     CanRunGui = services.GetRequiredService<JobRunner>().GuiWhy() is null,
                     GuiReason = services.GetRequiredService<JobRunner>().GuiWhy(),
-                    ArchivedFlights = state.ArchivedFlightRows().Length,
+                    ArchivedFlights = state.ArchivedFlightCount(),
                     Watchtower = watchtower.Health(),
                 }, services.GetRequiredService<TimeProvider>())
                 {
