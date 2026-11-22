@@ -202,6 +202,13 @@ public sealed class StraySweep(NodeState state, IProcessTable table, TimeProvide
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, Stray> _named = new(StringComparer.Ordinal);
 
     /// <summary>
+    /// Whether the node may press End on this stray's card itself on autopilot (#1269): it launched the owner, the owner has ended, and the
+    /// process is not tied to it by folder only (never kill what pilot did not launch).
+    /// </summary>
+    public bool NodeMayEnd(string key) =>
+        _named.TryGetValue(key, out var stray) && stray is { NodeLaunched: true, OwnerEnded: true, ByFolder: false } && !NeverEnded(stray.Name);
+
+    /// <summary>
     /// <c>end-stray process:&lt;pid&gt;@&lt;start&gt;</c>, the person's End on a stray's card: ends the process when its card is open, the sweep
     /// named it, it is none of the shell's, the browser's or Windows' own, and its pid still starts when the sweep saw it (a reused pid is
     /// another process, which is never ended). The card closes and a Handled line says who ended it.
