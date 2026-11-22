@@ -178,9 +178,10 @@ public sealed class LandedFlightStrayTests : IDisposable
     [Fact]
     public void ALandingClosesTheNamedStrayCardOfItsSessionAndLeavesAnotherFlightsOpen()
     {
-        // A process the node never ends (explorer) is only named on a card, so the landing has a card to close and nothing to end.
+        // The fake table keeps a killed process alive, as one that will not die: the landing's kill does not end it, so its card is still open
+        // and the landing closes it with the landing as the outcome.
         EndedWorker("w1", "PIL1270", SessionStartReasons.FlightReview);
-        _table.Add(602, 1, "explorer.exe", Began.AddMinutes(3), folder: Plane);
+        _table.Add(602, 1, "pwsh.exe", Began.AddMinutes(3), folder: Plane);
         _table.Add(603, 1, "pwsh.exe", Began.AddMinutes(3), folder: Other);
         PutSession("w2", "PIL1271", SessionStartReasons.FlightReview, SessionState.Ended, Began.AddMinutes(5), Other);
         var landing = Flight("PIL1270", Plane, FlightState.Flying);
@@ -192,7 +193,7 @@ public sealed class LandedFlightStrayTests : IDisposable
 
         _sweep.EndOfLanded(landing);
 
-        _table.Killed.ShouldBeEmpty();
+        _table.Killed.ShouldBe([602]);
         Open(StraySweep.Kind).Select(c => c.Subject).ShouldNotContain(StraySweep.KeyOf(602, Began.AddMinutes(3)));
         _state.Cards().Single(c => c.Subject == StraySweep.KeyOf(602, Began.AddMinutes(3)) && c.Kind == StraySweep.Kind).Outcome.ShouldBe("PIL1270 landed");
         Open(StraySweep.Kind).Select(c => c.Subject).ShouldContain(StraySweep.KeyOf(603, Began.AddMinutes(3)));
