@@ -306,8 +306,8 @@ public sealed class StraySweep(NodeState state, IProcessTable table, TimeProvide
         _named.TryGetValue(key, out var stray) && stray is { NodeLaunched: true, OwnerEnded: true, ByFolder: false } && !NeverEnded(stray.Name);
 
     /// <summary>
-    /// <c>end-stray process:&lt;pid&gt;@&lt;start&gt;</c>, the person's End on a stray's card: ends the process when its card is open, the sweep
-    /// named it, it is none of the shell's, the browser's or Windows' own, and its pid still starts when the sweep saw it (a reused pid is
+    /// <c>end-stray process:&lt;pid&gt;@&lt;start&gt;</c>, the person's End on a stray's card: ends the process, whether its card is open or was
+    /// dismissed, when the sweep currently names it, it is none of the shell's, the browser's or Windows' own, and its pid still starts when the sweep saw it (a reused pid is
     /// another process, which is never ended). The card closes and a Handled line says who ended it.
     /// </summary>
     public CommandResult EndOnWord(CommandRequest command)

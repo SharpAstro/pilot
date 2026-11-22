@@ -2067,9 +2067,9 @@ gets one For you card (`stray-process`, subject `process:<pid>@<start>`) naming 
 time), its owner, why, and the exact kill command for the OS (`Stop-Process -Id <pid> -Force`, `kill -9 <pid>`). A dismissal holds for the same
 pid and start (not for a later process that reuses the pid), and the card closes by itself once the process is gone. The node ends a stray
 itself, through `IProcessTable.Kill`, only when it started the owner, the owner has ended, the process descends from the owner (a process
-that only works in the owner's plane or names it on its command line may be a person's editor, so it is named and left). A landed flight is the exception (#1270): when it lands, the node ends the strays of its sessions at once, with no 2 minute grace, those descended from a session and those only working in its plane folder, before the plane is removed, and again on every later sweep; the landing's Handled line names what it ended and the start still
+that only works in the owner's plane or names it on its command line may be a person's editor, so it is named and left), and the start still
 matches; it tries once, says so on a Handled `stray-killed` card, and a process that survives is named again with "tried to end it and it is
-still here". Anything else is only named. The strays also ride on the machine row (`MachineRow.Strays`, optional, so `NodeWire.Version`
+still here". Anything else is only named. A landed flight is the exception (#1270): when it lands, the node ends the strays of its sessions at once, with no 2 minute grace, those descended from a session and those only working in its plane folder, before the plane is removed, and again on every later sweep; the landing's Handled line names what it ended. The strays also ride on the machine row (`MachineRow.Strays`, optional, so `NodeWire.Version`
 stays), which `pilot strays` lists with each one's why, command line and kill command, and the Machine part of `pilot status` shows
 as a `strays` line with one line under it for each. The sweep remembers a session's last process (pid and start, the first start seen for
 that pid) in memory only, so that a leftover of a session that ended can be tied to it by the lost parent's pid; a pid whose start
