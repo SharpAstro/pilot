@@ -210,7 +210,7 @@ public sealed class StandingTests
         });
         var fix = await Error(node, Command(Verbs.FixPr, Verbs.PrTarget("acme/widget", 7), lookout, true));
         fix.ShouldNotBeNull().ShouldNotContain("not the watchtower's");
-        fix.ShouldContain("not started on the autopilot");
+        fix.ShouldContain("not started by the node");
         // The node's settings stay the person's.
         (await Error(node, Command(Verbs.Set, Verbs.NodeTarget, lookout, true, "maintenance", "on"))).ShouldNotBeNull().ShouldContain("not the watchtower's");
     }

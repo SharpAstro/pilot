@@ -66,6 +66,9 @@ public static class DecisionByKinds
     public const string Watchtower = "watchtower";
     public const string Person = "person";
     public const string Node = "node";
+
+    /// <summary>How a kind or name is shown: the stored value of the node's own rules reads as the node's, never as the old switch's name.</summary>
+    public static string Shown(string value) => value == NodeRules ? "node" : value;
 }
 
 /// <summary>What <c>GET /api/v1/decisions</c> answers: the decisions that match, oldest first.</summary>

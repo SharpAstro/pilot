@@ -86,7 +86,7 @@ public sealed class CoalesceGuardTests : ReviewTestsBase
         await new PrChecks(_state, _github, TimeProvider.System, _flights, _legs).LookAsync(Ct);
 
         _state.Cards(openOnly: true).ShouldContain(c => c.Id == ready.Id);
-        _state.Cards().ShouldNotContain(c => c.Kind == CardKinds.NodeRan && c.Title.Contains("on autopilot"));
+        _state.Cards().ShouldNotContain(c => c.Kind == CardKinds.NodeRan && c.Title.StartsWith("The node did for"));
         _state.Cards(openOnly: true).ShouldNotContain(c => c.Kind == PrChecks.NodeMergeRefused || c.Kind == PrChecks.MergeDropped);
         open.SetResult();
         (await merge).Ok.ShouldBeTrue();

@@ -50,7 +50,7 @@ public sealed class FlightDetailDecisionsTests
 
         texts.ShouldContain("decisions");
         var first = "2026-10-18 04:41 design: SOFA (of VSOP87 / SOFA / JPL), by sebastian (person): already a dependency";
-        var second = "2026-10-18 08:41 merge: merge (of merge / wait), by autopilot (autopilot): checks are green and the review passed, so the queue may take it and nothing else is waiting on the branch";
+        var second = "2026-10-18 08:41 merge: merge (of merge / wait), by node (node): checks are green and the review passed, so the queue may take it and nothing else is waiting on the branch";
         // Prose is laid out a word to a leaf, so the line is read back as the words after the label, in order.
         var said = string.Join(' ', texts.Skip(texts.IndexOf("decisions") + 1));
         said.ShouldContain(first);

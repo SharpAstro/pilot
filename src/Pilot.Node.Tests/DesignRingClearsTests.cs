@@ -166,7 +166,7 @@ public sealed class DesignRingClearsTests : PrFixTestsBase
         notice.Title.ShouldContain("du1-watchtower");
         var detail = notice.Detail.ShouldNotBeNull();
         detail.ShouldContain($"Chosen: {DecidableDesign.Answer}");
-        detail.ShouldContain("Why: the watchtower answered it with review fix on autopilot");
+        detail.ShouldContain("Why: the watchtower answered it with review fix");
         Fixers.ShouldHaveSingleItem().Brief.ShouldContain(DecidableDesign.Answer);
         _state.Decisions(kind: DecisionKinds.Design).ShouldHaveSingleItem().ByKind.ShouldBe(DecisionByKinds.NodeRules);
     }

@@ -249,7 +249,7 @@ public sealed class AutopilotTests
         var line = BlackBox(node).Single(l => l.Verb == Verbs.Merge);
         (line.Who, line.Ok, line.Autopilot, line.Why).ShouldBe((Assistant, true, true, Why));
         var handled = node.State.Cards().Single(c => c.Kind == CardKinds.NodeRan);
-        (handled.Bin, handled.State, handled.Title, handled.AskedBy, handled.Why).ShouldBe((CardBin.Handled, CardState.Closed, "pilot-33 merged #63 (TIA1) on autopilot", Assistant, Why));
+        (handled.Bin, handled.State, handled.Title, handled.AskedBy, handled.Why).ShouldBe((CardBin.Handled, CardState.Closed, "The node did for pilot-33: merged #63 (TIA1)", Assistant, Why));
         handled.Detail.ShouldNotBeNull().ShouldContain(Why);
         node.State.Cards().ShouldNotContain(c => c.Kind == CardKinds.AssistantAsk);
     }

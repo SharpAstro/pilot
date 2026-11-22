@@ -28,7 +28,7 @@ public sealed class DecisionAutopilotMergeTests : ReviewTestsBase
         decision.Options.ShouldContain("Merge");
         decision.Options.ShouldContain("Wait");
         decision.By.ShouldBe("node");
-        decision.Reason.ShouldContain("autopilot on, review passed, checks");
+        decision.Reason.ShouldContain("review passed, checks");
         merges.Length.ShouldBe(1);
     }
 
