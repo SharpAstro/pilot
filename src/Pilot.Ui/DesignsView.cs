@@ -314,6 +314,8 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
         public PrototypeCellGrid<TSurface>? RealGrid { get; set; }
         public PrototypeCellGrid<TSurface>? Grid { get; set; }
         public DesignSurface? ShownTarget { get; set; }
+        // The player as the window lists it: answering the pointer only inside its frame (FramedWidget), kept so a drag stays with one widget.
+        public FramedWidget? Framed { get; set; }
     }
 
     private readonly Dictionary<(int Cell, int Frame), FramePlay> _plays = [];
@@ -336,7 +338,10 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
 
     /// <summary>The widgets the frames are in the window: each frame's player, or its grid of cells for a frame of a terminal size; none where the page is drawn in cells. The chrome lists them after the page.</summary>
     internal IEnumerable<IPixelWidget> FrameWidgets() =>
-        Terminal is not null ? [] : _plays.OrderBy(p => p.Key).Select(p => p.Value.Cells is not null && p.Value.Grid is { } grid ? (IPixelWidget)grid : p.Value.Shown);
+        Terminal is not null ? [] : _plays.OrderBy(p => p.Key).Select(p => p.Value.Cells is not null && p.Value.Grid is { } grid ? (IPixelWidget)grid
+            : p.Value.Framed ??= new FramedWidget(() => p.Value.Shown, FrameOf(p.Key)));
+
+    private Func<RectF32?> FrameOf((int Cell, int Frame) key) => () => FrameRectOf(key.Cell, key.Frame);
 
     // The size a frame is played at: its block's built-in target, or the terminal it names (which the window draws as a grid of cells and the terminal as the cells themselves),
     // else the one the page shows the design at (the design's own size unless the window chose another).
