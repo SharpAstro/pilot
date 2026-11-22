@@ -684,7 +684,7 @@ public sealed partial class LegCommander
     /// commit step, the check of the flight's last leg so the rerun covers the same build. The sweep starts it as any planned leg.
     /// Planned while the review is Passed and a PR is open: plan-leg has no guard against either (more work on a flight whose merge
     /// is armed takes the merge back), so nothing is bypassed. No second leg is planned while one is planned or flying.
-    /// Returns the leg's name, or null when none was planned (autopilot off, or one is already on its way).
+    /// Returns the leg's name, or null when none was planned (autopilot off, or past <see cref="MaxReviewNotesLegs"/>).
     /// </summary>
     private async Task<string?> PlanReviewNotesLegAsync(FlightRow flight, IReadOnlyList<string> notes, CancellationToken cancellationToken)
     {
@@ -699,6 +699,12 @@ public sealed partial class LegCommander
             return onWay.Name;
         }
         var taken = legs.Count(l => l.Name.StartsWith(ReviewNotesLeg, StringComparison.Ordinal));
+        // The cap holds on every path that plans one, the hold's grace and release included, not only a verdict's: PIL1252 reached
+        // review-notes-12 with the cap at 3, each extra leg planned by the hold after the cap had rung. Past it the owner plans by hand.
+        if (taken >= MaxReviewNotesLegs)
+        {
+            return null;
+        }
         var name = taken == 0 ? ReviewNotesLeg : $"{ReviewNotesLeg}-{taken + 1}";
         var clean = notes.Select(n => n.Trim().TrimStart('-', '*', ' ').ReplaceLineEndings(" ")).Where(n => n.Length > 0).ToList();
         var args = new List<string>
