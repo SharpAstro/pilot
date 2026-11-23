@@ -44,7 +44,9 @@ public sealed class PrPollBudgetTests
                     Code = code, Repo = repo[^1..], RepoPath = repo, Issue = number, Branch = branch, Worktree = $"{repo}/w/{code}", Base = "main", State = FlightState.Flying,
                     CreatedAt = time.GetUtcNow(), PullRequest = number,
                 });
-                State.RaiseCard(CardBin.ForYou, LegCommander.PrReady, Verbs.FlightTarget(code), $"{code}'s PR #{number} is ready to merge");
+                // The card's Merge is what a look mirrors the PR's checks onto.
+                State.RaiseCard(CardBin.ForYou, LegCommander.PrReady, Verbs.FlightTarget(code), $"{code}'s PR #{number} is ready to merge",
+                    choices: [new CardChoice { Label = "Merge", Verb = Verbs.Merge, Target = Verbs.FlightTarget(code), Args = [$"head{number}"] }]);
                 GitHub.PrOf[branch] = GhAnswers.PullRequestByBranch(number: number, head: $"head{number}", url: $"https://github.com/o/r/pull/{number}", mergeable: "MERGEABLE");
                 GitHub.SummaryOf[number] = GhAnswers.ChecksOf(ChoiceStatus.Pending, 1, 3);
                 if (batch)
