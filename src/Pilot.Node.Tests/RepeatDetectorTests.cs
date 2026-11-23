@@ -132,6 +132,56 @@ public sealed class RepeatDetectorTests
     }
 
     [Fact]
+    public void ABacklogFoundInOneLookIsOneTaskForItsNewestPair()
+    {
+        var cards = new List<CardRow>();
+        for (var i = 1; i <= 3; i++)
+        {
+            cards.Add(_state.RaiseCard(CardBin.Ring, "pr-red", "flight/PIL1", "red", $"run {i}"));
+            _state.CloseCard(cards[^1].Id, "pressed", "owner");
+            _time.Advance(TimeSpan.FromMinutes(10));
+        }
+
+        var found = _detector.Look().ShouldHaveSingleItem();
+
+        found.Second.ShouldBe(cards[2].Id);
+        found.Task.Detail.ShouldNotBeNull().ShouldContain($"[pair: {cards[1].Id} + {cards[2].Id}]");
+        found.Task.Detail.ShouldNotBeNull().ShouldNotContain($"[pair: {cards[0].Id} +");
+        _detector.Look().ShouldBeEmpty();
+        _state.Cards().Count(c => c.Kind == CardKinds.RepeatTask).ShouldBe(1);
+    }
+
+    [Fact]
+    public void TenCardsOfOneKindOnOneSubjectBeforeTheSwitchCameOnAreOneTaskNotNine()
+    {
+        for (var i = 1; i <= 10; i++)
+        {
+            _state.RaiseCard(CardBin.Ring, "pr-red", "flight/PIL1", "red", $"run {i}");
+            _time.Advance(TimeSpan.FromMinutes(5));
+        }
+
+        _detector.Look().ShouldHaveSingleItem();
+        _detector.Look().ShouldBeEmpty();
+        _state.Cards().Count(c => c.Kind == CardKinds.RepeatTask).ShouldBe(1);
+    }
+
+    [Fact]
+    public void ABacklogOfOneFailureOnAFlightIsOneTaskForItsNewestPair()
+    {
+        _failures.Add(Failure("test:Some.Test", Start, "aaa111"));
+        _failures.Add(Failure("test:Some.Test", Start.AddHours(1), "bbb222"));
+        _failures.Add(Failure("test:Some.Test", Start.AddHours(2), "ccc333"));
+        _time.Advance(TimeSpan.FromHours(2));
+
+        var found = _detector.Look().ShouldHaveSingleItem();
+
+        found.Task.Detail.ShouldNotBeNull().ShouldContain("bbb222");
+        found.Task.Detail.ShouldNotBeNull().ShouldContain("ccc333");
+        found.Task.Detail.ShouldNotBeNull().ShouldNotContain("aaa111");
+        _detector.Look().ShouldBeEmpty();
+    }
+
+    [Fact]
     public void TheInvestigatorsOwnRingsAreNoOccurrenceOfAnything()
     {
         _state.RaiseCard(CardBin.Ring, Investigator.RingKind, "flight/PIL1", "PIL1 needs you", "tried a rerun");
