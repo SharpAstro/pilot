@@ -33,6 +33,7 @@ internal static class CardKindCatalog
     private const string LegHoldRelease = "Flights/LegCommander.HoldRelease.cs";
     private const string HumanVerification = "Flights/LegCommander.HumanVerification.cs";
     private const string LegMerge = "Flights/LegCommander.Merge.cs";
+    private const string Quiet = "Flights/LegCommander.QuietWaits.cs";
     private const string LegQueuedPush = "Flights/LegCommander.QueuedPush.cs";
     private const string Lay = "Flights/LegCommander.Lay.cs";
     private const string Shape = "Flights/LegCommander.Shape.cs";
@@ -125,9 +126,9 @@ internal static class CardKindCatalog
         new("human-verification", "ForYou", [HumanVerification], "HumanVerificationFilingTests.AFlaggedPassFilesEachItemInTheMilestoneAndRaisesOneCard"),
         new("human-verification-refused", "Handled", [HumanVerification], "HumanVerificationFilingTests.ARefusedGhCallKeepsTheVerdictAndRaisesAHandledCard"),
         new("holding-cleared", "Handled", [LegReviewHold], "HoldingPatternTests.ClearByTheWatchtowerLetsTheNodeMergeIt"),
-        new("pr-waits-for-legs", "Handled", [LegMerge], "MergeFixtureCardTests.AReadyCardOfAFlightWithALegStillToFlyIsAHandledLineAndTheNodeMergesOnceTheLegLands"),
-        new("merge-armed-by-node", "Handled", [LegMerge], "MergeArmTests.ANodeArmedMergeWaitingOnItsChecksIsAHandledLineAndFailingChecksRaiseTheCard"),
-        new("pr-ready-restored", "Handled", [LegReview], "PassedWithoutCardTests.AFlightPassedWithNoCardGetsOneAndTheNodeMergesIt"),
+        new("pr-waits-for-legs", "Handled", [Quiet], "MergeFixtureCardTests.AReadyCardOfAFlightWithALegStillToFlyIsAHandledLineAndTheNodeMergesOnceTheLegLands"),
+        new("merge-armed-by-node", "Handled", [Quiet], "MergeArmTests.ANodeArmedMergeWaitingOnItsChecksIsAHandledLineAndFailingChecksRaiseTheCard"),
+        new("pr-ready-restored", "Handled", [Quiet], "PassedWithoutCardTests.AFlightPassedWithNoCardGetsOneAndTheNodeMergesIt"),
         new("holding-timeout", "Ring", [Checks], "HoldingPatternTests.PastTheBoundTheTimeoutCardRingsAndMergeAsItIsMerges", "the flight's holding pattern on its row is past its timeout and its PR is still open on GitHub", [nameof(Verbs.Merge), nameof(Verbs.Land)]),
         new("owner-decision", "ForYou", ["Flights/LegCommander.FollowUp.cs", "Flights/PrReviews.FollowUp.cs"], "DeferredPointTests.AnOwnerDecisionPointRaisesACardWithTheQuestionAndCreatesNoIssue"),
         new("review-notes-cap", "Ring", [LegReview], "ReviewNotesCapTests.APassWithNotesPastTheCapRingsTheOwnerAndPlansNoLeg", "the flight's re-reviews raised new notes after each of its review-notes legs, up to the cap, so the node plans no more", [nameof(Verbs.Clear), nameof(Verbs.Dismiss)]),

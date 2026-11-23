@@ -601,8 +601,8 @@ public sealed partial class LegCommander
             {
                 return false;
             }
-            // Any merge card of this head, open or closed: a person's dismissal, an answered or queued merge, is not undone.
-            // A card the node closed while legs were not done (PIL1294) is no person's dismissal: its merge is raised again here.
+            // Any merge card of this head, open or closed: a person's dismissal, an answered or queued merge, is not undone (not the
+            // card the node closed while legs were not done, PIL1294: its merge is raised again here).
             var waited = state.Cards(openOnly: false).Where(c => c.Subject == subject && c.Kind is PrReady && c.Outcome?.StartsWith(LegWaitOutcome, StringComparison.Ordinal) == true).ToList();
             if (state.Cards(openOnly: false).Except(waited).Any(c => c.Subject == subject && c.Kind is PrReady or MergeFailed
                 && (c.ClosedAt is null ||c.Choices.Any(ch => ch.Verb == Verbs.Merge && ch.Args.FirstOrDefault() is { } h && string.Equals(h, head, StringComparison.OrdinalIgnoreCase)))))
@@ -622,11 +622,7 @@ public sealed partial class LegCommander
                     await PlanOrRingForNotesAsync(FlightOf(subject), unmade, "its review passed with notes and the node restarted before they had an end", cancellationToken);
                 }
             }
-            if (waited.Count == 0)
-            {
-                state.RaiseCard(CardBin.Handled, PrReadyRestoredKind, subject, $"{code}'s PR-ready card was restored",
-                    "its review passed but no merge card was open (the node went away between the verdict and the card)");
-            }
+            RaiseRestoredLine(subject, code, waited.Count > 0);
             return true;
         }
         finally

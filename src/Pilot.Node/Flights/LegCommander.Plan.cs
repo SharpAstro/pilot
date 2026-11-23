@@ -220,7 +220,7 @@ public sealed partial class LegCommander
         // PIL1294: a review-notes leg within its own cap is expected (#1271, #1275), so it is a Handled line, never a card for the owner.
         if (leg.StartsWith(ReviewNotesLeg, StringComparison.Ordinal) && ReviewNotesLegsTaken(flight) <= MaxReviewNotesLegs)
         {
-            state.RaiseCard(CardBin.Handled, LegCapKind, subject, $"{flight.Code}: {leg} planned within the review-notes cap ({count} legs, {planned} planned)",
+            state.RaiseCard(CardBin.Handled, LegCapKind, subject, $"{flight.Code}: {leg} is within the review-notes cap",
                 $"{leg} makes the review's notes, one of at most {MaxReviewNotesLegs} review-notes legs a flight is given, so it is not an extra leg to ask about.");
             return;
         }

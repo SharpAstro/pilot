@@ -492,21 +492,8 @@ public sealed partial class LegCommander
     /// </summary>
     public void ShowMerge(string target, string? line, string way, string? note = null)
     {
-        // PIL1294: a merge the node armed on its own rules waits on its checks with nothing for a person to do: its card closes and a
-        // Handled line says so. The card comes back when the checks fail (ShowMergeFailed) or the merge is queued (below).
-        if (way == MergeWays.Armed && state.Flights().FirstOrDefault(f => f.Code == (Verbs.FlightCodeOf(target) ?? target)) is { MergeWhenGreen: { } armedRow } armedFlight
-            && armedRow.ElementAtOrDefault(2) != ArmedByGitHub && armedRow[^1] == ArmedByRules)
+        if (QuietNodeArm(target, line, way))
         {
-            var waiting = $"{armedFlight.Code}'s PR #{armedFlight.PullRequest} waits for its checks, then the node queues it";
-            var open = state.Cards(openOnly: true).Where(c => c.Kind is PrReady && c.Subject == target && c.Choices.Any(ch => ch.Verb == Verbs.Merge)).ToList();
-            foreach (var anchor in open)
-            {
-                state.CloseCard(anchor.Id, NodeArmedOutcome + waiting, "node");
-            }
-            if (open.Count > 0 && state.Cards(openOnly: false).Where(c => c.Subject == target && c.Kind == NodeArmedKind).OrderByDescending(c => c.At).FirstOrDefault()?.Title != waiting)
-            {
-                state.RaiseCard(CardBin.Handled, NodeArmedKind, target, waiting, line ?? "The node waits for the checks, then queues or merges it. Nothing to press unless they fail.", link: armedFlight.PullRequestUrl);
-            }
             return;
         }
         // Queued after a wait the node kept quiet: the merge card is raised again, as the queue's drop is read from it.
@@ -514,7 +501,8 @@ public sealed partial class LegCommander
             && state.Cards(openOnly: false).Where(c => c.Subject == target && c.Kind is PrReady && c.Outcome?.StartsWith(NodeArmedOutcome, StringComparison.Ordinal) == true).OrderByDescending(c => c.ClosedAt).FirstOrDefault() is { } quiet
             && state.Flights().FirstOrDefault(f => f.Code == (Verbs.FlightCodeOf(target) ?? target)) is { } queuedFlight)
         {
-            state.RaiseCard(MergeCardBin(queuedFlight.Repo), PrReady, target, $"{queuedFlight.Code}'s PR #{queuedFlight.PullRequest} is in the merge queue", line, quiet.Choices, link: quiet.Link ?? queuedFlight.PullRequestUrl);
+            var (queuedCode, queuedNumber) = (queuedFlight.Code, queuedFlight.PullRequest);
+            state.RaiseCard(MergeCardBin(queuedFlight.Repo), PrReady, target, $"{queuedCode}'s PR #{queuedNumber} is in the merge queue", line, quiet.Choices, link: quiet.Link ?? queuedFlight.PullRequestUrl);
         }
         foreach (var card in state.Cards(openOnly: true).Where(c => c.Kind is PrReady or MergeFailed && c.Subject == target && c.Choices.Any(ch => ch.Verb == Verbs.Merge)))
         {
@@ -641,48 +629,6 @@ public sealed partial class LegCommander
         state.UpdateCard(card.Id, title, detail, choices, merge is { Kind: MergeKinds.Blocked, FailedName: not null } ? merge.FailedLink ?? link : link, PrReady, MergeSummary(code, merge),
             MergeCardBin(flight?.Repo, merge.Kind is MergeKinds.Blocked or MergeKinds.ChangesRequested || !own && merge.DroppedFromQueue is not null));
     }
-
-    /// <summary>
-    /// A PR-ready card whose flight has a leg still to fly (a review-notes leg making the review's fixes, planned after the card was
-    /// raised): a Merge now is refused ("has legs not done"), so the card's Merge is a mark (<see cref="ChoiceStatus.WaitsForLegs"/>,
-    /// naming the legs) and the card says what the merge waits for, here and on the PR page that takes its button from it (#918;
-    /// PIL853's #920 said "ready" with a Merge that answered "legs not done: review-notes-2", twice in one evening). The choice keeps
-    /// the reviewed head the node and the holding bound read. True when the card shows the wait (nothing else is to be said of
-    /// it now); false when every leg is done, and the card says what GitHub has. Called whether or not GitHub gave a merge state.
-    /// </summary>
-    public bool ShowLegWait(CardRow card)
-    {
-        var code = Verbs.FlightCodeOf(card.Subject) ?? card.Subject;
-        if (state.Flights().FirstOrDefault(f => f.Code == code) is not { } flight || !card.Choices.Any(c => c.Verb == Verbs.Merge)
-            || state.OpenLegs(code) is not { Count: > 0 } open)
-        {
-            return false;
-        }
-        var legs = state.Legs(code);
-        var waitTitle = $"{code}'s PR #{flight.PullRequest} merges once {string.Join(", ", open)} {(open.Count == 1 ? "lands" : "land")}";
-        var waitWhy = $"The {string.Join(", ", open)} {(open.Count == 1 ? "leg makes" : "legs make")} the review's fixes (legs {legs.Length - open.Count}/{legs.Length} done); the node merges the PR once {(open.Count == 1 ? "it lands" : "they land")}. Nothing to press.";
-        // PIL1294: a Merge now is refused and nothing is the person's to do, so no For you card. The open card was the node's merge
-        // anchor: it closes (a card never moves to Handled), a Handled line says what is waited for, and RestorePrReadyAsync raises
-        // the card again once every leg is done. One line per wait, not one per look.
-        state.CloseCard(card.Id, LegWaitOutcome + waitTitle, "node");
-        if (state.Cards(openOnly: false).Where(c => c.Subject == card.Subject && c.Kind == LegWaitKind).OrderByDescending(c => c.At).FirstOrDefault()?.Title != waitTitle)
-        {
-            state.RaiseCard(CardBin.Handled, LegWaitKind, card.Subject, waitTitle, waitWhy, link: flight.PullRequestUrl ?? card.Link);
-        }
-        return true;
-    }
-
-    /// <summary>The Handled card kind that says a merge the node armed waits for its checks (PIL1294).</summary>
-    public const string NodeArmedKind = "merge-armed-by-node";
-
-    /// <summary>The outcome a PR-ready card is closed with while the node's own armed merge waits on checks.</summary>
-    public const string NodeArmedOutcome = "the node waits for the checks: ";
-
-    /// <summary>The Handled card kind that says a passed flight's PR merges once its legs land (PIL1294).</summary>
-    public const string LegWaitKind = "pr-waits-for-legs";
-
-    /// <summary>The outcome a PR-ready card is closed with while legs are not done: the restore sweep does not read it as a person's dismissal.</summary>
-    public const string LegWaitOutcome = "waits for legs: ";
 
     /// <summary>
     /// What a held merge waits for, in the words its Merge mark shows (#918): each leg not done, a leg whose check reruns marked so

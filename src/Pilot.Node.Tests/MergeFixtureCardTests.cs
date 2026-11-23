@@ -107,9 +107,10 @@ public sealed class MergeFixtureCardTests
         node.State.Cards().Count(c => c.Kind == "pr-waits-for-legs").ShouldBe(1);
 
         // The leg lands: the node's merge anchor is raised again, as GitHub has the PR.
+        node.State.PutFlight(node.State.Flights().Single() with { Review = new ReviewRow { State = ReviewState.Passed, Reviewer = "du1-tia1-review", StartedAt = DateTimeOffset.UtcNow, ReviewedHead = PrHead } });
         node.State.PutLeg(node.State.Legs("TIA1").Single(l => l.Name == "review-notes") with { State = LegState.Done });
         await Look(node, Read(fixture));
-        node.State.Cards(openOnly: true).Any(c => c.Kind == LegCommander.PrReady).ShouldBeTrue();
+        node.State.Cards().Any(c => c.Kind == LegCommander.PrReady && c.Id != ready.Id).ShouldBeTrue();
     }
 
     [Theory]
