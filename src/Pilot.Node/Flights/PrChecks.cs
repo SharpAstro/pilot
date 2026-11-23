@@ -31,6 +31,9 @@ public sealed class PrChecks(NodeState state, IGitHub gitHub, TimeProvider time,
     // A PR head the node has tried to bring up to date (the base merged in): tried once, not every look.
     private readonly HashSet<string> _rebased = new(StringComparer.Ordinal);
 
+    /// <summary>The heads the rebase-only look has acted on, by flight, head and whether a leg flew (<see cref="ResolveRebaseOnlyAsync"/>).</summary>
+    private readonly HashSet<string> _rebaseOnlySeen = new(StringComparer.Ordinal);
+
     // A PR head whose failed checks were sent back as changes: once, not every look.
     private readonly HashSet<string> _failed = new(StringComparer.Ordinal);
 
@@ -438,6 +441,7 @@ public sealed class PrChecks(NodeState state, IGitHub gitHub, TimeProvider time,
             {
                 await legs.NoteGitHubAsync(flight.Code, pr, state.Flights().FirstOrDefault(f => f.Code == flight.Code)?.MergeQueue?.StartsWith("in the merge queue", StringComparison.Ordinal) == true, cancellationToken);
                 await ResolveConflictsAsync(flight.Code, pr, cancellationToken);
+                await ResolveRebaseOnlyAsync(flight.Code, pr, cancellationToken);
             }
         }
     }
@@ -468,6 +472,41 @@ public sealed class PrChecks(NodeState state, IGitHub gitHub, TimeProvider time,
         if (await legs.BringUpToDateAsync(flight.Code, cancellationToken) is { } why)
         {
             await HandConflictOverInSweepAsync(code, why, cancellationToken);
+        }
+    }
+
+    /// <summary>
+    /// A flight's PR that GitHub calls mergeable but not rebaseable, on a base that merges by rebase (a merge of the base that resolved a
+    /// conflict cannot be replayed by rebase; pilot #1299), with the guards of <see cref="ResolveConflictsAsync"/>, once a head. It is left
+    /// alone while the flight is not Flying, while its review is Reviewing, while a leg is neither Done nor Flying, and while an open
+    /// <see cref="LegCommander.PrReady"/> or <see cref="LegCommander.MergeFailed"/> card names it: a PR handed to the person to merge, or whose
+    /// merge failed, is the person's, and reshaping it under them would move the head they are looking at. Otherwise, between
+    /// legs the node reshapes the branch (rebased, else laid as one commit, lease-pushed); while a leg flies it pushes nothing and says
+    /// the PR is rebase-only and handled. A real conflict (CONFLICTING) is <see cref="ResolveConflictsAsync"/>'s, and a squash base never reaches here.
+    /// </summary>
+    private async Task ResolveRebaseOnlyAsync(string code, PullRequest pr, CancellationToken cancellationToken)
+    {
+        if (legs is null || pr.Mergeable != "MERGEABLE" || pr.Rebaseable != false
+            || state.Flights().FirstOrDefault(f => f.Code == code) is not { State: FlightState.Flying, Review: { State: not ReviewState.Reviewing }, PullRequest: { } number }
+            || number != pr.Number
+            || state.Legs(code) is not { Length: > 0 } flown || flown.Any(l => l.State is not (LegState.Done or LegState.Flying))
+            || state.Cards(openOnly: true).Any(c => c.Kind is LegCommander.PrReady or LegCommander.MergeFailed && c.Subject == Verbs.FlightTarget(code)))
+        {
+            return;
+        }
+        var flying = flown.Any(l => l.State == LegState.Flying);
+        if (!_rebaseOnlySeen.Add($"{code} {pr.Head} {flying}"))
+        {
+            return;
+        }
+        try
+        {
+            await legs.ReshapeRebaseOnlyAsync(code, pr.Head, flying, cancellationToken);
+        }
+        catch (FlightException ex)
+        {
+            // The shape rang for itself (LayFailedKind); the same head is not tried again.
+            await Error.WriteLineAsync($"pr checks: {code}'s rebase-only PR could not be reshaped: {ex.Message}");
         }
     }
 
@@ -782,7 +821,7 @@ public sealed class PrChecks(NodeState state, IGitHub gitHub, TimeProvider time,
         var left = merge.Kind switch
         {
             MergeKinds.Armed or MergeKinds.Pending or MergeKinds.Merged => false,
-            MergeKinds.Ready => native,
+            MergeKinds.Ready or MergeKinds.RebaseOnly => native,
             MergeKinds.Blocked => merge.FailedName is null,
             _ => true,
         };
@@ -793,7 +832,7 @@ public sealed class PrChecks(NodeState state, IGitHub gitHub, TimeProvider time,
         // Whatever the card shows now, the merge it offered again is not one GitHub does by itself: its auto-merge is turned off for
         // every state the merge left (a ready one has none on it, a closed PR has nothing to turn off). Conflicts and behind move
         // the head next, and a changes-requested, draft or blocked PR on a repo without required reviews would still merge on green.
-        if (native && merge.Kind is not (MergeKinds.Ready or MergeKinds.Closed))
+        if (native && merge.Kind is not (MergeKinds.Ready or MergeKinds.RebaseOnly or MergeKinds.Closed))
         {
             try
             {
@@ -819,7 +858,7 @@ public sealed class PrChecks(NodeState state, IGitHub gitHub, TimeProvider time,
         // offered again, never merged from this entry.
         legs?.DropMerge(flight.Code, merge.Kind switch
         {
-            MergeKinds.Ready => "GitHub's auto-merge was turned off",
+            MergeKinds.Ready or MergeKinds.RebaseOnly => "GitHub's auto-merge was turned off",
             MergeKinds.ChangesRequested => "a review asks for changes",
             MergeKinds.Blocked => $"GitHub blocks it: {merge.Reason}",
             MergeKinds.Conflicts => "it conflicts with its base: the base is merged in, and the merge offered again once that stands",
@@ -835,7 +874,7 @@ public sealed class PrChecks(NodeState state, IGitHub gitHub, TimeProvider time,
             // No card shows the merge to say it: a For-you card does, as for any dropped merge.
             var why = merge.Kind switch
             {
-                MergeKinds.Ready => "GitHub's auto-merge was turned off",
+                MergeKinds.Ready or MergeKinds.RebaseOnly => "GitHub's auto-merge was turned off",
                 MergeKinds.ChangesRequested => "a review asks for changes",
                 MergeKinds.Blocked => $"GitHub blocks it: {merge.Reason}",
                 _ => $"GitHub shows it as {merge.Kind}",
@@ -1216,7 +1255,7 @@ public sealed class PrChecks(NodeState state, IGitHub gitHub, TimeProvider time,
                 // card back to a Merge; the go-around and re-run it offered stay while it is blocked. A card that says something
                 // GitHub shows no state for (the head moved, a merge refused) stays until it is answered.
                 if (card.Choices.Any(c => c.Verb == Verbs.RerunChecks)
-                    && merge is { Kind: MergeKinds.Pending or MergeKinds.Ready or MergeKinds.Armed or MergeKinds.Queued } && legs is not null)
+                    && merge is { Kind: MergeKinds.Pending or MergeKinds.Ready or MergeKinds.RebaseOnly or MergeKinds.Armed or MergeKinds.Queued } && legs is not null)
                 {
                     legs.ShowMergeState(card, merge, head, replaceWords: true);
                 }

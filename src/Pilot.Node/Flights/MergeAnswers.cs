@@ -76,6 +76,19 @@ public sealed record AllowedMergeMethods(bool Squash, bool Rebase, bool Merge)
     }
 }
 
+/// <summary>Which way a base branch merges its PRs, from what GitHub says of its merge queue and its repo.</summary>
+public static class MergeMethods
+{
+    /// <summary>
+    /// Whether the base merges by rebase: the merge queue's <c>merge_method</c> says <c>REBASE</c>; with no queue rule, the repo allows
+    /// rebase and nothing else (as under <c>required_linear_history</c>, where a PR that cannot be rebased cannot merge). A queue that
+    /// squashes, or a repo that also allows squash or a merge commit, is not.
+    /// </summary>
+    public static bool Rebases(string? queueMethod, AllowedMergeMethods? allowed) =>
+        queueMethod is { Length: > 0 } ? queueMethod.Equals("REBASE", StringComparison.OrdinalIgnoreCase)
+        : allowed is { Rebase: true, Squash: false, Merge: false };
+}
+
 /// <summary>The one table of GitHub's merge texts: the only place that matches them. The first row that matches decides.</summary>
 public static class MergeAnswers
 {

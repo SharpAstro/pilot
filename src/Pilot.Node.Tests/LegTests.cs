@@ -727,7 +727,9 @@ internal sealed class FakeGitHub : IGitHub
         {
             throw new FlightException(why);
         }
-        return (PrOf.TryGetValue(branch, out var own) ? own : Pr) is { } pr ? pr with { Labels = Labels.TryGetValue(pr.Number, out var labels) ? [.. InOrder(labels)] : [] } : null;
+        return (PrOf.TryGetValue(branch, out var own) ? own : Pr) is { } pr
+            ? pr with { Labels = Labels.TryGetValue(pr.Number, out var labels) ? [.. InOrder(labels)] : [], Rebaseable = pr.Rebaseable ?? (pr is { State: "OPEN", Mergeable: "MERGEABLE" } && BaseRebases ? CanBeRebased : null) }
+            : null;
     }
 
     /// <summary>Whether a merge joins a merge queue rather than merging, as on a base that has one.</summary>
@@ -835,6 +837,14 @@ internal sealed class FakeGitHub : IGitHub
     public string? MergeQueueMethod { get; set; }
 
     public Task<string?> MergeQueueMethodAsync(string repoPath, string branch, CancellationToken cancellationToken) => Task.FromResult(MergeQueueMethod);
+
+    /// <summary>GraphQL's canBeRebased for every PR the fake answers: null is not read, as on a base that does not merge by rebase.</summary>
+    public bool? CanBeRebased { get; set; }
+
+    /// <summary>The base merges by rebase as the real helper reads it: the queue's <see cref="MergeQueueMethod"/>, else the repo's <see cref="AllowedMethods"/>.</summary>
+    public bool BaseRebases => MergeMethods.Rebases(MergeQueueMethod, AllowedMethods);
+
+    public Task<bool> BaseMergesByRebaseAsync(string repoPath, string branch, CancellationToken cancellationToken) => Task.FromResult(BaseRebases);
 
     public Task<bool> BranchUnprotectedAsync(string repoPath, string branch, CancellationToken cancellationToken)
     {
@@ -1002,7 +1012,7 @@ internal sealed class FakeGitHub : IGitHub
         }
         var armed = AutoMergeArmed.Any(a => a.Number == number) && !AutoMergeDisarmed.Contains(number);
         var mergeState = status == ChoiceStatus.Passing ? "CLEAN" : status is null ? null : "BLOCKED";
-        return Task.FromResult(GhCli.ReadMergeState(new MergeFacts("OPEN", false, mergeState, "MERGEABLE", null, armed, checks), Queue));
+        return Task.FromResult(GhCli.ReadMergeState(new MergeFacts("OPEN", false, mergeState, "MERGEABLE", null, armed, checks, BaseRebases ? CanBeRebased : null, BaseRebases), Queue));
     }
 
     /// <summary>What MergeQueueAsync answers for any PR: null, a base with no merge queue, unless set.</summary>

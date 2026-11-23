@@ -16,11 +16,17 @@ public sealed partial class GhCli
                 ? null
                 : throw new FlightException($"gh could not read {branch}'s PR: {error.Trim()}");
         }
-        return ParsePullRequestByBranch(output);
+        var pr = ParsePullRequestByBranch(output);
+        // canBeRebased is GraphQL's alone, so it is asked only where it can matter: an open PR GitHub calls mergeable, on a base that merges by rebase.
+        if (pr is { State: "OPEN" } && AsksRebaseable(pr.Mergeable, pr.Base) && await BaseMergesByRebaseAsync(repoPath, pr.Base, cancellationToken))
+        {
+            pr = pr with { Rebaseable = await CanBeRebasedAsync(repoPath, pr.Number, cancellationToken) };
+        }
+        return pr;
     }
 
     /// <summary>The <c>--json</c> list of <c>gh pr view &lt;branch&gt;</c> (<see cref="PullRequestAsync"/>).</summary>
-    internal const string PullRequestByBranchFields = "number,state,headRefOid,url,mergeable,labels,mergeCommit,mergedAt,isDraft";
+    internal const string PullRequestByBranchFields = "number,state,headRefOid,url,mergeable,labels,mergeCommit,mergedAt,isDraft,baseRefName";
 
     /// <summary><see cref="PullRequestByBranchFields"/>' answer as a <see cref="PullRequest"/>.</summary>
     internal static PullRequest ParsePullRequestByBranch(string json)
@@ -35,7 +41,8 @@ public sealed partial class GhCli
                 : null,
             MergeCommit: root.TryGetProperty("mergeCommit", out var merge) ? TextOf(merge, "oid") ?? "" : "",
             MergedAt: TextOf(root, "mergedAt") is { } mergedAt && DateTimeOffset.TryParse(mergedAt, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out var merged) ? merged : null,
-            Draft: root.TryGetProperty("isDraft", out var draft) && draft.ValueKind == JsonValueKind.True);
+            Draft: root.TryGetProperty("isDraft", out var draft) && draft.ValueKind == JsonValueKind.True,
+            Base: TextOf(root, "baseRefName") ?? "");
     }
 
     public async Task<WorkflowRun[]> WorkflowRunsAsync(string repoPath, string commit, CancellationToken cancellationToken)
@@ -231,12 +238,73 @@ public sealed partial class GhCli
         var (exit, output, _) = await RunAsync(
             ["pr", "view", number.ToString(System.Globalization.CultureInfo.InvariantCulture), "--json", MergeStateFields],
             repoPath, cancellationToken);
+        if (exit != 0)
+        {
+            return null;
+        }
         // gh pr view has no merge queue field: its place in the queue is the GraphQL entry's.
-        return exit == 0 ? ParseMergeState(output, await MergeQueueAsync(repoPath, number, cancellationToken)) : null;
+        var queue = await MergeQueueAsync(repoPath, number, cancellationToken);
+        // Nor has it canBeRebased: asked only for a PR GitHub calls mergeable on a base that merges by rebase, so a squash repo costs nothing.
+        bool? rebaseable = null;
+        var baseRebases = false;
+        if (BaseOf(output) is { } baseRef && AsksRebaseable(baseRef.Mergeable, baseRef.Base) && await BaseMergesByRebaseAsync(repoPath, baseRef.Base, cancellationToken))
+        {
+            baseRebases = true;
+            rebaseable = await CanBeRebasedAsync(repoPath, number, cancellationToken);
+        }
+        return ParseMergeState(output, queue, rebaseable, baseRebases);
+    }
+
+    /// <summary>
+    /// The single reads' first gate before they spend a call on <c>canBeRebased</c> (and on the base's rules): GitHub calls the PR mergeable
+    /// and names its base. A conflict (CONFLICTING) or an UNKNOWN answer never asks, as rebase-only means "mergeable, yet not rebaseable";
+    /// the second gate, <see cref="BaseMergesByRebaseAsync"/>, keeps a squash or merge base from asking at all. The batch read gates the same
+    /// way through <see cref="NotRebaseableBases"/>.
+    /// </summary>
+    internal static bool AsksRebaseable(string? mergeable, string? baseRef) => mergeable == "MERGEABLE" && !string.IsNullOrEmpty(baseRef);
+
+    internal static (string? Mergeable, string Base)? BaseOf(string json)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            return (TextOf(doc.RootElement, "mergeable"), TextOf(doc.RootElement, "baseRefName") ?? "");
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    internal const string CanBeRebasedQuery = "query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){canBeRebased}}}";
+
+    /// <summary>GraphQL's <c>canBeRebased</c> of PR <paramref name="number"/>; null when GitHub would not say.</summary>
+    private async Task<bool?> CanBeRebasedAsync(string repoPath, int number, CancellationToken cancellationToken)
+    {
+        var (exit, output, _) = await RunAsync(
+            ["api", "graphql", "-F", "owner={owner}", "-F", "name={repo}", "-F", $"number={number.ToString(System.Globalization.CultureInfo.InvariantCulture)}", "-f", $"query={CanBeRebasedQuery}"],
+            repoPath, cancellationToken);
+        return exit == 0 ? ParseCanBeRebased(output) : null;
+    }
+
+    /// <summary><see cref="CanBeRebasedQuery"/>'s answer; null with no boolean in it.</summary>
+    internal static bool? ParseCanBeRebased(string json)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            return doc.RootElement.TryGetProperty("data", out var data) && data.TryGetProperty("repository", out var repo) && repo.ValueKind == JsonValueKind.Object
+                && repo.TryGetProperty("pullRequest", out var pr) && pr.ValueKind == JsonValueKind.Object
+                && pr.TryGetProperty("canBeRebased", out var can) && can.ValueKind is JsonValueKind.True or JsonValueKind.False ? can.GetBoolean() : null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
     }
 
     /// <summary>The <c>--json</c> list of <c>gh pr view</c> for <see cref="MergeStateAsync"/>.</summary>
-    internal const string MergeStateFields = "state,isDraft,mergeStateStatus,mergeable,reviewDecision,autoMergeRequest,statusCheckRollup";
+    internal const string MergeStateFields = "state,isDraft,mergeStateStatus,mergeable,reviewDecision,autoMergeRequest,statusCheckRollup,baseRefName";
 
     /// <summary>
     /// <c>gh pr view --json state,isDraft,mergeStateStatus,mergeable,reviewDecision,autoMergeRequest,statusCheckRollup</c>'s answer, and
@@ -246,7 +314,7 @@ public sealed partial class GhCli
     /// then what waits (an armed auto-merge, checks running), then ready. A failed check blocks even where GitHub would allow it
     /// (not a required one): pilot does not merge over a red check.
     /// </summary>
-    internal static MergeState? ParseMergeState(string json, MergeQueueState? queue = null)
+    internal static MergeState? ParseMergeState(string json, MergeQueueState? queue = null, bool? rebaseable = null, bool baseRebases = false)
     {
         try
         {
@@ -257,7 +325,7 @@ public sealed partial class GhCli
                 root.TryGetProperty("isDraft", out var draft) && draft.ValueKind == JsonValueKind.True,
                 TextOf(root, "mergeStateStatus"), TextOf(root, "mergeable"), TextOf(root, "reviewDecision"),
                 root.TryGetProperty("autoMergeRequest", out var auto) && auto.ValueKind == JsonValueKind.Object,
-                RollupChecks(root)), queue);
+                RollupChecks(root), rebaseable, baseRebases), queue);
         }
         catch (JsonException)
         {
@@ -331,6 +399,10 @@ public sealed partial class GhCli
             // job starts only after the builds finish) is the one thing left. Waiting, not blocked: an armed merge keeps waiting
             // for it, and Merge arms one.
             "BLOCKED" => Say(MergeKinds.Pending, "a required check has yet to report, or a branch rule blocks it: the PR page says which", awaits: true),
+            // Nothing in the way, but GitHub says it cannot be replayed by rebase on a base that merges by rebase (a merge of main that
+            // resolved a conflict): ready all the same, the node lays it as one commit at landing. Only ready is told so: a draft, a failed
+            // check or a review still to come is what the person is told first.
+            _ when facts is { Mergeable: "MERGEABLE", Rebaseable: false, BaseRebases: true } => Say(MergeKinds.RebaseOnly),
             _ => Say(MergeKinds.Ready),
         };
     }

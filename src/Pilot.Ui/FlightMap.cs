@@ -19,6 +19,11 @@ internal enum DestinationStatus
     Armed,
     Queued,
     Conflicts,
+    /// <summary>
+    /// Mergeable but not rebaseable on a base that merges by rebase (<see cref="FlightRow.RebaseOnly"/>): known and handled, it lands
+    /// squashed. Drawn as handled, never as trouble (pilot #1299).
+    /// </summary>
+    RebaseOnly,
     /// <summary>Merged: the flight has landed.</summary>
     Merged,
 }
@@ -79,6 +84,9 @@ internal readonly record struct MapHit(MapHitKind Kind, string Flight, string? L
 /// </summary>
 internal sealed class FlightMap
 {
+    /// <summary>The hover for a rebase-only PR, on the map and on the Pull requests page: known, harmless, why.</summary>
+    internal const string RebaseOnlyTip = PullRequestStates.RebaseOnlyLabel + ". A merge of the base that resolved a conflict cannot be replayed by rebase, so the PR lands squashed as one commit. Nothing to fix.";
+
     public const float Slot = 72f;
     public const float RowHeight = 72f;
     /// <summary>
@@ -193,13 +201,15 @@ internal sealed class FlightMap
         {
             return DestinationStatus.Armed;
         }
-        return flight.Review?.State switch
+        var status = flight.Review?.State switch
         {
             ReviewState.Reviewing => DestinationStatus.Reviewing,
             ReviewState.Passed => DestinationStatus.Passed,
             ReviewState.Changes => DestinationStatus.Changes,
             _ => pr == "draft" ? DestinationStatus.Draft : DestinationStatus.Open,
         };
+        // Rebase only is a note on a PR that is otherwise fine: a review under way or asking for changes still says so first.
+        return flight.RebaseOnly is not null && status is DestinationStatus.Passed or DestinationStatus.Open or DestinationStatus.Draft ? DestinationStatus.RebaseOnly : status;
     }
 
     /// <summary>

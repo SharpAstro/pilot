@@ -12,13 +12,14 @@ public sealed record MergedPullRequest(int Number, string HeadRef, string HeadOi
 
 /// <summary>A flight's PR on GitHub: its number, state and head.</summary>
 /// <param name="Mergeable">GitHub's word on whether it merges into its base: MERGEABLE, CONFLICTING, or UNKNOWN while it works it out.</param>
+/// <param name="Rebaseable">GraphQL's <c>canBeRebased</c>: whether its commits replay onto the base. Read only for a MERGEABLE PR whose base merges by rebase (null otherwise: not asked, so no call is made on a squash repo).</param>
 /// <param name="Title">Its title, as read by repo and number; empty otherwise.</param>
 /// <param name="Author">Its author's login, as read by repo and number; empty otherwise.</param>
 /// <param name="Base">The branch it goes into, as read by repo and number; empty otherwise.</param>
 /// <param name="Labels">The labels it carries, as read by branch; null when the read did not ask for them.</param>
 /// <param name="MergeCommit">The commit it merged as on its base, as read by branch; empty before it merges or when not read.</param>
 /// <param name="MergedAt">When it merged, as read by branch; null before it merges or when not read.</param>
-public sealed record PullRequest(int Number, string State, string Head, string Url, string Mergeable = "", string Title = "", string Author = "", string Base = "", IReadOnlyList<string>? Labels = null, string MergeCommit = "", DateTimeOffset? MergedAt = null, bool Draft = false, string HeadRef = "", bool Fork = false);
+public sealed record PullRequest(int Number, string State, string Head, string Url, string Mergeable = "", string Title = "", string Author = "", string Base = "", IReadOnlyList<string>? Labels = null, string MergeCommit = "", DateTimeOffset? MergedAt = null, bool Draft = false, string HeadRef = "", bool Fork = false, bool? Rebaseable = null);
 
 /// <summary>
 /// A GitHub Actions run on a commit: <paramref name="Status"/> is <c>queued</c>, <c>in_progress</c> or <c>completed</c>, and
@@ -99,6 +100,12 @@ public static class MergeKinds
     /// <summary>A review asks for changes.</summary>
     public const string ChangesRequested = "changes-requested";
 
+    /// <summary>
+    /// Mergeable, but not rebaseable, on a base that merges by rebase: "Conflict (rebase only): known, lands squashed". A merge of main
+    /// that resolved a conflict cannot be replayed by rebase; the node lays the PR as one commit at landing. Handled, never trouble.
+    /// </summary>
+    public const string RebaseOnly = "rebase-only";
+
     public const string Merged = "merged";
 
     public const string Closed = "closed";
@@ -121,6 +128,9 @@ public sealed record MergeState(string Kind, int Done = 0, int Total = 0, int? P
     /// <summary>The checks' progress as the card says it: <c>6 of 7</c>; null with no checks.</summary>
     public string? Progress => Total > 0 ? ArmedProgress.Say(Done, Total) : null;
 
+    /// <summary>Nothing stands in its way: <see cref="MergeKinds.Ready"/>, or <see cref="MergeKinds.RebaseOnly"/>, which lands all the same.</summary>
+    public bool IsReady => Kind is MergeKinds.Ready or MergeKinds.RebaseOnly;
+
     /// <summary>The queue place as the card says it: <c>position 2</c>; null when GitHub did not say.</summary>
     public string? Place => Position is { } position ? $"position {position}" : null;
 }
@@ -130,8 +140,10 @@ public sealed record MergeState(string Kind, int Done = 0, int Total = 0, int? P
 /// (<c>OPEN</c>, <c>MERGED</c>, <c>CLOSED</c>), the draft flag, <c>mergeStateStatus</c>, <c>mergeable</c> and <c>reviewDecision</c>, whether
 /// auto-merge is armed, and its checks as (bucket, name, link), the bucket as <see cref="GhCli.CheckBucket"/> says.
 /// </summary>
+/// <param name="Rebaseable">GraphQL's <c>canBeRebased</c>, null when not read.</param>
+/// <param name="BaseRebases">The PR's base merges by rebase (<see cref="MergeMethods.Rebases"/>): only then does a false <paramref name="Rebaseable"/> mean anything.</param>
 internal sealed record MergeFacts(string? State, bool Draft, string? MergeStateStatus, string? Mergeable, string? ReviewDecision, bool AutoMerge,
-    IReadOnlyList<(string Bucket, string? Name, string? Link)> Checks);
+    IReadOnlyList<(string Bucket, string? Name, string? Link)> Checks, bool? Rebaseable = null, bool BaseRebases = false);
 
 /// <summary>What GitHub's Priority field says of an issue: whether the repo has the field (and the token reads it), and the level, null when unset.</summary>
 public sealed record PriorityRead(bool HasField, IssuePriority? Level)
@@ -274,6 +286,12 @@ public interface IGitHub
     /// Null when no such rule applies or GitHub would not say.
     /// </summary>
     Task<string?> MergeQueueMethodAsync(string repoPath, string branch, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Whether <paramref name="branch"/> merges its PRs by rebase (<see cref="MergeMethods.Rebases"/> over the merge queue's method and
+    /// the repo's allowed methods). Kept for a while per repo and branch, so asking it on every look costs no call.
+    /// </summary>
+    Task<bool> BaseMergesByRebaseAsync(string repoPath, string branch, CancellationToken cancellationToken);
 
     /// <summary>
     /// Arms GitHub's auto-merge on PR <paramref name="number"/>: it merges by <paramref name="method"/> once its required checks

@@ -178,6 +178,13 @@ public sealed record FlightRow
     /// </summary>
     public string? MergeQueue { get; init; }
 
+    /// <summary>
+    /// Set while a leg flies on a flight whose PR is mergeable but not rebaseable on a base that merges by rebase (pilot #1299): the node
+    /// does not reshape a plane a worker is changing, so it says here that this is known and handled (it lands squashed, or laid as one
+    /// commit). Null otherwise; cleared once the next look has reshaped the branch.
+    /// </summary>
+    public string? RebaseOnly { get; init; }
+
     /// <summary>The PR's head as GitHub had it at the node's last look at it (#222); null before a look.</summary>
     public string? GitHubHead { get; init; }
 

@@ -56,7 +56,7 @@ public static class PullRequestSearch
     // checks make and the cost stays at its rounded point per page (a page's cost is read back from rateLimit, never assumed).
     public const string Query = "query($q:String!,$after:String){rateLimit{cost remaining resetAt} search(query:$q,type:ISSUE,first:30,after:$after){issueCount pageInfo{hasNextPage endCursor} "
         + "nodes{... on PullRequest{number state title url repository{nameWithOwner} author{login} isDraft createdAt updatedAt headRefName baseRefName labels(first:20){nodes{name}} "
-        + "mergeable mergeStateStatus reviewDecision isInMergeQueue mergeQueueEntry{position} autoMergeRequest{enabledAt} "
+        + "mergeable canBeRebased mergeStateStatus reviewDecision isInMergeQueue mergeQueueEntry{position} autoMergeRequest{enabledAt} "
         + "commits(last:1){nodes{commit{oid statusCheckRollup{state contexts(first:100){nodes{__typename "
         + "... on CheckRun{name status conclusion detailsUrl startedAt completedAt checkSuite{workflowRun{workflow{name}}}} ... on StatusContext{context state targetUrl createdAt}}}}}}}}}}}";
 
@@ -83,7 +83,7 @@ public static class PullRequestSearch
     /// <summary>Reads one page of the search's answer.</summary>
     /// <exception cref="RateLimitedException">GitHub's error is its rate limit.</exception>
     /// <exception cref="FlightException">The answer is no search result: GitHub's errors, or not JSON.</exception>
-    public static Page Parse(string json)
+    public static Page Parse(string json, Func<string, string?, bool>? baseRebases = null)
     {
         try
         {
@@ -111,7 +111,7 @@ public static class PullRequestSearch
                     {
                         gone.Add(new GonePullRequest(repoName, number, nodeState));
                     }
-                    else if (Row(node) is { } row)
+                    else if (Row(node, baseRebases) is { } row)
                     {
                         prs.Add(row);
                     }
@@ -136,7 +136,35 @@ public static class PullRequestSearch
         }
     }
 
-    private static PullRequestRow? Row(JsonElement pr)
+    /// <summary>
+    /// The (repo, base branch) of each PR of a page that GitHub calls mergeable yet not rebaseable (<c>canBeRebased</c> false): the only
+    /// ones whose base the reader must know the method of, so a repo whose PRs all rebase is never asked.
+    /// </summary>
+    public static (string Repo, string Base)[] NotRebaseable(string json)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            if (!(doc.RootElement.TryGetProperty("data", out var data) && data.ValueKind == JsonValueKind.Object
+                && data.TryGetProperty("search", out var search) && search.ValueKind == JsonValueKind.Object
+                && search.TryGetProperty("nodes", out var nodes) && nodes.ValueKind == JsonValueKind.Array))
+            {
+                return [];
+            }
+            return [.. nodes.EnumerateArray()
+                .Where(n => Text(n, "state") == "OPEN" && Text(n, "mergeable") == "MERGEABLE" && n.TryGetProperty("canBeRebased", out var can) && can.ValueKind == JsonValueKind.False)
+                .Select(n => (Repo: n.TryGetProperty("repository", out var r) ? Text(r, "nameWithOwner") : null, Base: Text(n, "baseRefName")))
+                .Where(n => n.Repo is not null && n.Base is not null)
+                .Select(n => (n.Repo!, n.Base!))
+                .Distinct()];
+        }
+        catch (JsonException)
+        {
+            return [];
+        }
+    }
+
+    private static PullRequestRow? Row(JsonElement pr, Func<string, string?, bool>? baseRebases)
     {
         if (pr.ValueKind != JsonValueKind.Object || !pr.TryGetProperty("number", out var number) || !number.TryGetInt32(out var n)
             || Text(pr, "url") is not { } url)
@@ -155,8 +183,10 @@ public static class PullRequestSearch
             && entry.TryGetProperty("position", out var at) && at.TryGetInt32(out var p) ? p : null;
         var draft = pr.TryGetProperty("isDraft", out var d) && d.ValueKind == JsonValueKind.True;
         var armed = pr.TryGetProperty("autoMergeRequest", out var auto) && auto.ValueKind == JsonValueKind.Object;
+        bool? rebaseable = pr.TryGetProperty("canBeRebased", out var can) && can.ValueKind is JsonValueKind.True or JsonValueKind.False ? can.GetBoolean() : null;
+        var rebases = rebaseable == false && baseRebases is not null && baseRebases(repo, Text(pr, "baseRefName"));
         var merge = GhCli.ReadMergeState(
-            new MergeFacts("OPEN", draft, Text(pr, "mergeStateStatus"), Text(pr, "mergeable"), Text(pr, "reviewDecision"), armed, checks),
+            new MergeFacts("OPEN", draft, Text(pr, "mergeStateStatus"), Text(pr, "mergeable"), Text(pr, "reviewDecision"), armed, checks, rebaseable, rebases),
             queued ? new MergeQueueState("QUEUED", "", true, position) : null);
         var state = Say(merge, draft);
         var failed = checks.FirstOrDefault(c => c.Bucket == "fail");
@@ -209,6 +239,7 @@ public static class PullRequestSearch
             MergeKinds.Queued => new(PullRequestKind.InMergeQueue, merge.Position is { } position ? $"In merge queue #{position}" : "In merge queue", false),
             MergeKinds.Conflicts => new(PullRequestKind.Conflicts, "Conflicts", true),
             MergeKinds.Behind => new(PullRequestKind.Behind, "Behind", false),
+            MergeKinds.RebaseOnly => new(PullRequestKind.RebaseOnly, PullRequestStates.RebaseOnlyChip, false),
             MergeKinds.ChangesRequested => new(PullRequestKind.ChangesRequested, "Changes requested", true),
             MergeKinds.Blocked when merge.FailedName is { } failed => new(PullRequestKind.ChecksFailed, $"Checks failed: {failed}", false),
             MergeKinds.Blocked => new(PullRequestKind.ReviewRequired, "Review required", false),

@@ -456,7 +456,7 @@ public sealed class PrRecheck : IHostedService
             return await FinishAsync(entry, pr, $"head {head} was not the one reviewed, {restarted}", LabelOf(code), cancellationToken);
         }
 
-        if (review.State == ReviewState.Passed && checks == ChoiceStatus.Passing && merge is null or { Kind: MergeKinds.Ready })
+        if (review.State == ReviewState.Passed && checks == ChoiceStatus.Passing && merge is null or { IsReady: true })
         {
             if (legs.Models.NoAutoMerge(flight.Repo))
             {

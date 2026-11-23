@@ -131,6 +131,20 @@ public sealed class FlightMapTests
         FlightMap.StatusOf(WithPr(Flight("A", FlightState.Landed)) with { LandedAt = Live.At }).ShouldBe(DestinationStatus.Merged);
     }
 
+    // pilot #1299: rebase only is its own status, read from the row; a real conflict wins over it and keeps its own.
+    [Fact]
+    public void ARebaseOnlyFlightHasItsOwnDestinationStatusAndARealConflictKeepsItsOwn()
+    {
+        var rebaseOnly = WithPr(Flight("A")) with { RebaseOnly = "known, lands squashed" };
+        FlightMap.StatusOf(rebaseOnly).ShouldBe(DestinationStatus.RebaseOnly);
+        FlightMap.StatusOf(rebaseOnly with { Review = Review(ReviewState.Passed, "pilot: conflicts") }).ShouldBe(DestinationStatus.Conflicts);
+        FlightMap.StatusOf(rebaseOnly with { MergeQueue = "in the merge queue, position 2" }).ShouldBe(DestinationStatus.Queued);
+        // A review under way or asking for changes still says so first: rebase only is a note on a PR otherwise fine.
+        FlightMap.StatusOf(rebaseOnly with { Review = Review(ReviewState.Changes, null) }).ShouldBe(DestinationStatus.Changes);
+        FlightMap.StatusOf(rebaseOnly with { Review = Review(ReviewState.Reviewing, null) }).ShouldBe(DestinationStatus.Reviewing);
+        FlightMap.StatusOf(rebaseOnly with { Review = Review(ReviewState.Passed, null) }).ShouldBe(DestinationStatus.RebaseOnly);
+    }
+
     [Fact]
     public void ALandedFlightHasNoPlaneAndItsDestinationIsMerged()
     {
@@ -383,5 +397,108 @@ public sealed class FlightMapTests
         view.Selected.ShouldBe(1);
         Linked("A/one: flying").ShouldBe(0);
         Linked("PIL51/one: planned").ShouldBe(0);
+    }
+
+    private static double Luminance(RGBAColor32 c)
+    {
+        static double Linear(byte v)
+        {
+            var x = v / 255.0;
+            return x <= 0.03928 ? x / 12.92 : Math.Pow((x + 0.055) / 1.055, 2.4);
+        }
+        return 0.2126 * Linear(c.Red) + 0.7152 * Linear(c.Green) + 0.0722 * Linear(c.Blue);
+    }
+
+    private static double Contrast(RGBAColor32 a, RGBAColor32 b)
+    {
+        var (hi, lo) = (Math.Max(Luminance(a), Luminance(b)), Math.Min(Luminance(a), Luminance(b)));
+        return (hi + 0.05) / (lo + 0.05);
+    }
+
+    // pilot #1299: the map's destination sign says "rebase only", whole within its slot, in the handled (flying) colour, its hover the
+    // whole sentence and why; a real conflict beside it stays in the failed colour and says it needs a fix. No word of the map lies over
+    // another, at a narrow and a wide window, in both palettes, with a long flight title.
+    [Theory]
+    [InlineData(640, false)]
+    [InlineData(640, true)]
+    [InlineData(1600, false)]
+    [InlineData(1600, true)]
+    public void TheMapSaysRebaseOnlyWholeInTheHandledColourAndARealConflictNeedsAFix(int width, bool night)
+    {
+        const string longTitle = "Not-rebaseable PRs: the node reshapes or says it is handled, instead of showing Conflict until landing (a very long title)";
+        var lines = new[]
+        {
+            Line(WithPr(Flight("A")) with { Title = longTitle, Repo = "pilot", RebaseOnly = "known, lands squashed" }, null, null, Leg("A", "show-rebase-only", 1, LegState.Done)),
+            Line(WithPr(Flight("B")) with { Title = longTitle, Repo = "pilot", PullRequest = 8, Review = Review(ReviewState.Passed, "pilot: conflicts") }, null, null, Leg("B", "reshape", 1, LegState.Done)),
+        };
+        using var renderer = new RgbaImageRenderer((uint)width, 800);
+        var view = new FlightsView<RgbaImage>(renderer) { FontPath = SessionsCapture.FontPath, Mode = FlightsViewMode.Canvas, Night = new NightSwitch { On = night } };
+        view.Render(new FlightsScreen(lines, "test", Live.At), new RectF32(0, 0, width, 800));
+
+        var rebaseWord = FlightsView<RgbaImage>.StatusWord(DestinationStatus.RebaseOnly);
+        var words = view.MapWords.ToList();
+        words.Select(w => w.Text).ShouldContain(rebaseWord);
+        words.Select(w => w.Text).ShouldContain(FlightsView<RgbaImage>.StatusWord(DestinationStatus.Conflicts));
+
+        // Not cut: the word's ink fits the destination's slot, at the size the map draws it (both scale alike with the zoom).
+        var measure = new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, 1f);
+        measure.MeasureText(rebaseWord, 9f).Width.ShouldBeLessThanOrEqualTo(FlightMap.Slot, "the rebase-only sign is cut");
+
+        // No word of the map over another (the text-over-text check on the words the map paints by hand).
+        var faults = new List<string>();
+        for (var i = 0; i < words.Count; i++)
+        {
+            for (var j = i + 1; j < words.Count; j++)
+            {
+                var (a, b) = (words[i].Box, words[j].Box);
+                if (MathF.Min(a.X + a.Width, b.X + b.Width) - MathF.Max(a.X, b.X) > TextOverlap.Tolerance
+                    && MathF.Min(a.Y + a.Height, b.Y + b.Height) - MathF.Max(a.Y, b.Y) > TextOverlap.Tolerance)
+                {
+                    faults.Add($"'{words[i].Text}' over '{words[j].Text}'");
+                }
+            }
+        }
+        faults.ShouldBeEmpty();
+
+        // The hovers: the rebase-only one says the whole words and why, a real conflict says it needs a fix.
+        var regions = new List<ClickableRegion>();
+        view.CollectPaintedRegions(regions);
+        var tips = regions.Select(r => r.Tooltip).OfType<string>().ToList();
+        tips.ShouldContain(t => t.Contains(FlightMap.RebaseOnlyTip) && t.Contains(PullRequestStates.RebaseOnlyLabel) && t.Contains("cannot be replayed by rebase"));
+        tips.ShouldContain(t => t.Contains("pilot PR #8: conflicts") && t.Contains("it needs a fix"));
+
+        // The handled colour is the flying one, never the conflict's; against the land it is drawn on it reads at 4.5:1 in the standard palette.
+        // Night is dim red on near-black by design (every Night colour is a red of the same hue), so there the bar is that every other
+        // Night word on the map meets: no dimmer than the dim leg-state words drawn on the same land.
+        var p = night ? Palette.Night : Palette.Standard;
+        p.Flying.ShouldNotBe(p.Failed);
+        var contrast = Contrast(p.Flying, p.LandHere);
+        if (night)
+        {
+            // An absolute floor too: "no dimmer than Dim" alone passes whatever Night's colours become. Flying on LandHere is about 2.7:1 today.
+            contrast.ShouldBeGreaterThanOrEqualTo(2.5, "the handled word is too dim on the Night land");
+            contrast.ShouldBeGreaterThanOrEqualTo(Contrast(p.Dim, p.LandHere));
+        }
+        else
+        {
+            contrast.ShouldBeGreaterThanOrEqualTo(4.5);
+        }
+        var image = renderer.Surface;
+        var flyingInk = 0;
+        var rebaseBox = words.First(w => w.Text == rebaseWord).Box;
+        for (var y = (int)rebaseBox.Y; y < (int)(rebaseBox.Y + rebaseBox.Height) && y < image.Height; y++)
+        {
+            for (var x = Math.Max(0, (int)rebaseBox.X); x < (int)(rebaseBox.X + rebaseBox.Width) && x < image.Width; x++)
+            {
+                var o = (y * image.Width + x) * 4;
+                flyingInk += Math.Abs(image.Pixels[o] - p.Flying.Red) + Math.Abs(image.Pixels[o + 1] - p.Flying.Green) + Math.Abs(image.Pixels[o + 2] - p.Flying.Blue) < 40 ? 1 : 0;
+            }
+        }
+        flyingInk.ShouldBeGreaterThan(0, "the rebase-only word is drawn in the handled colour");
+
+        // The capture for the flight's page, written to PILOT_JOB_ARTIFACTS (or the test's captures folder).
+        var dir = Environment.GetEnvironmentVariable("PILOT_JOB_ARTIFACTS") is { Length: > 0 } given ? given : Path.Combine(AppContext.BaseDirectory, "captures");
+        Directory.CreateDirectory(dir);
+        File.WriteAllBytes(Path.Combine(dir, $"map-rebase-only-{(night ? "night" : "standard")}-{width}.png"), SharpAstro.Png.PngWriter.Encode(image.Pixels, width, 800));
     }
 }

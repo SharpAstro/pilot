@@ -1,3 +1,4 @@
+using Pilot.Contracts;
 using Pilot.Node.Flights;
 using Shouldly;
 using Xunit;
@@ -70,6 +71,102 @@ public sealed class MergeStateTests
         state.DroppedFromQueue.ShouldBe("failed checks");
         Read("ready", "queue-idle").ShouldNotBeNull().DroppedFromQueue.ShouldBeNull();
         Read("ready").ShouldNotBeNull().DroppedFromQueue.ShouldBeNull();
+    }
+
+    private static MergeState? ReadWith(string mergeable, bool? rebaseable, bool baseRebases, string status = "CLEAN") =>
+        GhCli.ReadMergeState(new MergeFacts("OPEN", false, status, mergeable, "", false, [("pass", "build", null)], rebaseable, baseRebases));
+
+    [Fact]
+    public void MergeableButNotRebaseableOnABaseThatRebasesIsRebaseOnlyNotConflictsNorReady()
+    {
+        var state = ReadWith("MERGEABLE", rebaseable: false, baseRebases: true).ShouldNotBeNull();
+        state.Kind.ShouldBe(MergeKinds.RebaseOnly);
+        state.IsReady.ShouldBeTrue();
+    }
+
+    [Fact]
+    public void ARealConflictStaysConflictsWhateverRebaseSays()
+    {
+        ReadWith("CONFLICTING", rebaseable: false, baseRebases: true).ShouldNotBeNull().Kind.ShouldBe(MergeKinds.Conflicts);
+        ReadWith("CONFLICTING", rebaseable: true, baseRebases: true).ShouldNotBeNull().Kind.ShouldBe(MergeKinds.Conflicts);
+    }
+
+    [Fact]
+    public void ACleanPrOnARebaseBaseIsReadyAndSoIsOneNothingWasAskedOf()
+    {
+        ReadWith("MERGEABLE", rebaseable: true, baseRebases: true).ShouldNotBeNull().Kind.ShouldBe(MergeKinds.Ready);
+        // Not read (a squash repo is never asked): null, and a false that the base does not rebase is no state either.
+        ReadWith("MERGEABLE", rebaseable: null, baseRebases: false).ShouldNotBeNull().Kind.ShouldBe(MergeKinds.Ready);
+        ReadWith("MERGEABLE", rebaseable: false, baseRebases: false).ShouldNotBeNull().Kind.ShouldBe(MergeKinds.Ready);
+    }
+
+    [Fact]
+    public void RebaseOnlyOnlyReplacesReadyAChangeRequestOrFailedCheckIsToldFirst()
+    {
+        GhCli.ReadMergeState(new MergeFacts("OPEN", false, "BLOCKED", "MERGEABLE", "CHANGES_REQUESTED", false, [("pass", "build", null)], false, true)).ShouldNotBeNull().Kind.ShouldBe(MergeKinds.ChangesRequested);
+        GhCli.ReadMergeState(new MergeFacts("OPEN", false, "CLEAN", "MERGEABLE", "", false, [("fail", "build", null)], false, true)).ShouldNotBeNull().Kind.ShouldBe(MergeKinds.Blocked);
+    }
+
+    [Theory]
+    [InlineData(null, true, false, true)]
+    [InlineData("REBASE", true, true, true)]
+    [InlineData("SQUASH", false, true, false)]
+    [InlineData("SQUASH", true, false, false)]
+    [InlineData(null, true, true, false)]
+    [InlineData(null, false, true, false)]
+    public void ABaseMergesByRebaseWhenItsQueueSaysSoOrTheRepoAllowsNothingElse(string? queue, bool rebase, bool squash, bool expected)
+    {
+        var allowed = new AllowedMergeMethods(squash, rebase, Merge: false);
+        // The queue's word counts when there is a queue; else only a repo that allows rebase alone (linear history) rebases.
+        MergeMethods.Rebases(queue, allowed).ShouldBe(expected);
+    }
+
+    [Fact]
+    public void ThePrAnswerCanBeRebasedIsReadFromItsGraphQlReply()
+    {
+        GhCli.ParseCanBeRebased("""{"data":{"repository":{"pullRequest":{"canBeRebased":false}}}}""").ShouldBe(false);
+        GhCli.ParseCanBeRebased("""{"data":{"repository":{"pullRequest":{"canBeRebased":true}}}}""").ShouldBe(true);
+        GhCli.ParseCanBeRebased("""{"data":{"repository":null}}""").ShouldBeNull();
+        GhCli.ParseCanBeRebased("not json").ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task TheFakeOnlyAsksTheRebaseAnswerOfABaseThatMergesByRebase()
+    {
+        var github = new FakeGitHub { Pr = GhAnswers.PullRequestByBranch(number: 5, mergeable: "MERGEABLE"), Summary = GhAnswers.ChecksOf(ChoiceStatus.Passing) };
+        github.CanBeRebased = false;
+        // Squash and merge allowed (the default): never read, so the PR reads ready.
+        (await github.PullRequestAsync("x", "b", TestContext.Current.CancellationToken)).ShouldNotBeNull().Rebaseable.ShouldBeNull();
+        (await github.MergeStateAsync("x", 5, TestContext.Current.CancellationToken)).ShouldNotBeNull().Kind.ShouldBe(MergeKinds.Ready);
+        github.MergeQueueMethod = "SQUASH";
+        (await github.MergeStateAsync("x", 5, TestContext.Current.CancellationToken)).ShouldNotBeNull().Kind.ShouldBe(MergeKinds.Ready);
+
+        // A queue that rebases: read, and rebase-only.
+        github.MergeQueueMethod = "REBASE";
+        (await github.PullRequestAsync("x", "b", TestContext.Current.CancellationToken)).ShouldNotBeNull().Rebaseable.ShouldBe(false);
+        (await github.MergeStateAsync("x", 5, TestContext.Current.CancellationToken)).ShouldNotBeNull().Kind.ShouldBe(MergeKinds.RebaseOnly);
+        // A repo that allows rebase alone (required_linear_history) is a rebase base without a queue.
+        github.MergeQueueMethod = null;
+        github.AllowedMethods = new AllowedMergeMethods(false, true, false);
+        (await github.MergeStateAsync("x", 5, TestContext.Current.CancellationToken)).ShouldNotBeNull().Kind.ShouldBe(MergeKinds.RebaseOnly);
+    }
+
+    [Fact]
+    public void TheRealSingleReadsAskTheRebaseAnswerOnlyOfAMergeablePrWithABase()
+    {
+        // The gate GhCli.PullRequestAsync and MergeStateAsync run before they spend a call on canBeRebased (the base's rules come second).
+        GhCli.AsksRebaseable("MERGEABLE", "main").ShouldBeTrue();
+        GhCli.AsksRebaseable("CONFLICTING", "main").ShouldBeFalse();
+        GhCli.AsksRebaseable("UNKNOWN", "main").ShouldBeFalse();
+        GhCli.AsksRebaseable("MERGEABLE", "").ShouldBeFalse();
+        GhCli.AsksRebaseable(null, "main").ShouldBeFalse();
+        // MergeStateAsync reads both from gh pr view's answer: a conflict fixture never asks, a ready one does.
+        var conflict = GhCli.BaseOf(Fixture("conflicts")).ShouldNotBeNull();
+        GhCli.AsksRebaseable(conflict.Mergeable, conflict.Base).ShouldBeFalse();
+        var ready = GhCli.BaseOf(Fixture("ready")).ShouldNotBeNull();
+        (ready.Mergeable, ready.Base).ShouldBe(("MERGEABLE", "main"));
+        GhCli.AsksRebaseable(ready.Mergeable, ready.Base).ShouldBeTrue();
+        GhCli.BaseOf("not json").ShouldBeNull();
     }
 
     [Fact]

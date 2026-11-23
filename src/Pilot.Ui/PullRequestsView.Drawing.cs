@@ -477,6 +477,14 @@ internal sealed partial class PullRequestsView<TSurface>
     private static Layout.Node Middle(Layout.Node content) =>
         Layout.Builder.VStack(Layout.Builder.Spacer().HStar(), content.HFixed(ChipHeight), Layout.Builder.Spacer().HStar());
 
+    // A chip's hover: its words, and for the two conflict kinds what each means for the person.
+    internal static string StateTip(PullRequestRow pr) => pr.Kind switch
+    {
+        PullRequestKind.RebaseOnly => FlightMap.RebaseOnlyTip,
+        PullRequestKind.Conflicts => $"{pr.Label}: it conflicts with the base and needs a fix (go around).",
+        _ => pr.Label,
+    };
+
     // The chip: the Contracts label in the kind's colours, the width of the column so a column of them reads as one; a failed
     // check's chip opens its run.
     private Layout.Node StateCell(PullRequestRow pr)
@@ -488,7 +496,7 @@ internal sealed partial class PullRequestsView<TSurface>
         }
         else
         {
-            node = node.WithTooltip(pr.Label);
+            node = node.WithTooltip(StateTip(pr));
         }
         return Middle(node);
     }
@@ -595,6 +603,8 @@ internal sealed partial class PullRequestsView<TSurface>
             PullRequestKind.Ready => new RGBAColor32(0x1f, 0x6b, 0x45, 0xff),
             PullRequestKind.ChecksRunning or PullRequestKind.AwaitingCheck or PullRequestKind.Armed or PullRequestKind.Unknown => new RGBAColor32(0x6b, 0x52, 0x1c, 0xff),
             PullRequestKind.ChecksFailed => new RGBAColor32(0x7a, 0x28, 0x28, 0xff),
+            // Handled: known and harmless, a teal beside Ready's green, never the conflict magenta.
+            PullRequestKind.RebaseOnly => new RGBAColor32(0x1f, 0x5f, 0x5a, 0xff),
             PullRequestKind.Conflicts => new RGBAColor32(0x7a, 0x2a, 0x5a, 0xff),
             PullRequestKind.ChangesRequested => new RGBAColor32(0x8a, 0x48, 0x1c, 0xff),
             PullRequestKind.Behind => new RGBAColor32(0x3a, 0x4a, 0x66, 0xff),

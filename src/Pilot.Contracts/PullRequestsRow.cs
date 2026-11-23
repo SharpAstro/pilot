@@ -27,6 +27,12 @@ public enum PullRequestKind
     /// <summary>GitHub's auto-merge is armed on it: it merges once what it waits for is done.</summary>
     Armed,
 
+    /// <summary>
+    /// Mergeable, but not rebaseable, on a base that merges by rebase: "Conflict (rebase only): known, lands squashed". A merge of main
+    /// that resolved a conflict cannot be replayed by rebase; the node lays the PR as one commit at landing. Handled, never trouble.
+    /// </summary>
+    RebaseOnly,
+
     /// <summary>Every check shown is green, yet GitHub holds the merge: a required check has yet to report (a gate job starts only once the builds finish).</summary>
     AwaitingCheck,
 }
@@ -43,6 +49,12 @@ public readonly record struct PullRequestMergeState(PullRequestKind Kind, string
 /// </summary>
 public static class PullRequestStates
 {
+    /// <summary>The chip's words for <see cref="PullRequestKind.RebaseOnly"/>: it is GitHub's word (a conflict) and the node's (known, harmless).</summary>
+    public const string RebaseOnlyLabel = "Conflict (rebase only): known, lands squashed";
+
+    /// <summary>The chip's short words: the State column is 144 px wide, so <see cref="RebaseOnlyLabel"/> would be cut; it stays whole on the hover and the card.</summary>
+    public const string RebaseOnlyChip = "Conflict (rebase)";
+
     /// <summary>
     /// How much a PR of this kind asks of the person, 0 the most: ready to merge, then changes asked for, a conflict, failed
     /// checks, behind, a review wanted, waiting (running checks, a required check to come, an armed merge, a merge state not
@@ -56,7 +68,7 @@ public static class PullRequestStates
         PullRequestKind.ChecksFailed => 3,
         PullRequestKind.Behind => 4,
         PullRequestKind.ReviewRequired => 5,
-        PullRequestKind.ChecksRunning or PullRequestKind.AwaitingCheck or PullRequestKind.Armed or PullRequestKind.Unknown => 6,
+        PullRequestKind.ChecksRunning or PullRequestKind.AwaitingCheck or PullRequestKind.Armed or PullRequestKind.Unknown or PullRequestKind.RebaseOnly => 6,
         PullRequestKind.InMergeQueue => 7,
         _ => 8,
     };

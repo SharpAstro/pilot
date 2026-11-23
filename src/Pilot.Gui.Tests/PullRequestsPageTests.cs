@@ -268,6 +268,58 @@ public sealed class PullRequestsPageTests
         Dump(flightsOnly).ShouldNotContain("SharpAstro/DIR.Lib");
     }
 
+    // pilot #1299: the rebase-only chip says it is known and harmless, in a colour of its own (not the conflict's), with a hover that
+    // explains it; a real conflict keeps its chip and says it needs a fix. No text over text at a narrow or a wide page.
+    [Theory]
+    [InlineData(640f)]
+    [InlineData(1600f)]
+    public void ARebaseOnlyChipIsHandledAndARealConflictsNeedsAFix(float width)
+    {
+        var row = new PullRequestsRow
+        {
+            Orgs = ["SharpAstro"], ReadAt = Now - TimeSpan.FromSeconds(40), Viewer = "sebgod",
+            PullRequests =
+            [
+                Pr("SharpAstro/pilot", 1299, LongTitle, PullRequestKind.RebaseOnly, PullRequestStates.RebaseOnlyChip, flight: "PIL1299", review: PullRequestReview.Passed),
+                Pr("SharpAstro/tianwen", 1799, "Plate solving: a fallback", PullRequestKind.Conflicts, "Conflicts", needsMe: true, flight: "TIA1799", review: PullRequestReview.Changes),
+            ],
+        };
+        using var renderer = new RgbaImageRenderer((uint)width, 900);
+        var (_, page) = Chrome(renderer);
+        var arranged = Arrange(renderer, page, Screen(row), width);
+
+        var tips = arranged.Select(a => a.Node.Tooltip).Where(t => t is not null).ToList();
+        tips.ShouldContain(t => t!.StartsWith(PullRequestStates.RebaseOnlyLabel) && t.Contains("cannot be replayed by rebase") && t.Contains("Nothing to fix"));
+        tips.ShouldContain("Conflicts: it conflicts with the base and needs a fix (go around).");
+
+        var day = Palette.Standard;
+        PullRequestsView<RgbaImage>.ChipColors(day, PullRequestKind.RebaseOnly).Bg.ShouldNotBe(PullRequestsView<RgbaImage>.ChipColors(day, PullRequestKind.Conflicts).Bg);
+        TextOverlap.Faults(arranged).Select(f => f.Text).ShouldBeEmpty();
+
+        // The chip's words are not cut: its text fits the State column (the full sentence is on the hover).
+        var chip = arranged.Single(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text t } && t.Value == PullRequestStates.RebaseOnlyChip);
+        var text = (Layout.Content.Text)((Layout.Node.Leaf)chip.Node).Content;
+        var (measured, _) = renderer.MeasureText(text.Value, SessionsCapture.FontPath, text.FontSize);
+        measured.ShouldBeLessThanOrEqualTo(chip.Bounds.Width, "the rebase-only chip text is cut");
+        Contrast(PullRequestsView<RgbaImage>.ChipColors(Palette.Standard, PullRequestKind.RebaseOnly).Fg, PullRequestsView<RgbaImage>.ChipColors(Palette.Standard, PullRequestKind.RebaseOnly).Bg).ShouldBeGreaterThanOrEqualTo(4.5);
+        // Night is dim red on near-black by design (Palette.Night.Bright 0xc80000 on PanelBg 0x100000, about 3.4:1), as every Night chip is,
+        // so the 4.5:1 of the standard palette cannot hold there; the bar is the 3:1 the other Night chips meet.
+        Contrast(PullRequestsView<RgbaImage>.ChipColors(Palette.Night, PullRequestKind.RebaseOnly).Fg, PullRequestsView<RgbaImage>.ChipColors(Palette.Night, PullRequestKind.RebaseOnly).Bg).ShouldBeGreaterThanOrEqualTo(3.0);
+
+        // The capture for the flight's page: the page at this width, in the Standard palette (a dark theme, not a bright one) and in night, written to PILOT_JOB_ARTIFACTS (or the test's captures folder).
+        var dir = Environment.GetEnvironmentVariable("PILOT_JOB_ARTIFACTS") is { Length: > 0 } given ? given : Path.Combine(AppContext.BaseDirectory, "captures");
+        Directory.CreateDirectory(dir);
+        foreach (var night in new[] { false, true })
+        {
+            using var shot = new RgbaImageRenderer((uint)width, 700);
+            var (chrome, _) = Chrome(shot);
+            chrome.Show(PilotPage.PullRequests);
+            chrome.Night.On = night;
+            chrome.Render(new SessionsScreen([], "test", Now), null, null, null, null, null, Screen(row), new RectF32(0, 0, width, 700));
+            File.WriteAllBytes(Path.Combine(dir, $"pr-rebase-only-{(night ? "night" : "standard")}-{width}.png"), SharpAstro.Png.PngWriter.Encode(shot.Surface.Pixels, (int)width, 700));
+        }
+    }
+
     [Fact]
     public void ARowsChipTitleFlightAuthorReviewAndAgeAreWhatTheRowSays()
     {

@@ -24,7 +24,7 @@ public sealed partial class GhCli
     // 50 newest-updated open PRs of the repo: a flight's PR is among the freshly touched ones, and one beyond them is read singly.
     internal const string OpenPullRequestsByHeadQuery = "query($owner:String!,$name:String!){rateLimit{cost remaining resetAt} repository(owner:$owner,name:$name){"
         + "pullRequests(states:OPEN,first:50,orderBy:{field:UPDATED_AT,direction:DESC}){nodes{"
-        + "number state url isDraft headRefName headRefOid labels(first:100){nodes{name}} mergeable mergeStateStatus reviewDecision "
+        + "number state url isDraft headRefName headRefOid baseRefName canBeRebased labels(first:100){nodes{name}} mergeable mergeStateStatus reviewDecision "
         + "isMergeQueueEnabled isInMergeQueue mergeQueueEntry{position} autoMergeRequest{enabledAt} "
         + "timelineItems(last:10,itemTypes:[ADDED_TO_MERGE_QUEUE_EVENT,REMOVED_FROM_MERGE_QUEUE_EVENT]){nodes{__typename ... on AddedToMergeQueueEvent{createdAt} ... on RemovedFromMergeQueueEvent{createdAt reason}}} "
         + "commits(last:1){nodes{commit{statusCheckRollup{contexts(first:100){nodes{__typename "
@@ -38,13 +38,52 @@ public sealed partial class GhCli
         {
             return null;
         }
-        var (read, cost) = ParseOpenByHead(output);
+        // canBeRebased rides in the batch; only a PR that is mergeable yet not rebaseable makes the node ask what its base merges by.
+        var rebasing = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var baseRef in NotRebaseableBases(output))
+        {
+            if (await BaseMergesByRebaseAsync(repoPath, baseRef, cancellationToken))
+            {
+                rebasing.Add(baseRef);
+            }
+        }
+        var (read, cost) = ParseOpenByHead(output, baseRef => rebasing.Contains(baseRef));
         NodeTraffic.Shared.GhCalls.RecordCost("api graphql", "GhCli.OpenPullRequestsByHeadAsync", cost, counted);
         return read;
     }
 
-    /// <summary><see cref="OpenPullRequestsByHeadQuery"/>'s answer as <see cref="OpenPullRequest"/>s and what it cost; null when the answer holds no repository.</summary>
-    internal static (OpenPullRequest[]? PullRequests, int Cost) ParseOpenByHead(string json)
+    /// <summary>The bases of the PRs in the batch answer that GitHub calls mergeable yet not rebaseable: the only ones whose base's merge method matters.</summary>
+    internal static HashSet<string> NotRebaseableBases(string json)
+    {
+        var bases = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            if (doc.RootElement.TryGetProperty("data", out var data) && data.ValueKind == JsonValueKind.Object
+                && data.TryGetProperty("repository", out var repo) && repo.ValueKind == JsonValueKind.Object
+                && repo.TryGetProperty("pullRequests", out var listed) && listed.TryGetProperty("nodes", out var nodes) && nodes.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var pr in nodes.EnumerateArray())
+                {
+                    if (pr.ValueKind == JsonValueKind.Object && TextOf(pr, "mergeable") == "MERGEABLE" && TextOf(pr, "baseRefName") is { Length: > 0 } baseRef
+                        && pr.TryGetProperty("canBeRebased", out var can) && can.ValueKind == JsonValueKind.False)
+                    {
+                        bases.Add(baseRef);
+                    }
+                }
+            }
+        }
+        catch (JsonException)
+        {
+        }
+        return bases;
+    }
+
+    /// <summary>
+    /// <see cref="OpenPullRequestsByHeadQuery"/>'s answer as <see cref="OpenPullRequest"/>s and what it cost; null when the answer holds no repository.
+    /// <paramref name="baseRebases"/> says whether a base branch merges by rebase (null: none does), so <c>Rebaseable</c> is set only where it can mean something.
+    /// </summary>
+    internal static (OpenPullRequest[]? PullRequests, int Cost) ParseOpenByHead(string json, Func<string, bool>? baseRebases = null)
     {
         try
         {
@@ -59,7 +98,7 @@ public sealed partial class GhCli
             var found = new List<OpenPullRequest>();
             foreach (var pr in nodes.EnumerateArray())
             {
-                if (pr.ValueKind == JsonValueKind.Object && OpenPullRequestOf(pr) is { } one)
+                if (pr.ValueKind == JsonValueKind.Object && OpenPullRequestOf(pr, baseRebases) is { } one)
                 {
                     found.Add(one);
                 }
@@ -72,7 +111,7 @@ public sealed partial class GhCli
         }
     }
 
-    private static OpenPullRequest? OpenPullRequestOf(JsonElement pr)
+    private static OpenPullRequest? OpenPullRequestOf(JsonElement pr, Func<string, bool>? baseRebases)
     {
         if (!pr.TryGetProperty("number", out var number) || number.ValueKind != JsonValueKind.Number || !number.TryGetInt32(out var n) || TextOf(pr, "headRefName") is not { } head)
         {
@@ -83,11 +122,19 @@ public sealed partial class GhCli
         var (checks, _, _) = PullRequestSearch.Checks(pr);
         // The queue as MergeQueueAsync reads it: the same parser, over the node dressed as that query's answer.
         var queue = ParseMergeQueue($"{{\"data\":{{\"repository\":{{\"pullRequest\":{pr.GetRawText()}}}}}}}");
-        var merge = ReadMergeState(new MergeFacts(TextOf(pr, "state") ?? "OPEN", draft, TextOf(pr, "mergeStateStatus"), TextOf(pr, "mergeable"), TextOf(pr, "reviewDecision"), armed, checks), queue);
+        // As the single reads do: canBeRebased counts only for a PR GitHub calls mergeable on a base that merges by rebase.
+        var baseRef = TextOf(pr, "baseRefName") ?? "";
+        var rebases = TextOf(pr, "mergeable") == "MERGEABLE" && baseRef.Length > 0 && baseRebases?.Invoke(baseRef) == true;
+        bool? rebaseable = null;
+        if (rebases && pr.TryGetProperty("canBeRebased", out var can) && can.ValueKind is JsonValueKind.True or JsonValueKind.False)
+        {
+            rebaseable = can.ValueKind == JsonValueKind.True;
+        }
+        var merge = ReadMergeState(new MergeFacts(TextOf(pr, "state") ?? "OPEN", draft, TextOf(pr, "mergeStateStatus"), TextOf(pr, "mergeable"), TextOf(pr, "reviewDecision"), armed, checks, rebaseable, rebases), queue);
         var labels = pr.TryGetProperty("labels", out var l) && l.TryGetProperty("nodes", out var names) && names.ValueKind == JsonValueKind.Array
             ? (IReadOnlyList<string>)[.. names.EnumerateArray().Select(x => TextOf(x, "name")).OfType<string>()]
             : null;
-        var pull = new PullRequest(n, TextOf(pr, "state") ?? "OPEN", TextOf(pr, "headRefOid") ?? "", TextOf(pr, "url") ?? "", TextOf(pr, "mergeable") ?? "", Labels: labels, Draft: draft);
+        var pull = new PullRequest(n, TextOf(pr, "state") ?? "OPEN", TextOf(pr, "headRefOid") ?? "", TextOf(pr, "url") ?? "", TextOf(pr, "mergeable") ?? "", Base: baseRef, Labels: labels, Draft: draft, Rebaseable: rebaseable);
         var (ciStarted, ciLength) = CiTimesOf(pr);
         return new OpenPullRequest(head, pull, merge, SummariseChecks(checks), armed, queue, ciStarted, ciLength);
     }

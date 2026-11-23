@@ -424,52 +424,6 @@ internal sealed partial class FlightsView<TSurface>
         }
     }
 
-    private static string StateWord(AirportState state) => state switch
-    {
-        AirportState.Done => "done",
-        AirportState.Flying => "flying",
-        AirportState.Failed => "failed",
-        _ => "planned",
-    };
-
-    private static string StatusWord(DestinationStatus status) => status switch
-    {
-        DestinationStatus.NoPr => "no PR yet",
-        DestinationStatus.Open => "open",
-        DestinationStatus.Draft => "draft",
-        DestinationStatus.Reviewing => "reviewing",
-        DestinationStatus.Passed => "passed",
-        DestinationStatus.Changes => "changes",
-        DestinationStatus.Armed => "armed",
-        DestinationStatus.Queued => "queued",
-        DestinationStatus.Conflicts => "conflicts",
-        _ => "merged",
-    };
-
-    private static string Fit(string text, int chars) => text.Length <= chars ? text : text[..(chars - 1)] + "…";
-
-    // The words on a destination's sign: its repo and PR number (tianwen #7), the repo cut where both do not fit (tia… #1896); as wide
-    // as a leg's name, so a connection's drop out of the sign (FlightMap.LabelHalfWidth) passes clear of it. The repo alone
-    // before there is a PR.
-    private static string SignOf(string repo, int? pullRequest)
-    {
-        if (pullRequest is not { } pr)
-        {
-            return repo.Length > 0 ? Fit(repo, LabelChars) : "PR";
-        }
-        var number = $" #{pr}";
-        return LabelChars - number.Length < 4 || repo.Length == 0 ? $"PR #{pr}" : Fit(repo, LabelChars - number.Length) + number;
-    }
-
-    // What a destination says on hover: its PR by repo and number and where it stands, then the flight's brief.
-    private string DestinationTip(FlightLine line, MapDestination d)
-    {
-        var repo = line.Row.Repo;
-        var sign = d.PullRequest is { } pr ? $"{repo} PR #{pr}" : $"{repo} PR";
-        var first = !MapLayers.ShowPrStates ? sign : d.PullRequest is null ? $"{repo}: {StatusWord(d.Status)}" : $"{sign}: {StatusWord(d.Status)}";
-        return first + "\n" + ChipBrief.Text(ChipBrief.Flight(line));
-    }
-
     // A click target at a map point: a spacer at its own size, floated at its place in the map (scaled by k).
     private Layout.Node Target(float cx, float cy, float r, Func<Layout.Node, Layout.Node> make)
     {
@@ -762,7 +716,7 @@ internal sealed partial class FlightsView<TSurface>
             DestinationStatus.Merged => Landed,
             DestinationStatus.Conflicts or DestinationStatus.Changes => Failed,
             DestinationStatus.NoPr => P.RouteAhead,
-            DestinationStatus.Passed or DestinationStatus.Queued or DestinationStatus.Armed => Flying,
+            DestinationStatus.Passed or DestinationStatus.RebaseOnly or DestinationStatus.Queued or DestinationStatus.Armed => Flying,
             _ => Held,
         };
         FillRect(X(d.X) - r, Y(d.Y) - r, 2f * r, 2f * r, color, 2f * s);

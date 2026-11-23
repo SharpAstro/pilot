@@ -590,6 +590,7 @@ public sealed partial class LegCommander
             MergeKinds.Pending when merge.AwaitsCheck => (ChoiceStatus.Pending, null, $"{code}'s PR #{number} waits for a required check", own ? card.Detail : unarmed ?? "A check GitHub requires has yet to report. Merge arms the merge: it goes through once it passes."),
             MergeKinds.Pending => (ChoiceStatus.Pending, merge.Progress, $"{code}'s PR #{number}'s checks are running", own ? card.Detail : unarmed ?? "Its checks run again. Merge arms the merge: it goes through once they pass."),
             MergeKinds.Ready => (ChoiceStatus.Passing, null, ready, own ? card.Detail : unarmed ?? "Nothing on GitHub stands in its way."),
+            MergeKinds.RebaseOnly => (ChoiceStatus.Passing, null, ready, own ? card.Detail : unarmed ?? $"{PullRequestStates.RebaseOnlyLabel}. A merge of main that resolved a conflict cannot be replayed by rebase; the node lays the PR as one commit at landing. Nothing else stands in its way."),
             // Armed on green checks with a review still to come: GitHub waits for that, not for checks.
             MergeKinds.Armed when merge.Reason is { } waits => (ChoiceStatus.Armed, merge.Progress, $"{code}'s PR #{number} merges once it has {waits}", $"GitHub's auto-merge is armed: its checks passed, and GitHub waits for {waits} before it merges. GitHub merges it then, with the node up or not."),
             MergeKinds.Armed => (ChoiceStatus.Armed, merge.Progress, $"{code}'s PR #{number} merges when its checks pass", $"GitHub's auto-merge is armed: merging when checks pass{(merge.Progress is { } progress ? $", {progress} done" : "")}. GitHub merges it, with the node up or not."),
@@ -604,7 +605,7 @@ public sealed partial class LegCommander
             return;
         }
         // A dropped queue entry is said on a card that showed it queued, once it is offered again: why GitHub took it out.
-        if (!own && merge.DroppedFromQueue is { } dropped && merge.Kind is MergeKinds.Ready or MergeKinds.Pending)
+        if (!own && merge.DroppedFromQueue is { } dropped && merge.Kind is MergeKinds.Ready or MergeKinds.RebaseOnly or MergeKinds.Pending)
         {
             detail = $"Dropped from the merge queue: {dropped}. Merge queues it again once that is fixed.{(detail is null ? "" : " " + detail)}";
         }

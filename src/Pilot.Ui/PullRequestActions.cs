@@ -51,7 +51,7 @@ internal static class PullRequestActions
             {
                 offered.Add(new(PullRequestActionKind.Merge, CardsView<object>.StatusLabel(wait), waiting.Card.Title, waiting.Card, waiting.Number, ChoiceStatus.WaitsForLegs));
             }
-            else if (pr.Kind is PullRequestKind.Ready or PullRequestKind.ChecksRunning or PullRequestKind.AwaitingCheck && Choice(cards, code, Verbs.Merge) is { } merge)
+            else if (pr.Kind is PullRequestKind.Ready or PullRequestKind.RebaseOnly or PullRequestKind.ChecksRunning or PullRequestKind.AwaitingCheck && Choice(cards, code, Verbs.Merge) is { } merge)
             {
                 var choice = merge.Card.Choices[merge.Number - 1];
                 var pending = pr.Kind is PullRequestKind.ChecksRunning or PullRequestKind.AwaitingCheck;

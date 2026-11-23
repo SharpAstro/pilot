@@ -275,7 +275,7 @@ public static class Staleness
         read?.PullRequests.FirstOrDefault(p => p.Flight == flight.Code || (p.Number == flight.PullRequest && p.Repo == flight.Repo));
 
     private static bool IsGreen(PullRequestRow? pr) => pr is not null
-        && (pr.Kind is PullRequestKind.Ready or PullRequestKind.Armed or PullRequestKind.InMergeQueue
+        && (pr.Kind is PullRequestKind.Ready or PullRequestKind.RebaseOnly or PullRequestKind.Armed or PullRequestKind.InMergeQueue
             || (pr.ChecksTotal > 0 && pr.ChecksDone >= pr.ChecksTotal && pr.FailedCheck is null && pr.Kind is not (PullRequestKind.ChecksFailed or PullRequestKind.Conflicts)));
 
     private static DateTimeOffset? OpenSince(FlightRow flight, PullRequestRow? pr, List<CardRow> cards) =>

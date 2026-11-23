@@ -166,6 +166,10 @@ internal sealed class LookGitHub(IGitHub inner, PrPollSchedule? schedule = null)
     public Task<OpenPullRequest[]?> OpenPullRequestsByHeadAsync(string repoPath, CancellationToken cancellationToken) =>
         inner.OpenPullRequestsByHeadAsync(repoPath, cancellationToken);
 
+    // A read of the repo's git, not of a PR: the look holds nothing of it.
+    public Task<bool> BaseMergesByRebaseAsync(string repoPath, string branch, CancellationToken cancellationToken) =>
+        inner.BaseMergesByRebaseAsync(repoPath, branch, cancellationToken);
+
     // Writes: through to GitHub, then what the look read of the PR is stale.
     private async Task<T> Written<T>(string repoPath, int number, Func<Task<T>> write)
     {
