@@ -79,8 +79,7 @@ public sealed class ToastOverlapTests
         summaryWords.ShouldAllBe(a => squeezedSummary.Contains(string.Concat(((Layout.Content.Text)((Layout.Node.Leaf)a.Node).Content).Value.Where(ch => !char.IsWhiteSpace(ch) && ch != '…'))),
             "every 12-unit leaf there is a word of the summary");
         var rows = summaryWords.Select(a => MathF.Round(a.Bounds.Y)).Distinct().Count();
-        rows.ShouldBeLessThanOrEqualTo(CardsView<RgbaImage>.ToastSummaryLines, "the toast cuts the summary to three lines");
-        rows.ShouldBeGreaterThan(1, "a summary past the toast's three lines fills more than one");
+        rows.ShouldBe(CardsView<RgbaImage>.ToastSummaryLines, "a summary past the toast's lines is cut at exactly the toast's three rows, not two");
         var last = summaryWords.OrderBy(a => a.Bounds.Y).ThenBy(a => a.Bounds.X).Last();
         ((Layout.Content.Text)((Layout.Node.Leaf)last.Node).Content).Value.TrimEnd().ShouldEndWith("…", Case.Sensitive, "the cut summary ends in an ellipsis, never silently");
         ArrangedText.Concat(seen).Replace(" ", "").ShouldContain(PilotChrome<RgbaImage>.ToastCutLabel.Replace(" ", ""));

@@ -1011,9 +1011,11 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         var tokens = NotificationsHost.Colors();
         var severity = severityOf ?? (card.Bin == CardBin.Ring ? NotificationSeverity.Warn : NotificationSeverity.Info);
         var fill = closed ? Contrast.Mix(tokens.TintedFill(severity), tokens.Raised, ClosedTone) : tokens.TintedFill(severity);
+        // The dim ink a closed card's words are drawn in: Dim as it is where it reads at AA on the toned fill, else a step toward Bright (Dim is 4.49:1 on the success tone).
+        var closedInk = Contrast.Readable(Dim, fill, Bright);
         // A closed card's head, title and summary are dim; an event's head keeps its severity's hue, toned toward the dim ink but still read at AA on its fill.
         var accent = merged ? Live
-            : closed ? severityOf is { } closedSev ? Contrast.Readable(Contrast.Mix(SeverityInk(closedSev), Dim, ClosedTone), fill, Dim) : Dim
+            : closed ? severityOf is { } closedSev ? Contrast.Readable(Contrast.Mix(SeverityInk(closedSev), Dim, ClosedTone), fill, closedInk) : closedInk
             : severityOf is { } sev ? SeverityInk(sev) : card.Bin == CardBin.Ring ? Ring : ForYou;
         var leg = CardLeg.Of(card);
         // The first place the leg's name is in the title or the summary is the link; a later one is plain, so one card has one link to its leg.
@@ -1047,7 +1049,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
             // A card about a page (its PR) has its title as the link to it, as a hyperlink reads: where the eye goes first.
             // Marked as a link to elsewhere, so it reads as "open the page", never as an action of its own. A waiting
             // session's link is its button, Answer in the browser, so its title is no second one.
-            Title(card, linker, closed && !merged ? Dim : Bright),
+            Title(card, linker, closed && !merged ? closedInk : Bright),
         };
         // A title of several lines is set off from the detail under it.
         lines.Add(Layout.Builder.Spacer().RowH(4f));
@@ -1059,7 +1061,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
             // rings read as a list, never run together and never cut with the rest only on hover (the owner, 2026-11-22).
             lines.Add(toast
                 ? WrappedProse.Of(summary, 12f, Dim, ToastSummaryLines, selectable: false)
-                : Whole(WrappedProse.Lines(CardSummaryLines.Of(WrappedProse.Bound(summary, SummaryChars)), 12f, closed && !merged ? Dim : Body, linker(12f)), summary, summary.Length > SummaryChars));
+                : Whole(WrappedProse.Lines(CardSummaryLines.Of(WrappedProse.Bound(summary, SummaryChars)), 12f, closed && !merged ? closedInk : Body, linker(12f)), summary, summary.Length > SummaryChars));
         }
         // The leg's name was not in the words above: a small link row of its own, so the leg is one click away all the same.
         if (leg is { } ofLeg && !linked)
@@ -1279,14 +1281,15 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         // value changes in one place. A grid, not a stack with the content padded: a stack measures each child against its whole width, taking off
         // neither a sibling's width nor a padding, so a card whose last button wrapped came out a line short, the button poking out of its
         // bottom edge (DIR.Lib: Engine.MeasureStack). A grid measures its cells at the width their column is given.
-        var pad = NotificationsHost.Style.Padding;
+        // The one inset the frame leaves: the toast's padding, less the border the engine reserves outside the cells.
+        var inset = NotificationsHost.Style.Padding - EdgeWidth;
         return Layout.Builder.Grid(3,
                 Layout.Builder.Spacer(),
-                Layout.Builder.VStack([.. lines]).Pad(0f, pad - EdgeWidth).WStar(),
+                Layout.Builder.VStack([.. lines]).Pad(0f, inset).WStar(),
                 Layout.Builder.Spacer())
             // The frame's width comes out of the inner spacing (the engine reserves a border outside the cells), so the content keeps the
             // width it had unframed and a row of buttons that fit before still fits (Chat about this beside Dismiss at MinWidth).
-            .WithColumns(Layout.Sizing.Fixed(pad - EdgeWidth), Layout.Sizing.Star(), Layout.Sizing.Fixed(pad - EdgeWidth))
+            .WithColumns(Layout.Sizing.Fixed(inset), Layout.Sizing.Star(), Layout.Sizing.Fixed(inset))
             .WithAutoRows()
             .Bg(!closed && Focused(card) ? FocusBg : fill)
             .Border(closed ? Contrast.Mix(tokens.TintedEdge(severity), tokens.Raised, ClosedTone) : tokens.TintedEdge(severity), EdgeWidth, tokens.CornerRadius)
