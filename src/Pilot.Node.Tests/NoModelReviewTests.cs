@@ -245,7 +245,8 @@ public sealed class NoModelReviewTests : ReviewTestsBase
         _github.RunReruns.ShouldBeEmpty("a minute before the reset, after a restart");
         _clock.Advance(TimeSpan.FromMinutes(1));
         await Look(AfterRestart());
-        _github.RunReruns.ShouldBe([ReviewRun], "at the reset, after a restart");
+        _github.RunReruns.Count.ShouldBe(1, "at the reset, after a restart");
+        _github.RunReruns.ShouldBe([ReviewRun]);
         Unavailable().ShouldHaveSingleItem();
     }
 
