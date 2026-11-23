@@ -12,8 +12,9 @@ namespace Pilot.Node.Flights;
 /// </summary>
 /// <param name="fleet">The fleet, looked at each <see cref="Rescan"/> so a grant added later is followed.</param>
 /// <param name="time">The clock: backoffs, rescans and ageing run on it.</param>
+/// <param name="isAway">Whether a peer is away (PIL1312): no stream is opened for it, and one running is stopped; the next rescan after it answers opens it again.</param>
 /// <param name="pace">How long a peer's row outlives its stream; the watch's pace. Unset, <see cref="Fallback"/>.</param>
-public sealed class PeerPullRequests(Func<IFleet?> fleet, TimeProvider time, Func<TimeSpan>? pace = null) : BackgroundService
+public sealed class PeerPullRequests(Func<IFleet?> fleet, TimeProvider time, Func<TimeSpan>? pace = null, Func<string, bool>? isAway = null) : BackgroundService
 {
     /// <summary>The pace when none is given.</summary>
     public static readonly TimeSpan Fallback = TimeSpan.FromMinutes(1);
@@ -128,6 +129,14 @@ public sealed class PeerPullRequests(Func<IFleet?> fleet, TimeProvider time, Fun
             }
             foreach (var peer in peers)
             {
+                if (isAway?.Invoke(peer.Name) == true)
+                {
+                    if (_peers.Remove(peer.Name, out var away))
+                    {
+                        StopQuietly(away.Stop);
+                    }
+                    continue;
+                }
                 if (_peers.ContainsKey(peer.Name))
                 {
                     continue;
@@ -179,6 +188,10 @@ public sealed class PeerPullRequests(Func<IFleet?> fleet, TimeProvider time, Fun
             catch (OperationCanceledException) when (stopping.IsCancellationRequested)
             {
                 return;
+            }
+            catch (PeerAwayException)
+            {
+                // Skipped, not failed: the peer is away, and Follow lets this stream go at the next rescan.
             }
             catch (Exception ex) when (ex is not OutOfMemoryException)
             {
