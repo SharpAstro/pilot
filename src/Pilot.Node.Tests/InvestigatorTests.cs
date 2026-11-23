@@ -482,7 +482,7 @@ public sealed class InvestigatorTests
         await _investigator.SettledAsync();
         var held = Card(card.Id);
         held.Bin.ShouldBe(CardBin.ForYou);
-        held.Detail.ShouldNotBeNull().ShouldNotStartWith(Investigator.HeldLead, "the owner's hold words go in front");
+        held.Detail.ShouldNotBeNull().StartsWith(Investigator.HeldLead, StringComparison.Ordinal).ShouldBeFalse("the owner's hold words go in front");
         Investigator.IsHeld(held.Detail).ShouldBeTrue();
 
         var (next, _) = Restarted();
