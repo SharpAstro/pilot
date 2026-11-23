@@ -355,12 +355,6 @@ public interface IGitHub
     Task<string?> RunFailedLogAsync(string repoPath, long runId, CancellationToken cancellationToken) => Task.FromResult<string?>(null);
 
     /// <summary>
-    /// The <c>run_attempt</c> of workflow run <paramref name="runId"/>, read from the same REST field as <see cref="CiRun.Attempt"/> so both
-    /// sides key a run's log alike; null when gh could not say.
-    /// </summary>
-    Task<int?> RunAttemptAsync(string repoPath, long runId, CancellationToken cancellationToken) => Task.FromResult<int?>(null);
-
-    /// <summary>
     /// Workflow run <paramref name="runId"/>'s state now, from one REST call: its attempt, whether it is completed and its <c>updated_at</c>.
     /// Null when gh could not say. A no-model review run's rerun schedule is read from it, never held in memory.
     /// </summary>

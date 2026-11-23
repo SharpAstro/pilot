@@ -219,35 +219,31 @@ public sealed class OutsideReviews(IGitHub github, TimeProvider? time = null)
     }
 
     /// <summary>
-    /// The <c>run_attempt</c> of run <paramref name="runId"/> that its failed check's job <paramref name="jobId"/> belongs to: asked of GitHub
-    /// once per job id, since a job id names one attempt, and every look when the check names no job. Null when gh could not say; a gh
-    /// failure is thrown as <see cref="IGitHub.RunAttemptAsync"/> throws it.
+    /// The <c>run_attempt</c> that a failed check's job <paramref name="jobId"/> belongs to: the remembered one (a job id names one attempt, a
+    /// rerun makes new jobs), else the one <paramref name="run"/> carries, remembered by job id. Null when neither is known.
     /// </summary>
-    public async Task<int?> AttemptAsync(string repoPath, long runId, long? jobId, CancellationToken cancellationToken)
+    public int? Attempt(long? jobId, RunState? run)
     {
-        if (jobId is { } job)
+        lock (_lock)
         {
-            lock (_lock)
+            var now = _time.GetUtcNow();
+            if (jobId is { } job && _attempts.TryGetValue(job, out var known))
             {
-                if (_attempts.TryGetValue(job, out var known))
-                {
-                    _attemptsUsed[job] = _time.GetUtcNow();
-                    return known;
-                }
+                _attemptsUsed[job] = now;
+                return known;
             }
-        }
-        var attempt = await github.RunAttemptAsync(repoPath, runId, cancellationToken);
-        if (attempt is { } asked && jobId is { } id)
-        {
-            lock (_lock)
+            if (run is null)
             {
-                var now = _time.GetUtcNow();
+                return null;
+            }
+            if (jobId is { } id)
+            {
                 Prune(now);
-                _attempts[id] = asked;
+                _attempts[id] = run.Attempt;
                 _attemptsUsed[id] = now;
             }
+            return run.Attempt;
         }
-        return attempt;
     }
 
     /// <summary>Forgets what the log of <paramref name="runId"/> said, every attempt of it: a run run again keeps its id and gets a new log.</summary>

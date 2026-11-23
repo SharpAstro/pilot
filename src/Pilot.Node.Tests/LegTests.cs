@@ -917,16 +917,10 @@ internal sealed class FakeGitHub : IGitHub
     /// <summary>The <c>run_attempt</c> of each run id; one not listed is on its first attempt, as <see cref="CiRun.Attempt"/>'s default.</summary>
     public System.Collections.Concurrent.ConcurrentDictionary<long, int> RunAttempts { get; } = new();
 
-    /// <summary>How many times a run's attempt was asked for.</summary>
-    public int RunAttemptReads => _runAttemptReads;
+    /// <summary>How many times a run's attempt was asked for (its attempt comes with it).</summary>
+    public int RunStateReads => _runStateReads;
 
-    private int _runAttemptReads;
-
-    public Task<int?> RunAttemptAsync(string repoPath, long runId, CancellationToken cancellationToken)
-    {
-        Interlocked.Increment(ref _runAttemptReads);
-        return Task.FromResult<int?>(RunAttempts.GetValueOrDefault(runId, 1));
-    }
+    private int _runStateReads;
 
     /// <summary>A run's state as GitHub shows it now; one not listed is completed on its <see cref="RunAttempts"/> attempt, ended at <see cref="DefaultRunEnd"/>.</summary>
     public System.Collections.Concurrent.ConcurrentDictionary<long, RunState> RunStates { get; } = new();
@@ -937,8 +931,11 @@ internal sealed class FakeGitHub : IGitHub
     /// <summary>When set, reading a run's state fails as a gh that could not reach GitHub.</summary>
     public bool RunStateFails { get; set; }
 
-    public Task<RunState?> RunStateAsync(string repoPath, long runId, CancellationToken cancellationToken) =>
-        Task.FromResult(RunStateFails ? null : RunStates.TryGetValue(runId, out var s) ? s : new RunState(RunAttempts.GetValueOrDefault(runId, 1), true, DefaultRunEnd));
+    public Task<RunState?> RunStateAsync(string repoPath, long runId, CancellationToken cancellationToken)
+    {
+        Interlocked.Increment(ref _runStateReads);
+        return Task.FromResult(RunStateFails ? null : RunStates.TryGetValue(runId, out var s) ? s : new RunState(RunAttempts.GetValueOrDefault(runId, 1), true, DefaultRunEnd));
+    }
 
     /// <summary>The run ids that were asked to run again, in order.</summary>
     public ConcurrentQueue<long> RunReruns { get; } = [];
