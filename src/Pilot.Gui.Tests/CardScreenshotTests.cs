@@ -217,7 +217,7 @@ public sealed class CardScreenshotTests
         var close = regions.Single(r => r.Result is HitResult.ButtonHit { Action: "attachment:close" });
         foreach (var (x, y) in new[] { (10f, 400f), (600f, 450f), (1250f, 450f) })
         {
-            (x >= close.Bounds.X && x <= close.Bounds.X + close.Bounds.Width && y >= close.Bounds.Y && y <= close.Bounds.Y + close.Bounds.Height).ShouldBeTrue();
+            (x >= close.X && x <= close.X + close.Width && y >= close.Y && y <= close.Y + close.Height).ShouldBeTrue();
         }
         chrome.CoveredAfterPage(600f, 450f).ShouldBeTrue();
         close.OnClick!.Invoke(InputModifier.None);
