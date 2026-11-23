@@ -105,7 +105,7 @@ public sealed partial class LegCommander
             }
             if (state.CardsOf(OutsideReviewUnavailable, Verbs.FlightTarget(flight.Code)).All(c => c.Cause != cause))
             {
-                var (title, next) = OutsideCard(review, due, now);
+                var (title, next) = OutsideCard(review, due, now, run is { Completed: false });
                 state.RaiseCard(CardBin.Handled, OutsideReviewUnavailable, Verbs.FlightTarget(flight.Code),
                     $"{flight.Code}'s PR #{number}: outside review {check.Name} {title}",
                     $"{review.Reason}. The review job never reached a model, so nothing was sent back and no failed check was counted; {next}",
@@ -120,7 +120,8 @@ public sealed partial class LegCommander
     /// (on a rerun) the last attempt's end plus the wait; with no reset, after a doubling wait up to the ceiling from the last end, and never
     /// once the reruns so far reach the bound. The reruns so far are the attempt less one, so a rerun a person asked counts like the node's own:
     /// GitHub keeps no record of who asked, and counting them all only makes the node stop sooner, never rerun more than the bound. Nothing of
-    /// the schedule is held in memory.
+    /// the schedule is held in memory. <c>updated_at</c> is read as the end of the last attempt, which holds only while GitHub leaves it alone once
+    /// the run has completed; a later touch of the run would push the due time back, never forward.
     /// </summary>
     private static DateTimeOffset OutsideDue(NoModelReview review, RunState run)
     {
@@ -139,12 +140,16 @@ public sealed partial class LegCommander
     // The card's title after the check's name, and what the node does next, worded by whether the log named a reset time. The card is raised
     // at the first look of a head that no card of the node's store names, which after a restart or a late look can be after reruns, so the due
     // time can be past (said as "now") or unknown (the run state could not be read, or the bound is reached and the node has stopped).
-    private static (string Title, string Next) OutsideCard(NoModelReview review, DateTimeOffset? due, DateTimeOffset now)
+    private static (string Title, string Next) OutsideCard(NoModelReview review, DateTimeOffset? due, DateTimeOffset now, bool rerunning)
     {
         static string Utc(DateTimeOffset at) => at.ToString("yyyy-MM-dd HH:mm 'UTC'", CultureInfo.InvariantCulture);
         if (due is not { } at)
         {
             return ("is unavailable and the node could not read its run state", "the node looks again and runs it again once it can read the state. The red check still blocks the merge until it passes.");
+        }
+        if (rerunning)
+        {
+            return ("is unavailable and a rerun is running", "the node waits for that rerun to end and looks at its result. The red check still blocks the merge until it passes.");
         }
         if (at == DateTimeOffset.MaxValue)
         {

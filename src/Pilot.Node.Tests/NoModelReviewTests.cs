@@ -336,6 +336,7 @@ public sealed class NoModelReviewTests : ReviewTestsBase
     {
         var checks = await NoModelPr("80", NoModelLog());
         await Look(checks);
+        _github.RunStateReads.ShouldBe(1, "one REST read of the run's state per look, whatever it is used for");
 
         // Attempt 2 ended at 9.5 hours: its log names the 10 hour reset again, but the last end plus the wait (10.5 hours) is later.
         _clock.Advance(TimeSpan.FromHours(9.5));
@@ -350,7 +351,28 @@ public sealed class NoModelReviewTests : ReviewTestsBase
 
     [Fact]
     [Trait("Category", "Slow")]
-    public async Task ALateCardNamesTheBoundsStopOrNowNeverAnImpossibleTime()
+    public async Task AfterARerunARunWhoseResetIsLaterThanItsLastEndPlusTheWaitIsRunAgainAtTheReset()
+    {
+        var checks = await NoModelPr("83", NoModelLog());
+        await Look(checks);
+
+        // Attempt 2 ended at 8 hours: the last end plus the wait is 9 hours, the 10 hour reset is later, and the `reset` arm must win.
+        _clock.Advance(TimeSpan.FromHours(8));
+        RunIs(ReviewRun, 2, completed: true);
+        _clock.Advance(TimeSpan.FromHours(1.5));
+        await Look(checks);
+        _github.RunReruns.ShouldBeEmpty("the last end plus the wait has passed but the reset has not");
+        _clock.Advance(TimeSpan.FromHours(0.5) - TimeSpan.FromMinutes(1));
+        await Look(checks);
+        _github.RunReruns.ShouldBeEmpty("a minute before the reset");
+        _clock.Advance(TimeSpan.FromMinutes(1));
+        await Look(checks);
+        _github.RunReruns.ShouldBe([ReviewRun]);
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task ALateCardNamesTheBoundsStop()
     {
         // The node's store has no card for this head, and the run has already used all its reruns: the card says it has stopped.
         var stopped = await NoModelPr("81", NoResetLog);
@@ -365,7 +387,7 @@ public sealed class NoModelReviewTests : ReviewTestsBase
 
     [Fact]
     [Trait("Category", "Slow")]
-    public async Task ALateCardWhoseDueTimeHasPassedSaysNowNotATimeInThePast()
+    public async Task ALateCardWhileARerunIsRunningSaysSoNotATimeInThePast()
     {
         var checks = await NoModelPr("82", NoResetLog);
         // A rerun is running, and its due time (from its last end) is long past when the card is first raised.
@@ -374,7 +396,8 @@ public sealed class NoModelReviewTests : ReviewTestsBase
         await Look(checks);
 
         var card = Unavailable().ShouldHaveSingleItem();
-        card.Title.ShouldEndWith("run again at now");
+        card.Title.ShouldContain("a rerun is running");
+        card.Title.ShouldNotContain("run again at now");
         _github.RunReruns.ShouldBeEmpty();
     }
 

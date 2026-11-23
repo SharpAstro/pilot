@@ -207,10 +207,10 @@ public sealed class OutsideReviews(IGitHub github, TimeProvider? time = null)
         {
             return null;
         }
-        var review = OutsideReview.Jobs(log, _time.GetUtcNow());
+        var now = _time.GetUtcNow();
+        var review = OutsideReview.Jobs(log, now);
         lock (_lock)
         {
-            var now = _time.GetUtcNow();
             Prune(now);
             _runs[(runId, attempt)] = review;
             _runsUsed[(runId, attempt)] = now;
