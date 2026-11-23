@@ -73,11 +73,13 @@ public sealed class IdeasPaneTests
     /// </summary>
     private static readonly int Wide = PageRoom.Beside(1280);
 
-    private static List<ClickableRegion> Regions(PilotChrome<RgbaImage> chrome, IdeasScreen screen, float width = 1280)
+    private static List<ClickableRegion> Regions(PilotChrome<RgbaImage> chrome, IdeasScreen screen, float width = 1280, float height = 1400)
     {
-        Draw(chrome, screen, width);
+        Draw(chrome, screen, width, height);
         var regions = new List<ClickableRegion>();
         chrome.Ideas.CollectPaintedRegions(regions);
+        // The open viewer belongs to the window, not the page: its close region comes from the chrome's viewer widget.
+        chrome.Viewer.CollectPaintedRegions(regions);
         return regions;
     }
 
@@ -1026,11 +1028,17 @@ public sealed class IdeasPaneTests
 
         chrome.Gallery.Viewing.ShouldNotBeNull().Id.ShouldBe("abc123");
         painted.Clear();
-        var regions = Regions(chrome, screen);
+        var regions = Regions(chrome, screen, 1280, 900);
         Actions(regions).ShouldContain("attachment:close");
         painted.ShouldNotBeEmpty();
+        // The picture is fitted inside the window, as the cards panel's is.
+        var full = painted.Last();
+        full.X.ShouldBeGreaterThanOrEqualTo(0f);
+        full.Y.ShouldBeGreaterThanOrEqualTo(0f);
+        (full.X + full.Width).ShouldBeLessThanOrEqualTo(1280.01f);
+        (full.Y + full.Height).ShouldBeLessThanOrEqualTo(900.01f);
 
-        chrome.Ideas.HandleInput(new InputEvent.KeyDown(InputKey.Escape, InputModifier.None)).ShouldBeTrue();
+        chrome.HandleInput(new InputEvent.KeyDown(InputKey.Escape, InputModifier.None)).ShouldBeTrue();
         chrome.Gallery.Viewing.ShouldBeNull();
 
         Click(Regions(chrome, screen), "attachment:idea:pilot I381:abc123");

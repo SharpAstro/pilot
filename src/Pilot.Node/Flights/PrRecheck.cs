@@ -424,6 +424,13 @@ public sealed class PrRecheck : IHostedService
             return await FinishAsync(entry, pr, $"{why}{(notSent is null ? $": {LegCommander.WorkerResolves}" : $" ({notSent})")}", LabelOf(code), cancellationToken);
         }
 
+        if (checks == ChoiceStatus.Failing && flight.Review is { State: ReviewState.Passed }
+            && await legs.OutsideReviewOnlyAsync(flight, entry.Number, head, cancellationToken))
+        {
+            // Only an outside review that never reached a model is red (pilot #1283): not sent back; its Handled card says why.
+            return await FinishAsync(entry, pr, $"only the outside review is red at {head}, and it never reached a model: nothing sent back", LabelOf(code), cancellationToken);
+        }
+
         if (checks == ChoiceStatus.Failing && flight.Review is { State: ReviewState.Passed })
         {
             var why = await legs.ChecksFailedAsync(code, pr.Head, cancellationToken);

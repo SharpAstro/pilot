@@ -411,7 +411,7 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pilo
 
     internal override RectF32 PageSelectionViewport => Transcript.IsOpen ? Transcript.Viewport : _scroll.Viewport;
 
-    internal override bool SelectionBlocked => base.SelectionBlocked || About is { IsOpen: true } || _menu.IsOpen || Gallery.Viewing is not null || Transcript.MenuOpen;
+    internal override bool SelectionBlocked => base.SelectionBlocked || About is { IsOpen: true } || _menu.IsOpen || Transcript.MenuOpen;
 
     public void Render(SessionsScreen screen, RectF32 bounds)
     {
@@ -624,10 +624,6 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pilo
             Transcript.Open(_lines[Selected]);
             return true;
         }
-        if (evt is InputEvent.KeyDown { Key: var viewerKey } && Gallery.HandleKey(viewerKey))
-        {
-            return true;
-        }
         if (evt is InputEvent.KeyDown { Key: InputKey.Escape } && Transcript.IsOpen)
         {
             Transcript.GoUp();
@@ -665,7 +661,6 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pilo
         // The open transcript's chips that did not fit on a row, as a menu over the page.
         page = Transcript.Over(page, HeaderHeight);
         page = WithPageSelection(page);
-        page = Gallery.Over(page);
         page = _menu.IsOpen
             ? Layout.Builder.Overlay(page, Layout.Builder.Dropdown(_menuAt, _menu, 13f, Bright, MenuBg, RowFocusBg))
             : page;

@@ -25,6 +25,9 @@ public sealed partial class NodeState
     private readonly Lock _gate = new Lock();
     private readonly INodeJournal _journal;
     private readonly TimeProvider _time;
+
+    /// <summary>When each flight PR is read next (pilot #1293): shared by the PR checks' looks and by what the node itself does to a PR, which marks it due.</summary>
+    internal Flights.PrPollSchedule PrPolls { get; }
     private readonly int _retainedDeltas;
     private readonly Dictionary<string, SessionRow> _sessions = new Dictionary<string, SessionRow>(StringComparer.Ordinal);
     private readonly List<NodeNote> _notes = [];
@@ -57,6 +60,7 @@ public sealed partial class NodeState
         ArgumentOutOfRangeException.ThrowIfLessThan(retainedDeltas, 1);
         _journal = journal;
         _time = time;
+        PrPolls = new Flights.PrPollSchedule(time);
         _retainedDeltas = retainedDeltas;
 
         var history = journal.Load();

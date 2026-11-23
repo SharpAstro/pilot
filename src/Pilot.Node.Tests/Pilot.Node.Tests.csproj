@@ -48,6 +48,7 @@
        #249 and #242 on 2026-10-26, the rest shaped as GitHub answers them): the MergeState tests read them. -->
   <ItemGroup>
     <None Include="Fixtures\gh\**\*.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="Fixtures\gh\**\*.log" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <!-- The sample prototype (clean at every design size) and one with a deliberate overlap, for the design check, render and publish tests;

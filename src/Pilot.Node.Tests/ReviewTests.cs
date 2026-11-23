@@ -23,6 +23,9 @@ public abstract class ReviewTestsBase : IDisposable
     private protected readonly FlightCommander _flights;
     private protected readonly LegCommander _legs;
 
+    /// <summary>The commander's clock: the system's, moved on by what a test advances it (the outside review's reset, PIL1283).</summary>
+    private protected readonly ShiftedClock _clock = new();
+
     /// <summary>The git every commander of the test runs: <see cref="FakeRepoGit"/>, or <see cref="GitCli"/> for a class that is about git itself.</summary>
     private protected readonly IGit _git;
 
@@ -39,7 +42,7 @@ public abstract class ReviewTestsBase : IDisposable
         _git = _testGit = new TestGit(_root, realGit, () => SeedRepo.Make(_root));
         _flights = new FlightCommander(_state, new Planes(_git), TimeProvider.System, _workers, _github);
         var options = new NodeOptions(Path.Combine(_root, "node.sock"), Path.Combine(_root, "data"), MachinePrefix: "DU1");
-        _legs = new LegCommander(_state, _workers, new FakeChecks(), _github, _git, new Planes(_git), _flights, options, TimeProvider.System)
+        _legs = new LegCommander(_state, _workers, new FakeChecks(), _github, _git, new Planes(_git), _flights, options, _clock)
         {
             SelfFinishGrace = TimeSpan.FromMilliseconds(1),
         };

@@ -84,6 +84,9 @@ public sealed record NodeInfo
     /// <summary>The node's own network use in the last full clock hour; null when an older node did not say.</summary>
     public NodeTrafficRow? Traffic { get; init; }
 
+    /// <summary>The gh calls of the last closed 15-minute window by kind and caller, with their GraphQL points, as one line (#1293); null when it counted none or an older node did not say.</summary>
+    public string? GhCalls { get; init; }
+
     /// <summary>Median and slowest of the node's session starts, resumes and relays over the last hour (PIL584); null when an older node did not say or none happened.</summary>
     public SendTimingRow[]? SendTimings { get; init; }
 

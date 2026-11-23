@@ -15,6 +15,9 @@ internal sealed class NotificationsView<TSurface>(Renderer<TSurface> renderer) :
     /// <summary>The list the page scrolls.</summary>
     protected override IEnumerable<ListScrollController> PageScrolls => [Host.PageScroll];
 
+    /// <summary>The window's one attachment gallery: a card's thumbnail is painted and opened through it.</summary>
+    public AttachmentGallery Gallery { get; set; } = new();
+
     /// <summary>The header's ? card.</summary>
     public AboutCard? About { get; set; }
 
@@ -28,7 +31,7 @@ internal sealed class NotificationsView<TSurface>(Renderer<TSurface> renderer) :
     {
         Palette.Use(Night);
         BeginFrame();
-        RenderLayout(Tree(source, asOf, bounds.Width / Scale.X), bounds);
+        RenderLayout(Tree(source, asOf, bounds.Width / Scale.X), bounds, drawFill: Gallery.DrawFill);
     }
 
     /// <summary>The page as a tree, <paramref name="width"/> design units wide.</summary>

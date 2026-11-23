@@ -33,14 +33,16 @@
   <ItemGroup>
     <!-- The SharpAstro pins below are exact, each for the release that first brought a feature this repo uses:
          - Console.Lib 5.26.2761: CON84 (EmptyRows skips a declared border row).
-         - DIR.Lib and DIR.Lib.Debug 11.91.8751: the icon controls (SharpAstro/DIR.Lib#290: Builder.IconToggle, IconAction and Segmented, and the Pin, PinFilled and OpenInPage
-           icons). It also keeps #282 (toasts at the bottom right, a surface taking the pointer from what it covers) and the DIR_INSPECTOR opt-in in Release builds.
+         - DIR.Lib and DIR.Lib.Debug 11.95.9551: a word wider than a notification's line, a history line's included, is broken or ends in an ellipsis with its
+           whole text on hover (SharpAstro/DIR.Lib#275); 11.94 made a staying toast's buttons wrap instead of running past the card (SharpAstro/DIR.Lib#318). It also keeps
+           11.91's icon controls (SharpAstro/DIR.Lib#290: Builder.IconToggle, IconAction and Segmented, and the Pin, PinFilled and OpenInPage icons), #282 (toasts at
+           the bottom right, a surface taking the pointer from what it covers) and the DIR_INSPECTOR opt-in in Release builds.
          - SdlVulkan.Renderer and SdlVulkan.Renderer.Debug 7.107.5621: 7.106.5581 was the first with the caret blink handover (SharpAstro/.github#13: the phase lives on
            WindowUiSettings, SdlEventLoop sets it and wakes at each change); 7.107 adds the GPU Y'CbCr conversion and builds against DIR.Lib 11.84. -->
     <PackageVersion Include="Console.Lib" Version="5.26.2761" />
     <PackageVersion Include="Console.Lib.Debug" Version="5.26.2761" />
-    <PackageVersion Include="DIR.Lib" Version="11.91.8751" />
-    <PackageVersion Include="DIR.Lib.Debug" Version="11.91.8751" />
+    <PackageVersion Include="DIR.Lib" Version="11.95.9551" />
+    <PackageVersion Include="DIR.Lib.Debug" Version="11.95.9551" />
     <PackageVersion Include="LAN.Lib" Version="2.4.*" />
     <!-- The per-user node's socket location, lock, Kestrel hosting, event queue and ring buffer (SharpAstro/Node.Lib), shared with tianwen. -->
     <PackageVersion Include="Node.Lib" Version="1.2.*" />

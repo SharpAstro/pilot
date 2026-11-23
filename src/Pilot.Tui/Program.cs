@@ -581,7 +581,7 @@ while (!stop.IsCancellationRequested)
         // The cards panel stands beside the page when there is room beside a usable page, and something to show.
         // Arranged and cropped to each scroll container and page rect (Console.Lib's painter has no clip); the hit test reads the same tree.
         // No clear: the cell buffer diffs each frame against the last, and the tree's backgrounds cover every cell.
-        arranged = TerminalFrame.Build(railTree, pageTree, cardsOver ? cards.Tree(cardsScreen) : null, columns, rows, CellMeasureContext.PixelAuthored, input.Router.Tooltip, (bar, page));
+        arranged = TerminalFrame.Build(railTree, pageTree, cardsOver ? cards.Tree(cardsScreen) : null, columns, rows, CellMeasureContext.PixelAuthored, input.Router.Tooltip, (bar, page), chrome.Gallery.Viewer());
         TerminalFrame.Paint(terminal.HideCaret, () => CellLayout.Paint(terminal, arranged, surface));
         input.Painted();
         if ((chat.ParkedCaret(page, focus, arranged) ?? (page == PilotPage.Designs ? chrome.Designs.Chat.ParkedCaretEmbedded(focus, arranged) : null)) is var (caretColumn, caretRow))

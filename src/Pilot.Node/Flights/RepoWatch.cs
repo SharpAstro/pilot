@@ -303,7 +303,7 @@ public sealed partial class RepoWatch(NodeState state, RepoCatalog repos, Planes
     private async Task SweepHoldsAsync(RepoInfo repo, FlightRow[] flights, IssueInfo[] issues,
         Func<string, Func<Task<string[]?>>, Task<string[]?>> read, CancellationToken cancellationToken)
     {
-        foreach (var local in flights.Where(f => f.State != FlightState.Landed && f.Tracker == TrackerKind.GitHub))
+        foreach (var local in flights.Where(f => f.State is not (FlightState.Landed or FlightState.Held) && f.Tracker == TrackerKind.GitHub))
         {
             if (issues.FirstOrDefault(i => i.Number == local.Issue) is not { } issue)
             {

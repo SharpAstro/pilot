@@ -10,16 +10,19 @@ public sealed partial class LegCommander
     /// <summary>
     /// The one lease-push rule of the node: replaces a pushed branch (<c>--force-with-lease=&lt;branch&gt;:&lt;old head&gt;</c>, naming the
     /// head read, so a branch pushed from elsewhere meanwhile is never overwritten). When the push fails the plane is put back at
-    /// <paramref name="old"/> and a <see cref="FlightException"/> says so.
+    /// <paramref name="old"/> and a <see cref="FlightException"/> says so. A push that went through marks the flight's PR due
+    /// (pilot #1293): its head moved, so the next look reads it within 30 s, whatever wait it was on.
     /// </summary>
-    private async Task LeasePushAsync(string plane, string branch, string old, CancellationToken cancellationToken)
+    private async Task LeasePushAsync(FlightRow flight, string old, CancellationToken cancellationToken)
     {
+        var (plane, branch) = (flight.Worktree, flight.Branch);
         var push = await git.RunAsync(["push", $"--force-with-lease={branch}:{old}", "origin", branch], plane, cancellationToken);
         if (!push.Ok)
         {
             await git.RunAsync(["reset", "--hard", "--quiet", old], plane, CancellationToken.None);
             throw new FlightException($"git could not push {branch} ({push.Why}); the plane is back at {CommitRefs.Short(old)}");
         }
+        state.PrPolls.MarkDue(flight.RepoPath, branch);
     }
 
     /// <summary>
@@ -159,7 +162,7 @@ public sealed partial class LegCommander
             await git.RunAsync(["reset", "--hard", "--quiet", old], plane, CancellationToken.None);
             throw new FlightException($"the old head could not be kept ({kept.Why})");
         }
-        await LeasePushAsync(plane, flight.Branch, old, cancellationToken);
+        await LeasePushAsync(flight, old, cancellationToken);
         return (shaped, old, null);
     }
 }

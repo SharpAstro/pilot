@@ -253,7 +253,7 @@ public static class PullRequestSearch
 
     // The last commit's checks, as the reader takes them (bucketed as gh does), and its pilot/review status, whose word is also
     // the row's Review. The review status is a check like any other to the reader: a card counts it too.
-    private static (List<(string Bucket, string? Name, string? Link)> Checks, string? Review, string? ReviewUrl) Checks(JsonElement pr)
+    internal static (List<(string Bucket, string? Name, string? Link)> Checks, string? Review, string? ReviewUrl) Checks(JsonElement pr)
     {
         var checks = new List<(string Bucket, string? Name, string? Link)>();
         if (!(pr.TryGetProperty("commits", out var commits) && commits.TryGetProperty("nodes", out var commitNodes) && commitNodes.ValueKind == JsonValueKind.Array

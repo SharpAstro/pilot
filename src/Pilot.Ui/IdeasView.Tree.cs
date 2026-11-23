@@ -34,7 +34,7 @@ internal sealed partial class IdeasView<TSurface>
 
     internal override RectF32 PageSelectionViewport => _scroll.Viewport;
 
-    internal override bool SelectionBlocked => base.SelectionBlocked || About is { IsOpen: true } || Gallery.Viewing is not null;
+    internal override bool SelectionBlocked => base.SelectionBlocked || About is { IsOpen: true };
 
     public void Render(IdeasScreen screen, RectF32 bounds)
     {
@@ -63,13 +63,7 @@ internal sealed partial class IdeasView<TSurface>
         NoteInput.OnCommit = _ => NoteAsync();
         NoteInput.Placeholder = "Note an idea: the first line is its title";
         EditInput.OnCommit = text => CommitEditAsync(text);
-        EditInput.OnCancel = () =>
-        {
-            if (!Gallery.HandleKey(InputKey.Escape))
-            {
-                Close();
-            }
-        };
+        EditInput.OnCancel = Close;
         NoteInput.OnKeyOverride = key => key == TextInputKey.Paste && PasteImage(NoteInput);
         EditInput.OnKeyOverride = key => key == TextInputKey.Paste && PasteImage(EditInput);
         RowInput.OnCommit = text => CommitRowAsync(text);
@@ -158,7 +152,7 @@ internal sealed partial class IdeasView<TSurface>
         }
         var whole = Layout.Builder.VStack(top, body.HStar()).Bg(P.Ground).Stretch();
         whole = WithPageSelection(whole);
-        return Gallery.Over(About?.Over(whole, NightOrNull) ?? whole);
+        return About?.Over(whole, NightOrNull) ?? whole;
     }
 
     // The filter beside the view switch: a click shows only the ideas marked as needing a design, and a click again shows all.
@@ -355,7 +349,8 @@ internal sealed partial class IdeasView<TSurface>
     ];
 
     // A word this long may not fit a narrow line and Markdown does not break one (a bare URL, a path): it is broken after its
-    // separators (and a piece with none at its humps) with a space, as WrappedProse breaks the other pages' long words. Code (fenced or in backticks) and links are left whole.
+    // separators (and a piece with none at its humps) with a space, as WrappedProse breaks the other pages' long words. Code (fenced or in backticks) and links are left whole,
+    // and no space goes beside a ~, so a struck-through run (~~word~~) keeps its markup; a table row's cells still break after their |.
     private const int LongWord = 24;
 
     internal static string Soften(string markdown)
@@ -378,8 +373,10 @@ internal sealed partial class IdeasView<TSurface>
             {
                 return word;
             }
-            // After its separators, and a piece still past a line (an identifier with none) at its humps, as WrappedProse breaks it.
-            return string.Join(' ', WrappedProse.Break(word));
+            // After its separators, and a piece still past a line (an identifier with none) at its humps, as WrappedProse breaks it. A space
+            // beside a ~ would part a strikethrough's ~~ from its text, which ends the strikethrough, so the pieces either side of one run on.
+            var pieces = WrappedProse.Break(word).ToArray();
+            return string.Concat(pieces.Select((piece, i) => i > 0 && !pieces[i - 1].EndsWith('~') && !piece.StartsWith('~') ? " " + piece : piece));
         }
     }
 
@@ -424,10 +421,6 @@ internal sealed partial class IdeasView<TSurface>
 
     public override bool HandleInput(InputEvent evt)
     {
-        if (evt is InputEvent.KeyDown { Key: var viewerKey } && Gallery.HandleKey(viewerKey))
-        {
-            return true;
-        }
         if (evt is InputEvent.KeyDown { Key: InputKey.Escape } && _open is not null)
         {
             Close();

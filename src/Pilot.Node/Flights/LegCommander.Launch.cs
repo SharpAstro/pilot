@@ -372,6 +372,11 @@ public sealed partial class LegCommander
     /// <summary>Reads the Priority field of the flight's issue at a start, and its <c>pilot: priority</c> label where the repo has no field (its PR's is on the row): taking it off puts the flight back under the rules.</summary>
     private async Task PrimeAsync(FlightRow flight, CancellationToken cancellationToken)
     {
+        // A flight waiting on a connected flight reads nothing (pilot #1293): no issue fields, no labels, until the release to Flying starts it.
+        if ((state.Flights().FirstOrDefault(f => f.Code == flight.Code)?.State ?? flight.State) == FlightState.Held)
+        {
+            return;
+        }
         try
         {
             if (flights.Trackers?.Of(flight.Tracker) is { } tracker)

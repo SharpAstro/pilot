@@ -101,45 +101,127 @@ public sealed class CardScreenshotTests
         Lowest(with).ShouldBeGreaterThanOrEqualTo(Lowest(without) + AttachmentGallery.ThumbHeight);
     }
 
-    [Theory]
-    [InlineData(420)]
-    [InlineData(1300)]
-    public void TheThumbnailIsPaintedAndAClickOpensTheFullSizeViewerOverThePanel(int width)
+    private static AttachmentPicture Solid(int width, int height)
     {
-        using var renderer = new RgbaImageRenderer((uint)width, 900);
+        var rgba = new byte[width * height * 4];
+        Array.Fill(rgba, (byte)200);
+        return new AttachmentPicture(width, height, rgba);
+    }
+
+    // The whole chrome on the Flights page with the open bar's panel showing the card: the viewer is the chrome's, painted last over the window.
+    private static (PilotChrome<RgbaImage> Chrome, RgbaImageRenderer Renderer, List<RectF32> Painted, Action Draw) Window(int width, int height, AttachmentPicture picture)
+    {
+        var renderer = new RgbaImageRenderer((uint)width, (uint)height);
+        var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
         var painted = new List<RectF32>();
-        var view = View(renderer, painted);
+        var blit = AttachmentPictures.PaintOn(renderer.Surface);
+        chrome.Gallery.Lookup = _ => picture;
+        chrome.Gallery.Failed = _ => false;
+        chrome.Gallery.Draw = (p, rect) =>
+        {
+            painted.Add(rect);
+            blit(p, rect);
+        };
+        chrome.Notifications.Open = true;
+        chrome.Show(PilotPage.Flights);
         var screen = CardsScreen.From([Card("c1", image: true)]);
-        view.Render(screen, new RectF32(0, 0, width, 900));
+        void Draw() => chrome.Render(new SessionsScreen([], "test", Live.At), new FlightsScreen([], "test", Live.At), screen, new RectF32(0, 0, width, height));
+        Draw();
+        return (chrome, renderer, painted, Draw);
+    }
+
+    private static List<ClickableRegion> Regions(PilotChrome<RgbaImage> chrome)
+    {
+        var regions = new List<ClickableRegion>();
+        chrome.Cards.CollectPaintedRegions(regions);
+        chrome.Viewer.CollectPaintedRegions(regions);
+        return regions;
+    }
+
+    [Theory]
+    [InlineData(1300, 900)]
+    [InlineData(700, 500)]
+    public void AThumbnailInTheCardsPanelOpensAViewerOverTheWholeWindow(int width, int height)
+    {
+        var (chrome, renderer, painted, draw) = Window(width, height, Picture());
+        using var _ = renderer;
+        chrome.ShowsCards.ShouldBeTrue();
         painted.ShouldHaveSingleItem().Width.ShouldBeLessThanOrEqualTo(AttachmentGallery.ThumbWidth + 0.01f);
 
-        var regions = new List<ClickableRegion>();
-        view.CollectPaintedRegions(regions);
-        regions.Single(r => r.Result is HitResult.ButtonHit { Action: "attachment:card:c1:a1b2c3d4e5f6" }).OnClick!.Invoke(InputModifier.None);
-        view.Gallery.Viewing.ShouldNotBeNull().Id.ShouldBe("a1b2c3d4e5f6");
-        view.Gallery.InPanel.ShouldBeTrue();
-
+        Regions(chrome).Single(r => r.Result is HitResult.ButtonHit { Action: "attachment:card:c1:a1b2c3d4e5f6" }).OnClick!.Invoke(InputModifier.None);
+        chrome.Gallery.Viewing.ShouldNotBeNull().Id.ShouldBe("a1b2c3d4e5f6");
         painted.Clear();
-        view.Render(screen, new RectF32(0, 0, width, 900));
-        // Full size now: the picture is painted larger than its thumbnail, and a click on it, or Escape, shuts it.
-        painted.Max(r => r.Width).ShouldBeGreaterThan(AttachmentGallery.ThumbWidth);
-        view.HandleInput(new InputEvent.KeyDown(InputKey.Escape)).ShouldBeTrue();
-        view.Gallery.Viewing.ShouldBeNull();
+        draw();
+
+        var full = painted.Last();
+        // Wider than the panel the thumbnail sits in, scaled up past the picture's own 200, and inside the window.
+        full.Width.ShouldBeGreaterThan(CardsView<RgbaImage>.Width);
+        full.Width.ShouldBeGreaterThan(200f);
+        full.X.ShouldBeGreaterThanOrEqualTo(0f);
+        full.Y.ShouldBeGreaterThanOrEqualTo(0f);
+        (full.X + full.Width).ShouldBeLessThanOrEqualTo(width + 0.01f);
+        (full.Y + full.Height).ShouldBeLessThanOrEqualTo(height + 0.01f);
+        (full.Width / full.Height).ShouldBe(2f, 0.02f);
+
+        // A click closes it, as does Escape.
+        Regions(chrome).Single(r => r.Result is HitResult.ButtonHit { Action: "attachment:close" }).OnClick!.Invoke(InputModifier.None);
+        chrome.Gallery.Viewing.ShouldBeNull();
+        chrome.Gallery.Open(new AttachmentRef("a1b2c3d4e5f6", "Screenshot", "png", null));
+        chrome.HandleInput(new InputEvent.KeyDown(InputKey.Escape, InputModifier.None)).ShouldBeTrue();
+        chrome.Gallery.Viewing.ShouldBeNull();
     }
 
     [Fact]
-    public void AViewerOpenedFromACardIsNotDrawnAgainByThePageBesideIt()
+    public void ALargePictureIsFittedInsideTheWindowWithItsAspectKept()
     {
-        var gallery = new AttachmentGallery();
-        gallery.OpenInPanel(new AttachmentRef("a1b2c3d4e5f6", "Screenshot", "png", null));
-        var page = Layout.Builder.Spacer();
+        var (chrome, renderer, painted, draw) = Window(1300, 900, Solid(2880, 1814));
+        using var _ = renderer;
+        chrome.Gallery.Open(new AttachmentRef("a1b2c3d4e5f6", "Screenshot", "png", null));
+        painted.Clear();
+        draw();
 
-        gallery.Over(page).ShouldBeSameAs(page);
-        gallery.Over(page, panel: true).ShouldNotBeSameAs(page);
+        var full = painted.Last();
+        (full.Width / full.Height).ShouldBe(2880f / 1814f, 0.01f);
+        full.Width.ShouldBeLessThanOrEqualTo(1300f);
+        full.Height.ShouldBeLessThanOrEqualTo(900f);
+        // As large as the window allows: one side fills its room, less the viewer's own padding and title row.
+        full.Width.ShouldBeGreaterThan(1000f);
+    }
 
-        gallery.Open(new AttachmentRef("a1b2c3d4e5f6", "Screenshot", "png", null));
-        gallery.Over(page).ShouldNotBeSameAs(page);
-        gallery.Over(page, panel: true).ShouldBeSameAs(page);
+    [Fact]
+    public void ASmallPictureIsScaledUpToFillTheWindow()
+    {
+        var (chrome, renderer, painted, draw) = Window(1300, 900, Picture());
+        using var _ = renderer;
+        chrome.Gallery.Open(new AttachmentRef("a1b2c3d4e5f6", "Screenshot", "png", null));
+        painted.Clear();
+        draw();
+
+        painted.Last().Width.ShouldBeGreaterThan(200f * 3f);
+    }
+
+    [Fact]
+    public void TheViewerIsTheLastWidgetWhileOneIsOpenAndPaintsNothingWhenShut()
+    {
+        var (chrome, renderer, painted, draw) = Window(1300, 900, Picture());
+        using var _ = renderer;
+        chrome.Widgets[^1].ShouldBeSameAs(chrome.Viewer);
+        var regions = new List<ClickableRegion>();
+        chrome.Viewer.CollectPaintedRegions(regions);
+        regions.ShouldBeEmpty();
+
+        // Open: one frame later its close region covers the whole window, the page is covered, and a press through the chrome shuts it.
+        chrome.Gallery.Open(new AttachmentRef("a1b2c3d4e5f6", "Screenshot", "png", null));
+        draw();
+        chrome.Viewer.CollectPaintedRegions(regions);
+        var close = regions.Single(r => r.Result is HitResult.ButtonHit { Action: "attachment:close" });
+        foreach (var (x, y) in new[] { (10f, 400f), (600f, 450f), (1250f, 450f) })
+        {
+            (x >= close.X && x <= close.X + close.Width && y >= close.Y && y <= close.Y + close.Height).ShouldBeTrue();
+        }
+        chrome.CoveredAfterPage(600f, 450f).ShouldBeTrue();
+        close.OnClick!.Invoke(InputModifier.None);
+        chrome.Gallery.Viewing.ShouldBeNull();
     }
 
     [Theory]

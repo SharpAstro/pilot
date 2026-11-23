@@ -261,8 +261,8 @@ public sealed class LiveTextCheckTests
         }
 
         sent.ShouldBeEmpty();
-        // Home was checked, once: the steady window is not checked each frame.
+        // Home and the toast layer were each checked, once or twice while the window settles: the steady window is not checked each frame.
         chrome.TextCheck.Checks.ShouldBeGreaterThan(0);
-        chrome.TextCheck.Checks.ShouldBeLessThanOrEqualTo(2);
+        chrome.TextCheck.Checks.ShouldBeLessThanOrEqualTo(3);
     }
 }

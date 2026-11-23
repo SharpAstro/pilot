@@ -76,17 +76,17 @@ public sealed partial class GhCli
             .OrderByDescending(r => r.Id)];
     }
 
-    // A completed run's runner minutes by run id and the time it was last updated (a rerun updates it): read once, not at every look.
-    private readonly System.Collections.Concurrent.ConcurrentDictionary<(long Id, DateTimeOffset Updated), double> _runMinutes = new();
+    // A completed run's runner minutes and failed jobs by run id and the time it was last updated (a rerun updates it): read once, not at every look.
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<(long Id, DateTimeOffset Updated), (double Minutes, string[]? FailedJobs)> _runJobs = new();
 
     /// <summary>The endpoint of <see cref="CiRunsAsync"/> for a branch: the REST list of its workflow runs (no <c>--json</c> list, gh api answers every key).</summary>
     internal static string CiRunsEndpoint(string branch) => $"repos/{{owner}}/{{repo}}/actions/runs?branch={Uri.EscapeDataString(branch)}&per_page=100";
 
     /// <summary>The keys of each entry of <c>workflow_runs</c> that <see cref="ParseCiRuns"/> reads; a recording of the answer carries at least these.</summary>
-    internal const string CiRunKeys = "id,name,status,conclusion,event,run_started_at,created_at,updated_at";
+    internal const string CiRunKeys = "id,name,status,conclusion,event,run_started_at,created_at,updated_at,run_attempt";
 
     /// <summary>One run of <see cref="ParseCiRuns"/> before its runner minutes are known.</summary>
-    internal sealed record CiRunRow(long Id, string Name, string Status, string? Conclusion, string Event, DateTimeOffset StartedAt, DateTimeOffset Updated)
+    internal sealed record CiRunRow(long Id, string Name, string Status, string? Conclusion, string Event, DateTimeOffset StartedAt, DateTimeOffset Updated, int Attempt = 1)
     {
         public bool Completed => Status == "completed";
     }
@@ -108,14 +108,15 @@ public sealed partial class GhCli
             }
             var started = StampOf(r, "run_started_at") ?? StampOf(r, "created_at") ?? now;
             rows.Add(new CiRunRow(id, TextOf(r, "name") ?? "", TextOf(r, "status") ?? "", TextOf(r, "conclusion") is { Length: > 0 } conclusion ? conclusion : null,
-                TextOf(r, "event") ?? "", started, StampOf(r, "updated_at") ?? started));
+                TextOf(r, "event") ?? "", started, StampOf(r, "updated_at") ?? started,
+                r.TryGetProperty("run_attempt", out var attempt) && attempt.TryGetInt32(out var a) && a > 0 ? a : 1));
         }
         return rows;
     }
 
-    /// <summary>A parsed run with its runner minutes: a completed run carries when it ended, one still going does not.</summary>
-    internal static CiRun CiRunOf(CiRunRow r, double minutes) =>
-        new(r.Id, r.Name, r.Status, r.Conclusion, r.Event, r.StartedAt, r.Completed ? r.Updated : null, minutes);
+    /// <summary>A parsed run with its runner minutes and failed jobs: a completed run carries when it ended, one still going does not.</summary>
+    internal static CiRun CiRunOf(CiRunRow r, double minutes, string[]? failedJobs = null) =>
+        new(r.Id, r.Name, r.Status, r.Conclusion, r.Event, r.StartedAt, r.Completed ? r.Updated : null, minutes, r.Attempt, failedJobs);
 
     public async Task<CiRun[]> CiRunsAsync(string repoPath, string branch, CancellationToken cancellationToken)
     {
@@ -128,24 +129,52 @@ public sealed partial class GhCli
         var runs = new List<CiRun>();
         foreach (var r in ParseCiRuns(output, now))
         {
-            if (!_runMinutes.TryGetValue((r.Id, r.Updated), out var minutes) || !r.Completed)
+            if (!_runJobs.TryGetValue((r.Id, r.Updated), out var jobs) || !r.Completed)
             {
-                minutes = await RunnerMinutesAsync(repoPath, r.Id, now, cancellationToken);
-                if (r.Completed)
+                jobs = await RunJobsAsync(repoPath, r.Id, now, cancellationToken);
+                // A null FailedJobs is an answer gh could not give or that was unreadable: asked again at the next count, never kept as "no failed jobs".
+                if (r.Completed && jobs.FailedJobs is not null)
                 {
-                    _runMinutes[(r.Id, r.Updated)] = minutes;
+                    _runJobs[(r.Id, r.Updated)] = jobs;
                 }
             }
-            runs.Add(CiRunOf(r, minutes));
+            runs.Add(CiRunOf(r, jobs.Minutes, jobs.FailedJobs));
         }
         return [.. runs.OrderByDescending(r => r.Id)];
     }
 
-    // The runner time of a run: its jobs' durations over every attempt (filter=all), a job still running counted to now.
-    private async Task<double> RunnerMinutesAsync(string repoPath, long run, DateTimeOffset now, CancellationToken cancellationToken)
+    // The runner time of a run, its jobs' durations over every attempt (filter=all) with a job still running counted to now, and the jobs that
+    // failed in their latest attempt, from one answer.
+    private async Task<(double Minutes, string[]? FailedJobs)> RunJobsAsync(string repoPath, long run, DateTimeOffset now, CancellationToken cancellationToken)
     {
         var (exit, output, _) = await RunAsync(["api", $"repos/{{owner}}/{{repo}}/actions/runs/{run}/jobs?filter=all&per_page=100"], repoPath, cancellationToken);
-        return exit == 0 ? JobMinutes(output, now) : 0;
+        return exit == 0 ? (JobMinutes(output, now), FailedJobs(output)) : (0, null);
+    }
+
+    /// <summary>
+    /// The names of the jobs of <c>actions/runs/{id}/jobs?filter=all</c>'s answer that failed (failure, timed_out, startup_failure, as a run
+    /// fails), each job judged by its latest <c>run_attempt</c> as the run's latest attempt shows it; null when the answer is unreadable.
+    /// </summary>
+    internal static string[]? FailedJobs(string json)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            if (!doc.RootElement.TryGetProperty("jobs", out var jobs) || jobs.ValueKind != JsonValueKind.Array)
+            {
+                return null;
+            }
+            return [.. jobs.EnumerateArray()
+                .Select(j => (Name: TextOf(j, "name") ?? "", Attempt: j.TryGetProperty("run_attempt", out var a) && a.TryGetInt32(out var n) ? n : 1, Conclusion: TextOf(j, "conclusion")))
+                .GroupBy(j => j.Name, StringComparer.Ordinal)
+                .Select(g => g.MaxBy(j => j.Attempt))
+                .Where(j => j.Conclusion is "failure" or "timed_out" or "startup_failure")
+                .Select(j => j.Name)];
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
     }
 
     /// <summary>The runner minutes of <c>actions/runs/{id}/jobs</c>'s answer: each job's start to its completion (to <paramref name="now"/> while it runs); skipped jobs and unreadable output count none.</summary>
@@ -195,14 +224,8 @@ public sealed partial class GhCli
         try
         {
             using var doc = JsonDocument.Parse(json);
-            var checks = doc.RootElement.EnumerateArray().Select(c => (Bucket: TextOf(c, "bucket"), Name: TextOf(c, "name"), Link: TextOf(c, "link"))).Where(c => c.Bucket is not null).ToList();
-            var failed = checks.FirstOrDefault(c => c.Bucket is "fail" or "cancel");
-            var status = checks.Count == 0 ? null
-                : failed.Bucket is not null ? ChoiceStatus.Failing
-                : checks.Any(c => c.Bucket == "pending") ? ChoiceStatus.Pending
-                : checks.Any(c => c.Bucket == "pass") ? ChoiceStatus.Passing
-                : null;
-            return status is null ? null : new ChecksSummary(status, checks.Count(c => c.Bucket != "pending"), checks.Count, failed.Name, failed.Link);
+            var checks = doc.RootElement.EnumerateArray().Select(c => (Bucket: TextOf(c, "bucket"), Name: TextOf(c, "name"), Link: TextOf(c, "link"))).Where(c => c.Bucket is not null).Select(c => (Bucket: c.Bucket!, c.Name, c.Link)).ToList();
+            return SummariseChecks(checks);
         }
         catch (JsonException)
         {
@@ -429,6 +452,55 @@ public sealed partial class GhCli
     // A time gh prints, or null; the zero time of a run not finished yet is no time.
     private static DateTimeOffset? StampOf(JsonElement element, string property) =>
         TextOf(element, property) is { } text && DateTimeOffset.TryParse(text, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out var at) && at.Year > 1 ? at : null;
+
+    public async Task<FailedCheck[]> FailedChecksAsync(string repoPath, int number, CancellationToken cancellationToken)
+    {
+        var (_, output, _) = await RunAsync(["pr", "checks", number.ToString(System.Globalization.CultureInfo.InvariantCulture), "--json", ChecksFields], repoPath, cancellationToken);
+        return ParseFailedChecks(output);
+    }
+
+    /// <summary>Every failed check of <c>gh pr checks --json bucket,name,link</c>'s answer, with the run id and job id its link names; empty when it is no JSON.</summary>
+    internal static FailedCheck[] ParseFailedChecks(string json)
+    {
+        static long? Id(Group group) => group.Success ? long.Parse(group.Value, System.Globalization.CultureInfo.InvariantCulture) : null;
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            return [.. doc.RootElement.EnumerateArray()
+                .Where(c => TextOf(c, "bucket") is "fail" or "cancel")
+                .Select(c =>
+                {
+                    var link = TextOf(c, "link");
+                    var m = link is null ? Match.Empty : Regex.Match(link, @"/actions/runs/(?<run>\d+)(?:/job/(?<job>\d+))?");
+                    return new FailedCheck(TextOf(c, "name") ?? "", link, Id(m.Groups["run"]), Id(m.Groups["job"]));
+                })];
+        }
+        catch (JsonException)
+        {
+            return [];
+        }
+    }
+
+    public async Task<string?> RunFailedLogAsync(string repoPath, long runId, CancellationToken cancellationToken)
+    {
+        var (exit, log, _) = await RunAsync(["run", "view", runId.ToString(System.Globalization.CultureInfo.InvariantCulture), "--log-failed"], repoPath, cancellationToken);
+        return exit != 0 ? null : log.Length > FailedLogLimit ? log[^FailedLogLimit..] : log;
+    }
+
+    public async Task<int?> RunAttemptAsync(string repoPath, long runId, CancellationToken cancellationToken)
+    {
+        var (exit, output, _) = await RunAsync(["api", $"repos/{{owner}}/{{repo}}/actions/runs/{runId}", "--jq", ".run_attempt"], repoPath, cancellationToken);
+        return exit == 0 && int.TryParse(output.Trim(), System.Globalization.CultureInfo.InvariantCulture, out var attempt) && attempt > 0 ? attempt : null;
+    }
+
+    public async Task RerunRunAsync(string repoPath, long runId, CancellationToken cancellationToken)
+    {
+        var (exit, _, error) = await RunAsync(["run", "rerun", runId.ToString(System.Globalization.CultureInfo.InvariantCulture), "--failed"], repoPath, cancellationToken);
+        if (exit != 0)
+        {
+            throw new FlightException($"gh could not run {runId} again: {error.Trim()}");
+        }
+    }
 
     public async Task<int> RerunFailedChecksAsync(string repoPath, int number, CancellationToken cancellationToken)
     {

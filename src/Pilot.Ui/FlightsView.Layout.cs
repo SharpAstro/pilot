@@ -152,10 +152,6 @@ internal sealed partial class FlightsView<TSurface>
         {
             return true;
         }
-        if (evt is InputEvent.KeyDown { Key: var viewerKey } && Gallery.HandleKey(viewerKey))
-        {
-            return true;
-        }
         // An open why field takes Escape ahead of the page's own (the field has the keyboard while it is focused; this is for after).
         if (evt is InputEvent.KeyDown { Key: InputKey.Escape } && _asking is not null)
         {
@@ -223,7 +219,6 @@ internal sealed partial class FlightsView<TSurface>
         // After the page's text and before the menus over it: where the selection is drawn.
         page = WithPageSelection(page);
         page = About?.Over(page, NightOrNull) ?? page;
-        page = Gallery.Over(page);
         page = _menu.IsOpen ? Layout.Builder.Overlay(page, Layout.Builder.Dropdown(_menuAt, _menu, 13f, Bright, MenuBg, RowFocusBg)) : page;
         return _links.Over(page);
     }
