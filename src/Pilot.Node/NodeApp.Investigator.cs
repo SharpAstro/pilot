@@ -5,7 +5,7 @@ namespace Pilot.Node;
 
 public static partial class NodeApp
 {
-    /// <summary>The node's wakes (<see cref="AutopilotWakes"/>) are told of the peers a flight commander sees come and go.</summary>
+    /// <summary>The node's wakes are told of the peers a flight commander sees come and go.</summary>
     private static FlightCommander WithWakes(FlightCommander flights, IServiceProvider services)
     {
         flights.Wakes = services.GetRequiredService<AutopilotWakes>();
