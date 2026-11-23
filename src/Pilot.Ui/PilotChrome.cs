@@ -879,7 +879,7 @@ internal sealed class PilotChrome<TSurface>
     public bool HandleInput(InputEvent evt)
     {
         // A press on the rail's bell opens the Notifications page, and a press on a toast opens what it is about, ahead of the page beneath.
-        if (evt is InputEvent.MouseDown { Button: MouseButton.Left } down && PressNotification(NotificationsLayer.HitTest(down.X, down.Y)))
+        if (evt is InputEvent.MouseDown { Button: MouseButton.Left } down && Gallery.Viewing is null && PressNotification(NotificationsLayer.HitTest(down.X, down.Y)))
         {
             return true;
         }
@@ -1632,7 +1632,7 @@ internal sealed class PilotChrome<TSurface>
         {
             NotificationsLayer.Render(Frame(), side);
             // The pointer on a fading toast stops its countdown (the library's rule; the layer has just registered the toasts).
-            Notifications.Hover(Pointer is { } at ? NotificationsLayer.HitTest(at.X, at.Y) : null);
+            Notifications.Hover(Pointer is { } at && Gallery.Viewing is null ? NotificationsLayer.HitTest(at.X, at.Y) : null);
         }
         if (ShowsCards && cardsRect is { } panelRect && cards is not null)
         {

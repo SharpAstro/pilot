@@ -209,6 +209,19 @@ public sealed class CardScreenshotTests
         var regions = new List<ClickableRegion>();
         chrome.Viewer.CollectPaintedRegions(regions);
         regions.ShouldBeEmpty();
+
+        // Open: one frame later its close region covers the whole window, the page is covered, and a press through the chrome shuts it.
+        chrome.Gallery.Open(new AttachmentRef("a1b2c3d4e5f6", "Screenshot", "png", null));
+        draw();
+        chrome.Viewer.CollectPaintedRegions(regions);
+        var close = regions.Single(r => r.Result is HitResult.ButtonHit { Action: "attachment:close" });
+        foreach (var (x, y) in new[] { (10f, 400f), (600f, 450f), (1250f, 450f) })
+        {
+            (x >= close.Bounds.X && x <= close.Bounds.X + close.Bounds.Width && y >= close.Bounds.Y && y <= close.Bounds.Y + close.Bounds.Height).ShouldBeTrue();
+        }
+        chrome.CoveredAfterPage(600f, 450f).ShouldBeTrue();
+        close.OnClick!.Invoke(InputModifier.None);
+        chrome.Gallery.Viewing.ShouldBeNull();
     }
 
     [Theory]

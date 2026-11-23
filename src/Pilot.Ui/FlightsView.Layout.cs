@@ -152,10 +152,6 @@ internal sealed partial class FlightsView<TSurface>
         {
             return true;
         }
-        if (evt is InputEvent.KeyDown { Key: var viewerKey } && Gallery.HandleKey(viewerKey))
-        {
-            return true;
-        }
         // An open why field takes Escape ahead of the page's own (the field has the keyboard while it is focused; this is for after).
         if (evt is InputEvent.KeyDown { Key: InputKey.Escape } && _asking is not null)
         {

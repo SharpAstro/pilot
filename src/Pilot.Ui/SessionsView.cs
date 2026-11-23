@@ -411,7 +411,7 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pilo
 
     internal override RectF32 PageSelectionViewport => Transcript.IsOpen ? Transcript.Viewport : _scroll.Viewport;
 
-    internal override bool SelectionBlocked => base.SelectionBlocked || About is { IsOpen: true } || _menu.IsOpen || Gallery.Viewing is not null || Transcript.MenuOpen;
+    internal override bool SelectionBlocked => base.SelectionBlocked || About is { IsOpen: true } || _menu.IsOpen || Transcript.MenuOpen;
 
     public void Render(SessionsScreen screen, RectF32 bounds)
     {
@@ -622,10 +622,6 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pilo
         if (evt is InputEvent.KeyDown { Key: InputKey.Enter } && !Transcript.IsOpen && Selected >= 0 && Selected < _lines.Count && Transcript.Load is not null)
         {
             Transcript.Open(_lines[Selected]);
-            return true;
-        }
-        if (evt is InputEvent.KeyDown { Key: var viewerKey } && Gallery.HandleKey(viewerKey))
-        {
             return true;
         }
         if (evt is InputEvent.KeyDown { Key: InputKey.Escape } && Transcript.IsOpen)
