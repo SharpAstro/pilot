@@ -839,8 +839,7 @@ public static partial class NodeApp
             CancelJobs = (owners, who) => services.GetRequiredService<JobRunner>().CancelOwnedBy(owners, who),
             Sends = services.GetRequiredService<SendLog>(),
             Timings = services.GetRequiredService<SendTimings>(),
-            Removal = services.GetRequiredService<ClaudeJobRemoval>(),
-            WaitGone = SessionMessenger.WaitProcessGoneAsync,
+            Removal = services.GetRequiredService<ClaudeJobRemoval>(), WaitGone = SessionMessenger.WaitProcessGoneAsync,
             Watchers = new SessionWatchers(OsProcessTable.Instance),
             Streams = () => services.GetRequiredService<Watchtower>(),
         });
