@@ -74,8 +74,8 @@ public sealed class FleetAdmission(string machine, TimeProvider time)
     public async Task<View> RefreshAsync(CancellationToken cancellationToken)
     {
         var peers = Fleet?.Peers() ?? [];
-        using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        budget.CancelAfter(Budget);
+        using var expiry = new CancellationTokenSource(Budget, time);
+        using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, expiry.Token);
         var reads = await Task.WhenAll(peers.Select(p => ReadAsync(p, budget.Token, cancellationToken, (Fleet as PresenceFleet)?.Presence)));
         var view = new View(time.GetUtcNow(), [.. reads.Select(r => r.Reached).OfType<Reached>()], [.. reads.Select(r => r.Why).OfType<string>()], peers.Count)
         {
@@ -105,7 +105,7 @@ public sealed class FleetAdmission(string machine, TimeProvider time)
         }
         catch (Exception ex) when (Unreachable(ex) && !caller.IsCancellationRequested)
         {
-            if (ex is OperationCanceledException)
+            if (ex is OperationCanceledException && budget.IsCancellationRequested)
             {
                 presence?.Failed(peer.Name);
             }

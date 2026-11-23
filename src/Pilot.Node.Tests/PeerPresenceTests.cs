@@ -278,9 +278,13 @@ public sealed class PeerPresenceTests
     {
         var (peer, _, presence, admission) = Setup();
         peer.Hangs = true;
-        admission.Budget = TimeSpan.FromMilliseconds(1);
+        admission.Budget = TimeSpan.FromSeconds(5);
 
-        var view = await admission.RefreshAsync(Ct);
+        // The budget runs on the injected clock: the read waits on the hanging peer until the test moves time past it, with no real wait.
+        var read = admission.RefreshAsync(Ct);
+        await _clock.WhenWaiting(1);
+        _clock.Advance(admission.Budget);
+        var view = await read;
         _clock.Advance(Bound + TimeSpan.FromMinutes(1));
 
         view.NotCounted.ShouldHaveSingleItem().ShouldStartWith("LE1 (did not answer");
