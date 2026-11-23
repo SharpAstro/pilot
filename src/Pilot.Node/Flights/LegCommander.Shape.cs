@@ -22,7 +22,7 @@ public sealed partial class LegCommander
             await git.RunAsync(["reset", "--hard", "--quiet", old], plane, CancellationToken.None);
             throw new FlightException($"git could not push {branch} ({push.Why}); the plane is back at {CommitRefs.Short(old)}");
         }
-        state.PrPolls.MarkDue(flight.RepoPath, branch);
+        // mutation
     }
 
     /// <summary>
