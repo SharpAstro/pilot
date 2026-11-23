@@ -37,6 +37,18 @@ public sealed partial class PrReviews(
     /// </summary>
     public Func<string, string, string?, string?, CancellationToken, Task<string?>>? SendFlightRound { get; set; }
 
+    /// <summary>
+    /// Says a text to a fixer's session through the node's own say path (never a bare resume): session id, text; null when delivered, else why not.
+    /// Set where the node is built; null for one built without, which counts as a resume that could not be delivered.
+    /// </summary>
+    public Func<string, string, CancellationToken, Task<string?>>? ResumeFixer { get; set; }
+
+    /// <summary>
+    /// The session ledger, to tell a fixer that ended on its own from one a person or the watchtower stopped: only the first is resumed (pilot #1309).
+    /// Set where the node is built; null in a test with none, where no session counts as stopped.
+    /// </summary>
+    public Pilot.Node.Sessions.SessionLedger? Ledger { get; set; }
+
     private readonly SemaphoreSlim _one = new(1, 1);
 
     /// <summary>The PR targets of reviews the node posted whose reviewer is still in its <see cref="SelfFinishGrace"/>: a sweep leaves them, the delayed task of their verdict ends them.</summary>

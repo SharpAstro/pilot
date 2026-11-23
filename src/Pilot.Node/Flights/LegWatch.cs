@@ -1063,36 +1063,7 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
         return worker.ContextWindow > 0 && worker.ContextTokens > FullShare * worker.ContextWindow ? IdleCause.Full : IdleCause.Room;
     }
 
-    /// <summary>
-    /// The jobs of a session's own (pilot #777): owned by its id, session id or an earlier one, or by its name (a replaced session
-    /// keeps its name), and for a worker (a <paramref name="leg"/> given) also the leg's own flight and leg.
-    /// </summary>
-    private IEnumerable<JobRow> JobsOf(SessionRow session, LegRow? leg = null) => state.Jobs().Where(j =>
-        (j.Owner is { Length: > 0 } owner && (owner == session.Id || owner == session.SessionId || session.EarlierSessionIds?.Contains(owner) == true))
-        || string.Equals(j.OwnerName, session.Name, StringComparison.OrdinalIgnoreCase)
-        || (leg is not null && string.Equals(j.Flight, leg.Flight, StringComparison.OrdinalIgnoreCase) && string.Equals(j.Leg, leg.Name, StringComparison.OrdinalIgnoreCase)));
-
-    /// <summary>
-    /// A session's wait on jobs of its own (pilot #893), the one rule for a reviewer, a validator and a worker: a job still queued
-    /// or running is a wait, not a stall, even when its turn ended and Claude Code dropped it from its listing (a --bg session ended
-    /// by design resumes on the job's end), unless it failed. <see cref="Spoken"/> is the latest of a job's end and of its outcome
-    /// being told, so a resumed session is given its turn and the idle grace from then rather than from its stale last response.
-    /// Not filtering on <c>Gone</c> also holds a session someone stopped from outside while its job is open. That is on purpose
-    /// and bounded: the job's end resumes any ended session through the usual say path, the job has a timeout, and once it has
-    /// ended the idle clock starts from <see cref="Spoken"/>, so a session that never takes its turn is told, restarted or rung.
-    /// </summary>
-    private readonly record struct OwnJobWait(bool Open, DateTimeOffset? Spoken);
-
-    private OwnJobWait OwnJobsWait(SessionRow row, LegRow? leg = null)
-    {
-        if (row.State == SessionState.Failed)
-        {
-            return new OwnJobWait(false, null);
-        }
-        var jobs = JobsOf(row, leg).ToArray();
-        var spoken = jobs.SelectMany(j => new[] { j.EndedAt, j.ToldAt, j.RetoldAt }).Where(t => t is not null).Select(t => t!.Value).DefaultIfEmpty().Max();
-        return new OwnJobWait(jobs.Any(j => j.State is JobState.Running or JobState.Queued), spoken == default ? null : spoken);
-    }
+    private OwnJobWait OwnJobsWait(SessionRow row, LegRow? leg = null) => OwnJobWait.Of(state, row, leg);
 
     /// <summary>The detail's lead for a worker idle with room in its context: the cause, in plain words.</summary>
     private static string RoomLead(SessionRow worker) => worker.ContextWindow > 0

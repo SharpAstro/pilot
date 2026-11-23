@@ -109,25 +109,6 @@ public sealed class DesignQueueTests : PrFixTestsBase
 
         Fixers.ShouldBeEmpty();
     }
-
-    [Fact]
-    public async Task AFixerThatEndedWithoutAPushAfterAnAnswerLeavesThePrUnqueuedWithTheMergeCard()
-    {
-        var row = await Review("acme/widget#7", "comment", Question);
-        Green(row.Head);
-        (await Run(Verbs.FixPr, "acme/widget#7", "controller", "Keep", "it", "a", "library")).Error.ShouldBeNull();
-        _state.PutSession(FixerSession(SessionState.Ended));
-
-        await _reviews.SweepAsync(Ct);
-        await _reviews.SweepAsync(Ct);
-
-        _github.Merged.ShouldBeEmpty();
-        Row.QueuedAt.ShouldBeNull();
-        Row.QueueNote.ShouldNotBeNull().ShouldContain("without a push");
-        var card = _state.Cards(openOnly: true).Single(c => c.Kind == PrReviews.MergeKind);
-        card.Bin.ShouldBe(CardBin.ForYou);
-        card.Choices.ShouldHaveSingleItem().Verb.ShouldBe(Verbs.Merge);
-    }
 }
 
 /// <summary>A flight's merge is refused while an open design card names the flight's PR.</summary>
