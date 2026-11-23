@@ -25,7 +25,7 @@ public sealed partial class LegCommander(
     public NamedLock Lock => _one;
 
     // What a flight's review leaves on its PR on GitHub: the COMMENT review, the pilot/review status, the pilot: label.
-    private readonly PrMarks _marks = new(state, github, options);
+    private readonly PrMarks _marks = new(state, gitHub, options);
 
     /// <summary>How long a worker that finished its own leg has to end its turn and report before it is stopped.</summary>
     public TimeSpan SelfFinishGrace { get; init; } = TimeSpan.FromSeconds(90);
