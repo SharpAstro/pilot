@@ -242,6 +242,7 @@ internal sealed class PilotChrome<TSurface>
         Notifications.CardBody = ToastBody;
         Notifications.CardButtons = ToastButtons;
         Notifications.CardPage = (card, node) => () => WholeCard(card, node);
+        Notifications.EventCard = Cards.EventCard;
         // A flight page's Merge is its card's own choice, run as the panel runs it.
         Flights.CoveredAt = DrawnAfterPage;
         Flights.OnAnswerCard = (card, number) => Cards.OnAnswer?.Invoke(card, number);
@@ -596,13 +597,6 @@ internal sealed class PilotChrome<TSurface>
         _ => () => Show(PilotPage.Jobs),
     };
 
-    /// <summary>The most characters of a choice's label a toast button shows; a longer label is cut there and ends in an ellipsis, the whole label on hover. A character cut, not a measured one: nothing here measures text.</summary>
-    internal const int ToastLabelChars = 12;
-
-    /// <summary>The label as a toast button shows it: whole when short, else cut at <see cref="ToastLabelChars"/> ending in an ellipsis.</summary>
-    internal static string CutToastLabel(string label) =>
-        label.Length <= ToastLabelChars ? label : label[..(ToastLabelChars - 1)].TrimEnd() + "…";
-
     // The cards as the last frame was given them, whether or not the bar drew them: the Notifications page's rows are drawn from it.
     private CardsScreen _cardsNow = CardsScreen.Empty;
 
@@ -612,7 +606,9 @@ internal sealed class PilotChrome<TSurface>
         var now = _cardsNow;
         var same = now.Open.Where(c => c.Id == card.Id).ToList();
         var open = same.FirstOrDefault(c => now.NodeOf(c)?.Name == node) ?? (same.Count == 1 ? same[0] : null);
-        return open is not null ? Cards.FullCard(open, now.NodeOf(open), closed: false) : Cards.FullCard(card, null, closed: true);
+        // Whether the card is open is the feed's word (it is what Needs you lists), not the last frame's screen: a frame a test or the terminal
+        // synced without a screen would otherwise draw every open card closed.
+        return Notifications.IsOpen(card, node) ? Cards.FullCard(open ?? card, open is null ? null : now.NodeOf(open), closed: false) : Cards.FullCard(card, null, closed: true);
     }
 
     /// <summary>What a toast's summary shows whole, three lines of a 320-wide toast at 12pt; past it the toast says it is cut.</summary>
@@ -628,6 +624,7 @@ internal sealed class PilotChrome<TSurface>
     internal static bool ToastCuts(CardRow card, int shownChoices) =>
         card.Summary is { Length: > ToastSummaryFits }
         || (card.Detail is { Length: > 0 } detail && detail != card.Summary)
+        || card.Attachment is { Length: > 0 }
         || card.Choices.Count(c => c.Status != ChoiceStatus.Unavailable && !ChoiceStatus.IsChip(c.Status)) > shownChoices;
 
     // A staying card's toast keeps its words and carries the card's own plain choices, answered as the panel answers them (Cards.OnAnswer).
@@ -642,38 +639,14 @@ internal sealed class PilotChrome<TSurface>
         {
             return null;
         }
-        return () =>
-        {
-            var p = Palette.Current;
-            var parts = new List<Layout.Node> { Layout.Builder.Text(card.Title, 14f, p.Bright).WStar().WithTooltip(card.Title) };
-            if (card.Summary is { Length: > 0 } summary)
-            {
-                parts.Add(WrappedProse.Of(summary, 12f, p.Dim, 3, selectable: false));
-            }
-            var pressKey = CardsView<TSurface>.PressKeyOf(node, card.Id);
-            var colors = NotificationsHost.Colors();
-            // A refusal longer than its 3 lines ends in an ellipsis, so the whole text is on hover. It sits on the card's own ground (the
-            // toast's fill is that ground tinted by the severity, which no red of the night palette reads on at AA) and its ink is measured
-            // against that ground. The library's own choice buttons and the title are drawn on the tinted fill by the library:
-            // SharpAstro/DIR.Lib toast tint and button colours (issue filed), not this flight's to change.
-            if (Cards.Presses.RefusalLine(pressKey, 12f, Contrast.Readable(p.Held, colors.Card, p.Failed), 3) is { } refusal)
-            {
-                var line = refusal.Pad(6f, 3f).Bg(colors.Card);
-                parts.Add(Cards.Presses.RefusedOf(pressKey) is { Length: > 0 } why ? line.WithTooltip(why) : line);
-            }
-            if (cut)
-            {
-                parts.Add(WrappedProse.Of(ToastCutLabel, 11f, p.Link, selectable: false)
-                    .Follows(new HitResult.ButtonHit($"toast:{card.Id}:whole"), _ => Show(PilotPage.Notifications)));
-            }
-            return Layout.Builder.VStack([.. parts]).WithGap(4f).WStar();
-        };
+        // The toast's body is the one card component at toast fit (CardsView.Card): the same parts as the panel's and the page's.
+        return () => Cards.ToastCard(card, node, cut, () => Show(PilotPage.Notifications));
     }
 
     // The same choices as the toast's library buttons, in Dismiss's row (DIR.Lib 11.91, Notification.Buttons). They go through the card's Presses
     // under its press key, as the panel's do: while the node works they are dead and the one pressed reads "<label> …"; the refusal is the body's.
     // The toast's hit ids stay distinct from the panel's (toast:), while the pending hit Program notes is the panel's (card:<id>:<n>), so the
-    // pressed choice is told by its number. A long label is cut by characters and shows whole on hover; its dead twin is the same one line.
+    // pressed choice is told by its number. The label is the choice's whole one: the library's button row wraps when the buttons do not fit (DIR.Lib 11.94).
     private Func<IReadOnlyList<Layout.Node>>? ToastButtons(CardRow card, string? node)
     {
         var plain = card.Choices.Select((choice, i) => (choice, number: i + 1))
@@ -692,7 +665,7 @@ internal sealed class PilotChrome<TSurface>
             foreach (var (choice, number) in plain)
             {
                 var hit = $"toast:{card.Id}:{number}";
-                var shown = CutToastLabel(choice.Label);
+                var shown = choice.Label;
                 var first = number == plain[0].number;
                 buttons.Add(Cards.Presses.Button(pressKey, hit, () =>
                 {
@@ -700,14 +673,14 @@ internal sealed class PilotChrome<TSurface>
                     var button = first
                         ? NotificationsLayout.PrimaryButton(shown, severity, colors, NotificationsHost.Style, new HitResult.ButtonHit(hit), press)
                         : NotificationsLayout.PlainButton(shown, colors, NotificationsHost.Style, new HitResult.ButtonHit(hit), press);
-                    return shown == choice.Label ? button : button.WithTooltip(choice.Label);
+                    return button;
                 }, _ =>
                 {
                     var text = pending == $"card:{card.Id}:{number}" ? $"{shown} …" : shown;
                     var dead = first
                         ? NotificationsLayout.PrimaryButton(text, severity, colors, NotificationsHost.Style, null!, () => { })
                         : NotificationsLayout.PlainButton(text, colors, NotificationsHost.Style, null!, () => { });
-                    return shown == choice.Label ? dead : dead.WithTooltip(choice.Label);
+                    return dead;
                 }));
             }
             return buttons;

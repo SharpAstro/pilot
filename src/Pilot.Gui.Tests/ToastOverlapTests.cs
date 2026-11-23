@@ -54,5 +54,43 @@ public sealed class ToastOverlapTests
 
         ArrangedText.Concat(seen).ShouldContain("PIL1293 is stuck");
         TextOverlap.Faults(seen).Select(f => f.Line).ShouldBeEmpty();
+
+        // The card's title is longer than a toast line, its summary is past ToastSummaryFits (cut to 3 lines) and the cut-short line is drawn,
+        // and that line's rect overlaps no other text line.
+        Stuck().Title.Length.ShouldBeGreaterThan(40);
+        Stuck().Summary!.Length.ShouldBeGreaterThan(PilotChrome<RgbaImage>.ToastSummaryFits);
+        var cutShort = seen.Where(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text { Value: var v } } && PilotChrome<RgbaImage>.ToastCutLabel.Contains(v.Trim()) && v.Trim().Length > 0).ToArray();
+        cutShort.ShouldNotBeEmpty("the cut-short line is drawn");
+
+        // The summary as drawn: its words (12-unit leaves) between the title (14) and the cut-short line, counted by the rows they sit on.
+        var texts = seen.Where(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text { Value.Length: > 0 } }).ToArray();
+        static float SizeOf(Layout.ArrangedNode<float> a) => ((Layout.Content.Text)((Layout.Node.Leaf)a.Node).Content).FontSize;
+        static RGBAColor32 InkOf(Layout.ArrangedNode<float> a) => ((Layout.Content.Text)((Layout.Node.Leaf)a.Node).Content).Color;
+        // The cut-short line's own words are 11 units; a summary word that is also in its label ("the") is 12 and is not it.
+        var cutTop = cutShort.Where(a => SizeOf(a) == 11f).Min(a => a.Bounds.Y);
+        // The title's words are the 14-unit leaves above the cut-short line (the buttons' labels under it are 14 too).
+        var titleBottom = texts.Where(a => SizeOf(a) == 14f && a.Bounds.Y < cutTop).Max(a => a.Bounds.Y + a.Bounds.Height);
+        // The summary's words are in its own ink: the leg's link row under it is 12 units too, in the link's.
+        var between = texts.Where(a => SizeOf(a) == 12f && a.Bounds.Y >= titleBottom - 0.5f && a.Bounds.Y + a.Bounds.Height <= cutTop + 0.5f).OrderBy(a => a.Bounds.Y).ToArray();
+        var summaryWords = between.Where(a => between.Length > 0 && InkOf(a) == InkOf(between[0])).ToArray();
+        var squeezedSummary = string.Concat(Stuck().Summary!.Where(ch => !char.IsWhiteSpace(ch)));
+        summaryWords.ShouldNotBeEmpty($"the summary is drawn between the title (bottom {titleBottom}) and the cut-short line (top {cutTop}); the text leaves: "
+            + string.Join(" | ", texts.Select(a => $"{SizeOf(a)}@{a.Bounds.Y:0.#}:{((Layout.Content.Text)((Layout.Node.Leaf)a.Node).Content).Value.Trim()}")));
+        summaryWords.ShouldAllBe(a => squeezedSummary.Contains(string.Concat(((Layout.Content.Text)((Layout.Node.Leaf)a.Node).Content).Value.Where(ch => !char.IsWhiteSpace(ch) && ch != '…'))),
+            "every 12-unit leaf there is a word of the summary");
+        var rows = summaryWords.Select(a => MathF.Round(a.Bounds.Y)).Distinct().Count();
+        rows.ShouldBe(CardsView<RgbaImage>.ToastSummaryLines, "a summary past the toast's lines is cut at exactly the toast's three rows, not two");
+        var last = summaryWords.OrderBy(a => a.Bounds.Y).ThenBy(a => a.Bounds.X).Last();
+        ((Layout.Content.Text)((Layout.Node.Leaf)last.Node).Content).Value.TrimEnd().ShouldEndWith("…", Case.Sensitive, "the cut summary ends in an ellipsis, never silently");
+        ArrangedText.Concat(seen).Replace(" ", "").ShouldContain(PilotChrome<RgbaImage>.ToastCutLabel.Replace(" ", ""));
+        var others = seen.Where(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text } && !cutShort.Contains(a)).ToArray();
+        foreach (var c in cutShort)
+        {
+            others.Where(o => o.Bounds.X < c.Bounds.X + c.Bounds.Width && c.Bounds.X < o.Bounds.X + o.Bounds.Width
+                    && o.Bounds.Y < c.Bounds.Y + c.Bounds.Height - 0.5f && c.Bounds.Y < o.Bounds.Y + o.Bounds.Height - 0.5f
+                    && !ReferenceEquals(o.Node, c.Node)
+                    && !(o.Bounds.Y == c.Bounds.Y && o.Bounds.X >= c.Bounds.X + c.Bounds.Width))
+                .Select(o => ((Layout.Content.Text)((Layout.Node.Leaf)o.Node).Content).Value).ShouldBeEmpty();
+        }
     }
 }
