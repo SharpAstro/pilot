@@ -94,11 +94,11 @@ public sealed class NotificationsColumnTests
     private static string TextOf(Layout.ArrangedNode<float> a) => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text { Value: var v } } ? v : "";
 
     /// <summary>The card frames, top to bottom: the smallest node of the column's width holding a card's kind line.</summary>
-    private static List<(RectF32 Frame, string Head)> Frames(PageWindow w)
+    private static List<(Rect<float> Frame, string Head)> Frames(PageWindow w)
     {
         var heads = w.Arranged.Where(a => TextOf(a) is var t && (t.StartsWith("RING", StringComparison.Ordinal) || t.StartsWith("for you", StringComparison.Ordinal) || t.StartsWith("event", StringComparison.Ordinal)))
             .OrderBy(a => a.Bounds.Y).ToList();
-        var frames = new List<(RectF32, string)>();
+        var frames = new List<(Rect<float>, string)>();
         foreach (var head in heads)
         {
             var frame = w.Arranged.Where(a => a.Bounds.X <= head.Bounds.X && a.Bounds.Y <= head.Bounds.Y
