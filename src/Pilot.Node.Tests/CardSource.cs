@@ -87,7 +87,7 @@ internal static class CardSource
     /// </summary>
     private static IEnumerable<string> ListBuiltVerbs(string text, int callAt, string after)
     {
-        if (Regex.IsMatch(after, @"Verbs\.") || !Regex.IsMatch(after, @"(?<![\w.])[a-z]\w*\s*(?:,|$)"))
+        if (Regex.IsMatch(after, @"\bVerbs\.") || !Regex.IsMatch(after, @"(?<![\w.])[a-z]\w*\s*(?:,|$)"))
         {
             return [];
         }
@@ -99,7 +99,12 @@ internal static class CardSource
         }
         var end = Regex.Match(text[callAt..], @"^    \}", RegexOptions.Multiline);
         var body = text[decl.Index..(end.Success ? callAt + end.Index : text.Length)];
-        return Regex.Matches(body, @"Verbs\.(\w+)").Select(v => v.Groups[1].Value);
+        var found = new List<string>();
+        foreach (Match v in Regex.Matches(body, @"Verbs\.(\w+)"))
+        {
+            found.Add(v.Groups[1].Value);
+        }
+        return found;
     }
 
     /// <summary>Every <c>Label = …</c> in <paramref name="source"/>: a choice's button text.</summary>
