@@ -968,9 +968,10 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
     /// <item>a red workflow has the oldest and the newest run of its red streak read (<see cref="CiBudgets.RedStreak"/>): the oldest is the run
     /// its red clock counts from unless it never reached a model, and a findings run or one still going at the top cannot hide an earlier
     /// no-model streak;</item>
+    /// <item>a workflow green now has its newest and oldest failed run read the same way;</item>
     /// <item>a workflow one of those reads, or the memory, shows to be a no-model review has every failed run of it read.</item>
     /// </list>
-    /// So a red workflow of real failures costs at most two reads, and an earlier real test failure of a workflow green now is never downloaded.
+    /// So a workflow of real failures costs at most two reads, red or green now.
     /// Each read is once per run and <c>run_attempt</c>; one gh could not make counts the run as failed this time.
     /// </summary>
     private static async Task<HashSet<long>> NoModelRunsAsync(OutsideReviews reviews, FlightRow flight, CiRun[] runs, CancellationToken cancellationToken)
@@ -987,6 +988,12 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             if (!review && CiBudgets.RedStreak(workflow) is [var newest, ..] streak)
             {
                 review = await NoModelAsync(streak[^1]) || (streak.Count > 1 && await NoModelAsync(newest));
+            }
+            else if (!review && CiBudgets.RedStreak(workflow).Count == 0)
+            {
+                // Green now: its earlier failed runs may be no-model reviews the memory lost in a restart. The newest and the oldest are read
+                // (once per run and attempt); either one that never reached a model has every failed run of the workflow read.
+                review = await NoModelAsync(failed.MaxBy(r => r.Id)!) || (failed.Count > 1 && await NoModelAsync(failed.MinBy(r => r.Id)!));
             }
             if (!review)
             {

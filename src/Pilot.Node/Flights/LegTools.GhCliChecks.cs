@@ -125,7 +125,8 @@ public sealed partial class GhCli
             if (!_runJobs.TryGetValue((r.Id, r.Updated), out var jobs) || !r.Completed)
             {
                 jobs = await RunJobsAsync(repoPath, r.Id, now, cancellationToken);
-                if (r.Completed)
+                // A null FailedJobs is an answer gh could not give or that was unreadable: asked again at the next count, never kept as "no failed jobs".
+                if (r.Completed && jobs.FailedJobs is not null)
                 {
                     _runJobs[(r.Id, r.Updated)] = jobs;
                 }
