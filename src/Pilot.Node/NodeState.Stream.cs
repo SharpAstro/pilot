@@ -113,7 +113,11 @@ public sealed partial class NodeState
         Hold(delta.Seq, json);
         WriteToSinks(json);
         ReportSnapshotOutcome();
-        if (closedNow is not null)
+        if (closedNow is not null && _deferredCloses is { } deferred)
+        {
+            deferred.Add(closedNow);
+        }
+        else if (closedNow is not null)
         {
             CloseCardsAboutClosed(closedNow);
         }

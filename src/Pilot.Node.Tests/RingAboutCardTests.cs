@@ -13,9 +13,9 @@ public sealed class RingAboutCardTests
         node.State.RaiseCard(CardBin.Ring, "pr-ready", "flight/TIA1", "TIA1 needs a round", null,
             [new CardChoice { Label = "Allow one more round", Verb = Verbs.Raise, Target = "flight/TIA1", Args = ["handled", "round allowed"] }]);
 
-    private static async Task RaiseAbout(NodeHarness node, string title)
+    private static async Task RaiseAbout(NodeHarness node, string title, string target = "flight/TIA1")
     {
-        var response = (await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Raise, Target = "flight/TIA1", Args = ["ring", title], Who = "cli" }, Ct)).Response.ShouldNotBeNull();
+        var response = (await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Raise, Target = target, Args = ["ring", title], Who = "cli" }, Ct)).Response.ShouldNotBeNull();
         response.Error.ShouldBeNull();
     }
 
@@ -60,9 +60,11 @@ public sealed class RingAboutCardTests
         var a = RaiseAsk(node);
         node.State.CloseCard(a.Id, "dismissed", "cli");
         await RaiseAbout(node, "Nothing here names a card");
-        await RaiseAbout(node, $"Press {a.Id} which is closed already");
+        await RaiseAbout(node, $"Press {a.Id} which is closed already", "flight/TIA2");
 
-        node.State.Cards().Where(c => c.Kind == "watchtower").ShouldAllBe(c => c.AboutCard == null);
+        var rings = node.State.Cards().Where(c => c.Kind == "watchtower").ToList();
+        rings.Count.ShouldBe(2);
+        rings.ShouldAllBe(c => c.AboutCard == null);
     }
 
     private static async Task<string?> RingCard(NodeHarness node, string id, string bin, string title, string? detail = null)
@@ -78,7 +80,9 @@ public sealed class RingAboutCardTests
         var a = node.State.RaiseCard(CardBin.ForYou, "pr-ready", "flight/TIA1", "TIA1 needs a round", null,
             [new CardChoice { Label = "Allow one more round", Verb = Verbs.Raise, Target = "flight/TIA1", Args = ["handled", "round allowed"] }]);
 
-        (await RingCard(node, a.Id, "ring", "Please press Allow", "It has waited a day.")).ShouldBeNull();
+        var made = (await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Raise, Target = Verbs.CardTarget(a.Id), Args = ["ring", "Please press Allow", "It has waited a day."], Who = "wt" }, Ct)).Response.ShouldNotBeNull();
+        made.Error.ShouldBeNull();
+        made.Made.ShouldBe(a.Id);
 
         var now = node.State.Cards().Single();
         now.Id.ShouldBe(a.Id);
@@ -135,5 +139,59 @@ public sealed class RingAboutCardTests
         node.State.CloseCard(ring.Id, "dismissed", "cli");
 
         Open(node).Select(c => c.Id).ShouldBe([a.Id]);
+    }
+
+    [Fact]
+    public async Task ReplacingTheCardARingIsAboutHandsOutNoIdTwice()
+    {
+        await using var node = await NodeHarness.StartAsync(Ct);
+        var failed = node.State.RaiseCard(CardBin.Ring, "merge-failed", "flight/X", "X could not merge", null);
+        await RaiseAbout(node, $"Press Rerun checks on {failed.Id}", "flight/X");
+        var ring = node.State.Cards().Single(c => c.Kind == "watchtower");
+        ring.AboutCard.ShouldBe(failed.Id);
+
+        var ready = node.State.RaiseCard(CardBin.Ring, "pr-ready", "flight/X", "X is ready", null);
+
+        var all = node.State.Cards().ToList();
+        all.Select(c => c.Id).Distinct().Count().ShouldBe(all.Count);
+        node.State.Cards().Single(c => c.Id == ready.Id).Kind.ShouldBe("pr-ready");
+        node.State.Cards().Single(c => c.Id == failed.Id).Outcome.ShouldBe($"replaced by {ready.Id}");
+        node.State.Cards().Single(c => c.Id == ring.Id).Outcome.ShouldNotBeNull().ShouldStartWith($"{failed.Id} closed: ");
+        all.Any(c => c.Bin == CardBin.Handled && c.Title.Contains(ring.Id)).ShouldBeTrue();
+        Open(node).Select(c => c.Id).ShouldBe([ready.Id]);
+    }
+
+    [Fact]
+    public async Task TheNodeClosingACardClosesTheRingAboutIt()
+    {
+        await using var node = await NodeHarness.StartAsync(Ct);
+        var a = RaiseAsk(node);
+        await RaiseAbout(node, $"Press {a.Id}", "flight/TIA2");
+
+        node.State.CloseCardsAbout("flight/TIA1", "landed");
+
+        Open(node).ShouldBeEmpty();
+        node.State.Cards().Single(c => c.Kind == "watchtower").Outcome.ShouldNotBeNull().ShouldStartWith($"{a.Id} closed: landed");
+    }
+
+    [Fact]
+    public async Task ARingOnTheSameSubjectKeepsItsLinkOutcomeWhenTheNodeClosesBoth()
+    {
+        await using var node = await NodeHarness.StartAsync(Ct);
+        var a = RaiseAsk(node);
+        await RaiseAbout(node, $"Press {a.Id}");
+
+        node.State.CloseCardsAbout("flight/TIA1", "landed");
+
+        node.State.Cards().Single(c => c.Kind == "watchtower").Outcome.ShouldNotBeNull().ShouldStartWith($"{a.Id} closed: ");
+    }
+
+    [Fact]
+    public async Task AnAttachmentOnARingAboutACardIsRefusedInWords()
+    {
+        await using var node = await NodeHarness.StartAsync(Ct);
+        var a = RaiseAsk(node);
+        var response = (await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Raise, Target = Verbs.CardTarget(a.Id), Args = ["ring", "Look"], Who = "wt", Attachment = "nothing.png" }, Ct)).Response.ShouldNotBeNull();
+        response.Error.ShouldNotBeNull();
     }
 }

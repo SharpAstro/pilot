@@ -115,11 +115,22 @@ public sealed partial class NodeState
             }
             var number = _cards.Count == 0 ? 1 : _cards.Keys.Max(k => int.TryParse(k.AsSpan(1), out var n) ? n : 0) + 1;
             // One PR, one merge card: a pr-ready card replaces an older open merge card of the same subject, however it got there.
+            // The cards about a replaced card close once the new card exists (_deferredCloses): a Handled line raised in between would take
+            // the id this card is about to take.
+            var replaced = new List<CardRow>();
             if (bin != CardBin.Handled && kind == LegCommander.PrReady)
             {
-                foreach (var older in _cards.Values.Where(c => c.State == CardState.Open && IsMergeKind(c.Kind) && c.Subject == subject).ToList())
+                _deferredCloses = replaced;
+                try
                 {
-                    Publish(new CardChangedEvent { Seq = _seq + 1, At = now, Card = older with { State = CardState.Closed, Outcome = $"replaced by c{number}", ClosedBy = "node", ClosedAt = now, Answering = null } });
+                    foreach (var older in _cards.Values.Where(c => c.State == CardState.Open && IsMergeKind(c.Kind) && c.Subject == subject).ToList())
+                    {
+                        Publish(new CardChangedEvent { Seq = _seq + 1, At = now, Card = older with { State = CardState.Closed, Outcome = $"replaced by c{number}", ClosedBy = "node", ClosedAt = now, Answering = null } });
+                    }
+                }
+                finally
+                {
+                    _deferredCloses = null;
                 }
             }
             var card = new CardRow
@@ -151,9 +162,16 @@ public sealed partial class NodeState
             card = card with { Commits = CommitsOf(card, link) };
             Publish(new CardAddedEvent { Seq = _seq + 1, At = now, Card = card });
             created = true;
+            foreach (var done in replaced)
+            {
+                CloseCardsAboutClosed(done);
+            }
             return card;
         }
     }
+
+    /// <summary>Cards closed while a raise is still to add its own card: the cards about them close after it (PIL1290). Under the lock.</summary>
+    private List<CardRow>? _deferredCloses;
 
     /// <summary>True when the card with <paramref name="id"/> is open (PIL1290: what a raise that names a card links to).</summary>
     public bool IsCardOpen(string id)
@@ -516,10 +534,15 @@ public sealed partial class NodeState
     {
         lock (_gate)
         {
-            foreach (var card in _cards.Values.Where(c => c.State == CardState.Open
+            foreach (var listed in _cards.Values.Where(c => c.State == CardState.Open
                 && (c.Subject == subject || c.Subject.StartsWith(subject + "/", StringComparison.Ordinal))
                 && (kinds.Length == 0 || kinds.Contains(c.Kind))).ToList())
             {
+                // Re-read: closing an earlier card may have closed this one (a ring about it) already, with its own outcome.
+                if (_cards[listed.Id] is not { State: CardState.Open } card)
+                {
+                    continue;
+                }
                 var now = _time.GetUtcNow();
                 Publish(new CardChangedEvent { Seq = _seq + 1, At = now, Card = card with { State = CardState.Closed, Outcome = outcome, ClosedBy = closedBy, ClosedAt = now, Answering = null } });
             }
