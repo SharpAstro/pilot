@@ -89,7 +89,7 @@ internal sealed class NotificationsHost
     /// <summary>
     /// A feed notification with no card (a pilot event) drawn by the one card component from its title, text, node and time; set by the chrome.
     /// </summary>
-    public Func<string, string, string?, DateTimeOffset, string, Layout.Node>? EventCard { get; set; }
+    public Func<string, string, string?, DateTimeOffset, string, string, NotificationSeverity, Layout.Node>? EventCard { get; set; }
 
     /// <summary>
     /// Whether toasts stand over the page: false while the Notifications page is shown, which lists everything itself (a toast there would cover

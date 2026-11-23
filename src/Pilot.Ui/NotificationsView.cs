@@ -54,7 +54,7 @@ internal sealed class NotificationsView<TSurface>(Renderer<TSurface> renderer) :
     /// The widest a card is drawn on the page, in design units: near the toast's width (<see cref="NotificationsHost.Style"/>'s ToastWidth) and no
     /// wider than the panel's, so a card reads as it does in a toast and the lines stay short on a wide window.
     /// </summary>
-    internal const float ColumnWidth = 440f;
+    internal static float ColumnWidth => MathF.Round(NotificationsHost.Style.ToastWidth * 1.375f);
 
     private const float Gutter = 14f, CardGap = 10f;
 
@@ -70,7 +70,7 @@ internal sealed class NotificationsView<TSurface>(Renderer<TSurface> renderer) :
         Layout.Node Section(string title, int count, Layout.Node? action = null)
         {
             var label = Layout.Builder.Text($"{title} · {count}", 13f, colors.Dim).Selectable().WStar();
-            return (action is null ? Layout.Builder.HStack(label) : Layout.Builder.HStack(label, action)).CrossCenter().RowH(30f);
+            return (action is null ? Layout.Builder.HStack(label) : Layout.Builder.HStack(label, action)).CrossCenter().RowH(30f).WFixed(column);
         }
         Layout.Node Placed(Layout.Node card) => Layout.Builder.HStack(card.WFixed(column), Layout.Builder.Spacer().WStar()).HAuto();
 
@@ -99,7 +99,7 @@ internal sealed class NotificationsView<TSurface>(Renderer<TSurface> renderer) :
         {
             var card = n.Row is { } row
                 ? row()
-                : Host.EventCard?.Invoke(n.Title, n.Text, n.Source, n.Posted, n.Posted.ToLocalTime().ToString("HH:mm")) ?? Layout.Builder.Text(n.Title, 12f, Palette.Current.Bright).Selectable();
+                : Host.EventCard?.Invoke(n.Title, n.Text, n.Source, n.Posted, n.Posted.ToLocalTime().ToString("HH:mm"), n.Id, n.Severity) ?? Layout.Builder.Text(n.Title, 12f, Palette.Current.Bright).Selectable();
             blocks.Add(place(card));
         }
     }

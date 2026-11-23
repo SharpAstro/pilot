@@ -67,7 +67,9 @@ public sealed class ToastButtonsWrapTests
         var title = seen.First(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text { Value: var v } } && v.Contains("PIL1293")).Bounds;
         var toast = seen.Where(a => a.Bounds.X <= title.X && a.Bounds.Y <= title.Y && a.Bounds.X + a.Bounds.Width >= title.X + title.Width
                 && buttons.All(b => b.Bounds.X >= a.Bounds.X - 0.5f && b.Bounds.Y >= a.Bounds.Y - 0.5f))
-            .OrderByDescending(a => a.Bounds.Width * a.Bounds.Height).First().Bounds;
+            .OrderBy(a => a.Bounds.Width * a.Bounds.Height).First().Bounds;
+        // The smallest node holding the title and every button is the toast's own frame; the layer's root (the whole window) would pass any check.
+        toast.Width.ShouldBeLessThan(width / 2f, "the frame found is the toast, not the layer over the window");
         foreach (var b in buttons)
         {
             (b.Bounds.X + b.Bounds.Width).ShouldBeLessThanOrEqualTo(toast.X + toast.Width + 0.5f, $"{b.Node.Hit} inside the toast on the right");

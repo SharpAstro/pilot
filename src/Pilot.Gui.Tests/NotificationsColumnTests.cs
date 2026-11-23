@@ -19,7 +19,7 @@ public sealed class NotificationsColumnTests
 {
     private static readonly DateTimeOffset T0 = PageData.Now;
 
-    /// <summary>A window on the Notifications page with three open cards and two history entries, CPU-rendered; shared with the capture tests.</summary>
+    /// <summary>A window on the Notifications page with three open cards and two history entries, CPU-rendered; the capture tests draw their own window, so the before run stays self-contained.</summary>
     internal sealed class PageWindow : IDisposable
     {
         private ImmutableArray<Layout.ArrangedNode<float>> _arranged = [];
@@ -93,7 +93,7 @@ public sealed class NotificationsColumnTests
 
     private static string TextOf(Layout.ArrangedNode<float> a) => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text { Value: var v } } ? v : "";
 
-    /// <summary>The card frames, top to bottom: the smallest node of the column's width holding a card's kind line.</summary>
+    /// <summary>The card content, top to bottom: the smallest node taller than twice the kind line holding it (a card's padded stack inside its frame; the left edge and the gap are the frame's, offset by one constant).</summary>
     private static List<(Rect<float> Frame, string Head)> Frames(PageWindow w)
     {
         var heads = w.Arranged.Where(a => TextOf(a) is var t && (t.StartsWith("RING", StringComparison.Ordinal) || t.StartsWith("for you", StringComparison.Ordinal) || t.StartsWith("event", StringComparison.Ordinal)))
@@ -147,5 +147,22 @@ public sealed class NotificationsColumnTests
         frames.Take(3).ShouldAllBe(f => !f.Head.Contains("closed", StringComparison.Ordinal));
         frames.Skip(3).ShouldAllBe(f => f.Head.StartsWith("event", StringComparison.Ordinal), "a pilot event is drawn by the same component");
         TextOverlap.Faults(w.Arranged).Select(f => f.Line).ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void AnEventCardOffersNothingToChatAbout()
+    {
+        using var w = new PageWindow(1280, 800, 1f);
+        w.Fill();
+        w.Chrome.Cards.OnChatAbout = _ => { };
+        w.Frame(T0.AddMinutes(4), Cards());
+
+        var events = Frames(w).Where(f => f.Head.StartsWith("event", StringComparison.Ordinal)).ToList();
+        events.Count.ShouldBe(2);
+        foreach (var e in events)
+        {
+            w.Arranged.Where(a => TextOf(a).Contains("Chat about", StringComparison.Ordinal)
+                    && a.Bounds.Y >= e.Frame.Y && a.Bounds.Y <= e.Frame.Y + e.Frame.Height).ShouldBeEmpty("an event is not a card");
+        }
     }
 }
