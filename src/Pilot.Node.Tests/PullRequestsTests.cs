@@ -211,7 +211,7 @@ public sealed class PullRequestsTests : IDisposable
         var merge = GhCli.ReadMergeState(new MergeFacts("OPEN", false, "CLEAN", "MERGEABLE", null, false, [Pass()], false, true));
         var page = PullRequestSearch.Say(merge, false);
 
-        (page.Kind, page.Label, page.NeedsMe).ShouldBe((PullRequestKind.RebaseOnly, "Conflict (rebase only): known, lands squashed", false));
+        (page.Kind, page.Label, page.NeedsMe).ShouldBe((PullRequestKind.RebaseOnly, PullRequestStates.RebaseOnlyChip, false));
         // A wait, not a thing asked of the person: ranked beside the other waits, below a real conflict and below ready.
         PullRequestStates.Rank(PullRequestKind.RebaseOnly).ShouldBe(PullRequestStates.Rank(PullRequestKind.ChecksRunning));
         PullRequestStates.Rank(PullRequestKind.RebaseOnly).ShouldBeGreaterThan(PullRequestStates.Rank(PullRequestKind.Conflicts));
