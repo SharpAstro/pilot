@@ -119,7 +119,7 @@ public sealed class NotificationsAttachmentTests
             for (var x = (int)thumb.X; x < (int)(thumb.X + thumb.Width); x++)
             {
                 var at = (y * width + x) * 4;
-                if (pixels[at] != well.R || pixels[at + 1] != well.G || pixels[at + 2] != well.B)
+                if (pixels[at] != well.Red || pixels[at + 1] != well.Green || pixels[at + 2] != well.Blue)
                 {
                     other++;
                 }
