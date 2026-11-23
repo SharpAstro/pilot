@@ -426,11 +426,10 @@ public static partial class NodeApp
             var reviews = ActivatorUtilities.CreateInstance<PrReviews>(services);
             reviews.Models = services.GetRequiredService<RoleModels>();
             reviews.Slots = services.GetRequiredService<AdmissionGate>();
-            reviews.Error = logWriter;
+            reviews.Error = logWriter; reviews.ResumeFixer = (id, text, ct) => ResumeFixerAsync(services, id, text, ct);
             reviews.Investigations = services.GetRequiredService<FailureInvestigations>();
             reviews.Alerts = services.GetRequiredService<FailureAlerts>();
             reviews.DropJobs = (owners, why) => services.GetRequiredService<JobRunner>().DropQueuedOf(owners, why);
-            reviews.ResumeFixer = (id, text, ct) => ResumeFixerAsync(services, id, text, ct);
             reviews.TakeFlightVerdict = services.GetRequiredService<LegCommander>().TakePrVerdictAsync;
             reviews.SendFlightRound = services.GetRequiredService<LegCommander>().AnsweredDesignAsync;
             return reviews;
