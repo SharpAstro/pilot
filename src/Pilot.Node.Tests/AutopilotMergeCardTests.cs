@@ -62,11 +62,11 @@ public sealed class AutopilotMergeCardTests : ReviewTestsBase
         _state.Merges().ShouldBeEmpty();
         _state.Cards().ShouldNotContain(c => c.Kind == PrChecks.NodeMergeRefused);
 
-        // The leg lands: the same head is asked now, as it was never marked as tried.
+        // The leg lands: the node raises the PR-ready card again at the reviewed head and merges from it (the fixture's PR head is the reviewed one).
+        _github.Pr = _github.Pr! with { Head = _state.Flights().Single(f => f.Code == flight.Code).Review!.ReviewedHead! };
         _state.PutLeg(notes with { State = LegState.Done });
         await checks.LookAsync(Ct);
 
-        if (!_state.Merges().Any()) throw new Exception("DBG " + string.Join(" | ", _state.Cards(openOnly: false).Select(c => $"{c.Kind}/{c.State}/{c.Outcome}")) + " F=" + _state.Flights().First().Review?.ReviewedHead + " PR=" + _github.Pr?.Head + " legs=" + string.Join(",", _state.Legs(flight.Code).Select(l => l.Name + l.State)));
         _state.Merges().ShouldNotBeEmpty();
         _state.Cards().ShouldNotContain(c => c.Kind == PrChecks.NodeMergeRefused);
     }

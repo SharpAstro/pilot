@@ -941,7 +941,7 @@ public sealed class PrChecks(NodeState state, IGitHub gitHub, TimeProvider time,
             if (now - holding.Since < HoldingBound
                 || cards.Any(c => c.Subject == subject)
                 || (_holdingRung.TryGetValue(key, out var rung) && now - rung < HoldingBound)
-                || state.Cards(openOnly: true).FirstOrDefault(c => c.Kind == LegCommander.PrReady && c.Subject == subject)?.Choices.FirstOrDefault(c => c.Verb == Verbs.Merge) is not { Args: [{ } head, ..] })
+                || (state.Cards(openOnly: true).FirstOrDefault(c => c.Kind == LegCommander.PrReady && c.Subject == subject)?.Choices.FirstOrDefault(c => c.Verb == Verbs.Merge) is { Args: [{ } cardHead, ..] } ? cardHead : flight.Review?.ReviewedHead) is not { } head)
             {
                 continue;
             }
