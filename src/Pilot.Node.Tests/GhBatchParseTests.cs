@@ -138,4 +138,16 @@ public sealed class GhBatchParseTests
         one.Pull.Labels.ShouldNotBeNull().ShouldContain("pilot: hold");
         GhCli.OpenPullRequestsByHeadQuery.ShouldContain("labels(first:100)");
     }
+
+    [Fact]
+    public void TheBatchQueryAsksEachFieldAsItsOwnToken()
+    {
+        // "canBeRebasedlabels(...)" once slipped past a substring check, and GitHub refused the whole batch: pin the fields as tokens.
+        var tokens = GhCli.OpenPullRequestsByHeadQuery.Split([' ', '{', '}'], StringSplitOptions.RemoveEmptyEntries);
+        tokens.ShouldContain("baseRefName");
+        tokens.ShouldContain("canBeRebased");
+        tokens.ShouldContain("labels(first:100)");
+        tokens.ShouldContain("mergeable");
+        tokens.ShouldContain("mergeStateStatus");
+    }
 }

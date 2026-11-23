@@ -18,7 +18,7 @@ public sealed partial class GhCli
         }
         var pr = ParsePullRequestByBranch(output);
         // canBeRebased is GraphQL's alone, so it is asked only where it can matter: an open PR GitHub calls mergeable, on a base that merges by rebase.
-        if (pr is { State: "OPEN", Mergeable: "MERGEABLE", Base.Length: > 0 } && await BaseMergesByRebaseAsync(repoPath, pr.Base, cancellationToken))
+        if (pr is { State: "OPEN" } && AsksRebaseable(pr.Mergeable, pr.Base) && await BaseMergesByRebaseAsync(repoPath, pr.Base, cancellationToken))
         {
             pr = pr with { Rebaseable = await CanBeRebasedAsync(repoPath, pr.Number, cancellationToken) };
         }
@@ -247,7 +247,7 @@ public sealed partial class GhCli
         // Nor has it canBeRebased: asked only for a PR GitHub calls mergeable on a base that merges by rebase, so a squash repo costs nothing.
         bool? rebaseable = null;
         var baseRebases = false;
-        if (BaseOf(output) is { } baseRef && baseRef.Mergeable == "MERGEABLE" && baseRef.Base.Length > 0 && await BaseMergesByRebaseAsync(repoPath, baseRef.Base, cancellationToken))
+        if (BaseOf(output) is { } baseRef && AsksRebaseable(baseRef.Mergeable, baseRef.Base) && await BaseMergesByRebaseAsync(repoPath, baseRef.Base, cancellationToken))
         {
             baseRebases = true;
             rebaseable = await CanBeRebasedAsync(repoPath, number, cancellationToken);
@@ -255,7 +255,15 @@ public sealed partial class GhCli
         return ParseMergeState(output, queue, rebaseable, baseRebases);
     }
 
-    private static (string? Mergeable, string Base)? BaseOf(string json)
+    /// <summary>
+    /// The single reads' first gate before they spend a call on <c>canBeRebased</c> (and on the base's rules): GitHub calls the PR mergeable
+    /// and names its base. A conflict (CONFLICTING) or an UNKNOWN answer never asks, as rebase-only means "mergeable, yet not rebaseable";
+    /// the second gate, <see cref="BaseMergesByRebaseAsync"/>, keeps a squash or merge base from asking at all. The batch read gates the same
+    /// way through <see cref="NotRebaseableBases"/>.
+    /// </summary>
+    internal static bool AsksRebaseable(string? mergeable, string? baseRef) => mergeable == "MERGEABLE" && !string.IsNullOrEmpty(baseRef);
+
+    internal static (string? Mergeable, string Base)? BaseOf(string json)
     {
         try
         {

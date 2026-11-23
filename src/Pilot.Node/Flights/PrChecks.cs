@@ -477,7 +477,10 @@ public sealed class PrChecks(NodeState state, IGitHub gitHub, TimeProvider time,
 
     /// <summary>
     /// A flight's PR that GitHub calls mergeable but not rebaseable, on a base that merges by rebase (a merge of the base that resolved a
-    /// conflict cannot be replayed by rebase; pilot #1299), with the guards of <see cref="ResolveConflictsAsync"/>, once a head: between
+    /// conflict cannot be replayed by rebase; pilot #1299), with the guards of <see cref="ResolveConflictsAsync"/>, once a head. It is left
+    /// alone while the flight is not Flying, while its review is Reviewing, while a leg is neither Done nor Flying, and while an open
+    /// <see cref="LegCommander.PrReady"/> or <see cref="LegCommander.MergeFailed"/> card names it: a PR handed to the person to merge, or whose
+    /// merge failed, is the person's, and reshaping it under them would move the head they are looking at. Otherwise, between
     /// legs the node reshapes the branch (rebased, else laid as one commit, lease-pushed); while a leg flies it pushes nothing and says
     /// the PR is rebase-only and handled. A real conflict (CONFLICTING) is <see cref="ResolveConflictsAsync"/>'s, and a squash base never reaches here.
     /// </summary>

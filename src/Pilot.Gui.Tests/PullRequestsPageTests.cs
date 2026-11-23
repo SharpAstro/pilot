@@ -302,6 +302,8 @@ public sealed class PullRequestsPageTests
         var (measured, _) = renderer.MeasureText(text.Value, SessionsCapture.FontPath, text.FontSize);
         measured.ShouldBeLessThanOrEqualTo(chip.Bounds.Width, "the rebase-only chip text is cut");
         Contrast(PullRequestsView<RgbaImage>.ChipColors(Palette.Standard, PullRequestKind.RebaseOnly).Fg, PullRequestsView<RgbaImage>.ChipColors(Palette.Standard, PullRequestKind.RebaseOnly).Bg).ShouldBeGreaterThanOrEqualTo(4.5);
+        // Night is dim red on near-black by design (Palette.Night.Bright 0xc80000 on PanelBg 0x100000, about 3.4:1), as every Night chip is,
+        // so the 4.5:1 of the standard palette cannot hold there; the bar is the 3:1 the other Night chips meet.
         Contrast(PullRequestsView<RgbaImage>.ChipColors(Palette.Night, PullRequestKind.RebaseOnly).Fg, PullRequestsView<RgbaImage>.ChipColors(Palette.Night, PullRequestKind.RebaseOnly).Bg).ShouldBeGreaterThanOrEqualTo(3.0);
 
         // The capture for the flight's page: the page at this width, in light and in night, written to PILOT_JOB_ARTIFACTS (or the test's captures folder).

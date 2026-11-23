@@ -152,6 +152,24 @@ public sealed class MergeStateTests
     }
 
     [Fact]
+    public void TheRealSingleReadsAskTheRebaseAnswerOnlyOfAMergeablePrWithABase()
+    {
+        // The gate GhCli.PullRequestAsync and MergeStateAsync run before they spend a call on canBeRebased (the base's rules come second).
+        GhCli.AsksRebaseable("MERGEABLE", "main").ShouldBeTrue();
+        GhCli.AsksRebaseable("CONFLICTING", "main").ShouldBeFalse();
+        GhCli.AsksRebaseable("UNKNOWN", "main").ShouldBeFalse();
+        GhCli.AsksRebaseable("MERGEABLE", "").ShouldBeFalse();
+        GhCli.AsksRebaseable(null, "main").ShouldBeFalse();
+        // MergeStateAsync reads both from gh pr view's answer: a conflict fixture never asks, a ready one does.
+        var conflict = GhCli.BaseOf(Fixture("conflicts")).ShouldNotBeNull();
+        GhCli.AsksRebaseable(conflict.Mergeable, conflict.Base).ShouldBeFalse();
+        var ready = GhCli.BaseOf(Fixture("ready")).ShouldNotBeNull();
+        (ready.Mergeable, ready.Base).ShouldBe(("MERGEABLE", "main"));
+        GhCli.AsksRebaseable(ready.Mergeable, ready.Base).ShouldBeTrue();
+        GhCli.BaseOf("not json").ShouldBeNull();
+    }
+
+    [Fact]
     public void AConflictIsConflicts()
     {
         Read("conflicts").ShouldNotBeNull().Kind.ShouldBe(MergeKinds.Conflicts);

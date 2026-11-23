@@ -24,7 +24,7 @@ public sealed partial class GhCli
     // 50 newest-updated open PRs of the repo: a flight's PR is among the freshly touched ones, and one beyond them is read singly.
     internal const string OpenPullRequestsByHeadQuery = "query($owner:String!,$name:String!){rateLimit{cost remaining resetAt} repository(owner:$owner,name:$name){"
         + "pullRequests(states:OPEN,first:50,orderBy:{field:UPDATED_AT,direction:DESC}){nodes{"
-        + "number state url isDraft headRefName headRefOid baseRefName canBeRebasedlabels(first:100){nodes{name}} mergeable mergeStateStatus reviewDecision "
+        + "number state url isDraft headRefName headRefOid baseRefName canBeRebased labels(first:100){nodes{name}} mergeable mergeStateStatus reviewDecision "
         + "isMergeQueueEnabled isInMergeQueue mergeQueueEntry{position} autoMergeRequest{enabledAt} "
         + "timelineItems(last:10,itemTypes:[ADDED_TO_MERGE_QUEUE_EVENT,REMOVED_FROM_MERGE_QUEUE_EVENT]){nodes{__typename ... on AddedToMergeQueueEvent{createdAt} ... on RemovedFromMergeQueueEvent{createdAt reason}}} "
         + "commits(last:1){nodes{commit{statusCheckRollup{contexts(first:100){nodes{__typename "
