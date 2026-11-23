@@ -105,7 +105,7 @@ internal sealed class NodeFeed : IAsyncDisposable
     {
         var view = Volatile.Read(ref _view);
         var usage = view.Usage;
-        var counts = FlightCounts.Of(view.Flights);
+        var counts = FlightCounts.Of(view.Flights, view.Legs);
         return new NodeSummary
         {
             Connected = view.Connected,
@@ -121,6 +121,7 @@ internal sealed class NodeFeed : IAsyncDisposable
             Flying = counts.Flying,
             Held = counts.Held,
             OnHold = counts.OnHold,
+            Queued = counts.Queued,
             JobsRunning = view.Jobs.Count(j => j.State == JobState.Running),
             JobsQueued = view.Jobs.Count(j => j.State == JobState.Queued),
             JobHolder = JobQueue.HolderLine(view.Jobs, now),

@@ -39,8 +39,12 @@ internal sealed record FlightsScreen(IReadOnlyList<FlightLine> Lines, string Sou
     {
         get
         {
-            var (flying, held, onHold) = FlightCounts.Of(Lines.Select(l => l.Row));
+            var (flying, held, onHold, queued) = FlightCounts.Of(Lines.Select(l => l.Row), Lines.SelectMany(l => l.LegRows));
             var summary = $"{Lines.Count} {(Lines.Count == 1 ? "flight" : "flights")} · {flying} flying";
+            if (queued > 0)
+            {
+                summary += $" · {queued} queued";
+            }
             if (held > 0)
             {
                 summary += $" · {held} held";

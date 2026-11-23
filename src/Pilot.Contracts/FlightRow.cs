@@ -655,37 +655,139 @@ public sealed record PackagePin
 }
 
 /// <summary>
-/// How many flights fly, wait held and are on the owner's hold (<see cref="FlightRow.OnHold"/>), each counted once: the one count the
-/// Flights header, Home, the Fleet line and the digest all read. A flight on the owner's hold keeps its <see cref="FlightRow.State"/>
-/// (Flying or Held as far as its legs go) but is not flying: only the owner's release moves it, so it counts as on hold and in no
-/// other column. A landed flight is none of the three.
+/// Where a flight is, in one word, read from the node's answer (its <see cref="FlightRow"/> and <see cref="LegRow"/>s) by
+/// <see cref="FlightPhases.Of"/>. The one model the Flights header, the map, Home and <c>pilot status</c> read, so they cannot disagree.
+/// The order of precedence, first match wins, is written once on <see cref="FlightPhases.Of"/>.
 /// </summary>
-public readonly record struct FlightCounts(int Flying, int Held, int OnHold)
+public enum FlightPhase
 {
-    /// <summary>Counts <paramref name="flights"/>, each in one column.</summary>
-    public static FlightCounts Of(IEnumerable<FlightRow> flights)
+    /// <summary>Its work is in (<see cref="FlightState.Landed"/>).</summary>
+    Landed,
+
+    /// <summary>The owner's hold is on it (<see cref="FlightRow.OnHold"/>): nobody flies it until the release.</summary>
+    OnHold,
+
+    /// <summary>A flight it connects from has not landed yet (<see cref="FlightState.Held"/>).</summary>
+    Held,
+
+    /// <summary>Its PR conflicts with its base: the review's label override says <c>pilot: conflicts</c>.</summary>
+    Conflicts,
+
+    /// <summary>A leg failed and no leg flies now.</summary>
+    Failed,
+
+    /// <summary>It waits for admission (<see cref="FlightRow.Queued"/>, or its first planned leg's <see cref="LegRow.Queued"/> with no leg flying); not flying yet.</summary>
+    Queued,
+
+    /// <summary>Its review asked for changes and a fix leg is under way or planned.</summary>
+    MakingChanges,
+
+    /// <summary>A worker flies one of its legs.</summary>
+    Flying,
+
+    /// <summary>It is in the flying state, no leg flies and legs are left (or none is planned yet): the node picks the next one.</summary>
+    BetweenLegs,
+}
+
+/// <summary>Reads a <see cref="FlightPhase"/> off a flight and its legs.</summary>
+public static class FlightPhases
+{
+    /// <summary>
+    /// The flight's phase. Precedence, first match wins: Landed, OnHold, Held, Conflicts (the review's label override says conflicts),
+    /// then by its legs: a leg Flying (MakingChanges when its review asked for changes, else Flying), Failed (a leg Failed),
+    /// Queued (see <see cref="QueuedWhy"/>), MakingChanges (review changes with a leg Planned), else BetweenLegs.
+    /// <paramref name="legs"/> may hold other flights' legs, or none: a flight whose row says it queues is Queued without them.
+    /// </summary>
+    public static FlightPhase Of(FlightRow flight, IEnumerable<LegRow> legs)
     {
-        int flying = 0, held = 0, onHold = 0;
+        if (flight.State == FlightState.Landed)
+        {
+            return FlightPhase.Landed;
+        }
+        if (flight.OnHold is not null)
+        {
+            return FlightPhase.OnHold;
+        }
+        if (flight.State == FlightState.Held)
+        {
+            return FlightPhase.Held;
+        }
+        if (flight.Review?.LabelOverride is { } over && over.Contains("conflict", StringComparison.OrdinalIgnoreCase))
+        {
+            return FlightPhase.Conflicts;
+        }
+        var own = legs.Where(l => l.Flight == flight.Code).ToList();
+        var changes = flight.Review?.State == ReviewState.Changes;
+        if (own.Any(l => l.State == LegState.Flying))
+        {
+            return changes ? FlightPhase.MakingChanges : FlightPhase.Flying;
+        }
+        if (own.Any(l => l.State == LegState.Failed))
+        {
+            return FlightPhase.Failed;
+        }
+        if (QueuedWhy(flight, own) is not null)
+        {
+            return FlightPhase.Queued;
+        }
+        return changes && own.Any(l => l.State == LegState.Planned) ? FlightPhase.MakingChanges : FlightPhase.BetweenLegs;
+    }
+
+    /// <summary>
+    /// Why the flight waits for admission: its own <see cref="FlightRow.Queued"/>, else the first planned leg's <see cref="LegRow.Queued"/>;
+    /// null when a leg flies, the flight landed, is held or on hold, or nothing queues it. It is the reason only, not the phase: a flight
+    /// in conflict or with a failed leg can have one and still not be <see cref="FlightPhase.Queued"/>, so a caller that says "queued"
+    /// asks <see cref="Of"/> first (as <c>pilot status</c> does). <see cref="QueuedFlight.Of"/> is wider still (held and on-hold rows too).
+    /// </summary>
+    public static string? QueuedWhy(FlightRow flight, IEnumerable<LegRow> legs)
+    {
+        if (flight.State is FlightState.Landed or FlightState.Held || flight.OnHold is not null)
+        {
+            return null;
+        }
+        var own = legs.Where(l => l.Flight == flight.Code).ToList();
+        return own.Any(l => l.State == LegState.Flying) ? null
+            : flight.Queued ?? own.Where(l => l.State == LegState.Planned && l.Queued is not null).OrderBy(l => l.Order).Select(l => l.Queued).FirstOrDefault();
+    }
+}
+
+/// <summary>
+/// How many flights fly, wait queued, wait held and are on the owner's hold (<see cref="FlightRow.OnHold"/>), each counted once: the
+/// one count the Flights header, Home, the Fleet line and the digest all read, built on <see cref="FlightPhases"/>. A queued flight
+/// waits for admission and is not flying. A flight on the owner's hold keeps its <see cref="FlightRow.State"/> but counts as on
+/// hold and in no other column. A landed flight is none of the four.
+/// </summary>
+public readonly record struct FlightCounts(int Flying, int Held, int OnHold, int Queued = 0)
+{
+    /// <summary>Counts <paramref name="flights"/> without their legs: a flight is queued when its own <see cref="FlightRow.Queued"/> says so.</summary>
+    public static FlightCounts Of(IEnumerable<FlightRow> flights) => Of(flights, []);
+
+    /// <summary>Counts <paramref name="flights"/>, each in one column, reading the queue from <paramref name="legs"/> too.</summary>
+    public static FlightCounts Of(IEnumerable<FlightRow> flights, IEnumerable<LegRow> legs)
+    {
+        var all = legs as IReadOnlyCollection<LegRow> ?? [.. legs];
+        int flying = 0, held = 0, onHold = 0, queued = 0;
         foreach (var flight in flights)
         {
-            if (flight.State == FlightState.Landed)
+            switch (FlightPhases.Of(flight, all))
             {
-                continue;
-            }
-            if (flight.OnHold is not null)
-            {
-                onHold++;
-            }
-            else if (flight.State == FlightState.Flying)
-            {
-                flying++;
-            }
-            else if (flight.State == FlightState.Held)
-            {
-                held++;
+                case FlightPhase.Landed:
+                    break;
+                case FlightPhase.OnHold:
+                    onHold++;
+                    break;
+                case FlightPhase.Held:
+                    held++;
+                    break;
+                case FlightPhase.Queued:
+                    queued++;
+                    break;
+                default:
+                    flying++;
+                    break;
             }
         }
-        return new FlightCounts(flying, held, onHold);
+        return new FlightCounts(flying, held, onHold, queued);
     }
 }
 

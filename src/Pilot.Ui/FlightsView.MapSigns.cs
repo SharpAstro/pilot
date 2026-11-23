@@ -30,6 +30,27 @@ internal sealed partial class FlightsView<TSurface>
         _ => "merged",
     };
 
+    /// <summary>What a destination's colour means: the palette's Failed only for trouble, amber for waiting, progress, neutral.</summary>
+    internal enum MapTone { Failed, Progress, Waiting, Neutral, Landed }
+
+    /// <summary>
+    /// The destination's tone from the PR's status alone (design-language section 1), so its colour and its word always agree. Failed
+    /// only for a conflict; a failed leg is red on its own airport and named in the row's note, its PR still reads open in amber; a
+    /// review asking for changes is work in progress, never red; Queued, Armed and the not-yet-reviewed are amber; Passed is progress.
+    /// Each status keeps its word (<see cref="StatusWord"/>), so colour never carries it alone.
+    /// </summary>
+    internal static MapTone DestinationColour(DestinationStatus status) => status switch
+    {
+        DestinationStatus.Merged => MapTone.Landed,
+        DestinationStatus.Conflicts => MapTone.Failed,
+        DestinationStatus.NoPr => MapTone.Neutral,
+        DestinationStatus.Changes or DestinationStatus.Passed or DestinationStatus.RebaseOnly => MapTone.Progress,
+        _ => MapTone.Waiting,
+    };
+
+    // A row's note as drawn: whole to MaxNoteChars, else cut with an ellipsis (the whole text is on its hover).
+    private static string NoteText(MapRowNote note) => Fit(note.Text, FlightMap.MaxNoteChars);
+
     private static string Fit(string text, int chars) => text.Length <= chars ? text : text[..(chars - 1)] + "…";
 
     // The words on a destination's sign: its repo and PR number (tianwen #7), the repo cut where both do not fit (tia… #1896); as wide
@@ -57,6 +78,8 @@ internal sealed partial class FlightsView<TSurface>
             DestinationStatus.Conflicts => "Conflicts with the base: it needs a fix (go around).",
             _ => null,
         };
-        return first + (why is null ? "" : "\n" + why) + "\n" + ChipBrief.Text(ChipBrief.Flight(line));
+        // A stale flight says so first, as its plane does: a flight with no Flying leg has no plane, so its destination is where the map says it.
+        var stale = line.StaleMark is { } mark ? mark + "\n" : "";
+        return stale + first + (why is null ? "" : "\n" + why) + "\n" + ChipBrief.Text(ChipBrief.Flight(line));
     }
 }

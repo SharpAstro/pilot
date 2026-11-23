@@ -30,7 +30,7 @@ public sealed class MapZoomTests
         }).ToArray();
         var legRows = rows.SelectMany(f => Enumerable.Range(1, legs).Select(n => new LegRow
         {
-            Flight = f.Code, Name = "leg" + n, Order = n, Goal = "g", DoneWhen = "d", State = n <= doneLegs ? LegState.Done : LegState.Planned,
+            Flight = f.Code, Name = "leg" + n, Order = n, Goal = "g", DoneWhen = "d", State = n <= doneLegs ? LegState.Done : n == doneLegs + 1 ? LegState.Flying : LegState.Planned,
         }));
         return [.. FlightLine.Build(rows, [], Live.At, legRows)];
     }

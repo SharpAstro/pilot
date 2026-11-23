@@ -41,6 +41,9 @@ internal sealed record NodeSummary
     /// <summary>Flights on the owner's hold, counted in no other column (<see cref="FlightCounts"/>).</summary>
     public int OnHold { get; init; }
 
+    /// <summary>Flights waiting for admission, counted in no other column (<see cref="FlightCounts"/>).</summary>
+    public int Queued { get; init; }
+
     public int JobsRunning { get; init; }
 
     public int JobsQueued { get; init; }
@@ -234,7 +237,7 @@ internal sealed record FleetLine
             // A node heard and quiet keeps its last words (dimmed, dated); one never heard has none, and its dashes say so.
             Sessions = !summary.Connected && !lastKnown ? "—" : summary.WaitingOnYou > 0 ? $"{summary.LiveSessions} live · {summary.WaitingOnYou} waiting on you" : $"{summary.LiveSessions} live",
             WaitingOnYou = summary.Connected ? summary.WaitingOnYou : 0,
-            Flights = !summary.Connected && !lastKnown ? "—" : Counted("none in the air", (summary.Flying, "flying"), (summary.Held, "held"), (summary.OnHold, "on hold")) + (summary.LegWait is { } wait ? $" · {wait}" : ""),
+            Flights = !summary.Connected && !lastKnown ? "—" : Counted("none in the air", (summary.Flying, "flying"), (summary.Queued, "queued"), (summary.Held, "held"), (summary.OnHold, "on hold")) + (summary.LegWait is { } wait ? $" · {wait}" : ""),
             Jobs = !summary.Connected && !lastKnown ? "—" : Counted("none", (summary.JobsRunning, "running"), (summary.JobsQueued, "queued")),
             JobHolder = summary.Connected || lastKnown ? summary.JobHolder : null,
             JobFailing = summary.Connected || lastKnown ? summary.JobFailing : null,
