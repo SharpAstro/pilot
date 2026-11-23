@@ -795,7 +795,7 @@ public sealed partial class NodeCommands(IServiceProvider services, NodeState st
             {
                 return ClosedAlready(command, state.Cards().First(c => c.Id == card.Id), args);
             }
-            RecordCardDecision(command, card, DecisionKinds.Dismiss, choice.Label, "");
+            RecordCardDecision(command, card, DecisionKinds.Dismiss, choice.Label, string.Join(' ', choice.Args));
             if (card.Kind == PrReviews.ReadyKind)
             {
                 await Get<PrReviews>().SweepAsync(cancellationToken);
