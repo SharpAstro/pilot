@@ -430,6 +430,16 @@ public static partial class NodeApp
             reviews.Investigations = services.GetRequiredService<FailureInvestigations>();
             reviews.Alerts = services.GetRequiredService<FailureAlerts>();
             reviews.DropJobs = (owners, why) => services.GetRequiredService<JobRunner>().DropQueuedOf(owners, why);
+            reviews.ResumeFixer = async (id, text, ct) =>
+            {
+                // Never a say to a session wound down, as LegWatch.SayAsync: it is to be gone, not woken.
+                if (WindDown.Is(services.GetRequiredService<NodeState>(), services.GetRequiredService<SessionLedger>(), id))
+                {
+                    return $"session {id} is wound down, so it is not woken";
+                }
+                var said = await services.GetRequiredService<SessionMessenger>().SayAsync(new CommandRequest { Verb = Verbs.Say, Target = Verbs.SessionTarget(id), Args = [text], Who = Flights.LegWatch.Who }, ct);
+                return said.Ok ? null : said.Error ?? "no reason given";
+            };
             reviews.TakeFlightVerdict = services.GetRequiredService<LegCommander>().TakePrVerdictAsync;
             reviews.SendFlightRound = services.GetRequiredService<LegCommander>().AnsweredDesignAsync;
             return reviews;

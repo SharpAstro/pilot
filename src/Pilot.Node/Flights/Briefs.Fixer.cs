@@ -106,7 +106,8 @@ public static partial class Briefs
         text.AppendLine($"- Comment on the PR once (`gh pr comment {review.Number} -R {review.Repo}`) with each finding and what you did about it.");
         text.AppendLine("- Commit with messages that say what changed and why. Open no PR and merge nothing.");
         text.AppendLine("- If GitHub refuses a push because the PR has merged (or is in a merge queue and is merging), the node follows up a merged PR's commits: commit, say so, and end your turn. Do not dequeue the PR or open a new one yourself.");
-        text.AppendLine("- End your turn once the push and the comment are done.");
+        text.AppendLine("- End your turn once the push and the comment are done. A turn never ends with work uncommitted or unpushed unless your PR comment says what stopped it.");
+        text.AppendLine("- Ending a turn on a `pilot run` job is fine: the job's end wakes you.");
         return text.ToString();
     }
 }

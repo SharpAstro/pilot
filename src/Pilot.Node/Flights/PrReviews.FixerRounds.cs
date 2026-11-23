@@ -116,6 +116,26 @@ public sealed partial class PrReviews
             // force-removed with the work in it (pilot #1247: tianwen#2435's fix sat in a commit nothing pointed to). Its worktree is kept then, and the card
             // says where the work is and what it is.
             var left = await LeftWorkAsync(review, cancellationToken);
+            // Ended on its own with the head unmoved: resumed once per fixer job before any card (pilot #1309). Only a second end, or a resume
+            // that could not be delivered, falls through to the card.
+            if (review.FixerJob is { } ended && !string.Equals(review.FixerResumedJob, ended, StringComparison.Ordinal) && ResumeFixer is { } resume)
+            {
+                state.PutPrReview(review with { FixerResumedJob = ended });
+                string? refused;
+                try
+                {
+                    refused = await resume(ended, ResumeText(review, left), cancellationToken);
+                }
+                catch (FlightException ex)
+                {
+                    refused = ex.Message;
+                }
+                if (refused is null)
+                {
+                    return;
+                }
+                Error.WriteLine($"pr reviews: {pr}'s ended fixer could not be resumed: {refused}");
+            }
             if (!await EndFixerAsync(left is null ? review : review with { FixWorktreeBorrowed = true }, cancellationToken))
             {
                 return;
@@ -127,6 +147,11 @@ public sealed partial class PrReviews
                 [new CardChoice { Label = FixLabel, Verb = Verbs.FixPr, Target = subject }], link: review.Url);
         }
     }
+
+    /// <summary>What the node says to a fixer that ended its turn with the PR's head unmoved: what is left, then what to do about it.</summary>
+    private static string ResumeText(PrReviewRow review, string? left) =>
+        (left is null ? $"Your turn ended with nothing pushed: the PR's head is still {CommitRefs.Short(review.Head)}. " : $"Your turn ended with work not on the PR: {left}. ")
+        + "Commit and push it to the PR's branch, and comment on the PR; or, if something stops you (a refused push, a failing build, a point that asks for no change), say what in a PR comment and end your turn.";
 
     /// <summary>
     /// What an ended fixer left in its worktree that the PR does not have: its uncommitted files and its commits past the PR's head, in a line; null when
@@ -318,7 +343,7 @@ public sealed partial class PrReviews
         state.CloseCardsAbout(Verbs.PrTarget(review.Repo, review.Number), "the fixer ended", FixLeftKind);
         if (Of(PrRef.Parse($"{review.Repo}#{review.Number}")!) is { } latest)
         {
-            state.PutPrReview(latest with { Fixer = null, FixerJob = null, FixWorktree = null, FixWorktreeBorrowed = null, FixDetached = null });
+            state.PutPrReview(latest with { Fixer = null, FixerJob = null, FixerResumedJob = null, FixWorktree = null, FixWorktreeBorrowed = null, FixDetached = null });
         }
         return true;
     }

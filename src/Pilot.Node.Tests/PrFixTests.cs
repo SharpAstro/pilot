@@ -575,6 +575,67 @@ public sealed class PrFixTests3 : PrFixTestsBase
         Row.Fixer.ShouldBeNull();
     }
 
+    /// <summary>A fixer that ended its turn with the head unmoved is resumed once, through the resume hook, before any card (pilot #1309).</summary>
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AnEndedFixerWithTheHeadUnmovedIsResumedOnceAndASecondEndRingsWithTheWorkLine()
+    {
+        var said = new List<(string Id, string Text)>();
+        _reviews.ResumeFixer = (id, text, _) => { said.Add((id, text)); return Task.FromResult<string?>(null); };
+        await Review("acme/widget#7", "changes", "README.md:1 wrong");
+        var job = Row.FixerJob.ShouldNotBeNull();
+        _state.PutSession(FixerSession(SessionState.Ended));
+
+        await _reviews.SweepAsync(Ct);
+
+        var one = said.ShouldHaveSingleItem();
+        one.Id.ShouldBe(job);
+        one.Text.ShouldContain("nothing pushed");
+        one.Text.ShouldContain("Commit and push it to the PR's branch");
+        _state.Cards().ShouldNotContain(c => c.Kind == PrReviews.FixEndedKind);
+        (Row.Fixer, Row.FixerResumedJob).ShouldBe((Row.Fixer.ShouldNotBeNull(), job));
+
+        await _reviews.SweepAsync(Ct);
+
+        said.Count.ShouldBe(1, "once per fixer job");
+        var card = _state.Cards(openOnly: true).Where(c => c.Kind == PrReviews.FixEndedKind).ShouldHaveSingleItem();
+        card.Detail.ShouldNotBeNull().ShouldContain("head is still");
+        Row.Fixer.ShouldBeNull();
+        Row.FixerResumedJob.ShouldBeNull();
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AResumeThatCouldNotBeDeliveredRaisesTheCardAtOnce()
+    {
+        _reviews.ResumeFixer = (_, _, _) => Task.FromResult<string?>("session is wound down");
+        await Review("acme/widget#7", "changes", "README.md:1 wrong");
+        _state.PutSession(FixerSession(SessionState.Ended));
+
+        await _reviews.SweepAsync(Ct);
+
+        _state.Cards(openOnly: true).Where(c => c.Kind == PrReviews.FixEndedKind).ShouldHaveSingleItem();
+        Row.Fixer.ShouldBeNull();
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AFixerThatPushedAfterTheResumeTakesTheHeadMovedPath()
+    {
+        _reviews.ResumeFixer = (_, _, _) => Task.FromResult<string?>(null);
+        await Review("acme/widget#7", "changes", "README.md:1 wrong");
+        _state.PutSession(FixerSession(SessionState.Ended));
+        await _reviews.SweepAsync(Ct);
+        Row.FixerResumedJob.ShouldNotBeNull();
+
+        FixerPushes("the fix");
+        await _reviews.SweepAsync(Ct);
+
+        _state.Cards().ShouldNotContain(c => c.Kind == PrReviews.FixEndedKind);
+        Row.Fixer.ShouldBeNull();
+        Row.FixerResumedJob.ShouldBeNull();
+    }
+
     [Fact]
     [Trait("Category", "Slow")]
     public async Task AFixerThatEndsWithoutPushingLeavesACardWithFixItAndNoReview()
