@@ -35,7 +35,7 @@ public sealed class SessionModelCheckTests : IDisposable
             Error = _log,
         };
         _delivery = new FakeSessionDelivery(_agents);
-        _messenger = new SessionMessenger(_state, _tracker, _delivery, new StringWriter(), _book);
+        _messenger = new SessionMessenger(_state, _tracker, _delivery, TextWriter.Synchronized(new StringWriter()), _book);
     }
 
     public void Dispose() => _profile.Dispose();

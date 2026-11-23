@@ -30,7 +30,7 @@ public sealed class ResumeOptionsTests : IDisposable
     {
         _tracker = new SessionTracker(_state, _agents, _profile.Options(), () => false, TimeProvider.System, NullLogger<SessionTracker>.Instance);
         _delivery = new FakeSessionDelivery(_agents);
-        _messenger = new SessionMessenger(_state, _tracker, _delivery, new StringWriter(), _book);
+        _messenger = new SessionMessenger(_state, _tracker, _delivery, TextWriter.Synchronized(new StringWriter()), _book);
     }
 
     public void Dispose() => _profile.Dispose();

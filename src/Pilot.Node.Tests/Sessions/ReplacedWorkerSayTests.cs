@@ -29,7 +29,7 @@ public sealed class ReplacedWorkerSayTests : IDisposable
     {
         var tracker = new SessionTracker(_state, _agents, _profile.Options(), () => false, TimeProvider.System, NullLogger<SessionTracker>.Instance);
         _delivery = new FakeSessionDelivery(_agents);
-        _messenger = new SessionMessenger(_state, tracker, _delivery, new StringWriter());
+        _messenger = new SessionMessenger(_state, tracker, _delivery, TextWriter.Synchronized(new StringWriter()));
     }
 
     public void Dispose() => _profile.Dispose();
