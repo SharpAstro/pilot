@@ -161,7 +161,8 @@ public sealed class CardWholeInNotificationsTests
         {
             row.ShouldContain(Squeezed(choice), Case.Sensitive, $"the page carries {choice}");
         }
-        row.ShouldContain("Nofixerstarted", Case.Sensitive, "the detail is open and whole, its last line too");
+        row.ShouldContain("▸Detail", Case.Sensitive, "the detail is folded on the page too, as on the panel");
+        row.ShouldNotContain("Nofixerstarted", Case.Sensitive);
         row.ShouldNotContain("Detail", Case.Sensitive, "no fold to open on the page");
         row.ShouldNotContain("closed", Case.Sensitive, "an open card is drawn open, though the collapsed bar never drew it");
         var regions = new List<ClickableRegion>();
@@ -192,8 +193,8 @@ public sealed class CardWholeInNotificationsTests
         gone.Row.ShouldNotBeNull().Invoke();
         var regions = new List<ClickableRegion>();
         w.Chrome.PageWidget.CollectPaintedRegions(regions);
-        regions.Where(r => r.Result is HitResult.ButtonHit { Action: var action } && action.StartsWith("card:c26885:", StringComparison.Ordinal) && r.OnClick != null)
-            .ShouldBeEmpty("a card no longer open answers nothing");
+        regions.Where(r => r.Result is HitResult.ButtonHit { Action: var action } && action.StartsWith("card:c26885:", StringComparison.Ordinal) && !action.EndsWith(":detail", StringComparison.Ordinal) && r.OnClick != null)
+            .ShouldBeEmpty("a card no longer open answers nothing (its fold only shows the detail)");
     }
 
     [Fact]

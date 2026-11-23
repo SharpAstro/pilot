@@ -79,6 +79,15 @@ public sealed class NotificationsLongWordTests
         chrome.Show(PilotPage.Notifications);
         Frame(T0.AddSeconds(1));
         Frame(T0.AddSeconds(2));
+        // The detail is folded on the page as on the panel: unfold it, as a click on its fold does, and draw the page again.
+        var regions = new List<ClickableRegion>();
+        chrome.PageWidget.CollectPaintedRegions(regions);
+        foreach (var fold in regions.Where(r => r.Result is HitResult.ButtonHit { Action: var a } && a.EndsWith(":detail", StringComparison.Ordinal)))
+        {
+            fold.OnClick!.Invoke(InputModifier.None);
+        }
+        Frame(T0.AddSeconds(3));
+        Frame(T0.AddSeconds(4));
 
         var dir = Environment.GetEnvironmentVariable("PILOT_JOB_ARTIFACTS") is { Length: > 0 } given ? given : Path.Combine(AppContext.BaseDirectory, "captures");
         Directory.CreateDirectory(dir);
