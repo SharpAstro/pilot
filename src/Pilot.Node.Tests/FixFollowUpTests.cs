@@ -237,7 +237,7 @@ public sealed class FixFollowUpTests : PrFixTestsBase
 
         await _reviews.SweepAsync(Ct);
 
-        _workers.StopReasons.ShouldContain(r => r.Job == "du1-fix-widget-7");
+        _workers.StopReasons.ShouldContain(r => r.Job == LiveFixer().Id);
         _github.Created.ShouldHaveSingleItem();
         _state.Cards(openOnly: true).ShouldNotContain(c => c.Bin == CardBin.ForYou);
     }
