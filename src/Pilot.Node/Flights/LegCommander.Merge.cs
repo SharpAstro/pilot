@@ -670,7 +670,8 @@ public sealed partial class LegCommander
             {
                 return false;
             }
-            card = state.RaiseCard(CardBin.Ring, PrReady, target, title, detail, [new CardChoice { Label = MergeLabel, Verb = Verbs.Merge, Target = target, Args = [head, method] }], link: link ?? quiet.Link);
+            // Raised plain and turned to what failed just below, by the same update every failed card gets.
+            card = state.RaiseCard(CardBin.Ring, PrReady, target, "Its merge did not go through", detail, [new CardChoice { Label = MergeLabel, Verb = Verbs.Merge, Target = target, Args = [head, method] }], link: link ?? quiet.Link);
         }
         var choices = new List<CardChoice>();
         if (state.Legs(code).OrderBy(l => l.Order).LastOrDefault() is { } last)
