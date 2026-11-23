@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using DIR.Lib;
+using Layout = DIR.Lib.Layout;
 using Pilot.Commands;
 using Pilot.Contracts;
 using Pilot.Ui;
@@ -142,6 +143,26 @@ public sealed class AdmissionViewsTests
         home.QueueLines.Select(q => q.Line.Code).ShouldBe(["PIL902", "PIL903", "PIL904"]);
         home.QueueLines[0].Line.PriorityMark.ShouldNotBeNull();
         new HomeScreen(Screens([Flight(0)], [], null), new SessionsScreen([], "t", Now), new JobsScreen([], "t", Now), CardsScreen.Empty).OpusLine.ShouldBeNull();
+    }
+
+    /// <summary>An away peer is said once in the Opus line's hover text, after the line, and the line itself stays as it was (PIL1312).</summary>
+    [Fact]
+    public void TheOpusTooltipCarriesEachAwayPeerOnALineOfItsOwn()
+    {
+        const string away = "LE1 away since 2026-11-23 14:02 UTC: skipped until it answers";
+        var (flights, legs, _) = Queue(2);
+        var admission = Admission() with { PeersAway = [away] };
+        var home = new HomeScreen(Screens(flights, legs, admission), new SessionsScreen([], "t", Now), new JobsScreen([], "t", Now), CardsScreen.Empty);
+
+        home.OpusLine.ShouldBe("Opus 3/3");
+        home.OpusTooltip.ShouldBe($"Opus 3/3\n{away}");
+        new HomeScreen(Screens(flights, legs, Admission()), new SessionsScreen([], "t", Now), new JobsScreen([], "t", Now), CardsScreen.Empty).OpusTooltip.ShouldBe("Opus 3/3");
+
+        // The drawn Opus line carries it on hover.
+        using var renderer = new RgbaImageRenderer(1, 1);
+        var view = new HomeView<RgbaImage>(renderer) { FontPath = SessionsCapture.FontPath };
+        var arranged = Layout.Engine.Arrange(view.Tree(home), new Rect<float>(0, 0, 1600, 2000), new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, 1f));
+        arranged.Select(a => a.Node.Tooltip).OfType<string>().ShouldContain($"Opus 3/3\n{away}");
     }
 
     private static FlightsScreen Screens(FlightRow[] flights, LegRow[] legs, AdmissionRow? admission) =>

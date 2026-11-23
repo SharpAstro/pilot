@@ -66,15 +66,32 @@ public sealed class PeerPullRequestsTests : IDisposable
         public async IAsyncEnumerable<PullRequestsRow> PullRequestsAsync([System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken)
         {
             Opened++;
+            if (Refuse is { } refused)
+            {
+                throw refused;
+            }
             if (Down)
             {
                 throw new HttpRequestException("connection refused");
             }
-            await foreach (var row in _stream.Reader.ReadAllAsync(cancellationToken))
+            try
             {
-                yield return row;
+                await foreach (var row in _stream.Reader.ReadAllAsync(cancellationToken))
+                {
+                    yield return row;
+                }
+            }
+            finally
+            {
+                Closed.TrySetResult();
             }
         }
+
+        /// <summary>Thrown by every stream opened while set, as a fleet that skips an away peer throws.</summary>
+        public Exception? Refuse { get; set; }
+
+        /// <summary>Completes when an open stream ends, as when the cache stops it.</summary>
+        public TaskCompletionSource Closed { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     }
 
     private sealed class OneFleet(IFleetPeer peer) : IFleet
@@ -94,7 +111,7 @@ public sealed class PeerPullRequestsTests : IDisposable
         RepoReads = [new PullRequestRepoRead("SharpAstro/pilot", readAt, "B1", false)],
     };
 
-    private PeerPullRequests Cache(StreamPeer peer) => new(() => new OneFleet(peer), _clock, () => Pace)
+    private PeerPullRequests Cache(StreamPeer peer, Func<string, bool>? isAway = null) => new(() => new OneFleet(peer), _clock, () => Pace, isAway)
     {
         Rescan = TimeSpan.FromHours(1),
         Backoff = TimeSpan.FromSeconds(1),
@@ -249,5 +266,77 @@ public sealed class PeerPullRequestsTests : IDisposable
         }
         await cache.StopAsync(Ct);
         new PeerPullRequests(() => null, _clock).MaxBackoff.ShouldBe(TimeSpan.FromMinutes(10));
+    }
+
+    /// <summary>An away peer (PIL1312) gets no stream at a rescan, and so no "stream failed" line.</summary>
+    [Fact]
+    public void AnAwayPeerGetsNoStreamAndNoFailureLine()
+    {
+        var peer = new StreamPeer();
+        using var cache = Cache(peer, _ => true);
+        var log = new StringWriter();
+        cache.Error = TextWriter.Synchronized(log);
+
+        cache.Follow(Ct);
+
+        peer.Opened.ShouldBe(0);
+        cache.RowOf("B1").ShouldBeNull();
+        cache.IsDown("B1").ShouldBeFalse();
+        _clock.Waiting.ShouldBe(0);
+        log.ToString().ShouldBeEmpty();
+    }
+
+    /// <summary>A stream open for a peer that then goes away is stopped at the next rescan, its row let go, and nothing is written as failed.</summary>
+    [Fact]
+    public async Task AStreamOpenForAPeerThatGoesAwayIsStoppedAtTheNextRescan()
+    {
+        var peer = new StreamPeer();
+        var away = false;
+        using var cache = Cache(peer, _ => away);
+        var log = new StringWriter();
+        cache.Error = TextWriter.Synchronized(log);
+        using var stopping = CancellationTokenSource.CreateLinkedTokenSource(Ct);
+
+        cache.Follow(stopping.Token);
+        peer.Push(RowOf(Noon, 7));
+        await Until(cache, () => cache.RowOf("B1") is not null);
+
+        away = true;
+        cache.Follow(stopping.Token);
+        await peer.Closed.Task.WaitAsync(TimeSpan.FromSeconds(3), Ct);
+
+        cache.RowOf("B1").ShouldBeNull();
+        peer.Opened.ShouldBe(1);
+        log.ToString().ShouldNotContain("stream failed");
+        // Back again: the next rescan opens a new stream.
+        away = false;
+        cache.Follow(stopping.Token);
+        peer.Push(RowOf(Noon.AddMinutes(1), 7, 8));
+        await Until(cache, () => cache.RowOf("B1")?.PullRequests.Length == 2);
+        peer.Opened.ShouldBe(2);
+        await stopping.CancelAsync();
+    }
+
+    /// <summary>A stream refused because the peer is away is not written as failed, and is still tried again after the backoff.</summary>
+    [Fact]
+    public async Task AStreamRefusedAsAwayIsNotWrittenAsFailedAndStillBacksOff()
+    {
+        var peer = new StreamPeer { Refuse = new PeerAwayException("B1", Noon) };
+        using var cache = Cache(peer);
+        var log = new StringWriter();
+        cache.Error = TextWriter.Synchronized(log);
+        using var stopping = CancellationTokenSource.CreateLinkedTokenSource(Ct);
+
+        cache.Follow(stopping.Token);
+        await Until(cache, () => _clock.Waiting >= 1);
+        peer.Opened.ShouldBe(1);
+        log.ToString().ShouldNotContain("stream failed");
+
+        _clock.Advance(cache.Backoff - TimeSpan.FromMilliseconds(1));
+        peer.Opened.ShouldBe(1, "not tried again before the backoff is over");
+        _clock.Advance(TimeSpan.FromMilliseconds(1));
+        await Until(cache, () => peer.Opened >= 2 && _clock.Waiting >= 1);
+        log.ToString().ShouldNotContain("stream failed");
+        await stopping.CancelAsync();
     }
 }

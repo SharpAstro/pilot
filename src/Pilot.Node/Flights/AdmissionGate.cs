@@ -298,6 +298,7 @@ public sealed class AdmissionGate(NodeState state, Func<RoleModels> models, stri
             Counted = counted,
             Priority = [.. state.Flights().Where(f => f.State != FlightState.Landed && IsPriority(f)).Select(f => f.Code).Order(StringComparer.Ordinal)],
             PeersNotCounted = FleetAdmission.Note(view),
+            PeersAway = [.. view.Away],
             WaitingOnPerson = WaitingOnPerson(),
         });
     }
@@ -374,6 +375,7 @@ public sealed class AdmissionGate(NodeState state, Func<RoleModels> models, stri
         }
         // Peers the read could not reach already say why, as <c>host (did not answer: ...)</c>.
         sent.AddRange(view.NotCounted.Select(n => new FleetSent(n, FleetSendOutcome.Unreachable)));
+        sent.AddRange(view.Away.Select(a => new FleetSent(a, FleetSendOutcome.Unreachable)));
         return sent;
     }
 

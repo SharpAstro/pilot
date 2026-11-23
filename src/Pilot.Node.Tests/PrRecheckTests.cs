@@ -253,6 +253,8 @@ public abstract class PrRecheckTestsBase : IDisposable
 
         public bool Unreachable { get; init; }
 
+        public Exception? Throws { get; init; }
+
         public FlightRow[] Flights { get; init; } = [];
 
         public PrReviewRow[] PrReviews { get; init; } = [];
@@ -262,7 +264,7 @@ public abstract class PrRecheckTestsBase : IDisposable
         public Task<RepoInfo[]?> ReposAsync(CancellationToken cancellationToken) => throw new NotSupportedException();
 
         public Task<FleetLoad> LoadAsync(CancellationToken cancellationToken) =>
-            Unreachable ? Task.FromException<FleetLoad>(new HttpRequestException("connection refused")) : Task.FromResult(new FleetLoad(null, Flights, PrReviews));
+            Throws is not null ? Task.FromException<FleetLoad>(Throws) : Unreachable ? Task.FromException<FleetLoad>(new HttpRequestException("connection refused")) : Task.FromResult(new FleetLoad(null, Flights, PrReviews));
 
         public Task<CommandResult> SendAsync(CommandRequest command, CancellationToken cancellationToken) => throw new NotSupportedException();
     }
@@ -405,6 +407,55 @@ public sealed class PrRecheckTests1 : PrRecheckTestsBase
 
         Review().ShouldNotBeNull();
         _github.Labels[7].Keys.ShouldBe([PilotMarks.Reviewing]);
+    }
+
+    [Fact]
+    public async Task APeerWhoseEventStreamCannotConnectLeavesThePrToThisNode()
+    {
+        _fleet.Peers.Add(new Peer("a.local:1") { Throws = new System.Net.WebSockets.WebSocketException("Unable to connect to the remote server") });
+
+        await LookAsync();
+
+        Review().ShouldNotBeNull();
+        _github.Labels[7].Keys.ShouldBe([PilotMarks.Reviewing]);
+        Handled().ShouldBe(["recheck of widget#7: review started"]);
+        _state.Cards().ShouldNotContain(c => c.Kind == PrRecheck.FailedKind);
+    }
+
+    [Fact]
+    public async Task APeerThatThrowsInvalidOperationLeavesThePrToThisNode()
+    {
+        _fleet.Peers.Add(new Peer("a.local:1") { Throws = new InvalidOperationException("not connected") });
+
+        await LookAsync();
+
+        Review().ShouldNotBeNull();
+        _state.Cards().ShouldNotContain(c => c.Kind == PrRecheck.FailedKind);
+    }
+
+    [Fact]
+    public async Task APeerThatTimesOutLeavesThePrToThisNode()
+    {
+        _fleet.Peers.Add(new Peer("a.local:1") { Throws = new TimeoutException("no answer") });
+
+        await LookAsync();
+
+        Review().ShouldNotBeNull();
+        _github.Labels[7].Keys.ShouldBe([PilotMarks.Reviewing]);
+        Handled().ShouldBe(["recheck of widget#7: review started"]);
+        _state.Cards().ShouldNotContain(c => c.Kind == PrRecheck.FailedKind);
+    }
+
+    [Fact]
+    public async Task ARecheckThatCannotStartNamesThePeersItCouldNotReach()
+    {
+        _fleet.Peers.Add(new Peer("a.local:1") { Throws = new System.Net.WebSockets.WebSocketException("Unable to connect to the remote server") });
+        _workers.Fail = new FlightException("claude would not start");
+
+        await LookAsync();
+
+        var card = _state.Cards(openOnly: true).Single(c => c.Kind == PrRecheck.FailedKind);
+        card.Detail.ShouldNotBeNull().ShouldContain("Could not reach: a.local:1");
     }
 
     [Fact]
