@@ -233,7 +233,7 @@ public sealed class SayTests : IDisposable
         result.Way.ShouldBe(SayWays.Resumed);
         _delivery.Relays.ShouldBeEmpty();
         _delivery.Resumes.ShouldHaveSingleItem().Text.ShouldBe("hello there");
-        _log.ToString().ShouldContain($"say: who={who} from=owner target=");
+        _log.ToString()!.ShouldContain($"say: who={who} from=owner target=");
     }
 
     [Theory]
@@ -249,7 +249,7 @@ public sealed class SayTests : IDisposable
         result.Ok.ShouldBeTrue(result.Error);
         result.Way.ShouldBe(SayWays.Relayed);
         _delivery.Resumes.ShouldBeEmpty();
-        _log.ToString().ShouldContain($"who={who} from={kind} target=");
+        _log.ToString()!.ShouldContain($"who={who} from={kind} target=");
     }
 
     [Fact]
@@ -275,7 +275,7 @@ public sealed class SayTests : IDisposable
         result.Ok.ShouldBeTrue(result.Error);
         result.Way.ShouldBe(SayWays.Resumed);
         _delivery.Resumes.ShouldHaveSingleItem().Text.ShouldBe("/compact Keep the leg");
-        _log.ToString().ShouldContain("compact: who=node from=node target=session/b2c3d4e5 way=resumed");
+        _log.ToString()!.ShouldContain("compact: who=node from=node target=session/b2c3d4e5 way=resumed");
     }
 
     [Theory]
@@ -364,7 +364,7 @@ public sealed class SayTests : IDisposable
         (await second).Ok.ShouldBeTrue();
         _delivery.Resumes.Count.ShouldBe(1);
         _delivery.Relays.ShouldBeEmpty();
-        var log = _log.ToString();
+        var log = _log.ToString()!;
         log.Split("delivered as").Length.ShouldBe(2);
         log.ShouldContain("skipped: request id r1 was already sent");
     }
@@ -389,7 +389,7 @@ public sealed class SayTests : IDisposable
 
         await Should.ThrowAsync<OperationCanceledException>(() => _messenger.SayAsync(Say("b2c3d4e5", "lost") with { RequestId = "r1" }, Ct));
 
-        _log.ToString().ShouldContain("say: who=tests from=session target=session/b2c3d4e5 way=none cancelled");
+        _log.ToString()!.ShouldContain("say: who=tests from=session target=session/b2c3d4e5 way=none cancelled");
     }
 
     [Fact]
@@ -650,8 +650,8 @@ public sealed class SayTests : IDisposable
 
         await _messenger.SayAsync(Say("a1b2c3d4", "hello"), Ct);
 
-        _log.ToString().ShouldStartWith("say: who=tests from=session target=session/a1b2c3d4 way=relayed route=cli-relay (direct: its session record has no messagingSocketPath) delivered (");
-        _log.ToString().ShouldContain(" ms)");
+        _log.ToString()!.ShouldStartWith("say: who=tests from=session target=session/a1b2c3d4 way=relayed route=cli-relay (direct: its session record has no messagingSocketPath) delivered (");
+        _log.ToString()!.ShouldContain(" ms)");
     }
 
     [Fact]
@@ -662,7 +662,7 @@ public sealed class SayTests : IDisposable
 
         await _messenger.SayAsync(Say("a1b2c3d4", "hello"), Ct);
 
-        _log.ToString().ShouldMatch(@"delivered \(\d+ ms: gate \d+ ms, look \d+ ms, choose \d+ ms, deliver \d+ ms\)");
+        _log.ToString()!.ShouldMatch(@"delivered \(\d+ ms: gate \d+ ms, look \d+ ms, choose \d+ ms, deliver \d+ ms\)");
     }
 
     [Fact]
@@ -670,7 +670,7 @@ public sealed class SayTests : IDisposable
     {
         await _messenger.SayAsync(Say("nobody", "hello"), Ct);
 
-        _log.ToString().ShouldMatch(@"refused: .* \(\d+ ms: gate \d+ ms, look \d+ ms\)");
+        _log.ToString()!.ShouldMatch(@"refused: .* \(\d+ ms: gate \d+ ms, look \d+ ms\)");
     }
 
     [Fact]
@@ -681,7 +681,7 @@ public sealed class SayTests : IDisposable
         await _messenger.SayAsync(Say("a1b2c3d4", "hello"), Ct);
         await _messenger.SayAsync(Say("nobody", "hello"), Ct);
 
-        var lines = _log.ToString().Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var lines = _log.ToString()!.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         lines.Length.ShouldBe(2);
         lines[0].ShouldStartWith("say: who=tests from=session target=session/a1b2c3d4 way=relayed route=direct delivered (");
         lines[1].ShouldStartWith("say: who=tests from=session target=session/nobody way=none refused: There is no session nobody: ");

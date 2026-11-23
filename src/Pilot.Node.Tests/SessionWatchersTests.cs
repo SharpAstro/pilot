@@ -127,7 +127,7 @@ public sealed class SessionWatchersTests : IDisposable
         (await _messenger.StopAsync(Stop(id), Ct)).Ok.ShouldBeTrue();
 
         _table.Killed.ShouldBe([2, 3]);
-        _log.ToString().ShouldContain("watchers: ended 2 of pil5-end: pwsh 2, sleep 3");
+        _log.ToString()!.ShouldContain("watchers: ended 2 of pil5-end: pwsh 2, sleep 3");
     }
 
     [Fact]
@@ -143,7 +143,7 @@ public sealed class SessionWatchersTests : IDisposable
 
         said.Ok.ShouldBeTrue(said.Error);
         _table.Killed.ShouldBe([2, 3]);
-        _log.ToString().ShouldContain("watchers: ended 2 of pil5-end: pwsh 2, sleep 3");
+        _log.ToString()!.ShouldContain("watchers: ended 2 of pil5-end: pwsh 2, sleep 3");
     }
 
     [Fact]
@@ -156,7 +156,7 @@ public sealed class SessionWatchersTests : IDisposable
         (await _messenger.StopAsync(Stop(id), Ct)).Ok.ShouldBeTrue();
 
         _table.Killed.ShouldBeEmpty();
-        _log.ToString().ShouldNotContain("watchers:");
+        _log.ToString()!.ShouldNotContain("watchers:");
     }
 
     [Fact]

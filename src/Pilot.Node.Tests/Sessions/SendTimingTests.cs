@@ -49,7 +49,7 @@ public sealed class SendTimingTests : IDisposable
 
         var row = timings.Rows().ShouldNotBeNull().ShouldHaveSingleItem();
         row.ShouldBe(new SendTimingRow { Kind = "start", Count = 1, MedianMs = 1500, SlowestMs = 1500 });
-        _log.ToString().ShouldContain("timing: start name=de1-x job=abc (1500 ms)");
+        _log.ToString()!.ShouldContain("timing: start name=de1-x job=abc (1500 ms)");
     }
 
     [Fact]
@@ -75,7 +75,7 @@ public sealed class SendTimingTests : IDisposable
         (await messenger.SayAsync(Say("a1b2c3d4", "note"), Ct)).Way.ShouldBe(SayWays.Relayed);
 
         timings.Rows().ShouldNotBeNull().Select(r => (r.Kind, r.Count)).ShouldBe([("resume", 1), ("relay", 1)]);
-        _log.ToString().ShouldContain("timing: relay target=session/a1b2c3d4");
+        _log.ToString()!.ShouldContain("timing: relay target=session/a1b2c3d4");
     }
 
     [Fact]
