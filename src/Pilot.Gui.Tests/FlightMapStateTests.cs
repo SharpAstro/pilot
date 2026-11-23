@@ -207,7 +207,12 @@ public sealed class FlightMapStateTests
         status.Count(l => l.Contains(", queued: ")).ShouldBe(counts.Queued);
         // A flight in conflict whose fix leg waits for a slot is in conflict, not queued: pilot status and the header agree on it.
         status.Single(l => l.StartsWith("CNQ ", StringComparison.Ordinal)).ShouldNotContain("queued");
-        StatusMarkdown.Build(snapshot).ShouldNotContain("queued: waiting for an Opus slot");
+        // Its own section in the markdown says the same; the queue list above the sections (QueuedFlight.Of) is the wider
+        // admission queue, which names every leg waiting for a slot, so only the flight's state line is checked.
+        var markdown = StatusMarkdown.Build(snapshot).Split('\n');
+        var section = Array.FindIndex(markdown, l => l.StartsWith("### CNQ ", StringComparison.Ordinal));
+        section.ShouldBeGreaterThan(0);
+        markdown.Skip(section + 1).First(l => l.Trim().Length > 0).ShouldStartWith("**flying");
 
         // The map's own count of planes is the flights whose leg flies: never more than the flying count, and none for the queued.
         var (renderer, view) = Show(FlightMapWorld.Lines(flights, legs), 1800, 1000, night: false);
