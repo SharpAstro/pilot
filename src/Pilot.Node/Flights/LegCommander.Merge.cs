@@ -492,6 +492,30 @@ public sealed partial class LegCommander
     /// </summary>
     public void ShowMerge(string target, string? line, string way, string? note = null)
     {
+        // PIL1294: a merge the node armed on its own rules waits on its checks with nothing for a person to do: its card closes and a
+        // Handled line says so. The card comes back when the checks fail (ShowMergeFailed) or the merge is queued (below).
+        if (way == MergeWays.Armed && state.Flights().FirstOrDefault(f => f.Code == (Verbs.FlightCodeOf(target) ?? target)) is { MergeWhenGreen: { } armedRow } armedFlight
+            && armedRow.ElementAtOrDefault(2) != ArmedByGitHub)
+        {
+            var waiting = $"{armedFlight.Code}'s PR #{armedFlight.PullRequest} waits for its checks, then the node queues it";
+            var open = state.Cards(openOnly: true).Where(c => c.Kind is PrReady && c.Subject == target && c.Choices.Any(ch => ch.Verb == Verbs.Merge)).ToList();
+            foreach (var anchor in open)
+            {
+                state.CloseCard(anchor.Id, NodeArmedOutcome + waiting, "node");
+            }
+            if (open.Count > 0 && state.Cards(openOnly: false).Where(c => c.Subject == target && c.Kind == NodeArmedKind).OrderByDescending(c => c.At).FirstOrDefault()?.Title != waiting)
+            {
+                state.RaiseCard(CardBin.Handled, NodeArmedKind, target, waiting, line ?? "The node waits for the checks, then queues or merges it. Nothing to press unless they fail.", link: armedFlight.PullRequestUrl);
+            }
+            return;
+        }
+        // Queued after a wait the node kept quiet: the merge card is raised again, as the queue's drop is read from it.
+        if (way == MergeWays.Queued && !state.Cards(openOnly: true).Any(c => c.Kind is PrReady or MergeFailed && c.Subject == target && c.Choices.Any(ch => ch.Verb == Verbs.Merge))
+            && state.Cards(openOnly: false).Where(c => c.Subject == target && c.Kind is PrReady && c.Outcome?.StartsWith(NodeArmedOutcome, StringComparison.Ordinal) == true).OrderByDescending(c => c.ClosedAt).FirstOrDefault() is { } quiet
+            && state.Flights().FirstOrDefault(f => f.Code == (Verbs.FlightCodeOf(target) ?? target)) is { } queuedFlight)
+        {
+            state.RaiseCard(MergeCardBin(queuedFlight.Repo), PrReady, target, $"{queuedFlight.Code}'s PR #{queuedFlight.PullRequest} is in the merge queue", line, quiet.Choices, link: quiet.Link ?? queuedFlight.PullRequestUrl);
+        }
         foreach (var card in state.Cards(openOnly: true).Where(c => c.Kind is PrReady or MergeFailed && c.Subject == target && c.Choices.Any(ch => ch.Verb == Verbs.Merge)))
         {
             var code = Verbs.FlightCodeOf(target) ?? target;
@@ -635,17 +659,30 @@ public sealed partial class LegCommander
             return false;
         }
         var legs = state.Legs(code);
-        var legsLeft = LegWaitWords(legs);
-        var waitTitle = $"{code}'s PR #{flight.PullRequest} merges once {string.Join(", ", open)} {(open.Count == 1 ? "is" : "are")} done (legs {legs.Length - open.Count}/{legs.Length} done)";
-        var waitWhy = $"The {string.Join(", ", open)} {(open.Count == 1 ? "leg makes" : "legs make")} the review's fixes; the node merges the PR once {(open.Count == 1 ? "it lands" : "they land")}.";
-        if (card.Title != waitTitle || card.Choices.Any(c => c.Verb == Verbs.Merge && (c.Status != ChoiceStatus.WaitsForLegs || c.Note != legsLeft)))
+        var waitTitle = $"{code}'s PR #{flight.PullRequest} merges once {string.Join(", ", open)} {(open.Count == 1 ? "lands" : "land")}";
+        var waitWhy = $"The {string.Join(", ", open)} {(open.Count == 1 ? "leg makes" : "legs make")} the review's fixes (legs {legs.Length - open.Count}/{legs.Length} done); the node merges the PR once {(open.Count == 1 ? "it lands" : "they land")}. Nothing to press.";
+        // PIL1294: a Merge now is refused and nothing is the person's to do, so no For you card. The open card was the node's merge
+        // anchor: it closes (a card never moves to Handled), a Handled line says what is waited for, and RestorePrReadyAsync raises
+        // the card again once every leg is done. One line per wait, not one per look.
+        state.CloseCard(card.Id, LegWaitOutcome + waitTitle, "node");
+        if (state.Cards(openOnly: false).Where(c => c.Subject == card.Subject && c.Kind == LegWaitKind).OrderByDescending(c => c.At).FirstOrDefault()?.Title != waitTitle)
         {
-            state.UpdateCard(card.Id, waitTitle, waitWhy,
-                [.. card.Choices.Select(c => c.Verb == Verbs.Merge ? c with { Status = ChoiceStatus.WaitsForLegs, Note = legsLeft } : c)],
-                flight.PullRequestUrl ?? card.Link, PrReady, waitWhy, card.Bin);
+            state.RaiseCard(CardBin.Handled, LegWaitKind, card.Subject, waitTitle, waitWhy, link: flight.PullRequestUrl ?? card.Link);
         }
         return true;
     }
+
+    /// <summary>The Handled card kind that says a merge the node armed waits for its checks (PIL1294).</summary>
+    public const string NodeArmedKind = "merge-armed-by-node";
+
+    /// <summary>The outcome a PR-ready card is closed with while the node's own armed merge waits on checks.</summary>
+    public const string NodeArmedOutcome = "the node waits for the checks: ";
+
+    /// <summary>The Handled card kind that says a passed flight's PR merges once its legs land (PIL1294).</summary>
+    public const string LegWaitKind = "pr-waits-for-legs";
+
+    /// <summary>The outcome a PR-ready card is closed with while legs are not done: the restore sweep does not read it as a person's dismissal.</summary>
+    public const string LegWaitOutcome = "waits for legs: ";
 
     /// <summary>
     /// What a held merge waits for, in the words its Merge mark shows (#918): each leg not done, a leg whose check reruns marked so
@@ -678,9 +715,16 @@ public sealed partial class LegCommander
     {
         var target = Verbs.FlightTarget(code);
         // A go-around card (no Merge) is the one a conflicting PR already turned; it is turned again for the head it conflicts on.
-        if (state.Cards(openOnly: true).FirstOrDefault(c => c.Kind is PrReady or MergeFailed && c.Subject == target && c.Choices.Any(ch => ch.Verb is Verbs.Merge or Verbs.GoAround)) is not { } card)
+        var card = state.Cards(openOnly: true).FirstOrDefault(c => c.Kind is PrReady or MergeFailed && c.Subject == target && c.Choices.Any(ch => ch.Verb is Verbs.Merge or Verbs.GoAround));
+        if (card is null)
         {
-            return false;
+            // The node's quiet wait on the checks closed its card (PIL1294): the failure is the person's, so a card comes back.
+            if (state.Cards(openOnly: false).Where(c => c.Subject == target && c.Kind is PrReady && c.Outcome?.StartsWith(NodeArmedOutcome, StringComparison.Ordinal) == true).OrderByDescending(c => c.ClosedAt).FirstOrDefault() is not { } quiet
+                || state.Cards(openOnly: false).Any(c => c.Subject == target && c.Kind is PrReady && c.ClosedAt is null))
+            {
+                return false;
+            }
+            card = state.RaiseCard(CardBin.Ring, PrReady, target, title, detail, [new CardChoice { Label = MergeLabel, Verb = Verbs.Merge, Target = target, Args = [head, method] }], link: link ?? quiet.Link);
         }
         var choices = new List<CardChoice>();
         if (state.Legs(code).OrderBy(l => l.Order).LastOrDefault() is { } last)

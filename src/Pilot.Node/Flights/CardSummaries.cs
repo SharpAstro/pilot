@@ -113,6 +113,8 @@ public static partial class CardSummaries
             LegCommander.MoveFailedKind => $"The move of {what} to another node failed and it stays flying here. The move can be run once more when the cause is dealt with.",
             LegCommander.MovedAwayKind => $"{what} was handed over to another node, which flies it from here. Nothing to do.",
             LegCommander.LegCapKind => $"{what} grew past the legs its planner laid by more than one. The extra leg is planned and flies in its turn; Remove it takes it out, or leave it if the issue needs it.",
+            LegCommander.LegWaitKind => $"The PR of {what} is reviewed, and a leg that makes the review's fixes has yet to land. The node merges the PR once it does. Nothing to do.",
+            LegCommander.NodeArmedKind => $"The node armed the merge of {what} and waits for its checks, then queues it. Nothing to do unless they fail; then a card comes back.",
             LegCommander.LegRemovedKind => $"A leg of {what} was removed before it flew. Nothing to do; the legs after it keep their order.",
             LegCommander.FlownElsewhereKind => $"{what} is already flown on another node, so this node did not start it. Stop it there first, or leave it where it is.",
             LegCommander.ValidatingKind => $"A validator was started to check {what} against the tree before its worker starts. Nothing to do; the node starts the leg on its answer.",
