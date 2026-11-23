@@ -236,6 +236,7 @@ internal sealed class PilotChrome<TSurface>
         NotificationsPage.Arranged = nodes => TextCheck.Observe("notifications", nodes, DpiScale);
         Tooltips = new TooltipLayer<TSurface>(renderer);
         NotificationsLayer = new NotificationsLayer<TSurface>(renderer);
+        NotificationsLayer.Arranged = nodes => TextCheck.Observe("toast", nodes, DpiScale);
         More = new RailMoreMenu<TSurface>(renderer);
         Viewer = new AttachmentViewer<TSurface>(renderer, sessions.Gallery);
         Notifications.CardBody = ToastBody;
