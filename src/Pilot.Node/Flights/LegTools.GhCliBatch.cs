@@ -73,7 +73,7 @@ public sealed partial class GhCli
 
     private static OpenPullRequest? OpenPullRequestOf(JsonElement pr)
     {
-        if (!pr.TryGetProperty("number", out var number) || !number.TryGetInt32(out var n) || TextOf(pr, "headRefName") is not { } head)
+        if (!pr.TryGetProperty("number", out var number) || number.ValueKind != JsonValueKind.Number || !number.TryGetInt32(out var n) || TextOf(pr, "headRefName") is not { } head)
         {
             return null;
         }
