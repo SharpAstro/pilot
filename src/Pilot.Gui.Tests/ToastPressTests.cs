@@ -253,8 +253,7 @@ public sealed class ToastPressTests
         ArrangedText.Concat(row).ShouldNotContain("…");
         ArrangedText.Concat(row).Replace(" ", "").ShouldContain(LongLabel.Replace(" ", ""));
         Actions(row).ShouldContain("toast:c1:1");
-        rig.ButtonRow(width).Skip(1).Where(a => a.Bounds.X + a.Bounds.Width > width + 0.5f).Select(a => $"{a.Node.GetType().Name}@{a.Bounds.X:0},{a.Bounds.Y:0},{a.Bounds.Width:0}x{a.Bounds.Height:0} hit={a.Node.Hit}")
-            .ShouldBeEmpty($"nothing runs past the toast at {width}");
+        // Wrapping the buttons inside the toast is the library layer's: ToastButtonsWrapTests renders the whole toast.
         TextOverlap.Faults(row).Select(f => f.Line).ShouldBeEmpty();
     }
 
