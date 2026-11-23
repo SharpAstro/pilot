@@ -57,7 +57,10 @@ public sealed class AutopilotMergeRefusalTests : ReviewTestsBase
         _state.Merges().ShouldBeEmpty();
         NoRefusalRaised();
 
+        // PIL1294: the leg's wait closed the PR-ready card quietly, so the look that finds every leg done restores the card (the node merges
+        // only from one) and the look after it presses its Merge.
         _state.PutLeg(notes with { State = LegState.Done });
+        await checks.LookAsync(Ct);
         await checks.LookAsync(Ct);
 
         _state.Merges().ShouldNotBeEmpty();
