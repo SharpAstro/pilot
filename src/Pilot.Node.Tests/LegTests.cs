@@ -928,6 +928,18 @@ internal sealed class FakeGitHub : IGitHub
         return Task.FromResult<int?>(RunAttempts.GetValueOrDefault(runId, 1));
     }
 
+    /// <summary>A run's state as GitHub shows it now; one not listed is completed on its <see cref="RunAttempts"/> attempt, ended at <see cref="DefaultRunEnd"/>.</summary>
+    public System.Collections.Concurrent.ConcurrentDictionary<long, RunState> RunStates { get; } = new();
+
+    /// <summary>The end (updated_at) of a run whose state was not set.</summary>
+    public DateTimeOffset DefaultRunEnd { get; set; } = DateTimeOffset.UnixEpoch;
+
+    /// <summary>When set, reading a run's state fails as a gh that could not reach GitHub.</summary>
+    public bool RunStateFails { get; set; }
+
+    public Task<RunState?> RunStateAsync(string repoPath, long runId, CancellationToken cancellationToken) =>
+        Task.FromResult(RunStateFails ? null : RunStates.TryGetValue(runId, out var s) ? s : new RunState(RunAttempts.GetValueOrDefault(runId, 1), true, DefaultRunEnd));
+
     /// <summary>The run ids that were asked to run again, in order.</summary>
     public ConcurrentQueue<long> RunReruns { get; } = [];
 

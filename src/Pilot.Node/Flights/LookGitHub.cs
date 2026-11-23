@@ -264,6 +264,8 @@ internal sealed class LookGitHub(IGitHub inner, PrPollSchedule? schedule = null)
     public Task<FailedRun?> FailedRunAsync(string repoPath, int number, bool mergeGroup, CancellationToken cancellationToken) => inner.FailedRunAsync(repoPath, number, mergeGroup, cancellationToken);
     public Task<FailedCheck[]> FailedChecksAsync(string repoPath, int number, CancellationToken cancellationToken) => inner.FailedChecksAsync(repoPath, number, cancellationToken);
     public Task<string?> RunFailedLogAsync(string repoPath, long runId, CancellationToken cancellationToken) => inner.RunFailedLogAsync(repoPath, runId, cancellationToken);
+    public Task<RunState?> RunStateAsync(string repoPath, long runId, CancellationToken cancellationToken) => inner.RunStateAsync(repoPath, runId, cancellationToken);
+
     public Task<int?> RunAttemptAsync(string repoPath, long runId, CancellationToken cancellationToken) => inner.RunAttemptAsync(repoPath, runId, cancellationToken);
     public Task RerunRunAsync(string repoPath, long runId, CancellationToken cancellationToken) => inner.RerunRunAsync(repoPath, runId, cancellationToken);
     public Task<IssueInfo[]> IssuesAsync(string repoPath, CancellationToken cancellationToken) => inner.IssuesAsync(repoPath, cancellationToken);

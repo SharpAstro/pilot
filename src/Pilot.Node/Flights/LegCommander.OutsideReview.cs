@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using System.Globalization;
 using Pilot.Contracts;
 
@@ -22,21 +21,16 @@ public sealed partial class LegCommander
     /// <summary>How many times the node runs again a no-model review run whose log names no reset time (after 1, 2, 4 and 8 hours) before it leaves it.</summary>
     public const int OutsideReviewRetriesWithoutReset = 4;
 
-    private readonly ConcurrentDictionary<string, byte> _outsideCarded = new(StringComparer.Ordinal);
-
-    // Per run id: when it is run again (MaxValue: never again). Removed once run, so the next no-model look of that run schedules its next one.
-    private readonly ConcurrentDictionary<long, DateTimeOffset> _outsideDue = new();
-    private readonly ConcurrentDictionary<long, DateTimeOffset> _outsideRerunAt = new();
-
-    // Per run id: how many times it was run again on a log that named no reset time, the bound of OutsideReviewRetriesWithoutReset.
-    private readonly ConcurrentDictionary<long, int> _outsideNoResetReruns = new();
-
     /// <summary>
     /// True when PR <paramref name="number"/> of <paramref name="flight"/> has failed checks and every one is a no-model outside review: the
     /// caller then sends nothing back, runs nothing again and investigates nothing, and treats the checks as not failed. The merge stays
-    /// blocked by the red check as before. A Handled card says it once for the head, and a run past its reset is run again once.
-    /// A failed check whose log or attempt gh could not read, a check that is no workflow run, a review with findings and a mix with any other
-    /// failed check all return false, so today's path is taken for that look (a read that failed is asked again at the next look).
+    /// blocked by the red check as before. A Handled card says it once for the flight and head, and a run that is due is run again.
+    /// Nothing of this is held in memory, so a node restart changes none of it: whether the card was raised is read from the node's stored
+    /// cards (by its cause, "flight head"), and a run's schedule is read from GitHub's own run state (<see cref="IGitHub.RunStateAsync"/>: its
+    /// attempt, whether it is completed and when it was last updated), where the reruns so far are the attempt less one. A run whose new
+    /// attempt is not completed is never run again, so a rerun just asked is not asked twice.
+    /// A failed check whose log, attempt or run state gh could not read, a check that is no workflow run, a review with findings and a mix with
+    /// any other failed check all return false, so today's path is taken for that look (a read that failed is asked again at the next look).
     /// Each failed check is judged by its own job's lines of its run's log, so a no-model review job beside a build job that failed in the same
     /// run is a real failure. A run's log is read once per <c>run_attempt</c> (as the CI count keys it) however many of its jobs failed, and
     /// the attempt is asked once per job id, since a rerun makes new jobs.
@@ -86,18 +80,28 @@ public sealed partial class LegCommander
             found.Add((check, review));
         }
         var now = time.GetUtcNow();
+        var cause = $"{flight.Code} {CommitRefs.Short(head)}";
         // A run is run again (gh run rerun --failed) once for all its no-model jobs.
         foreach (var (check, review) in found.DistinctBy(f => f.Check.RunId))
         {
             var runId = check.RunId!.Value;
-            var due = _outsideDue.GetOrAdd(runId, _ => OutsideDue(runId, review, now));
-            if (due != DateTimeOffset.MaxValue && now >= due && _outsideDue.TryRemove(runId, out _))
+            RunState? run;
+            try
             {
-                _outsideRerunAt[runId] = now;
-                if (review.ResetsAt is null)
-                {
-                    _outsideNoResetReruns.AddOrUpdate(runId, 1, (_, n) => n + 1);
-                }
+                run = await github.RunStateAsync(flight.RepoPath, runId, cancellationToken);
+            }
+            catch (Exception ex) when (ex is FlightException or System.ComponentModel.Win32Exception or IOException)
+            {
+                return false;
+            }
+            if (run is null)
+            {
+                return false;
+            }
+            var due = OutsideDue(review, run);
+            // An attempt that is not completed is not run again: a rerun just asked is never asked twice.
+            if (run.Completed && due != DateTimeOffset.MaxValue && now >= due)
+            {
                 _outsideReviews.Forget(runId);
                 try
                 {
@@ -109,34 +113,35 @@ public sealed partial class LegCommander
                 }
                 continue;
             }
-            if (_outsideCarded.TryAdd($"{flight.Code} {CommitRefs.Short(head)}", 0))
+            if (state.CardsOf(OutsideReviewUnavailable, Verbs.FlightTarget(flight.Code)).All(c => c.Cause != cause))
             {
                 var (title, next) = OutsideCard(review, due);
                 state.RaiseCard(CardBin.Handled, OutsideReviewUnavailable, Verbs.FlightTarget(flight.Code),
                     $"{flight.Code}'s PR #{number}: outside review {check.Name} {title}",
                     $"{review.Reason}. The review job never reached a model, so nothing was sent back and no failed check was counted; {next}",
-                    link: check.Link ?? flight.PullRequestUrl);
+                    link: check.Link ?? flight.PullRequestUrl, cause: cause);
             }
         }
         return true;
     }
 
-    // When run runId is run again: after the reset its log names, else after a doubling wait up to the ceiling, and never past the bound.
-    // A run just run again whose old log is still what gh shows is not run again at once.
-    private DateTimeOffset OutsideDue(long runId, NoModelReview review, DateTimeOffset now)
+    /// <summary>
+    /// When the run in state <paramref name="run"/> is run again, read from that state alone: after the reset its log names, or when later
+    /// (on a rerun) the last attempt's end plus the wait; with no reset, after a doubling wait up to the ceiling from the last end, and never
+    /// once the reruns so far (the attempt less one) reach the bound. Nothing of the schedule is held in memory.
+    /// </summary>
+    private static DateTimeOffset OutsideDue(NoModelReview review, RunState run)
     {
-        DateTimeOffset? last = _outsideRerunAt.TryGetValue(runId, out var at) ? at : null;
+        var reruns = run.Attempt - 1;
         if (review.ResetsAt is { } reset)
         {
-            return last is { } l && l + OutsideReviewRetryWait > reset ? l + OutsideReviewRetryWait : reset;
+            return run.Attempt > 1 && run.UpdatedAt + OutsideReviewRetryWait > reset ? run.UpdatedAt + OutsideReviewRetryWait : reset;
         }
-        var tries = _outsideNoResetReruns.GetValueOrDefault(runId);
-        if (tries >= OutsideReviewRetriesWithoutReset)
+        if (reruns >= OutsideReviewRetriesWithoutReset)
         {
             return DateTimeOffset.MaxValue;
         }
-        var wait = TimeSpan.FromTicks(Math.Min(OutsideReviewRetryWait.Ticks << tries, OutsideReviewRetryCeiling.Ticks));
-        return (last ?? now) + wait;
+        return run.UpdatedAt + TimeSpan.FromTicks(Math.Min(OutsideReviewRetryWait.Ticks << reruns, OutsideReviewRetryCeiling.Ticks));
     }
 
     // The card's title after the check's name, and what the node does next, worded by whether the log named a reset time. The card is raised

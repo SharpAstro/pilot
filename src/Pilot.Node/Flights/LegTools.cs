@@ -60,6 +60,21 @@ public sealed record MergeQueueState(string State, string Head, bool Queued, int
 /// </summary>
 public sealed record FailedCheck(string Name, string? Link, long? RunId, long? JobId = null);
 
+/// <summary>A workflow run's state now: its <c>run_attempt</c>, whether its status is completed, and its <c>updated_at</c> (the attempt's end once completed).</summary>
+public sealed record RunState(int Attempt, bool Completed, DateTimeOffset UpdatedAt)
+{
+    /// <summary>Reads gh's <c>[.run_attempt, .status, .updated_at] | @tsv</c> line; null when it is not three fields of the right shape.</summary>
+    public static RunState? Parse(string output)
+    {
+        var fields = output.Trim().Split('\t');
+        return fields.Length == 3
+            && int.TryParse(fields[0], System.Globalization.CultureInfo.InvariantCulture, out var attempt) && attempt > 0
+            && DateTimeOffset.TryParse(fields[2], System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.AssumeUniversal, out var updated)
+            ? new RunState(attempt, fields[1] == "completed", updated)
+            : null;
+    }
+}
+
 /// <summary>
 /// Where a PR's checks stand: <paramref name="Status"/> a <see cref="ChoiceStatus"/> (failing, pending, passing),
 /// <paramref name="Done"/> of <paramref name="Total"/> checks finished (a skipped one is finished), and the first that failed by
@@ -344,6 +359,12 @@ public interface IGitHub
     /// sides key a run's log alike; null when gh could not say.
     /// </summary>
     Task<int?> RunAttemptAsync(string repoPath, long runId, CancellationToken cancellationToken) => Task.FromResult<int?>(null);
+
+    /// <summary>
+    /// Workflow run <paramref name="runId"/>'s state now, from one REST call: its attempt, whether it is completed and its <c>updated_at</c>.
+    /// Null when gh could not say. A no-model review run's rerun schedule is read from it, never held in memory.
+    /// </summary>
+    Task<RunState?> RunStateAsync(string repoPath, long runId, CancellationToken cancellationToken) => Task.FromResult<RunState?>(null);
 
     /// <summary>
     /// Runs the failed jobs of workflow run <paramref name="runId"/> again (<c>gh run rerun --failed</c>). The default does nothing, as a gh
