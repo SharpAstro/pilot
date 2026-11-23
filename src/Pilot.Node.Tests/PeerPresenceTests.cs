@@ -288,7 +288,7 @@ public sealed class PeerPresenceTests
         _clock.Advance(Bound + TimeSpan.FromMinutes(1));
 
         view.NotCounted.ShouldHaveSingleItem().ShouldStartWith("LE1 (did not answer");
-        presence.AwaySince("LE1").ShouldBe(Noon);
+        presence.AwaySince("LE1").ShouldBe(Noon + admission.Budget);
     }
 
     [Fact]
