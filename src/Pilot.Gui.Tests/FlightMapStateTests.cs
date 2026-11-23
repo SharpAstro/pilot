@@ -55,7 +55,7 @@ public sealed class FlightMapStateTests
         var data = new TheoryData<string, bool, string>();
         foreach (var night in new[] { false, true })
         {
-            foreach (var name in new[] { "conflicts", "failed-leg", "changes", "passed", "armed", "queue", "reviewing", "open", "merged" })
+            foreach (var name in new[] { "conflicts", "ci-red", "failed-leg", "changes", "passed", "armed", "queue", "reviewing", "open", "merged" })
             {
                 data.Add(name, night, name);
             }
@@ -69,6 +69,7 @@ public sealed class FlightMapStateTests
         return name switch
         {
             "conflicts" => (FlightMapWorld.Flight("A", review: FlightMapWorld.Review(ReviewState.Passed, "pilot: conflicts")), done, "Failed", "conflicts"),
+            "ci-red" => (FlightMapWorld.Flight("A", review: FlightMapWorld.Review(ReviewState.Passed)) with { Ci = new FlightCi { RedSince = Live.At } }, done, "Failed", "CI red"),
             "failed-leg" => (FlightMapWorld.Flight("A"), [FlightMapWorld.Leg("A", LegState.Done), FlightMapWorld.Leg("A", LegState.Failed, 2)], "Held", "open"),
             "changes" => (FlightMapWorld.Flight("A", review: FlightMapWorld.Review(ReviewState.Changes)), [FlightMapWorld.Leg("A", LegState.Done), FlightMapWorld.Leg("A", LegState.Flying, 2)], "Flying", "changes"),
             "passed" => (FlightMapWorld.Flight("A", review: FlightMapWorld.Review(ReviewState.Passed)), done, "Flying", "passed"),
@@ -92,7 +93,7 @@ public sealed class FlightMapStateTests
         var colour = CentreOf(renderer.Surface, Hit(view, "flight:A:pr", "flight:A:pr-chip", "map:A:destination"));
         var expected = tone switch { "Failed" => p.Failed, "Flying" => p.Flying, "Held" => p.Held, _ => p.Landed };
         Same(colour, expected).ShouldBeTrue($"{name}: destination {colour} should be {tone} {expected}");
-        // Red (the palette's Failed) is for a conflict only (a failed leg is red on its airport, not on the PR); colour never carries
+        // Red (the palette's Failed) is for trouble only, a conflict or red CI (a failed leg is red on its airport, not on the PR); colour never carries
         // the state alone.
         if (tone != "Failed" && !Same(p.Failed, p.Held) && !Same(p.Failed, p.Flying))
         {

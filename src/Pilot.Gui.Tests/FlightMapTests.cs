@@ -131,6 +131,29 @@ public sealed class FlightMapTests
         FlightMap.StatusOf(WithPr(Flight("A", FlightState.Landed)) with { LandedAt = Live.At }).ShouldBe(DestinationStatus.Merged);
     }
 
+    // PIL1298:R1.13: red CI (FlightCi.RedSince) is its own status; conflicts, the merge queue and a merge win over it.
+    [Fact]
+    public void RedCiIsItsOwnDestinationStatusAndOnlyConflictsQueuedAndMergedWinOverIt()
+    {
+        var red = new FlightCi { RedSince = Live.At };
+        var open = WithPr(Flight("A")) with { Ci = red };
+        FlightMap.StatusOf(open).ShouldBe(DestinationStatus.ChecksRed);
+        FlightMap.StatusOf((WithPr(Flight("A")) with { GitHubDraft = true }) with { Ci = red }).ShouldBe(DestinationStatus.ChecksRed);
+        foreach (var state in new[] { ReviewState.Reviewing, ReviewState.Passed, ReviewState.Changes })
+        {
+            FlightMap.StatusOf(open with { Review = Review(state, null) }).ShouldBe(DestinationStatus.ChecksRed);
+        }
+        FlightMap.StatusOf(open with { MergeWhenGreen = ["abc", "squash"] }).ShouldBe(DestinationStatus.ChecksRed);
+        FlightMap.StatusOf(open with { RebaseOnly = "known, lands squashed" }).ShouldBe(DestinationStatus.ChecksRed);
+        FlightMap.StatusOf(open with { Review = Review(ReviewState.Passed, "pilot: conflicts") }).ShouldBe(DestinationStatus.Conflicts);
+        FlightMap.StatusOf(open with { MergeQueue = "in the merge queue, position 2" }).ShouldBe(DestinationStatus.Queued);
+        FlightMap.StatusOf((WithPr(Flight("A", FlightState.Landed)) with { LandedAt = Live.At }) with { Ci = red }).ShouldBe(DestinationStatus.Merged);
+        FlightMap.StatusOf(Flight("A") with { Ci = red }).ShouldBe(DestinationStatus.NoPr);
+        FlightMap.StatusOf(WithPr(Flight("A")) with { Ci = new FlightCi { RedSince = null } }).ShouldBe(DestinationStatus.Open);
+        FlightsView<RgbaImage>.DestinationColour(DestinationStatus.ChecksRed).ShouldBe(FlightsView<RgbaImage>.MapTone.Failed);
+        FlightsView<RgbaImage>.StatusWord(DestinationStatus.ChecksRed).ShouldBe("CI red");
+    }
+
     // pilot #1299: rebase only is its own status, read from the row; a real conflict wins over it and keeps its own.
     [Fact]
     public void ARebaseOnlyFlightHasItsOwnDestinationStatusAndARealConflictKeepsItsOwn()
