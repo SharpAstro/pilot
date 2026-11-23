@@ -64,10 +64,9 @@ public sealed class ToastButtonsWrapTests
 
         var buttons = seen.Where(a => a.Node.Hit is HitResult.ButtonHit { Action: var act } && act.StartsWith("toast:c28040:") && !act.EndsWith(":whole")).ToArray();
         buttons.Length.ShouldBeGreaterThanOrEqualTo(2);
-        // The toast's Dismiss is the library's (no ButtonHit of the card's): its text leaf, held to the frame as the choices are.
-        var dismiss = seen.Where(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text { Value: var d } } && d.Trim() == "Dismiss").ToArray();
-        dismiss.Length.ShouldBe(1, "the toast's one Dismiss");
-        // Each choice is held by its whole button (its hit node, padding included); the library's Dismiss has no hit node, so it is held by its text.
+        var dismiss = seen.Where(a => a.Node.Hit is DIR.Lib.Notifications.NotificationHit { Part: DIR.Lib.Notifications.NotificationPart.Dismiss }).ToArray();
+        dismiss.Length.ShouldBe(1, "the toast's one Dismiss, found by its hit node");
+        // Each button is held by its whole hit node, padding included.
         var held = buttons.Concat(dismiss).ToArray();
         var title = seen.First(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text { Value: var v } } && v.Contains("PIL1293")).Bounds;
         var toast = seen.Where(a => a.Bounds.X <= title.X && a.Bounds.Y <= title.Y && a.Bounds.X + a.Bounds.Width >= title.X + title.Width

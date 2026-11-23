@@ -171,6 +171,19 @@ public sealed class NotificationsColumnTests
     }
 
     [Fact]
+    public void InNightAHistoryCardIsNotBrighterThanAnOpenOne()
+    {
+        using var w = new PageWindow(1280, 800, 1f);
+        w.Chrome.Night.On = true;
+        w.Fill();
+
+        RGBAColor32 InkOf(string word) => ((Layout.Content.Text)((Layout.Node.Leaf)w.Arranged.First(a => TextOf(a).StartsWith(word, StringComparison.Ordinal)).Node).Content).Color;
+        // Night's red on black has no ink that reaches AA on the toned fill, so a closed card keeps Dim rather than Bright.
+        InkOf("Job").ShouldNotBe(InkOf("TIA1818's"), "a history card's title is still dimmer than an open card's");
+        InkOf("437").ShouldNotBe(InkOf("short"), "a history card's summary is still dimmer than an open card's");
+    }
+
+    [Fact]
     public void AHistoryCardIsDimmedAndAnEventKeepsItsSeverity()
     {
         using var w = new PageWindow(1280, 800, 1f);
@@ -201,8 +214,16 @@ public sealed class NotificationsColumnTests
             Contrast.Ratio(InkOf(word), frame.Background!.Value).ShouldBeGreaterThanOrEqualTo(Contrast.AA, $"'{word}' on its history card's fill");
         }
         // An event's head ink is held too: its kind line reads at AA on its fill, and the two severities do not share one ink.
-        var (okHead, failedHead) = (InkOf("event"), w.Arranged.Where(a => TextOf(a).StartsWith("event", StringComparison.Ordinal)).Select(a => ((Layout.Content.Text)((Layout.Node.Leaf)a.Node).Content).Color).Last());
-        Contrast.Ratio(okHead, ok.Background!.Value).ShouldBeGreaterThanOrEqualTo(Contrast.AA, "the first event's head on its fill");
-        Contrast.Ratio(failedHead, failed.Background!.Value).ShouldBeGreaterThanOrEqualTo(Contrast.AA, "the second event's head on its fill");
+        RGBAColor32 HeadIn(Layout.Node frame)
+        {
+            var fb = w.Arranged.First(a => ReferenceEquals(a.Node, frame)).Bounds;
+            var head = w.Arranged.First(a => TextOf(a).StartsWith("event", StringComparison.Ordinal)
+                && a.Bounds.X >= fb.X && a.Bounds.Y >= fb.Y && a.Bounds.X + a.Bounds.Width <= fb.X + fb.Width && a.Bounds.Y + a.Bounds.Height <= fb.Y + fb.Height);
+            return ((Layout.Content.Text)((Layout.Node.Leaf)head.Node).Content).Color;
+        }
+        var (successHead, errorHead) = (HeadIn(ok), HeadIn(failed));
+        Contrast.Ratio(successHead, ok.Background!.Value).ShouldBeGreaterThanOrEqualTo(Contrast.AA, "the success event's head on its own fill");
+        Contrast.Ratio(errorHead, failed.Background!.Value).ShouldBeGreaterThanOrEqualTo(Contrast.AA, "the error event's head on its own fill");
+        successHead.ShouldNotBe(errorHead, "the two severities do not share one ink");
     }
 }

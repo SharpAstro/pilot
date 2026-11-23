@@ -1012,7 +1012,8 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         var severity = severityOf ?? (card.Bin == CardBin.Ring ? NotificationSeverity.Warn : NotificationSeverity.Info);
         var fill = closed ? Contrast.Mix(tokens.TintedFill(severity), tokens.Raised, ClosedTone) : tokens.TintedFill(severity);
         // The dim ink a closed card's words are drawn in: Dim as it is where it reads at AA on the toned fill, else a step toward Bright (Dim is 4.49:1 on the success tone).
-        var closedInk = Contrast.Readable(Dim, fill, Bright);
+        // A palette with no ink that reaches AA on the fill (Night: red on black) keeps Dim, so a closed card stays dimmer than an open one.
+        var closedInk = Contrast.Ratio(Bright, fill) < Contrast.AA ? Dim : Contrast.Readable(Dim, fill, Bright);
         // A closed card's head, title and summary are dim; an event's head keeps its severity's hue, toned toward the dim ink but still read at AA on its fill.
         var accent = merged ? Live
             : closed ? severityOf is { } closedSev ? Contrast.Readable(Contrast.Mix(SeverityInk(closedSev), Dim, ClosedTone), fill, closedInk) : closedInk
