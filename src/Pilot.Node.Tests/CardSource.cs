@@ -10,7 +10,7 @@ internal sealed record SourceLiteral(string Template, string After);
 /// One call that puts a card up: where, which kind and bins its text names, the literal parts of its title, and whether any argument after
 /// the title offers something to do: a choice, or a link to the page where the person does what the card says (a step outside pilot).
 /// </summary>
-internal sealed record CardCall(string File, int Line, string Form, string KindExpr, string[] Bins, string TitleExpr, IReadOnlyList<SourceLiteral> Title, bool HasChoices = false);
+internal sealed record CardCall(string File, int Line, string Form, string KindExpr, string[] Bins, string TitleExpr, IReadOnlyList<SourceLiteral> Title, bool HasChoices = false, string[]? ChoiceVerbs = null);
 
 /// <summary>A button's label as the source writes it, with the literal parts of the expression.</summary>
 internal sealed record LabelUse(string File, int Line, string Expr, IReadOnlyList<SourceLiteral> Literals);
@@ -71,11 +71,49 @@ internal static class CardSource
                 {
                     literals = Declared(text, m.Index, titleExpr);
                 }
-                var after = string.Join(" ", args.Skip(titleAt + 1).Select(a => Slice(text, a)));
-                calls.Add(new CardCall(file, LineOf(text, m.Index), form, kind, bins, titleExpr, literals, Regex.IsMatch(after, @"CardChoice|[Cc]hoices|Verbs\.|Offer|\blink\s*:")));
+                var after = string.Join(", ", args.Skip(titleAt + 1).Select(a => Slice(text, a)));
+                calls.Add(new CardCall(file, LineOf(text, m.Index), form, kind, bins, titleExpr, literals, Regex.IsMatch(after, @"CardChoice|[Cc]hoices|Verbs\.|Offer|\blink\s*:"),
+                    [.. Regex.Matches(after, @"\bVerbs\.(\w+)").Select(v => v.Groups[1].Value).Concat(ListBuiltVerbs(text, m.Index, after)).Distinct()]));
             }
         }
         return calls;
+    }
+
+    /// <summary>
+    /// The verbs of a card whose choices are built in a list before the call: when the call's own arguments name no <c>Verbs.X</c> but pass an
+    /// identifier that a line of the member declares beside <c>CardChoice</c>, the <c>Verbs.X</c> constants of the enclosing member (from the last line declaring one at the class's indent to the
+    /// next closing brace at that indent) are read as that call's choices. A member that raises several kinds gives each the verbs of all of
+    /// them, so this can over-report; a list built in another member, a field or a helper is still not seen.
+    /// </summary>
+    private static IEnumerable<string> ListBuiltVerbs(string text, int callAt, string after)
+    {
+        if (Regex.IsMatch(after, @"\bVerbs\.") || !Regex.IsMatch(after, @"(?<![\w.])[a-z]\w*\s*(?:,|$)"))
+        {
+            return [];
+        }
+        var head = text[..callAt];
+        var decl = Regex.Matches(head, @"^    (?!\s|[{}\[/])[^\n;=]*\(.*$", RegexOptions.Multiline).LastOrDefault();
+        if (decl is null)
+        {
+            return [];
+        }
+        var end = Regex.Match(text[callAt..], @"^    \}", RegexOptions.Multiline);
+        var body = text[decl.Index..(end.Success ? callAt + end.Index : text.Length)];
+        // Only an identifier a line of the member declares beside CardChoice is a choice list; a plain text argument (a title's detail) is not.
+        var before = text[decl.Index..callAt];
+        var isList = Regex.Matches(after, @"(?<![\w.])([a-z]\w*)\s*(?:,|$)")
+            .Where(a => a.Groups[1].Value is not ("null" or "true" or "false"))
+            .Any(a => Regex.IsMatch(before, @"^(?=[^\n]*CardChoice)[^\n]*\b" + a.Groups[1].Value + @"\b", RegexOptions.Multiline));
+        if (!isList)
+        {
+            return [];
+        }
+        var found = new List<string>();
+        foreach (Match v in Regex.Matches(body, @"Verbs\.(\w+)"))
+        {
+            found.Add(v.Groups[1].Value);
+        }
+        return found;
     }
 
     /// <summary>Every <c>Label = …</c> in <paramref name="source"/>: a choice's button text.</summary>

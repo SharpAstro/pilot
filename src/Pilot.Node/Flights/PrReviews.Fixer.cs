@@ -264,6 +264,27 @@ public sealed partial class PrReviews
     }
 
     /// <summary>
+    /// Why the node must not start a review of this PR's push now, or null when one may: the PR is open and its head, as GitHub reads it
+    /// now, has no review yet (a review row on that head, or one still reviewing, is a review). While GitHub still shows the head the
+    /// earlier review was of, the push has not shown yet, so the answer is a reason and a later look asks again.
+    /// </summary>
+    public async Task<string?> WhyNoReviewAsync(PrRef pr, CancellationToken cancellationToken)
+    {
+        var read = await github.PullRequestOfAsync(pr.Repo, pr.Number, cancellationToken);
+        if (!string.Equals(read.State, "OPEN", StringComparison.OrdinalIgnoreCase))
+        {
+            return $"{pr} is {read.State.ToLowerInvariant()}, not open";
+        }
+        if (read.Head.Length == 0)
+        {
+            return "GitHub did not say the PR's head";
+        }
+        return Of(pr) is { State: not PrReviewState.Closed } review && string.Equals(review.Head, read.Head, StringComparison.OrdinalIgnoreCase)
+            ? $"a review already {(review.State == PrReviewState.Reviewing ? "runs" : "stands")} at {CommitRefs.Short(review.Head)}, the head GitHub reads now"
+            : null;
+    }
+
+    /// <summary>
     /// The Fix it choice: the same fixer, started on the controller's word on a PR that is not their own. A PR this node holds no
     /// review of (the Pull requests page's Review word is the pilot/review status, which another node may have set, or the review
     /// was lost) gets pilot's review first; its findings are fixed when it asks for changes, by the way a posted verdict goes.

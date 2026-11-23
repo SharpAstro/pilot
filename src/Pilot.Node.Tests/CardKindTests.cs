@@ -226,6 +226,95 @@ public sealed class CardKindTests
         CardKindCatalog.All.Where(e => !rings.Contains(e) && (e.Fact is not null || e.Choices is not null)).Select(e => e.Kind).ShouldBeEmpty();
     }
 
+    /// <summary>
+    /// What only the node's rules decide is a NodePress, so the watchtower never presses it through a CLI command Claude Code's classifier can
+    /// refuse (#1311: <c>review pr</c> on pr-fix-pushed-unreviewed). Each marked kind is one NodePress owns, and offers the verb NodePress presses on it;
+    /// each NodePress kind is marked; and a kind that offers one of NodePress's verbs is marked or named as the person's, with its reason.
+    /// What each scan sees, and what it does not. The unmarked-kind scan reads the <c>Verbs.Name</c> constants in a raising call's own
+    /// arguments, and, when a call passes its choices as a plain identifier, those of the enclosing member (CardSource.Calls, ListBuiltVerbs),
+    /// so a kind that builds its choices in a list before the call is seen. It still cannot see a list built in another member, a field or a
+    /// helper, and a member raising several kinds gives each the verbs of all of them. A marked kind is read in two ways: its calls and, failing
+    /// that, a word match of <c>Verbs.Name</c> in its raising files; a PersonsOwn entry only by that word match in its raising files and
+    /// ChoiceFiles. Both matches are per file and not per kind: an entry stays valid after its own kind stops offering the verb while
+    /// another kind in the same files still does.
+    /// </summary>
+    [Fact]
+    public void EveryKindTheNodeAloneDecidesIsANodePressAndNoKindOffersItsVerbsUnmarked()
+    {
+        var problems = new List<string>();
+        var pressVerbs = NodePress.Kinds.Select(k => k.Verb).ToHashSet(StringComparer.Ordinal);
+        // Compared by constant NAME, never value to name: Verbs.OverlapPickFold and Verbs.Fold are both "fold".
+        pressVerbs.SetEquals(PressNames.Select(ValueOf)).ShouldBeTrue("NodePress.Kinds presses a verb this guard does not name in PressNames, or the reverse; update PressNames");
+        string NameOf(string verb) => PressNames.First(n => ValueOf(n) == verb);
+        var offered = Calls.Value
+            .Select(c => (Kind: Resolve(c.File, c.KindExpr)?.Value, Verbs: c.ChoiceVerbs ?? []))
+            .Where(c => c.Kind is not null)
+            .GroupBy(c => c.Kind!)
+            .ToDictionary(g => g.Key, g => g.SelectMany(c => c.Verbs).ToHashSet(StringComparer.Ordinal));
+        var asNames = PressNames.ToDictionary(n => n, n => ValueOf(n));
+        bool FileOffers(string file, string name) => Regex.IsMatch(Sources.Value.First(s => s.File == file).Source, $@"\bVerbs\.{name}\b");
+
+        foreach (var entry in CardKindCatalog.All.Where(e => e.NodePressed))
+        {
+            if (!NodePress.Owns(entry.Kind))
+            {
+                problems.Add($"{entry.Kind}: marked NodePressed and NodePress.Owns is false for it; add it to NodePress.Kinds with the verb it presses");
+            }
+            else if (NodePress.VerbOf(entry.Kind) is { } verb && !(offered.GetValueOrDefault(entry.Kind) ?? []).Contains(NameOf(verb))
+                && !entry.Files.Any(f => FileOffers(f, NameOf(verb))))
+            {
+                // A card whose choices are built in a list before the call is read from its raising files, as the Ring guard reads them.
+                problems.Add($"{entry.Kind}: NodePress presses {NameOf(verb)} on it and its raising calls do not offer that verb");
+            }
+        }
+        foreach (var press in NodePress.Kinds)
+        {
+            var entry = CardKindCatalog.All.FirstOrDefault(e => e.Kind == press.Kind);
+            if (entry is not { NodePressed: true })
+            {
+                problems.Add($"{press.Kind}: NodePress presses {NameOf(press.Verb)} on it and the catalog does not mark it NodePressed");
+            }
+        }
+        foreach (var entry in CardKindCatalog.All.Where(e => !e.NodePressed))
+        {
+            // The verbs of the kind's own calls (arguments, or the enclosing member for a list built before the call): a word match in a whole file flags every kind sharing it (ten kinds did).
+            var verbs = (offered.GetValueOrDefault(entry.Kind) ?? []).Where(asNames.ContainsKey).Order().ToList();
+            var named = CardKindCatalog.PersonsOwn.TryGetValue(entry.Kind, out var reason);
+            if (verbs.Count > 0 && !named)
+            {
+                problems.Add($"{entry.Kind}: offers {string.Join(", ", verbs)}, which NodePress presses on other kinds, and is neither NodePressed nor in CardKindCatalog.PersonsOwn with a reason");
+            }
+            // A named kind may build its choices before the call, so it is read from its raising files and ChoiceFiles.
+            var inFiles = asNames.Keys.Any(n => entry.Files.Concat(entry.ChoiceFiles ?? []).Any(f => FileOffers(f, n)));
+            if (named && (!inFiles || string.IsNullOrWhiteSpace(reason)))
+            {
+                problems.Add($"{entry.Kind}: named in CardKindCatalog.PersonsOwn but {(!inFiles ? "its raising files offer none of NodePress's verbs" : "gives no reason")}");
+            }
+        }
+        foreach (var kind in CardKindCatalog.PersonsOwn.Keys.Where(k => CardKindCatalog.All.All(e => e.Kind != k || e.NodePressed)))
+        {
+            problems.Add($"{kind}: named in CardKindCatalog.PersonsOwn and is no unmarked catalog kind");
+        }
+        problems.ShouldBeEmpty(string.Join('\n', problems));
+    }
+
+    /// <summary>The constants of <see cref="Verbs"/> that NodePress runs, by name.</summary>
+    private static readonly string[] PressNames = [nameof(Verbs.EndStray), nameof(Verbs.Fold), nameof(Verbs.FixPr), nameof(Verbs.ReviewPr)];
+
+    private static string ValueOf(string name) => (string)typeof(Verbs).GetField(name)!.GetRawConstantValue()!;
+
+    /// <summary>
+    /// Pins why the guard compares constant names: Verbs.Fold and Verbs.OverlapPickFold share a value, so a value compare would read one
+    /// as the other. It does not run the guard; the guard's own read of the overlap kind holds the Fold case.
+    /// </summary>
+    [Fact]
+    public void TheGuardTellsFoldFromOverlapPickFoldAlthoughTheyShareAValue()
+    {
+        ValueOf(nameof(Verbs.Fold)).ShouldBe(ValueOf(nameof(Verbs.OverlapPickFold)));
+        new[] { nameof(Verbs.Fold) }.Where(PressNames.Contains).ShouldBe([nameof(Verbs.Fold)]);
+        new[] { nameof(Verbs.OverlapPickFold) }.Where(PressNames.Contains).ShouldBeEmpty();
+    }
+
     [Fact]
     public void SourcePinned()
     {
@@ -313,6 +402,93 @@ public sealed class CardKindTests
     {
         CardSource.Calls("Sample.cs", sample).SelectMany(CardGuard.Findings)
             .Concat(CardSource.Labels("Sample.cs", sample).SelectMany(CardGuard.Findings)).ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void ACallPassingAListBuiltEarlierInTheMemberGetsThatListsVerbs()
+    {
+        const string sample = """
+            class C
+            {
+                void Raise()
+                {
+                    var choices = new List<CardChoice> { new() { Label = "Review it", Verb = Verbs.ReviewPr, Target = "t" } };
+                    state.RaiseCard(CardBin.Ring, "x-kind", "s", "x needs a look", null, choices);
+                }
+            }
+            """;
+
+        CardSource.Calls("Sample.cs", sample).Single().ChoiceVerbs.ShouldBe([nameof(Verbs.ReviewPr)]);
+    }
+
+    [Fact]
+    public void ACallWithItsVerbsInItsArgumentsOrAListBuiltInAnotherMemberKeepsTheAnswerTheSummarySays()
+    {
+        const string own = """
+            class C
+            {
+                void Raise()
+                {
+                    state.RaiseCard(CardBin.Ring, "x-kind", "s", "x needs a look", null, [new CardChoice { Label = "Fold it", Verb = Verbs.Fold, Target = "t" }]);
+                }
+            }
+            """;
+        const string other = """
+            class C
+            {
+                void Build()
+                {
+                    var choices = new List<CardChoice> { new() { Label = "Fix it", Verb = Verbs.FixPr, Target = "t" } };
+                }
+
+                void Raise(List<CardChoice> choices)
+                {
+                    state.RaiseCard(CardBin.Ring, "x-kind", "s", "x needs a look", null, choices);
+                }
+            }
+            """;
+
+        CardSource.Calls("Sample.cs", own).Single().ChoiceVerbs.ShouldBe([nameof(Verbs.Fold)]);
+        CardSource.Calls("Sample.cs", other).Single().ChoiceVerbs.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void ARecordCardWhoseLastArgumentIsPlainTextGetsNoVerbsFromItsSiblingsInTheMember()
+    {
+        const string source = """
+            class C
+            {
+                void Run(string said)
+                {
+                    state.RaiseCard(CardBin.Handled, "x-word", "s", "x answered", said);
+                    state.RaiseCard(CardBin.Ring, "x-other", "s", "needs a look", null, [new CardChoice { Label = "Fix it", Verb = Verbs.FixPr, Target = "t" }]);
+                }
+            }
+            """;
+
+        CardSource.Calls("Sample.cs", source).Single(c => c.KindExpr.Contains("x-word")).ChoiceVerbs.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void AListBuiltReadSeesAChoicesListFollowedByANamedArgumentButNotANullOrBoolean()
+    {
+        const string source = """
+            class C
+            {
+                void Run()
+                {
+                    var choices = new List<CardChoice> { new CardChoice { Label = "Fix it", Verb = Verbs.FixPr, Target = "t" } };
+                    state.RaiseCard(CardBin.Ring, "x-list", "s", "needs a look", choices, link: "l");
+                    state.RaiseCard(CardBin.Ring, "x-null", "s", "needs a look", null);
+                    state.RaiseCard(CardBin.Ring, "x-bool", "s", "needs a look", true);
+                }
+            }
+            """;
+
+        var calls = CardSource.Calls("Sample.cs", source);
+        calls.Single(c => c.KindExpr.Contains("x-list")).ChoiceVerbs!.ShouldContain("FixPr");
+        calls.Single(c => c.KindExpr.Contains("x-null")).ChoiceVerbs.ShouldBeEmpty();
+        calls.Single(c => c.KindExpr.Contains("x-bool")).ChoiceVerbs.ShouldBeEmpty();
     }
 
     [Fact]
