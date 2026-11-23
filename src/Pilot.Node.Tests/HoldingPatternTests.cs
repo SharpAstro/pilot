@@ -540,6 +540,28 @@ public sealed class HoldingPatternTests : ReviewTestsBase
 
     [Fact]
     [Trait("Category", "Slow")]
+    public async Task APrReadyCardAPersonDismissedRingsNoTimeoutCardPastTheBound()
+    {
+        NodeAdvances();
+        var flight = await Reviewed("41", Notes);
+        await WithoutTheFixerLeg(flight.Code);
+        var ready = Open().Where(c => c.Kind == LegCommander.PrReady).ShouldHaveSingleItem();
+        // A person's own dismissal (not the node's leg-wait close) leaves HoldingHead nothing to merge: the hold stays quiet.
+        _state.CloseCard(ready.Id, "read it, leaving it", "me");
+        var clock = new ManualTime(F(flight.Code).Holding!.Since);
+        var checks = TimedChecks(clock, live: true);
+
+        clock.Advance(TimeSpan.FromMinutes(31));
+        await checks.LookAsync(Ct);
+        await checks.LookAsync(Ct);
+
+        Open().ShouldNotContain(c => c.Kind == LegCommander.HoldingTimeoutKind);
+        F(flight.Code).Holding.ShouldNotBeNull();
+        _github.Merged.ShouldBeEmpty();
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
     public async Task ThePrReadyAndTimeoutCardsSayWhatTheHoldWaitsOn()
     {
         var flight = await Reviewed("24", Notes);

@@ -21,7 +21,7 @@ public sealed class CardChoiceTargetTests
         var bad = new List<string>();
         foreach (var (file, source) in CardKindTests.Sources.Value)
         {
-            foreach (Match m in Regex.Matches(source, @"new CardChoice\b"))
+            foreach (Match m in Regex.Matches(source, @"new CardChoice\b|\bnew\(\)(?=\s*\{[^;]*?\bLabel\s*=)"))
             {
                 if (Initializer(source, m.Index + m.Length) is not { } text)
                 {
@@ -50,6 +50,16 @@ public sealed class CardChoiceTargetTests
         EmptyTarget.IsMatch("{ Target = card.Subject }").ShouldBeFalse();
         Initializer("new CardChoice(a, b);", "new CardChoice".Length).ShouldBeNull("a constructor call has no initializer to read");
     }
+
+    [Fact]
+    public void TheScanAlsoSeesTheTargetTypedForm()
+    {
+        // `CardChoice c = new() { ... }` and `new List<CardChoice> { new() { ... } }` carry no type name after new (review note).
+        TypedForm.Matches("""CardChoice c = new() { Label = "x", Verb = Verbs.Run, Target = "" };""").Count.ShouldBe(1);
+        TypedForm.Matches("""var d = new() { Id = 1 };""").Count.ShouldBe(0, "an initializer with no Label is not a choice");
+    }
+
+    private static readonly Regex TypedForm = new(@"\bnew\(\)(?=\s*\{[^;]*?\bLabel\s*=)");
 
     private static readonly Regex EmptyTarget = new(@"\bTarget\s*=\s*(""""|string\.Empty\b)");
 
