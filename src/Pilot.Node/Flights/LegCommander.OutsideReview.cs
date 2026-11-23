@@ -105,7 +105,7 @@ public sealed partial class LegCommander
             }
             if (state.CardsOf(OutsideReviewUnavailable, Verbs.FlightTarget(flight.Code)).All(c => c.Cause != cause))
             {
-                var (title, next) = OutsideCard(review, due, now, run is { Completed: false });
+                var (title, next) = OutsideCard(review, due, run is { Completed: false });
                 state.RaiseCard(CardBin.Handled, OutsideReviewUnavailable, Verbs.FlightTarget(flight.Code),
                     $"{flight.Code}'s PR #{number}: outside review {check.Name} {title}",
                     $"{review.Reason}. The review job never reached a model, so nothing was sent back and no failed check was counted; {next}",
@@ -139,23 +139,24 @@ public sealed partial class LegCommander
 
     // The card's title after the check's name, and what the node does next, worded by whether the log named a reset time. The card is raised
     // at the first look of a head that no card of the node's store names, which after a restart or a late look can be after reruns, so the due
-    // time can be past (said as "now") or unknown (the run state could not be read, or the bound is reached and the node has stopped).
-    private static (string Title, string Next) OutsideCard(NoModelReview review, DateTimeOffset? due, DateTimeOffset now, bool rerunning)
+    // time can be unknown (the run state could not be read), the run can be still going (a first attempt or a rerun), or the bound is reached
+    // and the node has stopped. A due time already past never gets here: a completed run past its due time is run again at once instead.
+    private static (string Title, string Next) OutsideCard(NoModelReview review, DateTimeOffset? due, bool running)
     {
         static string Utc(DateTimeOffset at) => at.ToString("yyyy-MM-dd HH:mm 'UTC'", CultureInfo.InvariantCulture);
         if (due is not { } at)
         {
             return ("is unavailable and the node could not read its run state", "the node looks again and runs it again once it can read the state. The red check still blocks the merge until it passes.");
         }
-        if (rerunning)
+        if (running)
         {
-            return ("is unavailable and a rerun is running", "the node waits for that rerun to end and looks at its result. The red check still blocks the merge until it passes.");
+            return ("is unavailable and its run is still going", "the node waits for that run to end and looks at its result. The red check still blocks the merge until it passes.");
         }
         if (at == DateTimeOffset.MaxValue)
         {
             return ("is unavailable and the node has stopped running it again", $"it was run again {OutsideReviewRetriesWithoutReset} times with waits doubling up to {OutsideReviewRetryCeiling.TotalHours:0} hours, and its log names no reset time. Run it again by hand once the review's account can answer; the red check still blocks the merge until it passes.");
         }
-        var when = at <= now ? "now" : Utc(at);
+        var when = Utc(at);
         if (review.ResetsAt is not null)
         {
             return ($"is unavailable until {when}", $"the node runs it again once after {when}. The red check still blocks the merge until then.");

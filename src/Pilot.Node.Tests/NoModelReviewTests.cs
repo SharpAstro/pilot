@@ -396,7 +396,7 @@ public sealed class NoModelReviewTests : ReviewTestsBase
         await Look(checks);
 
         var card = Unavailable().ShouldHaveSingleItem();
-        card.Title.ShouldContain("a rerun is running");
+        card.Title.ShouldContain("its run is still going");
         card.Title.ShouldNotContain("run again at now");
         _github.RunReruns.ShouldBeEmpty();
     }
