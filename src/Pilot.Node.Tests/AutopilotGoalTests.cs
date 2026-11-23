@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Pilot.Commands;
 using Pilot.Contracts;
 using Pilot.Node.Flights;
@@ -107,6 +108,40 @@ public sealed class AutopilotGoalTests
 
         refused.Error.ShouldNotBeNull().ShouldContain("person's");
     }
+
+    [Fact]
+    public void GoAroundOverMcpCarriesTheReasonAndTheEvidenceWhy()
+    {
+        var root = PilotCommand.Build(Path.GetTempPath(), TextWriter.Null, TextWriter.Null);
+        var (path, chain) = McpServer.Tools(root)["leg_go-around"];
+        var given = JsonDocument.Parse("""{"reason":["the worker hung on a prompt"],"why":"job j962 shows it idle","leg":"TIA7/parser"}""")
+            .RootElement.EnumerateObject().ToDictionary(p => p.Name, p => p.Value.Clone());
+
+        var parsed = root.Parse(McpServer.Spell(path, chain, given));
+
+        parsed.Errors.ShouldBeEmpty();
+        parsed.GetValue<string[]>("reason").ShouldBe(["the worker hung on a prompt"]);
+        parsed.GetValue<string?>("--why").ShouldBe("job j962 shows it idle");
+        parsed.GetValue<string?>("--leg").ShouldBe("TIA7/parser");
+    }
+
+    /// <summary>
+    /// A tool's properties are its leaf's argument names and option names without dashes, in one object: an argument and an option of
+    /// the same name lose one of them over MCP (PIL1285's go-around, whose positional why hid the evidence --why).
+    /// </summary>
+    [Fact]
+    [Trait("Category", "Invariant")]
+    public void NoToolHasAnArgumentAndAnOptionOfTheSameName()
+    {
+        var root = PilotCommand.Build(Path.GetTempPath(), TextWriter.Null, TextWriter.Null);
+        var clashes = McpServer.Tools(root)
+            .SelectMany(t => t.Value.Chain[^1].Arguments.Where(a => !a.Hidden).Select(a => a.Name)
+                .Intersect(t.Value.Chain[^1].Options.Select(o => o.Name.TrimStart('-')), StringComparer.Ordinal)
+                .Select(n => $"{t.Key}: {n}"))
+            .ToList();
+
+        clashes.ShouldBeEmpty();
+    }
 }
 
 /// <summary>The per-flight, per-local-day bound on the watchtower's own grants of CI budget (PIL1285).</summary>
@@ -185,7 +220,7 @@ public sealed class AutopilotGoalTestsCiGrant : ReviewTestsBase
 /// person's overrides and an assistant's ask stay the person's; rerun-checks needs no why from the watchtower, autopilot on or off.
 /// </summary>
 [Trait("Category", "Slow")] // a real node on a socket of its own
-public sealed class AutopilotGoalVerbsTests : IAsyncLifetime
+public sealed class AutopilotGoalTestsVerbs : IAsyncLifetime
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 

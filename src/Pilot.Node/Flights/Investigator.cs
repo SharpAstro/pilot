@@ -113,16 +113,28 @@ public sealed partial class Investigator(NodeState state, IWorkerLauncher worker
     private const string SeenLead = "seen: ";
 
     /// <summary>
-    /// What the detail of a card waiting for an investigator starts with. It marks the card as held, so a node that restarted while a run
-    /// was live still finds it and rings it (<see cref="Look"/>); a decision takes the words off.
+    /// The words put in front of the detail of a card waiting for an investigator. They mark the card as held, so a node that restarted
+    /// while a run was live still finds it and rings it (<see cref="Look"/>); a decision takes them off. They are looked for anywhere in
+    /// the detail, not only at its start: a card on a flight the owner holds gets the hold's words in front of them (#771).
     /// </summary>
     public const string HeldLead = "Held for an investigator (it rings only if one decides it must): ";
 
     /// <summary>How long a held card may wait with no run holding it before a look rings it (a card just raised is between its raise and its hold).</summary>
     private static readonly TimeSpan HeldGrace = TimeSpan.FromMinutes(2);
 
-    /// <summary>The detail without <see cref="HeldLead"/>.</summary>
-    public static string Unheld(string? detail) => detail is not null && detail.StartsWith(HeldLead, StringComparison.Ordinal) ? detail[HeldLead.Length..] : detail ?? "";
+    /// <summary>Whether a card's detail carries <see cref="HeldLead"/>, wherever it sits.</summary>
+    public static bool IsHeld(string? detail) => detail is not null && detail.Contains(HeldLead, StringComparison.Ordinal);
+
+    /// <summary>The detail without <see cref="HeldLead"/>, wherever it sits.</summary>
+    public static string Unheld(string? detail)
+    {
+        if (detail is null)
+        {
+            return "";
+        }
+        var at = detail.IndexOf(HeldLead, StringComparison.Ordinal);
+        return at < 0 ? detail : detail[..at] + detail[(at + HeldLead.Length)..];
+    }
 
     /// <summary>The machine's code, lower case, that starts every session name.</summary>
     public string Machine { get; init; } = "node";
@@ -485,7 +497,7 @@ public sealed partial class Investigator(NodeState state, IWorkerLauncher worker
             _recovered = true;
             holding = [.. _runs.Values.SelectMany(r => r.Held)];
         }
-        foreach (var card in state.Cards(openOnly: true).Where(c => c.Bin == CardBin.ForYou && c.Detail is not null && c.Detail.StartsWith(HeldLead, StringComparison.Ordinal) && !holding.Contains(c.Id)))
+        foreach (var card in state.Cards(openOnly: true).Where(c => c.Bin == CardBin.ForYou && IsHeld(c.Detail) && !holding.Contains(c.Id)))
         {
             if (first || now - card.At >= HeldGrace)
             {

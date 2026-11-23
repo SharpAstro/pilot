@@ -177,21 +177,24 @@ public sealed class AutopilotSwitchTests
         Words(arranged).ShouldContain(AutopilotSwitch.WorkingLabel);
         arranged.Select(a => a.Node.Hit).OfType<HitResult.ButtonHit>().ShouldNotContain(b => b.Action == AutopilotSwitch.Action);
 
+        // The press's own redraw at its answer is the signal: it comes after the press stopped being pending.
+        var answered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var presses = chrome.Autopilot.Presses;
+        var redraw = presses.Changed;
+        presses.Changed = () =>
+        {
+            redraw?.Invoke();
+            if (presses.PendingOf(AutopilotSwitch.Action) is null)
+            {
+                answered.TrySetResult();
+            }
+        };
         reply.SetResult(null);
-        await WaitFor(() => chrome.Autopilot.Presses.PendingOf(AutopilotSwitch.Action) is null);
+        await answered.Task.WaitAsync(TimeSpan.FromSeconds(5), Ct);
         arranged = Arrange(Header());
         Words(arranged).ShouldNotContain("done");
         Words(arranged).ShouldNotContain(AutopilotSwitch.WorkingLabel);
         SwitchIn(arranged).Node.Background.ShouldBe(AutopilotSwitch.LitBg);
-    }
-
-    private static async Task WaitFor(Func<bool> condition)
-    {
-        for (var i = 0; i < 200 && !condition(); i++)
-        {
-            await Task.Delay(10, Ct);
-        }
-        condition().ShouldBeTrue();
     }
 
     /// <summary>A node's row says autopilot on or off from its node envelope; a node not reached says nothing it last said.</summary>

@@ -1671,12 +1671,17 @@ prints an `autopilot` line, and a remote node's switch in the GUI shows the stat
 `autopilot-ci-grants` (a number, 0 to 20; 1 unless set) bounds what the watchtower spends on its own while autopilot is on: it may
 grant one flight more CI budget (`pilot flight ci-budget <flight> continue --why <evidence>`) at most that many times per local day.
 A further grant that day is refused with a line saying it is the person's, and the watchtower rings them. With autopilot on the lookout
-also runs `create-issue`, `create-flight`, `go-around` and `rerun-checks` on a `--why` that names evidence (a job id, a card id, a commit,
-a run); each leaves a Handled line and a decision with that why. With it off they are refused as before.
+also runs `create-issue`, `create-flight` and `go-around` on a `--why` that names evidence (a job id, a card id, a commit, a run); each
+leaves a Handled line and a decision with that why. With it off they are refused as before. `rerun-checks` is the exception: the lookout
+runs it with no why, autopilot on or off, as it did before PIL1285. `go-around` takes the worker's reason as its words and the evidence
+as `--why` (over MCP: `reason` and `why`).
 
 Autopilot v2 has two tiers (PIL1285). **Sonnet keeps watch**: the watchtower, woken by a new card, a flight with no progress for
 `autopilot-stall-minutes` (60 unless set), a peer node going offline or coming back, and a repeated failure; the repeat detector turns
-the second card of one kind or the second failure cause on a flight into one "find the cause" task instead of a third press. **Opus
+the second card of one kind or the second failure cause on a flight into one "find the cause" task instead of a third press. Each wake is
+said once: a stall said is kept with the watchtower's tells (`watchtower-told`) while its flight is in the air, so a node restart does
+not say it again, and a move of the flight starts a new one; a restarted node only notes each peer's first sight, so no peer wake
+is said again either. **Opus
 thinks**: the `investigator` role (`investigator-range`, `opus..opus-high` unless set, separate from the watchtower's range) is a short
 session the node starts with the evidence in its brief, on a find-the-cause task, a flight past its stale bound, a card about to ring the
 person, and the digest. A run ends with exactly one outcome: an issue plus a flight (`pilot investigated <subject> issue`), an action

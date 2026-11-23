@@ -30,6 +30,12 @@ public sealed partial class NormalBehaviourWordTests
         "**autopilot** off (only the person",                      // the status line, as markdown
         "autopilot takes on or off",                               // the settings value's refusal
         "autopilot is the person's to change",                     // the person-only refusal
+        "Autopilot is on: the watchtower runs with a standing goal", // the switch's tooltip (AutopilotSwitch)
+        "Autopilot is off: the watchtower runs with no standing goal", // ditto
+        "Autopilot stays {(",                                        // the switch's refusal line
+        "autopilot {(",                                              // the switch's asking, refusal and reply lines
+        "\"autopilot:toggle\"",                                      // the switch's press action
+        "\"autopilot on\"", "\"autopilot off\"",                    // a node's switch on the Fleet line (FleetView)
         "autopilotGoal",                                           // the file member (an old "autopilot" member is ignored)
         "Autopilot switch",                                        // README: the top bar's switch
         "AutopilotKey",                                            // identifier of the setting's key
@@ -74,8 +80,6 @@ public sealed partial class NormalBehaviourWordTests
         {
             var name = Path.GetFileName(file);
             var text = File.ReadAllText(file);
-            if (name is "AutopilotSwitch.cs" or "FleetView.cs" or "PilotChrome.cs")
-                continue; // the switch's own view: its words are the v2 feature's (PIL1285)
             if (name == "CardKindCatalog.cs")
                 Scan(root, file, Without(text, AllowedInCatalog), hits);
             else if (name.StartsWith("Briefs", StringComparison.Ordinal) || name is "CardSummaries.cs")

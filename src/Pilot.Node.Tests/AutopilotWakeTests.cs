@@ -228,6 +228,32 @@ public sealed class AutopilotWakeTests : IDisposable
     }
 
     [Fact]
+    public async Task AStallToldBeforeARestartIsNotToldAgainAfterItButANewStallIs()
+    {
+        await RunningTowerAsync();
+        _time.Advance(TimeSpan.FromMinutes(61));
+        Row();
+        await _tower.LookAsync(Ct);
+        Says().ShouldHaveSingleItem().ShouldContain("no progress");
+        _said.Clear();
+
+        var wakes = new AutopilotWakes(_state, new RepeatDetector(_state, _failures, _time), _time) { On = () => _on, Stall = () => TimeSpan.FromMinutes(60) };
+        var tower = RestartedTower(wakes);
+        _time.Advance(TimeSpan.FromMinutes(5));
+        Row();
+        await tower.LookAsync(Ct);
+        wakes.Pending.ShouldBeEmpty();
+        Says().ShouldBeEmpty();
+
+        // The flight moves, then stalls again: a new stall, told once more.
+        _state.PutLeg(_state.Legs().Single() with { StartedAt = _time.GetUtcNow() });
+        _time.Advance(TimeSpan.FromMinutes(61));
+        Row();
+        await tower.LookAsync(Ct);
+        Says().ShouldHaveSingleItem().ShouldContain("no progress");
+    }
+
+    [Fact]
     public void ASecondCardWhoseWakeWasNeverSaidIsToldAsAnyCardOnceTheSwitchIsOff()
     {
         var first = _state.RaiseCard(CardBin.Ring, "pr-red", "flight/TIA9", "TIA9's PR is red", "run 1");

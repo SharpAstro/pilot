@@ -72,7 +72,7 @@ public sealed class AutopilotWakes(NodeState state, RepeatDetector repeats, Time
         }
     }
 
-    /// <summary>Whether the watchtower was told of a card (its persisted tells): a repeat task already told is not told again after a restart.</summary>
+    /// <summary>Whether the watchtower was told of a card or a stall (its persisted tells): a repeat task or a stall already told is not told again after a restart.</summary>
     public Func<string, bool> Told { get; set; } = _ => false;
 
     /// <summary>The ids of the cards a pending wake is about: the watchtower leaves them out of its fresh cards until the wake is said.</summary>
@@ -87,8 +87,23 @@ public sealed class AutopilotWakes(NodeState state, RepeatDetector repeats, Time
         }
     }
 
+    /// <summary>
+    /// What a stall's key starts with: <c>stall:&lt;flight&gt;:&lt;last move&gt;</c>. A stall said is kept with the watchtower's tells
+    /// (<see cref="Told"/>), so a node restart does not wake the watchtower again for a stall it was told of; a move of the flight is a
+    /// new key. A peer's wake needs no such keeping: a restarted node only notes each peer's first sight.
+    /// </summary>
+    public const string StallPrefix = "stall:";
+
+    /// <summary>The flight a stall's key is about, or null for another key.</summary>
+    public static string? StallFlight(string key) =>
+        key.StartsWith(StallPrefix, StringComparison.Ordinal) && key.IndexOf(':', StallPrefix.Length) is var end and > 0 ? key[StallPrefix.Length..end] : null;
+
     private void Add(string key, string text, IReadOnlyList<string>? cards = null)
     {
+        if (StallFlight(key) is not null && Told(key))
+        {
+            return;
+        }
         lock (_lock)
         {
             if (!_said.Contains(key) && _pending.All(w => w.Key != key))
@@ -158,7 +173,7 @@ public sealed class AutopilotWakes(NodeState state, RepeatDetector repeats, Time
             {
                 var waits = Staleness.WaitsOn(flight, legs, cards, jobs, pullRequests);
                 // One wake per stall: a move of the flight is a new last, so the same flight stalling again is told again.
-                Add($"stall:{flight.Code}:{last.UtcTicks}",
+                Add($"{StallPrefix}{flight.Code}:{last.UtcTicks}",
                     $"Flight {flight.Code} has shown no progress for {Waited.Coarse(now - last)} (last: {move.Text}). It waits on {waits}. Look at why and move it, or find the cause.");
             }
         }

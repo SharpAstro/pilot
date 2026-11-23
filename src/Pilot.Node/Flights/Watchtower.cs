@@ -199,7 +199,9 @@ public sealed partial class Watchtower(
         var tells = Tells();
         // A repeat task is a Handled line (closed from its birth) whose being told is what keeps its wake from being made again.
         var open = state.Cards().Where(c => c.State == CardState.Open || c.Kind == CardKinds.RepeatTask).Select(c => c.Id).ToHashSet(StringComparer.Ordinal);
-        foreach (var gone in tells.Keys.Where(id => !open.Contains(id)).ToList())
+        // A stall said is kept while its flight is in the air; a landed or gone flight's stalls go.
+        var inAir = state.Flights().Where(Staleness.InAir).Select(f => f.Code).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var gone in tells.Keys.Where(id => !open.Contains(id) && !(AutopilotWakes.StallFlight(id) is { } code && inAir.Contains(code))).ToList())
         {
             tells.Remove(gone);
         }
@@ -1550,6 +1552,11 @@ public sealed partial class Watchtower(
                 foreach (var id in wakes.SelectMany(w => w.Cards ?? []))
                 {
                     tells.TryAdd(id, (now, false));
+                }
+                // A stall said is kept too, so a restarted node does not wake it again for the same stall (PIL1285).
+                foreach (var stall in wakes.Where(w => AutopilotWakes.StallFlight(w.Key) is not null))
+                {
+                    tells.TryAdd(stall.Key, (now, false));
                 }
                 SaveTells();
             }

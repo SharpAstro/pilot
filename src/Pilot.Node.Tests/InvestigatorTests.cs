@@ -475,6 +475,27 @@ public sealed class InvestigatorTests
     }
 
     [Fact]
+    public async Task ACardOnAFlightTheOwnerHoldsIsStillFoundAsHeldAfterARestartAndRingsWithoutTheMarker()
+    {
+        _state.PutFlight(Flight("PIL1", TimeSpan.FromHours(1)) with { OnHold = new FlightOnHold { Reason = "waiting on the owner", Since = Start, By = "owner" } });
+        var card = RingBound();
+        await _investigator.SettledAsync();
+        var held = Card(card.Id);
+        held.Bin.ShouldBe(CardBin.ForYou);
+        held.Detail.ShouldNotBeNull().ShouldNotStartWith(Investigator.HeldLead, "the owner's hold words go in front");
+        Investigator.IsHeld(held.Detail).ShouldBeTrue();
+
+        var (next, _) = Restarted();
+        next.Look();
+
+        var rung = Card(card.Id);
+        rung.Bin.ShouldBe(CardBin.Ring);
+        rung.Detail.ShouldNotBeNull().ShouldContain("the node restarted before an investigator decided it");
+        rung.Detail.ShouldNotContain(Investigator.HeldLead);
+        rung.Detail.ShouldContain("job j962");
+    }
+
+    [Fact]
     public async Task AHeldCardWithALiveRunIsNotRungByTheNextLook()
     {
         var card = RingBound();
