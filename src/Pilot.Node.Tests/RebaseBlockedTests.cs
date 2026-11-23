@@ -8,9 +8,10 @@ namespace Pilot.Node.Tests;
 /// <summary>
 /// A flight PR that is mergeable but not rebaseable on a base that merges by rebase (pilot #1299): between legs the node reshapes the
 /// branch at its next look and nothing rings for the person; with a leg flying nothing is pushed and the flight says it is handled;
-/// a real conflict keeps the conflict path; a squash-only base gets no action. In memory: FakeRepoGit and FakeGitHub.
+/// a real conflict keeps the conflict path; a squash-only base gets no action. Real git over the seed's bare origin (the reshape is a rebase); FakeGitHub answers GitHub.
 /// </summary>
-public sealed class RebaseBlockedTests : ReviewTestsBase
+[Trait("Category", "Slow")]
+public sealed class RebaseBlockedTests() : ReviewTestsBase(realGit: true)
 {
     private static void Commit(string cwd, string message) =>
         Git(cwd, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-a", "-m", message);
