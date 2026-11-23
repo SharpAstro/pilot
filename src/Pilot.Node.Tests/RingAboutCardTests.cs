@@ -251,7 +251,7 @@ public sealed class RingAboutCardTests
         node.State.PutWordsOnCard(a.Id, "wt", "Look", "", CardBin.Ring).ShouldBe(NodeState.RungWordsResult.Unchanged);
         node.State.CloseCard(a.Id, "dismissed", "cli");
         node.State.PutWordsOnCard(a.Id, "wt", "Too late", "", CardBin.Ring).ShouldBe(NodeState.RungWordsResult.Closed);
-        node.State.Cards().Single(x => x.Id == a.Id).Detail.ShouldNotContain("Too late");
+        node.State.Cards().Single(x => x.Id == a.Id).Detail.ShouldNotBeNull().ShouldNotContain("Too late");
     }
 
     [Fact]
