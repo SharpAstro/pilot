@@ -152,24 +152,32 @@ public sealed class SelfClearingCardTests
     }
 
     [Fact]
-    public void ASyncThatClosesAGatingCardRunsAgainAndSettlesEveryOtherCard()
+    public void ASyncThatClosesAGatingCardRunsAgainAndSeesTheCardGone()
     {
-        // A PR-ready card is a gating kind (its opening or closing changes what other choices read), so the pass that closes it asks for
-        // one more pass; the cards the first pass already looked at are read again against the state the close left.
+        // Only a card that reads another card's opening can tell the second pass from the first: Merge reads an open design question on
+        // its flight's PR. Pass 1 closes the design card (its StartReview waits on TIA2's leg) with facts that still list it, so the Merge
+        // card is still marked; only pass 2 reads the state the close left.
         var state = NewState();
-        state.PutFlight(Flight());
-        var gating = state.RaiseCard(CardBin.ForYou, LegCommander.PrReady, "flight/TIA1", "TIA1's PR is ready", null, [StartReview()]);
-        var other = state.RaiseCard(CardBin.ForYou, "review-failed", "flight/TIA1", "TIA1's review did not start", null, [StartReview()]);
-        gating.State.ShouldBe(CardState.Open);
-        other.State.ShouldBe(CardState.Open);
+        const string pr = "https://github.com/SharpAstro/tianwen/pull/7";
+        state.PutFlight(Flight() with { Review = new ReviewRow { State = ReviewState.Passed, Reviewer = "du1-tia1-review", StartedAt = Start }, PullRequestUrl = pr });
+        state.PutLeg(Leg(LegState.Done));
+        state.PutFlight(Flight() with { Code = "TIA2", Branch = "flight/tia2", Worktree = "/r/TIA2", Issue = 2 });
+        var prRef = PrRef.Parse(pr)!;
+        var design = state.RaiseCard(CardBin.ForYou, PrReviews.DesignKind, Verbs.PrTarget(prRef.Repo, prRef.Number), "a design question", null,
+            [new CardChoice { Label = "Start the review again", Verb = Verbs.StartReview, Target = "flight/TIA2" }]);
+        var merge = state.RaiseCard(CardBin.ForYou, LegCommander.PrReady, "flight/TIA1", "TIA1's PR is ready", null,
+            [new CardChoice { Label = "Merge", Verb = Verbs.Merge, Target = "flight/TIA1" }]);
+        design.State.ShouldBe(CardState.Open);
+        merge.Choices.Single().Status.ShouldBe(ChoiceStatus.Unavailable);
 
-        state.PutLeg(Leg(LegState.Flying));
+        state.PutLeg(Leg(LegState.Flying) with { Flight = "TIA2" });
 
         var cards = state.Cards();
-        cards.Single(c => c.Id == gating.Id).State.ShouldBe(CardState.Closed);
-        cards.Single(c => c.Id == gating.Id).Outcome.ShouldBe(Waits);
-        cards.Single(c => c.Id == other.Id).State.ShouldBe(CardState.Closed);
-        cards.Count(c => c.State == CardState.Open).ShouldBe(0);
+        cards.Single(c => c.Id == design.Id).State.ShouldBe(CardState.Closed);
+        cards.Single(c => c.Id == design.Id).Outcome.ShouldBe("TIA2 has legs not done: review-notes-3; its review starts by itself once they land");
+        var after = cards.Single(c => c.Id == merge.Id).Choices.Single();
+        after.Status.ShouldNotBe(ChoiceStatus.Unavailable);
+        after.Note.ShouldBeNull();
     }
 
     [Fact]
