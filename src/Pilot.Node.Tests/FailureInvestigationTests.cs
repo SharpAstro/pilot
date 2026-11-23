@@ -397,6 +397,7 @@ public sealed class FailureInvestigationTests
         var site = new FailureSite("tianwen", "/r/tianwen", 79, "TIA79", Head('i'), FailureWhere.Ci);
         var log = "##[error]fatal: unable to access 'https://github.com/x/y/': Could not resolve host after 3 tries";
 
+        _github.BaseAnswer = new BaseRun(9000, false, log);
         await _failures.LookAtCheckAsync(site, log, () => Task.FromResult<string[]>(["a.cs"]), Ct);
         await _failures.LookAtCheckAsync(site with { Pr = 80, Flight = "TIA80", Head = Head('j') }, log.Replace("3 tries", "9 tries"), () => Task.FromResult<string[]>(["b.cs"]), Ct);
 
