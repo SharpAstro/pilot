@@ -35,7 +35,7 @@ public sealed class ClaudeJobRemovalTests : IDisposable
     {
         _tracker = new SessionTracker(_state, _agents, _profile.Options(), () => false, TimeProvider.System, NullLogger<SessionTracker>.Instance) { Launched = _ledger };
         _delivery = new FakeSessionDelivery(_agents);
-        _messenger = new SessionMessenger(_state, _tracker, _delivery, new StringWriter(), _book, _ledger) { Removal = new ClaudeJobRemoval(_jobs, _log) };
+        _messenger = new SessionMessenger(_state, _tracker, _delivery, TextWriter.Synchronized(new StringWriter()), _book, _ledger) { Removal = new ClaudeJobRemoval(_jobs, _log) };
     }
 
     public void Dispose() => _profile.Dispose();

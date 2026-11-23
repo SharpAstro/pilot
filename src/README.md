@@ -285,7 +285,7 @@ done only with every change committed (its worker's brief says so, and the node 
 refused while the plane holds commits past the reviewed head, so a late commit cannot miss the PR; landing by hand is
 refused while the plane holds a commit on no remote and not in its base (compared by patch, so rebase-merged work
 counts as in); a flight whose PR was merged on GitHub with something left out does not land but rings with it. Before
-any of that, a session ending its turn in a plane with files not committed is sent back to commit them (the Stop gate,
+any of that, a session ending its turn in a plane with files not committed is sent back to commit them, or delete them if they are scratch it made (the Stop gate,
 under Hooks). Once
 landed, the plane's worktree is removed and its branch kept. PRs are merged by rebase unless the node's `merge-method`
 says otherwise, so every commit's subject, which a repo's docs may cite, reaches main.
@@ -2018,10 +2018,9 @@ puts it right.
 
 **The Stop gate: nothing is left behind in a plane.** A session that ends its turn in a flight's plane (its cwd the
 plane's worktree or a folder in it, of a flight not landed) with files not committed there is sent back: the node
-answers `{"decision":"block","reason":"…"}`, the reason naming the files (`git status --porcelain`, the first three)
-and telling it to commit or drop them, and Claude Code carries on with that as the session's next instruction. Once
+answers `{"decision":"block","reason":"…"}`, the reason naming the files (`git status --porcelain`, the first three, read with `-uall` so a new folder lists its files) and telling it to commit them, or delete them if they are scratch it made, and Claude Code carries on with that as the session's next instruction. Once
 per turn: a stop Claude Code marks `stop_hook_active` (one a Stop hook already sent back) is let through, and if the
-files are still there the node rings (`stopped-uncommitted`, about the flying leg, with **Tell it again**); a later
+files are still there the node rings (`stopped-uncommitted`, about the flying leg, with **Tell it to commit** and, when the files are untracked, **Tell it to delete them**); a later
 stop with the plane clean closes the ring. Only a plane the node flies counts, not Claude Code's own worktrees beside
 it under `.claude/worktrees`; every other session, a subagent and any other event get no answer. This is why Stop's
 handler is not `async`: Claude Code never reads an async hook's output. It waits for the node at most 2 s, and no

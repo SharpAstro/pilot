@@ -52,7 +52,7 @@ public sealed class LiveWorkerResumeTests : IDisposable
     }
 
     private SessionMessenger Messenger(Func<int, TimeSpan, CancellationToken, Task<bool>> waitGone, StringWriter? log = null) =>
-        new SessionMessenger(_state, _tracker, _delivery, log ?? new StringWriter(), _book) { WaitGone = waitGone, GoneWait = TimeSpan.FromMilliseconds(300) };
+        new SessionMessenger(_state, _tracker, _delivery, log ?? TextWriter.Synchronized(new StringWriter()), _book) { WaitGone = waitGone, GoneWait = TimeSpan.FromMilliseconds(300) };
 
     private static CommandRequest Say(SessionRow row) =>
         new CommandRequest { Verb = Verbs.Say, Target = Verbs.SessionTarget(row.Id), Args = ["go on"], Who = "tests" };
@@ -160,7 +160,7 @@ public sealed class LiveWorkerResumeTests : IDisposable
         try
         {
             var row = await IdleMismatchedAsync(child.Id);
-            var messenger = new SessionMessenger(_state, _tracker, _delivery, new StringWriter(), _book)
+            var messenger = new SessionMessenger(_state, _tracker, _delivery, TextWriter.Synchronized(new StringWriter()), _book)
             {
                 WaitGone = SessionMessenger.WaitProcessGoneAsync,
                 GoneWait = TimeSpan.FromMilliseconds(500),
