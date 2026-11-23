@@ -300,6 +300,8 @@ public static class ChoiceStatus
     /// <summary>
     /// The node's own wait: a leg of the flight (a review-notes leg making the review's fixes) is still to fly, and the merge is
     /// refused until it lands; <see cref="CardChoice.Note"/> names the legs. Not a button, and not a failure: it ends by itself (#918).
+    /// Since PIL1294 the node no longer keeps a card open for this wait (a Handled line says it); the status stays on the wire
+    /// because an older node, or a card written before, still carries it and the views read it.
     /// </summary>
     public const string WaitsForLegs = "waits-for-legs";
 

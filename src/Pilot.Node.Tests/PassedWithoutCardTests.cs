@@ -73,7 +73,7 @@ public sealed class PassedWithoutCardTests : ReviewTestsBase
 
     [Fact]
     [Trait("Category", "Slow")]
-    public async Task AHoldingFlightGetsTheHoldingCardAndItsNotesCardAndIsNotMerged()
+    public async Task ARestoredHoldingCardWaitingOnALegIsAHandledLineAndNothingIsMerged()
     {
         NodeAdvances();
         _github.Checks = ChoiceStatus.Passing;
@@ -83,8 +83,10 @@ public sealed class PassedWithoutCardTests : ReviewTestsBase
         await Checks().LookAsync(Ct);
 
         F(flight.Code).Holding.ShouldNotBeNull();
-        // The card loop of the same look may retitle it from GitHub's state; its own words say it is the holding card.
-        Open().Single(c => c.Kind == LegCommander.PrReady).Detail.ShouldNotBeNull().ShouldContain("The review-notes leg makes the review's fixes");
+        // PIL1294: the restored holding card waits on a review-notes leg, so the same look closes it for a Handled line (no For you card
+        // with a Merge the node refuses); the node merges from a restored card once the leg lands (HoldingPatternTests).
+        Open().ShouldNotContain(c => c.Kind == LegCommander.PrReady);
+        _state.Cards(openOnly: false).Where(c => c.Kind == LegCommander.LegWaitKind).ShouldHaveSingleItem().Detail.ShouldNotBeNull().ShouldContain("leg makes the review's fixes");
         _github.Merged.ShouldBeEmpty();
     }
 

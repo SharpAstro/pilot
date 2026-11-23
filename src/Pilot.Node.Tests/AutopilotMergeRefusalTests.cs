@@ -57,7 +57,12 @@ public sealed class AutopilotMergeRefusalTests : ReviewTestsBase
         _state.Merges().ShouldBeEmpty();
         NoRefusalRaised();
 
+        // PIL1294: the leg's wait closed the PR-ready card quietly, so the first look that finds every leg done restores the card (the node merges
+        // only from one) and the look after it presses its Merge; the second look in each pair below is that follow-up.
+        // The restore raises the card only for the head the review passed (a PR moved on since is reviewed again), so the PR is at it.
+        _github.Pr = _github.Pr! with { Head = _state.Flights().Single(f => f.Code == flight.Code).Review!.ReviewedHead! };
         _state.PutLeg(notes with { State = LegState.Done });
+        await checks.LookAsync(Ct);
         await checks.LookAsync(Ct);
 
         _state.Merges().ShouldNotBeEmpty();
