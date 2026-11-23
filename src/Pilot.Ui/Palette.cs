@@ -354,6 +354,10 @@ internal sealed record Palette(
         };
     }
 
+    // Night's Bright, written once: the map's row notes (MapNote) are drawn in it too, so the two cannot drift apart.
+    // Declared before Night, since static initializers run in the order they are written.
+    private static readonly RGBAColor32 NightBright = new(0xc8, 0x00, 0x00, 0xff);
+
     /// <summary>Dim reds on black and nothing else: no green or blue in any channel, so the eye stays dark-adapted.</summary>
     public static Palette Night { get; } = new(
         Ground: new(0x00, 0x00, 0x00, 0xff),
@@ -361,7 +365,7 @@ internal sealed record Palette(
         RowAltBg: new(0x0c, 0x00, 0x00, 0xff),
         RowHoverBg: new(0x26, 0x00, 0x00, 0xff),
         RowFocusBg: new(0x3a, 0x00, 0x00, 0xff),
-        Bright: new(0xc8, 0x00, 0x00, 0xff),
+        Bright: NightBright,
         Body: new(0xa0, 0x00, 0x00, 0xff),
         Dim: new(0x70, 0x00, 0x00, 0xff),
         Faint: new(0x50, 0x00, 0x00, 0xff),
@@ -446,5 +450,5 @@ internal sealed record Palette(
         RetryHover: new(0xff, 0x00, 0x00, 0xff),
         RetryText: new(0x00, 0x00, 0x00, 0xff),
         // Night is red only, so no text reaches 4.5:1 on the land: Bright is its strongest ramp step that is not the accent, 3.3:1, where Dim is 1.6:1.
-        MapNote: new(0xc8, 0x00, 0x00, 0xff));
+        MapNote: NightBright);
 }

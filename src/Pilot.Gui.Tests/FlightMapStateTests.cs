@@ -255,5 +255,8 @@ public sealed class FlightMapStateTests
         var floor = night ? 3.0 : 4.5;
         Contrast.Ratio(p.MapNote, p.LandHere).ShouldBeGreaterThanOrEqualTo(floor);
         Contrast.Ratio(p.MapNote, p.Land).ShouldBeGreaterThanOrEqualTo(floor);
+
+        // Night's note colour is its Bright, one value, so a change to one is a change to both.
+        Palette.Night.MapNote.ShouldBe(Palette.Night.Bright);
     }
 }
