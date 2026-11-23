@@ -363,6 +363,33 @@ public sealed class NoModelReviewTests : ReviewTestsBase
 
     [Fact]
     [Trait("Category", "Slow")]
+    public async Task AGreenWorkflowWhoseEarlierFailuresWereNoModelReviewsCountsNoneOfThemAsFailed()
+    {
+        var (flight, number) = await Passed("69");
+        var start = _clock.GetUtcNow();
+        _github.CiRuns[flight.Branch] =
+        [
+            GhAnswers.CiRun(1100, 4, "failure", "CI", started: start.AddMinutes(-30), completedAt: start.AddMinutes(-25)),
+            GhAnswers.CiRun(1101, 4, "failure", "CI", started: start.AddMinutes(-20), completedAt: start.AddMinutes(-15)),
+            GhAnswers.CiRun(1102, 4, "success", "CI", started: start.AddMinutes(-10), completedAt: start.AddMinutes(-5)),
+            GhAnswers.CiRun(2100, 1, "failure", "review", started: start.AddMinutes(-10), completedAt: start.AddMinutes(-8)),
+        ];
+        _github.FailedChecks[number] = [Review(2100)];
+        // Both earlier failures of the green workflow were its review never reaching a model.
+        _github.RunLogs[1100] = NoModelLog();
+        _github.RunLogs[1101] = NoModelLog();
+        _github.RunLogs[2100] = NoModelLog();
+        var checks = new PrChecks(_state, _github, _clock, _flights, _legs) { CiInterval = TimeSpan.Zero };
+
+        await checks.LookAtCiAsync(Ct);
+
+        var ci = F(flight.Code).Ci.ShouldNotBeNull();
+        (ci.Failed, ci.RedSince, ci.CappedWhy).ShouldBe((0, null, null));
+        Kinds().ShouldNotContain(CiBudgets.CapKind);
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
     public async Task TheSameRunsWithAReviewThatHasFindingsGoRedAndCapPastTheBound()
     {
         var (flight, number) = await Passed("68");
