@@ -177,6 +177,7 @@ public static partial class CardSummaries
             PrChecks.MergeDropped => $"The merge of {what} did not go through. Merge it again once the cause is dealt with.",
             PrChecks.NodeMergeRefused => $"The node tried to merge {what}'s PR and the refusal is yours to clear (or GitHub did not answer in three tries, a minute and four minutes apart). The card says why, what the node tried and the one thing to do; a merge again only helps once that is done.",
             CardKinds.NodeRan => "The node ran a command for an assistant session. Nothing to do; the card is the record.",
+            CardKinds.RepeatTask => "The same card or failure came a second time. The node opened this task so the cause is found, not the answer pressed again; the watchtower was told. Nothing to do.",
             CardKinds.PersonsWord => "The watchtower answered or dismissed a card at the person's word in its chat. Nothing to do; the card is the record.",
             Watchtower.RaisedKind => "A card raised for the person by the watchtower or a session. Read its detail and dismiss it once dealt with.",
             StaleCards.HandledKind => "The node read the fact itself and closed a card the summary proposed as resolved. Nothing to do.",

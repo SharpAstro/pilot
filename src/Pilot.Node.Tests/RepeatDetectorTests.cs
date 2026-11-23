@@ -38,7 +38,7 @@ public sealed class RepeatDetectorTests
 
         var found = _detector.Look().ShouldHaveSingleItem();
 
-        var task = Repeats();
+        var task = _state.Cards().Single(c => c.Kind == CardKinds.RepeatTask);
         task.Bin.ShouldBe(CardBin.Handled);
         task.Detail.ShouldNotBeNull().ShouldContain(first.Id);
         task.Detail.ShouldNotBeNull().ShouldContain(second.Id);
@@ -52,7 +52,8 @@ public sealed class RepeatDetectorTests
     [Fact]
     public void ThePairNeverOpensASecondTaskNotWhileOneIsOpenAndNotAfterItClosed()
     {
-        _state.RaiseCard(CardBin.Ring, "pr-red", "flight/PIL1", "red");
+        var first = _state.RaiseCard(CardBin.Ring, "pr-red", "flight/PIL1", "red");
+        _state.CloseCard(first.Id, "pressed", "owner");
         _state.RaiseCard(CardBin.Ring, "pr-red", "flight/PIL1", "red");
         _detector.Look().Count.ShouldBe(1);
         _detector.Look().ShouldBeEmpty();
