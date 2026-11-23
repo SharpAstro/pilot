@@ -43,8 +43,8 @@ public sealed class PrPollBudgetTests
                     CreatedAt = new FixedTime().GetUtcNow(), PullRequest = number,
                 });
                 State.RaiseCard(CardBin.ForYou, LegCommander.PrReady, Verbs.FlightTarget(code), $"{code}'s PR #{number} is ready to merge");
-                GitHub.PrOf[branch] = new PullRequest(number, "OPEN", $"head{number}", $"https://github.com/o/r/pull/{number}", "MERGEABLE");
-                GitHub.SummaryOf[number] = new ChecksSummary(ChoiceStatus.Pending, 1, 3);
+                GitHub.PrOf[branch] = GhAnswers.PullRequestByBranch(number: number, head: $"head{number}", url: $"https://github.com/o/r/pull/{number}", mergeable: "MERGEABLE");
+                GitHub.SummaryOf[number] = GhAnswers.ChecksOf(ChoiceStatus.Pending, 1, 3);
                 if (batch)
                 {
                     GitHub.OpenBranches.TryAdd(repo, []);
@@ -112,13 +112,13 @@ public sealed class PrPollBudgetTests
 
         (await Look(12, RepoA)).Merge!.Kind.ShouldBe(MergeKinds.Pending);
 
-        rig.GitHub.SummaryOf[12] = new ChecksSummary(ChoiceStatus.Failing, 2, 3, "build", "https://github.com/o/r/actions/runs/1");
+        rig.GitHub.SummaryOf[12] = GhAnswers.ChecksOf(ChoiceStatus.Failing, 2, 3, "build", "https://github.com/o/r/actions/runs/1");
         var red = await Look(12, RepoA);
         red.Checks!.Status.ShouldBe(ChoiceStatus.Failing);
         red.Merge!.Kind.ShouldBe(MergeKinds.Blocked);
         red.Merge.FailedName.ShouldBe("build");
 
-        rig.GitHub.MergeOf[14] = new MergeState(MergeKinds.Queued, Position: 1);
+        rig.GitHub.MergeOf[14] = GhAnswers.MergeState(MergeKinds.Queued, position: 1);
         (await Look(14, RepoB)).Merge!.Kind.ShouldBe(MergeKinds.Queued);
 
         // One batch per look and repo (two looks of repo A, one of B), never one read per question.
@@ -141,7 +141,7 @@ public sealed class PrPollBudgetTests
         using (LookSnapshot.Begin())
         {
             (await github.MergeStateAsync(RepoA, 11, Ct))!.Kind.ShouldBe(MergeKinds.Pending);
-            rig.GitHub.SummaryOf[11] = new ChecksSummary(ChoiceStatus.Passing, 3, 3);
+            rig.GitHub.SummaryOf[11] = GhAnswers.ChecksOf(ChoiceStatus.Passing, 3, 3);
             // Still the look's reading ...
             (await github.ChecksSummaryAsync(RepoA, 11, Ct))!.Status.ShouldBe(ChoiceStatus.Pending);
             // ... until a write to the PR: its next read is GitHub's.
