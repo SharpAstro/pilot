@@ -61,6 +61,7 @@ public sealed class AttachmentGalleryTests
     {
         var regions = new List<ClickableRegion>();
         chrome.PageWidget.CollectPaintedRegions(regions);
+        chrome.Viewer.CollectPaintedRegions(regions);
         return regions;
     }
 
@@ -116,16 +117,18 @@ public sealed class AttachmentGalleryTests
         chrome.Gallery.Viewing.ShouldNotBeNull().Id.ShouldBe("a1b2c3");
         Draw(chrome, line);
         var full = painted.Rects.Last();
-        full.Width.ShouldBeGreaterThan(thumb.Width * 1.5f);
-        // Never drawn larger than the copy itself.
-        full.Width.ShouldBeLessThanOrEqualTo(200f);
+        // Scaled up past the copy's own 200, inside the window, its shape kept.
+        full.Width.ShouldBeGreaterThan(200f);
+        full.Width.ShouldBeLessThanOrEqualTo(1280f);
+        full.Height.ShouldBeLessThanOrEqualTo(800f);
+        (full.Width / full.Height).ShouldBe(2f, 0.02f);
         Buttons(chrome).ShouldContain("attachment:close");
 
         Regions(chrome).Single(r => r.Result is HitResult.ButtonHit { Action: "attachment:close" }).OnClick!.Invoke(InputModifier.None);
         chrome.Gallery.Viewing.ShouldBeNull();
 
         chrome.Gallery.Open(new AttachmentRef("a1b2c3", "The planets", "png", null));
-        chrome.Flights.HandleInput(new InputEvent.KeyDown(InputKey.Escape, InputModifier.None)).ShouldBeTrue();
+        chrome.HandleInput(new InputEvent.KeyDown(InputKey.Escape, InputModifier.None)).ShouldBeTrue();
         chrome.Gallery.Viewing.ShouldBeNull();
         // The Escape that closed the viewer left the page open.
         chrome.Flights.IsDetailOpen.ShouldBeTrue();

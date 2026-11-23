@@ -665,7 +665,6 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pilo
         // The open transcript's chips that did not fit on a row, as a menu over the page.
         page = Transcript.Over(page, HeaderHeight);
         page = WithPageSelection(page);
-        page = Gallery.Over(page);
         page = _menu.IsOpen
             ? Layout.Builder.Overlay(page, Layout.Builder.Dropdown(_menuAt, _menu, 13f, Bright, MenuBg, RowFocusBg))
             : page;

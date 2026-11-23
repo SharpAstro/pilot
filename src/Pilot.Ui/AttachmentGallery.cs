@@ -54,27 +54,10 @@ internal sealed class AttachmentGallery
     // A copy with no id is an image the node holds nothing of (a link out): it has no picture to fetch.
     private bool IsFailed(AttachmentRef copy) => copy.Id.Length == 0 || Failed?.Invoke(copy) == true;
 
-    /// <summary>True when the open copy was opened from a card: the cards panel draws the viewer, and the page beside it does not draw a second.</summary>
-    public bool InPanel { get; private set; }
+    /// <summary>Opens <paramref name="copy"/> in the window's viewer, which the chrome paints over everything (<see cref="Viewer"/>).</summary>
+    public void Open(AttachmentRef copy) => Viewing = copy;
 
-    public void Open(AttachmentRef copy)
-    {
-        Viewing = copy;
-        InPanel = false;
-    }
-
-    /// <summary>Opens <paramref name="copy"/> in the viewer the cards panel draws (<see cref="Over"/> with <c>panel</c>).</summary>
-    public void OpenInPanel(AttachmentRef copy)
-    {
-        Viewing = copy;
-        InPanel = true;
-    }
-
-    public void Close()
-    {
-        Viewing = null;
-        InPanel = false;
-    }
+    public void Close() => Viewing = null;
 
     /// <summary>Escape shuts the viewer; true when it was open.</summary>
     public bool HandleKey(InputKey key)
@@ -125,23 +108,23 @@ internal sealed class AttachmentGallery
     }
 
     /// <summary>
-    /// One thumbnail on its own, with no section heading, for a card: a click opens the viewer over the cards panel (<see cref="OpenInPanel"/>).
+    /// One thumbnail on its own, with no section heading, for a card: a click opens the window's viewer (<see cref="Open"/>).
     /// A copy the host cannot show (the node no longer holds it, or it did not decode) is said so in words beside the box, never a bare extension.
     /// </summary>
     public Layout.Node Single(string owner, AttachmentRef copy, Func<string, Layout.Node> words)
     {
-        var thumb = Thumb(owner, copy, 0, OpenInPanel);
+        var thumb = Thumb(owner, copy, 0, Open);
         return IsFailed(copy)
             ? Layout.Builder.HStack(thumb, words($"No preview: the node no longer has this image, or it could not be read ({copy.Ext.ToUpperInvariant()})")).WithGap(8f).WStar().HAuto()
             : thumb;
     }
 
-    /// <summary><paramref name="page"/> with the open copy full size over it; a click anywhere on it, or Escape, shuts it.</summary>
-    public Layout.Node Over(Layout.Node page, bool panel = false)
+    /// <summary>The open copy full size, to fill the whole window with a title row; a click anywhere on it, or Escape, shuts it. Null with none open.</summary>
+    public Layout.Node? Viewer()
     {
-        if (Viewing is not { } copy || InPanel != panel)
+        if (Viewing is not { } copy)
         {
-            return page;
+            return null;
         }
         if (copy.Id.Length > 0)
         {
@@ -157,7 +140,7 @@ internal sealed class AttachmentGallery
             .Bg(Scrim)
             .Stretch()
             .Follows(new HitResult.ButtonHit("attachment:close"), _ => Close());
-        return Layout.Builder.Overlay(page, viewer);
+        return viewer;
     }
 
     /// <summary>The <c>drawFill</c> of a page that carries the section or the viewer: paints thumbnails and the full-size copy.</summary>
@@ -174,13 +157,13 @@ internal sealed class AttachmentGallery
         {
             return;
         }
-        draw(picture, Fit(rect, picture.Width, picture.Height));
+        draw(picture, Fit(rect, picture.Width, picture.Height, upscale: key.StartsWith(FullKey, StringComparison.Ordinal)));
     }
 
-    /// <summary>The largest rectangle of the picture's shape that fits in <paramref name="rect"/>, centred, never larger than the picture.</summary>
-    internal static RectF32 Fit(RectF32 rect, int width, int height)
+    /// <summary>The largest rectangle of the picture's shape that fits in <paramref name="rect"/>, centred, larger than the picture only with <paramref name="upscale"/> (the viewer, as tianwen's LargePictureRect does).</summary>
+    internal static RectF32 Fit(RectF32 rect, int width, int height, bool upscale = false)
     {
-        var scale = MathF.Min(1f, MathF.Min(rect.Width / width, rect.Height / height));
+        var scale = MathF.Min(upscale ? float.MaxValue : 1f, MathF.Min(rect.Width / width, rect.Height / height));
         var w = width * scale;
         var h = height * scale;
         return new RectF32(rect.X + (rect.Width - w) / 2f, rect.Y + (rect.Height - h) / 2f, w, h);

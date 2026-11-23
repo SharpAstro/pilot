@@ -237,6 +237,7 @@ internal sealed class PilotChrome<TSurface>
         Tooltips = new TooltipLayer<TSurface>(renderer);
         NotificationsLayer = new NotificationsLayer<TSurface>(renderer);
         More = new RailMoreMenu<TSurface>(renderer);
+        Viewer = new AttachmentViewer<TSurface>(renderer, sessions.Gallery);
         Notifications.CardBody = ToastBody;
         Notifications.CardButtons = ToastButtons;
         Notifications.CardPage = (card, node) => () => WholeCard(card, node);
@@ -382,6 +383,9 @@ internal sealed class PilotChrome<TSurface>
     /// <summary>The menu of the pages the rail had no room for, behind its "..." cell; it paints only while open.</summary>
     internal RailMoreMenu<TSurface> More { get; }
 
+    /// <summary>The window's attachment viewer, painted last over the whole window.</summary>
+    internal AttachmentViewer<TSurface> Viewer { get; }
+
     /// <summary>The text check the pages report their arranged nodes to: the host gives it where to send the card it raises, and a line for the console.</summary>
     public LiveTextCheck TextCheck { get; } = new();
 
@@ -489,7 +493,7 @@ internal sealed class PilotChrome<TSurface>
     public PilotPage Page { get; private set; } = PilotPage.Home;
 
     /// <summary>The widgets this chrome paints, back to front: what the router asks about input.</summary>
-    public IReadOnlyList<IPixelWidget> Widgets => Page == PilotPage.Designs ? [.. PageWidgets, More] : (_widgetsOf.Page == Page && _widgetsOf.List is { } kept ? kept : Keep(Page));
+    public IReadOnlyList<IPixelWidget> Widgets => Page == PilotPage.Designs ? [.. PageWidgets, More, Viewer] : (_widgetsOf.Page == Page && _widgetsOf.List is { } kept ? kept : Keep(Page));
 
     // The widget lists of the page shown, made once a page (#1236 R2.4): every MouseMove asked for them, and each ask built two arrays. The Designs page
     // is made at each ask, as its frames' widgets come and go with the design open.
@@ -498,7 +502,7 @@ internal sealed class PilotChrome<TSurface>
     private IReadOnlyList<IPixelWidget> Keep(PilotPage page)
     {
         var pages = MakePageWidgets();
-        IReadOnlyList<IPixelWidget> all = [.. pages, More];
+        IReadOnlyList<IPixelWidget> all = [.. pages, More, Viewer];
         _widgetsOf = (page, pages, all);
         return all;
     }
@@ -880,8 +884,8 @@ internal sealed class PilotChrome<TSurface>
             return true;
         }
 
-        // A card's image open over the panel is shut by Escape wherever the page is: the page's own views only close what a page opened.
-        if (evt is InputEvent.KeyDown { Key: InputKey.Escape } && Gallery.InPanel && Gallery.HandleKey(InputKey.Escape))
+        // The open attachment viewer is shut by Escape wherever the page is, ahead of the page's own keys.
+        if (evt is InputEvent.KeyDown { Key: InputKey.Escape } && Gallery.HandleKey(InputKey.Escape))
         {
             return true;
         }
@@ -971,7 +975,7 @@ internal sealed class PilotChrome<TSurface>
                 return true;
             }
         }
-        return More.Menu.IsOpen && Covers(More, x, y, includeOutsideLayer);
+        return More.Menu.IsOpen && Covers(More, x, y, includeOutsideLayer) || Gallery.Viewing is not null && Covers(Viewer, x, y, includeOutsideLayer);
     }
 
     // Whether one widget's painted regions hold the point; the open bar's press-outside layer counts only with includeOutsideLayer.
@@ -1368,6 +1372,7 @@ internal sealed class PilotChrome<TSurface>
             NotificationsLayer.DpiScale = value;
             Rail.DpiScale = value;
             More.DpiScale = value;
+            Viewer.DpiScale = value;
             Nav.DpiScale = value;
         }
     }
@@ -1395,6 +1400,7 @@ internal sealed class PilotChrome<TSurface>
             NotificationsLayer.FontPath = value;
             Rail.FontPath = value;
             More.FontPath = value;
+            Viewer.FontPath = value;
             Nav.FontPath = value;
             // The rail's glyphs are emoji, which the UI face lacks: the platform's colour emoji face draws them
             // (Segoe UI Emoji, Noto Color Emoji), or none, and the rail falls back to the UI face.
@@ -1635,6 +1641,8 @@ internal sealed class PilotChrome<TSurface>
         CardsBounds = ShowsCards ? cardsRect : null;
         // Over everything the window painted: the menu of the pages the rail had no room for.
         More.Render(bounds);
+        // Over everything, the menu included: an attachment open full size.
+        Viewer.Render(bounds);
     }
 
     private void ChooseHidden(TabItem<PilotPage> item)

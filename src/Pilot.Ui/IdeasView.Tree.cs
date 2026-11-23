@@ -158,7 +158,7 @@ internal sealed partial class IdeasView<TSurface>
         }
         var whole = Layout.Builder.VStack(top, body.HStar()).Bg(P.Ground).Stretch();
         whole = WithPageSelection(whole);
-        return Gallery.Over(About?.Over(whole, NightOrNull) ?? whole);
+        return About?.Over(whole, NightOrNull) ?? whole;
     }
 
     // The filter beside the view switch: a click shows only the ideas marked as needing a design, and a click again shows all.
