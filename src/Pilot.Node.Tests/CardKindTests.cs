@@ -236,14 +236,16 @@ public sealed class CardKindTests
     {
         var problems = new List<string>();
         var pressVerbs = NodePress.Kinds.Select(k => k.Verb).ToHashSet(StringComparer.Ordinal);
-        string NameOf(string verb) => typeof(Verbs).GetFields(BindingFlags.Public | BindingFlags.Static)
-            .First(f => f.IsLiteral && Equals(f.GetRawConstantValue(), verb)).Name;
+        // Compared by constant NAME, never value to name: Verbs.OverlapPickFold and Verbs.Fold are both "fold".
+        pressVerbs.SetEquals(PressNames.Select(ValueOf)).ShouldBeTrue("NodePress.Kinds presses a verb this guard does not name in PressNames, or the reverse; update PressNames");
+        string NameOf(string verb) => PressNames.First(n => ValueOf(n) == verb);
         var offered = Calls.Value
             .Select(c => (Kind: Resolve(c.File, c.KindExpr)?.Value, Verbs: c.ChoiceVerbs ?? []))
             .Where(c => c.Kind is not null)
             .GroupBy(c => c.Kind!)
             .ToDictionary(g => g.Key, g => g.SelectMany(c => c.Verbs).ToHashSet(StringComparer.Ordinal));
-        var asNames = pressVerbs.ToDictionary(NameOf, v => v);
+        var asNames = PressNames.ToDictionary(n => n, n => ValueOf(n));
+        bool FileOffers(string file, string name) => Regex.IsMatch(Sources.Value.First(s => s.File == file).Source, $@"\bVerbs\.{name}\b");
 
         foreach (var entry in CardKindCatalog.All.Where(e => e.NodePressed))
         {
@@ -252,7 +254,7 @@ public sealed class CardKindTests
                 problems.Add($"{entry.Kind}: marked NodePressed and NodePress.Owns is false for it; add it to NodePress.Kinds with the verb it presses");
             }
             else if (NodePress.VerbOf(entry.Kind) is { } verb && !(offered.GetValueOrDefault(entry.Kind) ?? []).Contains(NameOf(verb))
-                && !entry.Files.Any(f => Sources.Value.First(s => s.File == f).Source.Contains($"Verbs.{NameOf(verb)}", StringComparison.Ordinal)))
+                && !entry.Files.Any(f => FileOffers(f, NameOf(verb))))
             {
                 // A card whose choices are built in a list before the call is read from its raising files, as the Ring guard reads them.
                 problems.Add($"{entry.Kind}: NodePress presses {NameOf(verb)} on it and its raising calls do not offer that verb");
@@ -275,7 +277,7 @@ public sealed class CardKindTests
                 problems.Add($"{entry.Kind}: offers {string.Join(", ", verbs)}, which NodePress presses on other kinds, and is neither NodePressed nor in CardKindCatalog.PersonsOwn with a reason");
             }
             // A card whose choices are built before the call offers its verbs in its raising files, which is where a named kind is read.
-            var inFiles = asNames.Keys.Any(n => entry.Files.Any(f => Sources.Value.First(s => s.File == f).Source.Contains($"Verbs.{n}", StringComparison.Ordinal)));
+            var inFiles = asNames.Keys.Any(n => entry.Files.Any(f => FileOffers(f, n)));
             if (named && (!inFiles || string.IsNullOrWhiteSpace(reason)))
             {
                 problems.Add($"{entry.Kind}: named in CardKindCatalog.PersonsOwn but {(!inFiles ? "its raising files offer none of NodePress's verbs" : "gives no reason")}");
@@ -286,6 +288,20 @@ public sealed class CardKindTests
             problems.Add($"{kind}: named in CardKindCatalog.PersonsOwn and is no unmarked catalog kind");
         }
         problems.ShouldBeEmpty(string.Join('\n', problems));
+    }
+
+    /// <summary>The constants of <see cref="Verbs"/> that NodePress runs, by name.</summary>
+    private static readonly string[] PressNames = [nameof(Verbs.EndStray), nameof(Verbs.Fold), nameof(Verbs.FixPr), nameof(Verbs.ReviewPr)];
+
+    private static string ValueOf(string name) => (string)typeof(Verbs).GetField(name)!.GetRawConstantValue()!;
+
+    /// <summary>Shows the guard reads names: a kind offering Verbs.Fold is seen, one offering the same-valued OverlapPickFold is not.</summary>
+    [Fact]
+    public void TheGuardTellsFoldFromOverlapPickFoldAlthoughTheyShareAValue()
+    {
+        ValueOf(nameof(Verbs.Fold)).ShouldBe(ValueOf(nameof(Verbs.OverlapPickFold)));
+        new[] { nameof(Verbs.Fold) }.Where(PressNames.Contains).ShouldBe([nameof(Verbs.Fold)]);
+        new[] { nameof(Verbs.OverlapPickFold) }.Where(PressNames.Contains).ShouldBeEmpty();
     }
 
     [Fact]

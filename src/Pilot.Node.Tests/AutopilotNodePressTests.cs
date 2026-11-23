@@ -8,7 +8,7 @@ using Xunit;
 namespace Pilot.Node.Tests;
 
 /// <summary>
-/// The node's own press (pilot #1269) over an in-memory state and a fake command path: each of the three card kinds is pressed by
+/// The node's own press (pilot #1269) over an in-memory state and a fake command path: each of the four card kinds is pressed by
 /// the node, and each refusal case is left to the person. No process, no wall-clock wait.
 /// </summary>
 public sealed class AutopilotNodePressTests
@@ -23,6 +23,7 @@ public sealed class AutopilotNodePressTests
     private string? _whyNoFixer;
     private bool _refuse;
     private string? _whyNoReview;
+    private string? _readFails;
 
     public AutopilotNodePressTests() => _state = new NodeState(new InMemoryJournal(), new ManualTime(Began));
 
@@ -34,7 +35,7 @@ public sealed class AutopilotNodePressTests
     {
         MayEndStray = _ => _mayEndStray,
         WhyNoFixer = (_, _) => Task.FromResult(_whyNoFixer),
-        WhyNoReview = (_, _) => Task.FromResult(_whyNoReview),
+        WhyNoReview = (pr, _) => _readFails is { } fails && fails == pr.ToString() ? throw new FlightException($"gh could not read {pr}") : Task.FromResult(_whyNoReview),
     };
 
     private const string ReviewLabel = "Review the fixer's push";
@@ -62,6 +63,20 @@ public sealed class AutopilotNodePressTests
         _whyNoReview = null;
         (await press.PressAsync(CancellationToken.None)).ShouldBe(1);
         ShouldHavePressed(card, ReviewLabel);
+    }
+
+    [Fact]
+    public async Task AReviewRuleThatCannotReadItsPrLeavesThatCardAndStillPressesTheOthers()
+    {
+        StrayCard();
+        var card = PushedCard();
+        _readFails = "SharpAstro/pilot#77";
+        var press = Press();
+        (await press.PressAsync(CancellationToken.None)).ShouldBe(1);
+        _ran.ShouldHaveSingleItem().Args.ShouldBe(["End process 4242"]);
+        _state.Cards(openOnly: true).ShouldContain(c => c.Id == card.Id);
+        _readFails = null;
+        (await press.PressAsync(CancellationToken.None)).ShouldBe(1);
     }
 
     [Fact]

@@ -120,7 +120,22 @@ public sealed class NodePress(NodeState state, Func<CommandRequest, Cancellation
         _tried.RemoveWhere(id => !open.Any(c => c.Id == id));
         foreach (var card in open)
         {
-            if (_tried.Contains(card.Id) || await RuleAsync(card, cancellationToken) is not { } rule)
+            if (_tried.Contains(card.Id))
+            {
+                continue;
+            }
+            Rule? found;
+            try
+            {
+                found = await RuleAsync(card, cancellationToken);
+            }
+            catch (FlightException ex)
+            {
+                // One card whose PR gh cannot read must not starve the cards after it.
+                await Error.WriteLineAsync($"node press: card {card.Id} ({card.Kind}) could not be checked, left for the next look: {ex.Message}");
+                continue;
+            }
+            if (found is not { } rule)
             {
                 continue;
             }
