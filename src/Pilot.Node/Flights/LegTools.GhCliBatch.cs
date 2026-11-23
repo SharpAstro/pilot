@@ -32,13 +32,14 @@ public sealed partial class GhCli
 
     public async Task<OpenPullRequest[]?> OpenPullRequestsByHeadAsync(string repoPath, CancellationToken cancellationToken)
     {
+        var counted = NodeTraffic.Shared.GhCalls.Now;
         var (exit, output, _) = await RunAsync(["api", "graphql", "-F", "owner={owner}", "-F", "name={repo}", "-f", $"query={OpenPullRequestsByHeadQuery}"], repoPath, cancellationToken);
         if (exit != 0)
         {
             return null;
         }
         var (read, cost) = ParseOpenByHead(output);
-        NodeTraffic.Shared.GhCalls.RecordCost("api graphql", "GhCli.OpenPullRequestsByHeadAsync", cost);
+        NodeTraffic.Shared.GhCalls.RecordCost("api graphql", "GhCli.OpenPullRequestsByHeadAsync", cost, counted);
         return read;
     }
 

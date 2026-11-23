@@ -63,6 +63,17 @@ public sealed class PrPollBudgetTests
         public CardRow[] Cards() => State.Cards(openOnly: true).Where(c => c.Kind == LegCommander.PrReady).ToArray();
     }
 
+    // A member IGitHub gives a default body (FailedChecksAsync, RerunRunAsync...) and the look's wrapper does not implement takes that
+    // default, which answers nothing and never reaches gh: every member is the wrapper's own, so the next default member cannot fall through.
+    [Fact]
+    [Trait("Category", "Invariant")]
+    public void TheLookAwareGitHubImplementsEveryMemberItselfDefaultBodiedOnesIncluded()
+    {
+        var map = typeof(LookGitHub).GetInterfaceMap(typeof(IGitHub));
+        var fallen = map.TargetMethods.Where(m => m.DeclaringType != typeof(LookGitHub)).Select(m => m.Name).ToArray();
+        fallen.ShouldBeEmpty("LookGitHub must forward these to its inner GitHub");
+    }
+
     [Fact]
     public async Task ALookReadsEachRepoAtMostTwiceWhereItReadThreePerPr()
     {

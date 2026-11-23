@@ -136,12 +136,6 @@ internal sealed class FakeChecks : ICheckRunner
     }
 }
 
-internal static class FakeReads
-{
-    /// <summary>Awaits nothing: <paramref name="answer"/> after a count was taken (the count's task is already complete).</summary>
-    public static Task<T> Then<T>(this Task counted, Task<T> answer) => answer;
-}
-
 internal sealed class FakeGitHub : IGitHub
 {
     public PullRequest? Pr { get; set; }
@@ -727,7 +721,7 @@ internal sealed class FakeGitHub : IGitHub
     // The labels are what the fake keeps on the PR, so a label taken off by hand is read as GitHub says it.
     public async Task<PullRequest?> PullRequestAsync(string repoPath, string branch, CancellationToken cancellationToken)
     {
-        _ = Counted(repoPath, nameof(PullRequestAsync));
+        Counted(repoPath, nameof(PullRequestAsync));
         await Called(nameof(PullRequestAsync));
         if (PrFails is { } why)
         {
@@ -802,13 +796,17 @@ internal sealed class FakeGitHub : IGitHub
     /// <summary>What ChecksSummaryAsync answers for one PR, by number, over <see cref="Summary"/>: null for a PR with no checks (yet).</summary>
     public Dictionary<int, ChecksSummary?> SummaryOf { get; } = [];
 
-    public Task<string?> ChecksAsync(string repoPath, int number, CancellationToken cancellationToken) =>
-        Counted(repoPath, nameof(ChecksAsync)).Then(
-        Task.FromResult(SummaryOf.TryGetValue(number, out var own) ? own?.Status : Summary?.Status ?? Checks));
+    public Task<string?> ChecksAsync(string repoPath, int number, CancellationToken cancellationToken)
+    {
+        Counted(repoPath, nameof(ChecksAsync));
+        return Task.FromResult(SummaryOf.TryGetValue(number, out var own) ? own?.Status : Summary?.Status ?? Checks);
+    }
 
-    public Task<ChecksSummary?> ChecksSummaryAsync(string repoPath, int number, CancellationToken cancellationToken) =>
-        Counted(repoPath, nameof(ChecksSummaryAsync)).Then(
-        Task.FromResult(SummaryOf.TryGetValue(number, out var own) ? own : Summary ?? (Checks is { } status ? GhAnswers.ChecksOf(status) : null)));
+    public Task<ChecksSummary?> ChecksSummaryAsync(string repoPath, int number, CancellationToken cancellationToken)
+    {
+        Counted(repoPath, nameof(ChecksSummaryAsync));
+        return Task.FromResult(SummaryOf.TryGetValue(number, out var own) ? own : Summary ?? (Checks is { } status ? GhAnswers.ChecksOf(status) : null));
+    }
 
     /// <summary>Whether the repo allows GitHub's auto-merge, as AutoMergeAllowedAsync answers.</summary>
     public bool AutoMergeAllowed { get; set; }
@@ -865,9 +863,11 @@ internal sealed class FakeGitHub : IGitHub
         return Task.CompletedTask;
     }
 
-    public Task<bool?> AutoMergeArmedAsync(string repoPath, int number, CancellationToken cancellationToken) =>
-        Counted(repoPath, nameof(AutoMergeArmedAsync)).Then(
-        Task.FromResult<bool?>(AutoMergeArmed.Any(a => a.Number == number) && !AutoMergeDisarmed.Contains(number)));
+    public Task<bool?> AutoMergeArmedAsync(string repoPath, int number, CancellationToken cancellationToken)
+    {
+        Counted(repoPath, nameof(AutoMergeArmedAsync));
+        return Task.FromResult<bool?>(AutoMergeArmed.Any(a => a.Number == number) && !AutoMergeDisarmed.Contains(number));
+    }
 
     public Task DisarmAutoMergeAsync(string repoPath, int number, CancellationToken cancellationToken)
     {
@@ -974,7 +974,7 @@ internal sealed class FakeGitHub : IGitHub
 
     public Task<MergeState?> MergeStateAsync(string repoPath, int number, CancellationToken cancellationToken)
     {
-        _ = Counted(repoPath, nameof(MergeStateAsync));
+        Counted(repoPath, nameof(MergeStateAsync));
         if (MergeOf.TryGetValue(number, out var own))
         {
             return Task.FromResult(own);
@@ -1010,7 +1010,7 @@ internal sealed class FakeGitHub : IGitHub
 
     public async Task<MergeQueueState?> MergeQueueAsync(string repoPath, int number, CancellationToken cancellationToken)
     {
-        _ = Counted(repoPath, nameof(MergeQueueAsync));
+        Counted(repoPath, nameof(MergeQueueAsync));
         await Called(nameof(MergeQueueAsync));
         return Queue;
     }
@@ -1026,13 +1026,12 @@ internal sealed class FakeGitHub : IGitHub
 
     private static readonly AsyncLocal<bool> InBatch = new();
 
-    private Task Counted(string repoPath, string call)
+    private void Counted(string repoPath, string call)
     {
         if (!InBatch.Value)
         {
             Reads.AddOrUpdate((repoPath, call), 1, (_, n) => n + 1);
         }
-        return Task.CompletedTask;
     }
 
     /// <summary>When the oldest running check of a PR (by number) started, as the batch read says it (<see cref="OpenPullRequest.CiStartedAt"/>).</summary>
@@ -1047,7 +1046,7 @@ internal sealed class FakeGitHub : IGitHub
     /// <summary>The batch read, over what the single reads answer (so the two cannot disagree), counted as one read.</summary>
     public async Task<OpenPullRequest[]?> OpenPullRequestsByHeadAsync(string repoPath, CancellationToken cancellationToken)
     {
-        _ = Counted(repoPath, nameof(OpenPullRequestsByHeadAsync));
+        Counted(repoPath, nameof(OpenPullRequestsByHeadAsync));
         if (!OpenBranches.TryGetValue(repoPath, out var branches))
         {
             return null;

@@ -1,7 +1,6 @@
 using System.Collections.Concurrent;
 using System.Globalization;
 using Microsoft.Extensions.Hosting;
-using Pilot.Contracts;
 
 namespace Pilot.Node.Flights;
 
@@ -73,9 +72,12 @@ public sealed class GhCallCounter(TimeProvider time)
         return args.Count > 1 && !args[1].StartsWith('-') ? $"{args[0]} {args[1]}" : args[0];
     }
 
-    private Cell CellOf(string kind, string caller)
+    /// <summary>The counter's now: a call site takes it before a gh call whose cost it will report, so <see cref="RecordCost"/> finds the call's window.</summary>
+    public DateTimeOffset Now => time.GetUtcNow();
+
+    private Cell CellOf(string kind, string caller, DateTimeOffset? at = null)
     {
-        var window = Index(time.GetUtcNow());
+        var window = Index(at ?? time.GetUtcNow());
         var cells = _windows.GetOrAdd(window, static _ => new());
         foreach (var old in _windows.Keys.Where(k => k <= window - KeptWindows))
         {
@@ -101,10 +103,14 @@ public sealed class GhCallCounter(TimeProvider time)
         }
     }
 
-    /// <summary>A call reported its real cost (<c>rateLimit { cost }</c>): the known points replace the 1 point estimated when it was counted.</summary>
-    public void RecordCost(string kind, string caller, int cost)
+    /// <summary>
+    /// A call reported its real cost (<c>rateLimit { cost }</c>): the known points replace the 1 point estimated when it was counted.
+    /// <paramref name="countedAt"/> is when the call was started and counted (<see cref="Now"/> before it), so a call that ends past a
+    /// window's edge puts its points on the window that holds its call, never on one where it has no call.
+    /// </summary>
+    public void RecordCost(string kind, string caller, int cost, DateTimeOffset countedAt)
     {
-        var cell = CellOf(kind, caller);
+        var cell = CellOf(kind, caller, countedAt);
         Interlocked.Add(ref cell.Known, cost);
         if (Interlocked.Decrement(ref cell.Estimated) < 0)
         {
@@ -161,8 +167,8 @@ public sealed class GhCallCounter(TimeProvider time)
     }
 }
 
-/// <summary>Writes the gh call counter's line to node.log once per 15-minute window.</summary>
-public sealed class GhCallLog(GhCallCounter counter, RollingLog log, TimeProvider time) : BackgroundService
+/// <summary>Writes the gh call counter's line to node.log (<paramref name="write"/>) once per 15-minute window, a second past its edge.</summary>
+public sealed class GhCallLog(GhCallCounter counter, Action<string> write, TimeProvider time) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stopping)
     {
@@ -177,7 +183,7 @@ public sealed class GhCallLog(GhCallCounter counter, RollingLog log, TimeProvide
             {
                 return;
             }
-            counter.Roll(line => log.Write(line));
+            counter.Roll(write);
         }
     }
 }

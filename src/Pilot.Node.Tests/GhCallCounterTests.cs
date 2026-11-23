@@ -38,7 +38,7 @@ public sealed class GhCallCounterTests
         }
         counter.Record(["pr", "view", "1"], "Other.Look");
         counter.Record(["api", "graphql"], "GhCli.OpenPullRequestsInAsync");
-        counter.RecordCost("api graphql", "GhCli.OpenPullRequestsInAsync", 12);
+        counter.RecordCost("api graphql", "GhCli.OpenPullRequestsInAsync", 12, T0);
         counter.Record(["api", "repos/o/r/milestones"], "GhCli.MilestonesAsync");
 
         clock.Now = T0.AddMinutes(15);
@@ -108,8 +108,110 @@ public sealed class GhCallCounterTests
     {
         var clock = new Clock(T0);
         var counter = new GhCallCounter(clock);
-        counter.RecordCost("api graphql", "X", 5);
+        counter.RecordCost("api graphql", "X", 5, T0);
         clock.Now = T0.AddMinutes(15);
         counter.Last()!.EstimatedPoints.ShouldBe(0);
+    }
+
+    [Fact]
+    public void ACostReportedPastTheWindowEdgeGoesOnTheWindowOfItsCall()
+    {
+        var clock = new Clock(T0.AddMinutes(14).AddSeconds(59));
+        var counter = new GhCallCounter(clock);
+        var counted = counter.Now;
+        counter.Record(["api", "graphql"], "GhCli.OpenPullRequestsByHeadAsync");
+        // The call answers two seconds later, in the next window.
+        clock.Now = T0.AddMinutes(15).AddSeconds(1);
+        counter.RecordCost("api graphql", "GhCli.OpenPullRequestsByHeadAsync", 7, counted);
+
+        var first = counter.Of(T0).ShouldNotBeNull();
+        first.Calls.ShouldBe(1);
+        first.KnownPoints.ShouldBe(7);
+        first.EstimatedPoints.ShouldBe(0, "the real cost replaced the estimate in the call's own window");
+        counter.Of(T0.AddMinutes(15)).ShouldBeNull("the window the answer came in holds no call, so it has no points either");
+    }
+
+    [Fact]
+    public async Task TheLogWritesTheClosedWindowOnceASecondPastEachEdgeOnTheNodesClock()
+    {
+        var clock = new TimerClock(T0.AddMinutes(3));
+        var counter = new GhCallCounter(clock);
+        var lines = new System.Collections.Concurrent.ConcurrentQueue<string>();
+        var written = new SemaphoreSlim(0);
+        using var log = new GhCallLog(counter, line => { lines.Enqueue(line); written.Release(); }, clock);
+        counter.Record(["pr", "view"], "PrChecks.LookAsync");
+
+        await log.StartAsync(Ct);
+        // The log waits on the clock's timer, set for one second past the edge: nothing before it.
+        clock.Advance(TimeSpan.FromMinutes(12));
+        lines.ShouldBeEmpty();
+        clock.Advance(TimeSpan.FromSeconds(1));
+        (await written.WaitAsync(TimeSpan.FromSeconds(5), Ct)).ShouldBeTrue("the timer fired and the line was written");
+        lines.ShouldHaveSingleItem().ShouldStartWith("gh calls 2026-11-23 10:00Z (15 min): 1 calls");
+
+        // The next window counted nothing: its edge passes and no line is written.
+        clock.Advance(GhCallCounter.Window);
+        await log.StopAsync(Ct);
+        lines.Count.ShouldBe(1);
+    }
+
+    private static CancellationToken Ct => TestContext.Current.CancellationToken;
+
+    // A clock a test moves by hand whose timers fire when it passes their time: the log's wait is on it, never on the wall clock.
+    private sealed class TimerClock(DateTimeOffset start) : TimeProvider
+    {
+        private readonly System.Collections.Concurrent.ConcurrentDictionary<Timer, byte> _timers = new();
+        private long _nowTicks = start.UtcTicks;
+
+        public override DateTimeOffset GetUtcNow() => new(Interlocked.Read(ref _nowTicks), TimeSpan.Zero);
+
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+        {
+            var timer = new Timer(this, callback, state);
+            _timers[timer] = 0;
+            timer.Change(dueTime, period);
+            return timer;
+        }
+
+        public void Advance(TimeSpan by)
+        {
+            var now = Interlocked.Add(ref _nowTicks, by.Ticks);
+            foreach (var timer in _timers.Keys)
+            {
+                timer.FireIfDue(now);
+            }
+        }
+
+        private sealed class Timer(TimerClock clock, TimerCallback callback, object? state) : ITimer
+        {
+            private long _dueTicks = long.MaxValue;
+
+            public bool Change(TimeSpan dueTime, TimeSpan period)
+            {
+                Interlocked.Exchange(ref _dueTicks, dueTime == Timeout.InfiniteTimeSpan ? long.MaxValue : Interlocked.Read(ref clock._nowTicks) + dueTime.Ticks);
+                return true;
+            }
+
+            public void FireIfDue(long now)
+            {
+                var due = Interlocked.Read(ref _dueTicks);
+                if (due <= now && Interlocked.CompareExchange(ref _dueTicks, long.MaxValue, due) == due)
+                {
+                    callback(state);
+                }
+            }
+
+            public void Dispose()
+            {
+                Interlocked.Exchange(ref _dueTicks, long.MaxValue);
+                clock._timers.TryRemove(this, out _);
+            }
+
+            public ValueTask DisposeAsync()
+            {
+                Dispose();
+                return ValueTask.CompletedTask;
+            }
+        }
     }
 }
