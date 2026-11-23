@@ -292,7 +292,7 @@ public sealed partial class Investigator(NodeState state, IWorkerLauncher worker
         {
             yield break;
         }
-        yield return $"Flight {flight.Code} ({flight.Repo}): {flight.State}{(flight.OnHold is { } hold ? $", on hold by {hold.Code}" : "")}{(flight.PullRequestUrl is { } url ? $", PR {url}" : "")}";
+        yield return $"Flight {flight.Code} ({flight.Repo}): {flight.State}{(flight.OnHold is { } hold ? $", on hold by {hold.By} ({hold.Reason})" : "")}{(flight.PullRequestUrl is { } url ? $", PR {url}" : "")}";
         foreach (var leg in state.Legs().Where(l => l.Flight == flight.Code).OrderBy(l => l.Order))
         {
             yield return $"Leg {leg.Name}: {leg.State}, {leg.GoArounds} go-around(s){(leg.Worker is { } worker ? $", worker {worker}" : "")}";
