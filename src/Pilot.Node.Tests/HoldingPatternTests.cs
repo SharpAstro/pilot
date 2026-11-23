@@ -544,7 +544,7 @@ public sealed class HoldingPatternTests : ReviewTestsBase
     {
         NodeAdvances();
         var flight = await Reviewed("41", Notes);
-        await WithoutTheFixerLeg(flight.Code);
+        // The review-notes leg stays planned and never starts, so past the bound the hold reaches the head lookup (as in the never-started test).
         var ready = Open().Where(c => c.Kind == LegCommander.PrReady).ShouldHaveSingleItem();
         // A person's own dismissal (not the node's leg-wait close) leaves HoldingHead nothing to merge: the hold stays quiet.
         _state.CloseCard(ready.Id, "read it, leaving it", "me");
