@@ -118,6 +118,17 @@ public sealed class GhRecordingTests
     }
 
     [Fact]
+    public void ARunStateIsReadFromGhsTabSeparatedAttemptStatusAndUpdatedAt()
+    {
+        var done = RunState.Parse("2\tcompleted\t2026-11-22T14:06:41Z\n").ShouldNotBeNull();
+        (done.Attempt, done.Completed, done.UpdatedAt).ShouldBe((2, true, new DateTimeOffset(2026, 11, 22, 14, 6, 41, TimeSpan.Zero)));
+        RunState.Parse("3\tin_progress\t2026-11-22T14:06:41Z").ShouldNotBeNull().Completed.ShouldBeFalse();
+        RunState.Parse("").ShouldBeNull();
+        RunState.Parse("0\tcompleted\t2026-11-22T14:06:41Z").ShouldBeNull();
+        RunState.Parse("2\tcompleted\tnot a time").ShouldBeNull();
+    }
+
+    [Fact]
     public void ACiRunCarriesItsRunAttemptAndOneWithoutItIsOnItsFirst()
     {
         var json = Recording("ci-runs", "completed");
