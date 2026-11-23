@@ -77,9 +77,9 @@ internal sealed partial class FlightsView<TSurface>
         {
             DestinationStatus.RebaseOnly => FlightMap.RebaseOnlyTip,
             DestinationStatus.Conflicts => "Conflicts with the base: it needs a fix (go around).",
-            DestinationStatus.ChecksRed => line.Row.Ci?.RedSince is { } red
-                ? $"CI red since {red.ToLocalTime():HH:mm}: the PR fixer or a go-around fixes it."
-                : "CI red: the PR fixer or a go-around fixes it.",
+            // StatusOf returns ChecksRed only when Ci.RedSince is set. While the CI budget has stopped the node (CappedWhy), nothing fixes it until the owner answers.
+            DestinationStatus.ChecksRed => $"CI red since {line.Row.Ci!.RedSince!.Value.ToLocalTime():HH:mm}: "
+                + (line.Row.Ci.CappedWhy is { Length: > 0 } capped ? $"nothing fixes it until you answer ({capped})." : "the PR fixer or a go-around fixes it."),
             _ => null,
         };
         // A stale flight says so first, as its plane does: a flight with no Flying leg has no plane, so its destination is where the map says it.

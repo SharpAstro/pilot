@@ -9,7 +9,7 @@ namespace Pilot.Gui.Tests;
 
 /// <summary>
 /// The flight map tells the truth (pilot #1298), read from the one state model (<see cref="FlightPhases"/>): a destination is red only
-/// for a conflict or a failed leg, the plane is drawn only on a flying leg, a queued flight has no plane and says why it waits, and the
+/// for a conflict or red CI, the plane is drawn only on a flying leg, a queued flight has no plane and says why it waits, and the
 /// header's counts are the ones <c>pilot status</c> prints. All on the CPU render, no display.
 /// </summary>
 public sealed class FlightMapStateTests
@@ -100,6 +100,57 @@ public sealed class FlightMapStateTests
             Same(colour, p.Failed).ShouldBeFalse($"{name} is not red");
         }
         view.MapWords.Select(w => w.Text).ShouldContain(word);
+    }
+
+    [Fact]
+    public void TheRedCiHoverSaysSinceWhenAndWhatToDoAndOtherStatesDoNot()
+    {
+        var done = new[] { FlightMapWorld.Leg("A", LegState.Done), FlightMapWorld.Leg("B", LegState.Done), FlightMapWorld.Leg("C", LegState.Done), FlightMapWorld.Leg("D", LegState.Done) };
+        var red = FlightMapWorld.Flight("A", review: FlightMapWorld.Review(ReviewState.Passed)) with { Ci = new FlightCi { RedSince = Live.At } };
+        var capped = FlightMapWorld.Flight("B", review: FlightMapWorld.Review(ReviewState.Passed)) with { Ci = new FlightCi { RedSince = Live.At, CappedWhy = "CI budget spent" } };
+        var conflict = FlightMapWorld.Flight("C", review: FlightMapWorld.Review(ReviewState.Passed, "pilot: conflicts"));
+        var open = FlightMapWorld.Flight("D");
+        var (renderer, view) = Show(FlightMapWorld.Lines([red, capped, conflict, open], done), 1800, 1000, night: false);
+        using var _ = renderer;
+
+        var since = $"CI red since {Live.At.ToLocalTime():HH:mm}";
+        Hit(view, "map:A:destination").Tooltip.ShouldNotBeNull().ShouldContain(since + ": the PR fixer or a go-around fixes it.");
+        var cappedTip = Hit(view, "map:B:destination").Tooltip.ShouldNotBeNull();
+        cappedTip.ShouldContain(since);
+        cappedTip.ShouldContain("CI budget spent");
+        cappedTip.ShouldNotContain("the PR fixer");
+        Hit(view, "map:C:destination").Tooltip.ShouldNotBeNull().ShouldNotContain("CI red");
+        Hit(view, "map:D:destination").Tooltip.ShouldNotBeNull().ShouldNotContain("CI red");
+    }
+
+    [Theory]
+    [InlineData(900, 700, false)]
+    [InlineData(1800, 1000, false)]
+    [InlineData(900, 700, true)]
+    [InlineData(1800, 1000, true)]
+    public void ARedCiDestinationIsDrawnBesideTheOtherStatesWithNoWordOverAnother(int width, int height, bool night)
+    {
+        var (flights, legs) = FlightMapWorld.World();
+        var redFlight = FlightMapWorld.Flight("RCI", review: FlightMapWorld.Review(ReviewState.Passed)) with { Ci = new FlightCi { RedSince = Live.At } };
+        var (renderer, view) = Show(FlightMapWorld.Lines([.. flights, redFlight], [.. legs, FlightMapWorld.Leg("RCI", LegState.Done)]), width, height, night);
+        using var _ = renderer;
+
+        var words = view.MapWords;
+        words.Select(w => w.Text).ShouldContain("CI red");
+        var faults = new List<string>();
+        for (var i = 0; i < words.Count; i++)
+        {
+            for (var j = i + 1; j < words.Count; j++)
+            {
+                var (a, b) = (words[i].Box, words[j].Box);
+                if (MathF.Min(a.X + a.Width, b.X + b.Width) - MathF.Max(a.X, b.X) > TextOverlap.Tolerance
+                    && MathF.Min(a.Y + a.Height, b.Y + b.Height) - MathF.Max(a.Y, b.Y) > TextOverlap.Tolerance)
+                {
+                    faults.Add($"'{words[i].Text}' over '{words[j].Text}'");
+                }
+            }
+        }
+        faults.ShouldBeEmpty();
     }
 
     [Theory]
