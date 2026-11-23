@@ -21,7 +21,7 @@ public sealed class CardChoiceTargetTests
         var bad = new List<string>();
         foreach (var (file, source) in CardKindTests.Sources.Value)
         {
-            foreach (Match m in Regex.Matches(source, @"new CardChoice\b|\bnew\(\)(?=\s*\{[^;]*?\bLabel\s*=)"))
+            foreach (Match m in NamedForm.Matches(source).Concat(TypedForm.Matches(source)).OrderBy(x => x.Index))
             {
                 if (Initializer(source, m.Index + m.Length) is not { } text)
                 {
@@ -59,6 +59,7 @@ public sealed class CardChoiceTargetTests
         TypedForm.Matches("""var d = new() { Id = 1 };""").Count.ShouldBe(0, "an initializer with no Label is not a choice");
     }
 
+    private static readonly Regex NamedForm = new(@"new CardChoice");
     private static readonly Regex TypedForm = new(@"\bnew\(\)(?=\s*\{[^;]*?\bLabel\s*=)");
 
     private static readonly Regex EmptyTarget = new(@"\bTarget\s*=\s*(""""|string\.Empty\b)");
