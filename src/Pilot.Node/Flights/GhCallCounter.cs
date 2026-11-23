@@ -119,15 +119,15 @@ public sealed class GhCallCounter(TimeProvider time)
         {
             return null;
         }
-        var rows = cells.Select(c => (c.Key.Kind, c.Key.Caller, Calls: Interlocked.Read(ref c.Value.Calls), Known: Interlocked.Read(ref c.Value.Known), Est: Interlocked.Read(ref c.Value.Estimated), Rest: Interlocked.Read(ref c.Value.Rest))).ToArray();
+        var rows = cells.Select(c => (c.Key.Kind, c.Key.Caller, Calls: Interlocked.Read(ref c.Value.Calls), Known: Interlocked.Read(ref c.Value.Known), Est: Interlocked.Read(ref c.Value.Estimated), RestCalls: Interlocked.Read(ref c.Value.Rest))).ToArray();
         if (rows.Length == 0)
         {
             return null;
         }
-        var kinds = rows.GroupBy(r => r.Kind).Select(g => new KindTotals(g.Key, g.Sum(r => r.Calls), g.Sum(r => r.Known + r.Est), g.Sum(r => r.Rest),
+        var kinds = rows.GroupBy(r => r.Kind).Select(g => new KindTotals(g.Key, g.Sum(r => r.Calls), g.Sum(r => r.Known + r.Est), g.Sum(r => r.RestCalls),
                 [.. g.OrderByDescending(r => r.Calls).ThenBy(r => r.Caller, StringComparer.Ordinal).Select(r => (r.Caller, r.Calls))]))
             .OrderByDescending(k => k.Points).ThenByDescending(k => k.Calls).ThenBy(k => k.Kind, StringComparer.Ordinal).ToArray();
-        return new Summary(start, rows.Sum(r => r.Calls), rows.Sum(r => r.Known), rows.Sum(r => r.Est), rows.Sum(r => r.Rest), kinds);
+        return new Summary(start, rows.Sum(r => r.Calls), rows.Sum(r => r.Known), rows.Sum(r => r.Est), rows.Sum(r => r.RestCalls), kinds);
     }
 
     private DateTimeOffset LastClosedStart() => new((Index(time.GetUtcNow()) - 1) * Window.Ticks, TimeSpan.Zero);
