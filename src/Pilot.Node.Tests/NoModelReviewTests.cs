@@ -336,7 +336,7 @@ public sealed class NoModelReviewTests : ReviewTestsBase
 
     [Fact]
     [Trait("Category", "Slow")]
-    public async Task TheCiCountDoesNotDownloadTheLogOfAnEarlierRealTestFailure()
+    public async Task TheCiCountReadsTheLogOfAnEarlierFailureOfAGreenWorkflowOnceAndCountsItAsFailed()
     {
         var (flight, number) = await Passed("70");
         var start = _clock.GetUtcNow();
@@ -356,7 +356,7 @@ public sealed class NoModelReviewTests : ReviewTestsBase
         await checks.LookAtCiAsync(Ct);
         await checks.LookAtCiAsync(Ct);
 
-        _github.RunLogReads.ShouldBe(2, "the two review runs, once each; the earlier test failure's log is not read");
+        _github.RunLogReads.ShouldBe(3, "the two review runs and the green workflow's one earlier failure, once each (a restart lost the memory, so it is probed)");
         var ci = F(flight.Code).Ci.ShouldNotBeNull();
         (ci.Failed, ci.RedSince).ShouldBe((1, null));
     }
