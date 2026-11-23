@@ -69,6 +69,70 @@ public sealed class FixerHoldTests : PrFixTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")] // The fixer's push to the PR branch is made on real git.
+    public async Task ASpentRoundsPrWithAPointLeftAndALiveFixerTheRowDoesNotNameGetsNoSpentCommentAndNoQueueUntilTheFixerEnds()
+    {
+        // The SE1 shape of 2026-11-23: a passing review with a deferred point, FixRound at the cap, and a live fixer the row does not name.
+        RealGit();
+        _github.Login = "ada";
+        await Review("acme/widget#7", "changes", "README.md:1 says hello to no one", "README.md:1 the greeting is never tested");
+        var moved = FixerPushes("the first round");
+        _state.PutSession(FixerSession(SessionState.Ended));
+        await _reviews.SweepAsync(Ct);
+        Row.Head.ShouldBe(moved);
+        _state.PutPrReview(Row with { FixRound = PrReviews.MaxFixRounds });
+        GreenAndQueueing(moved);
+        _state.PutSession(LiveFixer(SessionState.Working));
+        var table = "Checked.\n\n## Earlier points\n| Point | Answer | Where or reason |\n|---|---|---|\n| R1.1 | addressed | README.md:1 |\n| R1.2 | deferred: larger than the flight | out of scope |";
+        (await Run(Verbs.PrVerdict, "acme/widget#7", Row.Reviewer, "approve", table)).Error.ShouldBeNull();
+
+        await _reviews.SweepAsync(Ct);
+
+        _github.IssueComments.ShouldBeEmpty("no 'fix rounds are spent' comment while a fixer works");
+        _github.Merged.ShouldBeEmpty();
+        (Row.QueueNote, Row.QueuedAt).ShouldBe((null, null));
+        Row.FollowUpPoints.ShouldBeNullOrEmpty();
+
+        // The fixer ends: the comment is posted once and the PR is queued.
+        _state.PutSession(LiveFixer(SessionState.Ended));
+        await _reviews.SweepAsync(Ct);
+
+        _github.IssueComments.ShouldHaveSingleItem().Body.ShouldContain("fix rounds are spent");
+        Row.FollowUpPoints.ShouldBe(["R1.2"]);
+        _github.Merged.ShouldHaveSingleItem().Number.ShouldBe(7);
+    }
+
+    [Fact]
+    public async Task AFixerSessionWhoseProcessIsGoneHoldsNothingAndTheGreenPrIsQueued()
+    {
+        _github.Login = "ada";
+        GreenAndQueueing(_github.Prs["acme/widget#7"].Head);
+        _state.PutSession(LiveFixer(SessionState.Idle) with { Gone = true });
+
+        await Review("acme/widget#7", "approve");
+        await _reviews.SweepAsync(Ct);
+
+        _github.Merged.ShouldHaveSingleItem().Number.ShouldBe(7);
+        Row.QueuedAt.ShouldNotBeNull();
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")] // The fixer's push to the PR branch is made on real git.
+    public async Task AHeadThatMovedWithAGoneFixerSessionEndsTheFixerAndStartsTheFreshReview()
+    {
+        RealGit();
+        await Review("acme/widget#7", "changes", "README.md:1 wrong");
+        _state.PutSession(FixerSession(SessionState.Idle) with { Gone = true });
+        var pushed = FixerPushes("one");
+
+        await _reviews.SweepAsync(Ct);
+
+        Row.Fixer.ShouldBeNull();
+        Row.Head.ShouldBe(pushed);
+        Row.State.ShouldBe(PrReviewState.Reviewing);
+    }
+
+    [Fact]
     [Trait("Category", "Slow")] // The fix worktree is a real git worktree with a commit pushed from it.
     public async Task ACommitInTheFixWorktreePastThePrsHeadIsPushedByTheNodeAndTheMovedHeadIsReviewedNotMerged()
     {

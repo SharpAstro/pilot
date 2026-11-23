@@ -17,7 +17,7 @@ public sealed partial class PrReviews
         var clone = review.ClonePath.TrimEnd('\\', '/');
         var folder = Path.GetFileName(clone);
         var name = review.Repo[(review.Repo.IndexOf('/') + 1)..];
-        return state.Sessions().FirstOrDefault(s => !s.Archived && s.State is not (SessionState.Ended or SessionState.Failed)
+        return state.Sessions().FirstOrDefault(s => !s.Archived && !s.Gone && s.State is not (SessionState.Ended or SessionState.Failed)
             && (review.FixerJob is { } job && string.Equals(s.Id, job, StringComparison.Ordinal)
                 || AdmissionGate.IsFixer(s) && s.Pr == review.Number
                    && (string.Equals(s.Repo, folder, StringComparison.OrdinalIgnoreCase) || string.Equals(s.Repo, name, StringComparison.OrdinalIgnoreCase)
@@ -95,7 +95,7 @@ public sealed partial class PrReviews
         {
             return Held($"its fixer {live.Name} is still working on it");
         }
-        if (review.Fixer is { } on || review.FixerJob is not null)
+        if (review.Fixer is not null || review.FixerJob is not null)
         {
             return Held($"{review.Fixer ?? review.FixerJob} is its fixer, and its round is not settled yet");
         }
