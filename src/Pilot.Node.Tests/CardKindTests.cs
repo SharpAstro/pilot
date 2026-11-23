@@ -230,10 +230,12 @@ public sealed class CardKindTests
     /// What only the node's rules decide is a NodePress, so the watchtower never presses it through a CLI command Claude Code's classifier can
     /// refuse (#1311: <c>review pr</c> on pr-fix-pushed-unreviewed). Each marked kind is one NodePress owns, and offers the verb NodePress presses on it;
     /// each NodePress kind is marked; and a kind that offers one of NodePress's verbs is marked or named as the person's, with its reason.
-    /// What a kind offers is read per kind: the verbs in its raising calls' own arguments, and, for a kind with a call whose choices are
-    /// built before it (a list handed in), a word match of <c>Verbs.Name</c> in its raising files and ChoiceFiles. That second read is per
-    /// file, not per kind: a list-built kind sharing a file with another kind that offers the verb is read as offering it too (naming it
-    /// in PersonsOwn is then the fix), and a PersonsOwn entry for such a kind stays valid while any kind in its files offers the verb.
+    /// What each scan sees, and what it does not. The unmarked-kind scan reads only the <c>Verbs.Name</c> constants in a raising call's own
+    /// arguments, so a kind that builds its choices in a list before the call (or through a helper) is not seen by it: such a kind can offer
+    /// Review or Fix it unmarked and unnamed and this guard stays green. A whole-file read would close that, but the raising files are shared
+    /// by many kinds and it flagged ten that offer no such verb. A marked kind and a PersonsOwn entry are read by a word match of
+    /// <c>Verbs.Name</c> in the kind's raising files and ChoiceFiles, per file and not per kind: an entry stays valid after its own kind
+    /// stops offering the verb while another kind in the same files still does.
     /// </summary>
     [Fact]
     public void EveryKindTheNodeAloneDecidesIsANodePressAndNoKindOffersItsVerbsUnmarked()
@@ -250,17 +252,6 @@ public sealed class CardKindTests
             .ToDictionary(g => g.Key, g => g.SelectMany(c => c.Verbs).ToHashSet(StringComparer.Ordinal));
         var asNames = PressNames.ToDictionary(n => n, n => ValueOf(n));
         bool FileOffers(string file, string name) => Regex.IsMatch(Sources.Value.First(s => s.File == file).Source, $@"\bVerbs\.{name}\b");
-        // A kind with a call that has choices but none in its arguments builds them before the call: it is read from its files as well.
-        var listBuilt = Calls.Value
-            .Where(c => c.HasChoices && (c.ChoiceVerbs is null || c.ChoiceVerbs.Length == 0))
-            .Select(c => Resolve(c.File, c.KindExpr)?.Value)
-            .OfType<string>()
-            .ToHashSet(StringComparer.Ordinal);
-        List<string> Offers(CardKindEntry entry) =>
-        [
-            .. asNames.Keys.Where(n => (offered.GetValueOrDefault(entry.Kind) ?? []).Contains(n)
-                || (listBuilt.Contains(entry.Kind) && entry.Files.Concat(entry.ChoiceFiles ?? []).Any(f => FileOffers(f, n)))).Order(),
-        ];
 
         foreach (var entry in CardKindCatalog.All.Where(e => e.NodePressed))
         {
@@ -285,15 +276,18 @@ public sealed class CardKindTests
         }
         foreach (var entry in CardKindCatalog.All.Where(e => !e.NodePressed))
         {
-            var verbs = Offers(entry);
+            // Only the verbs in the kind's own call arguments: a word match in a whole file flags every kind sharing it (ten kinds did).
+            var verbs = (offered.GetValueOrDefault(entry.Kind) ?? []).Where(asNames.ContainsKey).Order().ToList();
             var named = CardKindCatalog.PersonsOwn.TryGetValue(entry.Kind, out var reason);
             if (verbs.Count > 0 && !named)
             {
                 problems.Add($"{entry.Kind}: offers {string.Join(", ", verbs)}, which NodePress presses on other kinds, and is neither NodePressed nor in CardKindCatalog.PersonsOwn with a reason");
             }
-            if (named && (verbs.Count == 0 || string.IsNullOrWhiteSpace(reason)))
+            // A named kind may build its choices before the call, so it is read from its raising files and ChoiceFiles.
+            var inFiles = asNames.Keys.Any(n => entry.Files.Concat(entry.ChoiceFiles ?? []).Any(f => FileOffers(f, n)));
+            if (named && (!inFiles || string.IsNullOrWhiteSpace(reason)))
             {
-                problems.Add($"{entry.Kind}: named in CardKindCatalog.PersonsOwn but {(verbs.Count == 0 ? "it offers none of NodePress's verbs (its calls' arguments, or its files for a list-built kind)" : "gives no reason")}");
+                problems.Add($"{entry.Kind}: named in CardKindCatalog.PersonsOwn but {(!inFiles ? "its raising files offer none of NodePress's verbs" : "gives no reason")}");
             }
         }
         foreach (var kind in CardKindCatalog.PersonsOwn.Keys.Where(k => CardKindCatalog.All.All(e => e.Kind != k || e.NodePressed)))
