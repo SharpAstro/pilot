@@ -66,7 +66,8 @@ public sealed class ToastOverlapTests
         var texts = seen.Where(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text { Value.Length: > 0 } }).ToArray();
         static float SizeOf(Layout.ArrangedNode<float> a) => ((Layout.Content.Text)((Layout.Node.Leaf)a.Node).Content).FontSize;
         var titleBottom = texts.Where(a => SizeOf(a) == 14f).Max(a => a.Bounds.Y + a.Bounds.Height);
-        var cutTop = cutShort.Min(a => a.Bounds.Y);
+        // The cut-short line's own words are 11 units; a summary word that is also in its label ("the") is 12 and is not it.
+        var cutTop = cutShort.Where(a => SizeOf(a) == 11f).Min(a => a.Bounds.Y);
         var summaryWords = texts.Where(a => SizeOf(a) == 12f && a.Bounds.Y >= titleBottom - 0.5f && a.Bounds.Y + a.Bounds.Height <= cutTop + 0.5f).ToArray();
         var squeezedSummary = string.Concat(Stuck().Summary!.Where(ch => !char.IsWhiteSpace(ch)));
         summaryWords.ShouldNotBeEmpty("the summary is drawn");
