@@ -42,7 +42,9 @@ public sealed partial class NodeState
     {
         // PIL1325: a card for a person whose every choice waits on something that clears by itself (a review that starts once the legs
         // land) is a Handled line saying so, not a card to press a refused button on.
-        if (bin is CardBin.ForYou or CardBin.Ring && choices is { Count: > 0 })
+        // A PR-ready card is the exception: while legs are open its wait is LegCommander.ShowLegWait's, which closes the card with the
+        // LegWaitOutcome the restore sweep reads. A Handled line here would read as a closed merge card and the card never came back.
+        if (bin is CardBin.ForYou or CardBin.Ring && kind != LegCommander.PrReady && choices is { Count: > 0 })
         {
             lock (_gate)
             {
