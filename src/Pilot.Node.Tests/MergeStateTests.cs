@@ -132,7 +132,7 @@ public sealed class MergeStateTests
     [Fact]
     public async Task TheFakeOnlyAsksTheRebaseAnswerOfABaseThatMergesByRebase()
     {
-        var github = new FakeGitHub { Pr = new PullRequest(5, "OPEN", "abc", "https://github.com/x/y/pull/5", "MERGEABLE") };
+        var github = new FakeGitHub { Pr = GhAnswers.PullRequestByBranch(number: 5, mergeable: "MERGEABLE"), Checks = GhAnswers.Checks(("pass", "build")) };
         github.CanBeRebased = false;
         // Squash and merge allowed (the default): never read, so the PR reads ready.
         (await github.PullRequestAsync("x", "b", TestContext.Current.CancellationToken)).ShouldNotBeNull().Rebaseable.ShouldBeNull();
