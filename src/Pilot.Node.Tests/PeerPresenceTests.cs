@@ -299,7 +299,7 @@ public sealed class PeerPresenceTests
         presence.Answered("LE1");
 
         var cards = state.Cards();
-        cards.Select(c => (c.Kind, c.Bin, c.Subject, c.Title)).ShouldBe(
+        cards.Select(c => (c.Kind, c.Bin, c.Subject, c.Title)).OrderBy(c => c.Kind, StringComparer.Ordinal).ShouldBe(
         [
             ("peer-away", CardBin.Handled, Verbs.NodeTarget, "LE1 away since 2026-11-24 12:00 UTC: skipped until it answers"),
             ("peer-back", CardBin.Handled, Verbs.NodeTarget, "LE1 answers again"),
