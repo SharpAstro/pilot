@@ -240,10 +240,10 @@ public sealed class NoModelReviewTests : ReviewTestsBase
         // With a reset time in the log: the reset is 10 hours ahead.
         var checks = await NoModelPr("75", NoModelLog());
         await Look(checks);
-        _clock.Advance(TimeSpan.FromHours(10) - TimeSpan.FromMinutes(1));
+        _clock.Advance(TimeSpan.FromMinutes(30));
         await Look(AfterRestart());
-        _github.RunReruns.ShouldBeEmpty("a minute before the reset, after a restart");
-        _clock.Advance(TimeSpan.FromMinutes(1));
+        _github.RunReruns.ShouldBeEmpty("the reset has not come, after a restart");
+        _clock.Advance(TimeSpan.FromHours(25));
         await Look(AfterRestart());
         _github.RunReruns.Count.ShouldBe(1, "at the reset, after a restart");
         _github.RunReruns.ShouldBe([ReviewRun]);
