@@ -138,7 +138,7 @@ public sealed class NotificationsPageTests
         var three = texts.FindIndex(history, t => t == "three");
         var two = texts.FindIndex(history, t => t == "two");
         var one = texts.FindIndex(history, t => t == "one");
-        three.ShouldBeGreaterThan(history);
+        three.ShouldBeGreaterThan(history, string.Join(" | ", texts.Skip(history)));
         two.ShouldBeGreaterThan(three, "newest first");
         one.ShouldBeGreaterThan(two);
         texts.ShouldContain("Clear");
