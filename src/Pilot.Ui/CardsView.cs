@@ -795,7 +795,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         return Layout.Builder.VStack([.. rows]).Pad(Gutter, 4f).Bg(CardBg).WStar().HAuto();
     }
 
-    public override bool HandleInput(InputEvent evt) => evt is InputEvent.KeyDown key && (_links.HandleKey(key, this) || Gallery.InPanel && Gallery.HandleKey(key.Key));
+    public override bool HandleInput(InputEvent evt) => evt is InputEvent.KeyDown key && _links.HandleKey(key, this);
 
     /// <summary>The window's gallery: the picture of a card's image is fetched, decoded and painted through it, as a flight's attachments are.</summary>
     public AttachmentGallery Gallery { get; set; } = new();
@@ -877,7 +877,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         }
         var stack = Layout.Builder.VStack([.. blocks]).WithScroll(_scroll).Pad(Gutter, 10f).Stretch();
         // A card's image opens full size over the panel (the page beside it does not draw a second viewer for it).
-        return Gallery.Over(_links.Over(WithPageSelection(Layout.Builder.VStack(CanTell && !OnChatPage ? [stack, Foot(screen)] : [stack]).Bg(PanelBg).BorderLeft(Edge, EdgeWidth).Stretch())), panel: true);
+        return _links.Over(WithPageSelection(Layout.Builder.VStack(CanTell && !OnChatPage ? [stack, Foot(screen)] : [stack]).Bg(PanelBg).BorderLeft(Edge, EdgeWidth).Stretch()));
     }
 
     /// <summary>The panel's line for a node out of reach: dim, two lines at most, the whole text on hover once it is cut.</summary>

@@ -34,7 +34,7 @@ internal sealed partial class IdeasView<TSurface>
 
     internal override RectF32 PageSelectionViewport => _scroll.Viewport;
 
-    internal override bool SelectionBlocked => base.SelectionBlocked || About is { IsOpen: true } || Gallery.Viewing is not null;
+    internal override bool SelectionBlocked => base.SelectionBlocked || About is { IsOpen: true };
 
     public void Render(IdeasScreen screen, RectF32 bounds)
     {
@@ -63,13 +63,7 @@ internal sealed partial class IdeasView<TSurface>
         NoteInput.OnCommit = _ => NoteAsync();
         NoteInput.Placeholder = "Note an idea: the first line is its title";
         EditInput.OnCommit = text => CommitEditAsync(text);
-        EditInput.OnCancel = () =>
-        {
-            if (!Gallery.HandleKey(InputKey.Escape))
-            {
-                Close();
-            }
-        };
+        EditInput.OnCancel = Close;
         NoteInput.OnKeyOverride = key => key == TextInputKey.Paste && PasteImage(NoteInput);
         EditInput.OnKeyOverride = key => key == TextInputKey.Paste && PasteImage(EditInput);
         RowInput.OnCommit = text => CommitRowAsync(text);
@@ -158,7 +152,7 @@ internal sealed partial class IdeasView<TSurface>
         }
         var whole = Layout.Builder.VStack(top, body.HStar()).Bg(P.Ground).Stretch();
         whole = WithPageSelection(whole);
-        return Gallery.Over(About?.Over(whole, NightOrNull) ?? whole);
+        return About?.Over(whole, NightOrNull) ?? whole;
     }
 
     // The filter beside the view switch: a click shows only the ideas marked as needing a design, and a click again shows all.
@@ -427,10 +421,6 @@ internal sealed partial class IdeasView<TSurface>
 
     public override bool HandleInput(InputEvent evt)
     {
-        if (evt is InputEvent.KeyDown { Key: var viewerKey } && Gallery.HandleKey(viewerKey))
-        {
-            return true;
-        }
         if (evt is InputEvent.KeyDown { Key: InputKey.Escape } && _open is not null)
         {
             Close();

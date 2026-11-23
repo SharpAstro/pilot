@@ -193,7 +193,7 @@ internal sealed partial class FlightsView<TSurface>(Renderer<TSurface> renderer)
     // The open flight's page only.
     internal override bool SelectionOn => IsDetailOpen && base.SelectionOn;
 
-    internal override bool SelectionBlocked => base.SelectionBlocked || Wizard.IsOpen || _menu.IsOpen || Gallery.Viewing is not null || About is { IsOpen: true };
+    internal override bool SelectionBlocked => base.SelectionBlocked || Wizard.IsOpen || _menu.IsOpen || About is { IsOpen: true };
 
     // A row's right-click menu, hung where the press was.
     private readonly DropdownMenuState<string> _menu = new();
