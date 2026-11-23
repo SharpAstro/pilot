@@ -240,7 +240,7 @@ public sealed class FailureInvestigations(NodeState state, IGitHub github, Failu
     private async Task<(string Code, int Issue)?> FileAsync(FailureSite site, long runId, string? runUrl, IReadOnlyList<Found> group, CancellationToken cancellationToken, IssueInfo? open = null)
     {
         var failure = group[0];
-        var cls = group.Count > 1 ? FailureSignature.ClassOf(failure.Test) : "";
+        var cls = failure.Test.Length > 0 ? FailureSignature.ClassOf(failure.Test) : "";
         // A class that has an investigation under any of its signatures joins it.
         var existing = group.Select(f => ledger.InvestigationOf(site.Name, f.Signature)).FirstOrDefault(r => r is not null)
             ?? (cls.Length > 0 ? ledger.All().FirstOrDefault(r => r.Issue > 0 && r.Test.Length > 0 && string.Equals(r.Repo, site.Name, StringComparison.OrdinalIgnoreCase) && FailureSignature.ClassOf(r.Test) == cls) : null);
@@ -344,10 +344,10 @@ public sealed class FailureInvestigations(NodeState state, IGitHub github, Failu
         {
             Keep(site, runId, f, code, issue.Number);
         }
-        var test = group.Count > 1 ? $"{cls}: {group.Count} of its tests" : failure.Test.Length > 0 ? FailureSignature.ShortOf(FailureSignature.NameOf(failure.Test)) : LegCommander.OneLine(failure.Message);
+        var test = group.Count > 1 ? $"{cls}: {group.Count} tests" : failure.Test.Length > 0 ? FailureSignature.ShortOf(FailureSignature.NameOf(failure.Test)) : LegCommander.OneLine(failure.Message);
         var subject = code.Length > 0 ? Verbs.FlightTarget(code) : $"{Verbs.RepoTargetPrefix}{site.RepoPath}";
         state.RaiseCard(CardBin.ForYou, CardKind, subject,
-            $"{site.Name}#{issue.Number}: {test} failed in a PR that does not touch {(group.Count > 1 ? "them" : "it")}, {(code.Length > 0 ? $"{code} investigates" : "no flight could be made for it")}",
+            $"{site.Name}#{issue.Number}: {test} failed{(group.Count > 1 ? "" : " in a PR that does not touch it")}, {(code.Length > 0 ? $"{code} investigates" : "no flight could be made for it")}",
             $"{Place(site)}: {run}, {WhereWords(site.Where)}.\n\n{(group.Count > 1 ? $"{group.Count} tests of {FailureSignature.ClassOf(failure.Test)} failed:\n{TestLines(group)}" : $"Test: {(failure.Test.Length > 0 ? failure.Test : "none, an error line")}\nAssertion message: {failure.Message}")}\n\nIt is a bug with a cause to find, filed as {site.Name}#{issue.Number} with priority high."
             + (notes.Count > 0 ? $"\n\nNot done: {string.Join("; ", notes)}." : ""),
             link: IssueLink(site, issue.Number));
