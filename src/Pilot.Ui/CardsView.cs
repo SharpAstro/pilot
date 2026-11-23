@@ -1302,6 +1302,9 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     /// </summary>
     internal Layout.Node FullCard(CardRow card, NodeMark? node, bool closed) => Card(card, node, closed || _closed.Contains(card), fit: CardFit.Page);
 
+    /// <summary>The panel's card (<see cref="CardFit.Panel"/>): the one place the panel builds it, and what the tests build.</summary>
+    internal Layout.Node PanelCard(CardRow card, NodeMark? node, bool closed = false) => Card(card, node, closed, fit: CardFit.Panel);
+
     /// <summary>The card's title, wrapped to <see cref="TitleLines"/> lines, with the whole text on hover where the cap could cut it.</summary>
     private Layout.Node Title(CardRow card, Func<float, Func<string, Layout.Node?>> linker)
     {
