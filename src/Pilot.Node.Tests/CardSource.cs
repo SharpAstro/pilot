@@ -102,7 +102,7 @@ internal static class CardSource
         // Only an identifier a line of the member declares beside CardChoice is a choice list; a plain text argument (a title's detail) is not.
         var before = text[decl.Index..callAt];
         var isList = Regex.Matches(after, @"(?<![\w.])([a-z]\w*)\s*(?:,|$)")
-            .Any(a => Regex.IsMatch(before, @"^[^\n]*CardChoice[^\n]*\b" + a.Groups[1].Value + @"\b", RegexOptions.Multiline));
+            .Any(a => Regex.IsMatch(before, @"^(?=[^\n]*CardChoice)[^\n]*\b" + a.Groups[1].Value + @"\b", RegexOptions.Multiline));
         if (!isList)
         {
             return [];
