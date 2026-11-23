@@ -427,7 +427,7 @@ internal sealed partial class FlightsView<TSurface>
     // A click target at a map point: a spacer at its own size, floated at its place in the map (scaled by k).
     private Layout.Node Target(float cx, float cy, float r, Func<Layout.Node, Layout.Node> make)
     {
-        var side = 2f * r * _vp.Scale;
+        var side = _vp.ViewLength(2f * r);
         var box = make(Layout.Builder.Spacer().WFixed(side).HFixed(side));
         return Layout.Builder.Anchored(box, null, _vp.ViewX(cx - r), _vp.ViewY(cy - r), 0f, false);
     }
@@ -435,7 +435,7 @@ internal sealed partial class FlightsView<TSurface>
     // A click target over a map box (x, y its top left), floated at its place in the map.
     private Layout.Node TargetBox(float x, float y, float w, float h, Func<Layout.Node, Layout.Node> make)
     {
-        var box = make(Layout.Builder.Spacer().WFixed(w * _vp.Scale).HFixed(h * _vp.Scale));
+        var box = make(Layout.Builder.Spacer().WFixed(_vp.ViewLength(w)).HFixed(_vp.ViewLength(h)));
         return Layout.Builder.Anchored(box, null, _vp.ViewX(x), _vp.ViewY(y), 0f, false);
     }
 

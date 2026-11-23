@@ -117,6 +117,9 @@ internal sealed class MapViewport
 
     public float ViewY(float y) => _viewHeight / 2f + _pan.PanOffset.Y + (y - _contentHeight / 2f) * Scale;
 
+    // The view length of a design length (a box's width or height): the zoom applied once, here, so a view sizes a box by asking.
+    public float ViewLength(float length) => length * Scale;
+
     public float DesignX(float viewX) => (viewX - _viewWidth / 2f - _pan.PanOffset.X) / Scale + _contentWidth / 2f;
 
     public float DesignY(float viewY) => (viewY - _viewHeight / 2f - _pan.PanOffset.Y) / Scale + _contentHeight / 2f;

@@ -200,17 +200,24 @@ public sealed class StaleFlightTests : IAsyncDisposable
         var texts = Texts(view.Tree(pages.Flights), renderer);
         if (view.CanvasShown)
         {
-            // The map draws its words on one leaf; what each plane says to the pointer is the same brief as the Home chip's.
+            // The map draws its words on one leaf; what each flight's destination says to the pointer ends in the same brief as the
+            // Home chip's. The destination, not the plane: every flight has one, where a plane is drawn only on a Flying leg (pilot #1298),
+            // so held ORB3 has none.
             view.Render(pages.Flights, new RectF32(0, 0, 1900, 900));
             var regions = new List<ClickableRegion>();
             view.CollectPaintedRegions(regions);
-            texts = [.. regions.Where(r => r.Result is HitResult.ButtonHit { Action: var a } && a.EndsWith(":plane", StringComparison.Ordinal)).Select(r => r.Tooltip!)];
+            texts = [.. regions.Where(r => r.Result is HitResult.ButtonHit { Action: var a } && IsDestination(a)).Select(r => r.Tooltip!)];
+            texts.Count.ShouldBe(3);
         }
 
         // Two stale flights: each says it, in words; TIA1's own says nothing of the kind.
         texts.Count(t => t.Contains(Mark, StringComparison.Ordinal)).ShouldBe(2);
         texts.Count(t => t.Contains("stale", StringComparison.Ordinal)).ShouldBe(2);
     }
+
+    // A flight's destination on the map: its PR on the Pull requests page, its PR's link, or, with neither, the destination itself.
+    private static bool IsDestination(string action) =>
+        action.EndsWith(":pr-chip", StringComparison.Ordinal) || action.EndsWith(":pr", StringComparison.Ordinal) || action.EndsWith(":destination", StringComparison.Ordinal);
 
     private PilotChrome<RgbaImage> Chrome(RgbaImageRenderer renderer)
     {
