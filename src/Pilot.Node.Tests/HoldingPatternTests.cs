@@ -24,6 +24,8 @@ public sealed class HoldingPatternTests : ReviewTestsBase
         await Fly(flight, "parser");
         (await Run(Verbs.OpenPr, Verbs.FlightTarget(flight.Code), "controller")).Error.ShouldBeNull();
         (await Run(Verbs.Review, Verbs.FlightTarget(flight.Code), Reviewer(flight.Code), "pass", report)).Error.ShouldBeNull();
+        // The fixture's PR sits at the head the review passed, as a real one does until a push (the restore after a leg wait reads it).
+        _github.Pr = _github.Pr! with { Head = F(flight.Code).Review!.ReviewedHead! };
         return flight;
     }
 
