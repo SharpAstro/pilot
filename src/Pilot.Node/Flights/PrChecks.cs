@@ -612,6 +612,14 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                 continue;
             }
             var failed = checks?.Status == ChoiceStatus.Failing;
+            if (dropped is null && failed && legs is not null && await legs.OutsideReviewOnlyAsync(flight, number, head, cancellationToken))
+            {
+                // Only an outside review that never reached a model is red (pilot #1283): not a failure of the PR, so nothing is sent back,
+                // run again or investigated, and no failure is counted. The red check still blocks the merge, which stays armed and is
+                // looked at again; the Handled card says why, once, and the run is run again after its reset.
+                legs.ShowMerge(subject, Said("waiting: the outside review is unavailable until its limit resets, the merge stays armed"), MergeWays.Armed);
+                continue;
+            }
             var checksFailed = dropped is null && failed;
             dropped ??= failed ? $"#{number}'s checks failed: the merge waited for them to pass" : null;
             if (native && dropped is null)
@@ -1178,6 +1186,12 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             }
             // Reviewed and passed, but its checks failed: run again once, then sent back as changes, once a head, so the leg goes around.
             var reviewedFailure = new FailureDecision(FailureAnswer.Unknown);
+            if (legs is not null && status == ChoiceStatus.Failing && pr is { Number: var noModelNumber, Head: var noModelHead } && noModelNumber == number
+                && await legs.OutsideReviewOnlyAsync(flight, number, CommitRefs.Short(noModelHead), cancellationToken))
+            {
+                // Only an outside review that never reached a model is red (pilot #1283): the card stays as it is, nothing is sent back.
+                continue;
+            }
             if (status == ChoiceStatus.Failing && pr is { Number: var seenNumber, Head: var seenHead } && seenNumber == number)
             {
                 reviewedFailure = await InvestigateAsync(flight, number, seenHead, FailureWhere.Ci, mergeGroup: false, cancellationToken);

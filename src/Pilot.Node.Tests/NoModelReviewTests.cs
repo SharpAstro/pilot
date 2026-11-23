@@ -1,0 +1,214 @@
+using Pilot.Contracts;
+using Pilot.Node.Flights;
+using Shouldly;
+using Xunit;
+
+namespace Pilot.Node.Tests;
+
+/// <summary>
+/// A PR whose only failed checks are outside review jobs that never reached a model is not sent back as "its checks failed", is not
+/// run again or investigated as a code failure, says once that the outside review is unavailable, and has that one run run again once
+/// after the reset (pilot #1283). A real failure, a review with findings included, is sent back as before.
+/// </summary>
+public sealed class NoModelReviewTests : ReviewTestsBase
+{
+    private const long ReviewRun = 45029777689;
+    private const long BuildRun = 45029777690;
+
+    private static string NoModelLog() => File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Fixtures", "gh", "failed-run-log-no-model.log"));
+
+    private static FailedCheck Review(long run = ReviewRun) => new("review", $"https://github.com/x/tianwen/actions/runs/{run}/job/9", run);
+
+    private static FailedCheck Build() => new("build (linux)", $"https://github.com/x/tianwen/actions/runs/{BuildRun}/job/8", BuildRun);
+
+    private const string FindingsLog = "review\tUNKNOWN STEP\t2026-11-22T14:06:41.0000000Z the review found 2 points: a null is read before it is checked";
+
+    private string[] Kinds() => [.. _state.Cards().Select(c => c.Kind)];
+
+    private CardRow[] Unavailable() => [.. _state.Cards().Where(c => c.Kind == LegCommander.OutsideReviewUnavailable)];
+
+    private void NothingSentBack(FlightRow flight)
+    {
+        F(flight.Code).Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Passed);
+        Kinds().ShouldNotContain("pr-checks-failed");
+        Kinds().ShouldNotContain("checks-rerun");
+        _github.Reruns.ShouldBeEmpty();
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task TheCardKindIsPinnedAsAHandledCardTitledWithTheFlightTheCheckAndTheResetTime()
+    {
+        var (flight, number) = await Passed("60");
+        _github.Checks = ChoiceStatus.Failing;
+        _github.FailedChecks[number] = [Review()];
+        _github.RunLogs[ReviewRun] = NoModelLog();
+        var checks = new PrChecks(_state, _github, TimeProvider.System, _flights, _legs);
+
+        await checks.LookAsync(Ct);
+
+        LegCommander.OutsideReviewUnavailable.ShouldBe("outside-review-unavailable");
+        var card = Unavailable().ShouldHaveSingleItem();
+        card.Bin.ShouldBe(CardBin.Handled);
+        card.Title.ShouldContain(flight.Code);
+        card.Title.ShouldContain("review");
+        card.Title.ShouldContain("UTC");
+        card.Detail.ShouldNotBeNull().ShouldContain("individual spend limit");
+        card.Detail.ShouldContain("nothing was sent back");
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task OnTheReadyCardOnlyAFailedNoModelReviewSendsNothingBackAndSaysSoOnce()
+    {
+        var (flight, number) = await Passed("61");
+        _github.Checks = ChoiceStatus.Failing;
+        _github.FailedChecks[number] = [Review()];
+        _github.RunLogs[ReviewRun] = NoModelLog();
+        var checks = new PrChecks(_state, _github, TimeProvider.System, _flights, _legs);
+
+        await checks.LookAsync(Ct);
+        await checks.LookAsync(Ct);
+        await checks.LookAsync(Ct);
+
+        NothingSentBack(flight);
+        Unavailable().ShouldHaveSingleItem();
+        _github.RunLogReads.ShouldBe(1, "a run's log is read once");
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task OnAnArmedMergeOnlyAFailedNoModelReviewSendsNothingBackKeepsTheMergeArmedAndSaysSoOnce()
+    {
+        var (flight, pr, checks) = await ArmedPassedFlight("62");
+        _github.Summary = GhAnswers.ChecksOf(ChoiceStatus.Failing, 2, 3, "review", Review().Link);
+        _github.FailedChecks[pr.Number] = [Review()];
+        _github.RunLogs[ReviewRun] = NoModelLog();
+
+        await checks.LookAsync(Ct);
+        await checks.LookAsync(Ct);
+
+        NothingSentBack(flight);
+        F(flight.Code).MergeWhenGreen.ShouldNotBeNull("the merge stays armed");
+        Unavailable().ShouldHaveSingleItem();
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task TheRunIsRunAgainOnceAfterTheResetOnTheNodesClockAndNotBefore()
+    {
+        var (flight, number) = await Passed("63");
+        _github.Checks = ChoiceStatus.Failing;
+        _github.FailedChecks[number] = [Review()];
+        _github.RunLogs[ReviewRun] = NoModelLog();
+        var checks = new PrChecks(_state, _github, TimeProvider.System, _flights, _legs);
+        await checks.LookAsync(Ct);
+
+        _clock.Advance(TimeSpan.FromMinutes(30));
+        await checks.LookAsync(Ct);
+        _github.RunReruns.ShouldBeEmpty("the reset has not come");
+
+        _clock.Advance(TimeSpan.FromHours(25));
+        await checks.LookAsync(Ct);
+
+        _github.RunReruns.ShouldBe([ReviewRun]);
+        NothingSentBack(flight);
+
+        // Failing again with no model: the log is read again and the run waits for its next reset.
+        await checks.LookAsync(Ct);
+        _github.RunReruns.Count.ShouldBe(1);
+        _clock.Advance(TimeSpan.FromHours(25));
+        await checks.LookAsync(Ct);
+        _github.RunReruns.ShouldBe([ReviewRun, ReviewRun]);
+        Unavailable().ShouldHaveSingleItem();
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AReviewRunWithFindingsIsSentBackAsToday()
+    {
+        var (flight, number) = await Passed("64");
+        _github.Checks = ChoiceStatus.Failing;
+        _github.FailedChecks[number] = [Review()];
+        _github.RunLogs[ReviewRun] = FindingsLog;
+        var checks = new PrChecks(_state, _github, TimeProvider.System, _flights, _legs);
+
+        await checks.LookAsync(Ct);
+        await checks.LookAsync(Ct);
+        await checks.LookAsync(Ct);
+
+        Unavailable().ShouldBeEmpty();
+        F(flight.Code).Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Changes);
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task ANoModelReviewBesideAFailedBuildIsSentBackAsToday()
+    {
+        var (flight, number) = await Passed("65");
+        _github.Checks = ChoiceStatus.Failing;
+        _github.FailedChecks[number] = [Review(), Build()];
+        _github.RunLogs[ReviewRun] = NoModelLog();
+        _github.RunLogs[BuildRun] = "build\tBuild\t2026-11-22T14:06:41.0000000Z error CS1002: ; expected";
+        var checks = new PrChecks(_state, _github, TimeProvider.System, _flights, _legs);
+
+        await checks.LookAsync(Ct);
+        await checks.LookAsync(Ct);
+        await checks.LookAsync(Ct);
+
+        Unavailable().ShouldBeEmpty();
+        F(flight.Code).Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Changes);
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task ALogGhCouldNotReadKeepsTodaysPathForThatLook()
+    {
+        var (flight, number) = await Passed("66");
+        _github.Checks = ChoiceStatus.Failing;
+        _github.FailedChecks[number] = [Review()];
+        _github.RunLogFails = true;
+        var checks = new PrChecks(_state, _github, TimeProvider.System, _flights, _legs);
+
+        await checks.LookAsync(Ct);
+        await checks.LookAsync(Ct);
+        await checks.LookAsync(Ct);
+
+        Unavailable().ShouldBeEmpty();
+        F(flight.Code).Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Changes);
+    }
+}
+
+/// <summary>The recheck of a PR's label (PrRecheck) reads a failed outside review that never reached a model as it does the checks of the ready card.</summary>
+public sealed class NoModelReviewRecheckTests : PrRecheckTestsBase
+{
+    [Fact]
+    public async Task ARecheckOfAPrWhoseOnlyFailedCheckIsANoModelReviewSendsNothingBack()
+    {
+        await PassedFlightAsync();
+        _github.Checks = ChoiceStatus.Failing;
+        _github.FailedChecks[7] = [new FailedCheck("review", "https://github.com/acme/widget/actions/runs/45029777689/job/9", 45029777689)];
+        _github.RunLogs[45029777689] = File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Fixtures", "gh", "failed-run-log-no-model.log"));
+
+        await LookAsync();
+
+        _state.Flights().Single().Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Passed);
+        _state.Cards().ShouldNotContain(c => c.Kind == "pr-checks-failed");
+        _state.Cards().ShouldContain(c => c.Kind == LegCommander.OutsideReviewUnavailable && c.Bin == CardBin.Handled);
+        Handled().ShouldHaveSingleItem().ShouldContain("never reached a model");
+    }
+
+    [Fact]
+    public async Task ARecheckOfAPrWhoseReviewRunHasFindingsIsSentBackAsChanges()
+    {
+        await PassedFlightAsync();
+        _github.Checks = ChoiceStatus.Failing;
+        _github.FailedChecks[7] = [new FailedCheck("review", "https://github.com/acme/widget/actions/runs/45029777689/job/9", 45029777689)];
+        _github.RunLogs[45029777689] = "review\tUNKNOWN STEP\t2026-11-22T14:06:41.0000000Z the review found 2 points";
+
+        await LookAsync();
+
+        _state.Flights().Single().Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Changes);
+        _state.Cards().ShouldNotContain(c => c.Kind == LegCommander.OutsideReviewUnavailable);
+    }
+}

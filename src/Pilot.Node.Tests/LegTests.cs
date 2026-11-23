@@ -880,6 +880,21 @@ internal sealed class FakeGitHub : IGitHub
     /// <summary>What <c>gh run view --log-failed</c> prints per run id; a run not listed, or listed null, is one gh could not read.</summary>
     public System.Collections.Concurrent.ConcurrentDictionary<long, string?> RunLogs { get; } = new();
 
+    /// <summary>The failed checks of each PR, by number; one not listed has none.</summary>
+    public System.Collections.Concurrent.ConcurrentDictionary<int, FailedCheck[]> FailedChecks { get; } = new();
+
+    public Task<FailedCheck[]> FailedChecksAsync(string repoPath, int number, CancellationToken cancellationToken) =>
+        Task.FromResult(FailedChecks.GetValueOrDefault(number) ?? []);
+
+    /// <summary>The run ids that were asked to run again, in order.</summary>
+    public ConcurrentQueue<long> RunReruns { get; } = [];
+
+    public Task RerunRunAsync(string repoPath, long runId, CancellationToken cancellationToken)
+    {
+        RunReruns.Enqueue(runId);
+        return Task.CompletedTask;
+    }
+
     /// <summary>When set, reading a run's log fails as a gh that could not reach GitHub.</summary>
     public bool RunLogFails { get; set; }
 

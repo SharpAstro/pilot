@@ -113,4 +113,13 @@ public sealed class OutsideReviews(IGitHub github, TimeProvider? time = null)
         }
         return new OutsideReviewAnswer(true, verdict);
     }
+
+    /// <summary>Forgets what the log of <paramref name="runId"/> said: a run run again keeps its id and gets a new log.</summary>
+    public void Forget(long runId)
+    {
+        lock (_lock)
+        {
+            _answers.Remove(runId);
+        }
+    }
 }

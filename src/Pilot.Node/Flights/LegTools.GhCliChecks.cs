@@ -399,6 +399,15 @@ public sealed partial class GhCli
         return exit != 0 ? null : log.Length > FailedLogLimit ? log[^FailedLogLimit..] : log;
     }
 
+    public async Task RerunRunAsync(string repoPath, long runId, CancellationToken cancellationToken)
+    {
+        var (exit, _, error) = await RunAsync(["run", "rerun", runId.ToString(System.Globalization.CultureInfo.InvariantCulture), "--failed"], repoPath, cancellationToken);
+        if (exit != 0)
+        {
+            throw new FlightException($"gh could not run {runId} again: {error.Trim()}");
+        }
+    }
+
     public async Task<int> RerunFailedChecksAsync(string repoPath, int number, CancellationToken cancellationToken)
     {
         var (_, output, _) = await RunAsync(["pr", "checks", number.ToString(System.Globalization.CultureInfo.InvariantCulture), "--json", "bucket,link"], repoPath, cancellationToken);

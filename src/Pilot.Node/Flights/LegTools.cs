@@ -305,6 +305,12 @@ public interface IGitHub
     /// </summary>
     Task<string?> RunFailedLogAsync(string repoPath, long runId, CancellationToken cancellationToken) => Task.FromResult<string?>(null);
 
+    /// <summary>
+    /// Runs the failed jobs of workflow run <paramref name="runId"/> again (<c>gh run rerun --failed</c>). The default does nothing, as a gh
+    /// that cannot; a failure is a <see cref="FlightException"/>.
+    /// </summary>
+    Task RerunRunAsync(string repoPath, long runId, CancellationToken cancellationToken) => Task.CompletedTask;
+
     /// <summary>Where PR <paramref name="number"/> stands in its base's merge queue; null when its base has none, or GitHub would not say.</summary>
     Task<MergeQueueState?> MergeQueueAsync(string repoPath, int number, CancellationToken cancellationToken);
 
