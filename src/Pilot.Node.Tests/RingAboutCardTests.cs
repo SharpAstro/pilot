@@ -223,6 +223,38 @@ public sealed class RingAboutCardTests
     }
 
     [Fact]
+    public async Task ARefusedAnswerOpensTheWholeChainOfRingsAboutRings()
+    {
+        await using var node = await NodeHarness.StartAsync(Ct);
+        var a = node.State.RaiseCard(CardBin.Ring, "pr-ready", "flight/TIA1", "TIA1 needs a round", null,
+            [new CardChoice { Label = "Refused", Verb = Verbs.Raise, Target = "flight/TIA1", Args = ["nope", "x"] }]);
+        await RaiseAbout(node, $"Press Refused on {a.Id}", "flight/TIA2");
+        var b = node.State.Cards().Single(c => c.Kind == "watchtower");
+        await RaiseAbout(node, $"Also look at {b.Id}", "flight/TIA3");
+        var c = node.State.Cards().Single(x => x.Id != a.Id && x.Id != b.Id && x.Bin != CardBin.Handled);
+        c.AboutCard.ShouldBe(b.Id);
+
+        (await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Answer, Target = Verbs.CardTarget(a.Id), Args = ["Refused"], Who = "cli" }, Ct))
+            .Response.ShouldNotBeNull().Error.ShouldNotBeNull().ShouldContain("was refused");
+
+        Open(node).Select(x => x.Id).Order().ShouldBe(new[] { a.Id, b.Id, c.Id }.Order());
+        node.State.Cards().Single(x => x.Id == c.Id).Outcome.ShouldBeNull();
+        node.State.Cards().Any(x => x.Bin == CardBin.Handled && x.Title == $"{c.Id} open again with {b.Id}").ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task PuttingWordsOnACardThatClosedMeanwhileSaysClosed()
+    {
+        await using var node = await NodeHarness.StartAsync(Ct);
+        var a = RaiseAsk(node);
+        node.State.PutWordsOnCard(a.Id, "wt", "Look", null, CardBin.Ring).ShouldBe(NodeState.RungWordsResult.Put);
+        node.State.PutWordsOnCard(a.Id, "wt", "Look", null, CardBin.Ring).ShouldBe(NodeState.RungWordsResult.Unchanged);
+        node.State.CloseCard(a.Id, "dismissed", "cli");
+        node.State.PutWordsOnCard(a.Id, "wt", "Too late", null, CardBin.Ring).ShouldBe(NodeState.RungWordsResult.Closed);
+        node.State.Cards().Single(x => x.Id == a.Id).Detail.ShouldNotContain("Too late");
+    }
+
+    [Fact]
     public async Task TwoRingsFromOneSenderLeaveOneParagraphAndANodeRewriteKeepsIt()
     {
         await using var node = await NodeHarness.StartAsync(Ct);

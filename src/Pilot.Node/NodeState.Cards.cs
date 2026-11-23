@@ -531,6 +531,23 @@ public sealed partial class NodeState
         }
     }
 
+    /// <summary>What <see cref="PutWordsOnCard"/> did: the words went on, nothing changed (the same words again), or the card is not open.</summary>
+    internal enum RungWordsResult { Put, Unchanged, Closed }
+
+    /// <summary>Puts a ring's words on card <paramref name="id"/> (one paragraph per sender), moving it to <paramref name="bin"/> when given. Closed when the card is not open, as when it closed after the caller looked.</summary>
+    internal RungWordsResult PutWordsOnCard(string id, string who, string title, string? detail, CardBin? bin)
+    {
+        lock (_gate)
+        {
+            if (!_cards.TryGetValue(id, out var card) || card.State != CardState.Open)
+            {
+                return RungWordsResult.Closed;
+            }
+            var merged = WithRungWords(card.Detail, who, title, detail);
+            return UpdateCard(id, card.Title, merged, card.Choices, card.Link, bin: bin) ? RungWordsResult.Put : RungWordsResult.Unchanged;
+        }
+    }
+
     /// <summary>The longest a ring's words on a card may be (PIL1290): a raise on card/&lt;id&gt; is a nudge, not a report.</summary>
     internal const int RungWordsCap = 600;
 
