@@ -444,8 +444,7 @@ internal sealed partial class FlightsView<TSurface>
         return -1;
     }
 
-    // Planes last, so they are over their airport as they are drawn. A plane parked on its destination has no target of its own:
-    // the destination's, as wide as the plane's ring, is the one there, so a click on it opens the PR.
+    // Planes last, so they are over their airport as they are drawn.
     private IEnumerable<Layout.Node> MapTargets(FlightsScreen screen)
     {
         foreach (var c in _map.Continents)
@@ -505,15 +504,15 @@ internal sealed partial class FlightsView<TSurface>
             foreach (var a in route.Airports)
             {
                 var leg = a.Leg;
-                yield return Target(a.X, a.Y, FlightMap.AirportRadius, n => Common(n.WithTooltip($"{line.Code}/{leg}: {StateWord(a.State)}{(a.StepsTotal > 0 ? $", {a.StepsDone}/{a.StepsTotal} steps" : "")}\n{brief}"), "leg:" + leg, () => OpenDetail(line.Code, leg)));
+                var why = StopNote(route, a) is { } note ? "\n" + note.Whole : "";
+                yield return Target(a.X, a.Y, FlightMap.AirportRadius, n => Common(n.WithTooltip($"{line.Code}/{leg}: {StateWord(a.State)}{(a.StepsTotal > 0 ? $", {a.StepsDone}/{a.StepsTotal} steps" : "")}{why}\n{brief}"), "leg:" + leg, () => OpenDetail(line.Code, leg)));
             }
             var d = route.Destination;
             var url = line.Row.PullRequestUrl;
-            var parked = route.PlaneAtDestination;
-            yield return Target(d.X, d.Y, parked ? FlightMap.PlaneRadius : FlightMap.AirportRadius, n =>
+            yield return Target(d.X, d.Y, FlightMap.AirportRadius, n =>
             {
                 var tip = DestinationTip(line, d);
-                var node = n.WithTooltip(parked && line.StaleMark is { } stale ? stale + "\n" + tip : tip)
+                var node = n.WithTooltip(tip)
                     .WithContextMenu(at => OpenMenu(line, index, at))
                     .DoubleClickable(_ =>
                     {
@@ -541,7 +540,7 @@ internal sealed partial class FlightsView<TSurface>
         }
         foreach (var route in _map.Routes)
         {
-            if (route.Plane is { } p && !route.PlaneAtDestination && IndexOf(screen, route) is >= 0 and var index)
+            if (route.Plane is { } p && IndexOf(screen, route) is >= 0 and var index)
             {
                 var line = screen.Lines[index];
                 var leg = p.Leg;
@@ -706,7 +705,14 @@ internal sealed partial class FlightsView<TSurface>
                 Label(leg, X(a.X - FlightMap.Slot / 2f), Y(a.Y + FlightMap.LabelBandTop), FlightMap.Slot * s, s, legSize, Body, line: StopLine);
             }
             var state = detail == MapDetail.Whole && a.StepsTotal > 0 ? $"{StateWord(a.State)} {a.StepsDone}/{a.StepsTotal}" : StateWord(a.State);
-            Label(state, X(a.X - FlightMap.Slot / 2f), Y(a.Y + FlightMap.LabelLineTwo), FlightMap.Slot * s, s, LabelSize, a.State == AirportState.Failed ? Failed : a.State == AirportState.Flying ? Flying : Dim, line: StopLine);
+            var stateSize = LabelSize;
+            // The first stop not yet flown says why nothing flies (pilot #1298): a queued flight its queue reason, a flight between legs
+            // that the node picks the next one. Cut to the slot with an ellipsis; the whole text is on the stop's hover (StopNote).
+            if (StopNote(route, a) is { } note)
+            {
+                (state, stateSize) = StopWord(note.Word, detail);
+            }
+            Label(state, X(a.X - FlightMap.Slot / 2f), Y(a.Y + FlightMap.LabelLineTwo), FlightMap.Slot * s, s, stateSize, a.State == AirportState.Failed ? Failed : a.State == AirportState.Flying ? Flying : Dim, line: StopLine);
         }
 
         // The destination is a square sign, its PR and its status in words under it.
@@ -714,10 +720,13 @@ internal sealed partial class FlightsView<TSurface>
         var color = !MapLayers.ShowPrStates ? P.RouteAhead : d.Status switch
         {
             DestinationStatus.Merged => Landed,
-            DestinationStatus.Conflicts or DestinationStatus.Changes => Failed,
-            DestinationStatus.NoPr => P.RouteAhead,
-            DestinationStatus.Passed or DestinationStatus.RebaseOnly or DestinationStatus.Queued or DestinationStatus.Armed => Flying,
-            _ => Held,
+            _ => DestinationColour(d.Status, route.Phase) switch
+            {
+                MapTone.Failed => Failed,
+                MapTone.Progress => Flying,
+                MapTone.Waiting => Held,
+                _ => P.RouteAhead,
+            },
         };
         FillRect(X(d.X) - r, Y(d.Y) - r, 2f * r, 2f * r, color, 2f * s);
         if (d.Status == DestinationStatus.NoPr && MapLayers.ShowPrStates)

@@ -30,6 +30,40 @@ internal sealed partial class FlightsView<TSurface>
         _ => "merged",
     };
 
+    /// <summary>What a destination's colour means: the palette's Failed only for trouble, amber for waiting, progress, neutral.</summary>
+    internal enum MapTone { Failed, Progress, Waiting, Neutral, Landed }
+
+    /// <summary>
+    /// The destination's tone from the PR's status and the flight's phase (design-language section 1). Failed only for a conflict or a
+    /// failed leg; a review asking for changes is work in progress, never red; Queued, Armed and the not-yet-reviewed are amber;
+    /// Passed is progress. Each status keeps its word (<see cref="StatusWord"/>), so colour never carries it alone.
+    /// </summary>
+    internal static MapTone DestinationColour(DestinationStatus status, FlightPhase phase) => status switch
+    {
+        DestinationStatus.Merged => MapTone.Landed,
+        DestinationStatus.Conflicts => MapTone.Failed,
+        _ when phase == FlightPhase.Failed => MapTone.Failed,
+        DestinationStatus.NoPr => MapTone.Neutral,
+        DestinationStatus.Changes or DestinationStatus.Passed or DestinationStatus.RebaseOnly => MapTone.Progress,
+        _ => MapTone.Waiting,
+    };
+
+    // The note on the first stop not yet flown: Word is what the stop's state line says, Whole the text for its hover.
+    private static (string Word, string Whole)? StopNote(MapRoute route, MapAirport a)
+    {
+        if (a.State != AirportState.Planned || route.Airports.FirstOrDefault(x => x.State == AirportState.Planned) != a)
+        {
+            return null;
+        }
+        return route.Phase switch
+        {
+            FlightPhase.Queued when route.QueuedWhy is { Length: > 0 } why => ($"queued: {why}", $"Queued, not flying: {why}"),
+            FlightPhase.Queued => ("queued", "Queued, not flying: it waits for admission."),
+            FlightPhase.BetweenLegs => ("between legs", "Between legs: no worker flies; the node picks the next leg."),
+            _ => null,
+        };
+    }
+
     private static string Fit(string text, int chars) => text.Length <= chars ? text : text[..(chars - 1)] + "…";
 
     // The words on a destination's sign: its repo and PR number (tianwen #7), the repo cut where both do not fit (tia… #1896); as wide

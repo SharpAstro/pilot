@@ -44,19 +44,19 @@ internal sealed record MapDestination(string Flight, int? PullRequest, Destinati
 internal sealed record MapGate(string Flight, string WaitsFor, float X, float Y);
 
 /// <summary>
-/// The plane: at the flying leg's airport, at the gate of a held flight, at the destination once every leg is done and the PR is
-/// not merged yet. <see cref="Leg"/> names the leg when at an airport; null elsewhere. A landed flight has none.
+/// The plane: at the airport of the leg a worker flies, and nowhere else (no plane at a gate, at the destination or on a planned leg).
+/// A landed flight has none.
 /// </summary>
 internal sealed record MapPlane(string Flight, string? Leg, float X, float Y);
 
 /// <summary>A flight's route: its gate (held only), airports in leg order, then its destination.</summary>
 internal sealed record MapRoute(string Flight, string Node, MapGate? Gate, IReadOnlyList<MapAirport> Airports, MapDestination Destination, MapPlane? Plane)
 {
-    /// <summary>
-    /// Whether the plane is parked on the destination (every leg done, the PR not merged): there the destination answers a point,
-    /// its click opening the PR, and the plane is only drawn.
-    /// </summary>
-    public bool PlaneAtDestination => Plane is { Leg: null } && Gate is null;
+    /// <summary>The flight's phase from the one state model (<see cref="FlightPhases.Of"/>), which the destination's colour and words read.</summary>
+    public FlightPhase Phase { get; init; } = FlightPhase.BetweenLegs;
+
+    /// <summary>Why a <see cref="FlightPhase.Queued"/> flight waits for admission; null otherwise.</summary>
+    public string? QueuedWhy { get; init; }
 }
 
 /// <summary>
@@ -304,27 +304,17 @@ internal sealed class FlightMap
         var status = StatusOf(line.Row);
         var destination = new MapDestination(line.Code, line.Row.PullRequest, status, at, y);
 
+        // The plane is drawn only where a worker flies: the airport of a Flying leg. A queued, held, between-legs, failed or parked
+        // flight has none (pilot #1298): a plane at a gate, on the destination or on the next planned leg said "flying" when nothing flew.
         MapPlane? plane = null;
-        if (status != DestinationStatus.Merged && line.Row.State != FlightState.Landed)
+        if (status != DestinationStatus.Merged && line.Row.State != FlightState.Landed
+            && airports.FirstOrDefault(a => a.State == AirportState.Flying) is { } flying)
         {
-            if (gate is not null)
-            {
-                plane = new MapPlane(line.Code, null, gate.X, gate.Y);
-            }
-            else if (airports.FirstOrDefault(a => a.State == AirportState.Flying) is { } flying)
-            {
-                plane = new MapPlane(line.Code, flying.Leg, flying.X, flying.Y);
-            }
-            else if (airports.All(a => a.State == AirportState.Done))
-            {
-                plane = new MapPlane(line.Code, null, destination.X, destination.Y);
-            }
-            else if (airports.FirstOrDefault(a => a.State is AirportState.Planned or AirportState.Failed) is { } next)
-            {
-                plane = new MapPlane(line.Code, next.Leg, next.X, next.Y);
-            }
+            plane = new MapPlane(line.Code, flying.Leg, flying.X, flying.Y);
         }
-        return new MapRoute(line.Code, node, gate, airports, destination, plane);
+        var phase = FlightPhases.Of(line.Row, line.LegRows);
+        var queuedWhy = phase == FlightPhase.Queued ? FlightPhases.QueuedWhy(line.Row, line.LegRows) : null;
+        return new MapRoute(line.Code, node, gate, airports, destination, plane) { Phase = phase, QueuedWhy = queuedWhy };
     }
 
     /// <summary>
@@ -395,8 +385,7 @@ internal sealed class FlightMap
 
     /// <summary>
     /// What is at a design-unit point: the plane first (it is drawn over its airport or gate), then a gate, an airport, a
-    /// destination; null on empty sea. A plane parked on its destination is the destination's, out to the plane's ring, so the
-    /// point opens the PR as the sign does.
+    /// destination; null on empty sea.
     /// </summary>
     public MapHit? At(float x, float y)
     {
@@ -404,7 +393,7 @@ internal sealed class FlightMap
 
         foreach (var route in Routes)
         {
-            if (route.Plane is { } p && !route.PlaneAtDestination && Near(x, y, p.X, p.Y, PlaneRadius))
+            if (route.Plane is { } p && Near(x, y, p.X, p.Y, PlaneRadius))
             {
                 return new MapHit(MapHitKind.Plane, route.Flight, p.Leg, Node: route.Node);
             }
@@ -422,7 +411,7 @@ internal sealed class FlightMap
                     return new MapHit(MapHitKind.Airport, route.Flight, a.Leg, Node: route.Node);
                 }
             }
-            if (Near(x, y, route.Destination.X, route.Destination.Y, route.PlaneAtDestination ? PlaneRadius : AirportRadius))
+            if (Near(x, y, route.Destination.X, route.Destination.Y, AirportRadius))
             {
                 return new MapHit(MapHitKind.Destination, route.Flight, PullRequest: route.Destination.PullRequest, Node: route.Node);
             }
