@@ -229,7 +229,11 @@ public sealed class CardKindTests
     /// <summary>
     /// What only the node's rules decide is a NodePress, so the watchtower never presses it through a CLI command Claude Code's classifier can
     /// refuse (#1311: <c>review pr</c> on pr-fix-pushed-unreviewed). Each marked kind is one NodePress owns, and offers the verb NodePress presses on it;
-    /// each NodePress kind is marked; and a kind whose raising calls offer one of NodePress's verbs is marked or named as the person's, with its reason.
+    /// each NodePress kind is marked; and a kind that offers one of NodePress's verbs is marked or named as the person's, with its reason.
+    /// What a kind offers is read per kind: the verbs in its raising calls' own arguments, and, for a kind with a call whose choices are
+    /// built before it (a list handed in), a word match of <c>Verbs.Name</c> in its raising files and ChoiceFiles. That second read is per
+    /// file, not per kind: a list-built kind sharing a file with another kind that offers the verb is read as offering it too (naming it
+    /// in PersonsOwn is then the fix), and a PersonsOwn entry for such a kind stays valid while any kind in its files offers the verb.
     /// </summary>
     [Fact]
     public void EveryKindTheNodeAloneDecidesIsANodePressAndNoKindOffersItsVerbsUnmarked()
@@ -246,6 +250,17 @@ public sealed class CardKindTests
             .ToDictionary(g => g.Key, g => g.SelectMany(c => c.Verbs).ToHashSet(StringComparer.Ordinal));
         var asNames = PressNames.ToDictionary(n => n, n => ValueOf(n));
         bool FileOffers(string file, string name) => Regex.IsMatch(Sources.Value.First(s => s.File == file).Source, $@"\bVerbs\.{name}\b");
+        // A kind with a call that has choices but none in its arguments builds them before the call: it is read from its files as well.
+        var listBuilt = Calls.Value
+            .Where(c => c.HasChoices && (c.ChoiceVerbs is null || c.ChoiceVerbs.Length == 0))
+            .Select(c => Resolve(c.File, c.KindExpr)?.Value)
+            .OfType<string>()
+            .ToHashSet(StringComparer.Ordinal);
+        List<string> Offers(CardKindEntry entry) =>
+        [
+            .. asNames.Keys.Where(n => (offered.GetValueOrDefault(entry.Kind) ?? []).Contains(n)
+                || (listBuilt.Contains(entry.Kind) && entry.Files.Concat(entry.ChoiceFiles ?? []).Any(f => FileOffers(f, n)))).Order(),
+        ];
 
         foreach (var entry in CardKindCatalog.All.Where(e => e.NodePressed))
         {
@@ -270,17 +285,15 @@ public sealed class CardKindTests
         }
         foreach (var entry in CardKindCatalog.All.Where(e => !e.NodePressed))
         {
-            var verbs = (offered.GetValueOrDefault(entry.Kind) ?? []).Where(asNames.ContainsKey).Order().ToList();
+            var verbs = Offers(entry);
             var named = CardKindCatalog.PersonsOwn.TryGetValue(entry.Kind, out var reason);
             if (verbs.Count > 0 && !named)
             {
                 problems.Add($"{entry.Kind}: offers {string.Join(", ", verbs)}, which NodePress presses on other kinds, and is neither NodePressed nor in CardKindCatalog.PersonsOwn with a reason");
             }
-            // A card whose choices are built before the call offers its verbs in its raising files, which is where a named kind is read.
-            var inFiles = asNames.Keys.Any(n => entry.Files.Any(f => FileOffers(f, n)));
-            if (named && (!inFiles || string.IsNullOrWhiteSpace(reason)))
+            if (named && (verbs.Count == 0 || string.IsNullOrWhiteSpace(reason)))
             {
-                problems.Add($"{entry.Kind}: named in CardKindCatalog.PersonsOwn but {(!inFiles ? "its raising files offer none of NodePress's verbs" : "gives no reason")}");
+                problems.Add($"{entry.Kind}: named in CardKindCatalog.PersonsOwn but {(verbs.Count == 0 ? "it offers none of NodePress's verbs (its calls' arguments, or its files for a list-built kind)" : "gives no reason")}");
             }
         }
         foreach (var kind in CardKindCatalog.PersonsOwn.Keys.Where(k => CardKindCatalog.All.All(e => e.Kind != k || e.NodePressed)))
@@ -295,7 +308,10 @@ public sealed class CardKindTests
 
     private static string ValueOf(string name) => (string)typeof(Verbs).GetField(name)!.GetRawConstantValue()!;
 
-    /// <summary>Shows the guard reads names: a kind offering Verbs.Fold is seen, one offering the same-valued OverlapPickFold is not.</summary>
+    /// <summary>
+    /// Pins why the guard compares constant names: Verbs.Fold and Verbs.OverlapPickFold share a value, so a value compare would read one
+    /// as the other. It does not run the guard; the guard's own read of the overlap kind holds the Fold case.
+    /// </summary>
     [Fact]
     public void TheGuardTellsFoldFromOverlapPickFoldAlthoughTheyShareAValue()
     {
