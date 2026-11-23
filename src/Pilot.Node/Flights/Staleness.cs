@@ -371,6 +371,14 @@ public static class Staleness
     }
 
     // What a flight waits on now, and the one action that moves it, in the order of what is nearest to hand.
+    /// <summary>What a flight waits on now, in a line, as a stale item says it.</summary>
+    public static string WaitsOn(FlightRow flight, IReadOnlyList<LegRow> legs, IReadOnlyList<CardRow> cards, IReadOnlyList<JobRow> jobs, PullRequestsRow? pullRequests)
+    {
+        var target = Verbs.FlightTarget(flight.Code);
+        return Waits(flight, [.. legs.Where(l => l.Flight == flight.Code).OrderBy(l => l.Order)],
+            [.. cards.Where(c => c.Subject == target || c.Subject.StartsWith(target + "/", StringComparison.Ordinal))], jobs, pullRequests).Waits;
+    }
+
     private static (string Waits, string Action) Waits(FlightRow flight, List<LegRow> legs, List<CardRow> cards, IReadOnlyList<JobRow> jobs, PullRequestsRow? pullRequests)
     {
         if (legs.FirstOrDefault(l => l is { State: LegState.Flying, Recheck: { Outcome: null } }) is { } rechecking)

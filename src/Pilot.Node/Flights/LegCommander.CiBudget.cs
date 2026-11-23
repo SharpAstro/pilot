@@ -22,7 +22,9 @@ public sealed partial class LegCommander
     private string AnswerCiBudget(CommandRequest command)
     {
         var flight = FlightOf(command.Target);
-        if (!IsPerson(flight, command.Who))
+        // PIL1285: the node marks the watchtower's own answer on autopilot (Autopilot never comes from the wire); a grant of more budget is bounded per day.
+        var byAutopilot = command.Autopilot && IsWatchtower(command.Who);
+        if (!IsPerson(flight, command.Who) && !byAutopilot)
         {
             throw new FlightException("only the person may answer a CI budget: the stop is theirs to lift");
         }
@@ -36,7 +38,17 @@ public sealed partial class LegCommander
         switch (answer)
         {
             case Verbs.CiContinue:
-                Record(flight.Code, f => f with { Ci = ci with { Extra = ci.Extra + 1, CappedWhy = null, CappedAt = null, Answer = null, RedAcknowledgedAt = time.GetUtcNow() } });
+                var today = TimeZoneInfo.ConvertTime(time.GetUtcNow(), time.LocalTimeZone).ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
+                var grantedToday = ci.AutoGrantDay == today ? ci.AutoGrants ?? 0 : 0;
+                if (byAutopilot && grantedToday >= Models.AutopilotCiGrants)
+                {
+                    throw new FlightException($"{flight.Code} has had {grantedToday} CI grant(s) from the watchtower today (the bound is {Models.AutopilotCiGrants} a day, autopilot-ci-grants): a further one is the person's, so ring them with the numbers ({CiBudgets.Numbers(ci)})");
+                }
+                Record(flight.Code, f => f with { Ci = ci with
+                {
+                    Extra = ci.Extra + 1, CappedWhy = null, CappedAt = null, Answer = null, RedAcknowledgedAt = time.GetUtcNow(),
+                    AutoGrantDay = byAutopilot ? today : ci.AutoGrantDay, AutoGrants = byAutopilot ? grantedToday + 1 : ci.AutoGrants,
+                } });
                 made = $"{flight.Code} may push again: its CI cap is now {Models.FlightCiBudget * (1 + ci.Extra + 1)} runner-hours";
                 break;
             case Verbs.CiLandGreen or Verbs.CiSplit:

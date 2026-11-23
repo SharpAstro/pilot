@@ -87,8 +87,9 @@ public sealed class FileJournal : INodeJournal, IDisposable
     /// 11: <c>branchDeleteFailed</c> and <c>branchDeleteFailedAt</c> on a flight (PIL1265). An older node would lose them when it compacts the snapshot,
     /// and would then push the refused delete again at each sweep.
     /// 12: <c>aboutCard</c> on a card (PIL1290). An older node would drop it when it compacts the snapshot, and the card would no longer close with the card it is about.
+    /// 13: a session row with the role <c>investigator</c> (PIL1285). An older node cannot read the role, and would fail on the snapshot.
     /// </remarks>
-    public const int StoreContract = 12;
+    public const int StoreContract = 13;
 
     private static readonly byte[] NewLine = "\n"u8.ToArray();
 

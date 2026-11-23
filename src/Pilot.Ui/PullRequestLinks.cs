@@ -19,7 +19,7 @@ internal static class PullRequestLinks
 
     /// <summary>
     /// The PR <paramref name="card"/> is about, or null for a card about anything else: a card of the kinds above, by the PR its link
-    /// is, else by its subject (<c>pr/&lt;owner&gt;/&lt;repo&gt;#&lt;n&gt;</c>); and an assistant's ask whose command is on a PR.
+    /// is, else by its subject (<c>pr/&lt;owner&gt;/&lt;repo&gt;#&lt;n&gt;</c>); and an assistant's ask (autopilot off) whose command is on a PR.
     /// </summary>
     public static PrRef? Of(CardRow card)
     {

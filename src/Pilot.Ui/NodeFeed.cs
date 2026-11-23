@@ -90,14 +90,14 @@ internal sealed class NodeFeed : IAsyncDisposable
 
     /// <summary>
     /// What the node says it is: the fixed fields (version, process, folders) as of its last connection, and what changes
-    /// (maintenance, fleet flights, account, watchtower) as the stream last carried it; null until it has said.
+    /// (maintenance, autopilot, fleet flights, account, watchtower) as the stream last carried it; null until it has said.
     /// </summary>
     public NodeInfo? Node => NodeOf(Volatile.Read(ref _view));
 
     // The changing fields come from the stream's node row, over the fixed ones asked once per connection.
     private static NodeInfo? NodeOf(View view) =>
         view.Node is { } info && view.Said is { } said
-            ? info with { Maintenance = said.Maintenance, AcceptsFleetFlights = said.AcceptsFleetFlights, Account = said.Account, Watchtower = said.Watchtower }
+            ? info with { Maintenance = said.Maintenance, Autopilot = said.Autopilot, AcceptsFleetFlights = said.AcceptsFleetFlights, Account = said.Account, Watchtower = said.Watchtower }
             : view.Node;
 
     /// <summary>The node in a few counts, as the Fleet page shows each one.</summary>

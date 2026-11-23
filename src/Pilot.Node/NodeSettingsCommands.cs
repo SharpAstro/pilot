@@ -36,9 +36,6 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         return new SetupChecks { Checks = checks, CheckedAt = at };
     }
 
-    /// <summary>The setting that was removed (PIL1271): a stored file holding it loads, ignoring it, and a set of it is refused with why.</summary>
-    private const string GoneAutopilotKey = "autopilot";
-
     /// <summary><c>set node &lt;key&gt; [value…]</c>: saves it, then restarts the node to run with it.</summary>
     public CommandResult Set(CommandRequest command)
     {
@@ -48,10 +45,6 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
             return state.Complete(command, $"set takes a setting ({string.Join(", ", NodeSettings.Keys)}), then its value; none, or default, takes it out");
         }
         var key = args[0].Trim().ToLowerInvariant();
-        if (key == GoneAutopilotKey)
-        {
-            return state.Complete(command, "autopilot is gone: what it turned on (fix rounds, review-notes legs, merges, fixers, the watchtower's presses) is what pilot always does");
-        }
         // A role range set for the fleet: saved here as the fleet layer (this node's own value still wins), and sent to every peer reached.
         if (args.Contains("--fleet", StringComparer.OrdinalIgnoreCase))
         {
@@ -102,7 +95,7 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         }
         // A role's range is read when a session of it starts: in force for the next one, no restart.
         if (NodeSettings.IsLayeredKey(key) || key is NodeSettings.MergeMethodKey or NodeSettings.StartLimitKey or NodeSettings.PriorityStartLimitKey or NodeSettings.PriorityReposKey or NodeSettings.WeekLimitKey or NodeSettings.WeekPaceKey or NodeSettings.SpendAlertKey or NodeSettings.WatchtowerCompactShareKey or NodeSettings.WatchtowerChatMessagesKey or NodeSettings.WatchtowerCompactIdleKey or NodeSettings.WatchtowerCompactAboveKey
-            or NodeSettings.MaintenanceKey or NodeSettings.AcceptFleetFlightsKey or NodeSettings.ReviewDeepFirstKey or NodeSettings.DeleteLandedBranchesKey or NodeSettings.RepoTrackersKey or NodeSettings.NoAutoMergeReposKey or NodeSettings.SubTaskReposKey or NodeSettings.MergeBatchKey or NodeSettings.WorkerLadderKey or NodeSettings.OpusCapKey or NodeSettings.ReviewLimitKey or NodeSettings.OneFlightPerRepoKey or NodeSettings.PrWatchIdleKey or NodeSettings.AdoptAfterKey or NodeSettings.ArchiveLandedAfterKey or NodeSettings.MaintenanceEveryKey or NodeSettings.MaintenanceIdleKey or NodeSettings.PackageAgeDaysKey or NodeSettings.GitPruneDaysKey or NodeSettings.MaintenancePruneHoursKey or NodeSettings.MaxGoAroundsKey or NodeSettings.ScratchDaysKey or NodeSettings.DesignerKeepKey or NodeSettings.DiskAlertGbKey or NodeSettings.FlightCiBudgetKey || NodeSettings.StaleKeys.Contains(key))
+            or NodeSettings.MaintenanceKey or NodeSettings.AcceptFleetFlightsKey or NodeSettings.AutopilotKey or NodeSettings.ReviewDeepFirstKey or NodeSettings.DeleteLandedBranchesKey or NodeSettings.RepoTrackersKey or NodeSettings.NoAutoMergeReposKey or NodeSettings.SubTaskReposKey or NodeSettings.MergeBatchKey or NodeSettings.WorkerLadderKey or NodeSettings.OpusCapKey or NodeSettings.ReviewLimitKey or NodeSettings.OneFlightPerRepoKey or NodeSettings.PrWatchIdleKey or NodeSettings.AdoptAfterKey or NodeSettings.ArchiveLandedAfterKey or NodeSettings.MaintenanceEveryKey or NodeSettings.MaintenanceIdleKey or NodeSettings.PackageAgeDaysKey or NodeSettings.GitPruneDaysKey or NodeSettings.MaintenancePruneHoursKey or NodeSettings.MaxGoAroundsKey or NodeSettings.ScratchDaysKey or NodeSettings.DesignerKeepKey or NodeSettings.DiskAlertGbKey or NodeSettings.FlightCiBudgetKey or NodeSettings.AutopilotCiGrantsKey or NodeSettings.AutopilotStallMinutesKey or NodeSettings.AutopilotInvestigationsKey || NodeSettings.StaleKeys.Contains(key))
         {
             roles.Apply(updated);
             // The cap and the repo mode are one value for the fleet, held by the node that keeps the Opus count: a set here goes there too (one sent from there is not sent back).
@@ -113,8 +106,8 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
             }
             return state.Complete(command, null, setting: Row(key, updated), way: key == NodeSettings.MergeMethodKey ? $"{key} saved as {value}; the next merge uses it"
                 : key == NodeSettings.SummaryModelKey ? $"{key} saved as {value}, and in force now; the next summary runs on it"
-                : key is NodeSettings.RepoTrackersKey or NodeSettings.NoAutoMergeReposKey or NodeSettings.SubTaskReposKey or NodeSettings.PrWatchIdleKey or NodeSettings.AdoptAfterKey or NodeSettings.ArchiveLandedAfterKey or NodeSettings.MaintenanceEveryKey or NodeSettings.MaintenanceIdleKey or NodeSettings.PackageAgeDaysKey or NodeSettings.GitPruneDaysKey or NodeSettings.MaintenancePruneHoursKey or NodeSettings.MaxGoAroundsKey or NodeSettings.ScratchDaysKey or NodeSettings.DesignerKeepKey or NodeSettings.DiskAlertGbKey or NodeSettings.FlightCiBudgetKey || NodeSettings.StaleKeys.Contains(key) ? $"{key} saved as {value}, and in force now"
-                : key is NodeSettings.MaintenanceKey or NodeSettings.AcceptFleetFlightsKey or NodeSettings.ReviewDeepFirstKey or NodeSettings.DeleteLandedBranchesKey or NodeSettings.MergeBatchKey or NodeSettings.WorkerLadderKey or NodeSettings.OpusCapKey or NodeSettings.ReviewLimitKey or NodeSettings.OneFlightPerRepoKey ? $"{key} saved as {value}, and in force now"
+                : key is NodeSettings.RepoTrackersKey or NodeSettings.NoAutoMergeReposKey or NodeSettings.SubTaskReposKey or NodeSettings.PrWatchIdleKey or NodeSettings.AdoptAfterKey or NodeSettings.ArchiveLandedAfterKey or NodeSettings.MaintenanceEveryKey or NodeSettings.MaintenanceIdleKey or NodeSettings.PackageAgeDaysKey or NodeSettings.GitPruneDaysKey or NodeSettings.MaintenancePruneHoursKey or NodeSettings.MaxGoAroundsKey or NodeSettings.ScratchDaysKey or NodeSettings.DesignerKeepKey or NodeSettings.DiskAlertGbKey or NodeSettings.FlightCiBudgetKey or NodeSettings.AutopilotCiGrantsKey or NodeSettings.AutopilotStallMinutesKey or NodeSettings.AutopilotInvestigationsKey || NodeSettings.StaleKeys.Contains(key) ? $"{key} saved as {value}, and in force now"
+                : key is NodeSettings.MaintenanceKey or NodeSettings.AcceptFleetFlightsKey or NodeSettings.AutopilotKey or NodeSettings.ReviewDeepFirstKey or NodeSettings.DeleteLandedBranchesKey or NodeSettings.MergeBatchKey or NodeSettings.WorkerLadderKey or NodeSettings.OpusCapKey or NodeSettings.ReviewLimitKey or NodeSettings.OneFlightPerRepoKey ? $"{key} saved as {value}, and in force now"
                 : key is NodeSettings.StartLimitKey or NodeSettings.PriorityStartLimitKey or NodeSettings.PriorityReposKey or NodeSettings.WeekLimitKey or NodeSettings.WeekPaceKey or NodeSettings.SpendAlertKey ? $"{key} saved as {value}; the next start the node makes by itself weighs it"
                 : $"{key} saved as {value}; the next session of that kind starts with it");
         }
@@ -277,6 +270,7 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         NodeSettings.OpusCapKey => roles.OpusCap.ToString(CultureInfo.InvariantCulture),
         NodeSettings.ReviewLimitKey => roles.ReviewLimit.ToString(CultureInfo.InvariantCulture),
         NodeSettings.AcceptFleetFlightsKey => roles.AcceptsFleetFlights ? "on" : "off",
+        NodeSettings.AutopilotKey => roles.Autopilot ? "on" : "off",
         NodeSettings.ReviewDeepFirstKey => roles.ReviewDeepFirst ? "on" : "off",
         NodeSettings.DeleteLandedBranchesKey => roles.DeleteLandedBranches ? "on" : "off",
         NodeSettings.UserSkillsKey => NodeSettings.Read(options.SettingsFile).UserSkills ?? true ? "on" : "off",
@@ -312,6 +306,9 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         NodeSettings.MaintenancePruneHoursKey => roles.MaintenancePruneHours ?? "",
         NodeSettings.DiskAlertGbKey => roles.DiskAlertGb.ToString(CultureInfo.InvariantCulture),
         NodeSettings.FlightCiBudgetKey => roles.FlightCiBudget.ToString(CultureInfo.InvariantCulture),
+        NodeSettings.AutopilotCiGrantsKey => roles.AutopilotCiGrants.ToString(CultureInfo.InvariantCulture),
+        NodeSettings.AutopilotStallMinutesKey => roles.AutopilotStallMinutes.ToString(CultureInfo.InvariantCulture),
+        NodeSettings.AutopilotInvestigationsKey => roles.AutopilotInvestigations.ToString(CultureInfo.InvariantCulture),
         _ when NodeSettings.StaleKeys.Contains(key) => roles.Stale.Value(key).ToString(CultureInfo.InvariantCulture),
         NodeSettings.StartLimitKey => roles.StartLimit.ToString(CultureInfo.InvariantCulture),
         NodeSettings.PriorityStartLimitKey => (NodeSettings.Read(options.SettingsFile).PriorityStartLimit ?? 98).ToString(CultureInfo.InvariantCulture),
@@ -337,7 +334,7 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
     /// method, the start limits, the priority repos, the job limits, maintenance and whether fleet flights are accepted.</summary>
     private static bool Live(string key) => NodeSettings.IsLayeredKey(key)
         || key is NodeSettings.MergeMethodKey or NodeSettings.StartLimitKey or NodeSettings.PriorityStartLimitKey or NodeSettings.PriorityReposKey or NodeSettings.WeekLimitKey or NodeSettings.WeekPaceKey or NodeSettings.SpendAlertKey or NodeSettings.WatchtowerCompactShareKey or NodeSettings.WatchtowerChatMessagesKey or NodeSettings.WatchtowerCompactIdleKey or NodeSettings.WatchtowerCompactAboveKey or NodeSettings.RepoTrackersKey or NodeSettings.NoAutoMergeReposKey or NodeSettings.SubTaskReposKey
-            or NodeSettings.MaxJobsKey or NodeSettings.JobsPerRepoKey or NodeSettings.JobMemoryKey or NodeSettings.JobPriorityKey or NodeSettings.JobPlaneOutputKey or NodeSettings.JobBuildCacheKey or NodeSettings.MaintenanceKey or NodeSettings.AcceptFleetFlightsKey or NodeSettings.ReviewDeepFirstKey or NodeSettings.DeleteLandedBranchesKey or NodeSettings.UserSkillsKey or NodeSettings.ShortcutTokenKey or NodeSettings.MergeBatchKey or NodeSettings.OpusCapKey or NodeSettings.ReviewLimitKey or NodeSettings.OneFlightPerRepoKey or NodeSettings.PrWatchIdleKey or NodeSettings.AdoptAfterKey or NodeSettings.ArchiveLandedAfterKey or NodeSettings.MaintenanceEveryKey or NodeSettings.MaintenanceIdleKey or NodeSettings.PackageAgeDaysKey or NodeSettings.GitPruneDaysKey or NodeSettings.MaintenancePruneHoursKey or NodeSettings.MaxGoAroundsKey or NodeSettings.ScratchDaysKey or NodeSettings.DesignerKeepKey or NodeSettings.DiskAlertGbKey or NodeSettings.FlightCiBudgetKey || NodeSettings.StaleKeys.Contains(key) || NodeSettings.IsBenchKey(key);
+            or NodeSettings.MaxJobsKey or NodeSettings.JobsPerRepoKey or NodeSettings.JobMemoryKey or NodeSettings.JobPriorityKey or NodeSettings.JobPlaneOutputKey or NodeSettings.JobBuildCacheKey or NodeSettings.MaintenanceKey or NodeSettings.AcceptFleetFlightsKey or NodeSettings.AutopilotKey or NodeSettings.ReviewDeepFirstKey or NodeSettings.DeleteLandedBranchesKey or NodeSettings.UserSkillsKey or NodeSettings.ShortcutTokenKey or NodeSettings.MergeBatchKey or NodeSettings.OpusCapKey or NodeSettings.ReviewLimitKey or NodeSettings.OneFlightPerRepoKey or NodeSettings.PrWatchIdleKey or NodeSettings.AdoptAfterKey or NodeSettings.ArchiveLandedAfterKey or NodeSettings.MaintenanceEveryKey or NodeSettings.MaintenanceIdleKey or NodeSettings.PackageAgeDaysKey or NodeSettings.GitPruneDaysKey or NodeSettings.MaintenancePruneHoursKey or NodeSettings.MaxGoAroundsKey or NodeSettings.ScratchDaysKey or NodeSettings.DesignerKeepKey or NodeSettings.DiskAlertGbKey or NodeSettings.FlightCiBudgetKey or NodeSettings.AutopilotCiGrantsKey or NodeSettings.AutopilotStallMinutesKey or NodeSettings.AutopilotInvestigationsKey || NodeSettings.StaleKeys.Contains(key) || NodeSettings.IsBenchKey(key);
 
     // A value as a row carries it: a list's items a line each (a folder may hold a space), else the one value.
     private static string Join(string key, IReadOnlyList<string> values) => string.Join(key is NodeSettings.RepoRootsKey or NodeSettings.PriorityReposKey or NodeSettings.RepoTrackersKey or NodeSettings.NoAutoMergeReposKey or NodeSettings.SubTaskReposKey ? '\n' : ' ', values);
@@ -351,6 +348,7 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         NodeSettings.OpusCapKey => "3",
         NodeSettings.ReviewLimitKey => "2",
         NodeSettings.AcceptFleetFlightsKey => "off",
+        NodeSettings.AutopilotKey => "off",
         NodeSettings.ReviewDeepFirstKey => "on",
         NodeSettings.DeleteLandedBranchesKey => "on",
         NodeSettings.UserSkillsKey => "on",
@@ -394,6 +392,9 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         NodeSettings.MaintenancePruneHoursKey => "",
         NodeSettings.DiskAlertGbKey => NodeSettings.DefaultDiskAlertGb.ToString(CultureInfo.InvariantCulture),
         NodeSettings.FlightCiBudgetKey => NodeSettings.DefaultFlightCiBudget.ToString(CultureInfo.InvariantCulture),
+        NodeSettings.AutopilotCiGrantsKey => NodeSettings.DefaultAutopilotCiGrants.ToString(CultureInfo.InvariantCulture),
+        NodeSettings.AutopilotStallMinutesKey => NodeSettings.DefaultAutopilotStallMinutes.ToString(CultureInfo.InvariantCulture),
+        NodeSettings.AutopilotInvestigationsKey => NodeSettings.DefaultAutopilotInvestigations.ToString(CultureInfo.InvariantCulture),
         _ when NodeSettings.StaleKeys.Contains(key) => NodeSettings.StaleDefault(key).ToString(CultureInfo.InvariantCulture),
         NodeSettings.WeekPaceKey => "off",
         NodeSettings.SpendAlertKey => "3",
@@ -418,6 +419,7 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         NodeSettings.OpusCapKey => ("Opus cap", "The most Opus sessions (workers, planners, fixers, reviewers; a role left to Claude Code's default counts) the fleet runs at once; a start past it waits for a slot. An idle session waiting on a person (an open card) or on a job of its own queued or running holds no slot; pilot status lists them as not counted. 0 for no cap. One value for the fleet: held by the node that keeps the count, the lowest-named one this fleet reaches, and a set on any node is sent there", ["0", "2", "3", "4"]),
         NodeSettings.OneFlightPerRepoKey => ("One flight per repo", "While on, a repo has one flight in the air at a time, on any node of the fleet; the others wait, those the rest depend on first. A flight marked priority goes ahead. One value for the fleet: held by the node that keeps the Opus count (the lowest-named one this fleet reaches), and a set on any node is sent there", ["on", "off"]),
         NodeSettings.AcceptFleetFlightsKey => ("Accept fleet flights", "Whether this node is willing to take a flight another node of the fleet routes to it, when a new flight is made", ["on", "off"]),
+        NodeSettings.AutopilotKey => ("Autopilot", "While on, the watchtower runs with a standing goal: it keeps the fleet moving on its own account, Sonnet keeping watch and Opus thinking, and asks you only as a last resort. Off by default. Only you can change it, never a session", ["on", "off"]),
         NodeSettings.DeleteLandedBranchesKey => ("Delete landed branches", "While on, the node deletes a landed flight's branch locally and on origin, but only when its tip is the merged head: a branch with a commit past it, checked out elsewhere, or of a flight with a live session is kept and says why. Off keeps branches as they are", ["on", "off"]),
         NodeSettings.ReviewDeepFirstKey => ("Deep first review", "While on, the first review of a large diff runs on the reviewer's max; a re-review always runs on the leg model (the worker's) and reads only what changed. Off, the first review runs on the reviewer model too", ["on", "off"]),
         NodeSettings.UserSkillsKey => ("User skills", "While on, the node installs the Claude Code skills it carries (merge-queue) into the profile's skills folder at setup and at every start, so a release that changes one reaches this machine with its update; a skill changed by hand, or a folder of the same name pilot did not write, is kept. Off takes out the ones pilot wrote and nobody changed", ["on", "off"]),
@@ -462,6 +464,9 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         NodeSettings.MaxGoAroundsKey => ("Go-around cap", "How many times a leg may go around, whatever the reason (a failed check, a conflict, red CI, a review). Past it the watchtower and the node send it round no more and a card lists what each round said; only you can send it round again or accept it as it stands", ["3", "5", "8", "12"]),
         NodeSettings.DiskAlertGbKey => ("Disk alert", "Free gigabytes on the repos' drive below which the node rings, naming the biggest reclaimable items by unique bytes", ["10", "20", "50"]),
         NodeSettings.FlightCiBudgetKey => ("Flight CI budget", "Runner-hours of CI a flight's PR may spend (counted from GitHub Actions across every run on its branch) before the node stops pushing for that flight and rings you with the numbers: continue, land what is green, or split. A PR red for more than 3 hours in a row stops it too", ["2", "4", "8", "16"]),
+        NodeSettings.AutopilotCiGrantsKey => ("Autopilot CI grants", "How many times a day (local time) the watchtower may grant one flight more CI budget on its own while autopilot is on; it must name the evidence. A further grant that day is yours and rings you. 0 leaves every grant to you", ["0", "1", "2"]),
+        NodeSettings.AutopilotStallMinutesKey => ("Autopilot stall minutes", "Minutes a flight in the air may show no progress (no leg, job, PR or state change) before the watchtower is woken for it while autopilot is on. Woken once per stall", ["30", "60", "120"]),
+        NodeSettings.AutopilotInvestigationsKey => ("Autopilot investigations", "How many investigator runs (Opus, short, one subject each) the node may start per local day while autopilot is on. Past it the one ring that would have waited says the bound is reached. 0 sends every ring to you as before", ["4", "8", "16"]),
         NodeSettings.PackageAgeDaysKey => ("Package age days", "How many days a NuGet package version in the global packages folder may go unread (newest last access over the files a build reads, the write time as the floor) before the idle-time disk sweep removes it, when no project.assets.json under a tracked repo, a sibling clone or a live plane and no open PR's pins use it. The newest version of every package always stays", ["7", "14", "30", "90"]),
         NodeSettings.MaintenancePruneHoursKey => ("Prune hours", "The local-time window (like 22-06, may wrap midnight) in which the sweep's git gc may prune at the short git-prune-days age; outside it the gc keeps two weeks. Off by default: a repo with a flying flight or a live session in it is never pruned short anyway", ["22-06", "off"]),
         NodeSettings.GitPruneDaysKey => ("Git prune days", "How many days an unreachable git object may sit before the idle-time sweep's git gc removes it (a squash-merged landed branch leaves all its commits unreachable). The sweep also sets gc.auto=0 in each repo, so a fetch starts no auto gc", ["1", "3", "7", "14"]),
@@ -493,6 +498,7 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         RoleModels.Worker => "A leg's worker, unless its plan names a model (leg plan --model), which wins",
         RoleModels.Planner => "Plans a flight's legs from its issue: short-lived, and decides everything after it",
         RoleModels.Designer => "Makes a design in its draft folder from the brief and publishes a version once the check is clean: one session per design, started again with its context on each brief piece",
+        RoleModels.Investigator => "The thinking tier of the standing goal: a short session the node starts with the evidence in its brief (a repeat, a stale flight, a card bound for the ring, the digest) that ends with one decision: an issue and a flight, an action, or one ring to you",
         _ => "Reviews a flight's PR before its merge card",
     };
 

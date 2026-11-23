@@ -56,6 +56,26 @@ public sealed partial class Watchtower(
     /// <summary>The model and effort the watchtower starts on; a test's watchtower passes none.</summary>
     public RoleModels Models { get; set; } = RoleModels.Unset;
 
+    /// <summary>What wakes it on autopilot besides a new card (PIL1285): a stalled flight, a peer going or coming, a repeat; null for one built without.</summary>
+    public AutopilotWakes? Wakes
+    {
+        get;
+        set
+        {
+            field = value;
+            if (value is not null)
+            {
+                value.Told = id =>
+                {
+                    lock (_tellsLock)
+                    {
+                        return Tells().ContainsKey(id);
+                    }
+                };
+            }
+        }
+    }
+
     /// <summary>What holds a start while the 5-hour window is spent: the node's one gate, shared with the leg sweep and the compactor.</summary>
     public StartGate Gate { get; set; } = new(state, time);
 
@@ -177,8 +197,11 @@ public sealed partial class Watchtower(
     private void SaveTells()
     {
         var tells = Tells();
-        var open = state.Cards(openOnly: true).Select(c => c.Id).ToHashSet(StringComparer.Ordinal);
-        foreach (var gone in tells.Keys.Where(id => !open.Contains(id)).ToList())
+        // A repeat task is a Handled line (closed from its birth) whose being told is what keeps its wake from being made again.
+        var open = state.Cards().Where(c => c.State == CardState.Open || c.Kind == CardKinds.RepeatTask).Select(c => c.Id).ToHashSet(StringComparer.Ordinal);
+        // A stall said is kept while its flight is in the air; a landed or gone flight's stalls go.
+        var inAir = state.Flights().Where(Staleness.InAir).Select(f => f.Code).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var gone in tells.Keys.Where(id => !open.Contains(id) && !(AutopilotWakes.StallFlight(id) is { } code && inAir.Contains(code))).ToList())
         {
             tells.Remove(gone);
         }
@@ -802,7 +825,7 @@ public sealed partial class Watchtower(
                         // Resumed in place a moment ago: the listing may still show it ended, which is no reason to start a second.
                         return;
                     }
-                    var untold = Untold().Count > 0;
+                    var untold = Untold().Count > 0 || Wakes?.Pending.Count > 0;
                     if (untold && Warm(row, now))
                     {
                         _job = row.Id;
@@ -1108,7 +1131,7 @@ public sealed partial class Watchtower(
             }
             // The fixed rules are a file the brief points to, written fresh on every start so the file is the text the fingerprint covers (PIL855).
             Directory.CreateDirectory(options.WatchtowerFolder);
-            File.WriteAllText(RulesFile, Briefs.WatchtowerRules(Name, Pilot, options.Machine, stream: Streams is not null));
+            File.WriteAllText(RulesFile, Briefs.WatchtowerRules(Name, Pilot, options.Machine, stream: Streams is not null, autopilot: Models.Autopilot));
             var brief = Briefs.Watchtower(Name, state.Flights(), state.Legs(), state.Cards(openOnly: true), Pilot, Models.Model(RoleModels.Watchtower), options.Machine, alreadyTold, StaleSection.Read(state, time.GetUtcNow(), Models.Stale), state.StandingOrders(), Path.GetFullPath(RulesFile));
             fingerprint = BriefFingerprint();
             var start = new WorkerStart(Name, folder, null, brief, Model: Models.Model(RoleModels.Watchtower), Effort: Models.Effort(RoleModels.Watchtower),
@@ -1375,7 +1398,7 @@ public sealed partial class Watchtower(
 
     // A stream watchtower's model is not part of it: a changed model restarts the process on --resume at its next idle (RelaunchOnSettingAsync),
     // in the same conversation, instead of ending it for a fresh generation on a new brief.
-    private string BriefFingerprint() => Briefs.WatchtowerFingerprint(Name, Pilot, Streams is null ? Models.Model(RoleModels.Watchtower) : null, options.Machine, stream: Streams is not null);
+    private string BriefFingerprint() => Briefs.WatchtowerFingerprint(Name, Pilot, Streams is null ? Models.Model(RoleModels.Watchtower) : null, options.Machine, stream: Streams is not null, autopilot: Models.Autopilot);
 
     /// <summary>The fingerprint of the brief the running watchtower was started with, or null when the node has no record of it.</summary>
     private string? Briefed()
@@ -1460,12 +1483,16 @@ public sealed partial class Watchtower(
     /// </summary>
     internal List<CardRow> Untold()
     {
+        Wakes?.Look();
+        // A second occurrence is said with its find-the-cause task, not as a fresh card: it is left out only while that wake is pending
+        // (said, it is marked told with it), so a say that fails or a restart before it never hides a card for good.
+        var covered = Wakes?.Covered;
         var now = time.GetUtcNow();
         lock (_tellsLock)
         {
             var tells = Tells();
             return state.Cards(openOnly: true)
-                .Where(c => c.Bin != CardBin.Handled && c.Kind != RaisedKind && c.Subject != Verbs.WatchtowerTarget
+                .Where(c => c.Bin != CardBin.Handled && c.Kind != RaisedKind && c.Subject != Verbs.WatchtowerTarget && covered?.Contains(c.Id) != true
                     && (!tells.TryGetValue(c.Id, out var told) || c.Bin == CardBin.Ring && now - told.At >= RetellAfter && !told.Retold))
                 .OrderBy(c => c.At)
                 .ToList();
@@ -1483,7 +1510,8 @@ public sealed partial class Watchtower(
     private async Task<bool?> TellNewCardsAsync(SessionRow row, CancellationToken cancellationToken)
     {
         var fresh = Untold();
-        if (fresh.Count == 0)
+        var wakes = Wakes?.Pending ?? [];
+        if (fresh.Count == 0 && wakes.Count == 0)
         {
             return null;
         }
@@ -1493,7 +1521,8 @@ public sealed partial class Watchtower(
             return false;
         }
 
-        var text = CardNotice.Compose(fresh);
+        var wakeText = string.Join("\n\n", wakes.Select(w => w.Text));
+        var text = fresh.Count == 0 ? wakeText : wakes.Count == 0 ? CardNotice.Compose(fresh) : wakeText + "\n\n" + CardNotice.Compose(fresh);
         int retells;
         lock (_tellsLock)
         {
@@ -1503,13 +1532,14 @@ public sealed partial class Watchtower(
         _sayRuns++;
         var result = await run(new CommandRequest { Verb = Verbs.Say, Target = Verbs.SessionTarget(row.Id), Args = [text], Who = LegWatch.Who,
             // The same cards said to the same row twice (a slow resume, then a retry by relay) reach it once (PIL595).
-            RequestId = $"cards:{row.Id}:{string.Join(',', fresh.Select(c => c.Id))}:{retells}" }, cancellationToken);
+            RequestId = $"cards:{row.Id}:{string.Join(',', fresh.Select(c => c.Id))}:{retells}{string.Concat(wakes.Select(w => '|' + w.Key))}" }, cancellationToken);
         _lastSayTransient = !result.Ok && result.Error is { } refused && Sessions.ClaudeCliDelivery.IsTransientConfigRead(refused);
         if (result.Ok)
         {
             _unreachableId = null;
             _transientId = null;
             _transientCount = 0;
+            Wakes?.Sent(wakes);
             var now = time.GetUtcNow();
             lock (_tellsLock)
             {
@@ -1517,6 +1547,16 @@ public sealed partial class Watchtower(
                 foreach (var card in fresh)
                 {
                     tells[card.Id] = tells.TryGetValue(card.Id, out var was) ? (was.At, true) : (now, false);
+                }
+                // The cards a wake was about (a repeat's task and its second card) are told with it.
+                foreach (var id in wakes.SelectMany(w => w.Cards ?? []))
+                {
+                    tells.TryAdd(id, (now, false));
+                }
+                // A stall said is kept too, so a restarted node does not wake it again for the same stall (PIL1285).
+                foreach (var stall in wakes.Where(w => AutopilotWakes.StallFlight(w.Key) is not null))
+                {
+                    tells.TryAdd(stall.Key, (now, false));
                 }
                 SaveTells();
             }

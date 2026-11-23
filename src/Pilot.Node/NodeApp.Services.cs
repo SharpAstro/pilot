@@ -227,7 +227,7 @@ public static partial class NodeApp
     {
         builder.Services.AddSingleton(services =>
         {
-            var flights = ActivatorUtilities.CreateInstance<FlightCommander>(services);
+            var flights = WithWakes(ActivatorUtilities.CreateInstance<FlightCommander>(services), services);
             flights.Models = services.GetRequiredService<RoleModels>();
             flights.Machine = options.Machine;
             flights.Attachments = services.GetRequiredService<Attachments>();
@@ -515,7 +515,7 @@ public static partial class NodeApp
                 Transcripts = services.GetRequiredService<TranscriptBook>(),
                 // The watchtower is one long-lived claude -p stream-json process the node owns (PIL855).
                 Streams = new ClaudeStreamProcessLauncher(),
-                Ledger = services.GetRequiredService<SessionLedger>(),
+                Ledger = services.GetRequiredService<SessionLedger>(), Wakes = services.GetRequiredService<AutopilotWakes>(),
                 Prepare = start => services.GetRequiredService<ClaudeWorkerLauncher>().WithMcp(start),
             };
         });
@@ -616,7 +616,7 @@ public static partial class NodeApp
                 var watchtower = services.GetRequiredService<Watchtower>();
                 return new NodeRowPublisher(state, () => new NodeRow
                 {
-                    Maintenance = models.Maintenance,
+                    Maintenance = models.Maintenance, Autopilot = models.Autopilot,
                     AcceptsFleetFlights = models.AcceptsFleetFlights,
                     Account = state.Usage()?.Account,
                     CanRunGui = services.GetRequiredService<JobRunner>().GuiWhy() is null,
@@ -753,6 +753,8 @@ public static partial class NodeApp
         builder.Services.AddSingleton(services => new Digest(services.GetRequiredService<NodeState>(), services.GetRequiredService<TimeProvider>())
         {
             Bounds = () => services.GetRequiredService<RoleModels>().Stale,
+            Autopilot = () => services.GetRequiredService<RoleModels>().Autopilot,
+            Ledger = services.GetRequiredService<SpendLedger>(),
         });
         builder.Services.AddHostedService(services => services.GetRequiredService<Digest>());
         // The follow-up backlog's counts per repo, and the ring for an issue with no flight after a day (pilot #1226).
