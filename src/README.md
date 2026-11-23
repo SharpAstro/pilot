@@ -1673,7 +1673,7 @@ grant one flight more CI budget (`pilot flight ci-budget <flight> continue --why
 A further grant that day is refused with a line saying it is the person's, and the watchtower rings them. With autopilot on the lookout
 also runs `create-issue`, `create-flight` and `go-around` on a `--why` that names evidence (a job id, a card id, a commit, a run); each
 leaves a Handled line and a decision with that why. With it off they are refused as before. `rerun-checks` is the exception: the lookout
-runs it with no why, autopilot on or off, as it did before PIL1285. `go-around` takes the worker's reason as its words and the evidence
+runs it with no why, the switch on or off, as it did before PIL1285. `go-around` takes the worker's reason as its words and the evidence
 as `--why` (over MCP: `reason` and `why`).
 
 Autopilot v2 has two tiers (PIL1285). **Sonnet keeps watch**: the watchtower, woken by a new card, a flight with no progress for

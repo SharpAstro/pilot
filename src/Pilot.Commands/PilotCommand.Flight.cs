@@ -83,7 +83,7 @@ public static partial class PilotCommand
             var land = Action(new Command("land", "The flight's work is in: its plane goes, its branch and code stay") { Arguments = { code }, Options = { actingOn } },
                 (p, client, ct) => Send(client, Verbs.Land, Verbs.FlightTarget(p.GetValue(code)!), [], who, ct, p.GetValue(actingOn)));
 
-            var withdrawWhy = Words("why", "Why the flight is a mistake (required: it goes on the Handled card)");
+            var withdrawWhy = Words("reason", "Why the flight is a mistake (required: it goes on the Handled card)");
             var withdraw = Action(new Command("withdraw", "End a mistaken flight that never did any work: its sessions, plane and branch go and its code is free; refused with a PR or commits past its base") { Arguments = { code, withdrawWhy }, Options = { actingOn } },
                 (p, client, ct) => Send(client, Verbs.WithdrawFlight, Verbs.FlightTarget(p.GetValue(code)!), p.GetValue(withdrawWhy) ?? [], who, ct, p.GetValue(actingOn)));
 

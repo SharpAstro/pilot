@@ -36,6 +36,8 @@ public sealed partial class NormalBehaviourWordTests
         "autopilot {(",                                              // the switch's asking, refusal and reply lines
         "\"autopilot:toggle\"",                                      // the switch's press action
         "\"autopilot on\"", "\"autopilot off\"",                    // a node's switch on the Fleet line (FleetView)
+        "NodeInfo.Autopilot\"",                                      // a doc comment's cref to the node's switch (AutopilotSwitch, FleetView)
+        "\"AutopilotSwitch.OnToggle\"", "\"AutopilotSwitch.On\"",   // a doc comment's cref to the switch's members (PilotChrome)
         "autopilotGoal",                                           // the file member (an old "autopilot" member is ignored)
         "Autopilot switch",                                        // README: the top bar's switch
         "AutopilotKey",                                            // identifier of the setting's key
