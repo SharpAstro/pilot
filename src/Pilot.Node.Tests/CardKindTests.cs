@@ -470,6 +470,28 @@ public sealed class CardKindTests
     }
 
     [Fact]
+    public void AListBuiltReadSeesAChoicesListFollowedByANamedArgumentButNotANullOrBoolean()
+    {
+        const string source = """
+            class C
+            {
+                void Run()
+                {
+                    var choices = new List<CardChoice> { new CardChoice { Label = "Fix it", Verb = Verbs.FixPr, Target = "t" } };
+                    state.RaiseCard(CardBin.Ring, "x-list", "s", "needs a look", choices, link: "l");
+                    state.RaiseCard(CardBin.Ring, "x-null", "s", "needs a look", null);
+                    state.RaiseCard(CardBin.Ring, "x-bool", "s", "needs a look", true);
+                }
+            }
+            """;
+
+        var calls = CardSource.Calls("Sample.cs", source);
+        calls.Single(c => c.KindExpr.Contains("x-list")).ChoiceVerbs.ShouldContain("FixPr");
+        calls.Single(c => c.KindExpr.Contains("x-null")).ChoiceVerbs.ShouldBeEmpty();
+        calls.Single(c => c.KindExpr.Contains("x-bool")).ChoiceVerbs.ShouldBeEmpty();
+    }
+
+    [Fact]
     public void TheScannerSkipsCommentsAndStringsThatLookLikeCalls()
     {
         const string source = """
