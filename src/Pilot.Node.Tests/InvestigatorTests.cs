@@ -428,6 +428,8 @@ public sealed class InvestigatorTests
         _investigator.Look();
         await _investigator.SettledAsync();
         _state.Cards().Count(c => c.Kind == Investigator.StartKind).ShouldBe(1);
+        _investigator.Begin(InvestigationTrigger.Stale, "PIL1", "flight/PIL1", ["also stale"], seen: "stale:PIL1:1").ShouldBe(InvestigationStart.Joined);
+        _state.Cards().Single(c => c.Kind == Investigator.JoinKind).Detail.ShouldNotBeNull().ShouldContain("seen: stale:PIL1:1");
 
         var (next, workers) = Restarted();
         next.StartedToday.ShouldBe(1);

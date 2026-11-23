@@ -228,7 +228,7 @@ public sealed class AutopilotWakeTests : IDisposable
     }
 
     [Fact]
-    public async Task ASecondCardWhoseWakeWasNeverSaidIsToldAsAnyCardOnceTheSwitchIsOff()
+    public void ASecondCardWhoseWakeWasNeverSaidIsToldAsAnyCardOnceTheSwitchIsOff()
     {
         var first = _state.RaiseCard(CardBin.Ring, "pr-red", "flight/TIA9", "TIA9's PR is red", "run 1");
         _state.CloseCard(first.Id, "pressed", "owner");
