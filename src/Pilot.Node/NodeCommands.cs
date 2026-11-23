@@ -10,7 +10,7 @@ namespace Pilot.Node;
 /// that does it. A card's choice is a command like any other, so answering a card cannot do anything a client could
 /// not do by hand.
 /// </summary>
-public sealed class NodeCommands(IServiceProvider services, NodeState state)
+public sealed partial class NodeCommands(IServiceProvider services, NodeState state)
 {
     /// <summary>How long a command's request id is remembered after it ran: a client that timed out retries within minutes.</summary>
     internal static readonly TimeSpan RequestIdRetention = TimeSpan.FromMinutes(15);
@@ -960,6 +960,9 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
         return state.Complete(command, null);
     }
 
+    [System.Text.RegularExpressions.GeneratedRegex(@"\bc\d+\b")]
+    private static partial System.Text.RegularExpressions.Regex CardIdWord();
+
     /// <summary><c>raise &lt;subject&gt; ring|for-you|handled &lt;title&gt; [detail…]</c>: a card from whoever raises it.</summary>
     private CommandResult Raise(CommandRequest command)
     {
@@ -977,8 +980,46 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
         {
             return state.Complete(command, refused);
         }
+        // PIL1290: a ring or for-you raise on card/<id> is about the card itself: its words go on that card, which is rung again
+        // (ring) or left in its bin (for-you); no second card. A handled raise stays a born-closed line about the card.
+        // Chosen: this skips the ring judge (PIL855). The card is already one the person was shown, and the point is to press it.
+        if (bin.Value != CardBin.Handled && command.Target.StartsWith(Verbs.CardTargetPrefix, StringComparison.Ordinal))
+        {
+            var id = command.Target[Verbs.CardTargetPrefix.Length..];
+            if (attachment is not null)
+            {
+                return state.Complete(command, "an attachment cannot go on a ring about an existing card; ring it with the words only");
+            }
+            var target = state.Cards().FirstOrDefault(c => c.Id == id);
+            if (target is null)
+            {
+                return state.Complete(command, $"There is no card {id}");
+            }
+            if (target.State != CardState.Open)
+            {
+                return state.Complete(command, $"Card {id} is closed ({target.Outcome ?? "no outcome recorded"}): it cannot be raised again");
+            }
+            // One paragraph per sender, replaced by their next ring and capped; the node's own rewrites of the detail keep it (UpdateCard).
+            // Closed between the check above and the update is a refusal; the same words again (nothing changed) is not.
+            if (state.PutWordsOnCard(id, command.Who, title, detail, bin.Value == CardBin.Ring ? CardBin.Ring : null) == NodeState.RungWordsResult.Closed)
+            {
+                return state.Complete(command, $"Card {id} closed meanwhile: it cannot be raised again");
+            }
+            if (bin.Value == CardBin.Ring)
+            {
+                state.RingAgain(id);
+            }
+            return state.Complete(command, null, made: id);
+        }
+        // PIL1290: a ring or for-you card that names exactly one open card (c27881) is about it, and closes when it does.
+        string? aboutCard = null;
+        if (bin.Value != CardBin.Handled)
+        {
+            var namedCards = CardIdWord().Matches($"{title} {detail}").Select(m => m.Value).Distinct().Where(state.IsCardOpen).ToList();
+            aboutCard = namedCards.Count == 1 ? namedCards[0] : null;
+        }
         state.RaiseCard(bin.Value, Watchtower.RaisedKind, command.Target, title, (detail.Length > 0 ? detail : null) is { } d ? d + from : from.Length > 0 ? from.Trim() : null,
-            attachment: attachment, attachmentExt: attachmentExt);
+            attachment: attachment, attachmentExt: attachmentExt, aboutCard: aboutCard);
         return state.Complete(command, null);
     }
 
