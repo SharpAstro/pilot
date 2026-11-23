@@ -83,21 +83,13 @@ internal sealed class NotificationsHost
     /// <summary>The page's list scroll, which a terminal takes the scroll bar away from.</summary>
     internal ListScrollController PageScroll => _page.ListScroll;
 
+    /// <summary>Whether the card is one of the feed's open ones (it needs the person), as of the last <see cref="Sync"/>.</summary>
+    internal bool IsOpen(CardRow card, string? node) => _ids.ContainsKey((node, card.Id));
+
     /// <summary>
-    /// The Notifications page's body: the library's list frame (Needs you, then History newest first, with Clear), laid as wide as the page.
-    /// It declares no toggle key and no toasts, so the window's edge handle keeps the key.
+    /// A feed notification with no card (a pilot event) drawn by the one card component from its title, text, node and time; set by the chrome.
     /// </summary>
-    public Layout.Node ListFrame(float width)
-    {
-        _page.Open = true;
-        var style = Style with { BarWidth = width, StripWidth = 0f, MaxToasts = 0, ToggleKey = new KeyChord(InputKey.F12, InputModifier.Ctrl | InputModifier.Alt | InputModifier.Shift) };
-        var frame = NotificationsLayout.Build(Layout.Builder.Spacer().Stretch(), Feed, _page, Colors(), style);
-        // The library docks its strip beside what it builds, a strip of no width too, and lays the strip's bell and count out past that
-        // edge: the page's text check read the count as text outside the page whenever a card was open. The page is the list, so it takes
-        // the frame's fill (the list over an empty page) and leaves the strip, its count and its chord out; were the shape ever another,
-        // the frame stands whole, with a chord nothing presses.
-        return frame is Layout.Node.Dock { Fill: var list } ? list : frame;
-    }
+    public Func<string, string, string?, DateTimeOffset, string, string, NotificationSeverity, Layout.Node>? EventCard { get; set; }
 
     /// <summary>
     /// Whether toasts stand over the page: false while the Notifications page is shown, which lists everything itself (a toast there would cover

@@ -124,11 +124,11 @@ public sealed class CardWholeInNotificationsTests
         var toast = w.Bar.Toasts.Toasts.ShouldHaveSingleItem().Notification;
         var body = Joined(toast.Row.ShouldNotBeNull().Invoke());
         // The plain choices sit in Dismiss's row as the library's buttons (Notification.Buttons), not in the body.
-        // A button label is cut at ToastLabelChars (the whole on hover), so both options read as their cut label.
+        // A button label is the choice's whole one.
         var buttons = toast.Buttons.ShouldNotBeNull().Invoke();
         buttons.Count.ShouldBe(2, "a toast carries two plain choices");
         var choices = Squeezed(string.Concat(buttons.SelectMany(Texts)));
-        choices.ShouldContain(Squeezed(PilotChrome<RgbaImage>.CutToastLabel("Pick option A")));
+        choices.ShouldContain(Squeezed("Pick option A"));
         choices.ShouldNotContain(Squeezed("Pick option C"), Case.Sensitive);
         body.ShouldContain(Squeezed(PilotChrome<RgbaImage>.ToastCutLabel), Case.Sensitive);
         w.Save("card-whole-toast-1920x1080");
@@ -161,8 +161,8 @@ public sealed class CardWholeInNotificationsTests
         {
             row.ShouldContain(Squeezed(choice), Case.Sensitive, $"the page carries {choice}");
         }
-        row.ShouldContain("Nofixerstarted", Case.Sensitive, "the detail is open and whole, its last line too");
-        row.ShouldNotContain("Detail", Case.Sensitive, "no fold to open on the page");
+        row.ShouldContain("▸Detail", Case.Sensitive, "the detail is folded on the page too, as on the panel");
+        row.ShouldNotContain("Nofixerstarted", Case.Sensitive);
         row.ShouldNotContain("closed", Case.Sensitive, "an open card is drawn open, though the collapsed bar never drew it");
         var regions = new List<ClickableRegion>();
         w.Chrome.PageWidget.CollectPaintedRegions(regions);
@@ -192,8 +192,8 @@ public sealed class CardWholeInNotificationsTests
         gone.Row.ShouldNotBeNull().Invoke();
         var regions = new List<ClickableRegion>();
         w.Chrome.PageWidget.CollectPaintedRegions(regions);
-        regions.Where(r => r.Result is HitResult.ButtonHit { Action: var action } && action.StartsWith("card:c26885:", StringComparison.Ordinal) && r.OnClick != null)
-            .ShouldBeEmpty("a card no longer open answers nothing");
+        regions.Where(r => r.Result is HitResult.ButtonHit { Action: var action } && action.StartsWith("card:c26885:", StringComparison.Ordinal) && !action.EndsWith(":detail", StringComparison.Ordinal) && r.OnClick != null)
+            .ShouldBeEmpty("a card no longer open answers nothing (its fold only shows the detail)");
     }
 
     [Fact]

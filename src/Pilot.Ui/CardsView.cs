@@ -1,4 +1,5 @@
 using DIR.Lib;
+using DIR.Lib.Notifications;
 using Pilot.Contracts;
 
 namespace Pilot.Ui;
@@ -226,6 +227,17 @@ internal sealed record CardsScreen(IReadOnlyList<CardRow> Open, IReadOnlyList<Ca
     }
 }
 
+/// <summary>Where a card is drawn: the one component (<c>CardsView.Card</c>) lays out the same parts in the same order for each.</summary>
+internal enum CardFit
+{
+    /// <summary>The toast's body: summary cut to three lines, a cut-short link, no buttons (the library's row carries them).</summary>
+    Toast,
+    /// <summary>The For you panel's card, with its own buttons.</summary>
+    Panel,
+    /// <summary>The Notifications page's row, with its own buttons.</summary>
+    Page,
+}
+
 /// <summary>
 /// The cards panel down the window's right side, as the design's home screen has the watchtower's: what waits on the
 /// controller on top, each card with its buttons (its choices, and Dismiss), then what was handled, a line each. A
@@ -249,12 +261,6 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
 
     /// <summary>The width of a declared border, in design units (a cell paints one glyph row or column).</summary>
     private const float EdgeWidth = 1f;
-
-    /// <summary>The corner radius of a card, which the GUI rounds with and the terminal draws as arc glyphs.</summary>
-    private const float CardRadius = 6f;
-
-    /// <summary>The space between a card's edge and its content on either side, its frame included.</summary>
-    private const float CardInset = 10f;
 
     private static RGBAColor32 PanelBg => Palette.Current.RowAltBg;
     private static RGBAColor32 CardBg => Palette.Current.MenuBg;
@@ -905,8 +911,9 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     /// </summary>
     internal const int MergeDetailLines = 8;
 
-    /// <summary>The width of the bar down a card's left edge, in its bin's colour.</summary>
-    private const float AccentBar = 3f;
+    /// <summary>How many lines of its summary a toast shows.</summary>
+    internal const int ToastSummaryLines = 3;
+
 
     /// <summary>How many lines a card's title may take: it says what happened and to what (an overlap's names both flights, the shared files and the choice), which one clipped row loses (pilot#677).</summary>
     // Known gap (pilot#923): a title cut by this cap shows no ellipsis in a capture (the whole text is on hover in the live window only).
@@ -974,6 +981,9 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     /// <summary>The card's title as shown: a landed flight's starts with 🛬. The node's title is left as it raised it.</summary>
     internal static string Titled(CardRow card) => card.Kind == "landed" ? Palette.Glyph("🛬", "✈") + " " + card.Title : card.Title;
 
+    /// <summary>How far a closed card's fill, edge and an event's head are toned toward the plain raised ground and the dim ink: History reads as past, its hue kept.</summary>
+    internal const double ClosedTone = 0.5;
+
     /// <summary>The most waiting cards drawn as dots; the rest are one "+N" with their titles on hover.</summary>
     internal const int WaitingDots = 3;
 
@@ -984,11 +994,30 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
 
     /// <param name="closed">Closed while the panel was held: drawn where and as it was, marked closed, its buttons dead.</param>
     /// <param name="merged">A merge that finished a moment ago (<see cref="CardsScreen.Merged"/>): in the live green, marked merged, with only its Merged chip.</param>
-    /// <param name="full">The whole card, for the Notifications page (the owner, 2026-11-22: "in the notification tab it should always show the full
-    /// thing with all options"): its detail open and uncut, with no fold to toggle, and no frame of its own, as the page's row is its frame.</param>
-    private Layout.Node Card(CardRow card, NodeMark? node, bool closed = false, bool merged = false, bool full = false)
+    /// <param name="fit">Where the card is drawn (<see cref="CardFit"/>): the one component lays out the same parts in the same order for each; only the width it
+    /// is given and the fit differ. A toast draws no frame and no buttons of its own (the library's toast frame and button row carry them); the panel's and the
+    /// page's frame come from the toast's tokens.</param>
+    /// <param name="nodeName">The node's name where the caller has no <see cref="NodeMark"/> (a toast knows it by name).</param>
+    /// <param name="cutShort">A toast's card whose parts the toast leaves out ends in a link to the Notifications page.</param>
+    /// <param name="toPage">What that link, and the fold of the detail a toast never shows, open.</param>
+    private Layout.Node Card(CardRow card, NodeMark? node, bool closed = false, bool merged = false, CardFit fit = CardFit.Panel,
+        string? nodeName = null, bool cutShort = false, Action? toPage = null, string? kindWord = null, string? when = null, NotificationSeverity? severityOf = null, bool isEvent = false)
     {
-        var accent = merged ? Live : closed ? Dim : card.Bin == CardBin.Ring ? Ring : ForYou;
+        var toast = fit == CardFit.Toast;
+        var full = fit == CardFit.Page;
+        var nodeLabel = node?.Name ?? nodeName;
+        // The frame's tokens: the toast's fill and edge for the card's severity, toned toward the plain raised ground on a closed card (the
+        // history), so it reads as past while an event keeps its severity's hue.
+        var tokens = NotificationsHost.Colors();
+        var severity = severityOf ?? (card.Bin == CardBin.Ring ? NotificationSeverity.Warn : NotificationSeverity.Info);
+        var fill = closed ? Contrast.Mix(tokens.TintedFill(severity), tokens.Raised, ClosedTone) : tokens.TintedFill(severity);
+        // The dim ink a closed card's words are drawn in: Dim as it is where it reads at AA on the toned fill, else a step toward Bright (Dim is 4.49:1 on the success tone).
+        // A palette with no ink that reaches AA on the fill (Night: red on black) keeps Dim, so a closed card stays dimmer than an open one.
+        var closedInk = Contrast.Ratio(Bright, fill) < Contrast.AA ? Dim : Contrast.Readable(Dim, fill, Bright);
+        // A closed card's head, title and summary are dim; an event's head keeps its severity's hue, toned toward the dim ink but still read at AA on its fill.
+        var accent = merged ? Live
+            : closed ? severityOf is { } closedSev ? Contrast.Readable(Contrast.Mix(SeverityInk(closedSev), Dim, ClosedTone), fill, closedInk) : closedInk
+            : severityOf is { } sev ? SeverityInk(sev) : card.Bin == CardBin.Ring ? Ring : ForYou;
         var leg = CardLeg.Of(card);
         // The first place the leg's name is in the title or the summary is the link; a later one is plain, so one card has one link to its leg.
         var linked = false;
@@ -1011,7 +1040,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
             return LegLink(card, about, shown[..at] + about + shown[(at + bare.Length)..] + " ", size).WAuto();
             };
         };
-        var head = Layout.Builder.Text($"{(merged ? "merged" : card.Bin == CardBin.Ring ? "RING" : "for you")}{(node is null ? "" : $" · {node.Name}")}{(closed && !merged ? " · closed" : "")}", 10f, accent).Selectable();
+        var head = Layout.Builder.Text($"{(merged ? "merged" : kindWord ?? (card.Bin == CardBin.Ring ? "RING" : "for you"))}{(nodeLabel is null ? "" : $" · {nodeLabel}")}{(when is null ? "" : $" · {when}")}{(closed && !merged ? " · closed" : "")}", 10f, accent).Selectable();
         var lines = new List<Layout.Node>
         {
             // The stale age (#736) is a word of its own beside the head, so the head says the same whatever the clock reads.
@@ -1021,7 +1050,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
             // A card about a page (its PR) has its title as the link to it, as a hyperlink reads: where the eye goes first.
             // Marked as a link to elsewhere, so it reads as "open the page", never as an action of its own. A waiting
             // session's link is its button, Answer in the browser, so its title is no second one.
-            Title(card, linker),
+            Title(card, linker, closed && !merged ? closedInk : Bright),
         };
         // A title of several lines is set off from the detail under it.
         lines.Add(Layout.Builder.Spacer().RowH(4f));
@@ -1031,7 +1060,9 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         {
             // Drawn whole, each of its lines a paragraph (CardSummaryLines): a design card's question, each option by its tag and why it
             // rings read as a list, never run together and never cut with the rest only on hover (the owner, 2026-11-22).
-            lines.Add(Whole(WrappedProse.Lines(CardSummaryLines.Of(WrappedProse.Bound(summary, SummaryChars)), 12f, Body, linker(12f)), summary, summary.Length > SummaryChars));
+            lines.Add(toast
+                ? WrappedProse.Of(summary, 12f, Dim, ToastSummaryLines, selectable: false)
+                : Whole(WrappedProse.Lines(CardSummaryLines.Of(WrappedProse.Bound(summary, SummaryChars)), 12f, closed && !merged ? closedInk : Body, linker(12f)), summary, summary.Length > SummaryChars));
         }
         // The leg's name was not in the words above: a small link row of its own, so the leg is one click away all the same.
         if (leg is { } ofLeg && !linked)
@@ -1040,21 +1071,18 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         }
         if (card.Detail is { Length: > 0 } detail && detail != summary)
         {
-            var unfolded = full || summary is null || Volatile.Read(ref _detailOpen).Contains(card.Id);
-            if (summary is not null && !full)
+            // A toast never shows the detail: its fold is shut and opens the page, which lists the card.
+            var unfolded = !toast && (summary is null || Volatile.Read(ref _detailOpen).Contains(card.Id));
+            if (summary is not null)
             {
-                lines.Add(Layout.Builder.Text($"{(unfolded ? "▾" : "▸")} Detail", 11f, Dim)
-                    .BgHover(CardHover)
-                    .Follows(new HitResult.ButtonHit($"card:{card.Id}:detail"), _ => ToggleDetail(card.Id))
+                var fold = Layout.Builder.Text($"{(unfolded ? "▾" : "▸")} Detail", 11f, Dim).BgHover(CardHover);
+                lines.Add((toast
+                    ? fold.Follows(new HitResult.ButtonHit($"toast:{card.Id}:detail"), _ => toPage?.Invoke())
+                    : fold.Follows(new HitResult.ButtonHit($"card:{card.Id}:detail"), _ => ToggleDetail(card.Id)))
                     .RowH(20f));
             }
             if (unfolded)
             {
-                if (full && summary is not null)
-                {
-                    // No fold above it to set it off: a gap, so the detail reads as its own part under the summary's list.
-                    lines.Add(Layout.Builder.Spacer().RowH(6f));
-                }
                 // Wraps within the panel, three lines at most (eight on a merge's); an explicit newline stays a break.
                 var cap = DetailLinesOf(card);
                 if (card.Kind == CardKinds.WatchtowerAsk || full)
@@ -1074,7 +1102,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
             }
         }
         // The one image the node keeps for the card (an overlap's screenshot): a thumbnail under the detail, a click opens it full size.
-        if (card.Attachment is { Length: > 0 } image && card.AttachmentExt is { Length: > 0 } imageExt)
+        if (!toast && card.Attachment is { Length: > 0 } image && card.AttachmentExt is { Length: > 0 } imageExt)
         {
             lines.Add(Layout.Builder.Spacer().RowH(4f));
             lines.Add(Gallery.Single($"card:{card.Id}", new AttachmentRef(image, ImageTitle, imageExt, node),
@@ -1089,13 +1117,24 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
             lines.Add(ideaLinks);
         }
         // What the node said to the last button pressed here, when it refused: on the card, never only in a log.
-        var pressKey = PressKey(card);
+        var pressKey = PressKeyOf(nodeLabel, card.Id);
         var working = Presses.PendingOf(pressKey);
         // An answer to this card that is underway (#792): said where the buttons are, whoever pressed it, and its buttons are dead.
         var answering = closed || merged ? null : card.Answering;
         // Not drawn while an answer is underway: the line below says what is going on, and a refusal that landed before the stream showed
         // the answer's end is drawn once it does.
-        if (answering is null && Presses.RefusalLine(pressKey, 11f, Ring, DetailLines, LineChars) is { } refusal)
+        if (answering is null && toast)
+        {
+            // On the card's own ground (the toast's fill is that ground tinted by the severity, which no red of the night palette reads on at AA),
+            // its ink measured against that ground; three lines, with an ellipsis and the whole text on hover.
+            var colors = NotificationsHost.Colors();
+            if (Presses.RefusalLine(pressKey, 12f, Contrast.Readable(Palette.Current.Held, colors.Card, Palette.Current.Failed), 3) is { } toastRefusal)
+            {
+                var line = toastRefusal.Pad(6f, 3f).Bg(colors.Card);
+                lines.Add(Presses.RefusedOf(pressKey) is { Length: > 0 } why ? line.WithTooltip(why) : line);
+            }
+        }
+        else if (answering is null && Presses.RefusalLine(pressKey, 11f, Ring, DetailLines, LineChars) is { } refusal)
         {
             lines.Add(refusal);
             // Drawn once: from now on a card that moves on (closed, answered) takes it with it (see DropStaleRefusals).
@@ -1105,6 +1144,16 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         {
             var underway = answering.Line();
             lines.Add(Whole(WrappedProse.Paragraphs(underway, 11f, Body, DetailLines, LineChars), underway, underway.Length > DetailFits));
+        }
+
+        if (toast)
+        {
+            if (cutShort)
+            {
+                lines.Add(WrappedProse.Of(PilotChrome<TSurface>.ToastCutLabel, 11f, Link, selectable: false)
+                    .Follows(new HitResult.ButtonHit($"toast:{card.Id}:whole"), _ => toPage?.Invoke()));
+            }
+            return Layout.Builder.VStack([.. lines]).WStar();
         }
 
         // The buttons in order, each with whether its label is long enough to be wrapped inside a button of the panel's width, which then has a row of its own.
@@ -1203,11 +1252,13 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         {
             Put(Button("Open", $"card:{card.Id}:open", () => show(card, session)));
         }
-        if (watched is null && !merged && OnChatAbout is { } about)
+        // An event is not a card: it has nothing to chat about.
+        if (watched is null && !merged && !isEvent && OnChatAbout is { } about)
         {
             Put(Button(ChatAboutLabel, $"card:{card.Id}:chat", () => about(card)));
         }
-        if (watched is null && !merged)
+        // A closed card (the history) has nothing left to dismiss: its choices stay as dead buttons, and the one Dismiss a card has is the open card's.
+        if (watched is null && !merged && !(closed && full))
         {
             // Dismiss (a close x) stays a word for want of a glyph: SharpAstro/DIR.Lib#151.
             Put(NodeButton("Dismiss", DismissHit(card), () =>
@@ -1227,38 +1278,57 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         lines.Add(Layout.Builder.Spacer().RowH(6f));
         // Wrapping: a waiting session's card has up to four buttons, more than one line of the panel holds.
         lines.Add(ButtonRows(buttons));
-        if (full)
-        {
-            return Layout.Builder.VStack([.. lines]).WStar().HAuto();
-        }
-
-        // A grid, not a stack with the accent bar beside the content and the content padded: a stack measures each child against its
-        // whole width, taking off neither a sibling's width nor a padding, so the detail and the buttons were measured wider than
-        // they were arranged, and a card whose last button wrapped came out a line short, the button poking out of its bottom edge
-        // (DIR.Lib: Engine.MeasureStack). A grid measures its cells at the width their column is given.
-        return Layout.Builder.Grid(4,
-                Layout.Builder.Spacer().Bg(accent).HStar(),
+        // The frame is the toast's: its fill, edge, radius and padding come from the library's tokens (NotificationsHost.Colors and Style), so a
+        // value changes in one place. A grid, not a stack with the content padded: a stack measures each child against its whole width, taking off
+        // neither a sibling's width nor a padding, so a card whose last button wrapped came out a line short, the button poking out of its
+        // bottom edge (DIR.Lib: Engine.MeasureStack). A grid measures its cells at the width their column is given.
+        // The one inset the frame leaves: the toast's padding, less the border the engine reserves outside the cells.
+        var inset = NotificationsHost.Style.Padding - EdgeWidth;
+        return Layout.Builder.Grid(3,
                 Layout.Builder.Spacer(),
-                Layout.Builder.VStack([.. lines]).Pad(0f, 8f).WStar(),
+                Layout.Builder.VStack([.. lines]).Pad(0f, inset).WStar(),
                 Layout.Builder.Spacer())
             // The frame's width comes out of the inner spacing (the engine reserves a border outside the cells), so the content keeps the
             // width it had unframed and a row of buttons that fit before still fits (Chat about this beside Dismiss at MinWidth).
-            .WithColumns(Layout.Sizing.Fixed(AccentBar), Layout.Sizing.Fixed(CardInset - EdgeWidth), Layout.Sizing.Star(), Layout.Sizing.Fixed(CardInset - EdgeWidth))
+            .WithColumns(Layout.Sizing.Fixed(inset), Layout.Sizing.Star(), Layout.Sizing.Fixed(inset))
             .WithAutoRows()
-            .Bg(!closed && Focused(card) ? FocusBg : CardBg)
-            .Border(Edge, EdgeWidth, CardRadius)
+            .Bg(!closed && Focused(card) ? FocusBg : fill)
+            .Border(closed ? Contrast.Mix(tokens.TintedEdge(severity), tokens.Raised, ClosedTone) : tokens.TintedEdge(severity), EdgeWidth, tokens.CornerRadius)
             .WStar()
             .HAuto();
     }
+
+    /// <summary>A toast's card body (<see cref="CardFit.Toast"/>): the same parts as the panel's and the page's, without buttons, which the library's row carries.</summary>
+    internal Layout.Node ToastCard(CardRow card, string? nodeName, bool cutShort, Action toPage) =>
+        Card(card, null, fit: CardFit.Toast, nodeName: nodeName, cutShort: cutShort, toPage: toPage);
 
     /// <summary>
     /// The whole of a card for the Notifications page's row, every choice live; <paramref name="closed"/> for a card no longer open (the
     /// history), drawn as it was with its buttons dead.
     /// </summary>
-    internal Layout.Node FullCard(CardRow card, NodeMark? node, bool closed) => Card(card, node, closed || _closed.Contains(card), full: true);
+    internal Layout.Node FullCard(CardRow card, NodeMark? node, bool closed) => Card(card, node, closed || _closed.Contains(card), fit: CardFit.Page);
+
+    /// <summary>
+    /// A feed notification with no card (a pilot event: a job ended, a flight landed) drawn by the same component, from its title, text, node and time,
+    /// closed and dimmed like any history card.
+    /// </summary>
+    internal Layout.Node EventCard(string title, string text, string? nodeName, DateTimeOffset at, string when, string id, NotificationSeverity severity) =>
+        Card(new CardRow { Id = "event" + id, Bin = CardBin.ForYou, Kind = "event", Subject = "event", Title = title, Summary = text.Length > 0 ? text : null, At = at, State = CardState.Closed },
+            null, closed: true, fit: CardFit.Page, nodeName: nodeName, kindWord: "event", when: when, severityOf: severity, isEvent: true);
+
+    private static RGBAColor32 SeverityInk(NotificationSeverity severity) => severity switch
+    {
+        NotificationSeverity.Error => Ring,
+        NotificationSeverity.Warn => Ring,
+        NotificationSeverity.Success => Live,
+        _ => ForYou,
+    };
+
+    /// <summary>The panel's card (<see cref="CardFit.Panel"/>): the one place the panel builds it, and what the tests build.</summary>
+    internal Layout.Node PanelCard(CardRow card, NodeMark? node, bool closed = false) => Card(card, node, closed, fit: CardFit.Panel);
 
     /// <summary>The card's title, wrapped to <see cref="TitleLines"/> lines, with the whole text on hover where the cap could cut it.</summary>
-    private Layout.Node Title(CardRow card, Func<float, Func<string, Layout.Node?>> linker)
+    private Layout.Node Title(CardRow card, Func<float, Func<string, Layout.Node?>> linker, RGBAColor32 ink)
     {
         // The whole title is on hover where the cap (three lines) could cut it.
         var cut = card.Title.Length > TitleFits;
@@ -1278,7 +1348,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
                     .Follows(new HitResult.ButtonHit($"card:{card.Id}:title"), _ => (inApp ? OnGoTo : OnOpen)?.Invoke(titleLink)), titleLink),
                 inApp ? "" : Followable.Away, LineChars, IsHovered(new HitResult.ButtonHit($"card:{card.Id}:title")) ? CardHover : null), card.Title, cut);
         }
-        return Whole(WrappedProse.Of(Titled(card), 14f, Bright, TitleLines, linker(14f), lineChars: LineChars), card.Title, cut);
+        return Whole(WrappedProse.Of(Titled(card), 14f, ink, TitleLines, linker(14f), lineChars: LineChars), card.Title, cut);
     }
 
     /// <summary>
