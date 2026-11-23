@@ -74,13 +74,18 @@ public sealed partial class PrReviews
         {
             // A fixer started on a passing review has had its go at the points its brief listed (ReviewFollowUp.ToMake, the same list): they are
             // acted on, so a point it answered deferred does not start another fixer. A changes-verdict fixer's brief lists none, so none is recorded.
+            // The fixer's session still live: it may push more, so it is left running and no review starts yet; a later sweep looks again once it ends.
+            if (LiveFixerOf(review) is not null)
+            {
+                return;
+            }
             var tried = string.Equals(review.Verdict, "changes", StringComparison.OrdinalIgnoreCase) ? []
                 : ReviewFollowUp.ToMake(review).Select(i => i.Key).ToArray();
             if (tried.Length > 0)
             {
                 state.PutPrReview(review with { FollowUpPoints = [.. review.FollowUpPoints ?? [], .. tried] });
             }
-            if (!await EndFixerAsync(review, cancellationToken))
+            if (!await EndFixerAsync(review, cancellationToken, read.Head))
             {
                 return;
             }
@@ -123,14 +128,35 @@ public sealed partial class PrReviews
     /// </summary>
     private async Task<string?> LeftWorkAsync(PrReviewRow review, CancellationToken cancellationToken)
     {
-        if (review.FixWorktree is not { } worktree || review.FixWorktreeBorrowed == true || !Directory.Exists(worktree))
+        if (review.FixWorktree is not { } worktree || review.FixWorktreeBorrowed == true)
+        {
+            return null;
+        }
+        return (await WorkPastAsync(worktree, review.Head, cancellationToken))?.Line;
+    }
+
+    /// <summary>What a worktree holds that the PR does not have: its commits past <c>head</c> and its uncommitted files, as a line and as counts.</summary>
+    private sealed record WorkPast(string Line, int Commits, int Files);
+
+    /// <summary>
+    /// The work in <paramref name="worktree"/> past <paramref name="head"/> (the PR's head): commits not on it and uncommitted files; null when
+    /// nothing (or no folder, or git cannot read it).
+    /// </summary>
+    private async Task<WorkPast?> WorkPastAsync(string worktree, string head, CancellationToken cancellationToken)
+    {
+        if (!Directory.Exists(worktree))
         {
             return null;
         }
         try
         {
             var status = await git.RunAsync(["status", "--porcelain"], worktree, cancellationToken);
-            var ahead = await git.RunAsync(["log", "--format=%h %s", $"{review.Head}..HEAD"], worktree, cancellationToken);
+            var ahead = await git.RunAsync(["log", "--format=%h %s", $"{head}..HEAD"], worktree, cancellationToken);
+            if (!ahead.Ok)
+            {
+                // The PR's head is not in this clone (someone else pushed it): what HEAD has that no remote branch has is what is not pushed.
+                ahead = await git.RunAsync(["log", "--format=%h %s", "HEAD", "--not", "--remotes"], worktree, cancellationToken);
+            }
             var files = status.Ok ? status.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) : [];
             var commits = ahead.Ok ? ahead.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) : [];
             var parts = new List<string>();
@@ -142,7 +168,7 @@ public sealed partial class PrReviews
             {
                 parts.Add($"{files.Length} file{(files.Length == 1 ? "" : "s")} not committed ({string.Join(", ", files.Take(5).Select(f => f.Length > 3 ? f[3..] : f))}{(files.Length > 5 ? ", ..." : "")})");
             }
-            return parts.Count > 0 ? string.Join(", and ", parts) : null;
+            return parts.Count > 0 ? new WorkPast(string.Join(", and ", parts), commits.Length, files.Length) : null;
         }
         catch (Exception ex) when (ex is FlightException or System.ComponentModel.Win32Exception or IOException)
         {
@@ -161,13 +187,18 @@ public sealed partial class PrReviews
     /// opened as a follow-up PR against the same base, which is reviewed as any PR. Nothing past the head, nothing to do. A push or a
     /// create that fails is a For-you card naming the commit and the local branch that keeps it. Never a force push.
     /// </summary>
-    private async Task FollowUpAsync(PrRef pr, PrReviewRow review, PullRequest read, CancellationToken cancellationToken)
+    private async Task FollowUpAsync(PrRef pr, PrReviewRow review, PullRequest read, CancellationToken cancellationToken, string? followWorktree = null)
     {
-        var worktree = review.FixWorktree!;
+        var worktree = followWorktree ?? review.FixWorktree!;
         var subject = Verbs.PrTarget(review.Repo, review.Number);
         if (review.FixerJob is { } job)
         {
             await StopQuietly(job, cancellationToken);
+        }
+        // A live fixer of the PR the row does not name (pilot #1291, tianwen#2470) is stopped the same way before its commits are read.
+        if (LiveFixerOf(review) is { } live && !string.Equals(live.Id, review.FixerJob, StringComparison.Ordinal))
+        {
+            await StopQuietly(live.Id, cancellationToken);
         }
         var merged = read.Head.Length > 0 ? read.Head : review.Head;
         var baseBranch = read.Base.Length > 0 ? read.Base : "main";
@@ -245,14 +276,18 @@ public sealed partial class PrReviews
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> _followedUp = new(StringComparer.Ordinal);
 
     /// <summary>Stops a PR's fixer and removes its worktree, then clears the fix fields; false when the worktree is held, said on a card and tried again.</summary>
-    private async Task<bool> EndFixerAsync(PrReviewRow review, CancellationToken cancellationToken)
+    private async Task<bool> EndFixerAsync(PrReviewRow review, CancellationToken cancellationToken, string? prHead = null)
     {
         if (review.FixerJob is { } job)
         {
             await StopQuietly(job, cancellationToken);
         }
+        // With the PR's current head given (an open PR), a worktree holding commits past it or uncommitted files is kept, never force-removed: the
+        // hold (FixerHoldAsync) pushes the commits or rings for it (pilot #1291).
+        var keep = prHead is not null && review.FixWorktree is { } kept && review.FixWorktreeBorrowed != true
+            && await WorkPastAsync(kept, prHead, cancellationToken) is not null;
         // A borrowed worktree is someone else's: only the row's fix fields are cleared.
-        if (review.FixWorktree is { } worktree && review.FixWorktreeBorrowed != true)
+        if (!keep && review.FixWorktree is { } worktree && review.FixWorktreeBorrowed != true)
         {
             string? held;
             try

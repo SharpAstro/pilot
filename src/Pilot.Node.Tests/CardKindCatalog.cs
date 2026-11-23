@@ -48,6 +48,7 @@ internal static class CardKindCatalog
     private const string Reviews = "Flights/PrReviews.cs";
     private const string PrReviewsFixer = "Flights/PrReviews.Fixer.cs";
     private const string PrReviewsFixerRounds = "Flights/PrReviews.FixerRounds.cs";
+    private const string PrReviewsFixerHold = "Flights/PrReviews.FixerHold.cs";
     private const string PrReviewsQueue = "Flights/PrReviews.Queue.cs";
     private const string PrReviewsLand = "Flights/PrReviews.Land.cs";
     private const string PrReviewsStart = "Flights/PrReviews.Start.cs";
@@ -200,7 +201,8 @@ internal static class CardKindCatalog
         // PRs of the person's own, reviewed and rechecked.
         new("pr-review-ready", "ForYou", [PrReviewsVerdicts], "PrReviewTests.OnlyTheReviewersVerdictRaisesTheCardAndTheWorktreeGoesWhenTheCardCloses"),
         new("pr-review-waiting", "Handled|ForYou", [Reviews, PrReviewsSweep], "AdmissionReviewTests.APrReviewAtTheOpusCapAnswersQueuedLeavesOneHandledCardAndStartsOnTheSweepAndSaysItOnce"),
-        new("pr-fix-pushed-unreviewed", "ForYou", [PrReviewsFixerRounds], "PrRecheckTests.TheFixersPushWhoseReviewCouldNotStartStaysAnOpenCardAfterTheSweep"),
+        new("pr-fix-pushed-unreviewed", "ForYou", [PrReviewsFixerRounds, PrReviewsFixerHold], "PrRecheckTests.TheFixersPushWhoseReviewCouldNotStartStaysAnOpenCardAfterTheSweep"),
+        new("pr-fixer-work-held", "ForYou", [PrReviewsFixerHold], "FixerHoldTests.FilesLeftUncommittedInTheFixWorktreeHoldThePrWithOneCard"),
         new("pr-review-started", "Handled", [PrReviewsStart], "PrReviewTests.APrInARepoWithACloneIsReviewedInThatClonePinnedAtItsHead"),
         new("pr-review-left", "Handled", [PrReviewsSweep], "RemovalQueueTests.AReviewWhoseWorktreeIsHeldClosesAtOnceWithOneHandledLineAndAQueueEntry"),
         new("pr-review-restarted", "Handled", [PrReviewsSweep], "PrReviewTests.AReviewingRowWhoseSessionIsGoneAfterARestartIsStartedAfreshAtTheFirstSweepOnce"),

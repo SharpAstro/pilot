@@ -1162,9 +1162,13 @@ internal sealed class FakeGitHub : IGitHub
     /// <summary>How many times each PR, by <c>owner/repo#n</c>, was read by number.</summary>
     public ConcurrentDictionary<string, int> PrReads { get; } = new(StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>Run as each PullRequestOfAsync begins, with <c>owner/name#number</c>: a test moves a PR's head the moment the node has pushed to it, as GitHub does. Null does nothing.</summary>
+    public Action<string>? OnPullRequestRead { get; set; }
+
     public Task<PullRequest> PullRequestOfAsync(string repo, int number, CancellationToken cancellationToken)
     {
         PrReads.AddOrUpdate($"{repo}#{number}", 1, (_, n) => n + 1);
+        OnPullRequestRead?.Invoke($"{repo}#{number}");
         return Prs.TryGetValue($"{repo}#{number}", out var pr) ? Task.FromResult(pr) : Task.FromException<PullRequest>(new FlightException($"gh could not read {repo}#{number}: not found"));
     }
 

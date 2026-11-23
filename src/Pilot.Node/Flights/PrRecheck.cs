@@ -574,7 +574,12 @@ public sealed class PrRecheck : IHostedService
             // The queue watch decides once; a recheck is a new ask, so what it noted before is cleared and it decides again.
             var fresh = review with { QueueNote = null };
             state.PutPrReview(fresh);
-            await reviews.QueueWhenGreenAsync(fresh, cancellationToken);
+            var held = await reviews.QueueWhenGreenAsync(fresh, cancellationToken);
+            if (held is not null)
+            {
+                // Held for its fixer (pilot #1291): the hold's own words, not "its checks are still running".
+                return await FinishAsync(entry, pr, $"nothing queued at {head}: {held}", stands, cancellationToken);
+            }
             var now = reviews.Of(new PrRef(entry.Repo.Split('/')[0], entry.Repo.Split('/')[1], entry.Number)) ?? fresh;
             if (now.QueuedAt is not null)
             {

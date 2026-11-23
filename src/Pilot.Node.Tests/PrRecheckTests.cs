@@ -656,6 +656,25 @@ public sealed class PrRecheckTests2 :PrRecheckTestsBase
     }
 
     [Fact]
+    public async Task AReviewedPrHeldForItsLiveFixerSaysSoNotThatItsChecksAreRunning()
+    {
+        // pilot #1291: a fixer of PR 7 the row does not name is still working, so the PR is held; the recheck names the fixer.
+        await ReviewedAsync();
+        _github.Checks = ChoiceStatus.Pending;
+        _state.PutSession(new SessionRow
+        {
+            Id = "feed1234", SessionId = "feed1234-0000", Name = "du1-fix-widget-7", Kind = SessionKind.Background, Cwd = "/x", Role = SessionRole.Fixer,
+            Pr = 7, Repo = "widget", ContextTokens = 0, ContextWindow = 1, State = SessionState.Working, SpendWeighted = 0, StartedAt = DateTimeOffset.UtcNow,
+        });
+
+        await LookAsync();
+
+        _github.Merged.ShouldBeEmpty();
+        Handled().ShouldBe([$"recheck of widget#7: nothing queued at {Short(_head)}: its fixer du1-fix-widget-7 is still working on it"]);
+        _github.Labels[7].Keys.ShouldBe([PilotMarks.Passed]);
+    }
+
+    [Fact]
     public async Task AFlightsPrBehindItsBaseHasItMergedInAndItsPassedReviewCarriedToTheNewHead()
     {
         var flight = await PassedFlightAsync();
