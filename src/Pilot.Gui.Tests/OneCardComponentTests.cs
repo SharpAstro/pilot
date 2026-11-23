@@ -70,11 +70,12 @@ public sealed class OneCardComponentTests
         ArrangedText.Concat(arranged).ShouldNotContain("no turn for 11 min", Case.Sensitive);
         if (fit != Fit.Toast)
         {
-            Buttons.Select(b => TopOf(arranged, b)).ShouldAllBe(t => t > tops[^1], $"{fit}: the card's own buttons follow the fold");
+            var fold = tops[^1];
+            Buttons.Select(b => TopOf(arranged, b)).All(t => t > fold).ShouldBeTrue($"{fit}: the card's own buttons follow the fold");
         }
         else
         {
-            Buttons.Select(b => TopOf(arranged, b)).ShouldAllBe(float.IsNaN, "the toast's buttons are the library's row, not the card's");
+            Buttons.Select(b => TopOf(arranged, b)).All(float.IsNaN).ShouldBeTrue("the toast's buttons are the library's row, not the card's");
         }
     }
 
