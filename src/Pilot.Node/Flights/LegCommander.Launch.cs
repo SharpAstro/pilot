@@ -337,13 +337,37 @@ public sealed partial class LegCommander
             if (state.Legs(flight.Code).FirstOrDefault(l => l.Name == leg.Name) is { } now && now.Queued != why)
             {
                 state.PutLeg(now with { Queued = why });
+                if (why is null && now.Queued is not null)
+                {
+                    StampAdmitted(flight.Code);
+                }
             }
         }
         else
         {
-            state.UpdateFlight(flight.Code, f => f.Queued == why ? f : f with { Queued = why });
+            var ended = false;
+            state.UpdateFlight(flight.Code, f =>
+            {
+                if (f.Queued == why)
+                {
+                    return f;
+                }
+                ended = why is null && f.Queued is not null;
+                return f with { Queued = why };
+            });
+            if (ended)
+            {
+                StampAdmitted(flight.Code);
+            }
         }
         return why is not null;
+    }
+
+    /// <summary>PIL1321: records that the flight's admission wait ended now (<see cref="FlightRow.AdmittedAt"/>), for the CI red clock.</summary>
+    internal void StampAdmitted(string code)
+    {
+        var at = time.GetUtcNow();
+        state.UpdateFlight(code, f => f with { AdmittedAt = at });
     }
 
     /// <summary>

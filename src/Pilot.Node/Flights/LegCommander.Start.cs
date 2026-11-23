@@ -299,6 +299,10 @@ public sealed partial class LegCommander
                 // A flight in a holding pattern waits on this leg now: the hold says so, and its watch covers the wait.
                 HoldForLeg(flight.Code, leg.Name);
                 state.PutLeg(now with { State = LegState.Flying, AttemptModel = attemptModel, AttemptEffort = attemptEffort, Worker = worker, WorkerJob = job, StartedAt = time.GetUtcNow(), StartHead = startHead, TickerJob = null, Report = resumed, Wait = null, Queued = null });
+                if (now.Queued is not null)
+                {
+                    StampAdmitted(flight.Code);
+                }
                 state.CloseCardsAbout(target, $"{flight.Code}/{leg.Name} started", NoGoKind, ValidatingKind);
                 // A ring that this step could not be taken by itself is moot once it is.
                 state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), $"{flight.Code}/{leg.Name} started", NextStepKind);
