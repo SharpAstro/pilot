@@ -1081,7 +1081,8 @@ public sealed class PrChecks(NodeState state, IGitHub gitHub, TimeProvider time,
     /// <c>flight-ci-budget</c> or red for more than three hours the flight is capped: its pushes are refused with the numbers, and one
     /// For-you card rings the owner with continue, land what is green, or split. The card is raised once for a cap; the owner's
     /// <c>continue</c> lifts the cap for one more budget, and a budget raised in the settings lifts it by itself. PIL1023: the red
-    /// bound does not run while the flight waits on a person and restarts when that wait ends (<see cref="CiBudgets.WaitOnPerson"/>); a cap
+    /// bound does not run while the flight waits on a person and restarts when that wait ends (<see cref="CiBudgets.WaitOnPerson"/>); PIL1321: a wait
+    /// for admission in the queue counts the same (<see cref="CiBudgets.WaitInQueue"/>); a cap
     /// already set stays until answered, only a new red cap is held back.
     /// </summary>
     internal async Task LookAtCiAsync(CancellationToken cancellationToken)
@@ -1123,7 +1124,10 @@ public sealed class PrChecks(NodeState state, IGitHub gitHub, TimeProvider time,
             var counted = CiBudgets.Count(runs, current.Ci, now, noModel);
             // PIL1023: a flight waiting on a person (a review loop card, another card for the owner) does not run its red clock.
             // A cap already set is judged as before: only a new red cap is held back, so a card opening later never lifts a stop nobody answered.
-            var wait = counted.CappedWhy is null ? CiBudgets.WaitOnPerson(state.Cards(), flight.Code, counted.RedSince) : default;
+            // PIL1321: so does a flight queued for admission (its repo held, the Opus cap), which could not fly to fix anything.
+            var wait = counted.CappedWhy is null
+                ? CiBudgets.Combine(CiBudgets.WaitOnPerson(state.Cards(), flight.Code, counted.RedSince), CiBudgets.WaitInQueue(current, state.Legs(flight.Code), counted.RedSince))
+                : default;
             var why = CiBudgets.Why(counted, budget, now, wait);
             var subject = Verbs.FlightTarget(flight.Code);
             if (why is not null && counted.CappedWhy is null)

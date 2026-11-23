@@ -235,6 +235,12 @@ public sealed record FlightRow
     public string? Queued { get; init; }
 
     /// <summary>
+    /// PIL1321: when the flight's admission wait (its own or a leg's <see cref="Queued"/>) last ended, so the CI red clock counts again from then.
+    /// Null before any wait ended. Nullable, so a store written before it reads as no wait.
+    /// </summary>
+    public DateTimeOffset? AdmittedAt { get; init; }
+
+    /// <summary>
     /// Where GitHub disagrees with what the node set or read (<c>pilot: passed was removed on GitHub</c>, <c>the head moved to
     /// beef1111 since the review read cafe0000</c>), as of the last look; null when they agree. Clients show it; the node
     /// puts nothing right by itself, since the person who changed it may have meant to.
@@ -449,7 +455,7 @@ public sealed record FlightCi
     /// <summary>Set while the node has stopped pushing for the flight: why, in numbers (<c>4.3 runner-hours of 4, 31 runs, 9 failed</c>). Null while it may push.</summary>
     public string? CappedWhy { get; init; }
 
-    /// <summary>When the owner last said <c>continue</c>: a red stop counts from the latest of this, <see cref="RedSince"/> and the end of the flight's last wait on a person (PIL1023).</summary>
+    /// <summary>When the owner last said <c>continue</c>: a red stop counts from the latest of this, <see cref="RedSince"/> and the end of the flight's last wait on a person (PIL1023) or for admission in the queue (PIL1321).</summary>
     public DateTimeOffset? RedAcknowledgedAt { get; init; }
 
     /// <summary>When it was capped.</summary>

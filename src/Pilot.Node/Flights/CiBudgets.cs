@@ -107,6 +107,22 @@ public static class CiBudgets
         return new PersonWait(open, ended);
     }
 
+    /// <summary>
+    /// PIL1321: whether the flight waits for admission now (its repo held by another flight, or the Opus cap: <see cref="FlightPhases.QueuedWhy"/>
+    /// non-null, no leg flying), and when its last such wait ended (<see cref="FlightRow.AdmittedAt"/>, when after <paramref name="since"/>).
+    /// A flight that could not fly cannot fix its CI, so the red clock counts again from its admission, as after a person wait.
+    /// </summary>
+    public static PersonWait WaitInQueue(FlightRow flight, IEnumerable<LegRow> legs, DateTimeOffset? since)
+    {
+        var open = FlightPhases.QueuedWhy(flight, legs) is not null;
+        DateTimeOffset? ended = flight.AdmittedAt is { } admitted && (since is null || admitted > since) ? admitted : null;
+        return new PersonWait(open, ended);
+    }
+
+    /// <summary>Both waits as one: waiting while either is open, and the later of the two ends.</summary>
+    public static PersonWait Combine(PersonWait a, PersonWait b) =>
+        new(a.Waiting || b.Waiting, a.LastEnded is { } x && (b.LastEnded is not { } y || x > y) ? a.LastEnded : b.LastEnded);
+
     /// <summary>Whether a flight waits on a person now, and when the latest such wait ended (null if none did).</summary>
     public readonly record struct PersonWait(bool Waiting, DateTimeOffset? LastEnded);
 
@@ -114,7 +130,7 @@ public static class CiBudgets
     /// Why the flight's pushes should stop, in numbers, or null while it is within its budget: its runner-hours past
     /// <paramref name="budgetHours"/> times (1 + the extra budgets granted), or its CI red for more than <see cref="RedBound"/>. The red
     /// clock counts from the latest of when it went red, when the owner last said continue, and when the flight's last wait on a person
-    /// ended (<paramref name="wait"/>, PIL1023); while a wait is open it does not run, so no red reason. Runner-hours ignore the wait.
+    /// ended (<paramref name="wait"/>, PIL1023; a wait for admission in the queue counts too, PIL1321); while a wait is open it does not run, so no red reason. Runner-hours ignore the wait.
     /// </summary>
     public static string? Why(FlightCi ci, int budgetHours, DateTimeOffset now, PersonWait wait = default)
     {
