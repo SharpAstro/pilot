@@ -48,7 +48,7 @@ public sealed record CiRun(long Id, string Name, string Status, string? Conclusi
 public sealed record MergeQueueState(string State, string Head, bool Queued, int? Position = null, DateTimeOffset? RemovedAt = null, string? RemovedReason = null);
 
 /// <summary>A failed check of a PR: its name, its page and the workflow run behind it (null for a check that is no workflow run).</summary>
-public sealed record FailedCheck(string Name, string? Link, long? RunId);
+public sealed record FailedCheck(string Name, string? Link, long? RunId, DateTimeOffset? CompletedAt = null);
 
 /// <summary>
 /// Where a PR's checks stand: <paramref name="Status"/> a <see cref="ChoiceStatus"/> (failing, pending, passing),

@@ -75,20 +75,20 @@ public readonly record struct OutsideReviewAnswer(bool Known, NoModelReview? NoM
 }
 
 /// <summary>
-/// The node's memory of which failed runs never reached a model. A completed run's log does not change, so each run id's log is read once
-/// and the answer kept; a read gh could not make is not kept and is asked again at the next look, and is never read as no-model.
+/// The node's memory of which failed runs never reached a model. A completed attempt's log does not change, so each run id's log is read once per attempt
+/// (the run id and the time the attempt completed: a rerun, by anyone, keeps the id and gets a new time and a new log) and the answer kept; a read gh could not make is not kept and is asked again at the next look, and is never read as no-model.
 /// </summary>
 public sealed class OutsideReviews(IGitHub github, TimeProvider? time = null)
 {
     private readonly TimeProvider _time = time ?? TimeProvider.System;
-    private readonly Dictionary<long, NoModelReview?> _answers = [];
+    private readonly Dictionary<(long RunId, DateTimeOffset? Attempt), NoModelReview?> _answers = [];
     private readonly Lock _lock = new();
 
-    public async Task<OutsideReviewAnswer> AskAsync(string repoPath, long runId, CancellationToken cancellationToken)
+    public async Task<OutsideReviewAnswer> AskAsync(string repoPath, long runId, DateTimeOffset? attempt, CancellationToken cancellationToken)
     {
         lock (_lock)
         {
-            if (_answers.TryGetValue(runId, out var known))
+            if (_answers.TryGetValue((runId, attempt), out var known))
             {
                 return new OutsideReviewAnswer(true, known);
             }
@@ -109,7 +109,7 @@ public sealed class OutsideReviews(IGitHub github, TimeProvider? time = null)
         var verdict = OutsideReview.Read(log, _time.GetUtcNow());
         lock (_lock)
         {
-            _answers[runId] = verdict;
+            _answers[(runId, attempt)] = verdict;
         }
         return new OutsideReviewAnswer(true, verdict);
     }
@@ -119,7 +119,10 @@ public sealed class OutsideReviews(IGitHub github, TimeProvider? time = null)
     {
         lock (_lock)
         {
-            _answers.Remove(runId);
+            foreach (var key in _answers.Keys.Where(k => k.RunId == runId).ToList())
+            {
+                _answers.Remove(key);
+            }
         }
     }
 }

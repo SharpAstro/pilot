@@ -94,6 +94,14 @@ internal sealed class ShiftedClock : TimeProvider
     public override DateTimeOffset GetUtcNow() => TimeProvider.System.GetUtcNow() + TimeSpan.FromTicks(Interlocked.Read(ref _shiftTicks));
 
     public void Advance(TimeSpan span) => Interlocked.Add(ref _shiftTicks, span.Ticks);
+
+    /// <summary>Moves on to the next <paramref name="hour"/> o'clock UTC, so a test about a time of day does not depend on the real one.</summary>
+    public void AdvanceToNext(int hour)
+    {
+        var now = GetUtcNow().ToUniversalTime();
+        var at = new DateTimeOffset(now.Year, now.Month, now.Day, hour, 0, 0, TimeSpan.Zero);
+        Advance((at > now ? at : at.AddDays(1)) - now);
+    }
 }
 
 internal sealed class FakeChecks : ICheckRunner

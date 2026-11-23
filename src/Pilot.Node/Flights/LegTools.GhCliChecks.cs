@@ -368,7 +368,7 @@ public sealed partial class GhCli
 
     public async Task<FailedCheck[]> FailedChecksAsync(string repoPath, int number, CancellationToken cancellationToken)
     {
-        var (_, output, _) = await RunAsync(["pr", "checks", number.ToString(System.Globalization.CultureInfo.InvariantCulture), "--json", ChecksFields], repoPath, cancellationToken);
+        var (_, output, _) = await RunAsync(["pr", "checks", number.ToString(System.Globalization.CultureInfo.InvariantCulture), "--json", ChecksFields + ",completedAt"], repoPath, cancellationToken);
         return ParseFailedChecks(output);
     }
 
@@ -384,7 +384,7 @@ public sealed partial class GhCli
                 {
                     var link = TextOf(c, "link");
                     var m = link is null ? Match.Empty : Regex.Match(link, @"/actions/runs/(\d+)");
-                    return new FailedCheck(TextOf(c, "name") ?? "", link, m.Success ? long.Parse(m.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture) : null);
+                    return new FailedCheck(TextOf(c, "name") ?? "", link, m.Success ? long.Parse(m.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture) : null, StampOf(c, "completedAt"));
                 })];
         }
         catch (JsonException)

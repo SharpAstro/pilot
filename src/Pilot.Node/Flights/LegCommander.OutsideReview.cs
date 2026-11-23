@@ -51,7 +51,7 @@ public sealed partial class LegCommander
             {
                 return false;
             }
-            var answer = await _outsideReviews.AskAsync(flight.RepoPath, runId, cancellationToken);
+            var answer = await _outsideReviews.AskAsync(flight.RepoPath, runId, check.CompletedAt, cancellationToken);
             if (!answer.Known || answer.NoModel is not { } review)
             {
                 return false;

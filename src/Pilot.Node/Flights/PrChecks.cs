@@ -1006,7 +1006,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             {
                 foreach (var run in runs.Where(r => r.Conclusion is "failure" or "timed_out" or "startup_failure"))
                 {
-                    var answer = await legs.OutsideReviews.AskAsync(flight.RepoPath, run.Id, cancellationToken);
+                    var answer = await legs.OutsideReviews.AskAsync(flight.RepoPath, run.Id, run.CompletedAt, cancellationToken);
                     if (answer is { Known: true, NoModel: not null })
                     {
                         noModel.Add(run.Id);

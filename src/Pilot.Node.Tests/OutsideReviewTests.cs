@@ -78,13 +78,13 @@ public sealed class OutsideReviewTests
         gh.RunLogs[45029777689] = RealLog();
         gh.RunLogs[7] = "";
         var reviews = new OutsideReviews(gh, new FixedTime(Noon));
-        var first = await reviews.AskAsync("repo", 45029777689, CancellationToken.None);
-        var second = await reviews.AskAsync("repo", 45029777689, CancellationToken.None);
+        var first = await reviews.AskAsync("repo", 45029777689, null, CancellationToken.None);
+        var second = await reviews.AskAsync("repo", 45029777689, null, CancellationToken.None);
         gh.RunLogReads.ShouldBe(1);
         first.Known.ShouldBeTrue();
         first.NoModel.ShouldNotBeNull();
         second.NoModel.ShouldBe(first.NoModel);
-        await reviews.AskAsync("repo", 7, CancellationToken.None);
+        await reviews.AskAsync("repo", 7, null, CancellationToken.None);
         gh.RunLogReads.ShouldBe(2);
     }
 
@@ -94,8 +94,8 @@ public sealed class OutsideReviewTests
         var gh = new FakeGitHub();
         gh.RunLogs[1] = "test\tRun\t2026-11-22T14:06:41.1Z Failed!";
         var reviews = new OutsideReviews(gh, new FixedTime(Noon));
-        (await reviews.AskAsync("repo", 1, CancellationToken.None)).ShouldBe(new OutsideReviewAnswer(true, null));
-        await reviews.AskAsync("repo", 1, CancellationToken.None);
+        (await reviews.AskAsync("repo", 1, null, CancellationToken.None)).ShouldBe(new OutsideReviewAnswer(true, null));
+        await reviews.AskAsync("repo", 1, null, CancellationToken.None);
         gh.RunLogReads.ShouldBe(1);
     }
 
@@ -104,12 +104,12 @@ public sealed class OutsideReviewTests
     {
         var gh = new FakeGitHub();
         var reviews = new OutsideReviews(gh, new FixedTime(Noon));
-        (await reviews.AskAsync("repo", 5, CancellationToken.None)).ShouldBe(OutsideReviewAnswer.Unknown);
+        (await reviews.AskAsync("repo", 5, null, CancellationToken.None)).ShouldBe(OutsideReviewAnswer.Unknown);
         gh.RunLogFails = true;
-        (await reviews.AskAsync("repo", 5, CancellationToken.None)).ShouldBe(OutsideReviewAnswer.Unknown);
+        (await reviews.AskAsync("repo", 5, null, CancellationToken.None)).ShouldBe(OutsideReviewAnswer.Unknown);
         gh.RunLogFails = false;
         gh.RunLogs[5] = RealLog();
-        var answer = await reviews.AskAsync("repo", 5, CancellationToken.None);
+        var answer = await reviews.AskAsync("repo", 5, null, CancellationToken.None);
         gh.RunLogReads.ShouldBe(3);
         answer.Known.ShouldBeTrue();
         answer.NoModel.ShouldNotBeNull();
