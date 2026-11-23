@@ -158,7 +158,8 @@ public sealed class FixFollowUpTests : PrFixTestsBase
 
         _github.Created.ShouldBeEmpty();
         _state.Cards().ShouldNotContain(c => c.Kind == PrReviews.FixFollowUpKind || c.Kind == PrReviews.FixFollowUpFailedKind);
-        PrOrigins.Git(Origin, "for-each-ref", "refs/heads/feature/seven-followup-7").ShouldBeEmpty();
+        // The helper throws on git's non-zero exit, which for rev-parse --verify --quiet is the ref's absence.
+        Should.Throw<InvalidOperationException>(() => PrOrigins.Git(Origin, "rev-parse", "--verify", "--quiet", "refs/heads/feature/seven-followup-7"));
         Row.Fixer.ShouldBeNull();
     }
 
