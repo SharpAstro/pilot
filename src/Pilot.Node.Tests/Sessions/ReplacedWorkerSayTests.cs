@@ -34,13 +34,13 @@ public sealed class ReplacedWorkerSayTests : IDisposable
 
     public void Dispose() => _profile.Dispose();
 
-    private static SessionRow Worker(string sessionId, SessionState state, DateTimeOffset startedAt) => new SessionRow
+    private SessionRow Worker(string sessionId, SessionState state, DateTimeOffset startedAt) => new SessionRow
     {
         Id = sessionId[..8],
         SessionId = sessionId,
         Name = WorkerName,
         Kind = SessionKind.Background,
-        Cwd = "C:\\work\\plane",
+        Cwd = _profile.Folder,
         Role = SessionRole.Worker,
         Flight = Flight,
         Leg = Leg,
