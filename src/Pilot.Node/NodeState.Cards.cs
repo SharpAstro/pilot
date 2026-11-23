@@ -494,8 +494,8 @@ public sealed partial class NodeState
     private static bool IsMergeKind(string kind) => kind is LegCommander.PrReady or LegCommander.MergeFailed;
 
     /// <summary>
-    /// Opens a closed card again, as it was before: an answer whose choice was refused. PIL1290: the cards about it that its close closed
-    /// (outcome <c>&lt;id&gt; closed: ...</c>, by the node) open again too, since the answer they were closed by never stood, and a Handled
+    /// Opens a closed card again, as it was before: an answer whose choice was refused. PIL1290: the cards about it that its close closed, and those
+    /// that closed with them, as the close unwinds chains (outcome <c>&lt;id&gt; closed: ...</c>, by the node) open again too, since the answer they were closed by never stood, and a Handled
     /// line says so beside the one that said they closed.
     /// </summary>
     public void ReopenCard(string id)
@@ -511,15 +511,23 @@ public sealed partial class NodeState
                 }
                 var now = _time.GetUtcNow();
                 Publish(new CardChangedEvent { Seq = _seq + 1, At = now, Card = card with { State = CardState.Open, Outcome = null, ClosedBy = null, ClosedAt = null, Answering = null } });
-                var cascade = $"{id} closed: ";
-                foreach (var about in _cards.Values.Where(c => c.State == CardState.Closed && c.AboutCard == id && c.ClosedBy == "node"
-                    && c.Outcome is { } o && o.StartsWith(cascade, StringComparison.Ordinal)).ToList())
-                {
-                    Publish(new CardChangedEvent { Seq = _seq + 1, At = now, Card = about with { State = CardState.Open, Outcome = null, ClosedBy = null, ClosedAt = null, Answering = null } });
-                    RaiseCardCore(CardBin.Handled, CardKinds.NodeRan, Verbs.CardTarget(about.Id), $"{about.Id} open again with {id}",
-                        $"{about.Id} ({about.Title}) is open again: the answer on {id} ({card.Title}) that closed it was refused.", null, null, null, null, null, null, null, null, null, out _);
-                }
+                ReopenCardsAbout(card, now);
             }
+        }
+    }
+
+    // Unwinds the cascade the close of `closed` ran, a chain as the close does: each card it closed opens, then those that closed with that one.
+    // A card opens once (only a closed one is read), so a cycle ends.
+    private void ReopenCardsAbout(CardRow closed, DateTimeOffset now)
+    {
+        var cascade = $"{closed.Id} closed: ";
+        foreach (var about in _cards.Values.Where(c => c.State == CardState.Closed && c.AboutCard == closed.Id && c.ClosedBy == "node"
+            && c.Outcome is { } o && o.StartsWith(cascade, StringComparison.Ordinal)).ToList())
+        {
+            Publish(new CardChangedEvent { Seq = _seq + 1, At = now, Card = about with { State = CardState.Open, Outcome = null, ClosedBy = null, ClosedAt = null, Answering = null } });
+            RaiseCardCore(CardBin.Handled, CardKinds.NodeRan, Verbs.CardTarget(about.Id), $"{about.Id} open again with {closed.Id}",
+                $"{about.Id} ({about.Title}) is open again: the answer on {closed.Id} ({closed.Title}) that closed it was refused.", null, null, null, null, null, null, null, null, null, out _);
+            ReopenCardsAbout(about, now);
         }
     }
 

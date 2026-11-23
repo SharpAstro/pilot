@@ -1001,7 +1001,12 @@ public sealed partial class NodeCommands(IServiceProvider services, NodeState st
             }
             // One paragraph per sender, replaced by their next ring and capped; the node's own rewrites of the detail keep it (UpdateCard).
             var merged = NodeState.WithRungWords(target.Detail, command.Who, title, detail);
-            state.UpdateCard(id, target.Title, merged, target.Choices, target.Link, bin: bin.Value == CardBin.Ring ? CardBin.Ring : null);
+            // False when nothing changed (the same words again, still to be rung) or the card closed meanwhile: only the second is a refusal.
+            if (!state.UpdateCard(id, target.Title, merged, target.Choices, target.Link, bin: bin.Value == CardBin.Ring ? CardBin.Ring : null)
+                && state.Cards().FirstOrDefault(c => c.Id == id) is not { State: CardState.Open })
+            {
+                return state.Complete(command, $"Card {id} closed meanwhile: it cannot be raised again");
+            }
             if (bin.Value == CardBin.Ring)
             {
                 state.RingAgain(id);

@@ -262,6 +262,8 @@ public sealed class RingAboutCardTests
             await first.StopKeepingFolderAsync();
         }
 
+        // Few deltas, so no compaction ran: the card comes back by replaying the journal, which the line below proves.
+        File.ReadAllText(Path.Combine(folder, "data", "journal.jsonl")).ShouldContain($"\"aboutCard\":\"{aId}\"");
         await using var node = await NodeHarness.StartAsync(Ct, folder: folder);
         node.State.Cards().Single(c => c.Id == ringId).AboutCard.ShouldBe(aId);
 
