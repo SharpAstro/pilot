@@ -186,7 +186,7 @@ public sealed class NoModelReviewTests : ReviewTestsBase
 
         var ci = F(flight.Code).Ci.ShouldNotBeNull();
         ci.Failed.ShouldBe(12);
-        ci.RedSince.ShouldNotBeNull(string.Join(" | ", _github.CiRuns[flight.Branch].Take(4).Select(r => $"{r.Id} {r.Name} {r.Conclusion} {r.CompletedAt:O}")));
+        if (ci.RedSince is null) { throw new InvalidOperationException("DIAG " + ci + " :: " + string.Join(" | ", _github.CiRuns[flight.Branch].Take(4).Select(r => $"{r.Id} {r.Name} {r.Status} {r.Conclusion} {r.CompletedAt:O}"))); }
         ci.CappedWhy.ShouldNotBeNull().ShouldContain("red for");
         _state.Cards().ShouldContain(c => c.Kind == CiBudgets.CapKind);
     }
