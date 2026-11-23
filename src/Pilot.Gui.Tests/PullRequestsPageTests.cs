@@ -306,7 +306,7 @@ public sealed class PullRequestsPageTests
         // so the 4.5:1 of the standard palette cannot hold there; the bar is the 3:1 the other Night chips meet.
         Contrast(PullRequestsView<RgbaImage>.ChipColors(Palette.Night, PullRequestKind.RebaseOnly).Fg, PullRequestsView<RgbaImage>.ChipColors(Palette.Night, PullRequestKind.RebaseOnly).Bg).ShouldBeGreaterThanOrEqualTo(3.0);
 
-        // The capture for the flight's page: the page at this width, in light and in night, written to PILOT_JOB_ARTIFACTS (or the test's captures folder).
+        // The capture for the flight's page: the page at this width, in the Standard palette (a dark theme, not a bright one) and in night, written to PILOT_JOB_ARTIFACTS (or the test's captures folder).
         var dir = Environment.GetEnvironmentVariable("PILOT_JOB_ARTIFACTS") is { Length: > 0 } given ? given : Path.Combine(AppContext.BaseDirectory, "captures");
         Directory.CreateDirectory(dir);
         foreach (var night in new[] { false, true })
@@ -316,7 +316,7 @@ public sealed class PullRequestsPageTests
             chrome.Show(PilotPage.PullRequests);
             chrome.Night.On = night;
             chrome.Render(new SessionsScreen([], "test", Now), null, null, null, null, null, Screen(row), new RectF32(0, 0, width, 700));
-            File.WriteAllBytes(Path.Combine(dir, $"pr-rebase-only-{(night ? "night" : "light")}-{width}.png"), SharpAstro.Png.PngWriter.Encode(shot.Surface.Pixels, (int)width, 700));
+            File.WriteAllBytes(Path.Combine(dir, $"pr-rebase-only-{(night ? "night" : "standard")}-{width}.png"), SharpAstro.Png.PngWriter.Encode(shot.Surface.Pixels, (int)width, 700));
         }
     }
 

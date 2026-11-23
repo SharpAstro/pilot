@@ -475,6 +475,8 @@ public sealed class FlightMapTests
         var contrast = Contrast(p.Flying, p.LandHere);
         if (night)
         {
+            // An absolute floor too: "no dimmer than Dim" alone passes whatever Night's colours become. Flying on LandHere is about 2.7:1 today.
+            contrast.ShouldBeGreaterThanOrEqualTo(2.5, "the handled word is too dim on the Night land");
             contrast.ShouldBeGreaterThanOrEqualTo(Contrast(p.Dim, p.LandHere));
         }
         else
@@ -497,6 +499,6 @@ public sealed class FlightMapTests
         // The capture for the flight's page, written to PILOT_JOB_ARTIFACTS (or the test's captures folder).
         var dir = Environment.GetEnvironmentVariable("PILOT_JOB_ARTIFACTS") is { Length: > 0 } given ? given : Path.Combine(AppContext.BaseDirectory, "captures");
         Directory.CreateDirectory(dir);
-        File.WriteAllBytes(Path.Combine(dir, $"map-rebase-only-{(night ? "night" : "light")}-{width}.png"), SharpAstro.Png.PngWriter.Encode(image.Pixels, width, 800));
+        File.WriteAllBytes(Path.Combine(dir, $"map-rebase-only-{(night ? "night" : "standard")}-{width}.png"), SharpAstro.Png.PngWriter.Encode(image.Pixels, width, 800));
     }
 }
