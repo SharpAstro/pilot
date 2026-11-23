@@ -274,9 +274,11 @@ public sealed class CardKindTests
             {
                 problems.Add($"{entry.Kind}: offers {string.Join(", ", verbs)}, which NodePress presses on other kinds, and is neither NodePressed nor in CardKindCatalog.PersonsOwn with a reason");
             }
-            if (named && (verbs.Count == 0 || string.IsNullOrWhiteSpace(reason)))
+            // A card whose choices are built before the call offers its verbs in its raising files, which is where a named kind is read.
+            var inFiles = asNames.Keys.Any(n => entry.Files.Any(f => Sources.Value.First(s => s.File == f).Source.Contains($"Verbs.{n}", StringComparison.Ordinal)));
+            if (named && (!inFiles || string.IsNullOrWhiteSpace(reason)))
             {
-                problems.Add($"{entry.Kind}: named in CardKindCatalog.PersonsOwn but {(verbs.Count == 0 ? "offers none of NodePress's verbs" : "gives no reason")}");
+                problems.Add($"{entry.Kind}: named in CardKindCatalog.PersonsOwn but {(!inFiles ? "its raising files offer none of NodePress's verbs" : "gives no reason")}");
             }
         }
         foreach (var kind in CardKindCatalog.PersonsOwn.Keys.Where(k => CardKindCatalog.All.All(e => e.Kind != k || e.NodePressed)))
