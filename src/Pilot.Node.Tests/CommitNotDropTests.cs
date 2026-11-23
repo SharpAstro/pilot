@@ -58,7 +58,7 @@ public sealed partial class CommitNotDropTests
     public void TheSummaryOfAStoppedWorkerNamesTheFilesOrHowManyPlusTheFirstFew()
     {
         CardSummaries.Usable(StopGate.Summary("COD54", ["?? notes.txt"])).ShouldBeTrue();
-        StopGate.Summary("COD54", ["?? notes.txt"]).ShouldContain("commit notes.txt and stopped again with it still there");
+        StopGate.Summary("COD54", ["?? notes.txt"]).ShouldContain("commit or delete notes.txt and stopped again with it still there");
 
         var many = StopGate.Summary("COD54", ["?? src/a/b/one.cs", " M two.cs", "A  three.cs", "?? four.cs", "?? five.cs"]);
         many.ShouldContain("5 files, one.cs, two.cs, three.cs and more");
