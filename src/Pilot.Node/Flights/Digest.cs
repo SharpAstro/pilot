@@ -75,7 +75,6 @@ public sealed class Digest(NodeState state, TimeProvider time) : BackgroundServi
         state.CloseCardsAbout(Verbs.NodeTarget, "a newer digest", Kind);
         var card = state.RaiseCard(CardBin.ForYou, Kind, Verbs.NodeTarget, title, detail,
             [new CardChoice { Label = "Mark it read", Verb = Verbs.Dismiss, Target = "" }]);
-        state.AimDismiss(card);
         return card;
     }
 

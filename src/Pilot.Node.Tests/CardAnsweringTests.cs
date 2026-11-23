@@ -59,6 +59,37 @@ public sealed class CardAnsweringTests
         }
     }
 
+    // ---- Mark it read (PIL1294): an empty-target Dismiss choice closes its own card by the answer ----
+
+    [Theory]
+    [InlineData("benchmark", "Mark it read")]
+    [InlineData("digest", "Mark it read")]
+    [InlineData("branch-kept", "Mark it read")]
+    [InlineData("turns-outage", "Mark it read")]
+    [InlineData("account-limit", "Mark it read")]
+    [InlineData("store", "I will fix it")]
+    [InlineData("duplicate", "Keep both")]
+    [InlineData("branch-sweep", "Leave them")]
+    public async Task AnEmptyTargetDismissChoiceClosesItsCardWithItsLabelAndLeavesNoOpenCard(string kind, string label)
+    {
+        await using var node = await NodeHarness.StartAsync(Ct);
+        var card = node.State.RaiseCard(CardBin.ForYou, kind, Verbs.NodeTarget, "t", "d",
+            [new CardChoice { Label = label, Verb = Verbs.Dismiss, Target = "" }]);
+
+        var answered = await Press(node, "cli", card, label);
+
+        answered.Ok.ShouldBeTrue(answered.Error);
+        var closed = node.State.Cards().Single(c => c.Id == card.Id);
+        closed.State.ShouldBe(CardState.Closed);
+        closed.Outcome.ShouldBe(label);
+        node.State.Cards(openOnly: true).ShouldNotContain(c => c.Id == card.Id);
+
+        var dismissed = await node.App.Services.GetRequiredService<NodeCommands>().RunAsync(
+            new CommandRequest { Verb = Verbs.Dismiss, Target = Verbs.CardTarget(card.Id), Who = "cli" }, Ct);
+        dismissed.Ok.ShouldBeFalse();
+        dismissed.Error.ShouldContain("closed already");
+    }
+
     // ---- the card's own state, no node around it ----
 
     [Fact]

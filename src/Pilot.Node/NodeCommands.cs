@@ -783,6 +783,26 @@ public sealed partial class NodeCommands(IServiceProvider services, NodeState st
             return state.Complete(command, null);
         }
 
+        // A choice that dismisses this very card (an empty target, written before the card's id was known, or the card's own target) is
+        // the card's close: run as a command after the close it would find the card closed already and be refused, and the card reopened.
+        if (choice.Verb == Verbs.Dismiss && (choice.Target.Length == 0 || choice.Target == Verbs.CardTarget(card.Id)))
+        {
+            if (card.Answering is { } underway && Get<TimeProvider>().GetUtcNow() - underway.At < Get<LegCommander>().StuckAfter)
+            {
+                return state.Complete(command, $"card {card.Id} is being answered ({underway.Choice}, pressed by {underway.By} at {LocalTime(underway.At)}): wait for its answer, then ask again");
+            }
+            if (!state.CloseCard(card.Id, choice.Label, command.Who))
+            {
+                return ClosedAlready(command, state.Cards().First(c => c.Id == card.Id), args);
+            }
+            RecordCardDecision(command, card, DecisionKinds.Dismiss, choice.Label, "");
+            if (card.Kind == PrReviews.ReadyKind)
+            {
+                await Get<PrReviews>().SweepAsync(cancellationToken);
+            }
+            return state.Complete(command, null);
+        }
+
         // A merge (or a re-run of checks) pressed on a PR card is in progress while it runs, which is seconds of gh calls: the
         // card stays open throughout, on every client, and closes when the thing is done (landing closes it as landed) or turns
         // to say it is armed or queued. A refusal leaves it as it was.
