@@ -260,6 +260,24 @@ public sealed class PrMarksTests2 : PrMarksTestsBase
 {
     [Fact]
     [Trait("Category", "Slow")]
+    public async Task OnlyAConflictingPrIsLabelledConflictsARebaseOnlyOneIsNot()
+    {
+        var flight = await Opened();
+        var open = _github.Pr!;
+
+        // Mergeable but not rebaseable: GitHub's word is MERGEABLE, the node lays it squashed, so there is nothing to fix and no label.
+        await _legs.NoteGitHubAsync(flight.Code, open with { Mergeable = "MERGEABLE", Rebaseable = false }, queued: false, Ct);
+        Pilot(_github.Labels[71]).ShouldBe(["pilot: reviewing"]);
+        F(flight.Code).Review!.LabelOverride.ShouldBeNull();
+
+        // A real conflict still sets it.
+        await _legs.NoteGitHubAsync(flight.Code, open with { Mergeable = "CONFLICTING", Rebaseable = false }, queued: false, Ct);
+        F(flight.Code).Review!.LabelOverride.ShouldBe(PilotMarks.Conflicts);
+        Pilot(_github.Labels[71]).ShouldBe([PilotMarks.Conflicts]);
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
     public async Task AWriteGitHubRefusesIsACardAndNeverFailsTheReviewOrLosesTheVerdict()
     {
         var flight = await Opened();

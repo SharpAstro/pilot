@@ -138,6 +138,42 @@ public sealed partial class GhCli
         }
     }
 
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, (bool Rebases, DateTimeOffset At)> _rebaseBases = new(StringComparer.OrdinalIgnoreCase);
+
+    public async Task<bool> BaseMergesByRebaseAsync(string repoPath, string branch, CancellationToken cancellationToken)
+    {
+        var key = $"{repoPath}\n{branch}";
+        if (_rebaseBases.TryGetValue(key, out var known) && DateTimeOffset.UtcNow - known.At < AutoMergeAllowedFor)
+        {
+            return known.Rebases;
+        }
+        var rebases = MergeMethods.Rebases(await MergeQueueMethodAsync(repoPath, branch, cancellationToken), await AllowedMergeMethodsAsync(repoPath, cancellationToken));
+        _rebaseBases[key] = (rebases, DateTimeOffset.UtcNow);
+        return rebases;
+    }
+
+    /// <summary>
+    /// <see cref="BaseMergesByRebaseAsync"/> for a repo named <c>owner/name</c> rather than found by a clone's folder (the Pull requests
+    /// search reads repos with no clone here); the same two answers, kept for the same while under the slug.
+    /// </summary>
+    private async Task<bool> BaseOfRepoMergesByRebaseAsync(string repo, string branch, CancellationToken cancellationToken)
+    {
+        var key = $"{repo}\n{branch}";
+        if (_rebaseBases.TryGetValue(key, out var known) && DateTimeOffset.UtcNow - known.At < AutoMergeAllowedFor)
+        {
+            return known.Rebases;
+        }
+        var (rulesExit, rules, _) = await RunAsync(["api", $"repos/{repo}/rules/branches/{branch}"], AppContext.BaseDirectory, cancellationToken);
+        var (repoExit, repoJson, _) = await RunAsync(["api", $"repos/{repo}"], AppContext.BaseDirectory, cancellationToken);
+        var rebases = MergeMethods.Rebases(rulesExit == 0 ? ParseMergeQueueMethod(rules) : null, repoExit == 0 ? AllowedMergeMethods.Parse(repoJson) : null);
+        // An answer GitHub did not give is no answer: not kept.
+        if (rulesExit == 0 && repoExit == 0)
+        {
+            _rebaseBases[key] = (rebases, DateTimeOffset.UtcNow);
+        }
+        return rebases;
+    }
+
     public async Task<string?> MergeQueueMethodAsync(string repoPath, string branch, CancellationToken cancellationToken)
     {
         var (exit, rules, _) = await RunAsync(["api", $"repos/{{owner}}/{{repo}}/rules/branches/{branch}"], repoPath, cancellationToken);

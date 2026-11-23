@@ -74,7 +74,16 @@ public sealed partial class GhCli
             PullRequestSearch.Page read;
             try
             {
-                read = PullRequestSearch.Parse(output);
+                // The search already carries canBeRebased: only a PR that is mergeable yet not rebaseable makes the node ask what its base merges by.
+                var rebasing = new HashSet<(string, string)>();
+                foreach (var (repo, baseRef) in PullRequestSearch.NotRebaseable(output))
+                {
+                    if (await BaseOfRepoMergesByRebaseAsync(repo, baseRef, cancellationToken))
+                    {
+                        rebasing.Add((repo, baseRef));
+                    }
+                }
+                read = PullRequestSearch.Parse(output, (repo, baseRef) => baseRef is not null && rebasing.Contains((repo, baseRef)));
             }
             catch (RateLimitedException ex)
             {

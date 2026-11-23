@@ -206,6 +206,41 @@ public sealed class PullRequestsTests : IDisposable
     }
 
     [Fact]
+    public void AMergeablePrThatCannotBeRebasedOnARebaseBaseReadsRebaseOnlyAndItsWordsAreTheOwners()
+    {
+        var merge = GhCli.ReadMergeState(new MergeFacts("OPEN", false, "CLEAN", "MERGEABLE", null, false, [Pass()], false, true));
+        var page = PullRequestSearch.Say(merge, false);
+
+        (page.Kind, page.Label, page.NeedsMe).ShouldBe((PullRequestKind.RebaseOnly, "Conflict (rebase only): known, lands squashed", false));
+        // A wait, not a thing asked of the person: ranked beside the other waits, below a real conflict and below ready.
+        PullRequestStates.Rank(PullRequestKind.RebaseOnly).ShouldBe(PullRequestStates.Rank(PullRequestKind.ChecksRunning));
+        PullRequestStates.Rank(PullRequestKind.RebaseOnly).ShouldBeGreaterThan(PullRequestStates.Rank(PullRequestKind.Conflicts));
+        // A real conflict is still Conflicts and still needs the person.
+        var conflict = PullRequestSearch.Say(GhCli.ReadMergeState(new MergeFacts("OPEN", false, "DIRTY", "CONFLICTING", null, false, [Pass()], false, true)), false);
+        (conflict.Kind, conflict.NeedsMe).ShouldBe((PullRequestKind.Conflicts, true));
+    }
+
+    [Fact]
+    public void TheSearchReadsCanBeRebasedAndAsksTheBaseOnlyOfAPrThatIsMergeableYetNotRebaseable()
+    {
+        var json = SearchWith(mergeable: "MERGEABLE", canBeRebased: "false");
+        PullRequestSearch.NotRebaseable(json).ShouldBe([("x/y", "main")]);
+
+        PullRequestSearch.Parse(json, (repo, baseRef) => repo == "x/y" && baseRef == "main").PullRequests.Single().Kind.ShouldBe(PullRequestKind.RebaseOnly);
+        // A squash base (the lookup says no), or no lookup at all, is a PR that is ready.
+        PullRequestSearch.Parse(json, (_, _) => false).PullRequests.Single().Kind.ShouldBe(PullRequestKind.Ready);
+        PullRequestSearch.Parse(json).PullRequests.Single().Kind.ShouldBe(PullRequestKind.Ready);
+        // Rebaseable, or conflicting, asks nothing.
+        PullRequestSearch.NotRebaseable(SearchWith(mergeable: "MERGEABLE", canBeRebased: "true")).ShouldBeEmpty();
+        PullRequestSearch.NotRebaseable(SearchWith(mergeable: "CONFLICTING", canBeRebased: "false")).ShouldBeEmpty();
+        PullRequestSearch.Parse(SearchWith(mergeable: "CONFLICTING", canBeRebased: "false"), (_, _) => true).PullRequests.Single().Kind.ShouldBe(PullRequestKind.Conflicts);
+        PullRequestSearch.Query.ShouldContain("canBeRebased");
+    }
+
+    private static string SearchWith(string mergeable, string canBeRebased) =>
+        $$$$"""{"data":{"search":{"issueCount":1,"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"number":7,"state":"OPEN","title":"t","url":"https://github.com/x/y/pull/7","repository":{"nameWithOwner":"x/y"},"author":{"login":"a"},"isDraft":false,"createdAt":"2026-11-01T00:00:00Z","updatedAt":"2026-11-01T00:00:00Z","headRefName":"h","baseRefName":"main","labels":{"nodes":[]},"mergeable":"{{{{mergeable}}}}","canBeRebased":{{{{canBeRebased}}}},"mergeStateStatus":"{{{{(mergeable == "CONFLICTING" ? "DIRTY" : "CLEAN")}}}}","reviewDecision":null,"isInMergeQueue":false,"mergeQueueEntry":null,"autoMergeRequest":null,"commits":{"nodes":[{"commit":{"oid":"abc","statusCheckRollup":{"state":"SUCCESS","contexts":{"nodes":[{"__typename":"CheckRun","name":"build","status":"COMPLETED","conclusion":"SUCCESS","detailsUrl":"u"}]}}}}]}}]}}}""";
+
+    [Fact]
     public void APullRequestGitHubHoldsAsBlockedWithNoReviewInTheWayWaitsForItsRequiredCheckAndIsNeitherReadyNorNeedsMe()
     {
         // Recorded: BLOCKED, no review decision, every check green: the window before the required gate check is created.

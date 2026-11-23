@@ -771,7 +771,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
         var left = merge.Kind switch
         {
             MergeKinds.Armed or MergeKinds.Pending or MergeKinds.Merged => false,
-            MergeKinds.Ready => native,
+            MergeKinds.Ready or MergeKinds.RebaseOnly => native,
             MergeKinds.Blocked => merge.FailedName is null,
             _ => true,
         };
@@ -782,7 +782,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
         // Whatever the card shows now, the merge it offered again is not one GitHub does by itself: its auto-merge is turned off for
         // every state the merge left (a ready one has none on it, a closed PR has nothing to turn off). Conflicts and behind move
         // the head next, and a changes-requested, draft or blocked PR on a repo without required reviews would still merge on green.
-        if (native && merge.Kind is not (MergeKinds.Ready or MergeKinds.Closed))
+        if (native && merge.Kind is not (MergeKinds.Ready or MergeKinds.RebaseOnly or MergeKinds.Closed))
         {
             try
             {
@@ -808,7 +808,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
         // offered again, never merged from this entry.
         legs?.DropMerge(flight.Code, merge.Kind switch
         {
-            MergeKinds.Ready => "GitHub's auto-merge was turned off",
+            MergeKinds.Ready or MergeKinds.RebaseOnly => "GitHub's auto-merge was turned off",
             MergeKinds.ChangesRequested => "a review asks for changes",
             MergeKinds.Blocked => $"GitHub blocks it: {merge.Reason}",
             MergeKinds.Conflicts => "it conflicts with its base: the base is merged in, and the merge offered again once that stands",
@@ -824,7 +824,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             // No card shows the merge to say it: a For-you card does, as for any dropped merge.
             var why = merge.Kind switch
             {
-                MergeKinds.Ready => "GitHub's auto-merge was turned off",
+                MergeKinds.Ready or MergeKinds.RebaseOnly => "GitHub's auto-merge was turned off",
                 MergeKinds.ChangesRequested => "a review asks for changes",
                 MergeKinds.Blocked => $"GitHub blocks it: {merge.Reason}",
                 _ => $"GitHub shows it as {merge.Kind}",
@@ -1130,7 +1130,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                 // card back to a Merge; the go-around and re-run it offered stay while it is blocked. A card that says something
                 // GitHub shows no state for (the head moved, a merge refused) stays until it is answered.
                 if (card.Choices.Any(c => c.Verb == Verbs.RerunChecks)
-                    && merge is { Kind: MergeKinds.Pending or MergeKinds.Ready or MergeKinds.Armed or MergeKinds.Queued } && legs is not null)
+                    && merge is { Kind: MergeKinds.Pending or MergeKinds.Ready or MergeKinds.RebaseOnly or MergeKinds.Armed or MergeKinds.Queued } && legs is not null)
                 {
                     legs.ShowMergeState(card, merge, head, replaceWords: true);
                 }
