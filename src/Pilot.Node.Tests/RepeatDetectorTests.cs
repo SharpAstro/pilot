@@ -40,10 +40,10 @@ public sealed class RepeatDetectorTests
 
         var task = Repeats();
         task.Bin.ShouldBe(CardBin.Handled);
-        task.Detail.ShouldContain(first.Id);
-        task.Detail.ShouldContain(second.Id);
-        task.Detail.ShouldContain("run 1 failed");
-        task.Detail.ShouldContain("run 2 failed");
+        task.Detail.ShouldNotBeNull().ShouldContain(first.Id);
+        task.Detail.ShouldNotBeNull().ShouldContain(second.Id);
+        task.Detail.ShouldNotBeNull().ShouldContain("run 1 failed");
+        task.Detail.ShouldNotBeNull().ShouldContain("run 2 failed");
         found.Told.ShouldContain("do not press again");
         _detector.IsSecond(second.Id).ShouldBeTrue();
         _detector.IsSecond(first.Id).ShouldBeFalse();
@@ -94,9 +94,9 @@ public sealed class RepeatDetectorTests
 
         var task = Repeats();
         task.Subject.ShouldBe("flight/PIL1");
-        task.Detail.ShouldContain("aaa111");
-        task.Detail.ShouldContain("bbb222");
-        task.Detail.ShouldContain("expected 1 but was 2");
+        task.Detail.ShouldNotBeNull().ShouldContain("aaa111");
+        task.Detail.ShouldNotBeNull().ShouldContain("bbb222");
+        task.Detail.ShouldNotBeNull().ShouldContain("expected 1 but was 2");
         found.Told.ShouldContain("do not press again");
         _detector.Look().ShouldBeEmpty();
     }
