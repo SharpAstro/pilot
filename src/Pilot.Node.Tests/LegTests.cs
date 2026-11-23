@@ -719,7 +719,7 @@ internal sealed class FakeGitHub : IGitHub
     // The labels are what the fake keeps on the PR, so a label taken off by hand is read as GitHub says it.
     public async Task<PullRequest?> PullRequestAsync(string repoPath, string branch, CancellationToken cancellationToken)
     {
-        Counted(repoPath, nameof(PullRequestAsync));
+        _ = Counted(repoPath, nameof(PullRequestAsync));
         await Called(nameof(PullRequestAsync));
         if (PrFails is { } why)
         {
@@ -922,7 +922,7 @@ internal sealed class FakeGitHub : IGitHub
 
     public Task<MergeState?> MergeStateAsync(string repoPath, int number, CancellationToken cancellationToken)
     {
-        Counted(repoPath, nameof(MergeStateAsync));
+        _ = Counted(repoPath, nameof(MergeStateAsync));
         if (MergeOf.TryGetValue(number, out var own))
         {
             return Task.FromResult(own);
@@ -958,7 +958,7 @@ internal sealed class FakeGitHub : IGitHub
 
     public async Task<MergeQueueState?> MergeQueueAsync(string repoPath, int number, CancellationToken cancellationToken)
     {
-        Counted(repoPath, nameof(MergeQueueAsync));
+        _ = Counted(repoPath, nameof(MergeQueueAsync));
         await Called(nameof(MergeQueueAsync));
         return Queue;
     }
@@ -989,7 +989,7 @@ internal sealed class FakeGitHub : IGitHub
     /// <summary>The batch read, over what the single reads answer (so the two cannot disagree), counted as one read.</summary>
     public async Task<OpenPullRequest[]?> OpenPullRequestsByHeadAsync(string repoPath, CancellationToken cancellationToken)
     {
-        Counted(repoPath, nameof(OpenPullRequestsByHeadAsync));
+        _ = Counted(repoPath, nameof(OpenPullRequestsByHeadAsync));
         if (!OpenBranches.TryGetValue(repoPath, out var branches))
         {
             return null;
