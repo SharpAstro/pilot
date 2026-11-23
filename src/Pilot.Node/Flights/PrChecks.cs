@@ -1040,8 +1040,9 @@ public sealed class PrChecks(NodeState state, IGitHub gitHub, TimeProvider time,
             {
                 continue;
             }
-            // Poll by state (pilot #1293): in a look that read nothing of the flight's repo none of its PRs was due, and its runs are not asked either.
-            if (LookSnapshot.Current is { } look && !look.ReadFresh(flight.RepoPath) && _ciCounted.ContainsKey(flight.Code))
+            // Poll by state (pilot #1293): a PR the schedule does not have due is not asked for its runs either. The schedule decides, not whether an
+            // earlier phase of this look happened to read the repo (a flight with a ready card is read later, in the card loop).
+            if (LookSnapshot.Current is not null && _ciCounted.ContainsKey(flight.Code) && !state.PrPolls.Due(flight.RepoPath, [flight.Branch]))
             {
                 continue;
             }

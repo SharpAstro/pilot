@@ -29,6 +29,12 @@ internal sealed class PrPollSchedule(TimeProvider time)
     /// <summary>A red, conflicting, draft or unknown PR waits on the node's own fix (which marks it due when it pushes) or on a person: the least wait.</summary>
     public static readonly TimeSpan StuckWait = MinCiWait;
 
+    // How long a repo's CI really takes, as its own batch reads say (the longest check run of a PR whose checks all completed): what a running CI is waited for by.
+    private readonly ConcurrentDictionary<string, TimeSpan> _runLength = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>How long CI runs in this repo: what the repo's last completed checks took, or <see cref="UsualCiRun"/> for a repo not seen with a completed run yet.</summary>
+    public TimeSpan RunLength(string repoPath) => _runLength.TryGetValue(repoPath, out var length) ? length : UsualCiRun;
+
     private sealed record Entry(DateTimeOffset NextRead, string Head, DateTimeOffset? PendingSince, int PassingReads);
 
     private readonly ConcurrentDictionary<(string Repo, string Branch), Entry> _prs = new();
@@ -82,14 +88,20 @@ internal sealed class PrPollSchedule(TimeProvider time)
     {
         _last[repoPath] = batch;
         var now = time.GetUtcNow();
+        // Any open PR of the repo with completed checks teaches how long its CI takes, a flight's or not.
+        if (batch.Where(p => p.CiRunLength is { } length && length > TimeSpan.Zero).Select(p => p.CiRunLength!.Value).DefaultIfEmpty().Max() is { } learned && learned > TimeSpan.Zero)
+        {
+            _runLength[repoPath] = learned;
+        }
+        var usual = RunLength(repoPath);
         foreach (var branch in branches)
         {
             var pr = batch.FirstOrDefault(p => p.HeadBranch == branch);
-            _prs.AddOrUpdate((repoPath, branch), _ => Next(null, pr, now), (_, before) => Next(before, pr, now));
+            _prs.AddOrUpdate((repoPath, branch), _ => Next(null, pr, now, usual), (_, before) => Next(before, pr, now, usual));
         }
     }
 
-    private static Entry Next(Entry? before, OpenPullRequest? pr, DateTimeOffset now)
+    private Entry Next(Entry? before, OpenPullRequest? pr, DateTimeOffset now, TimeSpan usual)
     {
         if (pr is null)
         {
@@ -109,8 +121,9 @@ internal sealed class PrPollSchedule(TimeProvider time)
         switch (pr.Checks?.Status)
         {
             case ChoiceStatus.Pending:
-                var since = before?.PendingSince ?? now;
-                var remaining = UsualCiRun - (now - since);
+                // What GitHub says first: the oldest running check started at CiStartedAt; the node's first sight of it only when GitHub gave no time.
+                var since = pr.CiStartedAt is { } started && started <= now ? started : before?.PendingSince ?? now;
+                var remaining = usual - (now - since);
                 var wait = remaining > TimeSpan.Zero ? (remaining < MinCiWait ? MinCiWait : remaining) : CiOverrunWait;
                 return new Entry(now + wait, head, since, 0);
             case ChoiceStatus.Passing:

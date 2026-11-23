@@ -14,14 +14,17 @@ namespace Pilot.Node.Flights;
 /// <param name="Checks">As <see cref="IGitHub.ChecksSummaryAsync"/> answers; null with no checks.</param>
 /// <param name="AutoMergeArmed">As <see cref="IGitHub.AutoMergeArmedAsync"/> answers.</param>
 /// <param name="Queue">As <see cref="IGitHub.MergeQueueAsync"/> answers; null when its base has no merge queue.</param>
-public sealed record OpenPullRequest(string HeadBranch, PullRequest Pull, MergeState? Merge, ChecksSummary? Checks, bool AutoMergeArmed, MergeQueueState? Queue);
+/// <param name="CiStartedAt">When the oldest of its still-running check runs started (GitHub's <c>startedAt</c>); null when none runs.</param>
+/// <param name="CiRunLength">How long its longest check run took, when all of them are done; null while one still runs. It teaches the poll schedule this repo's usual CI length.</param>
+public sealed record OpenPullRequest(string HeadBranch, PullRequest Pull, MergeState? Merge, ChecksSummary? Checks, bool AutoMergeArmed, MergeQueueState? Queue,
+    DateTimeOffset? CiStartedAt = null, TimeSpan? CiRunLength = null);
 
 public sealed partial class GhCli
 {
     // 50 newest-updated open PRs of the repo: a flight's PR is among the freshly touched ones, and one beyond them is read singly.
     internal const string OpenPullRequestsByHeadQuery = "query($owner:String!,$name:String!){rateLimit{cost remaining resetAt} repository(owner:$owner,name:$name){"
         + "pullRequests(states:OPEN,first:50,orderBy:{field:UPDATED_AT,direction:DESC}){nodes{"
-        + "number state url isDraft headRefName headRefOid labels(first:20){nodes{name}} mergeable mergeStateStatus reviewDecision "
+        + "number state url isDraft headRefName headRefOid labels(first:100){nodes{name}} mergeable mergeStateStatus reviewDecision "
         + "isMergeQueueEnabled isInMergeQueue mergeQueueEntry{position} autoMergeRequest{enabledAt} "
         + "timelineItems(last:10,itemTypes:[ADDED_TO_MERGE_QUEUE_EVENT,REMOVED_FROM_MERGE_QUEUE_EVENT]){nodes{__typename ... on AddedToMergeQueueEvent{createdAt} ... on RemovedFromMergeQueueEvent{createdAt reason}}} "
         + "commits(last:1){nodes{commit{statusCheckRollup{contexts(first:100){nodes{__typename "
@@ -84,7 +87,47 @@ public sealed partial class GhCli
             ? (IReadOnlyList<string>)[.. names.EnumerateArray().Select(x => TextOf(x, "name")).OfType<string>()]
             : null;
         var pull = new PullRequest(n, TextOf(pr, "state") ?? "OPEN", TextOf(pr, "headRefOid") ?? "", TextOf(pr, "url") ?? "", TextOf(pr, "mergeable") ?? "", Labels: labels, Draft: draft);
-        return new OpenPullRequest(head, pull, merge, SummariseChecks(checks), armed, queue);
+        var (ciStarted, ciLength) = CiTimesOf(pr);
+        return new OpenPullRequest(head, pull, merge, SummariseChecks(checks), armed, queue, ciStarted, ciLength);
+    }
+
+    /// <summary>
+    /// What the rollup's check runs say about time: the oldest <c>startedAt</c> of those not completed, and (when all are completed) the longest
+    /// <c>completedAt - startedAt</c>, so the node waits for what GitHub says of a run and learns how long a repo's CI really takes.
+    /// </summary>
+    internal static (DateTimeOffset? Started, TimeSpan? Length) CiTimesOf(JsonElement pr)
+    {
+        if (!(pr.TryGetProperty("commits", out var commits) && commits.TryGetProperty("nodes", out var commitNodes) && commitNodes.ValueKind == JsonValueKind.Array && commitNodes.GetArrayLength() > 0
+            && commitNodes[0].TryGetProperty("commit", out var commit) && commit.TryGetProperty("statusCheckRollup", out var rollup) && rollup.ValueKind == JsonValueKind.Object
+            && rollup.TryGetProperty("contexts", out var contexts) && contexts.TryGetProperty("nodes", out var runs) && runs.ValueKind == JsonValueKind.Array))
+        {
+            return (null, null);
+        }
+        DateTimeOffset? oldestRunning = null;
+        TimeSpan? longest = null;
+        var anyRunning = false;
+        foreach (var run in runs.EnumerateArray())
+        {
+            if (run.ValueKind != JsonValueKind.Object || TextOf(run, "__typename") != "CheckRun")
+            {
+                continue;
+            }
+            var started = DateTimeOffset.TryParse(TextOf(run, "startedAt"), System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.AssumeUniversal, out var s) ? s : (DateTimeOffset?)null;
+            if (TextOf(run, "status") == "COMPLETED")
+            {
+                if (started is { } begin && DateTimeOffset.TryParse(TextOf(run, "completedAt"), System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.AssumeUniversal, out var end) && end >= begin)
+                {
+                    longest = longest is { } so && so > end - begin ? so : end - begin;
+                }
+                continue;
+            }
+            anyRunning = true;
+            if (started is { } running && (oldestRunning is not { } oldest || running < oldest))
+            {
+                oldestRunning = running;
+            }
+        }
+        return (oldestRunning, anyRunning ? null : longest);
     }
 
     /// <summary>The checks (bucket, name, link) as one <see cref="ChecksSummary"/>, as <see cref="ParseChecks"/> says it of <c>gh pr checks</c>; null with none.</summary>
