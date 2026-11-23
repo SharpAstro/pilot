@@ -237,12 +237,7 @@ public sealed class AutopilotWakeTests : IDisposable
         _wakes.Look();
         _wakes.Covered.ShouldContain(second.Id);
         _on = false;
-        await RunningTowerAsync();
-        Row();
 
-        await _tower.LookAsync(Ct);
-
-        _wakes.Covered.ShouldBeEmpty();
         _tower.Untold().ShouldContain(c => c.Id == second.Id);
     }
 

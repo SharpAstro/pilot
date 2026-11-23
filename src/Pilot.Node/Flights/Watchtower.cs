@@ -197,7 +197,8 @@ public sealed partial class Watchtower(
     private void SaveTells()
     {
         var tells = Tells();
-        var open = state.Cards(openOnly: true).Select(c => c.Id).ToHashSet(StringComparer.Ordinal);
+        // A repeat task is a Handled line (closed from its birth) whose being told is what keeps its wake from being made again.
+        var open = state.Cards().Where(c => c.State == CardState.Open || c.Kind == CardKinds.RepeatTask).Select(c => c.Id).ToHashSet(StringComparer.Ordinal);
         foreach (var gone in tells.Keys.Where(id => !open.Contains(id)).ToList())
         {
             tells.Remove(gone);

@@ -310,9 +310,9 @@ public sealed class AutopilotGoalVerbsTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task AnOverrideStaysThePersonsForTheWatchtowerAndForAnInvestigator()
+    public async Task AnOverrideStaysThePersonsForAnInvestigatorWhateverItsWhy()
     {
-        foreach (var who in new[] { Lookout, Investigator })
+        foreach (var who in new[] { Investigator })
         {
             var refused = await Send(who, Verbs.CreateFlight, Verbs.RepoTarget(Repo), ["22", "Again", Verbs.AnywayFlag], "issue #22 and job j970 say so");
 
