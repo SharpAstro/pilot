@@ -808,7 +808,7 @@ public sealed partial class NodeCommands(IServiceProvider services, NodeState st
 
         // A choice the node would refuse now (its flight is held, its session is gone) is refused here, before anything is taken, closed or run,
         // with the reason its card shows on it (ChoiceAvailability): a client that pressed before it saw the mark runs nothing (#792).
-        if (ChoiceAvailability.WhyNot(choice, state.Flights(), state.Sessions()) is { } unavailable)
+        if (ChoiceAvailability.WhyNot(choice, state.Flights(), state.Legs(), state.Cards(openOnly: true), state.Sessions(), card.Kind) is { } unavailable)
         {
             return state.Complete(command, $"{choice.Label} was refused: {unavailable}");
         }

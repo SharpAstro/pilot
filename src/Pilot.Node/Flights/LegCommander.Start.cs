@@ -15,29 +15,17 @@ public sealed partial class LegCommander
     {
         var (flight, leg) = LegOf(command.Target);
         RefuseIfStarting(LegsKey(flight.Code), $"a session on {flight.Code}'s plane ({flight.Code}/{leg.Name} or another leg)");
-        if (flight.State != FlightState.Flying)
-        {
-            throw new FlightException($"{flight.Code} is {flight.State.ToString().ToLowerInvariant()}{(flight.State == FlightState.Held ? $", waiting for {FlightWaiting.For(flight)}" : "")}");
-        }
-        if (leg.State != LegState.Planned)
-        {
-            throw new FlightException($"{flight.Code}/{leg.Name} is {leg.State.ToString().ToLowerInvariant()}; a go-around starts it again");
-        }
         var legs = state.Legs(flight.Code);
-        if (legs.FirstOrDefault(l => l.State == LegState.Flying) is { } flying)
+        if (VerbPreconditions.StartLeg(flight, leg, legs) is { } refused)
         {
-            throw new FlightException($"{flight.Code}/{flying.Name} is flying: one leg at a time on a plane");
-        }
-        if (legs.FirstOrDefault(l => l.Order < leg.Order && l.State != LegState.Done) is { } before)
-        {
-            throw new FlightException($"{flight.Code}/{before.Name} comes first and is {before.State.ToString().ToLowerInvariant()}");
+            throw new FlightException(refused.Why);
         }
 
         // A new leg on a flight whose merge is armed or queued takes the merge back first, a refusal refusing the start.
         await TakeMergeBackAsync(flight, Verbs.StartLeg, $"{leg.Name} started", cancellationToken);
         // The lock was let go for GitHub: the leg is read again, as it is now, so one that moved meanwhile is refused here.
         (flight, leg) = LegOf(command.Target);
-        if (leg.State != LegState.Planned || flight.State != FlightState.Flying || state.Legs(flight.Code).Any(l => l.State == LegState.Flying))
+        if (VerbPreconditions.StartLeg(flight, leg, state.Legs(flight.Code)) is not null)
         {
             throw new FlightException($"{flight.Code}/{leg.Name} moved while its merge was taken back ({leg.State.ToString().ToLowerInvariant()}); start it again");
         }

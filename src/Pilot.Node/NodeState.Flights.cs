@@ -29,7 +29,7 @@ public sealed partial class NodeState
                 RefreshPlannedCard(known, flight);
                 // A flight that turned held (or flies again) changes which of its cards' choices the node would refuse (#792).
                 // After the planned card was rebuilt, so the mark lands on the choices it now offers.
-                if (HoldChanged(known, flight))
+                if (AvailabilityChanged(known, flight))
                 {
                     SyncChoiceAvailability();
                 }
@@ -63,7 +63,7 @@ public sealed partial class NodeState
             {
                 Publish(new FlightChangedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Flight = changed });
                 RefreshPlannedCard(known, changed);
-                if (HoldChanged(known, changed))
+                if (AvailabilityChanged(known, changed))
                 {
                     SyncChoiceAvailability();
                 }
@@ -141,10 +141,16 @@ public sealed partial class NodeState
                 {
                     CloseCardsAbout(Verbs.FlightTarget(leg.Flight), $"{leg.Name} took off", LegCommander.PlannedKind);
                 }
+                // A leg that changed state changes what its flight's verbs would refuse (review, merge, PR: legs not done; a start: another flying).
+                if (known.State != leg.State)
+                {
+                    SyncChoiceAvailability();
+                }
             }
             else
             {
                 Publish(new LegAddedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Leg = leg });
+                SyncChoiceAvailability();
             }
         }
     }
@@ -190,6 +196,7 @@ public sealed partial class NodeState
             if (_legs.ContainsKey((flight, name)))
             {
                 Publish(new LegRemovedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Flight = flight, Name = name });
+                SyncChoiceAvailability();
             }
         }
     }

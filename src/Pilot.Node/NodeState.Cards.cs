@@ -157,7 +157,7 @@ public sealed partial class NodeState
                 Detail = detail,
                 Summary = CardSummaries.Resolve(summary, detail, kind, subject, title, choices ?? []),
                 // A choice the node would refuse already (its flight is held) is born marked, not offered until the next sweep (#792).
-                Choices = Available(choices ?? []),
+                Choices = Available(choices ?? [], kind),
                 Link = link,
                 AskedBy = askedBy,
                 Why = why,
@@ -384,7 +384,7 @@ public sealed partial class NodeState
             {
                 return false;
             }
-            var next = Available(choices);
+            var next = Available(choices, card.Kind);
             if (card.Choices.SequenceEqual(next) || ifStill is not null && !card.Choices.SequenceEqual(ifStill))
             {
                 return false;
@@ -429,7 +429,7 @@ public sealed partial class NodeState
             var nextBin = bin is { } b && b != CardBin.Handled && card.Bin != CardBin.Handled ? b : card.Bin;
             // PIL1290: the words a ring on card/<id> put on the card stay through a rewrite of its detail that does not carry them itself.
             detail = KeepRungWords(card.Detail, detail);
-            var next = card with { Title = title, Detail = detail, Choices = Available(choices), Link = link, Kind = kind ?? card.Kind, Bin = nextBin };
+            var next = card with { Title = title, Detail = detail, Choices = Available(choices, kind ?? card.Kind), Link = link, Kind = kind ?? card.Kind, Bin = nextBin };
             // A card that says something new says it in new words: the summary follows the title and kind, as the raiser wrote it or the table has it.
             next = next with { Summary = summary is null && next.Title == card.Title && next.Kind == card.Kind ? card.Summary : CardSummaries.Resolve(summary, detail, next.Kind, next.Subject, next.Title, next.Choices) };
             next = next with { Commits = CommitsOf(next, link) };

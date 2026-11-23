@@ -10,7 +10,8 @@ public sealed partial class NodeState
     /// every write of a card's choices goes through it, so a card raised, turned or refreshed while its flight is held (or its session
     /// gone) says so at once, and a writer that rebuilds its choices from scratch (a merge's checks) never drops the mark. Under the lock.
     /// </summary>
-    private CardChoice[] Available(IReadOnlyList<CardChoice> choices) => ChoiceAvailability.Apply(choices, _flights.Values, _sessions.Values);
+    private CardChoice[] Available(IReadOnlyList<CardChoice> choices, string? cardKind = null) =>
+        ChoiceAvailability.Apply(choices, _flights.Values, [.. _legs.Values], [.. _cards.Values], _sessions.Values, cardKind);
 
     /// <summary>
     /// Brings every open card's choices in line with what the node would refuse now (#792 point 4): a choice whose flight turned held or whose
@@ -22,7 +23,7 @@ public sealed partial class NodeState
     {
         foreach (var card in _cards.Values.Where(c => c.State == CardState.Open && c.Choices.Length > 0).ToList())
         {
-            var next = Available(card.Choices);
+            var next = Available(card.Choices, card.Kind);
             if (!next.SequenceEqual(card.Choices))
             {
                 Publish(new CardChangedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Card = card with { Choices = next } });
@@ -31,6 +32,8 @@ public sealed partial class NodeState
     }
 
     // Whether what a flight is held for changed between two rows: its state, or what it waits on (the reason a card gives).
-    private static bool HoldChanged(FlightRow before, FlightRow after) =>
-        before.State != after.State || (after.State == FlightState.Held && FlightWaiting.For(before) != FlightWaiting.For(after));
+    // PIL1325: and what the verb predicates read of it: its review state, its owner's hold, its PR and its holding pattern.
+    private static bool AvailabilityChanged(FlightRow before, FlightRow after) =>
+        before.State != after.State || (after.State == FlightState.Held && FlightWaiting.For(before) != FlightWaiting.For(after))
+        || before.Review?.State != after.Review?.State || before.OnHold != after.OnHold || before.PullRequestUrl != after.PullRequestUrl;
 }

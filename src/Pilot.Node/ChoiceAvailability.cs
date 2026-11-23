@@ -15,14 +15,36 @@ internal static class ChoiceAvailability
     internal static bool NeedsFlyingFlight(string verb) => verb is Verbs.StartLeg or Verbs.GoAround or Verbs.Merge or Verbs.RerunChecks;
 
     /// <summary>Why the node would refuse <paramref name="choice"/> now, in the words the card and the refusal share; null when nothing stops it.</summary>
-    internal static string? WhyNot(CardChoice choice, IEnumerable<FlightRow> flights, IReadOnlyCollection<SessionRow> sessions)
+    internal static string? WhyNot(CardChoice choice, IEnumerable<FlightRow> flights, IReadOnlyCollection<LegRow> legs, IReadOnlyCollection<CardRow> cards, IReadOnlyCollection<SessionRow> sessions, string? cardKind = null) =>
+        Refusal(choice, flights, legs, cards, sessions, cardKind)?.Why;
+
+    /// <summary>
+    /// Like <see cref="WhyNot"/> but with the refusal whole: whether its cause clears by itself. A flight or leg target is judged by
+    /// <see cref="VerbPreconditions"/> by verb, the very predicate its command calls first; a card press is judged as the person's.
+    /// </summary>
+    internal static VerbRefusal? Refusal(CardChoice choice, IEnumerable<FlightRow> flights, IReadOnlyCollection<LegRow> legs, IReadOnlyCollection<CardRow> cards, IReadOnlyCollection<SessionRow> sessions, string? cardKind = null)
     {
-        if (NeedsFlyingFlight(choice.Verb) && choice.Target.StartsWith(Verbs.FlightTargetPrefix, StringComparison.Ordinal))
+        if (choice.Target.StartsWith(Verbs.FlightTargetPrefix, StringComparison.Ordinal))
         {
-            var code = choice.Target[Verbs.FlightTargetPrefix.Length..].Split('/')[0];
-            if (flights.FirstOrDefault(f => string.Equals(f.Code, code, StringComparison.OrdinalIgnoreCase)) is { State: FlightState.Held } held)
+            var parts = choice.Target[Verbs.FlightTargetPrefix.Length..].Split('/', 2);
+            var code = parts[0];
+            if (flights.FirstOrDefault(f => string.Equals(f.Code, code, StringComparison.OrdinalIgnoreCase)) is { } flight)
             {
-                return HeldReason(held);
+                if (NeedsFlyingFlight(choice.Verb) && flight.State == FlightState.Held)
+                {
+                    return new VerbRefusal(HeldReason(flight));
+                }
+                if (!LegCommander.TakenOnHold(choice.Verb, choice.Args) && VerbPreconditions.OnHold(flight) is { } onHold)
+                {
+                    return new VerbRefusal(onHold);
+                }
+                var ofFlight = legs.Where(l => l.Flight == flight.Code).ToList();
+                var leg = parts.Length > 1 ? ofFlight.FirstOrDefault(l => l.Name == parts[1]) : null;
+                var open = cards.Where(c => c.State == CardState.Open).ToList();
+                if (VerbPreconditions.For(choice.Verb, flight, leg, ofFlight, open, doneLegGoesRound: cardKind is LegCommander.PrReady or LegCommander.MergeFailed) is { } refused)
+                {
+                    return refused;
+                }
             }
         }
         if (choice.Target.StartsWith(Verbs.SessionTargetPrefix, StringComparison.Ordinal))
@@ -30,7 +52,7 @@ internal static class ChoiceAvailability
             var id = choice.Target[Verbs.SessionTargetPrefix.Length..];
             if (id.Length > 0 && SessionNames.Find(sessions, id) is null)
             {
-                return $"session {id} no longer exists";
+                return new VerbRefusal($"session {id} no longer exists");
             }
         }
         return null;
@@ -48,7 +70,7 @@ internal static class ChoiceAvailability
     /// the more telling. A choice marked unavailable over another status (a Merge's Passing or Pending checks) is cleared to no status when
     /// the mark goes, so it reads blank until the next look at the PR writes its checks again; the mark does not keep what it covered.
     /// </summary>
-    internal static CardChoice[] Apply(IReadOnlyList<CardChoice> choices, IEnumerable<FlightRow> flights, IReadOnlyCollection<SessionRow> sessions)
+    internal static CardChoice[] Apply(IReadOnlyList<CardChoice> choices, IEnumerable<FlightRow> flights, IReadOnlyCollection<LegRow> legs, IReadOnlyCollection<CardRow> cards, IReadOnlyCollection<SessionRow> sessions, string? cardKind = null)
     {
         var flightList = flights as IReadOnlyCollection<FlightRow> ?? [.. flights];
         var result = new CardChoice[choices.Count];
@@ -56,7 +78,7 @@ internal static class ChoiceAvailability
         {
             var choice = choices[i];
             result[i] = choice;
-            if (WhyNot(choice, flightList, sessions) is { } why)
+            if (WhyNot(choice, flightList, legs, cards, sessions, cardKind) is { } why)
             {
                 if (!ChoiceStatus.IsChip(choice.Status) && !(choice.Status == ChoiceStatus.Unavailable && choice.Note == why))
                 {
