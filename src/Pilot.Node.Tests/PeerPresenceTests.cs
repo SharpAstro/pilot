@@ -37,9 +37,30 @@ public sealed class PeerPresenceTests
 
         public bool HasGrant => true;
 
+        /// <summary>Its node read never answers: it ends only when its token is cancelled, as a host that is off and drops the connect.</summary>
+        public bool Hangs { get; set; }
+
+        private TaskCompletionSource? _called;
+
+        /// <summary>Completes at the next node read.</summary>
+        public Task NextCall()
+        {
+            _called = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            return _called.Task;
+        }
+
         public Task<NodeInfo> NodeAsync(CancellationToken cancellationToken)
         {
             Calls++;
+            _called?.TrySetResult();
+            if (cancellationToken.IsCancellationRequested)
+            {
+                return Task.FromCanceled<NodeInfo>(cancellationToken);
+            }
+            if (Hangs)
+            {
+                return HangAsync(cancellationToken);
+            }
             if (Down)
             {
                 return Task.FromException<NodeInfo>(new WebSocketException("Unable to connect to the remote server"));
@@ -49,6 +70,12 @@ public sealed class PeerPresenceTests
                 WireVersion = NodeWire.Version, Version = "0", MachineName = name, MachinePrefix = name, ProcessId = 1,
                 StartedAt = Noon, DataFolder = "/data", SocketPath = "/sock", Stream = "s",
             });
+        }
+
+        private static async Task<NodeInfo> HangAsync(CancellationToken cancellationToken)
+        {
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            throw new InvalidOperationException("an infinite wait ended without its token");
         }
 
         public Task<RepoInfo[]?> ReposAsync(CancellationToken cancellationToken) => throw new NotSupportedException();
@@ -190,5 +217,92 @@ public sealed class PeerPresenceTests
         peer.Calls.ShouldBe(1);
         presence.AwaySince("LE1").ShouldBe(Noon);
         presence.Away().Select(a => a.Name).ShouldBe(["LE1"]);
+    }
+
+    [Fact]
+    public async Task The_probe_asks_an_away_peer_once_each_Every_and_not_before()
+    {
+        var (peer, fleet, presence, admission) = Setup();
+        await admission.RefreshAsync(Ct);
+        _clock.Advance(Bound + TimeSpan.FromMinutes(1));
+        presence.IsAway("LE1").ShouldBeTrue();
+        var probe = new PeerProbe(fleet, _clock);
+        probe.Every.ShouldBe(TimeSpan.FromMinutes(10));
+
+        await probe.StartAsync(Ct);
+        try
+        {
+            foreach (var round in new[] { 1, 2, 3 })
+            {
+                await _clock.WhenWaiting(1).WaitAsync(TimeSpan.FromSeconds(3), Ct);
+                var asked = peer.NextCall();
+                _clock.Advance(probe.Every - TimeSpan.FromMilliseconds(1));
+                peer.Calls.ShouldBe(round, $"not asked before round {round}'s {probe.Every} are over");
+                _clock.Advance(TimeSpan.FromMilliseconds(1));
+                await asked.WaitAsync(TimeSpan.FromSeconds(3), Ct);
+                peer.Calls.ShouldBe(round + 1);
+            }
+        }
+        finally
+        {
+            await probe.StopAsync(Ct);
+        }
+        // Still silent each time: still away, and said only once.
+        presence.IsAway("LE1").ShouldBeTrue();
+        _said.ShouldHaveSingleItem();
+    }
+
+    [Fact]
+    public async Task A_call_its_caller_cancelled_starts_no_away_clock()
+    {
+        var (peer, fleet, presence, _) = Setup();
+        using var cancelled = new CancellationTokenSource();
+        await cancelled.CancelAsync();
+
+        await Should.ThrowAsync<TaskCanceledException>(() => fleet.Peers()[0].NodeAsync(cancelled.Token));
+        _clock.Advance(Bound + TimeSpan.FromMinutes(1));
+
+        peer.Calls.ShouldBe(1);
+        presence.IsAway("LE1").ShouldBeFalse();
+        presence.Away().ShouldBeEmpty();
+        _said.ShouldBeEmpty();
+
+        // The same peer failing while its caller still waits does start it.
+        await Should.ThrowAsync<WebSocketException>(() => fleet.Peers()[0].NodeAsync(Ct));
+        _clock.Advance(Bound + TimeSpan.FromMinutes(1));
+        presence.IsAway("LE1").ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task A_peer_that_hangs_past_the_admission_reads_budget_still_goes_away()
+    {
+        var (peer, _, presence, admission) = Setup();
+        peer.Hangs = true;
+        admission.Budget = TimeSpan.FromMilliseconds(1);
+
+        var view = await admission.RefreshAsync(Ct);
+        _clock.Advance(Bound + TimeSpan.FromMinutes(1));
+
+        view.NotCounted.ShouldHaveSingleItem().ShouldStartWith("LE1 (did not answer");
+        presence.AwaySince("LE1").ShouldBe(Noon);
+    }
+
+    [Fact]
+    public void The_presence_lines_land_as_Handled_cards_on_the_node()
+    {
+        var state = new NodeState(new InMemoryJournal(), _clock);
+        var presence = new PeerPresence(_clock, () => Bound, PeerAway.Cards(() => state));
+        presence.Failed("LE1");
+        _clock.Advance(Bound + TimeSpan.FromMinutes(1));
+
+        presence.IsAway("LE1").ShouldBeTrue();
+        presence.Answered("LE1");
+
+        var cards = state.Cards();
+        cards.Select(c => (c.Kind, c.Bin, c.Subject, c.Title)).ShouldBe(
+        [
+            ("peer-away", CardBin.Handled, Verbs.NodeTarget, "LE1 away since 2026-11-24 12:00 UTC: skipped until it answers"),
+            ("peer-back", CardBin.Handled, Verbs.NodeTarget, "LE1 answers again"),
+        ]);
     }
 }

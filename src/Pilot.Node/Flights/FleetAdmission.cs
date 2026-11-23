@@ -76,7 +76,7 @@ public sealed class FleetAdmission(string machine, TimeProvider time)
         var peers = Fleet?.Peers() ?? [];
         using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         budget.CancelAfter(Budget);
-        var reads = await Task.WhenAll(peers.Select(p => ReadAsync(p, budget.Token, cancellationToken)));
+        var reads = await Task.WhenAll(peers.Select(p => ReadAsync(p, budget.Token, cancellationToken, (Fleet as PresenceFleet)?.Presence)));
         var view = new View(time.GetUtcNow(), [.. reads.Select(r => r.Reached).OfType<Reached>()], [.. reads.Select(r => r.Why).OfType<string>()], peers.Count)
         {
             Away = [.. reads.Select(r => r.Away).OfType<string>()],
@@ -85,7 +85,9 @@ public sealed class FleetAdmission(string machine, TimeProvider time)
         return view;
     }
 
-    private static async Task<(Reached? Reached, string? Why, string? Away)> ReadAsync(IFleetPeer peer, CancellationToken budget, CancellationToken caller)
+    // The presence ledger does not count a cancelled call as the peer failing, since the call cannot tell its caller's cancel from a budget;
+    // so this read's own budget running out while the caller still waits is told to it here, and a peer that hangs past it still goes away.
+    private static async Task<(Reached? Reached, string? Why, string? Away)> ReadAsync(IFleetPeer peer, CancellationToken budget, CancellationToken caller, PeerPresence? presence)
     {
         if (!peer.HasGrant)
         {
@@ -103,6 +105,10 @@ public sealed class FleetAdmission(string machine, TimeProvider time)
         }
         catch (Exception ex) when (Unreachable(ex) && !caller.IsCancellationRequested)
         {
+            if (ex is OperationCanceledException)
+            {
+                presence?.Failed(peer.Name);
+            }
             return (null, $"{peer.Name} (did not answer: {FirstLine(ex.Message)})", null);
         }
     }

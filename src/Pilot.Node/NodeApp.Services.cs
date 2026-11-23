@@ -255,16 +255,14 @@ public static partial class NodeApp
         });
         builder.Services.AddSingleton(services => new PeerPresence(services.GetRequiredService<TimeProvider>(),
             () => TimeSpan.FromHours(services.GetRequiredService<RoleModels>().Stale.UnreachableHours),
-            (kind, title, detail) => _ = kind == PeerAway.Returned
-                ? services.GetRequiredService<NodeState>().RaiseCard(CardBin.Handled, PeerAway.Returned, Verbs.NodeTarget, title, detail)
-                : services.GetRequiredService<NodeState>().RaiseCard(CardBin.Handled, PeerAway.Kind, Verbs.NodeTarget, title, detail)));
+            PeerAway.Cards(services.GetRequiredService<NodeState>)));
         builder.Services.AddSingleton(services => new PresenceFleet(new HeldTokenFleet(Environment.GetEnvironmentVariable("PILOT_CLIENT_GRANTS") is { Length: > 0 } grants
                 ? grants
                 : Path.Combine(options.DataFolder, "client-grants.json"),
                 // Where each held node announces itself now, when this node runs LAN discovery; else the last address it answered at.
                 services.GetService<LAN.Lib.LanDiscovery>() is { } lan ? () => lan.PeersOf(NodeWire.LanService) : null),
             services.GetRequiredService<PeerPresence>()));
-        builder.Services.AddHostedService(services => new PeerProbe(services.GetRequiredService<PresenceFleet>(), services.GetRequiredService<TimeProvider>()) { Error = services.GetRequiredService<LogWriter>() });
+        builder.Services.AddHostedService(services => new PeerProbe(services.GetRequiredService<PresenceFleet>(), services.GetRequiredService<TimeProvider>()));
         builder.Services.AddSingleton(services => new FleetCopy(FleetCopy.FileIn(options.DataFolder), services.GetRequiredService<TimeProvider>()) { Error = services.GetRequiredService<LogWriter>() });
         builder.Services.AddHostedService(services => new FleetCopyWatch(services.GetRequiredService<FlightCommander>(), services.GetRequiredService<TimeProvider>()) { Error = services.GetRequiredService<LogWriter>() });
     }

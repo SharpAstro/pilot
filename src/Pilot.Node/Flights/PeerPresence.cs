@@ -10,7 +10,9 @@ namespace Pilot.Node.Flights;
 /// <see cref="PeerProbe"/> gets an answer. The node says so once when a peer goes away and once when it answers again, never on every read.
 /// </summary>
 /// <param name="time">The clock the bound runs on.</param>
-/// <param name="bound">How long a peer may fail before it is away; read at each ask, so a changed setting counts at once.</param>
+/// <param name="bound">How long a peer may fail before it is away; read at each ask, so a changed setting counts at once. The node gives it
+/// <c>stale-unreachable-hours</c>, the bound after which a flight held on an unreachable node is called stale: one setting for both, since a node
+/// silent that long is the same fact either way, and a person who says how long silence is tolerable says it once.</param>
 /// <param name="said">Told once per change: the title and the detail of the line; the node raises a Handled card from it.</param>
 public sealed class PeerPresence(TimeProvider time, Func<TimeSpan> bound, Action<string, string, string>? said = null)
 {
@@ -117,6 +119,12 @@ public static class PeerAway
 
     /// <summary>An away peer answered again.</summary>
     public const string Returned = "peer-back";
+
+    /// <summary>What the node does with a line <see cref="PeerPresence"/> says: a Handled card on the node, <see cref="Kind"/> or <see cref="Returned"/>.</summary>
+    /// <param name="state">The node state, asked for at the first line so the presence ledger can be made before it.</param>
+    public static Action<string, string, string> Cards(Func<NodeState> state) => (kind, title, detail) => _ = kind == Returned
+        ? state().RaiseCard(CardBin.Handled, PeerAway.Returned, Verbs.NodeTarget, title, detail)
+        : state().RaiseCard(CardBin.Handled, PeerAway.Kind, Verbs.NodeTarget, title, detail);
 }
 
 /// <summary>A call on a peer that is away: skipped with no network attempt. An <see cref="IOException"/>, so every catch of an unreachable peer takes it.</summary>
@@ -145,13 +153,13 @@ public sealed class PresenceFleet(IFleet inner, PeerPresence presence) : IFleet
 
         public bool HasGrant => peer.HasGrant;
 
-        public Task<NodeInfo> NodeAsync(CancellationToken cancellationToken) => CallAsync(() => peer.NodeAsync(cancellationToken));
+        public Task<NodeInfo> NodeAsync(CancellationToken cancellationToken) => CallAsync(() => peer.NodeAsync(cancellationToken), cancellationToken);
 
-        public Task<RepoInfo[]?> ReposAsync(CancellationToken cancellationToken) => CallAsync(() => peer.ReposAsync(cancellationToken));
+        public Task<RepoInfo[]?> ReposAsync(CancellationToken cancellationToken) => CallAsync(() => peer.ReposAsync(cancellationToken), cancellationToken);
 
-        public Task<FleetLoad> LoadAsync(CancellationToken cancellationToken) => CallAsync(() => peer.LoadAsync(cancellationToken));
+        public Task<FleetLoad> LoadAsync(CancellationToken cancellationToken) => CallAsync(() => peer.LoadAsync(cancellationToken), cancellationToken);
 
-        public Task<CommandResult> SendAsync(CommandRequest command, CancellationToken cancellationToken) => CallAsync(() => peer.SendAsync(command, cancellationToken));
+        public Task<CommandResult> SendAsync(CommandRequest command, CancellationToken cancellationToken) => CallAsync(() => peer.SendAsync(command, cancellationToken), cancellationToken);
 
         public async IAsyncEnumerable<PullRequestsRow> PullRequestsAsync([System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken)
         {
@@ -166,7 +174,7 @@ public sealed class PresenceFleet(IFleet inner, PeerPresence presence) : IFleet
                 }
                 catch (Exception ex) when (FleetAdmission.Unreachable(ex))
                 {
-                    presence.Failed(Name);
+                    Failed(cancellationToken);
                     throw;
                 }
                 presence.Answered(Name);
@@ -186,7 +194,17 @@ public sealed class PresenceFleet(IFleet inner, PeerPresence presence) : IFleet
             }
         }
 
-        private async Task<T> CallAsync<T>(Func<Task<T>> call)
+        // A call its caller cancelled (a shutdown, a budget) says nothing of the peer, so it starts no away clock; a caller that keeps a budget
+        // of its own and still waits tells the ledger itself (FleetAdmission). A timeout of the fleet underneath is a TimeoutException, not a cancel.
+        private void Failed(CancellationToken cancellationToken)
+        {
+            if (!cancellationToken.IsCancellationRequested)
+            {
+                presence.Failed(Name);
+            }
+        }
+
+        private async Task<T> CallAsync<T>(Func<Task<T>> call, CancellationToken cancellationToken)
         {
             Guard();
             try
@@ -197,7 +215,7 @@ public sealed class PresenceFleet(IFleet inner, PeerPresence presence) : IFleet
             }
             catch (Exception ex) when (FleetAdmission.Unreachable(ex))
             {
-                presence.Failed(Name);
+                Failed(cancellationToken);
                 throw;
             }
         }
@@ -209,8 +227,6 @@ public sealed class PeerProbe(PresenceFleet fleet, TimeProvider time) : Backgrou
 {
     /// <summary>How often an away peer is tried.</summary>
     public TimeSpan Every { get; init; } = TimeSpan.FromMinutes(10);
-
-    public TextWriter Error { get; set; } = TextWriter.Null;
 
     protected override async Task ExecuteAsync(CancellationToken stopping)
     {

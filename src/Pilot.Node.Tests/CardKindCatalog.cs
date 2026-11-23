@@ -273,8 +273,8 @@ internal static class CardKindCatalog
         new("session-compacted", "Handled", ["Flights/Compactor.cs"], "CompactorTests.AWorkerWaitingOnItsJobIsCompactedWithWhatItWaitsOnAndOneNotWaitingIsNot"),
         new("watchtower-still-full", "ForYou", ["Flights/Compactor.cs"], "CompactorTests.AWatchtowerStillFullAfterACompactionAndARestartIsSaidOnceAndLeftAlone"),
         new("digest", "ForYou", ["Flights/Digest.cs"], "SignalTests.TheDigestListsWhatLandedWhatWasHandledAndWhatIsParkedAndReplacesTheLastOne"),
-        new("peer-away", "Handled", ["NodeApp.Services.cs"], "PeerPresenceTests.A_peer_failing_past_the_bound_is_skipped_listed_as_away_and_said_once"),
-        new("peer-back", "Handled", ["NodeApp.Services.cs"], "PeerPresenceTests.The_probes_first_answer_makes_the_peer_a_peer_again_and_it_is_said_once"),
+        new("peer-away", "Handled", ["Flights/PeerPresence.cs"], "PeerPresenceTests.The_presence_lines_land_as_Handled_cards_on_the_node"),
+        new("peer-back", "Handled", ["Flights/PeerPresence.cs"], "PeerPresenceTests.The_presence_lines_land_as_Handled_cards_on_the_node"),
         new("stale-acted", "Handled", ["Flights/StaleWatch.cs"], "StaleWatchTests.HalfABoundNudgesAnIdleWorkerOnce"),
         new("idea-conflict", "ForYou", ["Flights/Ideas.cs"], "IdeaEditTests.AContradictionRaisesACardWithBothVersionsAndTheMergeAsDefaultAndWritesNothingUntilItIsAnswered"),
         new("idea-repo", "ForYou", ["Flights/Ideas.cs"], "IdeaRepoTests.WhenTwoReposFitEquallyACardAsksAndNothingIsCreatedUntilItIsAnswered"),
@@ -299,7 +299,7 @@ internal static class CardKindCatalog
     /// </summary>
     public static readonly Dictionary<string, string> TitlesFrom = new()
     {
-        ["NodeApp.Services.cs|title"] = "PeerPresence.Line names the peer and since when it is away, or says that it answers again; PeerPresenceTests pins both",
+        ["Flights/PeerPresence.cs|title"] = "PeerPresence.Line names the peer and since when it is away, or says that it answers again; PeerPresenceTests pins both",
         ["Flights/IdleMaintenance.cs|run.Line()"] = "MaintenanceRun.Line, whose text IdleMaintenanceTests.TheHandledLineIsPinnedExactly pins",
         ["Flights/Digest.cs|title"] = "Digest.Compose names what landed, what was handled and what is parked",
         ["Flights/LegWatch.cs|title"] = "the parameter of LegWatch.Ring, whose titles are the literals at each Ring( call, which the guard reads as it reads RaiseCard",

@@ -108,7 +108,7 @@ public sealed record NodeSettings
     /// <summary>How many times a flight's hold may pass its timeout before it is called stale.</summary>
     public const string StaleHoldsKey = "stale-holds";
     public const int DefaultStaleHolds = 2;
-    /// <summary>Hours a flight may be held on a flight of a node that cannot be asked before it is called stale (#753).</summary>
+    /// <summary>Hours a flight may be held on a flight of a node that cannot be asked before it is called stale (#753); also how long a peer may fail before it is away and skipped (PIL1312).</summary>
     public const string StaleUnreachableHoursKey = "stale-unreachable-hours";
     public const int DefaultStaleUnreachableHours = 1;
 

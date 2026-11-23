@@ -21,7 +21,7 @@ public sealed record StaleBounds
     /// <summary>How many holding-timeout cards a flight may have raised before its hold counts as repeated.</summary>
     public int Holds { get; init; } = NodeSettings.DefaultStaleHolds;
 
-    /// <summary>Hours a flight may be held on a flight of a node that cannot be asked (#753).</summary>
+    /// <summary>Hours a flight may be held on a flight of a node that cannot be asked (#753), and how long a peer may fail before it is away (PIL1312): one fact, a node silent too long.</summary>
     public int UnreachableHours { get; init; } = NodeSettings.DefaultStaleUnreachableHours;
 
     /// <summary>The value of one of <see cref="NodeSettings.StaleKeys"/>; 0 for another key.</summary>

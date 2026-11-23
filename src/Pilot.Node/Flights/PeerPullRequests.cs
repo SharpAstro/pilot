@@ -30,7 +30,7 @@ public sealed class PeerPullRequests(Func<IFleet?> fleet, TimeProvider time, Fun
     /// <summary>The longest wait between two tries of a peer that stays away: a node that is switched off is not a thing to poll.</summary>
     public TimeSpan MaxBackoff { get; init; } = TimeSpan.FromMinutes(10);
 
-    /// <summary>Raised after a peer's row is kept or its stream is found down.</summary>
+    /// <summary>Raised after a peer's row is kept, its stream is found down, or an away peer's stream is let go.</summary>
     public event Action? Changed;
 
     private sealed class Kept
@@ -117,9 +117,13 @@ public sealed class PeerPullRequests(Func<IFleet?> fleet, TimeProvider time, Fun
     }
 
     // A stream for each granted peer not followed yet; a peer no longer granted is let go.
-    private void Follow(CancellationToken stopping)
+    // Internal so a test can run one rescan without waiting for the timer.
+    internal void Follow(CancellationToken stopping)
     {
         var peers = fleet()?.Peers().Where(p => p.HasGrant).ToList() ?? [];
+        // Asked before the gate is taken: isAway may say the peer went away, which raises a card under the node state's lock.
+        var away = peers.Where(p => isAway?.Invoke(p.Name) == true).Select(p => p.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var stopped = false;
         lock (_gate)
         {
             foreach (var gone in _peers.Where(kv => !peers.Any(p => string.Equals(p.Name, kv.Key, StringComparison.OrdinalIgnoreCase))).ToList())
@@ -129,11 +133,12 @@ public sealed class PeerPullRequests(Func<IFleet?> fleet, TimeProvider time, Fun
             }
             foreach (var peer in peers)
             {
-                if (isAway?.Invoke(peer.Name) == true)
+                if (away.Contains(peer.Name))
                 {
-                    if (_peers.Remove(peer.Name, out var away))
+                    if (_peers.Remove(peer.Name, out var gone))
                     {
-                        StopQuietly(away.Stop);
+                        StopQuietly(gone.Stop);
+                        stopped = true;
                     }
                     continue;
                 }
@@ -164,6 +169,11 @@ public sealed class PeerPullRequests(Func<IFleet?> fleet, TimeProvider time, Fun
                 }, CancellationToken.None);
                 _runs.Add(run);
             }
+        }
+        if (stopped)
+        {
+            // An away peer's row went with its stream.
+            Changed?.Invoke();
         }
     }
 

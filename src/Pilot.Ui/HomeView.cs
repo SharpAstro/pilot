@@ -87,6 +87,11 @@ internal sealed record HomeScreen(FlightsScreen Flights, SessionsScreen Sessions
     /// <summary><c>Opus 2/3</c> as the node said it (<see cref="AdmissionRow.Line"/>); null when it said none.</summary>
     public string? OpusLine => Flights.Admission?.Line();
 
+    /// <summary>The Opus line's hover text: the line, the peers not counted, then one line per away peer (<c>LE1 away since ...</c>); null when no line is said.</summary>
+    public string? OpusTooltip => OpusLine is { } opus
+        ? string.Join("\n", new[] { opus, Flights.Admission?.PeersNotCounted }.Concat(Flights.Admission?.PeersAway ?? []).OfType<string>())
+        : null;
+
     /// <summary>The flights waiting for admission and why, priority ones first, then in the order they formed; a stale flight's last known wait is not one.</summary>
     public IReadOnlyList<(FlightLine Line, string Why)> QueueLines =>
         [.. Flights.Lines.Where(l => l.Stale is null && l.Queued is not null)
@@ -378,7 +383,7 @@ internal sealed class HomeView<TSurface>(Renderer<TSurface> renderer) : PilotWid
         blocks.Add(Layout.Builder.Text("Queue", 13f, Dim).Selectable().RowH(22f));
         if (screen.OpusLine is { } opus)
         {
-            blocks.Add(Layout.Builder.Text(opus, 13f, screen.Flights.Admission?.PeersNotCounted is null ? Palette.Current.Body : Ring).WithTooltip(string.Join("\n", new[] { opus, screen.Flights.Admission?.PeersNotCounted }.Concat(screen.Flights.Admission?.PeersAway ?? []).Where(l => l is not null))).Selectable().RowH(22f));
+            blocks.Add(Layout.Builder.Text(opus, 13f, screen.Flights.Admission?.PeersNotCounted is null ? Palette.Current.Body : Ring).WithTooltip(screen.OpusTooltip ?? opus).Selectable().RowH(22f));
         }
         if (queue.Count == 0)
         {
