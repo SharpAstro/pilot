@@ -45,6 +45,47 @@ public sealed class CiBudgetTests : ReviewTestsBase
     }
 
     [Fact]
+    public void ANoModelRunCountsAsSpendAndARunButNeitherAsFailedNorAsRed()
+    {
+        CiRun[] runs = [CiOf(1, 30, "success"), CiOf(2, 10, "failure", "review"), CiOf(3, 5, "failure", "review", Now.AddHours(-2))];
+        IReadOnlySet<long> noModel = new HashSet<long> { 2, 3 };
+
+        var ci = CiBudgets.Count(runs, null, Now, noModel);
+
+        (ci.Runs, ci.Failed, ci.RunnerMinutes, ci.RedSince).ShouldBe((3, 0, 45, null));
+        CiBudgets.Count(runs, null, Now).Failed.ShouldBe(2, "with no set every caller is as before");
+    }
+
+    [Fact]
+    public void ARealFailureAfterANoModelOneIsRedFromTheRealOne()
+    {
+        var real = Now.AddHours(-1);
+        CiRun[] runs = [CiOf(3, 1, "failure", "review", real), CiOf(2, 1, "failure", "review", Now.AddHours(-3)), CiOf(1, 1, "success", "review", Now.AddHours(-6))];
+
+        CiBudgets.RedSince(runs, new HashSet<long> { 2 }).ShouldBe(real);
+        CiBudgets.RedSince(runs, new HashSet<long> { 2, 3 }).ShouldBeNull();
+    }
+
+    [Fact]
+    public void AWorkflowsRedStreakIsItsFailedRunsNewestFirstBackToItsLastGreenAndEmptyWhileGreen()
+    {
+        CiRun[] runs =
+        [
+            CiOf(6, 1, null, "review"),
+            CiOf(5, 1, "failure", "review", Now.AddHours(-1)),
+            CiOf(4, 1, "cancelled", "review", Now.AddHours(-2)),
+            CiOf(3, 1, "timed_out", "review", Now.AddHours(-3)),
+            CiOf(2, 1, "success", "review", Now.AddHours(-4)),
+            CiOf(1, 1, "failure", "review", Now.AddHours(-5)),
+        ];
+
+        // A run still going and a cancelled one are neither red nor green; the red clock counts from the streak's oldest.
+        CiBudgets.RedStreak(runs).Select(r => r.Id).ShouldBe([5L, 3L]);
+        CiBudgets.RedSince(runs).ShouldBe(Now.AddHours(-3));
+        CiBudgets.RedStreak([.. runs, CiOf(7, 1, "success", "review", Now)]).ShouldBeEmpty();
+    }
+
+    [Fact]
     public void CountingKeepsWhatTheNodeDecidedAndOnlyReplacesTheNumbers()
     {
         var before = new FlightCi { Extra = 2, CappedWhy = "past it", Answer = Verbs.CiSplit, RunnerMinutes = 1 };
