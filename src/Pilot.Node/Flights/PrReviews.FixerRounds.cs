@@ -106,6 +106,12 @@ public sealed partial class PrReviews
         var sessions = state.Sessions().Where(s => review.FixerJob is { } job ? string.Equals(s.Id, job, StringComparison.Ordinal) : string.Equals(s.Name, review.Fixer, StringComparison.Ordinal)).ToList();
         if (sessions.Count > 0 && sessions.All(s => s.State == SessionState.Ended))
         {
+            // Ended with a pilot run job of its own queued or running is waiting, not finished: the job's end wakes it (pilot #1309: tianwen #2474 and
+            // #2476 ended their turn on 'pilot run', were read as finished and stopped, #2474 was queued and its push refused).
+            if (sessions.Any(FixerWaitsOnJob))
+            {
+                return;
+            }
             // What it left: a fixer that ended with its fix uncommitted, or committed and not pushed (a detached HEAD, a push that failed), had its worktree
             // force-removed with the work in it (pilot #1247: tianwen#2435's fix sat in a commit nothing pointed to). Its worktree is kept then, and the card
             // says where the work is and what it is.
