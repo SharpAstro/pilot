@@ -111,6 +111,10 @@ public sealed class MergeFixtureCardTests
         node.State.PutLeg(node.State.Legs("TIA1").Single(l => l.Name == "review-notes") with { State = LegState.Done });
         await Look(node, Read(fixture));
         node.State.Cards().Any(c => c.Kind == LegCommander.PrReady && c.Id != ready.Id).ShouldBeTrue();
+
+        // And the node merges from it: the wait costs the flight nothing but time.
+        await Look(node, Read(fixture));
+        node.State.Merges().ShouldNotBeEmpty();
     }
 
     [Theory]
