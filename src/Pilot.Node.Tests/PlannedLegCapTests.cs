@@ -51,6 +51,24 @@ public sealed class PlannedLegCapTests : LegCommanderTestsBase
     }
 
     [Fact]
+    public async Task AReviewNotesLegWithinTheCapIsAHandledLineNotACard()
+    {
+        await FlightWithTwoLegs();
+        (await Leg(Verbs.Planned, "flight/TIA1", "two legs")).Ok.ShouldBeTrue();
+        await Plan("extra");
+
+        await Plan("review-notes");
+
+        CapCards().ShouldBeEmpty();
+        var line = _state.Cards(openOnly: false).Single(c => c.Kind == LegCommander.LegCapKind);
+        (line.Bin, line.Title).ShouldBe((CardBin.Handled, "TIA1: review-notes planned within the review-notes cap (4 legs, 2 planned)"));
+
+        // An extra leg that is not a review-notes leg still raises the card.
+        await Plan("another");
+        CapCards().ShouldHaveSingleItem().Bin.ShouldBe(CardBin.ForYou);
+    }
+
+    [Fact]
     public async Task TheSecondExtraLegRaisesAForYouCardNamingTheFlightAndTheCounts()
     {
         await FlightWithTwoLegs();

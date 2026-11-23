@@ -77,6 +77,33 @@ public sealed class MergeArmTests
     }
 
     [Fact]
+    public async Task ANodeArmedMergeWaitingOnItsChecksIsAHandledLineAndFailingChecksRaiseTheCard()
+    {
+        // PIL1294: a merge the node armed on its own rules has nothing for a person to do: no For you card, a Handled line instead.
+        await using var node = await NodeHarness.StartOnModelAsync(Ct);
+        var ready = Ready(node);
+        node.State.PutFlight(node.State.Flights().Single() with { MergeWhenGreen = [PrHead, "squash", "", LegCommander.ArmedByRules] });
+        node.GitHub.Summary = Pending(1);
+
+        await Look(node);
+
+        Card(node, ready).State.ShouldBe(CardState.Closed);
+        node.State.Cards(openOnly: true).Where(c => c.Bin != CardBin.Handled).ShouldBeEmpty();
+        var line = node.State.Cards().Single(c => c.Kind == "merge-armed-by-node");
+        (line.Bin, line.Title).ShouldBe((CardBin.Handled, "TIA1's PR #63 waits for its checks, then the node queues it"));
+        await Look(node);
+        node.State.Cards().Count(c => c.Kind == "merge-armed-by-node").ShouldBe(1);
+
+        // Failing checks bring the person's card back, with the go-around and the re-run.
+        node.App.Services.GetRequiredService<LegCommander>().ShowMergeFailed("TIA1", PrHead, "squash", "TIA1's PR #63: check build (linux) failed", "it failed", CheckLink,
+            rerun: true, goAroundWhy: "fix it", because: "because check build (linux) failed").ShouldBeTrue();
+        var back = node.State.Cards(openOnly: true).Single(c => c.Bin != CardBin.Handled);
+        back.Bin.ShouldBe(CardBin.Ring);
+        back.Choices.Select(c => c.Verb).ShouldContain(Verbs.GoAround);
+        back.Choices.Select(c => c.Verb).ShouldContain(Verbs.RerunChecks);
+    }
+
+    [Fact]
     public async Task EachLookAtTheChecksUpdatesTheArmedCardInPlace()
     {
         var (node, ready) = await Armed(Pending(1));

@@ -85,33 +85,31 @@ public sealed class MergeFixtureCardTests
     [Theory]
     [InlineData("ready")]
     [InlineData("pending")]
-    public async Task AReadyCardOfAFlightWithALegStillToFlyOffersNoMergeAndSaysWhatItWaitsForUntilTheLegLands(string fixture)
+    public async Task AReadyCardOfAFlightWithALegStillToFlyIsAHandledLineAndTheNodeMergesOnceTheLegLands(string fixture)
     {
-        // PIL853: a review-notes leg was planned after the card was raised; the card and the PR row said "ready" with a Merge that
-        // answered "has legs not done: review-notes-2".
+        // PIL853, PIL1294: a review-notes leg was planned after the card was raised; its Merge is refused ("has legs not done"), so the
+        // card is no For you card: it closes and a Handled line says what the merge waits for.
         await using var node = await NodeHarness.StartAsync(Ct);
         var ready = Ready(node);
         node.State.PutLeg(new LegRow { Flight = "TIA1", Name = "review-notes", Order = 2, Goal = "g", DoneWhen = "d", State = LegState.Flying });
 
         await Look(node, Read(fixture));
 
-        var card = Card(node, ready);
-        card.State.ShouldBe(CardState.Open);
-        // A mark, not a button: Blocked, naming the leg, with the reviewed head kept for the node's own merge and the holding bound.
-        var mark = card.Choices.Single(c => c.Verb == Verbs.Merge);
-        (mark.Status, mark.Note, mark.Args[0]).ShouldBe((ChoiceStatus.WaitsForLegs, "review-notes", PrHead));
-        var legs = node.State.Legs("TIA1");
-        card.Title.ShouldBe($"TIA1's PR #63 merges once review-notes is done (legs {legs.Length - 1}/{legs.Length} done)");
+        Card(node, ready).State.ShouldBe(CardState.Closed);
+        node.State.Cards(openOnly: true).Where(c => c.Bin != CardBin.Handled).ShouldBeEmpty();
+        var line = node.State.Cards().Single(c => c.Kind == "pr-waits-for-legs");
+        (line.Bin, line.State).ShouldBe((CardBin.Handled, CardState.Closed));
+        line.Title.ShouldBe("TIA1's PR #63 merges once review-notes lands");
 
-        // GitHub gives no merge state (UNKNOWN right after a push): the wait stays, the Merge no button (review of #924).
+        // Another look says nothing new: one line per wait, not one per look.
         node.GitHub.Merge = null;
         await node.App.Services.GetRequiredService<PrChecks>().LookAsync(Ct);
-        Card(node, ready).Choices.Single(c => c.Verb == Verbs.Merge).Status.ShouldBe(ChoiceStatus.WaitsForLegs);
+        node.State.Cards().Count(c => c.Kind == "pr-waits-for-legs").ShouldBe(1);
 
-        // The leg lands: the next look offers the Merge again, as GitHub has the PR.
+        // The leg lands: the node's merge anchor is raised again, as GitHub has the PR.
         node.State.PutLeg(node.State.Legs("TIA1").Single(l => l.Name == "review-notes") with { State = LegState.Done });
         await Look(node, Read(fixture));
-        Card(node, ready).Choices.Single(c => c.Verb == Verbs.Merge).Status.ShouldBe(fixture == "ready" ? ChoiceStatus.Passing : ChoiceStatus.Pending);
+        node.State.Cards(openOnly: true).Any(c => c.Kind == LegCommander.PrReady).ShouldBeTrue();
     }
 
     [Theory]

@@ -495,7 +495,7 @@ public sealed partial class LegCommander
         // PIL1294: a merge the node armed on its own rules waits on its checks with nothing for a person to do: its card closes and a
         // Handled line says so. The card comes back when the checks fail (ShowMergeFailed) or the merge is queued (below).
         if (way == MergeWays.Armed && state.Flights().FirstOrDefault(f => f.Code == (Verbs.FlightCodeOf(target) ?? target)) is { MergeWhenGreen: { } armedRow } armedFlight
-            && armedRow.ElementAtOrDefault(2) != ArmedByGitHub)
+            && armedRow.ElementAtOrDefault(2) != ArmedByGitHub && armedRow[^1] == ArmedByRules)
         {
             var waiting = $"{armedFlight.Code}'s PR #{armedFlight.PullRequest} waits for its checks, then the node queues it";
             var open = state.Cards(openOnly: true).Where(c => c.Kind is PrReady && c.Subject == target && c.Choices.Any(ch => ch.Verb == Verbs.Merge)).ToList();
