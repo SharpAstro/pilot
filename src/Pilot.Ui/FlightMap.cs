@@ -197,21 +197,19 @@ internal sealed class FlightMap
         {
             return DestinationStatus.Conflicts;
         }
-        if (flight.RebaseOnly is not null)
-        {
-            return DestinationStatus.RebaseOnly;
-        }
         if (flight.MergeWhenGreen is { Length: > 0 })
         {
             return DestinationStatus.Armed;
         }
-        return flight.Review?.State switch
+        var status = flight.Review?.State switch
         {
             ReviewState.Reviewing => DestinationStatus.Reviewing,
             ReviewState.Passed => DestinationStatus.Passed,
             ReviewState.Changes => DestinationStatus.Changes,
             _ => pr == "draft" ? DestinationStatus.Draft : DestinationStatus.Open,
         };
+        // Rebase only is a note on a PR that is otherwise fine: a review under way or asking for changes still says so first.
+        return flight.RebaseOnly is not null && status is DestinationStatus.Passed or DestinationStatus.Open or DestinationStatus.Draft ? DestinationStatus.RebaseOnly : status;
     }
 
     /// <summary>

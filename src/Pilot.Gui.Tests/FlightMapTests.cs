@@ -139,6 +139,10 @@ public sealed class FlightMapTests
         FlightMap.StatusOf(rebaseOnly).ShouldBe(DestinationStatus.RebaseOnly);
         FlightMap.StatusOf(rebaseOnly with { Review = Review(ReviewState.Passed, "pilot: conflicts") }).ShouldBe(DestinationStatus.Conflicts);
         FlightMap.StatusOf(rebaseOnly with { MergeQueue = "in the merge queue, position 2" }).ShouldBe(DestinationStatus.Queued);
+        // A review under way or asking for changes still says so first: rebase only is a note on a PR otherwise fine.
+        FlightMap.StatusOf(rebaseOnly with { Review = Review(ReviewState.Changes, null) }).ShouldBe(DestinationStatus.Changes);
+        FlightMap.StatusOf(rebaseOnly with { Review = Review(ReviewState.Reviewing, null) }).ShouldBe(DestinationStatus.Reviewing);
+        FlightMap.StatusOf(rebaseOnly with { Review = Review(ReviewState.Passed, null) }).ShouldBe(DestinationStatus.RebaseOnly);
     }
 
     [Fact]

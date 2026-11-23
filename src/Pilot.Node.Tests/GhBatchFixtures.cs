@@ -15,7 +15,7 @@ internal static class GhBatchFixtures
 
     internal sealed record Scenario(
         string State = "OPEN", bool Draft = false, string Merge = "MERGEABLE", string MergeStatus = "CLEAN", string? Review = null, bool Armed = false,
-        bool QueueEnabled = true, bool InQueue = false, int? Position = null, string? Removed = null, string? RemovedReason = null, Check[]? Checks = null, string[]? Labels = null, int Number = 7);
+        bool QueueEnabled = true, bool InQueue = false, int? Position = null, string? Removed = null, string? RemovedReason = null, Check[]? Checks = null, string[]? Labels = null, int Number = 7, bool? CanBeRebased = null);
 
     internal static Check Passed(string name = "build") => new(name, "COMPLETED", "SUCCESS", "pass");
 
@@ -33,7 +33,7 @@ internal static class GhBatchFixtures
         var rollup = s.Checks is null ? "null" : $"{{\"contexts\":{{\"nodes\":[{contexts}]}}}}";
         var labels = string.Join(",", (s.Labels ?? []).Select(l => $"{{\"name\":\"{l}\"}}"));
         return $"{{\"data\":{{\"rateLimit\":{{\"cost\":{cost},\"remaining\":4990}},\"repository\":{{\"pullRequests\":{{\"nodes\":[{{"
-            + $"\"number\":{s.Number},\"state\":\"{s.State}\",\"url\":\"https://github.com/o/r/pull/{s.Number}\",\"isDraft\":{(s.Draft ? "true" : "false")},\"headRefName\":\"flight/x\",\"headRefOid\":\"abc123\","
+            + $"\"number\":{s.Number},\"state\":\"{s.State}\",\"url\":\"https://github.com/o/r/pull/{s.Number}\",\"isDraft\":{(s.Draft ? "true" : "false")},\"headRefName\":\"flight/x\",\"headRefOid\":\"abc123\",\"baseRefName\":\"main\",\"canBeRebased\":{(s.CanBeRebased is { } can ? (can ? "true" : "false") : "null")},"
             + $"\"labels\":{{\"nodes\":[{labels}]}},\"mergeable\":\"{s.Merge}\",\"mergeStateStatus\":\"{s.MergeStatus}\",\"reviewDecision\":{Q(s.Review)},"
             + $"\"isMergeQueueEnabled\":{(s.QueueEnabled ? "true" : "false")},\"isInMergeQueue\":{(s.InQueue ? "true" : "false")},\"mergeQueueEntry\":{(s.Position is { } p ? $"{{\"position\":{p}}}" : "null")},"
             + $"\"autoMergeRequest\":{(s.Armed ? "{\"enabledAt\":\"2026-11-23T09:01:00Z\"}" : "null")},"
@@ -44,7 +44,7 @@ internal static class GhBatchFixtures
     // The same PR as gh pr view says it (the fields of PullRequestByBranchFields).
     internal static string ViewPullRequest(Scenario s) =>
         $"{{\"number\":{s.Number},\"state\":\"{s.State}\",\"headRefOid\":\"abc123\",\"url\":\"https://github.com/o/r/pull/{s.Number}\",\"mergeable\":\"{s.Merge}\","
-        + $"\"labels\":[{string.Join(",", (s.Labels ?? []).Select(l => $"{{\"name\":\"{l}\"}}"))}],\"mergeCommit\":null,\"mergedAt\":null,\"isDraft\":{(s.Draft ? "true" : "false")}}}";
+        + $"\"labels\":[{string.Join(",", (s.Labels ?? []).Select(l => $"{{\"name\":\"{l}\"}}"))}],\"mergeCommit\":null,\"mergedAt\":null,\"isDraft\":{(s.Draft ? "true" : "false")},\"baseRefName\":\"main\"}}";
 
     // gh pr view's MergeStateFields.
     internal static string ViewMergeState(Scenario s) =>

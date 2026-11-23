@@ -770,8 +770,7 @@ internal sealed partial class FlightsView<TSurface>
             DestinationStatus.Merged => Landed,
             DestinationStatus.Conflicts or DestinationStatus.Changes => Failed,
             DestinationStatus.NoPr => P.RouteAhead,
-            DestinationStatus.RebaseOnly => Landed,
-            DestinationStatus.Passed or DestinationStatus.Queued or DestinationStatus.Armed => Flying,
+            DestinationStatus.Passed or DestinationStatus.RebaseOnly or DestinationStatus.Queued or DestinationStatus.Armed => Flying,
             _ => Held,
         };
         FillRect(X(d.X) - r, Y(d.Y) - r, 2f * r, 2f * r, color, 2f * s);

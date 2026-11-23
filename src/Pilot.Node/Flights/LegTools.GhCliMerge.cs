@@ -147,8 +147,14 @@ public sealed partial class GhCli
         {
             return known.Rebases;
         }
-        var rebases = MergeMethods.Rebases(await MergeQueueMethodAsync(repoPath, branch, cancellationToken), await AllowedMergeMethodsAsync(repoPath, cancellationToken));
-        _rebaseBases[key] = (rebases, DateTimeOffset.UtcNow);
+        var (rulesExit, rules, _) = await RunAsync(["api", $"repos/{{owner}}/{{repo}}/rules/branches/{branch}"], repoPath, cancellationToken);
+        var allowed = await AllowedMergeMethodsAsync(repoPath, cancellationToken);
+        var rebases = MergeMethods.Rebases(rulesExit == 0 ? ParseMergeQueueMethod(rules) : null, allowed);
+        // An answer GitHub did not give is no answer: not kept.
+        if (rulesExit == 0 && allowed is not null)
+        {
+            _rebaseBases[key] = (rebases, DateTimeOffset.UtcNow);
+        }
         return rebases;
     }
 

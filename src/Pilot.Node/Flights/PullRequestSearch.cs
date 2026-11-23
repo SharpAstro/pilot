@@ -239,7 +239,7 @@ public static class PullRequestSearch
             MergeKinds.Queued => new(PullRequestKind.InMergeQueue, merge.Position is { } position ? $"In merge queue #{position}" : "In merge queue", false),
             MergeKinds.Conflicts => new(PullRequestKind.Conflicts, "Conflicts", true),
             MergeKinds.Behind => new(PullRequestKind.Behind, "Behind", false),
-            MergeKinds.RebaseOnly => new(PullRequestKind.RebaseOnly, PullRequestStates.RebaseOnlyLabel, false),
+            MergeKinds.RebaseOnly => new(PullRequestKind.RebaseOnly, PullRequestStates.RebaseOnlyChip, false),
             MergeKinds.ChangesRequested => new(PullRequestKind.ChangesRequested, "Changes requested", true),
             MergeKinds.Blocked when merge.FailedName is { } failed => new(PullRequestKind.ChecksFailed, $"Checks failed: {failed}", false),
             MergeKinds.Blocked => new(PullRequestKind.ReviewRequired, "Review required", false),

@@ -280,7 +280,7 @@ public sealed class PullRequestsPageTests
             Orgs = ["SharpAstro"], ReadAt = Now - TimeSpan.FromSeconds(40), Viewer = "sebgod",
             PullRequests =
             [
-                Pr("SharpAstro/pilot", 1299, LongTitle, PullRequestKind.RebaseOnly, PullRequestStates.RebaseOnlyLabel, flight: "PIL1299", review: PullRequestReview.Passed),
+                Pr("SharpAstro/pilot", 1299, LongTitle, PullRequestKind.RebaseOnly, PullRequestStates.RebaseOnlyChip, flight: "PIL1299", review: PullRequestReview.Passed),
                 Pr("SharpAstro/tianwen", 1799, "Plate solving: a fallback", PullRequestKind.Conflicts, "Conflicts", needsMe: true, flight: "TIA1799", review: PullRequestReview.Changes),
             ],
         };
@@ -295,6 +295,27 @@ public sealed class PullRequestsPageTests
         var day = Palette.Standard;
         PullRequestsView<RgbaImage>.ChipColors(day, PullRequestKind.RebaseOnly).Bg.ShouldNotBe(PullRequestsView<RgbaImage>.ChipColors(day, PullRequestKind.Conflicts).Bg);
         TextOverlap.Faults(arranged).Select(f => f.Text).ShouldBeEmpty();
+
+        // The chip's words are not cut: its text fits the State column (the full sentence is on the hover).
+        var chip = arranged.Single(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text t } && t.Value == PullRequestStates.RebaseOnlyChip);
+        var text = (Layout.Content.Text)((Layout.Node.Leaf)chip.Node).Content;
+        var (measured, _) = renderer.MeasureText(text.Value, SessionsCapture.FontPath, text.FontSize);
+        measured.ShouldBeLessThanOrEqualTo(chip.Bounds.Width, "the rebase-only chip text is cut");
+        Contrast(PullRequestsView<RgbaImage>.ChipColors(Palette.Standard, PullRequestKind.RebaseOnly).Fg, PullRequestsView<RgbaImage>.ChipColors(Palette.Standard, PullRequestKind.RebaseOnly).Bg).ShouldBeGreaterThanOrEqualTo(4.5);
+        Contrast(PullRequestsView<RgbaImage>.ChipColors(Palette.Night, PullRequestKind.RebaseOnly).Fg, PullRequestsView<RgbaImage>.ChipColors(Palette.Night, PullRequestKind.RebaseOnly).Bg).ShouldBeGreaterThanOrEqualTo(3.0);
+
+        // The capture for the flight's page: the page at this width, in light and in night, written to PILOT_JOB_ARTIFACTS (or the test's captures folder).
+        var dir = Environment.GetEnvironmentVariable("PILOT_JOB_ARTIFACTS") is { Length: > 0 } given ? given : Path.Combine(AppContext.BaseDirectory, "captures");
+        Directory.CreateDirectory(dir);
+        foreach (var night in new[] { false, true })
+        {
+            using var shot = new RgbaImageRenderer((uint)width, 700);
+            var (chrome, _) = Chrome(shot);
+            chrome.Show(PilotPage.PullRequests);
+            chrome.Night.On = night;
+            chrome.Render(new SessionsScreen([], "test", Now), null, null, null, null, null, Screen(row), new RectF32(0, 0, width, 700));
+            File.WriteAllBytes(Path.Combine(dir, $"pr-rebase-only-{(night ? "night" : "light")}-{width}.png"), SharpAstro.Png.PngWriter.Encode(shot.Surface.Pixels, (int)width, 700));
+        }
     }
 
     [Fact]

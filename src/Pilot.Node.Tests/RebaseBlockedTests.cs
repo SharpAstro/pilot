@@ -66,10 +66,6 @@ public sealed class RebaseBlockedTests() : ReviewTestsBase(realGit: true)
         Git(plane, "rev-parse", $"refs/pilot/laid/{flight.Code}").ShouldBe(old);
         F(flight.Code).Review!.ReviewedHead.ShouldBe(shaped);
         F(flight.Code).RebaseOnly.ShouldBeNull();
-        // GitHub reads the pushed head as replayable now.
-        _github.CanBeRebased = true;
-        _github.Pr = _github.Pr! with { Head = shaped };
-        (await _github.PullRequestAsync(Repo, flight.Branch, Ct)).ShouldNotBeNull().Rebaseable.ShouldBe(true);
         _state.Cards().ShouldContain(c => c.Kind == LegCommander.ShapedKind && c.Bin == CardBin.Handled);
         NoCardForThePerson();
         // Once a head: the next look at the same head does nothing more.
@@ -107,6 +103,20 @@ public sealed class RebaseBlockedTests() : ReviewTestsBase(realGit: true)
         Git(Repo, "rev-parse", $"refs/heads/{flight.Branch}").ShouldBe(shaped);
         F(flight.Code).RebaseOnly.ShouldBeNull();
         Open().ShouldNotContain(c => c.Kind == LegCommander.RebaseOnlyKind);
+        NoCardForThePerson();
+    }
+
+    // The look reads a flight's PR from the repo's batch (pilot #1293), not singly: the batch carries the rebaseable answer too.
+    [Fact]
+    public async Task TheLooksBatchReadAlsoReshapesTheBranch()
+    {
+        var (flight, old) = await BlockedFlight("5");
+        _github.OpenBranches.GetOrAdd(Repo, _ => new()).Enqueue(flight.Branch);
+
+        await Checks().LookAsync(Ct);
+
+        Git(flight.Worktree, "rev-parse", "HEAD").ShouldNotBe(old);
+        MergesOver(flight.Worktree).ShouldBe(0);
         NoCardForThePerson();
     }
 

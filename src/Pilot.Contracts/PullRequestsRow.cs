@@ -52,6 +52,9 @@ public static class PullRequestStates
     /// <summary>The chip's words for <see cref="PullRequestKind.RebaseOnly"/>: it is GitHub's word (a conflict) and the node's (known, harmless).</summary>
     public const string RebaseOnlyLabel = "Conflict (rebase only): known, lands squashed";
 
+    /// <summary>The chip's short words: the State column is 144 px wide, so <see cref="RebaseOnlyLabel"/> would be cut; it stays whole on the hover and the card.</summary>
+    public const string RebaseOnlyChip = "Conflict (rebase)";
+
     /// <summary>
     /// How much a PR of this kind asks of the person, 0 the most: ready to merge, then changes asked for, a conflict, failed
     /// checks, behind, a review wanted, waiting (running checks, a required check to come, an armed merge, a merge state not

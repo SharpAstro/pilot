@@ -94,6 +94,26 @@ public sealed class GhBatchParseTests
         done.CiRunLength.ShouldBe(TimeSpan.FromMinutes(3));
     }
 
+    // pilot #1299: the batch carries canBeRebased and the base, so a look reads a rebase-only PR as the single reads do; it counts only on a base that merges by rebase.
+    [Fact]
+    public void TheBatchCarriesCanBeRebasedAndItCountsOnlyOnABaseThatMergesByRebase()
+    {
+        var json = Batch(new Scenario(Checks: [Passed()], CanBeRebased: false));
+        GhCli.NotRebaseableBases(json).ShouldBe(["main"]);
+        GhCli.NotRebaseableBases(Batch(new Scenario(Checks: [Passed()], CanBeRebased: true))).ShouldBeEmpty();
+        GhCli.NotRebaseableBases(Batch(new Scenario(Merge: "CONFLICTING", MergeStatus: "DIRTY", CanBeRebased: false))).ShouldBeEmpty("a real conflict is not asked about");
+
+        var rebasing = GhCli.ParseOpenByHead(json, baseRef => baseRef == "main").PullRequests.ShouldNotBeNull().ShouldHaveSingleItem();
+        rebasing.Pull.Base.ShouldBe("main");
+        rebasing.Pull.Rebaseable.ShouldBe(false);
+        rebasing.Merge.ShouldNotBeNull().Kind.ShouldBe(MergeKinds.RebaseOnly);
+
+        var squashing = GhCli.ParseOpenByHead(json, _ => false).PullRequests.ShouldNotBeNull().ShouldHaveSingleItem();
+        squashing.Pull.Rebaseable.ShouldBeNull("a squash-only base never reads rebase only");
+        squashing.Merge.ShouldNotBeNull().Kind.ShouldBe(MergeKinds.Ready);
+        GhCli.ParseOpenByHead(json).PullRequests.ShouldNotBeNull().ShouldHaveSingleItem().Pull.Rebaseable.ShouldBeNull();
+    }
+
     [Fact]
     public void ANullOrGarbledAnswerIsNullAndTheCostIsRead()
     {
