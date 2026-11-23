@@ -213,7 +213,7 @@ internal sealed record FleetLine
             WatchtowerChurning = health is { Churning: true },
             WatchtowerStarts = health?.StartsLast24h ?? 0,
             WatchtowerSummary = health is { Churning: true, Summary.Length: > 0 } ? health.Summary : null,
-            Traffic = (summary.Connected || lastKnown) && summary.Node?.Traffic is { } traffic ? TrafficWords(traffic) : null,
+            Traffic = string.Join(" · ", new[] { (summary.Connected || lastKnown) && summary.Node?.Traffic is { } traffic ? TrafficWords(traffic) : null, summary.Connected || lastKnown ? summary.Node?.GhCalls : null }.Where(t => t is not null)) is { Length: > 0 } words ? words : null,
             Commands = (summary.Connected || lastKnown) ? Pilot.Contracts.CommandTimingRow.Slowest(summary.Node?.CommandTimings) : null,
             Account = summary.Account ?? (summary.Connected || lastKnown ? "account unknown" : "—"),
             Usage = summary.Usage ?? "",

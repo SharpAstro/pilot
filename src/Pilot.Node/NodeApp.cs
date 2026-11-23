@@ -202,6 +202,7 @@ public static partial class NodeApp
                 CountedSessions = slots.Publish().Counted,
                 Leases = slots.Fleet.Leases() is { Length: > 0 } leases ? leases : null,
                 Traffic = traffic.LastHourRow(),
+                GhCalls = traffic.GhCalls.Last()?.StatusLine(),
                 SendTimings = timings.Rows(),
                 CommandTimings = commandTimings.Rows(),
                 Heap = heap(),

@@ -83,6 +83,7 @@ public sealed partial class GhCli
             prs.AddRange(read.PullRequests);
             gone.AddRange(read.Gone);
             cost += read.Cost;
+            NodeTraffic.Shared.GhCalls.RecordCost("api graphql", "GhCli.OpenPullRequestsInAsync", read.Cost);
             remaining = read.Remaining ?? remaining;
             resetAt = read.ResetAt ?? resetAt;
             if (read.Next is not { } next)
