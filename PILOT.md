@@ -57,18 +57,13 @@ is neither built nor tested by CI.
   or `pilot session end` from a person or the watchtower. A session that finishes or crashes on its own is out of scope;
   the ledger closes it as finished or crashed. A session never stops another with `claude stop`.
 - A reboot made ready (`pilot node reboot request`, #916) puts the node in maintenance mode and tells every live session it
-  started to save itself. A session told so stops where it is, **commits and pushes** what it can (unpushed work is lost
-  work), and writes the file it was named (`<data>/reboot/flight-<code>-reboot-<stamp>.md`, `watchtower-reboot-…`, or its
-  name's) with four parts: what it was doing and where it stopped; what is committed and pushed and what is not; what it
-  was waiting on; the exact next step. Then it ends its turn, and the node ends the session once the file is in. A session
-  silent for 5 minutes gets a file the node writes from what it knows and is ended. `pilot node reboot status` says how far
-  it is, a "Ready to reboot" card says when all are in, and `pilot node reboot done` (after the reboot) or `cancel` leaves
+  started to save itself: stop where it is, **commit and push** what it can, and write the file it was named
+  (`<data>/reboot/flight-<code>-reboot-<stamp>.md`, `watchtower-reboot-…`, or its name's) with four parts: where it stopped; what is
+  pushed and what is not; what it waits on; the exact next step. Then end the turn; the node ends the session once the file is in
+  (one silent for 5 minutes gets a file the node writes). `pilot node reboot status` says how far it is, `done` or `cancel` leaves
   maintenance mode. The node never reboots the machine.
-- Autopilot v2 (#1285, `pilot settings set autopilot on`, the person's to change, per node, off by default): the watchtower
-  (Sonnet) runs with a standing goal and is woken on a stalled flight, a peer node, a repeated failure and new cards; the
-  `investigator` role (Opus, `investigator-range`) is a short session the node starts on a find-the-cause task, a stale flight, a
-  card bound for the ring and the digest, and it ends with one outcome (issue plus flight, action with its why, or one ring saying what
-  was tried). Settings: `autopilot-ci-grants`, `autopilot-stall-minutes`, `autopilot-investigations`. `src/README.md` has the rest.
+- With `pilot settings set autopilot on` (the person's, per node, off by default) the watchtower (Sonnet) runs with the standing goal of
+  #1285 and an `investigator` session (Opus, `investigator-range`) decides what would ring the person; `src/README.md` has the rest.
 - A watch script has a deadline or an until-condition, never `while true`; check for the old one before re-arming (#870).
 - One live watchtower per node. A change to how the node finds, messages, resumes or stops a session keeps
   `OneWatchtowerTests`, `WatchtowerTests` and `ResumeOptionsTests` passing.
