@@ -157,12 +157,12 @@ public sealed class FlightMapTests
     }
 
     [Fact]
-    public void ThePlaneWaitsAtTheDestinationOnceEveryLegIsDone()
+    public void NoPlaneIsParkedAtTheDestinationOnceEveryLegIsDone()
     {
+        // pilot #1298: nothing flies, so nothing is drawn flying.
         var route = Map(Line(WithPr(Flight("A")), De1, null, Leg("A", "only", 1, LegState.Done))).Route("A")!;
 
-        route.Plane!.Leg.ShouldBeNull();
-        route.Plane.X.ShouldBe(route.Destination.X);
+        route.Plane.ShouldBeNull();
     }
 
     [Fact]
@@ -251,7 +251,7 @@ public sealed class FlightMapTests
         route.Gate.ShouldNotBeNull();
         route.Gate.WaitsFor.ShouldBe("A");
         route.Gate.X.ShouldBeLessThan(route.Airports[0].X);
-        route.Plane!.X.ShouldBe(route.Gate.X);
+        route.Plane.ShouldBeNull();
     }
 
     [Fact]
@@ -297,27 +297,24 @@ public sealed class FlightMapTests
     }
 
     [Fact]
-    public void APlaneParkedOnItsDestinationLeavesThePointToTheDestinationOutToItsRing()
+    public void TheDestinationAndTheGateStayClickableWithNoPlaneOnThem()
     {
-        // Every leg done and the PR open, and a flight with no legs yet: the plane waits on the destination in both.
+        // Every leg done and the PR open, a flight with no legs yet, and a held flight: no plane on the sign or the gate (pilot #1298).
         var map = Map(
             Line(WithPr(Flight("A")), De1, null, Leg("A", "one", 1, LegState.Done), Leg("A", "two", 2, LegState.Done)),
-            Line(WithPr(Flight("B")), De1));
+            Line(WithPr(Flight("B")), De1),
+            Line(Flight("D", FlightState.Held, "A"), De1));
 
         foreach (var code in new[] { "A", "B" })
         {
             var route = map.Route(code)!;
-            route.PlaneAtDestination.ShouldBeTrue();
+            route.Plane.ShouldBeNull();
             var d = route.Destination;
             map.At(d.X, d.Y).ShouldBe(new MapHit(MapHitKind.Destination, code, PullRequest: 7, Node: "de1"));
-            // The plane's ring is wider than the sign: its edge is the destination's too.
-            map.At(d.X + FlightMap.PlaneRadius - 0.5f, d.Y)!.Value.Kind.ShouldBe(MapHitKind.Destination);
         }
-        // A plane at a flying leg and one at a gate are still the plane's.
-        var flying = Map(Line(Flight("C"), De1, null, Leg("C", "one", 1, LegState.Flying))).Route("C")!;
-        flying.PlaneAtDestination.ShouldBeFalse();
-        var held = Map(Line(Flight("D", FlightState.Held, "C"), De1)).Route("D")!;
-        held.PlaneAtDestination.ShouldBeFalse();
+        var held = map.Route("D")!;
+        held.Plane.ShouldBeNull();
+        map.At(held.Gate!.X, held.Gate.Y).ShouldBe(new MapHit(MapHitKind.Gate, "D", Node: "de1"));
     }
 
     [Fact]
