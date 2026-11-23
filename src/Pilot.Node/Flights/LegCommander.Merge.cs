@@ -630,14 +630,6 @@ public sealed partial class LegCommander
             MergeCardBin(flight?.Repo, merge.Kind is MergeKinds.Blocked or MergeKinds.ChangesRequested || !own && merge.DroppedFromQueue is not null));
     }
 
-    /// <summary>
-    /// What a held merge waits for, in the words its Merge mark shows (#918): each leg not done, a leg whose check reruns marked so
-    /// (<c>review-notes-3 (check rerunning)</c>). No minutes: the words change only when the wait does, so the card is not rewritten every tick.
-    /// </summary>
-    internal static string LegWaitWords(IEnumerable<LegRow> legs) =>
-        string.Join(", ", legs.Where(l => l.State != LegState.Done).OrderBy(l => l.Order)
-            .Select(l => l is { State: LegState.Flying, Recheck: { Outcome: null } } ? $"{l.Name} (check rerunning)" : l.Name));
-
     /// <summary>What a PR-ready card says of the merge state it shows: its own sentence for each state, never the table's "is ready" for a PR GitHub holds back.</summary>
     internal static string MergeSummary(string code, MergeState merge) => merge.Kind switch
     {

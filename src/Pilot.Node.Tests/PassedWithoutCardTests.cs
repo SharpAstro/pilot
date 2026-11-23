@@ -73,7 +73,7 @@ public sealed class PassedWithoutCardTests : ReviewTestsBase
 
     [Fact]
     [Trait("Category", "Slow")]
-    public async Task AHoldingFlightGetsTheHoldingCardAndItsNotesCardAndIsNotMerged()
+    public async Task ARestoredHoldingCardWaitingOnALegIsAHandledLineAndNothingIsMerged()
     {
         NodeAdvances();
         _github.Checks = ChoiceStatus.Passing;

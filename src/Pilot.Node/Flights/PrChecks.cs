@@ -937,11 +937,12 @@ public sealed class PrChecks(NodeState state, IGitHub gitHub, TimeProvider time,
                 await legs.SettleNodeHoldAsync(flight.Code, holding.Since, cancellationToken);
                 continue;
             }
-            // The bound counts from the review.
+            // The bound counts from the review. The head is the open PR-ready card's; a card the node closed for a leg wait (PIL1294) leaves
+            // the reviewed head on the flight's review. A card a person dismissed rings nothing, as before.
             if (now - holding.Since < HoldingBound
                 || cards.Any(c => c.Subject == subject)
                 || (_holdingRung.TryGetValue(key, out var rung) && now - rung < HoldingBound)
-                || (state.Cards(openOnly: true).FirstOrDefault(c => c.Kind == LegCommander.PrReady && c.Subject == subject)?.Choices.FirstOrDefault(c => c.Verb == Verbs.Merge) is { Args: [{ } cardHead, ..] } ? cardHead : flight.Review?.ReviewedHead) is not { } head)
+                || HoldingHead(subject, flight) is not { } head)
             {
                 continue;
             }
@@ -958,6 +959,20 @@ public sealed class PrChecks(NodeState state, IGitHub gitHub, TimeProvider time,
                 new CardChoice { Label = "Keep waiting", Verb = Verbs.Dismiss, Target = Verbs.CardTarget(card.Id), Args = ["waiting for the watchtower"] },
             ]);
         }
+    }
+
+    /// <summary>
+    /// The head a holding flight's timeout card merges: the open PR-ready card's Merge head, or, where the node itself closed that card
+    /// for a leg wait (<see cref="LegCommander.LegWaitOutcome"/>), the flight's reviewed head. Null otherwise (no card, or one a person closed).
+    /// </summary>
+    private string? HoldingHead(string subject, FlightRow flight)
+    {
+        if (state.Cards(openOnly: true).FirstOrDefault(c => c.Kind == LegCommander.PrReady && c.Subject == subject) is { } open)
+        {
+            return open.Choices.FirstOrDefault(c => c.Verb == Verbs.Merge) is { Args: [{ } cardHead, ..] } ? cardHead : null;
+        }
+        var latest = state.Cards(openOnly: false).Where(c => c.Kind == LegCommander.PrReady && c.Subject == subject).OrderByDescending(c => c.ClosedAt ?? c.At).FirstOrDefault();
+        return latest?.Outcome?.StartsWith(LegCommander.LegWaitOutcome, StringComparison.Ordinal) == true ? flight.Review?.ReviewedHead : null;
     }
 
     /// <summary>

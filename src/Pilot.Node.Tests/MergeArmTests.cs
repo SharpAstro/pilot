@@ -104,6 +104,36 @@ public sealed class MergeArmTests
     }
 
     [Fact]
+    public async Task ANodeArmedMergeThatJoinsTheQueueAfterItsQuietWaitRaisesOneQueuedCard()
+    {
+        // PIL1294 review R1.8: the queue's drop is read from the merge card, so a queued merge after the quiet wait brings it back, once.
+        await using var node = await NodeHarness.StartOnModelAsync(Ct);
+        var ready = Ready(node);
+        node.State.PutFlight(node.State.Flights().Single() with { MergeWhenGreen = [PrHead, "squash", "", LegCommander.ArmedByRules] });
+        node.GitHub.Summary = Pending(1);
+        await Look(node);
+        Card(node, ready).State.ShouldBe(CardState.Closed);
+        node.State.Cards(openOnly: true).Where(c => c.Bin != CardBin.Handled).ShouldBeEmpty();
+        var commander = node.App.Services.GetRequiredService<LegCommander>();
+
+        commander.ShowMerge(Subject, "in the merge queue, position 2", MergeWays.Queued);
+
+        var queued = node.State.Cards(openOnly: true).Where(c => c.Bin != CardBin.Handled).ShouldHaveSingleItem();
+        queued.Id.ShouldNotBe(ready.Id);
+        (queued.Kind, queued.Bin, queued.Title).ShouldBe((LegCommander.PrReady, CardBin.ForYou, "TIA1's PR #63 is in the merge queue"));
+        queued.Link.ShouldBe(PrUrl);
+        var merge = queued.Choices.Single(c => c.Verb == Verbs.Merge);
+        (merge.Status, merge.Note).ShouldBe((ChoiceStatus.Queued, "position 2"));
+        merge.Args[0].ShouldBe(PrHead, "the quiet card's Merge, with its reviewed head, is what the queued card offers");
+
+        // A second look at the queue turns the same card, it raises no second one.
+        commander.ShowMerge(Subject, "in the merge queue, position 1", MergeWays.Queued);
+        var again = node.State.Cards(openOnly: true).Where(c => c.Bin != CardBin.Handled).ShouldHaveSingleItem();
+        again.Id.ShouldBe(queued.Id);
+        again.Choices.Single(c => c.Verb == Verbs.Merge).Note.ShouldBe("position 1");
+    }
+
+    [Fact]
     public async Task EachLookAtTheChecksUpdatesTheArmedCardInPlace()
     {
         var (node, ready) = await Armed(Pending(1));
