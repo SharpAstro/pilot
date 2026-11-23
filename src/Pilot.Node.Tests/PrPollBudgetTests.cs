@@ -263,6 +263,8 @@ public sealed class PrPollBudgetTests
 
         var redBefore = MergeChoice(rig, "PBA2");
         rig.GitHub.SummaryOf[12] = GhAnswers.ChecksOf(ChoiceStatus.Failing, 2, 3, "build", "https://github.com/o/r/actions/runs/1");
+        // GitHub blocks the merge on the failed check, which is what the card shows.
+        rig.GitHub.MergeOf[12] = GhAnswers.MergeState(MergeKinds.Blocked, failedName: "build", failedLink: "https://github.com/o/r/actions/runs/1");
         (await hour.SeenWithinAsync(() => MergeChoice(rig, "PBA2") != redBefore, interval)).ShouldNotBeNull("red CI is seen within one interval");
 
         var queuedBefore = MergeChoice(rig, "PBB2");
