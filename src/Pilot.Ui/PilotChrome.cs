@@ -604,6 +604,7 @@ internal sealed class PilotChrome<TSurface>
     internal static bool ToastCuts(CardRow card, int shownChoices) =>
         card.Summary is { Length: > ToastSummaryFits }
         || (card.Detail is { Length: > 0 } detail && detail != card.Summary)
+        || card.Attachment is { Length: > 0 }
         || card.Choices.Count(c => c.Status != ChoiceStatus.Unavailable && !ChoiceStatus.IsChip(c.Status)) > shownChoices;
 
     // A staying card's toast keeps its words and carries the card's own plain choices, answered as the panel answers them (Cards.OnAnswer).
@@ -618,32 +619,8 @@ internal sealed class PilotChrome<TSurface>
         {
             return null;
         }
-        return () =>
-        {
-            var p = Palette.Current;
-            var parts = new List<Layout.Node> { Layout.Builder.Text(card.Title, 14f, p.Bright).WStar().WithTooltip(card.Title) };
-            if (card.Summary is { Length: > 0 } summary)
-            {
-                parts.Add(WrappedProse.Of(summary, 12f, p.Dim, 3, selectable: false));
-            }
-            var pressKey = CardsView<TSurface>.PressKeyOf(node, card.Id);
-            var colors = NotificationsHost.Colors();
-            // A refusal longer than its 3 lines ends in an ellipsis, so the whole text is on hover. It sits on the card's own ground (the
-            // toast's fill is that ground tinted by the severity, which no red of the night palette reads on at AA) and its ink is measured
-            // against that ground. The library's own choice buttons and the title are drawn on the tinted fill by the library:
-            // SharpAstro/DIR.Lib toast tint and button colours (issue filed), not this flight's to change.
-            if (Cards.Presses.RefusalLine(pressKey, 12f, Contrast.Readable(p.Held, colors.Card, p.Failed), 3) is { } refusal)
-            {
-                var line = refusal.Pad(6f, 3f).Bg(colors.Card);
-                parts.Add(Cards.Presses.RefusedOf(pressKey) is { Length: > 0 } why ? line.WithTooltip(why) : line);
-            }
-            if (cut)
-            {
-                parts.Add(WrappedProse.Of(ToastCutLabel, 11f, p.Link, selectable: false)
-                    .Follows(new HitResult.ButtonHit($"toast:{card.Id}:whole"), _ => Show(PilotPage.Notifications)));
-            }
-            return Layout.Builder.VStack([.. parts]).WithGap(4f).WStar();
-        };
+        // The toast's body is the one card component at toast fit (CardsView.Card): the same parts as the panel's and the page's.
+        return () => Cards.ToastCard(card, node, cut, () => Show(PilotPage.Notifications));
     }
 
     // The same choices as the toast's library buttons, in Dismiss's row (DIR.Lib 11.91, Notification.Buttons). They go through the card's Presses
