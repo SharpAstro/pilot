@@ -37,7 +37,13 @@ public sealed record WorkflowRun(long Id, string Name, string Status, string? Co
 /// <param name="Conclusion">Null until it has completed.</param>
 /// <param name="StartedAt">When it started (its first attempt).</param>
 /// <param name="CompletedAt">When it last completed; null while it runs.</param>
-public sealed record CiRun(long Id, string Name, string Status, string? Conclusion, string Event, DateTimeOffset StartedAt, DateTimeOffset? CompletedAt, double RunnerMinutes);
+/// <param name="Attempt">Its <c>run_attempt</c>: 1, and one more for each time it was run again (pilot #1283 keys a run's log by it).</param>
+/// <param name="FailedJobs">
+/// The names of its jobs that failed in their latest attempt, read from the same jobs answer as its runner minutes; null when that answer
+/// could not be read. Pilot #1283 counts a run as an outside review that never reached a model only when every one of them is.
+/// </param>
+public sealed record CiRun(long Id, string Name, string Status, string? Conclusion, string Event, DateTimeOffset StartedAt, DateTimeOffset? CompletedAt, double RunnerMinutes, int Attempt = 1,
+    IReadOnlyList<string>? FailedJobs = null);
 
 /// <summary>
 /// Where a PR stands in its base's merge queue. <paramref name="State"/> and <paramref name="Head"/> are the PR's own
@@ -46,6 +52,12 @@ public sealed record CiRun(long Id, string Name, string Status, string? Conclusi
 /// queue, when that came after its last joining it. A merge through the queue is a removal too, with the reason <c>merged</c>.
 /// </summary>
 public sealed record MergeQueueState(string State, string Head, bool Queued, int? Position = null, DateTimeOffset? RemovedAt = null, string? RemovedReason = null);
+
+/// <summary>
+/// A failed check of a PR: its name (its job's name), its page, the workflow run behind it (null for a check that is no workflow run) and the
+/// job its page names (<c>/job/&lt;id&gt;</c>, one attempt's job: a rerun makes a new one).
+/// </summary>
+public sealed record FailedCheck(string Name, string? Link, long? RunId, long? JobId = null);
 
 /// <summary>
 /// Where a PR's checks stand: <paramref name="Status"/> a <see cref="ChoiceStatus"/> (failing, pending, passing),
@@ -299,6 +311,27 @@ public interface IGitHub
     /// read that fails is no failure to look at, and never an exception that stops a look.
     /// </summary>
     Task<FailedRun?> FailedRunAsync(string repoPath, int number, bool mergeGroup, CancellationToken cancellationToken) => Task.FromResult<FailedRun?>(null);
+
+    /// <summary>Every failed check of PR <paramref name="number"/> with its page and run; empty when there is none or GitHub would not say.</summary>
+    Task<FailedCheck[]> FailedChecksAsync(string repoPath, int number, CancellationToken cancellationToken) => Task.FromResult<FailedCheck[]>([]);
+
+    /// <summary>
+    /// What <c>gh run view --log-failed</c> prints for run <paramref name="runId"/>: the empty string when it printed nothing; null when gh
+    /// could not say, which is no answer and asked again.
+    /// </summary>
+    Task<string?> RunFailedLogAsync(string repoPath, long runId, CancellationToken cancellationToken) => Task.FromResult<string?>(null);
+
+    /// <summary>
+    /// The <c>run_attempt</c> of workflow run <paramref name="runId"/>, read from the same REST field as <see cref="CiRun.Attempt"/> so both
+    /// sides key a run's log alike; null when gh could not say.
+    /// </summary>
+    Task<int?> RunAttemptAsync(string repoPath, long runId, CancellationToken cancellationToken) => Task.FromResult<int?>(null);
+
+    /// <summary>
+    /// Runs the failed jobs of workflow run <paramref name="runId"/> again (<c>gh run rerun --failed</c>). The default does nothing, as a gh
+    /// that cannot; a failure is a <see cref="FlightException"/>.
+    /// </summary>
+    Task RerunRunAsync(string repoPath, long runId, CancellationToken cancellationToken) => Task.CompletedTask;
 
     /// <summary>Where PR <paramref name="number"/> stands in its base's merge queue; null when its base has none, or GitHub would not say.</summary>
     Task<MergeQueueState?> MergeQueueAsync(string repoPath, int number, CancellationToken cancellationToken);

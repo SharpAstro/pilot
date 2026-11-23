@@ -615,6 +615,14 @@ public sealed class PrChecks(NodeState state, IGitHub gitHub, TimeProvider time,
                 continue;
             }
             var failed = checks?.Status == ChoiceStatus.Failing;
+            if (dropped is null && failed && legs is not null && await legs.OutsideReviewOnlyAsync(flight, number, head, cancellationToken))
+            {
+                // Only an outside review that never reached a model is red (pilot #1283): not a failure of the PR, so nothing is sent back,
+                // run again or investigated, and no failure is counted. The red check still blocks the merge, which stays armed and is
+                // looked at again; the Handled card says why, once, and the run is run again after its reset.
+                legs.ShowMerge(subject, Said("waiting: the outside review is unavailable until its limit resets, the merge stays armed"), MergeWays.Armed);
+                continue;
+            }
             var checksFailed = dropped is null && failed;
             dropped ??= failed ? $"#{number}'s checks failed: the merge waited for them to pass" : null;
             if (native && dropped is null)
@@ -955,6 +963,59 @@ public sealed class PrChecks(NodeState state, IGitHub gitHub, TimeProvider time,
         }
     }
 
+    /// <summary>
+    /// PIL1283: the failed runs of <paramref name="runs"/> whose log says the outside review never reached a model, every failed job of the run
+    /// (<see cref="CiRun.FailedJobs"/>, else the jobs its log names) a no-model review. Workflow by workflow, and from the runs alone, so the
+    /// node's memory is not needed (it is empty after a restart):
+    /// <list type="bullet">
+    /// <item>a red workflow has the oldest and the newest run of its red streak read (<see cref="CiBudgets.RedStreak"/>): the oldest is the run
+    /// its red clock counts from unless it never reached a model, and a findings run or one still going at the top cannot hide an earlier
+    /// no-model streak;</item>
+    /// <item>a workflow green now has its newest and oldest failed run read the same way;</item>
+    /// <item>a workflow one of those reads, or the memory, shows to be a no-model review has every failed run of it read.</item>
+    /// </list>
+    /// So a workflow of real failures costs at most two reads, red or green now.
+    /// Each read is once per run and <c>run_attempt</c>; one gh could not make counts the run as failed this time.
+    /// </summary>
+    private static async Task<HashSet<long>> NoModelRunsAsync(OutsideReviews reviews, FlightRow flight, CiRun[] runs, CancellationToken cancellationToken)
+    {
+        HashSet<long> noModel = [];
+        foreach (var workflow in runs.GroupBy(r => r.Name))
+        {
+            var failed = workflow.Where(CiBudgets.Failed).ToList();
+            if (failed.Count == 0)
+            {
+                continue;
+            }
+            var review = failed.Any(r => reviews.TryKnown(r.Id, r.Attempt, out var known) && known.Run(r.FailedJobs) is not null);
+            if (!review && CiBudgets.RedStreak(workflow) is [var newest, ..] streak)
+            {
+                review = await NoModelAsync(streak[^1]) || (streak.Count > 1 && await NoModelAsync(newest));
+            }
+            else if (!review && CiBudgets.RedStreak(workflow).Count == 0)
+            {
+                // Green now: its earlier failed runs may be no-model reviews the memory lost in a restart. The newest and the oldest are read
+                // (once per run and attempt); either one that never reached a model has every failed run of the workflow read.
+                review = await NoModelAsync(failed.MaxBy(r => r.Id)!) || (failed.Count > 1 && await NoModelAsync(failed.MinBy(r => r.Id)!));
+            }
+            if (!review)
+            {
+                continue;
+            }
+            foreach (var run in failed)
+            {
+                if (await NoModelAsync(run))
+                {
+                    noModel.Add(run.Id);
+                }
+            }
+        }
+        return noModel;
+
+        async Task<bool> NoModelAsync(CiRun run) =>
+            await reviews.AskRunAsync(flight.RepoPath, run.Id, run.Attempt, run.FailedJobs, cancellationToken) is { Known: true, NoModel: not null };
+    }
+
     /// <summary>How often a flight's CI spend is counted: each count reads the runs of its branch and the jobs of each run still going.</summary>
     public TimeSpan CiInterval { get; init; } = TimeSpan.FromMinutes(2);
 
@@ -1000,7 +1061,9 @@ public sealed class PrChecks(NodeState state, IGitHub gitHub, TimeProvider time,
             {
                 continue;
             }
-            var counted = CiBudgets.Count(runs, current.Ci, now);
+            // PIL1283: a failed run whose log says the outside review never reached a model is neither failed nor red.
+            HashSet<long> noModel = legs is null ? [] : await NoModelRunsAsync(legs.OutsideReviews, current, runs, cancellationToken);
+            var counted = CiBudgets.Count(runs, current.Ci, now, noModel);
             // PIL1023: a flight waiting on a person (a review loop card, another card for the owner) does not run its red clock.
             // A cap already set is judged as before: only a new red cap is held back, so a card opening later never lifts a stop nobody answered.
             var wait = counted.CappedWhy is null ? CiBudgets.WaitOnPerson(state.Cards(), flight.Code, counted.RedSince) : default;
@@ -1198,6 +1261,12 @@ public sealed class PrChecks(NodeState state, IGitHub gitHub, TimeProvider time,
             }
             // Reviewed and passed, but its checks failed: run again once, then sent back as changes, once a head, so the leg goes around.
             var reviewedFailure = new FailureDecision(FailureAnswer.Unknown);
+            if (legs is not null && status == ChoiceStatus.Failing && pr is { Number: var noModelNumber, Head: var noModelHead } && noModelNumber == number
+                && await legs.OutsideReviewOnlyAsync(flight, number, CommitRefs.Short(noModelHead), cancellationToken))
+            {
+                // Only an outside review that never reached a model is red (pilot #1283): the card stays as it is, nothing is sent back.
+                continue;
+            }
             if (status == ChoiceStatus.Failing && pr is { Number: var seenNumber, Head: var seenHead } && seenNumber == number)
             {
                 reviewedFailure = await InvestigateAsync(flight, number, seenHead, FailureWhere.Ci, mergeGroup: false, cancellationToken);

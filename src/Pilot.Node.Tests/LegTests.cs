@@ -94,6 +94,14 @@ internal sealed class ShiftedClock : TimeProvider
     public override DateTimeOffset GetUtcNow() => TimeProvider.System.GetUtcNow() + TimeSpan.FromTicks(Interlocked.Read(ref _shiftTicks));
 
     public void Advance(TimeSpan span) => Interlocked.Add(ref _shiftTicks, span.Ticks);
+
+    /// <summary>Moves on to the next <paramref name="hour"/> o'clock UTC, so a test about a time of day does not depend on the real one.</summary>
+    public void AdvanceToNext(int hour)
+    {
+        var now = GetUtcNow().ToUniversalTime();
+        var at = new DateTimeOffset(now.Year, now.Month, now.Day, hour, 0, 0, TimeSpan.Zero);
+        Advance((at > now ? at : at.AddDays(1)) - now);
+    }
 }
 
 internal sealed class FakeChecks : ICheckRunner
@@ -886,6 +894,50 @@ internal sealed class FakeGitHub : IGitHub
 
     /// <summary>When set, reading a failed run yields nothing, as a gh that could not read it.</summary>
     public bool FailedRunFails { get; set; }
+
+    /// <summary>What <c>gh run view --log-failed</c> prints per run id; a run not listed, or listed null, is one gh could not read.</summary>
+    public System.Collections.Concurrent.ConcurrentDictionary<long, string?> RunLogs { get; } = new();
+
+    /// <summary>The failed checks of each PR, by number; one not listed has none.</summary>
+    public System.Collections.Concurrent.ConcurrentDictionary<int, FailedCheck[]> FailedChecks { get; } = new();
+
+    public Task<FailedCheck[]> FailedChecksAsync(string repoPath, int number, CancellationToken cancellationToken) =>
+        Task.FromResult(FailedChecks.GetValueOrDefault(number) ?? []);
+
+    /// <summary>The <c>run_attempt</c> of each run id; one not listed is on its first attempt, as <see cref="CiRun.Attempt"/>'s default.</summary>
+    public System.Collections.Concurrent.ConcurrentDictionary<long, int> RunAttempts { get; } = new();
+
+    /// <summary>How many times a run's attempt was asked for.</summary>
+    public int RunAttemptReads => _runAttemptReads;
+
+    private int _runAttemptReads;
+
+    public Task<int?> RunAttemptAsync(string repoPath, long runId, CancellationToken cancellationToken)
+    {
+        Interlocked.Increment(ref _runAttemptReads);
+        return Task.FromResult<int?>(RunAttempts.GetValueOrDefault(runId, 1));
+    }
+
+    /// <summary>The run ids that were asked to run again, in order.</summary>
+    public ConcurrentQueue<long> RunReruns { get; } = [];
+
+    public Task RerunRunAsync(string repoPath, long runId, CancellationToken cancellationToken)
+    {
+        RunReruns.Enqueue(runId);
+        return Task.CompletedTask;
+    }
+
+    /// <summary>When set, reading a run's log fails as a gh that could not reach GitHub.</summary>
+    public bool RunLogFails { get; set; }
+
+    /// <summary>How many run logs were asked for.</summary>
+    public int RunLogReads { get; private set; }
+
+    public Task<string?> RunFailedLogAsync(string repoPath, long runId, CancellationToken cancellationToken)
+    {
+        RunLogReads++;
+        return RunLogFails ? throw new FlightException("gh could not reach GitHub") : Task.FromResult(RunLogs.GetValueOrDefault(runId));
+    }
 
     public Task<FailedRun?> FailedRunAsync(string repoPath, int number, bool mergeGroup, CancellationToken cancellationToken) =>
         Task.FromResult(!FailedRunFails && FailedRuns.TryGetValue((number, mergeGroup), out var run) ? run : null);
