@@ -73,7 +73,7 @@ internal static class CardSource
                 }
                 var after = string.Join(" ", args.Skip(titleAt + 1).Select(a => Slice(text, a)));
                 calls.Add(new CardCall(file, LineOf(text, m.Index), form, kind, bins, titleExpr, literals, Regex.IsMatch(after, @"CardChoice|[Cc]hoices|Verbs\.|Offer|\blink\s*:"),
-                    [.. Regex.Matches(after, @"\bVerbs\.(\w+)").Select(v => v.Groups[1].Value).Distinct()]));
+                    [.. Regex.Matches(after, @"\bVerbs\.(\w+)").Select(v => v.Groups[1].Value).Concat(ListBuiltVerbs(text, m.Index, after)).Distinct()]));
             }
         }
         return calls;
@@ -92,8 +92,7 @@ internal static class CardSource
             return [];
         }
         var head = text[..callAt];
-        var decl = Regex.Matches(head, @"^    (?!\s|[{}\[/])[^
-;=]*\(.*$", RegexOptions.Multiline).LastOrDefault();
+        var decl = Regex.Matches(head, @"^    (?!\s|[{}\[/])[^\n;=]*\(.*$", RegexOptions.Multiline).LastOrDefault();
         if (decl is null)
         {
             return [];

@@ -405,6 +405,54 @@ public sealed class CardKindTests
     }
 
     [Fact]
+    public void ACallPassingAListBuiltEarlierInTheMemberGetsThatListsVerbs()
+    {
+        const string sample = """
+            class C
+            {
+                void Raise()
+                {
+                    var choices = new List<CardChoice> { new() { Label = "Review it", Verb = Verbs.ReviewPr, Target = "t" } };
+                    state.RaiseCard(CardBin.Ring, "x-kind", "s", "x needs a look", null, choices);
+                }
+            }
+            """;
+
+        CardSource.Calls("Sample.cs", sample).Single().ChoiceVerbs.ShouldBe([nameof(Verbs.ReviewPr)]);
+    }
+
+    [Fact]
+    public void ACallWithItsVerbsInItsArgumentsOrAListBuiltInAnotherMemberKeepsTheAnswerTheSummarySays()
+    {
+        const string own = """
+            class C
+            {
+                void Raise()
+                {
+                    state.RaiseCard(CardBin.Ring, "x-kind", "s", "x needs a look", null, [new CardChoice { Label = "Fold it", Verb = Verbs.Fold, Target = "t" }]);
+                }
+            }
+            """;
+        const string other = """
+            class C
+            {
+                void Build()
+                {
+                    var choices = new List<CardChoice> { new() { Label = "Fix it", Verb = Verbs.FixPr, Target = "t" } };
+                }
+
+                void Raise(List<CardChoice> choices)
+                {
+                    state.RaiseCard(CardBin.Ring, "x-kind", "s", "x needs a look", null, choices);
+                }
+            }
+            """;
+
+        CardSource.Calls("Sample.cs", own).Single().ChoiceVerbs.ShouldBe([nameof(Verbs.Fold)]);
+        CardSource.Calls("Sample.cs", other).Single().ChoiceVerbs.ShouldBeEmpty();
+    }
+
+    [Fact]
     public void TheScannerSkipsCommentsAndStringsThatLookLikeCalls()
     {
         const string source = """
