@@ -154,11 +154,14 @@ public sealed class RepeatDetectorTests
     [Fact]
     public void TenCardsOfOneKindOnOneSubjectBeforeTheSwitchCameOnAreOneTaskNotNine()
     {
+        // Each is closed before the next, as a pressed card is: an open one of the same kind and subject would take the next as an update.
         for (var i = 1; i <= 10; i++)
         {
-            _state.RaiseCard(CardBin.Ring, "pr-red", "flight/PIL1", "red", $"run {i}");
+            var card = _state.RaiseCard(CardBin.Ring, "pr-red", "flight/PIL1", "red", $"run {i}");
+            _state.CloseCard(card.Id, "pressed", "owner");
             _time.Advance(TimeSpan.FromMinutes(5));
         }
+        _state.Cards().Count(c => c.Kind == "pr-red").ShouldBe(10);
 
         _detector.Look().ShouldHaveSingleItem();
         _detector.Look().ShouldBeEmpty();
