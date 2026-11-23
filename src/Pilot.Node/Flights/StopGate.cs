@@ -93,7 +93,7 @@ public sealed class StopGate(NodeState state, Planes planes)
     {
         var p = porcelain.Length > 3 ? porcelain[3..] : porcelain;
         if (p.Contains(" -> ", StringComparison.Ordinal)) p = p[(p.LastIndexOf(" -> ", StringComparison.Ordinal) + 4)..];
-        return Path.GetFileName(p.Trim().Trim('"').TrimEnd('/', '\'));
+        return Path.GetFileName(p.Trim().Trim('"').TrimEnd('/', '\\'));
     }
 
     /// <summary>Whether a file name (not its path) looks like scratch: *Scratch*, Zz* or Tmp*, any case.</summary>
