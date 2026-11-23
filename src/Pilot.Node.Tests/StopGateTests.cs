@@ -10,7 +10,7 @@ using Xunit;
 namespace Pilot.Node.Tests;
 
 /// <summary>
-/// A Stop in a flight's plane with files not committed is sent back to commit them, once per turn; a second stop is let
+/// A Stop in a flight's plane with files not committed is sent back to commit or delete them, once per turn; a second stop is let
 /// through and rings. Every other stop goes through in silence. Over a repo of the test's own, on the in-memory git model.
 /// </summary>
 public sealed class StopGateTests : IDisposable
@@ -181,9 +181,7 @@ public sealed class StopGateTests : IDisposable
         File.WriteAllText(Path.Combine(Plane, "real.cs"), "//\n");
 
         var reason = JsonDocument.Parse((await Decide(Plane)).ShouldNotBeNull()).RootElement.GetProperty("reason").GetString().ShouldNotBeNull();
-        reason.ShouldContain("ZzLook.cs");
-        reason.ShouldContain("tmpshot.png");
-        reason.ShouldContain("looks like scratch");
+        reason.ShouldMatch(@"(ZzLook\.cs, tmpshot\.png|tmpshot\.png, ZzLook\.cs) looks like scratch\.");
         reason.ShouldNotContain("real.cs looks");
     }
 

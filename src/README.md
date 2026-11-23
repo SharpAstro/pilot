@@ -2018,10 +2018,9 @@ puts it right.
 
 **The Stop gate: nothing is left behind in a plane.** A session that ends its turn in a flight's plane (its cwd the
 plane's worktree or a folder in it, of a flight not landed) with files not committed there is sent back: the node
-answers `{"decision":"block","reason":"…"}`, the reason naming the files (`git status --porcelain`, the first three)
-(`-uall`, so a new folder lists its files) and telling it to commit them, or delete them if they are scratch it made, and Claude Code carries on with that as the session's next instruction. Once
+answers `{"decision":"block","reason":"…"}`, the reason naming the files (`git status --porcelain`, the first three, read with `-uall` so a new folder lists its files) and telling it to commit them, or delete them if they are scratch it made, and Claude Code carries on with that as the session's next instruction. Once
 per turn: a stop Claude Code marks `stop_hook_active` (one a Stop hook already sent back) is let through, and if the
-files are still there the node rings (`stopped-uncommitted`, about the flying leg, with **Tell it again**); a later
+files are still there the node rings (`stopped-uncommitted`, about the flying leg, with **Tell it to commit** and, when the files are untracked, **Tell it to delete them**); a later
 stop with the plane clean closes the ring. Only a plane the node flies counts, not Claude Code's own worktrees beside
 it under `.claude/worktrees`; every other session, a subagent and any other event get no answer. This is why Stop's
 handler is not `async`: Claude Code never reads an async hook's output. It waits for the node at most 2 s, and no
