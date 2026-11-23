@@ -268,6 +268,35 @@ public sealed class PullRequestsPageTests
         Dump(flightsOnly).ShouldNotContain("SharpAstro/DIR.Lib");
     }
 
+    // pilot #1299: the rebase-only chip says it is known and harmless, in a colour of its own (not the conflict's), with a hover that
+    // explains it; a real conflict keeps its chip and says it needs a fix. No text over text at a narrow or a wide page.
+    [Theory]
+    [InlineData(640f)]
+    [InlineData(1600f)]
+    public void ARebaseOnlyChipIsHandledAndARealConflictsNeedsAFix(float width)
+    {
+        var row = new PullRequestsRow
+        {
+            Orgs = ["SharpAstro"], ReadAt = Now - TimeSpan.FromSeconds(40), Viewer = "sebgod",
+            PullRequests =
+            [
+                Pr("SharpAstro/pilot", 1299, LongTitle, PullRequestKind.RebaseOnly, PullRequestStates.RebaseOnlyLabel, flight: "PIL1299", review: PullRequestReview.Passed),
+                Pr("SharpAstro/tianwen", 1799, "Plate solving: a fallback", PullRequestKind.Conflicts, "Conflicts", needsMe: true, flight: "TIA1799", review: PullRequestReview.Changes),
+            ],
+        };
+        using var renderer = new RgbaImageRenderer((uint)width, 900);
+        var (_, page) = Chrome(renderer);
+        var arranged = Arrange(renderer, page, Screen(row), width);
+
+        var tips = arranged.Select(a => a.Node.Tooltip).Where(t => t is not null).ToList();
+        tips.ShouldContain(t => t!.StartsWith(PullRequestStates.RebaseOnlyLabel) && t.Contains("cannot be replayed by rebase") && t.Contains("Nothing to fix"));
+        tips.ShouldContain("Conflicts: it conflicts with the base and needs a fix (go around).");
+
+        var day = Palette.Standard;
+        PullRequestsView<RgbaImage>.ChipColors(day, PullRequestKind.RebaseOnly).Bg.ShouldNotBe(PullRequestsView<RgbaImage>.ChipColors(day, PullRequestKind.Conflicts).Bg);
+        TextOverlap.Faults(arranged).Select(f => f.Text).ShouldBeEmpty();
+    }
+
     [Fact]
     public void ARowsChipTitleFlightAuthorReviewAndAgeAreWhatTheRowSays()
     {

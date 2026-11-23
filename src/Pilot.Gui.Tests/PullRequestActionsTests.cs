@@ -73,7 +73,7 @@ public sealed class PullRequestActionsTests
         awaiting[0].Status.ShouldBe(ChoiceStatus.Pending);
 
         // Not on any other state of a flight's PR, card or no card.
-        foreach (var kind in AllKinds.Where(k => k is not (PullRequestKind.Ready or PullRequestKind.ChecksRunning or PullRequestKind.AwaitingCheck)))
+        foreach (var kind in AllKinds.Where(k => k is not (PullRequestKind.Ready or PullRequestKind.RebaseOnly or PullRequestKind.ChecksRunning or PullRequestKind.AwaitingCheck)))
         {
             Kinds(Pr("SharpAstro/pilot", 252, kind, kind.ToString(), "PIL252", PullRequestReview.Passed), cards).ShouldNotContain(PullRequestActionKind.Merge, kind.ToString());
         }
@@ -103,6 +103,15 @@ public sealed class PullRequestActionsTests
         // Not a flight's: no card to press, and no Go around (its review says changes, so a plain PR gets Address review instead).
         Kinds(conflicts with { Flight = null }, cards).ShouldNotContain(PullRequestActionKind.GoAround);
         Kinds(conflicts).ShouldBe([PullRequestActionKind.Open]);
+    }
+
+    // pilot #1299: a rebase-only PR is known and handled: it offers Merge like a ready one, and never Go around, which only a real conflict gets.
+    [Fact]
+    public void ARebaseOnlyPrOffersMergeAndNoGoAroundWhileARealConflictOffersGoAround()
+    {
+        var rebaseOnly = Pr("SharpAstro/pilot", 1299, PullRequestKind.RebaseOnly, PullRequestStates.RebaseOnlyLabel, "PIL1299", PullRequestReview.Passed);
+        Kinds(rebaseOnly, MergeCard("PIL1299"), AroundCard("PIL1299")).ShouldBe([PullRequestActionKind.Merge, PullRequestActionKind.Open]);
+        Kinds(rebaseOnly with { Kind = PullRequestKind.Conflicts, Label = "Conflicts" }, MergeCard("PIL1299"), AroundCard("PIL1299")).ShouldContain(PullRequestActionKind.GoAround);
     }
 
     // #536, 2026-10-31: Review on PIL525's draft PR was pressed and nothing showed: it sent `pilot review pr`, which the node refuses

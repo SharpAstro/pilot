@@ -131,6 +131,16 @@ public sealed class FlightMapTests
         FlightMap.StatusOf(WithPr(Flight("A", FlightState.Landed)) with { LandedAt = Live.At }).ShouldBe(DestinationStatus.Merged);
     }
 
+    // pilot #1299: rebase only is its own status, read from the row; a real conflict wins over it and keeps its own.
+    [Fact]
+    public void ARebaseOnlyFlightHasItsOwnDestinationStatusAndARealConflictKeepsItsOwn()
+    {
+        var rebaseOnly = WithPr(Flight("A")) with { RebaseOnly = "known, lands squashed" };
+        FlightMap.StatusOf(rebaseOnly).ShouldBe(DestinationStatus.RebaseOnly);
+        FlightMap.StatusOf(rebaseOnly with { Review = Review(ReviewState.Passed, "pilot: conflicts") }).ShouldBe(DestinationStatus.Conflicts);
+        FlightMap.StatusOf(rebaseOnly with { MergeQueue = "in the merge queue, position 2" }).ShouldBe(DestinationStatus.Queued);
+    }
+
     [Fact]
     public void ALandedFlightHasNoPlaneAndItsDestinationIsMerged()
     {

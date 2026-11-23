@@ -19,6 +19,11 @@ internal enum DestinationStatus
     Armed,
     Queued,
     Conflicts,
+    /// <summary>
+    /// Mergeable but not rebaseable on a base that merges by rebase (<see cref="FlightRow.RebaseOnly"/>): known and handled, it lands
+    /// squashed. Drawn as handled, never as trouble (pilot #1299).
+    /// </summary>
+    RebaseOnly,
     /// <summary>Merged: the flight has landed.</summary>
     Merged,
 }
@@ -188,6 +193,10 @@ internal sealed class FlightMap
         if (flight.Review?.LabelOverride?.Contains("conflicts", StringComparison.OrdinalIgnoreCase) == true)
         {
             return DestinationStatus.Conflicts;
+        }
+        if (flight.RebaseOnly is not null)
+        {
+            return DestinationStatus.RebaseOnly;
         }
         if (flight.MergeWhenGreen is { Length: > 0 })
         {

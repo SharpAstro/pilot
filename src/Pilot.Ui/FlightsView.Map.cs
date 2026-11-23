@@ -443,6 +443,8 @@ internal sealed partial class FlightsView<TSurface>
         DestinationStatus.Armed => "armed",
         DestinationStatus.Queued => "queued",
         DestinationStatus.Conflicts => "conflicts",
+        // The sign is a leg's name wide; the whole words (PullRequestStates.RebaseOnlyLabel) are on its hover.
+        DestinationStatus.RebaseOnly => "rebase only",
         _ => "merged",
     };
 
@@ -461,13 +463,21 @@ internal sealed partial class FlightsView<TSurface>
         return LabelChars - number.Length < 4 || repo.Length == 0 ? $"PR #{pr}" : Fit(repo, LabelChars - number.Length) + number;
     }
 
+    internal const string RebaseOnlyTip = PullRequestStates.RebaseOnlyLabel + ". A merge of the base that resolved a conflict cannot be replayed by rebase, so the PR lands squashed as one commit. Nothing to fix.";
+
     // What a destination says on hover: its PR by repo and number and where it stands, then the flight's brief.
     private string DestinationTip(FlightLine line, MapDestination d)
     {
         var repo = line.Row.Repo;
         var sign = d.PullRequest is { } pr ? $"{repo} PR #{pr}" : $"{repo} PR";
         var first = !MapLayers.ShowPrStates ? sign : d.PullRequest is null ? $"{repo}: {StatusWord(d.Status)}" : $"{sign}: {StatusWord(d.Status)}";
-        return first + "\n" + ChipBrief.Text(ChipBrief.Flight(line));
+        var why = !MapLayers.ShowPrStates ? null : d.Status switch
+        {
+            DestinationStatus.RebaseOnly => RebaseOnlyTip,
+            DestinationStatus.Conflicts => "Conflicts with the base: it needs a fix (go around).",
+            _ => null,
+        };
+        return first + (why is null ? "" : "\n" + why) + "\n" + ChipBrief.Text(ChipBrief.Flight(line));
     }
 
     // A click target at a map point: a spacer at its own size, floated at its place in the map (scaled by k).
@@ -762,6 +772,7 @@ internal sealed partial class FlightsView<TSurface>
             DestinationStatus.Merged => Landed,
             DestinationStatus.Conflicts or DestinationStatus.Changes => Failed,
             DestinationStatus.NoPr => P.RouteAhead,
+            DestinationStatus.RebaseOnly => Landed,
             DestinationStatus.Passed or DestinationStatus.Queued or DestinationStatus.Armed => Flying,
             _ => Held,
         };
