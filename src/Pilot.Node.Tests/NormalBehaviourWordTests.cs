@@ -21,6 +21,9 @@ public sealed partial class NormalBehaviourWordTests
     [
         // PIL1285: the word is a real feature again, the switch whose meaning is "the watchtower runs with a standing goal". These
         // are the switch's own names and sentences; they come first, so a longer phrase is taken out before a shorter one inside it.
+        // PIL1285, the standing goal: the switch's CI-grant bound, its refusal and the goal section of the watchtower's rules.
+        "autopilot-ci-grants", "AutopilotCiGrants", "Autopilot CI grants", "while autopilot is on", "With autopilot on", "on autopilot needs",
+        "has autopilot on", "(autopilot)", "bool autopilot", "if (autopilot)", "autopilot: ", "autopilot))", "autopilot,", "autopilot ="  ,
         "autopilot  on: the watchtower runs with a standing goal", // the status line
         "autopilot  off (only the person",                         // the status line
         "**autopilot** on: the watchtower",                        // the status line, as markdown
