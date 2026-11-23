@@ -16,7 +16,14 @@ public sealed class NoModelReviewTests : ReviewTestsBase
     private const long BuildRun = 45029777690;
 
     // The fixture's reset is "resets 10pm (UTC)": starting at noon UTC puts it 10 hours ahead whatever the real time of day.
-    public NoModelReviewTests() => _clock.AdvanceToNext(12);
+    public NoModelReviewTests()
+    {
+        _clock.AdvanceToNext(12);
+        _github.DefaultRunEnd = Now();
+    }
+
+    // What GitHub shows of a run now: its attempt, whether it is completed, and updated_at at the test clock's now.
+    private void RunIs(long run, int attempt, bool completed) => _github.RunStates[run] = new RunState(attempt, completed, Now());
 
     private const string NoResetLog =
         "review\tUNKNOWN STEP\t2026-11-22T14:06:41.9810902Z the run ended before the model answered (1 turn(s), no tokens used): a refused token; the CLI said: Invalid API key";
@@ -139,9 +146,13 @@ public sealed class NoModelReviewTests : ReviewTestsBase
         _github.RunReruns.ShouldBe([ReviewRun]);
         NothingSentBack(flight);
 
-        // Failing again with no model: the log is read again and the run waits for its next reset.
+        // GitHub shows the new attempt running (never asked again), then failing again with no model: it waits for its next reset.
+        RunIs(ReviewRun, 2, completed: false);
         await checks.LookAsync(Ct);
         _github.RunReruns.Count.ShouldBe(1);
+        RunIs(ReviewRun, 2, completed: true);
+        await checks.LookAsync(Ct);
+        _github.RunReruns.Count.ShouldBe(1, "the last end plus the wait has not come");
         _clock.Advance(TimeSpan.FromHours(25));
         await checks.LookAsync(Ct);
         _github.RunReruns.ShouldBe([ReviewRun, ReviewRun]);
@@ -179,7 +190,11 @@ public sealed class NoModelReviewTests : ReviewTestsBase
             _clock.Advance(TimeSpan.FromMinutes(1));
             await checks.LookAsync(Ct);
             _github.RunReruns.Count.ShouldBe(i + 1, $"at wait {i + 1}");
+            // GitHub shows the new attempt running, then ended with no model again.
+            RunIs(ReviewRun, i + 2, completed: false);
             await checks.LookAsync(Ct);
+            _github.RunReruns.Count.ShouldBe(i + 1, "an attempt that is not completed is not run again");
+            RunIs(ReviewRun, i + 2, completed: true);
         }
 
         _clock.Advance(TimeSpan.FromDays(10));
@@ -188,6 +203,104 @@ public sealed class NoModelReviewTests : ReviewTestsBase
         _github.RunReruns.Count.ShouldBe(LegCommander.OutsideReviewRetriesWithoutReset, "the node stops after its bound");
         NothingSentBack(flight);
         Unavailable().ShouldHaveSingleItem();
+    }
+
+    private async Task<PrChecks> NoModelPr(string suffix, string log)
+    {
+        var (flight, number) = await Passed(suffix);
+        _github.Checks = ChoiceStatus.Failing;
+        _github.FailedChecks[number] = [Review()];
+        _github.RunLogs[ReviewRun] = log;
+        return new PrChecks(_state, _github, TimeProvider.System, _flights, _legs);
+    }
+
+    private Task Look(PrChecks checks) => checks.LookAsync(Ct);
+
+    private PrChecks AfterRestart() => new(_state, _github, TimeProvider.System, _flights, Restarted());
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AfterARestartTheSameHeadRaisesNoSecondCard()
+    {
+        var checks = await NoModelPr("74", NoModelLog());
+        await Look(checks);
+        Unavailable().ShouldHaveSingleItem();
+
+        await Look(AfterRestart());
+        await Look(AfterRestart());
+
+        Unavailable().ShouldHaveSingleItem();
+        _github.RunReruns.ShouldBeEmpty();
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AfterARestartAPendingRerunKeepsItsDueTime()
+    {
+        // With a reset time in the log: the reset is 10 hours ahead.
+        var checks = await NoModelPr("75", NoModelLog());
+        await Look(checks);
+        _clock.Advance(TimeSpan.FromHours(10) - TimeSpan.FromMinutes(1));
+        await Look(AfterRestart());
+        _github.RunReruns.ShouldBeEmpty("a minute before the reset, after a restart");
+        _clock.Advance(TimeSpan.FromMinutes(1));
+        await Look(AfterRestart());
+        _github.RunReruns.ShouldBe([ReviewRun], "at the reset, after a restart");
+        Unavailable().ShouldHaveSingleItem();
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AfterARestartANoResetRunKeepsItsDoublingWaitAndItsStopAfterFourReruns()
+    {
+        var checks = await NoModelPr("76", NoResetLog);
+        await Look(checks);
+
+        // Attempt 3 ended now (two reruns so far): the next wait is 4 hours, read from GitHub's state, not from memory.
+        RunIs(ReviewRun, 3, completed: true);
+        _clock.Advance(TimeSpan.FromHours(4) - TimeSpan.FromMinutes(1));
+        await Look(AfterRestart());
+        _github.RunReruns.ShouldBeEmpty("a minute before the doubled wait, after a restart");
+        _clock.Advance(TimeSpan.FromMinutes(1));
+        await Look(AfterRestart());
+        _github.RunReruns.ShouldBe([ReviewRun]);
+
+        // Attempt 5 (four reruns) is left for good, whatever the time and however often the node restarts.
+        RunIs(ReviewRun, 5, completed: true);
+        _clock.Advance(TimeSpan.FromDays(10));
+        await Look(AfterRestart());
+        await Look(AfterRestart());
+        _github.RunReruns.Count.ShouldBe(1);
+        Unavailable().ShouldHaveSingleItem();
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task ARunWhoseNewAttemptIsNotCompletedIsNotRunAgain()
+    {
+        var checks = await NoModelPr("77", NoResetLog);
+        await Look(checks);
+        RunIs(ReviewRun, 2, completed: false);
+
+        _clock.Advance(TimeSpan.FromDays(10));
+        await Look(checks);
+        await Look(AfterRestart());
+
+        _github.RunReruns.ShouldBeEmpty();
+        Unavailable().ShouldHaveSingleItem();
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task ARunStateGhCouldNotReadKeepsTodaysPathForThatLook()
+    {
+        var checks = await NoModelPr("78", NoModelLog());
+        _github.RunStateFails = true;
+
+        await Look(checks);
+
+        Unavailable().ShouldBeEmpty();
+        _github.RunReruns.ShouldBeEmpty();
     }
 
     // Many pushes: every push leaves a review run that failed and a build run that passed, all finished a day before the end of the test.
