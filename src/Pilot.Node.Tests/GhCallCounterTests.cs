@@ -142,6 +142,8 @@ public sealed class GhCallCounterTests
         counter.Record(["pr", "view"], "PrChecks.LookAsync");
 
         await log.StartAsync(Ct);
+        // A BackgroundService runs ExecuteAsync off StartAsync's thread (.NET 10), so the clock moves only once the log's wait is set.
+        (await clock.TimerSet.WaitAsync(TimeSpan.FromSeconds(5), Ct)).ShouldBeTrue("the log set its wait on the clock");
         // The log waits on the clock's timer, set for one second past the edge: nothing before it.
         clock.Advance(TimeSpan.FromMinutes(12));
         lines.ShouldBeEmpty();
@@ -163,6 +165,9 @@ public sealed class GhCallCounterTests
         private readonly System.Collections.Concurrent.ConcurrentDictionary<Timer, byte> _timers = new();
         private long _nowTicks = start.UtcTicks;
 
+        /// <summary>Released each time a timer is created, so a test moves the clock only once the waiter's timer exists.</summary>
+        public SemaphoreSlim TimerSet { get; } = new(0);
+
         public override DateTimeOffset GetUtcNow() => new(Interlocked.Read(ref _nowTicks), TimeSpan.Zero);
 
         public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
@@ -170,6 +175,7 @@ public sealed class GhCallCounterTests
             var timer = new Timer(this, callback, state);
             _timers[timer] = 0;
             timer.Change(dueTime, period);
+            TimerSet.Release();
             return timer;
         }
 
