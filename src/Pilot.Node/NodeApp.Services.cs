@@ -247,16 +247,22 @@ public static partial class NodeApp
                 trackers.Add(new GitHubTracker(gitHub));
             }
             flights.Trackers = new Trackers(trackers);
-            // The nodes this user's own grants reach (pilot connect): the file beside the node's data, as the clients keep it.
-            flights.Fleet = new HeldTokenFleet(Environment.GetEnvironmentVariable("PILOT_CLIENT_GRANTS") is { Length: > 0 } grants
-                ? grants
-                : Path.Combine(options.DataFolder, "client-grants.json"),
-                // Where each held node announces itself now, when this node runs LAN discovery; else the last address it answered at.
-                services.GetService<LAN.Lib.LanDiscovery>() is { } lan ? () => lan.PeersOf(NodeWire.LanService) : null);
+            // The nodes this user's own grants reach (pilot connect), each kept in the presence ledger so one that stays silent is skipped (PIL1312).
+            flights.Fleet = services.GetRequiredService<PresenceFleet>();
             // The last copy of each peer's flights and legs, so a flight of a node that went down can still be read (#894).
             flights.Copy = services.GetRequiredService<FleetCopy>();
             return flights;
         });
+        builder.Services.AddSingleton(services => new PeerPresence(services.GetRequiredService<TimeProvider>(),
+            () => TimeSpan.FromHours(services.GetRequiredService<RoleModels>().Stale.UnreachableHours),
+            PeerAway.Cards(services.GetRequiredService<NodeState>)));
+        builder.Services.AddSingleton(services => new PresenceFleet(new HeldTokenFleet(Environment.GetEnvironmentVariable("PILOT_CLIENT_GRANTS") is { Length: > 0 } grants
+                ? grants
+                : Path.Combine(options.DataFolder, "client-grants.json"),
+                // Where each held node announces itself now, when this node runs LAN discovery; else the last address it answered at.
+                services.GetService<LAN.Lib.LanDiscovery>() is { } lan ? () => lan.PeersOf(NodeWire.LanService) : null),
+            services.GetRequiredService<PeerPresence>()));
+        builder.Services.AddHostedService(services => new PeerProbe(services.GetRequiredService<PresenceFleet>(), services.GetRequiredService<TimeProvider>()));
         builder.Services.AddSingleton(services => new FleetCopy(FleetCopy.FileIn(options.DataFolder), services.GetRequiredService<TimeProvider>()) { Error = services.GetRequiredService<LogWriter>() });
         builder.Services.AddHostedService(services => new FleetCopyWatch(services.GetRequiredService<FlightCommander>(), services.GetRequiredService<TimeProvider>()) { Error = services.GetRequiredService<LogWriter>() });
     }
@@ -272,7 +278,7 @@ public static partial class NodeApp
         builder.Services.AddSingleton(services =>
         {
             var models = services.GetRequiredService<RoleModels>();
-            return new PeerPullRequests(() => services.GetRequiredService<FlightCommander>().Fleet, services.GetRequiredService<TimeProvider>(), () => services.GetRequiredService<PageViews>().Count(ClientPages.PullRequests) > 0 ? PullRequestWatch.DefaultInterval : models.PrWatchIdle) { Error = logWriter };
+            return new PeerPullRequests(() => services.GetRequiredService<FlightCommander>().Fleet, services.GetRequiredService<TimeProvider>(), () => services.GetRequiredService<PageViews>().Count(ClientPages.PullRequests) > 0 ? PullRequestWatch.DefaultInterval : models.PrWatchIdle, services.GetRequiredService<PeerPresence>().IsAway) { Error = logWriter };
         });
         builder.Services.AddHostedService(services => services.GetRequiredService<PeerPullRequests>());
         builder.Services.AddSingleton(services =>

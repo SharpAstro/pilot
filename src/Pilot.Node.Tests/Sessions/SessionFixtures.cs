@@ -101,8 +101,41 @@ internal sealed class TimerTime(DateTimeOffset start) : TimeProvider
         lock (_gate)
         {
             _timers.Add(timer);
+            Release();
         }
         return timer;
+    }
+
+    private readonly List<(int Count, TaskCompletionSource Done)> _waiters = [];
+
+    /// <summary>Completes once at least <paramref name="count"/> timers are set, so a test advances the clock only past a timer that exists.</summary>
+    public Task WhenWaiting(int count)
+    {
+        lock (_gate)
+        {
+            if (_timers.Count(t => t.Due is not null) >= count)
+            {
+                return Task.CompletedTask;
+            }
+            var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            _waiters.Add((count, done));
+            return done.Task;
+        }
+    }
+
+    // Under the gate: completes each waiter whose count of set timers is reached.
+    private void Release()
+    {
+        if (_waiters.Count == 0)
+        {
+            return;
+        }
+        var set = _timers.Count(t => t.Due is not null);
+        foreach (var waiter in _waiters.Where(w => w.Count <= set).ToList())
+        {
+            _waiters.Remove(waiter);
+            waiter.Done.TrySetResult();
+        }
     }
 
     public void Advance(TimeSpan by)
@@ -128,6 +161,7 @@ internal sealed class TimerTime(DateTimeOffset start) : TimeProvider
             lock (owner._gate)
             {
                 Due = dueTime == Timeout.InfiniteTimeSpan ? null : owner._now + dueTime;
+                owner.Release();
             }
             return true;
         }

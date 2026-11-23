@@ -73,6 +73,10 @@ internal static class StatusMarkdown
         if (snapshot.Admission is { } admission)
         {
             facts.Add($"**{Text(admission.Line())}**{(admission.Counted.Length > 0 ? ": " + Text(string.Join(", ", admission.Counted)) : "")}");
+            foreach (var away in admission.PeersAway)
+            {
+                facts.Add(Text(away));
+            }
         }
         foreach (var queued in QueuedFlight.Of(snapshot.Flights, snapshot.Legs, snapshot.Admission))
         {
