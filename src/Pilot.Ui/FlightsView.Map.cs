@@ -432,6 +432,22 @@ internal sealed partial class FlightsView<TSurface>
         return Layout.Builder.Anchored(box, null, _vp.ViewX(cx - r), _vp.ViewY(cy - r), 0f, false);
     }
 
+    // A click target over a map box (x, y its top left), floated at its place in the map.
+    private Layout.Node TargetBox(float x, float y, float w, float h, Func<Layout.Node, Layout.Node> make)
+    {
+        var box = make(Layout.Builder.Spacer().WFixed(w * _vp.Scale).HFixed(h * _vp.Scale));
+        return Layout.Builder.Anchored(box, null, _vp.ViewX(x), _vp.ViewY(y), 0f, false);
+    }
+
+    // Where a row's note sits in map units: on the code line, from NoteLeft past the row's first slot edge to the continent's inner edge.
+    private (float X, float Y, float Width, float Height) NoteBox(MapRoute route)
+    {
+        var c = _map.Continents.First(c => c.Key == route.Node);
+        var x = (route.Gate?.X ?? route.Airports.FirstOrDefault()?.X ?? route.Destination.X) - FlightMap.Slot / 2f + FlightMap.NoteLeft;
+        var w = Math.Max(0f, c.X + c.Width - FlightMap.Pad / 2f - x);
+        return (x, route.Destination.Y + FlightMap.CodeTop, w, FlightMap.CodeBottom - FlightMap.CodeTop);
+    }
+
     private int IndexOf(FlightsScreen screen, MapRoute route)
     {
         for (var i = 0; i < screen.Lines.Count; i++)
@@ -501,11 +517,16 @@ internal sealed partial class FlightsView<TSurface>
             {
                 yield return Target(gate.X, gate.Y, FlightMap.AirportRadius, n => Common(n.WithTooltip($"{line.Code} is held at its gate: {gate.WaitsFor}"), "gate"));
             }
+            if (route.Note is { } note)
+            {
+                // The note's own hover: its whole words, whatever the zoom or MaxNoteChars cut from it.
+                var (nx, ny, nw, nh) = NoteBox(route);
+                yield return TargetBox(nx, ny, nw, nh, n => Common(n.WithTooltip($"{line.Code}: {note.Whole}\n{brief}"), "note"));
+            }
             foreach (var a in route.Airports)
             {
                 var leg = a.Leg;
-                var why = StopNote(route, a) is { } note ? "\n" + note.Whole : "";
-                yield return Target(a.X, a.Y, FlightMap.AirportRadius, n => Common(n.WithTooltip($"{line.Code}/{leg}: {StateWord(a.State)}{(a.StepsTotal > 0 ? $", {a.StepsDone}/{a.StepsTotal} steps" : "")}{why}\n{brief}"), "leg:" + leg, () => OpenDetail(line.Code, leg)));
+                yield return Target(a.X, a.Y, FlightMap.AirportRadius, n => Common(n.WithTooltip($"{line.Code}/{leg}: {StateWord(a.State)}{(a.StepsTotal > 0 ? $", {a.StepsDone}/{a.StepsTotal} steps" : "")}\n{brief}"), "leg:" + leg, () => OpenDetail(line.Code, leg)));
             }
             var d = route.Destination;
             var url = line.Row.PullRequestUrl;
@@ -642,7 +663,15 @@ internal sealed partial class FlightsView<TSurface>
         }
         var landed = line?.Row.State == FlightState.Landed || line?.Stale is not null;
         var startX = route.Gate?.X ?? route.Airports.FirstOrDefault()?.X ?? d.X;
-        Label(route.Flight, X(startX - FlightMap.Slot / 2f), Y(d.Y + FlightMap.CodeTop), (FlightMap.Slot * 2f) * s, s, 11f, landed ? Dim : Bright, TextAlign.Near);
+        Label(route.Flight, X(startX - FlightMap.Slot / 2f), Y(d.Y + FlightMap.CodeTop), (route.Note is null ? FlightMap.Slot * 2f : FlightMap.NoteLeft) * s, s, 11f, landed ? Dim : Bright, TextAlign.Near);
+        // What the row says when no plane says it (pilot #1298): queued and why, between legs, a failed leg, on hold. On the code line,
+        // where the continent is laid wide enough to read it whole; the whole text is on its hover too.
+        if (route.Note is { } rowNote)
+        {
+            var (nx, ny, nw, nh) = NoteBox(route);
+            var fits = Math.Max(1, (int)(nw / FlightMap.NoteAdvance));
+            Label(Fit(NoteText(rowNote), fits), X(nx), Y(ny), nw * s, s, FlightMap.NoteSize, P.MapNote, TextAlign.Near, line: nh);
+        }
 
         // Segments: a leg reached (done or flying) makes the run into it passed; the rest is ahead, dashed.
         var stops = new List<(float X, float Y, bool Reached)>();
@@ -705,16 +734,8 @@ internal sealed partial class FlightsView<TSurface>
                 Label(leg, X(a.X - FlightMap.Slot / 2f), Y(a.Y + FlightMap.LabelBandTop), FlightMap.Slot * s, s, legSize, Body, line: StopLine);
             }
             var state = detail == MapDetail.Whole && a.StepsTotal > 0 ? $"{StateWord(a.State)} {a.StepsDone}/{a.StepsTotal}" : StateWord(a.State);
-            var stateSize = LabelSize;
             var stateColor = a.State == AirportState.Failed ? Failed : a.State == AirportState.Flying ? Flying : Dim;
-            // The first stop not yet flown says why nothing flies (pilot #1298): a queued flight its queue reason, a flight between legs
-            // that the node picks the next one. Cut to the slot with an ellipsis; the whole text is on the stop's hover (StopNote).
-            if (StopNote(route, a) is { } note)
-            {
-                (state, stateSize) = StopWord(note.Word, detail);
-                stateColor = P.MapNote;
-            }
-            Label(state, X(a.X - FlightMap.Slot / 2f), Y(a.Y + FlightMap.LabelLineTwo), FlightMap.Slot * s, s, stateSize, stateColor, line: StopLine);
+            Label(state, X(a.X - FlightMap.Slot / 2f), Y(a.Y + FlightMap.LabelLineTwo), FlightMap.Slot * s, s, LabelSize, stateColor, line: StopLine);
         }
 
         // The destination is a square sign, its PR and its status in words under it.

@@ -35,6 +35,12 @@ internal static class FlightMapWorld
 
     internal const string Why = "waiting for DIR.Lib flight PIL1234 to land";
 
+    /// <summary>The queue reason of a flight with no legs yet, queued for its planner (the DIR316 case of pilot #1298).</summary>
+    internal const string PlannerWhy = "waiting for a planner slot (2 of 2 busy)";
+
+    /// <summary>The queue reason of a flight whose legs are all done, queued for its review.</summary>
+    internal const string ReviewWhy = "waiting for a review slot";
+
     internal static (FlightRow[] Flights, LegRow[] Legs) World()
     {
         var landed = Flight("LND", FlightState.Landed) with { LandedAt = Live.At };
@@ -49,6 +55,10 @@ internal static class FlightMapWorld
             Flight("CNF", review: Review(ReviewState.Passed, "pilot: conflicts")),
             Flight("CHG", review: Review(ReviewState.Changes)),
             Flight("BTW", pr: false),
+            Flight("QNL", queued: PlannerWhy, pr: false),
+            Flight("QDN", queued: ReviewWhy),
+            // In conflict, its fix leg waiting for a slot: Conflicts wins over the queue, so it counts as flying and is red.
+            Flight("CNQ", review: Review(ReviewState.Passed, "pilot: conflicts")),
         ],
         [
             Leg("LND", LegState.Done),
@@ -59,6 +69,8 @@ internal static class FlightMapWorld
             Leg("CNF", LegState.Done),
             Leg("CHG", LegState.Done), Leg("CHG", LegState.Flying, 2),
             Leg("BTW", LegState.Done), Leg("BTW", LegState.Planned, 2),
+            Leg("QDN", LegState.Done), Leg("QDN", LegState.Done, 2),
+            Leg("CNQ", LegState.Done), Leg("CNQ", LegState.Planned, 2, queued: "waiting for an Opus slot", name: "conflict-fix"),
         ]);
     }
 

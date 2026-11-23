@@ -1,6 +1,3 @@
 __pycache__/
 *.pyc
 artifacts/
-
-# The capture test writes here when PILOT_MAP_CAPTURES is not set; the kept captures are moved to before/ or after/ (pilot #1298).
-docs/captures/pil1298/out/

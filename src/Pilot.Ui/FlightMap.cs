@@ -57,7 +57,19 @@ internal sealed record MapRoute(string Flight, string Node, MapGate? Gate, IRead
 
     /// <summary>Why a <see cref="FlightPhase.Queued"/> flight waits for admission; null otherwise.</summary>
     public string? QueuedWhy { get; init; }
+
+    /// <summary>
+    /// What the row says beside its code when no plane tells it (pilot #1298): queued and why, between legs, a failed leg, on hold,
+    /// making review changes. Null for a flight whose flying leg, gate or landing already says where it is.
+    /// </summary>
+    public MapRowNote? Note { get; init; }
 }
+
+/// <summary>
+/// A row's note, drawn on the code line right of the flight code: <paramref name="Text"/> as drawn (whole up to
+/// <see cref="FlightMap.MaxNoteChars"/>, the continent widened to hold it) and <paramref name="Whole"/> for its hover.
+/// </summary>
+internal sealed record MapRowNote(string Text, string Whole);
 
 /// <summary>
 /// A connection from the flight waited for (<paramref name="From"/> on <paramref name="FromNode"/>, its destination) to the one it
@@ -108,6 +120,13 @@ internal sealed class FlightMap
     /// <summary>The flight code's box above a route's first stop: left aligned at the slot's left edge.</summary>
     public const float CodeWidth = 44f;
     public const float CodeTop = -27f;
+    /// <summary>Where a row's note starts, right of the flight's first slot edge: past the code's box with a gap.</summary>
+    public const float NoteLeft = CodeWidth + 12f;
+    /// <summary>The note's text size and the advance of one of its glyphs, a generous average so the width laid out holds the words.</summary>
+    public const float NoteSize = 10f;
+    public const float NoteAdvance = 0.6f * NoteSize;
+    /// <summary>The longest note drawn whole; a longer one is cut with an ellipsis, the whole text on its hover.</summary>
+    public const int MaxNoteChars = 72;
     public const float CodeBottom = -11f;
     public const float Header = 32f;
     public const float Pad = 24f;
@@ -260,13 +279,17 @@ internal sealed class FlightMap
         {
             var flights = node.OrderBy(l => l.Row.CreatedAt).ThenBy(l => l.Code, StringComparer.Ordinal).ToList();
             var slots = flights.Max(l => SlotsOf(l));
-            var width = Pad * 2 + slots * Slot;
             var h = Header + Pad + flights.Count * RowHeight;
             var mark = node.First().Node;
+            var laid = new List<MapRoute>();
             for (var r = 0; r < flights.Count; r++)
             {
-                routes.Add(Lay(flights[r], KeyOf(flights[r]), x + Pad, Header + Pad / 2 + r * RowHeight + RowHeight / 2));
+                laid.Add(Lay(flights[r], KeyOf(flights[r]), x + Pad, Header + Pad / 2 + r * RowHeight + RowHeight / 2));
             }
+            // Wide enough for its longest route and for each row's note read whole (to MaxNoteChars), so a reason is not cut at rest.
+            var noteChars = laid.Max(r => r.Note is { } n ? Math.Min(n.Text.Length, MaxNoteChars) : 0);
+            var width = Math.Max(Pad * 2 + slots * Slot, noteChars == 0 ? 0f : Pad * 2 + NoteLeft + noteChars * NoteAdvance);
+            routes.AddRange(laid);
             continents.Add(new MapContinent(node.Key, mark?.Name ?? "this node", mark?.Here ?? true, node.Any(l => l.Stale is not null), x, 0f, width, h, [.. flights.Select(l => l.Code)]));
             x += width + ContinentGap;
             height = Math.Max(height, h);
@@ -314,8 +337,29 @@ internal sealed class FlightMap
         }
         var phase = FlightPhases.Of(line.Row, line.LegRows);
         var queuedWhy = phase == FlightPhase.Queued ? FlightPhases.QueuedWhy(line.Row, line.LegRows) : null;
-        return new MapRoute(line.Code, node, gate, airports, destination, plane) { Phase = phase, QueuedWhy = queuedWhy };
+        return new MapRoute(line.Code, node, gate, airports, destination, plane) { Phase = phase, QueuedWhy = queuedWhy, Note = line.Stale is null ? NoteOf(line, phase, queuedWhy) : null };
     }
+
+    /// <summary>
+    /// The row's note from the flight's phase: the words for what the map cannot show with a plane. A queued flight says why it waits
+    /// whether it has planned legs, none yet (queued for its planner) or all done (queued for review).
+    /// </summary>
+    internal static MapRowNote? NoteOf(FlightLine line, FlightPhase phase, string? queuedWhy) => phase switch
+    {
+        FlightPhase.Queued when queuedWhy is { Length: > 0 } why => new($"queued: {why}", $"Queued, not flying: {why}"),
+        FlightPhase.Queued => new("queued: waits for admission", "Queued, not flying: it waits for admission."),
+        FlightPhase.BetweenLegs when line.LegRows.Count == 0 => new("no legs yet: the node plans them", "Between legs: no leg is planned yet; the node plans them."),
+        FlightPhase.BetweenLegs when line.LegRows.Any(l => l.State == LegState.Planned)
+            => new("between legs: the node picks the next", "Between legs: no worker flies; the node picks the next leg."),
+        FlightPhase.Failed when line.LegRows.Where(l => l.State == LegState.Failed).OrderBy(l => l.Order).FirstOrDefault() is { } leg
+            => new($"leg failed: {leg.Name}", $"Leg {leg.Name} failed; no leg flies. Go around or ground it."),
+        FlightPhase.Failed => new("a leg failed", "A leg failed; no leg flies."),
+        FlightPhase.MakingChanges => new("making review changes", "Making the changes the review asked for."),
+        FlightPhase.OnHold when FlightWaiting.OnHoldText(line.Row) is { } hold => new(hold, Capital(hold) + "."),
+        _ => null,
+    };
+
+    private static string Capital(string text) => text.Length == 0 ? text : char.ToUpperInvariant(text[0]) + text[1..];
 
     /// <summary>
     /// The connections between the flights on the map. <see cref="FlightRow.Connections"/> and <see cref="FlightRow.FoldedIn"/> name

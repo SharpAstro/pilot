@@ -48,21 +48,8 @@ internal sealed partial class FlightsView<TSurface>
         _ => MapTone.Waiting,
     };
 
-    // The note on the first stop not yet flown: Word is what the stop's state line says, Whole the text for its hover.
-    private static (string Word, string Whole)? StopNote(MapRoute route, MapAirport a)
-    {
-        if (a.State != AirportState.Planned || route.Airports.FirstOrDefault(x => x.State == AirportState.Planned) != a)
-        {
-            return null;
-        }
-        return route.Phase switch
-        {
-            FlightPhase.Queued when route.QueuedWhy is { Length: > 0 } why => ($"queued: {why}", $"Queued, not flying: {why}"),
-            FlightPhase.Queued => ("queued", "Queued, not flying: it waits for admission."),
-            FlightPhase.BetweenLegs => ("between legs", "Between legs: no worker flies; the node picks the next leg."),
-            _ => null,
-        };
-    }
+    // A row's note as drawn: whole to MaxNoteChars, else cut with an ellipsis (the whole text is on its hover).
+    private static string NoteText(MapRowNote note) => Fit(note.Text, FlightMap.MaxNoteChars);
 
     private static string Fit(string text, int chars) => text.Length <= chars ? text : text[..(chars - 1)] + "…";
 

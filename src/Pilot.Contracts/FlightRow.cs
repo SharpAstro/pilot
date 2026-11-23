@@ -734,8 +734,10 @@ public static class FlightPhases
     }
 
     /// <summary>
-    /// Why the flight waits for admission, found as <see cref="QueuedFlight.Of"/> finds it: its own <see cref="FlightRow.Queued"/>, else
-    /// the first planned leg's <see cref="LegRow.Queued"/>; null when a leg flies, the flight landed, is held or on hold, or nothing queues it.
+    /// Why the flight waits for admission: its own <see cref="FlightRow.Queued"/>, else the first planned leg's <see cref="LegRow.Queued"/>;
+    /// null when a leg flies, the flight landed, is held or on hold, or nothing queues it. It is the reason only, not the phase: a flight
+    /// in conflict or with a failed leg can have one and still not be <see cref="FlightPhase.Queued"/>, so a caller that says "queued"
+    /// asks <see cref="Of"/> first (as <c>pilot status</c> does). <see cref="QueuedFlight.Of"/> is wider still (held and on-hold rows too).
     /// </summary>
     public static string? QueuedWhy(FlightRow flight, IEnumerable<LegRow> legs)
     {

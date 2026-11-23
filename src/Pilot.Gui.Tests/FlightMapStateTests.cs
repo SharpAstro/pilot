@@ -105,9 +105,12 @@ public sealed class FlightMapStateTests
     [InlineData("HLD", false)]
     [InlineData("HLT", false)]
     [InlineData("QRW", false)]
+    [InlineData("QNL", false)]
+    [InlineData("QDN", false)]
     [InlineData("FLY", true)]
     [InlineData("FAL", false)]
     [InlineData("CNF", false)]
+    [InlineData("CNQ", false)]
     [InlineData("CHG", true)]
     [InlineData("BTW", false)]
     public void ThePlaneIsDrawnOnlyOnAFlyingLeg(string code, bool plane)
@@ -119,18 +122,47 @@ public sealed class FlightMapStateTests
         var route = view.Map.Route(code)!;
         (route.Plane is not null).ShouldBe(plane, $"{code} plane");
         Has(view, $"map:{code}:plane").ShouldBe(plane);
-        if (plane)
+        // Only the held flight has a gate, and it stays clickable with nothing parked on it.
+        (route.Gate is not null).ShouldBe(code == "HLT");
+        if (route.Gate is { } gate)
         {
-            // On the airport of the leg that flies, not at a gate or on the destination.
-            route.Plane!.Leg.ShouldNotBeNull();
-            route.Airports.Single(a => a.State == AirportState.Flying).X.ShouldBe(route.Plane.X);
+            Has(view, $"map:{code}:gate").ShouldBeTrue();
         }
-        // The gate and the destination stay where they were, with nothing parked on them.
-        route.Gate.ShouldBe(code == "HLT" ? route.Gate : null);
+        if (route.Plane is { } p)
+        {
+            // On the airport of the leg that flies: not at a gate, not on the destination, not on a planned or failed leg.
+            p.Leg.ShouldNotBeNull();
+            var at = route.Airports.Single(a => a.Leg == p.Leg);
+            at.State.ShouldBe(AirportState.Flying);
+            p.X.ShouldBe(at.X);
+            p.X.ShouldNotBe(route.Destination.X);
+        }
+    }
+
+    // The note a queued flight's row draws: its reason whole, beside its code, at the map's default zoom, whatever its legs are.
+    [Theory]
+    [InlineData("QRW", FlightMapWorld.Why)]
+    [InlineData("QNL", FlightMapWorld.PlannerWhy)]
+    [InlineData("QDN", FlightMapWorld.ReviewWhy)]
+    public void AQueuedFlightHasNoPlaneAndItsReasonIsDrawnWholeOnItsRow(string code, string why)
+    {
+        var (flights, legs) = FlightMapWorld.World();
+        var (renderer, view) = Show(FlightMapWorld.Lines(flights, legs), 1800, 1000, night: false);
+        using var _ = renderer;
+
+        var route = view.Map.Route(code)!;
+        route.Phase.ShouldBe(FlightPhase.Queued);
+        route.QueuedWhy.ShouldBe(why);
+        route.Plane.ShouldBeNull();
+        view.MapWords.Select(w => w.Text).ShouldContain($"queued: {why}");
+        Hit(view, $"map:{code}:note").Tooltip.ShouldNotBeNull().ShouldContain(why);
+        // A flight whose leg flies has no queue reason and no note.
+        view.Map.Route("FLY")!.QueuedWhy.ShouldBeNull();
+        view.Map.Route("FLY")!.Note.ShouldBeNull();
     }
 
     [Fact]
-    public void AQueuedFlightHasNoPlaneAndItsReasonIsDrawnOnItsFirstStop()
+    public void AtEveryZoomTheWholeQueueReasonIsOnTheNotesHover()
     {
         var (flights, legs) = FlightMapWorld.World();
         foreach (var zoom in new[] { 0.5f, 1.0f, 1.5f, 3f })
@@ -139,33 +171,25 @@ public sealed class FlightMapStateTests
             using var _ = renderer;
             view.Render(new FlightsScreen(FlightMapWorld.Lines(flights, legs), "test", Live.At), new RectF32(0, 0, 1800, 1000));
 
-            var route = view.Map.Route("QRW")!;
-            route.Phase.ShouldBe(FlightPhase.Queued);
-            route.QueuedWhy.ShouldBe(FlightMapWorld.Why);
-            route.Plane.ShouldBeNull();
-            // The whole reason is on the first stop's hover, whatever the zoom cuts the drawn word to.
-            var tip = Hit(view, "map:QRW:leg:" + route.Airports[0].Leg).Tooltip.ShouldNotBeNull();
-            tip.ShouldContain(FlightMapWorld.Why);
-            if (zoom >= 1f)
-            {
-                view.MapWords.Select(w => w.Text).ShouldContain(t => t.StartsWith("queued", StringComparison.Ordinal));
-            }
-            // A flight whose leg flies has no such note.
-            view.Map.Route("FLY")!.QueuedWhy.ShouldBeNull();
+            Hit(view, "map:QRW:note").Tooltip.ShouldNotBeNull().ShouldContain(FlightMapWorld.Why);
+            view.MapWords.Select(w => w.Text).ShouldContain(t => t.StartsWith("queued", StringComparison.Ordinal));
         }
     }
 
-    [Fact]
-    public void ABetweenLegsFlightSaysSoInWordsOnItsNextStop()
+    [Theory]
+    [InlineData("BTW", "between legs")]
+    [InlineData("FAL", "leg failed: node-merge-queue-leg2")]
+    [InlineData("CHG", "making review changes")]
+    [InlineData("HLD", "on hold by seb: wait")]
+    public void AFlightWithNoPlaneToSayWhereItIsSaysSoInWords(string code, string words)
     {
         var (flights, legs) = FlightMapWorld.World();
         var (renderer, view) = Show(FlightMapWorld.Lines(flights, legs), 1800, 1000, night: false);
         using var _ = renderer;
 
-        var route = view.Map.Route("BTW")!;
-        route.Phase.ShouldBe(FlightPhase.BetweenLegs);
-        route.Plane.ShouldBeNull();
-        Hit(view, "map:BTW:leg:" + route.Airports[1].Leg).Tooltip.ShouldNotBeNull().ShouldContain("Between legs");
+        var route = view.Map.Route(code)!;
+        route.Note.ShouldNotBeNull().Text.ShouldStartWith(words);
+        view.MapWords.Select(w => w.Text).ShouldContain(t => t.StartsWith(words, StringComparison.Ordinal) && !t.EndsWith('…'));
     }
 
     [Fact]
@@ -175,11 +199,16 @@ public sealed class FlightMapStateTests
         var counts = FlightCounts.Of(flights, legs);
         var screen = new FlightsScreen(FlightMapWorld.Lines(flights, legs), "", Live.At);
         screen.Counts.ShouldContain($"{counts.Flying} flying · {counts.Queued} queued · {counts.Held} held · {counts.OnHold} on hold");
+        counts.Queued.ShouldBe(3);
 
         var snapshot = new SnapshotEvent { Seq = 1, At = Live.At.AddHours(1), Stream = "s", Sessions = [], Notes = [], Flights = flights, Legs = legs };
         var status = PilotCommand.Status(snapshot).Split('\n');
         status.Count(l => l.Contains(", flying")).ShouldBe(counts.Flying);
         status.Count(l => l.Contains(", queued: ")).ShouldBe(counts.Queued);
+        // A flight in conflict whose fix leg waits for a slot is in conflict, not queued: pilot status and the header agree on it.
+        status.Single(l => l.StartsWith("CNQ ", StringComparison.Ordinal)).ShouldNotContain("queued");
+        StatusMarkdown.Build(snapshot).ShouldNotContain("queued: waiting for an Opus slot");
+
         // The map's own count of planes is the flights whose leg flies: never more than the flying count, and none for the queued.
         var (renderer, view) = Show(FlightMapWorld.Lines(flights, legs), 1800, 1000, night: false);
         using var _ = renderer;
@@ -214,7 +243,7 @@ public sealed class FlightMapStateTests
         }
         faults.ShouldBeEmpty();
 
-        // The queue reason and the between-legs note are drawn in the palette's MapNote: 4.5:1 on both lands in Standard. Night is red
+        // The row notes (queue reason, between legs, a failed leg) are drawn in the palette's MapNote: 4.5:1 on both lands in Standard. Night is red
         // only and its strongest ramp step that is not the accent is 3.3:1, so there the floor is 3:1 (large text and icons).
         var p = night ? Palette.Night : Palette.Standard;
         var floor = night ? 3.0 : 4.5;

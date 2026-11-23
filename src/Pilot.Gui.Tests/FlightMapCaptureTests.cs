@@ -7,11 +7,16 @@ using Xunit;
 
 namespace Pilot.Gui.Tests;
 
-/// <summary>Writes the canvas with a flight in each phase as PNGs (pilot #1298); uses no API the map's state rules added, so it runs on the code before them.</summary>
+/// <summary>
+/// Writes the canvas with a flight in each phase as PNGs (pilot #1298), only when a person asks: it uses no API the map's state rules
+/// added, so the same file runs on main's code for the before captures.
+/// </summary>
 public sealed class FlightMapCaptureTests
 {
-    // The captures of the canvas with a flight in each phase, long names too, at a narrow and a wide size in each palette. The folder
-    // is PILOT_MAP_CAPTURES (docs/captures/pil1298/before or after), else a temp folder outside the plane.
+    // The captures of the canvas with a flight in each phase, long names too, at a narrow and a wide size in each palette. They go to
+    // the folder PILOT_MAP_CAPTURES names (docs/captures/pil1298/before or after), for the PR; with no variable the test writes nothing,
+    // as AdmissionViewsTests and CardsPanelCaptureTests do. Run it by the test host with the variable set:
+    // PILOT_MAP_CAPTURES=<folder> src/Pilot.Gui.Tests/bin/Release/net10.0/Pilot.Gui.Tests -class Pilot.Gui.Tests.FlightMapCaptureTests
     [Theory]
     [InlineData(900, 700, false)]
     [InlineData(1800, 1000, false)]
@@ -19,7 +24,10 @@ public sealed class FlightMapCaptureTests
     [InlineData(1800, 1000, true)]
     public void CaptureEachPhaseOnTheMap(int width, int height, bool night)
     {
-        var folder = Environment.GetEnvironmentVariable("PILOT_MAP_CAPTURES") is { Length: > 0 } f ? f : DefaultFolder();
+        if (Environment.GetEnvironmentVariable("PILOT_MAP_CAPTURES") is not { Length: > 0 } folder)
+        {
+            return;
+        }
         Directory.CreateDirectory(folder);
         var (flights, legs) = FlightMapWorld.World();
         // One flight with every state's long names, as a person's list has.
@@ -27,21 +35,7 @@ public sealed class FlightMapCaptureTests
         using var _r = renderer;
         var path = Path.Combine(folder, $"map-{(night ? "night" : "standard")}-{width}x{height}.png");
         File.WriteAllBytes(path, PngWriter.Encode([.. renderer.Surface.Pixels], width, height));
-        File.Exists(path).ShouldBeTrue();
-    }
-
-    // A node job does not pass the caller's environment on, so with no variable the captures go to docs/captures/pil1298/out in the
-    // repo (found by walking up to PILOT.md), where the person running the test renames the folder to before or after.
-    private static string DefaultFolder()
-    {
-        for (var dir = new DirectoryInfo(AppContext.BaseDirectory); dir is not null; dir = dir.Parent)
-        {
-            if (File.Exists(Path.Combine(dir.FullName, "PILOT.md")))
-            {
-                return Path.Combine(dir.FullName, "docs", "captures", "pil1298", "out");
-            }
-        }
-        return Path.Combine(Path.GetTempPath(), "pilot-map-captures");
+        new FileInfo(path).Length.ShouldBeGreaterThan(0);
     }
 
     private static (RgbaImageRenderer Renderer, FlightsView<RgbaImage> View) Capture(FlightLine[] lines, int width, int height, bool night)
