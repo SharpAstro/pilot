@@ -62,6 +62,7 @@ public sealed partial class GhCli
                 args.AddRange(["-f", $"after={after}"]);
             }
             // gh api needs no repo, so it runs where the node does.
+            var counted = NodeTraffic.Shared.GhCalls.Now;
             var (exit, output, error) = await RunAsync(args, AppContext.BaseDirectory, cancellationToken);
             if (exit != 0)
             {
@@ -83,6 +84,7 @@ public sealed partial class GhCli
             prs.AddRange(read.PullRequests);
             gone.AddRange(read.Gone);
             cost += read.Cost;
+            NodeTraffic.Shared.GhCalls.RecordCost("api graphql", "GhCli.OpenPullRequestsInAsync", read.Cost, counted);
             remaining = read.Remaining ?? remaining;
             resetAt = read.ResetAt ?? resetAt;
             if (read.Next is not { } next)

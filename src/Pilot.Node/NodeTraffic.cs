@@ -217,6 +217,11 @@ public sealed class NodeTraffic
         };
     }
 
+    private GhCallCounter? _ghCalls;
+
+    /// <summary>Every gh call by kind and caller per 15-minute window (#1293), on the node's clock (<see cref="Time"/>).</summary>
+    public GhCallCounter GhCalls => _ghCalls ??= new GhCallCounter(Time);
+
     private CommandCallers? _callers;
 
     /// <summary>
@@ -289,8 +294,12 @@ public sealed class NodeTraffic
     /// With <paramref name="canUseNetwork"/> false (a local git run: status, log, diff) the run is counted but its bytes are
     /// not, since the job's figure is then local file I/O, which would swamp the network share the figure is for.
     /// </summary>
-    public async Task<(Process Process, Child Counted)> StartAsync(string tool, ProcessStartInfo start, bool canUseNetwork = true, CancellationToken cancellationToken = default)
+    public async Task<(Process Process, Child Counted)> StartAsync(string tool, ProcessStartInfo start, bool canUseNetwork = true, CancellationToken cancellationToken = default, string? caller = null)
     {
+        if (tool == "gh")
+        {
+            GhCalls.Record(start.ArgumentList, caller);
+        }
         var process = await StartProcessAsync(tool, start, cancellationToken).ConfigureAwait(false);
         if (canUseNetwork && tool == "git")
         {

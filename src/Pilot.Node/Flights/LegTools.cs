@@ -174,6 +174,13 @@ public interface IGitHub
     /// </summary>
     Task<MergeState?> MergeStateAsync(string repoPath, int number, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// The newest open PRs of the repo at <paramref name="repoPath"/>, each with everything the single reads answer for it, from one
+    /// GraphQL call (pilot #1293: one read per repo per look, not three per PR). Null when GitHub would not say, and by default:
+    /// the caller then reads each PR on its own.
+    /// </summary>
+    Task<OpenPullRequest[]?> OpenPullRequestsByHeadAsync(string repoPath, CancellationToken cancellationToken) => Task.FromResult<OpenPullRequest[]?>(null);
+
     /// <summary>The PR whose head is <paramref name="branch"/> in the repo at <paramref name="repoPath"/>, or null without one.</summary>
     Task<PullRequest?> PullRequestAsync(string repoPath, string branch, CancellationToken cancellationToken);
 
@@ -748,7 +755,7 @@ public sealed partial class GhCli : IGitHub
         }
     }
 
-    private static async Task<(int Exit, string Output, string Error)> RunAsync(IReadOnlyList<string> args, string cwd, CancellationToken cancellationToken, TimeSpan? timeout = null)
+    private static async Task<(int Exit, string Output, string Error)> RunAsync(IReadOnlyList<string> args, string cwd, CancellationToken cancellationToken, TimeSpan? timeout = null, [System.Runtime.CompilerServices.CallerMemberName] string? caller = null)
     {
         var start = new ProcessStartInfo("gh")
         {
@@ -765,7 +772,7 @@ public sealed partial class GhCli : IGitHub
             start.ArgumentList.Add(arg);
         }
         start.Environment["GH_PROMPT_DISABLED"] = "1";
-        var (process, counted) = await NodeTraffic.Shared.StartAsync("gh", start, cancellationToken: cancellationToken);
+        var (process, counted) = await NodeTraffic.Shared.StartAsync("gh", start, cancellationToken: cancellationToken, caller: $"GhCli.{caller}");
         using var _ = process;
         using var __ = counted;
         using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);

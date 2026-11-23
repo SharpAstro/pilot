@@ -13,8 +13,11 @@ namespace Pilot.Node.Flights;
 /// gets a fresh worker briefed from the work, never from an earlier worker's conversation.
 /// </summary>
 public sealed partial class LegCommander(
-    NodeState state, IWorkerLauncher workers, ICheckRunner checks, IGitHub github, IGit git, Planes planes, FlightCommander flights, NodeOptions options, TimeProvider time)
+    NodeState state, IWorkerLauncher workers, ICheckRunner checks, IGitHub gitHub, IGit git, Planes planes, FlightCommander flights, NodeOptions options, TimeProvider time)
 {
+    // Reads of a flight's PR inside a PrChecks look are answered from its snapshot (LookSnapshot); anywhere else they go to GitHub.
+    private readonly IGitHub github = LookGitHub.Of(gitHub, state.PrPolls);
+
     // The one lock of the leg verbs, which says what holds it (a command waiting past LockWait.Patience is told).
     private readonly NamedLock _one = new(time);
 
@@ -22,10 +25,10 @@ public sealed partial class LegCommander(
     public NamedLock Lock => _one;
 
     // What a flight's review leaves on its PR on GitHub: the COMMENT review, the pilot/review status, the pilot: label.
-    private readonly PrMarks _marks = new(state, github, options);
+    private readonly PrMarks _marks = new(state, LookGitHub.Of(gitHub, state.PrPolls), options);
 
     // Which failed runs never reached a model, read once from their logs (pilot #1283).
-    private readonly OutsideReviews _outsideReviews = new(github, time);
+    private readonly OutsideReviews _outsideReviews = new(gitHub, time);
 
     /// <summary>The node's memory of which failed runs never reached a model (one log read per run id).</summary>
     internal OutsideReviews OutsideReviews => _outsideReviews;

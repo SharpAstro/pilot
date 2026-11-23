@@ -8,8 +8,11 @@ namespace Pilot.Node.Flights;
 /// decides nothing. A PR merged on GitHub itself (a person, another tool) is noticed too: its card closes and its flight
 /// lands, as a merge through the card would; one closed without a merge closes its card.
 /// </summary>
-public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time, FlightCommander? flights = null, LegCommander? legs = null) : BackgroundService
+public sealed class PrChecks(NodeState state, IGitHub gitHub, TimeProvider time, FlightCommander? flights = null, LegCommander? legs = null) : BackgroundService
 {
+    // Reads of a flight's PR inside a look are answered from one read per repo (LookSnapshot); outside a look they go to GitHub as ever.
+    private readonly IGitHub github = LookGitHub.Of(gitHub, state.PrPolls);
+
     /// <summary>Where this says what it would have said on stderr: the node's log (pilot #416), nothing for one built without.</summary>
     public TextWriter Error { get; set; } = TextWriter.Null;
 
@@ -875,7 +878,7 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
                 state.CloseCard(card.Id, "the hold ended", "node");
             }
         }
-        foreach (var flight in flights.Where(f => f is { State: not FlightState.Landed, Holding: not null, PullRequest: not null, OnHold: null }))
+        foreach (var flight in flights.Where(f => f is { State: not FlightState.Landed and not FlightState.Held, Holding: not null, PullRequest: not null, OnHold: null }))
         {
             var holding = flight.Holding!;
             var key = $"{flight.Code} {holding.Since.UtcTicks}";
@@ -1037,6 +1040,14 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             {
                 continue;
             }
+            // Poll by state (pilot #1293): a PR this look did not read from GitHub and the schedule does not have due is not asked for its runs
+            // either. An earlier phase of the look that read the repo has already moved the PR's next-read time on, so "read fresh this look"
+            // counts as due; a flight with a ready card read only later, in the card loop, is still due here.
+            if (LookSnapshot.Current is { } look && _ciCounted.ContainsKey(flight.Code) && !look.ReadFresh(flight.RepoPath)
+                && !state.PrPolls.Due(flight.RepoPath, [flight.Branch]))
+            {
+                continue;
+            }
             CiRun[] runs;
             try
             {
@@ -1095,9 +1106,16 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
         }
     }
 
+    // The branches of a repo whose PR the node reads: the flights flying with a PR and not on hold. A held flight (waiting on a connected flight) reads nothing.
+    private string[] BranchesOf(string repoPath) =>
+        [.. state.Flights().Where(f => f is { State: FlightState.Flying, PullRequest: not null, OnHold: null } && string.Equals(f.RepoPath, repoPath, StringComparison.OrdinalIgnoreCase)).Select(f => f.Branch)];
+
     /// <summary>One look at every open PR-ready card's PR.</summary>
     public async Task LookAsync(CancellationToken cancellationToken)
     {
+        // One read per repo for the whole look (pilot #1293): the flights' PR, merge state, checks and queue reads below are answered from it.
+        // Each PR has its own next-read time (state.PrPolls): a repo none of whose flights' PRs is due is not read, its PRs answered from its last read.
+        using var snapshot = LookSnapshot.Begin(state.PrPolls, BranchesOf);
         await RestorePassedWithoutCardAsync(cancellationToken);
         await LookAtHoldsAsync(cancellationToken);
         // A failure's investigation that landed lets the flights held for it go: re-queued, rerun, or their leg check run again.
@@ -1134,6 +1152,11 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             }
             // An armed merge is MergeWhenGreenAsync's: GitHub is read there, and what it says is put on the card there.
             if (flight.MergeWhenGreen is not null)
+            {
+                continue;
+            }
+            // A flight waiting on a connected flight reads nothing (pilot #1293): not its PR, its issue fields nor its labels.
+            if (flight.State == FlightState.Held)
             {
                 continue;
             }

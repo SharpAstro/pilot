@@ -325,7 +325,7 @@ public sealed partial class GhCli
         exit == 0 ? true : error.Contains("(HTTP 404)", StringComparison.Ordinal) ? false : null;
 
     /// <summary>gh with bytes on stdin and bytes out: an image goes through a request body (too big for an argument) and comes back raw.</summary>
-    private static async Task<(int Exit, byte[] Output, string Error)> RunBytesAsync(IReadOnlyList<string> args, string cwd, byte[]? stdin, CancellationToken cancellationToken)
+    private static async Task<(int Exit, byte[] Output, string Error)> RunBytesAsync(IReadOnlyList<string> args, string cwd, byte[]? stdin, CancellationToken cancellationToken, [System.Runtime.CompilerServices.CallerMemberName] string? caller = null)
     {
         var start = new ProcessStartInfo("gh")
         {
@@ -342,7 +342,7 @@ public sealed partial class GhCli
             start.ArgumentList.Add(arg);
         }
         start.Environment["GH_PROMPT_DISABLED"] = "1";
-        var (process, counted) = await NodeTraffic.Shared.StartAsync("gh", start, cancellationToken: cancellationToken);
+        var (process, counted) = await NodeTraffic.Shared.StartAsync("gh", start, cancellationToken: cancellationToken, caller: $"GhCli.{caller}");
         using var _ = process;
         using var __ = counted;
         using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);

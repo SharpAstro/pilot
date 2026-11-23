@@ -122,6 +122,19 @@ internal sealed record FleetLine
     /// <summary><see cref="Traffic"/> as the two lines the machine cell draws (the node's HTTP, then its git and gh children), each short enough for the column; empty without traffic.</summary>
     public string[] TrafficLines => Commands is { } commands ? [.. Traffic?.Split(" · ") ?? [], commands] : Traffic?.Split(" · ") ?? [];
 
+    /// <summary>The node's gh calls of its last 15 minutes, in full (kinds, callers, points); null for a node that does not say. The cell draws <see cref="GhShort"/> and shows this on hover.</summary>
+    public string? GhCalls { get; init; }
+
+    /// <summary><see cref="GhCalls"/> cut to what a narrow column holds: the window's totals and its busiest kind, without the callers.</summary>
+    public string? GhShort => GhCalls is { Length: > 0 } full ? ShortGh(full) : null;
+
+    internal static string ShortGh(string full)
+    {
+        var parts = full.Split("; ", 2);
+        var top = parts.Length > 1 ? parts[1].Split(" (", 2)[0] : null;
+        return top is { Length: > 0 } ? $"{parts[0]} · {top}" : parts[0];
+    }
+
     /// <summary>How slow the node's commands were over the last hour, the slowest verb's p95 (<c>commands p95 1.2 s</c>); null when none ran or the node does not say.</summary>
     public string? Commands { get; init; }
 
@@ -214,6 +227,7 @@ internal sealed record FleetLine
             WatchtowerStarts = health?.StartsLast24h ?? 0,
             WatchtowerSummary = health is { Churning: true, Summary.Length: > 0 } ? health.Summary : null,
             Traffic = (summary.Connected || lastKnown) && summary.Node?.Traffic is { } traffic ? TrafficWords(traffic) : null,
+            GhCalls = summary.Connected || lastKnown ? summary.Node?.GhCalls : null,
             Commands = (summary.Connected || lastKnown) ? Pilot.Contracts.CommandTimingRow.Slowest(summary.Node?.CommandTimings) : null,
             Account = summary.Account ?? (summary.Connected || lastKnown ? "account unknown" : "—"),
             Usage = summary.Usage ?? "",
@@ -767,6 +781,7 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         + (line.Connected ? 0f : 16f)
         + (line.StateLines.Length > 1 ? 16f : 0f)
         + line.TrafficLines.Length * 16f
+        + (line.GhShort is null ? 0f : 16f)
         + LastKnownUsageHeight(line);
 
     private Layout.Node Row(FleetLine line, int index)
@@ -807,7 +822,9 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PilotWi
                 Layout.Builder.Text(where, 11f, Dim).Selectable().Whole(where).RowH(18f),
                 Layout.Builder.Text(line.TrafficLines is [var http, ..] ? http : "", 11f, Dim).Selectable().RowH(line.TrafficLines.Length > 0 ? 16f : 0f),
                 Layout.Builder.Text(line.TrafficLines is [_, var children, ..] ? children : "", 11f, Dim).Selectable().RowH(line.TrafficLines.Length > 1 ? 16f : 0f),
-                Layout.Builder.Text(line.TrafficLines is [_, _, var commands, ..] ? commands : "", 11f, Dim).Selectable().RowH(line.TrafficLines.Length > 2 ? 16f : 0f)),
+                Layout.Builder.Text(line.TrafficLines is [_, _, var commands, ..] ? commands : "", 11f, Dim).Selectable().RowH(line.TrafficLines.Length > 2 ? 16f : 0f),
+                // The gh window has a row of its own, so it neither displaces the commands line nor runs past the column; the whole line is on hover.
+                line.GhShort is { } ghShort ? Layout.Builder.Text(ghShort, 11f, Dim).Selectable().Whole(line.GhCalls!).RowH(16f) : Layout.Builder.Text("", 11f, Dim).RowH(0f)),
             Layout.Builder.VStack(
                 Layout.Builder.Text(line.Account, 13f, line.LastKnown ? Dim : Body).Selectable().Whole(line.Account).RowH(22f),
                 line.Maintenance || line.WatchtowerMark is not null
