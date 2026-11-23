@@ -140,6 +140,11 @@ public sealed partial class PrReviews
             {
                 return;
             }
+            if (left is null && review.DesignAnswer is { Length: > 0 })
+            {
+                RaiseDesignFixMissingCard(review, subject, pr);
+                return;
+            }
             state.RaiseCard(CardBin.ForYou, FixEndedKind, subject, $"{pr}: {review.Fixer} ended without a push",
                 left is null
                     ? $"The PR's head is still {CommitRefs.Short(review.Head)}. Fix it starts another fixer on the same findings."
@@ -147,6 +152,28 @@ public sealed partial class PrReviews
                 [new CardChoice { Label = FixLabel, Verb = Verbs.FixPr, Target = subject }], link: review.Url);
         }
     }
+
+    /// <summary>
+    /// The card for a PR whose design question was answered and whose fixer ended without a push (tianwen #2495): the fix the answer called for is
+    /// missing, offered as Fix it. An answer that asks for no code (close, supersede) is the owner's to carry out on GitHub, since no fixer closes a
+    /// PR: a card with no choice. Never a Merge choice. One place, so the fixer-ended path and the queue's design branch say the same words.
+    /// </summary>
+    private void RaiseDesignFixMissingCard(PrReviewRow review, string subject, string pr)
+    {
+        var answer = (review.DesignAnswer ?? "").Trim();
+        var at = CommitRefs.Short(review.Head);
+        var noCode = AsksForNoCode(answer);
+        state.RaiseCard(CardBin.ForYou, FixEndedKind, subject,
+            noCode ? $"{pr}: its design answer is to close it, which is yours to do" : $"{pr}: the fix its design answer called for is missing",
+            noCode
+                ? $"The answer to its design question was \"{answer}\": the PR is to be closed as answered. No fixer closes a PR, so close it on GitHub yourself. Nothing was pushed (head {at})."
+                : $"The answer to its design question was \"{answer}\", but its fixer ended without pushing the fix (head {at}). Fix it starts another fixer with the answer.",
+            noCode ? [] : [new CardChoice { Label = FixLabel, Verb = Verbs.FixPr, Target = subject }], link: review.Url);
+    }
+
+    /// <summary>True when a design answer asks for no change to the code: close, supersede, drop or abandon the PR.</summary>
+    internal static bool AsksForNoCode(string answer) =>
+        System.Text.RegularExpressions.Regex.IsMatch(answer, @"\b(close[ds]?|supersede[ds]?|drop|abandon(ed)?|withdraw)\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
 
     /// <summary>What the node says to a fixer that ended its turn with the PR's head unmoved: what is left, then what to do about it.</summary>
     private static string ResumeText(PrReviewRow review, string? left) =>
