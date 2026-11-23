@@ -436,6 +436,7 @@
       "queueNote": null,
       "fixer": null,
       "fixerJob": null,
+      "fixerResumedJob": null,
       "fixWorktree": null,
       "fixWorktreeBorrowed": null,
       "fixDetached": null,

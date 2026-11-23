@@ -540,6 +540,201 @@ public sealed class PrFixTests3 : PrFixTestsBase
         Row.Fixer.ShouldBeNull("the fixer is done with; its worktree stays for the person");
     }
 
+    /// <summary>
+    /// A fixer whose turn ended on a pilot run job of its own is waiting, not finished (pilot #1309: tianwen #2474 and #2476): no card, no stop, the row
+    /// keeps its Fixer; once the job has ended the usual no-push end runs.
+    /// </summary>
+    [Theory]
+    [InlineData(JobState.Running, true)]
+    [InlineData(JobState.Queued, true)]
+    [InlineData(JobState.Running, false)]
+    [InlineData(JobState.Queued, false)]
+    public async Task AFixerThatEndedItsTurnOnAnOpenJobOfItsOwnIsWaitingNotEnded(JobState open, bool byId)
+    {
+        await Review("acme/widget#7", "changes", "README.md:1 wrong");
+        var fixer = Row.Fixer.ShouldNotBeNull();
+        _state.PutSession(FixerSession(SessionState.Ended));
+        var job = new JobRow
+        {
+            Id = "j4009", Command = "dotnet build", Cwd = _root, State = open, LogPath = Path.Combine(_root, "j4009.log"), Timeout = TimeSpan.FromMinutes(30), StartedAt = new DateTimeOffset(2026, 11, 23, 0, 0, 0, TimeSpan.Zero),
+            Owner = byId ? Row.FixerJob : "an-earlier-id", OwnerName = byId ? null : fixer,
+        };
+        _state.PutJob(job);
+
+        await _reviews.SweepAsync(Ct);
+
+        _state.Cards().ShouldNotContain(c => c.Kind == PrReviews.FixEndedKind);
+        Row.Fixer.ShouldBe(fixer);
+        Row.FixerJob.ShouldNotBeNull();
+
+        _state.PutJob(job with { State = JobState.Succeeded });
+        await _reviews.SweepAsync(Ct);
+
+        _state.Cards(openOnly: true).Where(c => c.Kind == PrReviews.FixEndedKind).ShouldHaveSingleItem();
+        Row.Fixer.ShouldBeNull();
+    }
+
+    /// <summary>
+    /// A fixer whose own job has ended but whose outcome the node has not told it yet (EndedAt set, ToldAt null) reads Ended, and is still
+    /// waiting: no resume, no card. Once the grace from the job's end has passed with no turn of its own, the resume runs (pilot #1309 go-around).
+    /// </summary>
+    [Fact]
+    public async Task AFixerWhoseJobEndedButWasNotToldYetIsStillWaitingAndItsResumeIsNotSpent()
+    {
+        var said = new List<string>();
+        _reviews.ResumeFixer = (id, _, _) => { said.Add(id); return Task.FromResult<string?>(null); };
+        await Review("acme/widget#7", "changes", "README.md:1 wrong");
+        var fixer = Row.Fixer.ShouldNotBeNull();
+        var session = FixerSession(SessionState.Ended) with { LastResponseAt = DateTimeOffset.UtcNow.AddMinutes(-1) };
+        _state.PutSession(session);
+        var job = new JobRow
+        {
+            Id = "j4010", Command = "dotnet build", Cwd = _root, State = JobState.Succeeded, LogPath = Path.Combine(_root, "j4010.log"), Timeout = TimeSpan.FromMinutes(30),
+            StartedAt = DateTimeOffset.UtcNow.AddMinutes(-2), EndedAt = DateTimeOffset.UtcNow, ToldAt = null, Owner = Row.FixerJob,
+        };
+        _state.PutJob(job);
+
+        await _reviews.SweepAsync(Ct);
+
+        said.ShouldBeEmpty("the job's end has not reached the fixer yet");
+        _state.Cards().ShouldNotContain(c => c.Kind == PrReviews.FixEndedKind);
+        Row.Fixer.ShouldBe(fixer);
+        Row.FixerResumedJob.ShouldBeNull();
+
+        // Past the grace with no turn since the job's end, the end is its own: the one resume runs.
+        _state.PutSession(session with { LastResponseAt = DateTimeOffset.UtcNow.AddMinutes(-15) });
+        _state.PutJob(job with { StartedAt = DateTimeOffset.UtcNow.AddMinutes(-20), EndedAt = DateTimeOffset.UtcNow.AddMinutes(-10) });
+        await _reviews.SweepAsync(Ct);
+
+        said.ShouldHaveSingleItem();
+        Row.FixerResumedJob.ShouldNotBeNull();
+    }
+
+    /// <summary>A fixer that ended its turn with the head unmoved is resumed once, through the resume hook, before any card (pilot #1309).</summary>
+    [Fact]
+    public async Task AnEndedFixerWithTheHeadUnmovedIsResumedOnceAndASecondEndRingsWithTheWorkLine()
+    {
+        var said = new List<(string Id, string Text)>();
+        _reviews.ResumeFixer = (id, text, _) => { said.Add((id, text)); return Task.FromResult<string?>(null); };
+        await Review("acme/widget#7", "changes", "README.md:1 wrong");
+        var job = Row.FixerJob.ShouldNotBeNull();
+        _state.PutSession(FixerSession(SessionState.Ended));
+
+        await _reviews.SweepAsync(Ct);
+
+        var one = said.ShouldHaveSingleItem();
+        one.Id.ShouldBe(job);
+        one.Text.ShouldContain("nothing pushed");
+        one.Text.ShouldContain("Commit and push it to the PR's branch");
+        _state.Cards().ShouldNotContain(c => c.Kind == PrReviews.FixEndedKind);
+        (Row.Fixer, Row.FixerResumedJob).ShouldBe((Row.Fixer.ShouldNotBeNull(), job));
+
+        await _reviews.SweepAsync(Ct);
+
+        said.Count.ShouldBe(1, "once per fixer job");
+        var card = _state.Cards(openOnly: true).Where(c => c.Kind == PrReviews.FixEndedKind).ShouldHaveSingleItem();
+        card.Detail.ShouldNotBeNull().ShouldContain("head is still");
+        Row.Fixer.ShouldBeNull();
+        Row.FixerResumedJob.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task AResumeThatCouldNotBeDeliveredRaisesTheCardAtOnce()
+    {
+        _reviews.ResumeFixer = (_, _, _) => Task.FromResult<string?>("session is wound down");
+        await Review("acme/widget#7", "changes", "README.md:1 wrong");
+        _state.PutSession(FixerSession(SessionState.Ended));
+
+        await _reviews.SweepAsync(Ct);
+
+        _state.Cards(openOnly: true).Where(c => c.Kind == PrReviews.FixEndedKind).ShouldHaveSingleItem();
+        Row.Fixer.ShouldBeNull();
+    }
+
+    /// <summary>A fixer a person stopped reads Ended too; waking it would undo the stop, so the card is raised at once (pilot #1309 go-around).</summary>
+    [Fact]
+    public async Task AFixerTheLedgerRecordsAsStoppedByAPersonIsNotResumedAndTheCardIsRaisedAtOnce()
+    {
+        var said = new List<string>();
+        _reviews.ResumeFixer = (id, _, _) => { said.Add(id); return Task.FromResult<string?>(null); };
+        var ledger = new Pilot.Node.Sessions.SessionLedger();
+        _reviews.Ledger = ledger;
+        await Review("acme/widget#7", "changes", "README.md:1 wrong");
+        var session = FixerSession(SessionState.Ended);
+        _state.PutSession(session);
+        ledger.Adopt(session);
+        ledger.Stopped([session.Id], $"{SessionEndReasons.Person}: not this one", "person");
+
+        await _reviews.SweepAsync(Ct);
+
+        said.ShouldBeEmpty("a stopped fixer is not woken");
+        _state.Cards(openOnly: true).Where(c => c.Kind == PrReviews.FixEndedKind).ShouldHaveSingleItem();
+        Row.Fixer.ShouldBeNull();
+    }
+
+    /// <summary>A fixer that ended on its own (ledger reason Finished) is resumed.</summary>
+    [Fact]
+    public async Task AFixerTheLedgerRecordsAsFinishedIsResumed()
+    {
+        var said = new List<string>();
+        _reviews.ResumeFixer = (id, _, _) => { said.Add(id); return Task.FromResult<string?>(null); };
+        var ledger = new Pilot.Node.Sessions.SessionLedger();
+        _reviews.Ledger = ledger;
+        await Review("acme/widget#7", "changes", "README.md:1 wrong");
+        var session = FixerSession(SessionState.Ended);
+        _state.PutSession(session);
+        ledger.Adopt(session);
+        ledger.Stopped([session.Id], SessionEndReasons.Finished, "claude");
+
+        await _reviews.SweepAsync(Ct);
+
+        said.ShouldHaveSingleItem();
+    }
+
+    /// <summary>The second end's card names the work the fixer left in its worktree (uncommitted files and unpushed commits), after the one resume.</summary>
+    [Fact]
+    // Slow: it commits in the fix worktree and reads what is left with real git (RealGit()), a real process.
+    [Trait("Category", "Slow")]
+    public async Task ASecondEndWithWorkLeftRingsWithTheWorkNamed()
+    {
+        RealGit();
+        _reviews.ResumeFixer = (_, _, _) => Task.FromResult<string?>(null);
+        await Review("acme/widget#7", "changes", "README.md:1 wrong");
+        var worktree = Row.FixWorktree.ShouldNotBeNull();
+        var git = new GitCli();
+        File.WriteAllText(Path.Combine(worktree, "fixed.txt"), "the fix\n");
+        (await git.RunAsync(["add", "fixed.txt"], worktree, Ct)).Ok.ShouldBeTrue();
+        (await git.RunAsync(["-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "make the README right"], worktree, Ct)).Ok.ShouldBeTrue();
+        File.WriteAllText(Path.Combine(worktree, "half.txt"), "not committed\n");
+        _state.PutSession(FixerSession(SessionState.Ended));
+
+        await _reviews.SweepAsync(Ct);
+        _state.Cards().ShouldNotContain(c => c.Kind == PrReviews.FixEndedKind);
+        await _reviews.SweepAsync(Ct);
+
+        var card = _state.Cards(openOnly: true).Where(c => c.Kind == PrReviews.FixEndedKind).ShouldHaveSingleItem();
+        card.Detail.ShouldNotBeNull().ShouldContain($"the fixer left work in {worktree}, kept there");
+        card.Detail.ShouldContain("1 commit not pushed");
+        card.Detail.ShouldContain("1 file not committed (half.txt)");
+    }
+
+    [Fact]
+    public async Task AFixerThatPushedAfterTheResumeTakesTheHeadMovedPath()
+    {
+        _reviews.ResumeFixer = (_, _, _) => Task.FromResult<string?>(null);
+        await Review("acme/widget#7", "changes", "README.md:1 wrong");
+        _state.PutSession(FixerSession(SessionState.Ended));
+        await _reviews.SweepAsync(Ct);
+        Row.FixerResumedJob.ShouldNotBeNull();
+
+        FixerPushes("the fix");
+        await _reviews.SweepAsync(Ct);
+
+        _state.Cards().ShouldNotContain(c => c.Kind == PrReviews.FixEndedKind);
+        Row.Fixer.ShouldBeNull();
+        Row.FixerResumedJob.ShouldBeNull();
+    }
+
     [Fact]
     [Trait("Category", "Slow")]
     public async Task AFixerThatEndsWithoutPushingLeavesACardWithFixItAndNoReview()

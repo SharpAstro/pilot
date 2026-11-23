@@ -106,12 +106,48 @@ public sealed partial class PrReviews
         var sessions = state.Sessions().Where(s => review.FixerJob is { } job ? string.Equals(s.Id, job, StringComparison.Ordinal) : string.Equals(s.Name, review.Fixer, StringComparison.Ordinal)).ToList();
         if (sessions.Count > 0 && sessions.All(s => s.State == SessionState.Ended))
         {
+            // Ended with a pilot run job of its own queued or running is waiting, not finished: the job's end wakes it (pilot #1309: tianwen #2474 and
+            // #2476 ended their turn on 'pilot run', were read as finished and stopped, #2474 was queued and its push refused).
+            if (sessions.Any(FixerWaitsOnJob))
+            {
+                return;
+            }
             // What it left: a fixer that ended with its fix uncommitted, or committed and not pushed (a detached HEAD, a push that failed), had its worktree
             // force-removed with the work in it (pilot #1247: tianwen#2435's fix sat in a commit nothing pointed to). Its worktree is kept then, and the card
             // says where the work is and what it is.
             var left = await LeftWorkAsync(review, cancellationToken);
+            // Ended on its own with the head unmoved: resumed once per fixer job before any card (pilot #1309). Only a second end, or a resume
+            // that could not be delivered, falls through to the card.
+            // A fixer a person or the watchtower stopped reads Ended too: waking it would undo the stop, so it goes straight to the card.
+            var stoppedOnPurpose = sessions.Any(s => Ledger?.Find([s.SessionId, s.Id, .. s.EarlierSessionIds ?? []]) is { EndReason: not null and not SessionEndReasons.Finished });
+            if (!stoppedOnPurpose && review.FixerJob is { } ended && !string.Equals(review.FixerResumedJob, ended, StringComparison.Ordinal) && ResumeFixer is { } resume)
+            {
+                if (Of(PrRef.Parse($"{review.Repo}#{review.Number}")!) is { } latest)
+                {
+                    state.PutPrReview(latest with { FixerResumedJob = ended });
+                }
+                string? refused;
+                try
+                {
+                    refused = await resume(ended, ResumeText(review, left), cancellationToken);
+                }
+                catch (FlightException ex)
+                {
+                    refused = ex.Message;
+                }
+                if (refused is null)
+                {
+                    return;
+                }
+                Error.WriteLine($"pr reviews: {pr}'s ended fixer could not be resumed: {refused}");
+            }
             if (!await EndFixerAsync(left is null ? review : review with { FixWorktreeBorrowed = true }, cancellationToken))
             {
+                return;
+            }
+            if (left is null && review.DesignAnswer is { Length: > 0 })
+            {
+                RaiseDesignFixMissingCard(review, subject, $"{pr}");
                 return;
             }
             state.RaiseCard(CardBin.ForYou, FixEndedKind, subject, $"{pr}: {review.Fixer} ended without a push",
@@ -121,6 +157,55 @@ public sealed partial class PrReviews
                 [new CardChoice { Label = FixLabel, Verb = Verbs.FixPr, Target = subject }], link: review.Url);
         }
     }
+
+    /// <summary>
+    /// The card for a PR whose design question was answered and whose fixer ended without a push (tianwen #2495): the fix the answer called for is
+    /// missing, offered as Fix it. An answer that asks for no code (close, supersede) is the owner's to carry out on GitHub, since no fixer closes a
+    /// PR: a card with no choice. Never a Merge choice. One place, so the fixer-ended path and the queue's design branch say the same words.
+    /// </summary>
+    private void RaiseDesignFixMissingCard(PrReviewRow review, string subject, string pr)
+    {
+        var answer = (review.DesignAnswer ?? "").Trim();
+        var at = CommitRefs.Short(review.Head);
+        var noCode = AsksForNoCode(answer);
+        state.RaiseCard(CardBin.ForYou, FixEndedKind, subject,
+            noCode ? $"{pr}: its design answer is to close it, which is yours to do" : $"{pr}: the fix its design answer called for is missing",
+            noCode
+                ? $"The answer to its design question was \"{answer}\": the PR is to be closed as answered. No fixer closes a PR, so close it on GitHub yourself. Nothing was pushed (head {at})."
+                : $"The answer to its design question was \"{answer}\", but its fixer ended without pushing the fix (head {at}). Fix it starts another fixer with the answer.",
+            noCode ? [] : [new CardChoice { Label = FixLabel, Verb = Verbs.FixPr, Target = subject }], link: review.Url);
+    }
+
+    /// <summary>
+    /// True when a design answer asks for no change to the code: it names the PR itself ("close it", "close the PR", "this PR is superseded",
+    /// "superseded by #N", "drop the PR") or says to leave things as they are ("leave it as is", "keep main as it is"). "Close the handle in Dispose"
+    /// or "drop the cache layer" are code and do not match. A bare "it" or "this" counts only where it ends the clause ("close it.", "drop it"), or
+    /// where the next words are one of two named tails: "as superseded", "as a duplicate", "as obsolete" or "as answered" (the issue's "close it as
+    /// superseded by #N"), and "or the PR" / "or this pull request" (the brief's "close it or the PR"). Any other words after it keep it code, so
+    /// "close this connection", "close it in the finally block", "close it as soon as the response is read", "close it and reopen on error",
+    /// "drop it and use a plain list" and "drop this cache layer" stay code; "is closed" counts only for the PR ("this PR is closed"), so "before it
+    /// is closed" stays code. The fixer brief's no-change list says the same.
+    /// </summary>
+    internal static bool AsksForNoCode(string answer) => NoCodeAnswer().IsMatch(answer);
+
+    private const string ThePr = @"(?:the|this)\s+(?:pr|pull\s+request)";
+
+    private const string BareIt = @"(?:it|this)(?=\s*(?:[.,;:!]|$)|\s+as\s+(?:superseded|a\s+duplicate|obsolete|answered)\b|\s+or\s+" + ThePr + @"\b)";
+
+    [System.Text.RegularExpressions.GeneratedRegex(
+        @"\b(?:close[ds]?\s+(?:" + ThePr + "|" + BareIt + ")"
+        + @"|" + ThePr + @"\s+(?:is|can\s+be|should\s+be|to\s+be)\s+(?:closed|superseded|dropped|abandoned|withdrawn)"
+        + @"|it\s+is\s+superseded"
+        + @"|supersede[ds]?\s+by\s+(?:#|pr)"
+        + @"|(?:drop|abandon|withdraw)\s+(?:" + ThePr + "|" + BareIt + ")"
+        + @"|(?:leave|keep)\s+(?:it|main|this|things|everything)?\s*(?:as\s+(?:it\s+is|is)|unchanged))\b",
+        System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
+    private static partial System.Text.RegularExpressions.Regex NoCodeAnswer();
+
+    /// <summary>What the node says to a fixer that ended its turn with the PR's head unmoved: what is left, then what to do about it.</summary>
+    private static string ResumeText(PrReviewRow review, string? left) =>
+        (left is null ? $"Your turn ended with nothing pushed: the PR's head is still {CommitRefs.Short(review.Head)}. " : $"Your turn ended with work not on the PR: {left}. ")
+        + "Commit and push it to the PR's branch, and comment on the PR; or, if something stops you (a refused push, a failing build, a point that asks for no change), say what in a PR comment and end your turn.";
 
     /// <summary>
     /// What an ended fixer left in its worktree that the PR does not have: its uncommitted files and its commits past the PR's head, in a line; null when
@@ -312,7 +397,7 @@ public sealed partial class PrReviews
         state.CloseCardsAbout(Verbs.PrTarget(review.Repo, review.Number), "the fixer ended", FixLeftKind);
         if (Of(PrRef.Parse($"{review.Repo}#{review.Number}")!) is { } latest)
         {
-            state.PutPrReview(latest with { Fixer = null, FixerJob = null, FixWorktree = null, FixWorktreeBorrowed = null, FixDetached = null });
+            state.PutPrReview(latest with { Fixer = null, FixerJob = null, FixerResumedJob = null, FixWorktree = null, FixWorktreeBorrowed = null, FixDetached = null });
         }
         return true;
     }

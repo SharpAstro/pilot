@@ -92,6 +92,9 @@ public sealed record PrReviewRow
     /// <summary>The fixer's background job, the first eight of its session id.</summary>
     public string? FixerJob { get; init; }
 
+    /// <summary>The fixer job the node already resumed once with "commit and push, or say what stops you" after it ended with the head unmoved (pilot #1309); null while none was. Cleared with the other fix fields. Optional on the wire.</summary>
+    public string? FixerResumedJob { get; init; }
+
     /// <summary>The fixer's worktree, <c>&lt;clone&gt;/.claude/worktrees/fix-&lt;repo&gt;-&lt;n&gt;</c>, on the PR's own branch.</summary>
     public string? FixWorktree { get; init; }
 

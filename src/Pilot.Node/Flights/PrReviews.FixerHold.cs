@@ -8,6 +8,28 @@ public sealed partial class PrReviews
     public const string FixerWorkHeldKind = "pr-fixer-work-held";
 
     /// <summary>
+    /// How long a fixer whose own job has ended (or whose outcome was told) is still read as waiting when it has not taken a turn since: the node
+    /// tells it the job's end and it answers, so an end read in that window is not its own (pilot #1309 go-around). As LegWatch's idle grace.
+    /// </summary>
+    public TimeSpan FixerToldGrace { get; init; } = TimeSpan.FromMinutes(3);
+
+    /// <summary>
+    /// A fixer session that reads Ended but owns a queued or running job (by id, session id, earlier id or name): waiting, not finished. So is one
+    /// whose own job ended or was told (<see cref="OwnJobWait.Spoken"/>) after its last turn, within <see cref="FixerToldGrace"/> of that: the node
+    /// has not had its answer to the job's end yet, and reading it as ended would spend its one resume on the gap.
+    /// </summary>
+    private bool FixerWaitsOnJob(SessionRow s)
+    {
+        if (s.State != SessionState.Ended)
+        {
+            return false;
+        }
+        var wait = OwnJobWait.Of(state, s);
+        return wait.Open
+            || wait.Spoken is { } spoken && (s.LastResponseAt ?? s.StartedAt) < spoken && time.GetUtcNow() - spoken < FixerToldGrace;
+    }
+
+    /// <summary>
     /// The fixer's own session of this PR that is still running, or null: the row's job (or its name, for a row stored before FixerJob), and any other
     /// fixer session (as <see cref="AdmissionGate.IsFixer"/> reads it) for the PR's number in its repo. Read from the session store, not only from the row,
     /// since a row can read no fixer while one works (tianwen#2470, pilot #1291).
@@ -17,7 +39,8 @@ public sealed partial class PrReviews
         var clone = review.ClonePath.TrimEnd('\\', '/');
         var folder = Path.GetFileName(clone);
         var name = review.Repo[(review.Repo.IndexOf('/') + 1)..];
-        return state.Sessions().FirstOrDefault(s => !s.Archived && !s.Gone && s.State is not (SessionState.Ended or SessionState.Failed)
+        // A fixer whose turn ended on a pilot run job of its own reads Ended but is waiting: the job's end wakes it (pilot #1309, tianwen #2474/#2476).
+        return state.Sessions().FirstOrDefault(s => !s.Archived && !s.Gone && (s.State is not (SessionState.Ended or SessionState.Failed) || FixerWaitsOnJob(s))
             && (review.FixerJob is { } job && string.Equals(s.Id, job, StringComparison.Ordinal)
                 || AdmissionGate.IsFixer(s) && s.Pr == review.Number
                    && (string.Equals(s.Repo, folder, StringComparison.OrdinalIgnoreCase) || string.Equals(s.Repo, name, StringComparison.OrdinalIgnoreCase)
