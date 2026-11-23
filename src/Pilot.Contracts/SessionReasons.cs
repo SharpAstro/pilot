@@ -38,4 +38,6 @@ public static class SessionEndReasons
     public const string DesignerIdle = "stopped when the designer sat idle";
     /// <summary>A flight's planner the node ended once its first leg's worker started: its plan is done, and it holds no Opus slot (#568).</summary>
     public const string Planned = "stopped once planned";
+    /// <summary>A worker of a leg that was redone (PIL1206): the leg has another current worker, so the node ended this duplicate itself. Starts the why of an end-session.</summary>
+    public const string DuplicateWorker = "duplicate worker of a redone leg";
 }

@@ -75,6 +75,28 @@ public sealed class SessionTracker : BackgroundService
     /// <summary>The pid the last listing gave row <paramref name="id"/>, or null when it has no process.</summary>
     public int? PidOf(string id) => _pids.TryGetValue(id, out var pid) ? pid : null;
 
+    /// <summary>
+    /// The process a listing taken now gives <paramref name="row"/>'s session, or null when it has none (#1206). Not the
+    /// last poll's pid: after a stop that one may be gone and reused by another process, which a wait would take for the
+    /// session. A listing that cannot be had falls back to the last poll's pid, so a resume still waits rather than guessing gone.
+    /// The row is left as it is (it may be held by a resume); only the pid is read.
+    /// </summary>
+    public async Task<int?> PidNowAsync(SessionRow row, CancellationToken cancellationToken)
+    {
+        string text;
+        try
+        {
+            text = await _agents.ListAsync(cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return PidOf(row.Id);
+        }
+        return ClaudeAgentsJson.Parse(text) is { } listed
+            ? listed.FirstOrDefault(a => a.SessionId == row.SessionId && a.Pid is not null)?.Pid
+            : PidOf(row.Id);
+    }
+
     private static bool HasProcess(IReadOnlyList<ClaudeAgentRow> listed, string sessionId) =>
         listed.Any(a => a.SessionId == sessionId && a.Pid is not null);
 
