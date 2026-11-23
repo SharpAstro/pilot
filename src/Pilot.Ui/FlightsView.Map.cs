@@ -104,9 +104,9 @@ internal sealed partial class FlightsView<TSurface>
     // The map takes the pointer and the keys only while it is what the page shows, with no menu, wizard or flight page over it.
     private bool MapLive => MapShown && _mapBodySeen is not null && !IsDetailOpen && !Wizard.IsOpen && !_menu.IsOpen;
 
-    // An overlay over the canvas (the About card, the gallery viewer) takes a plain left press itself, so it never starts a pan.
+    // An overlay over the canvas (the About card) takes a plain left press itself, so it never starts a pan.
     // The chrome adds the rail's More menu, which the view does not know.
-    private bool OverlayOpen => About is { IsOpen: true } || Gallery.Viewing is not null;
+    private bool OverlayOpen => About is { IsOpen: true };
 
     // Whether Space is held (a left drag then moves the map); cleared by its release, or when the map goes away.
     private bool _space;

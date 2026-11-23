@@ -181,6 +181,21 @@ public sealed class OverlayDepthTests
     }
 
     [Fact]
+    public void APressOnAToastsButtonUnderTheOpenViewerAnswersNothing()
+    {
+        using var rig = new Rig(PilotPage.Jobs, BarStates.Collapsed, CardsScreen.From([Card("c1")]));
+        var button = rig.Regions(rig.Chrome.NotificationsLayer).Last(r => r.Result is HitResult.ButtonHit b && b.Action.StartsWith("toast:c1:", StringComparison.Ordinal));
+        var at = (X: button.X + button.Width / 2f, Y: button.Y + button.Height / 2f);
+        rig.Chrome.Gallery.Open(new AttachmentRef("abc123", "shot", "png", null));
+        rig.Paint();
+
+        rig.Drag(at, at);
+
+        // The viewer is over the toast (the guard of #1287): a press under it is the viewer's, never the toast's.
+        rig.Answered.ShouldBeNull();
+    }
+
+    [Fact]
     public void APressAndDragOnTheOpenBarOverPageTextSelectsNoPageText()
     {
         using var rig = new Rig(PilotPage.Jobs, BarStates.Over, CardsScreen.From([Card("c1")]));
