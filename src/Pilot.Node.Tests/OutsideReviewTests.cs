@@ -35,6 +35,15 @@ public sealed class OutsideReviewTests
         OutsideReview.ResetAfter("resets 10pm (UTC)", Noon.AddHours(10))!.Value.ShouldBe(DateTimeOffset.Parse("2026-11-23T22:00:00Z", System.Globalization.CultureInfo.InvariantCulture));
     }
 
+    [Fact]
+    public void TheResetIsTheNextOneAfterTheLogLinesOwnTimeWhateverTheTimeOfTheRead()
+    {
+        // The recorded line is of 2026-11-22 14:06 UTC: read at noon or three days later, the reset is the same 22:00 that day.
+        var at = DateTimeOffset.Parse("2026-11-22T22:00:00Z", System.Globalization.CultureInfo.InvariantCulture);
+        OutsideReview.Read(RealLog(), Noon)!.ResetsAt.ShouldBe(at);
+        OutsideReview.Read(RealLog(), Noon.AddDays(3))!.ResetsAt.ShouldBe(at);
+    }
+
     [Theory]
     [InlineData("")]
     [InlineData("resets soon")]

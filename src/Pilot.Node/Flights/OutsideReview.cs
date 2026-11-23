@@ -24,7 +24,7 @@ public static partial class OutsideReview
     private static partial Regex Reset();
 
     // gh run view --log-failed: "<job>\t<step>\t<timestamp>Z <text>".
-    [GeneratedRegex(@"^(?<job>[^\t]*)\t[^\t]*\t\d{4}-\d\d-\d\dT[\d:.]+Z ?", RegexOptions.CultureInvariant)]
+    [GeneratedRegex(@"^(?<job>[^\t]*)\t[^\t]*\t(?<stamp>\d{4}-\d\d-\d\dT[\d:.]+Z) ?", RegexOptions.CultureInvariant)]
     private static partial Regex LinePrefix();
 
     /// <summary>
@@ -36,7 +36,7 @@ public static partial class OutsideReview
     /// <summary>
     /// Each job a failed run's <paramref name="log"/> names (its lines' first column, the job's name as its check shows it) with the job's own
     /// verdict: null unless one of that job's lines carries the no-model marker as its own output (not the script's text, not a diff line);
-    /// otherwise the CLI's reason and the next reset time after <paramref name="now"/>. A line with no job column belongs to the job "".
+    /// otherwise the CLI's reason and the next reset time after the line's own time (<paramref name="now"/> when the line has none). A line with no job column belongs to the job "".
     /// </summary>
     public static RunReview Jobs(string? log, DateTimeOffset now)
     {
@@ -61,7 +61,10 @@ public static partial class OutsideReview
             }
             var said = CliSaid().Match(line) is { Success: true } m ? m.Groups["said"].Value : "";
             var reason = said.Length == 0 ? "the run ended before the model answered" : said.Split(" · ", 2)[0].Trim();
-            jobs[job] = new NoModelReview(reason, said, ResetAfter(said, now));
+            // The reset is the next one after the line's own time, so a log read again later (after a node restart) names the same instant;
+            // a line with no readable time falls back to the time of the read.
+            var stamped = prefix.Success && DateTimeOffset.TryParse(prefix.Groups["stamp"].Value, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.AssumeUniversal, out var at) ? at : now;
+            jobs[job] = new NoModelReview(reason, said, ResetAfter(said, stamped));
         }
         return new RunReview(jobs);
     }

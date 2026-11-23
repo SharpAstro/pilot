@@ -28,7 +28,10 @@ public sealed class NoModelReviewTests : ReviewTestsBase
     private const string NoResetLog =
         "review\tUNKNOWN STEP\t2026-11-22T14:06:41.9810902Z the run ended before the model answered (1 turn(s), no tokens used): a refused token; the CLI said: Invalid API key";
 
-    private static string NoModelLog() => File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Fixtures", "gh", "failed-run-log-no-model.log"));
+    // The recorded log, its lines dated the test clock's day: its reset ("10pm UTC") is the next one after the log's own time, so 10 hours
+    // ahead of the test clock's noon whenever the log is read.
+    private string NoModelLog() => File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Fixtures", "gh", "failed-run-log-no-model.log"))
+        .Replace("2026-11-22T", $"{Now():yyyy-MM-dd}T", StringComparison.Ordinal);
 
     // A check's link names its run and its job, one attempt's job: a rerun makes a new job id.
     private static FailedCheck Review(long run = ReviewRun, long job = 9) => new("review", $"https://github.com/x/tianwen/actions/runs/{run}/job/{job}", run, job);
@@ -240,10 +243,11 @@ public sealed class NoModelReviewTests : ReviewTestsBase
         // With a reset time in the log: the reset is 10 hours ahead.
         var checks = await NoModelPr("75", NoModelLog());
         await Look(checks);
-        _clock.Advance(TimeSpan.FromMinutes(30));
+        // The reset is read from the log's own time, so a restart that reads the log again later names the same instant.
+        _clock.Advance(TimeSpan.FromHours(10) - TimeSpan.FromMinutes(1));
         await Look(AfterRestart());
-        _github.RunReruns.ShouldBeEmpty("the reset has not come, after a restart");
-        _clock.Advance(TimeSpan.FromHours(25));
+        _github.RunReruns.ShouldBeEmpty("a minute before the reset, after a restart");
+        _clock.Advance(TimeSpan.FromMinutes(1));
         await Look(AfterRestart());
         _github.RunReruns.Count.ShouldBe(1, "at the reset, after a restart");
         _github.RunReruns.ShouldBe([ReviewRun]);
@@ -594,7 +598,9 @@ public sealed class NoModelReviewRecheckTests : PrRecheckTestsBase
         await PassedFlightAsync();
         _github.Checks = ChoiceStatus.Failing;
         _github.FailedChecks[7] = [new FailedCheck("review", "https://github.com/acme/widget/actions/runs/45029777689/job/9", 45029777689)];
-        _github.RunLogs[45029777689] = File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Fixtures", "gh", "failed-run-log-no-model.log"));
+        // Dated tomorrow, so its reset (the next 10pm UTC after the log's own time) is still ahead whatever the time of day.
+        _github.RunLogs[45029777689] = File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Fixtures", "gh", "failed-run-log-no-model.log"))
+            .Replace("2026-11-22T", $"{DateTimeOffset.UtcNow.AddDays(1):yyyy-MM-dd}T", StringComparison.Ordinal);
 
         await LookAsync();
 
