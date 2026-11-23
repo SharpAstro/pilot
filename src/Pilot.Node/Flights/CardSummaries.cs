@@ -202,6 +202,7 @@ public static partial class CardSummaries
             LegCommander.DropUnexplainedKind => $"The merge queue dropped the PR of {what} or would not take its laid head, and the node found no cause. It is not queued again at this head; push a changed head or look at the PR page.",
             PrReviews.NoFixerKind => "A review asks for changes or puts a question, and the node starts no fixer on that PR. The detail says why; what is left is yours to decide.",
             PrReviews.WaitingKind => "A review or fixer of a PR waits for a free slot under the node's admission rules. The node starts it by itself; nothing to do unless the start did not go.",
+            PrReviews.FixerWorkHeldKind => "A fixer left work in its worktree that the PR does not have and the node could not push it. The PR is not queued or merged; push or remove the work, then Review the PR again.",
             PrReviews.PushedUnreviewedKind => "A fixer pushed to a PR but the review of that push could not start. The push stands; Start the review of the fixer's push runs it.",
             AdmissionGate.CycleKind => "Two flights each waited on the other under the admission rules, so the node admitted one to break the wait. Nothing to do.",
             LegCommander.SpendAlertKind => "A leg has spent a large share of the 7-day window before its next round. The round still starts; stop the flight by hand if it should not.",

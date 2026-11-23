@@ -95,7 +95,7 @@ public sealed partial class PrReviews
         {
             var why = $"the fix worktree {worktree} holds work the PR does not have: {work.Line}";
             RaiseOnce(pr, review, CardBin.ForYou, FixerWorkHeldKind, subject, $"{pr} is held: its fixer left work not pushed",
-                $"{why}. {cause}.\nThe PR is not queued or merged until that work is pushed or removed.", summary: $"Push or remove the work in {worktree}: {LegCommander.OneLine(cause)}.");
+                $"{why}. {cause}.\nThe PR is not queued or merged until that work is pushed or removed.", [new CardChoice { Label = "Review the PR again", Verb = Verbs.ReviewPr, Target = subject }], summary: $"Push or remove the work in {worktree}: {LegCommander.OneLine(cause)}.");
             return Held(why);
         }
     }
