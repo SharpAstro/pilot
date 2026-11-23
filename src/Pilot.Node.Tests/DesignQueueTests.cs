@@ -109,54 +109,6 @@ public sealed class DesignQueueTests : PrFixTestsBase
 
         Fixers.ShouldBeEmpty();
     }
-
-    [Fact]
-    public async Task AFixerThatEndedWithoutAPushAfterAnAnswerLeavesThePrUnqueuedWithTheMergeCard()
-    {
-        var row = await Review("acme/widget#7", "comment", Question);
-        Green(row.Head);
-        (await Run(Verbs.FixPr, "acme/widget#7", "controller", "Keep", "it", "a", "library")).Error.ShouldBeNull();
-        _state.PutSession(FixerSession(SessionState.Ended));
-
-        await _reviews.SweepAsync(Ct);
-        await _reviews.SweepAsync(Ct);
-
-        _github.Merged.ShouldBeEmpty();
-        Row.QueuedAt.ShouldBeNull();
-        Row.QueueNote.ShouldNotBeNull().ShouldContain("without a push");
-        _state.Cards(openOnly: true).ShouldNotContain(c => c.Kind == PrReviews.MergeKind);
-        var card = _state.Cards(openOnly: true).Single(c => c.Kind == PrReviews.FixEndedKind);
-        card.Bin.ShouldBe(CardBin.ForYou);
-        card.Title.ShouldContain("the fix its design answer called for is missing");
-        card.Detail.ShouldNotBeNull().ShouldContain("Keep it a library");
-        card.Choices.ShouldHaveSingleItem().Verb.ShouldBe(Verbs.FixPr);
-    }
-
-    [Fact]
-    public async Task ACloseAnswerWhoseFixerPushedNothingGetsTheCloseCardWithNoChoice()
-    {
-        var row = await Review("acme/widget#7", "comment", Question);
-        Green(row.Head);
-        (await Run(Verbs.FixPr, "acme/widget#7", "controller", "Close", "it", "as", "superseded", "by", "#9")).Error.ShouldBeNull();
-        _state.PutSession(FixerSession(SessionState.Ended));
-
-        await _reviews.SweepAsync(Ct);
-        await _reviews.SweepAsync(Ct);
-
-        _github.Merged.ShouldBeEmpty();
-        var card = _state.Cards(openOnly: true).Single(c => c.Kind == PrReviews.FixEndedKind);
-        card.Title.ShouldContain("close it");
-        card.Choices.ShouldBeEmpty();
-    }
-
-    [Fact]
-    public async Task TheFixerBriefTellsADesignAnswerThatAsksForNoCodeToPushNothingAndSayNoChange()
-    {
-        await Review("acme/widget#7", "comment", Question);
-        (await Run(Verbs.FixPr, "acme/widget#7", "controller", "Close", "it")).Error.ShouldBeNull();
-
-        Fixers.ShouldHaveSingleItem().Brief.ShouldContain("no change: the answer is <answer>");
-    }
 }
 
 /// <summary>A flight's merge is refused while an open design card names the flight's PR.</summary>

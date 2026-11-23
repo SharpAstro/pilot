@@ -35,13 +35,105 @@ public sealed class DesignAnswerTests : PrFixTestsBase
     [InlineData("Keep it a library, no service.")]
     [InlineData("Withdraw the retry from the client")]
     [InlineData("Use a closed set of states")]
+    [InlineData("Drop this cache layer")]
+    [InlineData("Close this connection")]
+    [InlineData("Close it in the finally block")]
+    [InlineData("Flush the stream before it is closed")]
     public void AnAnswerThatIsCodeDoesNotAskForNoCode(string answer) => PrReviews.AsksForNoCode(answer).ShouldBeFalse();
 
-    [Fact]
-    public void TheFixerBriefsNoChangeListAndTheClassifierAgreeOnItsOwnPhrases()
+    private void Green(string head)
     {
-        // The brief says "close it or the PR, it is superseded by #N, drop it, leave it as it is, keep main as it is": each reads as no code.
-        foreach (var phrase in new[] { "close it", "superseded by #4", "drop it", "leave it as it is", "keep main as it is" })
+        _github.Summary = GhAnswers.ChecksOf(ChoiceStatus.Passing, 1, 1);
+        _github.Queue = GhAnswers.MergeQueue("idle", head);
+    }
+
+    /// <summary>
+    /// The fixer-ended path (tianwen #2495): a design answer's fixer that ended with nothing pushed gets the fix-missing card, with Fix it and no
+    /// Merge choice, and the PR is not queued; the queue's design branch keeps it so on the next sweep.
+    /// </summary>
+    [Fact]
+    public async Task AFixerThatEndedWithoutAPushAfterAnAnswerGetsTheFixMissingCardWithFixItAndNoMerge()
+    {
+        var row = await Review("acme/widget#7", "comment", Question);
+        Green(row.Head);
+        (await Run(Verbs.FixPr, "acme/widget#7", "controller", "Keep", "it", "a", "library")).Error.ShouldBeNull();
+        _state.PutSession(FixerSession(SessionState.Ended));
+
+        await _reviews.SweepAsync(Ct);
+        await _reviews.SweepAsync(Ct);
+
+        _github.Merged.ShouldBeEmpty();
+        Row.QueuedAt.ShouldBeNull();
+        Row.QueueNote.ShouldNotBeNull().ShouldContain("without a push");
+        _state.Cards(openOnly: true).ShouldNotContain(c => c.Kind == PrReviews.MergeKind);
+        var card = _state.Cards(openOnly: true).Single(c => c.Kind == PrReviews.FixEndedKind);
+        card.Bin.ShouldBe(CardBin.ForYou);
+        card.Title.ShouldContain("the fix its design answer called for is missing");
+        card.Detail.ShouldNotBeNull().ShouldContain("Keep it a library");
+        card.Choices.ShouldHaveSingleItem().Verb.ShouldBe(Verbs.FixPr);
+        card.Choices.ShouldNotContain(c => c.Verb == Verbs.Merge);
+    }
+
+    /// <summary>
+    /// The queue's design branch on its own: a row whose fixer is already cleared (no fixer-ended path runs) with an answer, a round and the head
+    /// unmoved gets the same fix-missing card and QueueNote, and no Merge choice.
+    /// </summary>
+    [Fact]
+    public async Task TheQueuesDesignBranchRaisesTheFixMissingCardWithNoMergeForARowWithNoFixer()
+    {
+        var row = await Review("acme/widget#7", "comment", Question);
+        Green(row.Head);
+        (await Run(Verbs.FixPr, "acme/widget#7", "controller", "Keep", "it", "a", "library")).Error.ShouldBeNull();
+        _state.PutPrReview(Row with { Fixer = null, FixerJob = null });
+
+        await _reviews.SweepAsync(Ct);
+
+        _github.Merged.ShouldBeEmpty();
+        Row.QueueNote.ShouldNotBeNull().ShouldContain("its fixer ended without a push");
+        _state.Cards(openOnly: true).ShouldNotContain(c => c.Kind == PrReviews.MergeKind);
+        var card = _state.Cards(openOnly: true).Single(c => c.Kind == PrReviews.FixEndedKind);
+        card.Title.ShouldContain("the fix its design answer called for is missing");
+        card.Choices.ShouldHaveSingleItem().Verb.ShouldBe(Verbs.FixPr);
+    }
+
+    [Fact]
+    public async Task ACloseAnswerWhoseFixerPushedNothingGetsTheCloseCardWithNoChoice()
+    {
+        var row = await Review("acme/widget#7", "comment", Question);
+        Green(row.Head);
+        (await Run(Verbs.FixPr, "acme/widget#7", "controller", "Close", "it", "as", "superseded", "by", "#9")).Error.ShouldBeNull();
+        _state.PutSession(FixerSession(SessionState.Ended));
+
+        await _reviews.SweepAsync(Ct);
+        await _reviews.SweepAsync(Ct);
+
+        _github.Merged.ShouldBeEmpty();
+        _state.Cards(openOnly: true).ShouldNotContain(c => c.Kind == PrReviews.MergeKind);
+        var card = _state.Cards(openOnly: true).Single(c => c.Kind == PrReviews.FixEndedKind);
+        card.Title.ShouldContain("close it");
+        card.Detail.ShouldNotBeNull().ShouldContain("Close it as superseded by #9");
+        card.Choices.ShouldBeEmpty();
+    }
+
+    /// <summary>
+    /// The fixer brief tells a fixer whose answer asks for no code to push nothing and say so; every phrase of the brief's own no-change list,
+    /// read from the brief a fixer is given, reads as no code to the classifier, so the two cannot drift apart.
+    /// </summary>
+    [Fact]
+    public async Task TheFixerBriefsNoChangeLineSaysNoChangeAndEachOfItsPhrasesReadsAsNoCode()
+    {
+        await Review("acme/widget#7", "comment", Question);
+        (await Run(Verbs.FixPr, "acme/widget#7", "controller", "Close", "it")).Error.ShouldBeNull();
+
+        var brief = Fixers.ShouldHaveSingleItem().Brief;
+        brief.ShouldContain("no change: the answer is <answer>");
+        const string Lead = "If the answer asks for no change to the code (";
+        var from = brief.IndexOf(Lead, StringComparison.Ordinal);
+        from.ShouldBeGreaterThanOrEqualTo(0);
+        from += Lead.Length;
+        var phrases = brief[from..brief.IndexOf(')', from)].Split(", ");
+        phrases.Length.ShouldBeGreaterThan(2);
+        foreach (var phrase in phrases)
         {
             PrReviews.AsksForNoCode(phrase).ShouldBeTrue(phrase);
         }

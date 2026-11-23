@@ -549,7 +549,6 @@ public sealed class PrFixTests3 : PrFixTestsBase
     [InlineData(JobState.Queued, true)]
     [InlineData(JobState.Running, false)]
     [InlineData(JobState.Queued, false)]
-    [Trait("Category", "Slow")]
     public async Task AFixerThatEndedItsTurnOnAnOpenJobOfItsOwnIsWaitingNotEnded(JobState open, bool byId)
     {
         await Review("acme/widget#7", "changes", "README.md:1 wrong");
@@ -575,9 +574,44 @@ public sealed class PrFixTests3 : PrFixTestsBase
         Row.Fixer.ShouldBeNull();
     }
 
+    /// <summary>
+    /// A fixer whose own job has ended but whose outcome the node has not told it yet (EndedAt set, ToldAt null) reads Ended, and is still
+    /// waiting: no resume, no card. Once the grace from the job's end has passed with no turn of its own, the resume runs (pilot #1309 go-around).
+    /// </summary>
+    [Fact]
+    public async Task AFixerWhoseJobEndedButWasNotToldYetIsStillWaitingAndItsResumeIsNotSpent()
+    {
+        var said = new List<string>();
+        _reviews.ResumeFixer = (id, _, _) => { said.Add(id); return Task.FromResult<string?>(null); };
+        await Review("acme/widget#7", "changes", "README.md:1 wrong");
+        var fixer = Row.Fixer.ShouldNotBeNull();
+        var session = FixerSession(SessionState.Ended) with { LastResponseAt = DateTimeOffset.UtcNow.AddMinutes(-1) };
+        _state.PutSession(session);
+        var job = new JobRow
+        {
+            Id = "j4010", Command = "dotnet build", Cwd = _root, State = JobState.Succeeded, LogPath = Path.Combine(_root, "j4010.log"), Timeout = TimeSpan.FromMinutes(30),
+            StartedAt = DateTimeOffset.UtcNow.AddMinutes(-2), EndedAt = DateTimeOffset.UtcNow, ToldAt = null, Owner = Row.FixerJob,
+        };
+        _state.PutJob(job);
+
+        await _reviews.SweepAsync(Ct);
+
+        said.ShouldBeEmpty("the job's end has not reached the fixer yet");
+        _state.Cards().ShouldNotContain(c => c.Kind == PrReviews.FixEndedKind);
+        Row.Fixer.ShouldBe(fixer);
+        Row.FixerResumedJob.ShouldBeNull();
+
+        // Past the grace with no turn since the job's end, the end is its own: the one resume runs.
+        _state.PutSession(session with { LastResponseAt = DateTimeOffset.UtcNow.AddMinutes(-15) });
+        _state.PutJob(job with { StartedAt = DateTimeOffset.UtcNow.AddMinutes(-20), EndedAt = DateTimeOffset.UtcNow.AddMinutes(-10) });
+        await _reviews.SweepAsync(Ct);
+
+        said.ShouldHaveSingleItem();
+        Row.FixerResumedJob.ShouldNotBeNull();
+    }
+
     /// <summary>A fixer that ended its turn with the head unmoved is resumed once, through the resume hook, before any card (pilot #1309).</summary>
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AnEndedFixerWithTheHeadUnmovedIsResumedOnceAndASecondEndRingsWithTheWorkLine()
     {
         var said = new List<(string Id, string Text)>();
@@ -605,7 +639,6 @@ public sealed class PrFixTests3 : PrFixTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AResumeThatCouldNotBeDeliveredRaisesTheCardAtOnce()
     {
         _reviews.ResumeFixer = (_, _, _) => Task.FromResult<string?>("session is wound down");
@@ -620,7 +653,6 @@ public sealed class PrFixTests3 : PrFixTestsBase
 
     /// <summary>A fixer a person stopped reads Ended too; waking it would undo the stop, so the card is raised at once (pilot #1309 go-around).</summary>
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AFixerTheLedgerRecordsAsStoppedByAPersonIsNotResumedAndTheCardIsRaisedAtOnce()
     {
         var said = new List<string>();
@@ -642,7 +674,6 @@ public sealed class PrFixTests3 : PrFixTestsBase
 
     /// <summary>A fixer that ended on its own (ledger reason Finished) is resumed.</summary>
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AFixerTheLedgerRecordsAsFinishedIsResumed()
     {
         var said = new List<string>();
@@ -662,6 +693,7 @@ public sealed class PrFixTests3 : PrFixTestsBase
 
     /// <summary>The second end's card names the work the fixer left in its worktree (uncommitted files and unpushed commits), after the one resume.</summary>
     [Fact]
+    // Slow: it commits in the fix worktree and reads what is left with real git (RealGit()), a real process.
     [Trait("Category", "Slow")]
     public async Task ASecondEndWithWorkLeftRingsWithTheWorkNamed()
     {
@@ -687,7 +719,6 @@ public sealed class PrFixTests3 : PrFixTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AFixerThatPushedAfterTheResumeTakesTheHeadMovedPath()
     {
         _reviews.ResumeFixer = (_, _, _) => Task.FromResult<string?>(null);

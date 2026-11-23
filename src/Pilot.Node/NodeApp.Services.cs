@@ -423,10 +423,10 @@ public static partial class NodeApp
     {
         builder.Services.AddSingleton(services =>
         {
-            var reviews = ActivatorUtilities.CreateInstance<PrReviews>(services);
+            var reviews = WithFixerResume(ActivatorUtilities.CreateInstance<PrReviews>(services), services);
             reviews.Models = services.GetRequiredService<RoleModels>();
             reviews.Slots = services.GetRequiredService<AdmissionGate>();
-            reviews.Error = logWriter; reviews.Ledger = services.GetRequiredService<SessionLedger>(); reviews.ResumeFixer = (id, text, ct) => ResumeFixerAsync(services, id, text, ct);
+            reviews.Error = logWriter;
             reviews.Investigations = services.GetRequiredService<FailureInvestigations>();
             reviews.Alerts = services.GetRequiredService<FailureAlerts>();
             reviews.DropJobs = (owners, why) => services.GetRequiredService<JobRunner>().DropQueuedOf(owners, why);

@@ -179,16 +179,23 @@ public sealed partial class PrReviews
     /// <summary>
     /// True when a design answer asks for no change to the code: it names the PR itself ("close it", "close the PR", "this PR is superseded",
     /// "superseded by #N", "drop the PR") or says to leave things as they are ("leave it as is", "keep main as it is"). "Close the handle in Dispose"
-    /// or "drop the cache layer" are code and do not match. The fixer brief's no-change list says the same.
+    /// or "drop the cache layer" are code and do not match. A bare "it" or "this" counts only where it ends the clause ("close it.", "drop it",
+    /// "close it as superseded"), so "close this connection", "close it in the finally block" and "drop this cache layer" stay code; "is closed"
+    /// counts only for the PR ("this PR is closed"), so "before it is closed" stays code. The fixer brief's no-change list says the same.
     /// </summary>
     internal static bool AsksForNoCode(string answer) => NoCodeAnswer().IsMatch(answer);
 
+    private const string ThePr = @"(?:the|this)\s+(?:pr|pull\s+request)";
+
+    private const string BareIt = @"(?:it|this)(?=\s*(?:[.,;:!]|$)|\s+(?:as|or|and)\b)";
+
     [System.Text.RegularExpressions.GeneratedRegex(
-        @"\b(?:close[ds]?\s+(it|this|the\s+(pr|pull\s+request)|this\s+(pr|pull\s+request))"
-        + @"|(this\s+pr|the\s+pr|it)\s+(is|can\s+be|should\s+be|to\s+be)\s+(closed|superseded|dropped|abandoned|withdrawn)"
-        + @"|supersede[ds]?\s+by\s+(#|pr)"
-        + @"|(drop|abandon|withdraw)\s+(it|this|the\s+pr|this\s+pr)"
-        + @"|(leave|keep)\s+(it|main|this|things|everything)?\s*(as\s+(it\s+is|is)|unchanged))\b",
+        @"\b(?:close[ds]?\s+(?:" + ThePr + "|" + BareIt + ")"
+        + @"|" + ThePr + @"\s+(?:is|can\s+be|should\s+be|to\s+be)\s+(?:closed|superseded|dropped|abandoned|withdrawn)"
+        + @"|it\s+is\s+superseded"
+        + @"|supersede[ds]?\s+by\s+(?:#|pr)"
+        + @"|(?:drop|abandon|withdraw)\s+(?:" + ThePr + "|" + BareIt + ")"
+        + @"|(?:leave|keep)\s+(?:it|main|this|things|everything)?\s*(?:as\s+(?:it\s+is|is)|unchanged))\b",
         System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
     private static partial System.Text.RegularExpressions.Regex NoCodeAnswer();
 
