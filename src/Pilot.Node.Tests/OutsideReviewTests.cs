@@ -91,7 +91,8 @@ public sealed class OutsideReviewTests
     [Fact]
     public async Task ARealFailureIsKeptToo()
     {
-        var gh = new LogGitHub { Log = "test\tRun\t2026-11-22T14:06:41.1Z Failed!" };
+        var gh = new FakeGitHub();
+        gh.RunLogs[1] = "test\tRun\t2026-11-22T14:06:41.1Z Failed!";
         var reviews = new OutsideReviews(gh, new FixedTime(Noon));
         (await reviews.AskAsync("repo", 1, CancellationToken.None)).ShouldBe(new OutsideReviewAnswer(true, null));
         await reviews.AskAsync("repo", 1, CancellationToken.None);
