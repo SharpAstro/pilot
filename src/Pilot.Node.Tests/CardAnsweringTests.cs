@@ -87,7 +87,7 @@ public sealed class CardAnsweringTests
         var dismissed = await node.App.Services.GetRequiredService<NodeCommands>().RunAsync(
             new CommandRequest { Verb = Verbs.Dismiss, Target = Verbs.CardTarget(card.Id), Who = "cli" }, Ct);
         dismissed.Ok.ShouldBeFalse();
-        dismissed.Error.ShouldContain("closed already");
+        dismissed.Error.ShouldNotBeNull().ShouldContain("closed already");
     }
 
     // ---- the card's own state, no node around it ----
