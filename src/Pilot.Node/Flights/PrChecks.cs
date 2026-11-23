@@ -31,6 +31,9 @@ public sealed class PrChecks(NodeState state, IGitHub gitHub, TimeProvider time,
     // A PR head the node has tried to bring up to date (the base merged in): tried once, not every look.
     private readonly HashSet<string> _rebased = new(StringComparer.Ordinal);
 
+    /// <summary>The heads the rebase-only look has acted on, by flight, head and whether a leg flew (<see cref="ResolveRebaseOnlyAsync"/>).</summary>
+    private readonly HashSet<string> _rebaseOnlySeen = new(StringComparer.Ordinal);
+
     // A PR head whose failed checks were sent back as changes: once, not every look.
     private readonly HashSet<string> _failed = new(StringComparer.Ordinal);
 
@@ -438,6 +441,7 @@ public sealed class PrChecks(NodeState state, IGitHub gitHub, TimeProvider time,
             {
                 await legs.NoteGitHubAsync(flight.Code, pr, state.Flights().FirstOrDefault(f => f.Code == flight.Code)?.MergeQueue?.StartsWith("in the merge queue", StringComparison.Ordinal) == true, cancellationToken);
                 await ResolveConflictsAsync(flight.Code, pr, cancellationToken);
+                await ResolveRebaseOnlyAsync(flight.Code, pr, cancellationToken);
             }
         }
     }
@@ -468,6 +472,38 @@ public sealed class PrChecks(NodeState state, IGitHub gitHub, TimeProvider time,
         if (await legs.BringUpToDateAsync(flight.Code, cancellationToken) is { } why)
         {
             await HandConflictOverInSweepAsync(code, why, cancellationToken);
+        }
+    }
+
+    /// <summary>
+    /// A flight's PR that GitHub calls mergeable but not rebaseable, on a base that merges by rebase (a merge of the base that resolved a
+    /// conflict cannot be replayed by rebase; pilot #1299), with the guards of <see cref="ResolveConflictsAsync"/>, once a head: between
+    /// legs the node reshapes the branch (rebased, else laid as one commit, lease-pushed); while a leg flies it pushes nothing and says
+    /// the PR is rebase-only and handled. A real conflict (CONFLICTING) is <see cref="ResolveConflictsAsync"/>'s, and a squash base never reaches here.
+    /// </summary>
+    private async Task ResolveRebaseOnlyAsync(string code, PullRequest pr, CancellationToken cancellationToken)
+    {
+        if (legs is null || pr.Mergeable != "MERGEABLE" || pr.Rebaseable != false
+            || state.Flights().FirstOrDefault(f => f.Code == code) is not { State: FlightState.Flying, Review: { State: not ReviewState.Reviewing }, PullRequest: { } number }
+            || number != pr.Number
+            || state.Legs(code) is not { Length: > 0 } flown || flown.Any(l => l.State is not (LegState.Done or LegState.Flying))
+            || state.Cards(openOnly: true).Any(c => c.Kind is LegCommander.PrReady or LegCommander.MergeFailed && c.Subject == Verbs.FlightTarget(code)))
+        {
+            return;
+        }
+        var flying = flown.Any(l => l.State == LegState.Flying);
+        if (!_rebaseOnlySeen.Add($"{code} {pr.Head} {flying}"))
+        {
+            return;
+        }
+        try
+        {
+            await legs.ReshapeRebaseOnlyAsync(code, pr.Head, flying, cancellationToken);
+        }
+        catch (FlightException ex)
+        {
+            // The shape rang for itself (LayFailedKind); the same head is not tried again.
+            await Error.WriteLineAsync($"pr checks: {code}'s rebase-only PR could not be reshaped: {ex.Message}");
         }
     }
 
