@@ -8,7 +8,7 @@ namespace Pilot.Node.Tests;
 
 /// <summary>
 /// Pilot #1226: a review that passes with not blocking notes cannot merge with a note unmade. Only the owner's word (the person's, or the
-/// watchtower carrying it, with a reason) clears the hold or removes the review-notes leg; an untaken hold plans the leg or rings the owner;
+/// watchtower carrying it, with a reason) clears the hold or removes the review-notes leg; a hold whose leg is missing has the node plan it again, or ring the owner when the node does not advance;
 /// the merge refuses a note with no end. Each runs on the in-memory node.
 /// </summary>
 public sealed class NotesUnmadeTests : ReviewTestsBase
@@ -16,9 +16,6 @@ public sealed class NotesUnmadeTests : ReviewTestsBase
     private const string Tower = "du1-watchtower";
     private const string Notes = "Checked.\n\n## Not blocking\n- rename `x` to `count`";
     private const string EarlierAnswered = "## Earlier points\n| Point | Answer | Where or why |\n|---|---|---|\n| R1.1 | addressed | fix.txt:1 |\n\n";
-
-    private void AutopilotOn() =>
-        _legs.Models = new RoleModels(NodeSettings.With(new NodeSettings(), NodeSettings.AutopilotKey, ["on"]).Settings!);
 
     private async Task<FlightRow> Reviewed(string issue, string report)
     {
@@ -53,7 +50,7 @@ public sealed class NotesUnmadeTests : ReviewTestsBase
     [Trait("Category", "Slow")]
     public async Task TheWatchtowerMayNotRemoveTheReviewNotesLegWhileANoteIsUnmade()
     {
-        AutopilotOn();
+        NodeAdvances();
         var flight = await Reviewed("2", Notes);
         var leg = _state.Legs(flight.Code).Single(l => l.Name == LegCommander.ReviewNotesLeg);
 
@@ -68,7 +65,7 @@ public sealed class NotesUnmadeTests : ReviewTestsBase
     [Trait("Category", "Slow")]
     public async Task AReviewerSessionWithAReasonMayNotRemoveTheReviewNotesLegWhileANoteIsUnmade()
     {
-        AutopilotOn();
+        NodeAdvances();
         var flight = await Reviewed("2", Notes);
         var leg = _state.Legs(flight.Code).Single(l => l.Name == LegCommander.ReviewNotesLeg);
 
@@ -99,7 +96,7 @@ public sealed class NotesUnmadeTests : ReviewTestsBase
     [Trait("Category", "Slow")]
     public async Task ThePersonRemovesTheReviewNotesLegWithAReasonAndWithoutOneIsRefused()
     {
-        AutopilotOn();
+        NodeAdvances();
         var flight = await Reviewed("4", Notes);
         var target = Verbs.LegTarget(flight.Code, LegCommander.ReviewNotesLeg);
 
@@ -114,7 +111,7 @@ public sealed class NotesUnmadeTests : ReviewTestsBase
     [Trait("Category", "Slow")]
     public async Task TheWatchtowerAtThePersonsWordClearsTheHoldAndRemovesTheLegWithAReason()
     {
-        AutopilotOn();
+        NodeAdvances();
         var flight = await Reviewed("5", Notes);
         var target = Verbs.LegTarget(flight.Code, LegCommander.ReviewNotesLeg);
 
@@ -133,7 +130,7 @@ public sealed class NotesUnmadeTests : ReviewTestsBase
     [Trait("Category", "Slow")]
     public async Task TheWatchtowerClearsOnceEveryNoteHasAnEndFromAReviewNotesLegsReport()
     {
-        AutopilotOn();
+        NodeAdvances();
         var flight = await Reviewed("6", Notes);
         var leg = _state.Legs(flight.Code).Single(l => l.Name == LegCommander.ReviewNotesLeg);
         _state.PutLeg(leg with { State = LegState.Done, FinishedAt = DateTimeOffset.UtcNow, Report = EarlierAnswered + "made" });
@@ -145,9 +142,9 @@ public sealed class NotesUnmadeTests : ReviewTestsBase
 
     [Fact]
     [Trait("Category", "Slow")]
-    public async Task AnUntakenHoldPlansTheReviewNotesLegAndNeverMergesWithTheNote()
+    public async Task ARemovedReviewNotesLegIsPlannedAgainAndTheFlightNeverMergesWithTheNote()
     {
-        AutopilotOn();
+        NodeAdvances();
         _github.Checks = ChoiceStatus.Passing;
         var flight = await Reviewed("7", Notes);
         (await Run(Verbs.RemoveLeg, Verbs.LegTarget(flight.Code, LegCommander.ReviewNotesLeg), "me", "taking the leg out to see the node plan it again")).Error.ShouldBeNull();
@@ -166,7 +163,7 @@ public sealed class NotesUnmadeTests : ReviewTestsBase
 
     [Fact]
     [Trait("Category", "Slow")]
-    public async Task AnUntakenHoldWithAutopilotOffRingsTheOwnerOnceAndKeepsTheHold()
+    public async Task ANodeThatDoesNotAdvanceRingsTheOwnerAtOnceAndKeepsTheHold()
     {
         _github.Checks = ChoiceStatus.Passing;
         var flight = await Reviewed("8", Notes);
@@ -183,6 +180,38 @@ public sealed class NotesUnmadeTests : ReviewTestsBase
         ring.Detail.ShouldNotBeNull().ShouldContain("rename `x` to `count`");
         _github.Merged.ShouldBeEmpty();
         _state.Cards(openOnly: false).ShouldNotContain(c => c.Kind == LegCommander.HoldingClearedKind);
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task KeepWaitingOnTheNotesUnmadeCardHoldsItClosedUntilTheBoundHasPassed()
+    {
+        // Review of PIL1271, R1.11: every look settles a node-held hold again, so a card closed by Keep waiting came straight back.
+        _github.Checks = ChoiceStatus.Passing;
+        var flight = await Reviewed("10", Notes);
+        var clock = new ManualTime(F(flight.Code).Holding!.Since);
+        clock.Advance(TimeSpan.FromMinutes(6));
+        var card = Open().Single(c => c.Kind == LegCommander.NotesUnmadeKind);
+
+        // Keep waiting is the card's Dismiss, which closes it as the node's dismiss command does (NodeCommands).
+        var keep = card.Choices.Single(c => c.Label == "Keep waiting");
+        keep.Verb.ShouldBe(Verbs.Dismiss);
+        _state.CloseCard(card.Id, $"dismissed: {string.Join(' ', keep.Args)}", "me").ShouldBeTrue();
+        await TimedChecks(clock).LookAsync(Ct);
+        await TimedChecks(clock).LookAsync(Ct);
+
+        Open().ShouldNotContain(c => c.Kind == LegCommander.NotesUnmadeKind);
+        _state.Cards(openOnly: false).Count(c => c.Kind == LegCommander.NotesUnmadeKind).ShouldBe(1);
+        F(flight.Code).Holding.ShouldNotBeNull();
+
+        // Once the bound has passed since Keep waiting, the next look asks again: one new card, the hold still on.
+        _legs.NotesUnmadeBound = TimeSpan.Zero;
+        await TimedChecks(clock).LookAsync(Ct);
+        await TimedChecks(clock).LookAsync(Ct);
+
+        Open().Single(c => c.Kind == LegCommander.NotesUnmadeKind).Id.ShouldNotBe(card.Id);
+        _state.Cards(openOnly: false).Count(c => c.Kind == LegCommander.NotesUnmadeKind).ShouldBe(2);
+        _github.Merged.ShouldBeEmpty();
     }
 
     [Fact]
@@ -227,7 +256,7 @@ public sealed class NotesUnmadeTests : ReviewTestsBase
     public async Task ALaterRoundsNotesAreNotFiledAsTheyAreAndNeedAnEndInstead()
     {
         // #918 filed a later round's notes as they were; pilot #1226: each needs an end, and the flight holds for the leg of them.
-        AutopilotOn();
+        NodeAdvances();
         _github.Checks = ChoiceStatus.Passing;
         var flight = await Reviewed("11", Notes);
         var first = _state.Legs(flight.Code).Single(l => l.Name == LegCommander.ReviewNotesLeg);

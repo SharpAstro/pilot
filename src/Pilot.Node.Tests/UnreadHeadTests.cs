@@ -9,14 +9,20 @@ namespace Pilot.Node.Tests;
 /// <summary>The sweep's invariant: every leg done, the PR open and no review running, a head the last review did not read gets one (PIL485).</summary>
 public sealed class UnreadHeadTests : ReviewTestsBase
 {
-    /// <summary>A flight with its PR open and a Changes review that read the head the PR was opened at.</summary>
+    /// <summary>
+    /// A flight with its PR open, every leg done, and a Changes review that read the head the PR was opened at. The leg's review rounds
+    /// are spent, so the node sends no fix round itself (pilot #1271) and the leg stays done: the card is the person's, and a commit in
+    /// the plane is a fix made by hand.
+    /// </summary>
     private async Task<(FlightRow Flight, string ReadHead)> ReviewedWithChanges(string issue)
     {
         var flight = await NewFlight(issue, "parser");
         await Fly(flight, "parser");
         (await Run(Verbs.OpenPr, Verbs.FlightTarget(flight.Code), "controller")).Error.ShouldBeNull();
         var code = flight.Code;
+        _state.PutLeg(_state.Legs(code).Single() with { ReviewGoArounds = LegCommander.MaxReviewGoArounds });
         (await Run(Verbs.Review, $"flight/{code}", Reviewer(code), "changes", "fix it")).Ok.ShouldBeTrue();
+        _state.Legs(code).Single().State.ShouldBe(LegState.Done);
         _legs.Models = new RoleModels(new NodeSettings());
         var read = Git(flight.Worktree, "rev-parse", "HEAD");
         _state.PutFlight(F(code) with { Review = F(code).Review! with { ReviewedHead = read } });

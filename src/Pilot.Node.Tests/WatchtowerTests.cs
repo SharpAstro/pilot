@@ -1076,7 +1076,7 @@ public sealed class WatchtowerRouteTests
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
     [Fact]
-    public async Task AMergeOrALandingFromTheWatchtowerIsRefusedACardsIncluded()
+    public async Task AMergeOrALandingFromTheWatchtowerRunsAsThePersonsAssistantsACardsIncluded()
     {
         await using var node = await NodeHarness.StartAsync(Ct);
         var watchtower = $"{node.Options.Machine.ToLowerInvariant()}-watchtower";
@@ -1086,10 +1086,13 @@ public sealed class WatchtowerRouteTests
         var answered = await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Answer, Target = "card/c1", Args = ["1"], Who = watchtower }, Ct);
         var landed = await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Land, Target = "flight/TIA1", Who = watchtower }, Ct);
 
-        // The answer runs the choice as the watchtower's, so the merge in it is what is refused.
-        answered.Response.ShouldNotBeNull().Error.ShouldBe("Merge was refused: merge is the controller's, not the watchtower's: leave its card open for them");
-        landed.Response.ShouldNotBeNull().Error.ShouldStartWith("land is the controller's");
-        node.State.Cards(openOnly: true).ShouldHaveSingleItem();
+        // The answer runs the choice as the watchtower's, which merges as the person's assistant would (pilot #1271): no fence refuses
+        // it, and what answers is the flight's own path (here, that there is no such flight). The card stays open for the merge.
+        var mergeError = answered.Response.ShouldNotBeNull().Error.ShouldNotBeNull();
+        mergeError.ShouldNotContain("the controller's");
+        mergeError.ShouldContain("There is no flight TIA1");
+        landed.Response.ShouldNotBeNull().Error.ShouldNotBeNull().ShouldNotContain("the controller's");
+        node.State.Cards(openOnly: true).Where(c => c.Kind == "pr-ready").ShouldHaveSingleItem();
     }
 
     [Fact]

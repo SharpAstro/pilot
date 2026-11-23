@@ -236,6 +236,7 @@ internal sealed class PilotChrome<TSurface>
         NotificationsPage.Arranged = nodes => TextCheck.Observe("notifications", nodes, DpiScale);
         Tooltips = new TooltipLayer<TSurface>(renderer);
         NotificationsLayer = new NotificationsLayer<TSurface>(renderer);
+        NotificationsLayer.Arranged = nodes => TextCheck.Observe("toast", nodes, DpiScale);
         More = new RailMoreMenu<TSurface>(renderer);
         Notifications.CardBody = ToastBody;
         Notifications.CardButtons = ToastButtons;
@@ -338,20 +339,6 @@ internal sealed class PilotChrome<TSurface>
         NotificationsPage.Nodes = Nodes;
         Designs.About = About;
         Designs.Nodes = Nodes;
-        // The Autopilot switch, in every page's header, for the node the window shows.
-        sessions.Autopilot = Autopilot;
-        Flights.Autopilot = Autopilot;
-        Repos.Autopilot = Autopilot;
-        PullRequests.Autopilot = Autopilot;
-        Jobs.Autopilot = Autopilot;
-        Fleet.Autopilot = Autopilot;
-        Settings.Autopilot = Autopilot;
-        Home.Autopilot = Autopilot;
-        Chat.Autopilot = Autopilot;
-        Ideas.Autopilot = Autopilot;
-        Spend.Autopilot = Autopilot;
-        NotificationsPage.Autopilot = Autopilot;
-        Designs.Autopilot = Autopilot;
         // And the Night switch beside it, one state every page reads.
         sessions.Night = Flights.Night = Repos.Night = Jobs.Night = Fleet.Night = Settings.Night = Home.Night = Chat.Night = PullRequests.Night = Ideas.Night = Spend.Night = Designs.Night = NotificationsPage.Night = Night;
         Settings.Notifications = Notifications;
@@ -404,9 +391,6 @@ internal sealed class PilotChrome<TSurface>
 
     /// <summary>The header's ? card, the same on every page.</summary>
     public AboutCard About { get; } = new();
-
-    /// <summary>The header's Autopilot switch, the same on every page: the host sets <see cref="AutopilotSwitch.On"/> from the node in view and <see cref="AutopilotSwitch.OnToggle"/> to flip it.</summary>
-    public AutopilotSwitch Autopilot { get; } = new();
 
     /// <summary>The header's Night switch, the same on every page: the window's one night state, kept across a restart by <see cref="KeepColumnWidths"/>'s file.</summary>
     public NightSwitch Night { get; } = new();

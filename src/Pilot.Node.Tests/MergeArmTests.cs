@@ -27,7 +27,7 @@ public sealed class MergeArmTests
 
     /// <summary>
     /// TIA1 with its one leg done, its review passed and PR #63 open at <see cref="PrHead"/>, and the PR-ready card offering the merge
-    /// on it. No plane on disk, as in the autopilot's tests: a merge needs nothing more.
+    /// on it. No plane on disk, as in the node's own merge tests: a merge needs nothing more.
     /// </summary>
     private static CardRow Ready(NodeHarness node)
     {
@@ -200,10 +200,22 @@ public sealed class MergeArmTests
     public void GhCliReadsAllowAutoMergeFromTheRepoApi(string output, bool allowed) =>
         GhCli.ParseAllowAutoMerge(output).ShouldBe(allowed);
 
-    private static async Task<(NodeHarness Node, CardRow Card)> ArmedNatively(ChecksSummary at)
+    /// <summary>
+    /// TIA1's repo set to no-auto-merge: the node does not merge its passed flight by itself, so a test of what the card shows once an
+    /// arm is left reads the card as the person sees it, before anyone presses Merge again.
+    /// </summary>
+    internal static async Task PersonsMergeOnlyAsync(NodeHarness node) =>
+        (await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Set, Target = Verbs.NodeTarget, Args = [NodeSettings.NoAutoMergeReposKey, "tianwen"], Who = "gui" }, Ct))
+            .Response.ShouldNotBeNull().Error.ShouldBeNull();
+
+    private static async Task<(NodeHarness Node, CardRow Card)> ArmedNatively(ChecksSummary at, bool personsMergeOnly = false)
     {
         var node = await NodeHarness.StartOnModelAsync(Ct);
         node.GitHub.AutoMergeAllowed = true;
+        if (personsMergeOnly)
+        {
+            await PersonsMergeOnlyAsync(node);
+        }
         var card = Ready(node);
         node.GitHub.Summary = at;
         (await Answer(node, card, "Merge")).Error.ShouldBeNull();
@@ -537,7 +549,7 @@ public sealed class MergeArmTests
     [Fact]
     public async Task ANativelyArmedMergeWhoseAutoMergeWasTurnedOffOnGitHubNoLongerSaysGitHubMergesIt()
     {
-        var (node, ready) = await ArmedNatively(Pending(1));
+        var (node, ready) = await ArmedNatively(Pending(1), personsMergeOnly: true);
         await using var _ = node;
 
         // Checks pass, but somebody switched auto-merge off on the PR page: GitHub says ready, not armed.
@@ -563,7 +575,7 @@ public sealed class MergeArmTests
     [Fact]
     public async Task ANativelyArmedMergeGitHubBlocksOnRequestedChangesShowsThemOnTheSameCard()
     {
-        var (node, ready) = await ArmedNatively(Pending(1));
+        var (node, ready) = await ArmedNatively(Pending(1), personsMergeOnly: true);
         await using var _ = node;
 
         node.GitHub.Summary = Passing();

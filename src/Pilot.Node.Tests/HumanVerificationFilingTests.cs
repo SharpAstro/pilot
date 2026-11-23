@@ -96,11 +96,8 @@ public sealed class HumanVerificationFilingTests : ReviewTestsBase
         (await Verdict(flight, "changes", $"## Blocking\n- the parser drops the last line\n\n## Human verification\n{Pan}")).Error.ShouldBeNull();
         _github.IssuesCreated.Count.ShouldBe(1);
 
-        File.WriteAllText(Path.Combine(flight.Worktree, "fix.txt"), "more\n");
-        Git(flight.Worktree, "add", ".");
-        Git(flight.Worktree, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "fix");
-        (await Run(Verbs.StartReview, Verbs.FlightTarget(flight.Code), "controller")).Error.ShouldBeNull();
-        await Started(_legs, flight.Code);
+        // The node sends the fix round itself; the worker's finish starts the second review.
+        await FixRound(flight.Code, "fix.txt");
 
         // The restated check (spelled a little differently) files nothing; the one new check does, and the one card now names both.
         (await Verdict(flight, "pass", $"Fixed.\n\n## Human verification\n- pan the canvas  with a touchpad\n  Do: again.\n  Done when: again.\n\n{Camera}")).Error.ShouldBeNull();
@@ -121,11 +118,8 @@ public sealed class HumanVerificationFilingTests : ReviewTestsBase
         (await Verdict(flight, "changes", $"## Blocking\n- the parser drops the last line\n\n## Human verification\n{Pan}")).Error.ShouldBeNull();
         var first = Open().Single(c => c.Kind == LegCommander.HumanVerificationKind);
 
-        File.WriteAllText(Path.Combine(flight.Worktree, "fix.txt"), "more\n");
-        Git(flight.Worktree, "add", ".");
-        Git(flight.Worktree, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "fix");
-        (await Run(Verbs.StartReview, Verbs.FlightTarget(flight.Code), "controller")).Error.ShouldBeNull();
-        await Started(_legs, flight.Code);
+        // The node sends the fix round itself; the worker's finish starts the second review.
+        await FixRound(flight.Code, "fix.txt");
         (await Verdict(flight, "pass", $"## Human verification\n{Pan}")).Error.ShouldBeNull();
 
         _github.IssuesCreated.Count.ShouldBe(1);

@@ -218,9 +218,9 @@ public static partial class Briefs
         text.AppendLine();
         text.AppendLine("A conflict, a review's findings, a stalled step are yours to see through to the merge. Hand on only a real fork in");
         text.AppendLine("what the work should be (which of two designs, whether to drop a goal), never \"what do I do with this card\".");
-        // Only what the node lets it do (the review of #470): a fixer on autopilot; a design question and a flight past its
+        // Only what the node lets it do (the review of #470): a fixer; a design question and a flight past its
         // round cap stay the person's until the node gives them to the watchtower (PIL433).
-        text.AppendLine("That holds for a PR outside a flight too: with the autopilot on, when its review asks for changes, start a fixer on it");
+        text.AppendLine("That holds for a PR outside a flight too: when its review asks for changes, start a fixer on it");
         text.AppendLine($"(`{pilot} review fix <owner/repo#n>`) and see it re-reviewed. Fix it on another author's PR stays the person's unless they ask for it in the chat. A design question a review raises");
         text.AppendLine("stays the person's until it has an answer (their comment on the PR, or words they give you): then `review fix <owner/repo#n> <answer>` fixes it. A flight's leg past its round cap is the person's unless they ask for it in the chat: say so on the card and leave it to them.");
         text.AppendLine("Name a PR outside a flight as owner/repo#n (or #n) with its title. A flight code such as PIL1000 names only a flight, never a PR of the same number.");
@@ -345,18 +345,11 @@ public static partial class Briefs
         text.AppendLine("  hold rule below says, not to your own hands): you do not press it. When the points left are small, you may allow one more round, saying so in the press. A real disagreement between the reviewer and the worker you settle in the plane: read both, decide which is");
         text.AppendLine($"  right, and commit the fix or the note. Only what you cannot settle rings the controller. For one more round give your word with");
         text.AppendLine($"  `{pilot} flight allow-round <code> <why>`, which lets exactly one more go-around or reviewer start; without it the node refuses a fourth round.");
-        text.AppendLine("- A review that passes with notes puts its flight in a holding pattern: autopilot's merge and the card's Merge are held. A hold's notes");
-        text.AppendLine($"  go to a fixer worker by default: within a few minutes of the hold, plan and start a review-notes leg carrying the notes (`{pilot} leg plan`,");
-        text.AppendLine($"  then `{pilot} leg start`; the finished leg's push ends the hold and the review runs again). You do not clear the flight: while a note has no end");
-        text.AppendLine($"  (made, not work, the node's own, or deferred with a reason) `{pilot} flight clear` and removing the review-notes leg are refused to you; they are the owner's word, with a reason.");
-        text.AppendLine("  Say what you did on the review-notes card. A fix of your own");
-        text.AppendLine($"  only for a one-line change: take the hold with `{pilot} flight hold <code> [why]` (or commit in the plane), make it, then `{pilot} flight pr <code>`.");
-        text.AppendLine("  With the autopilot on the node has planned the review-notes leg itself (the card names it): there is nothing to do but watch it.");
-        text.AppendLine("  A hold no leg and no `flight hold` or commit in the plane takes within a few minutes is not released into a merge: the node plans the review-notes leg");
-        text.AppendLine("  itself, or rings the owner when it cannot. A hold you took and left");
-        text.AppendLine("  rings the person after 30 minutes. With no watchtower running (it ends by design after a reply), five minutes after the hold the node pushes");
-        text.AppendLine("  any commits left in the plane past the reviewed head (as `flight pr` does, so a fresh review gates the merge), or plans the review-notes leg (or");
-        text.AppendLine("  rings the owner), never merging with the notes. So make the fixes in the turn you take the card.");
+        text.AppendLine("- A review that passes with notes puts its flight in a holding pattern: the node's merge and the card's Merge are held. The node plans the");
+        text.AppendLine("  review-notes leg itself (a Handled card names it): there is nothing to do but watch it. Its push ends the hold and");
+        text.AppendLine("  the review runs again. Notes nobody makes ring the owner (notes-unmade, or review-notes-cap past the cap). You do not clear the flight: while a note");
+        text.AppendLine($"  has no end (made, not work, the node's own, or deferred with a reason) `{pilot} flight clear` and removing the review-notes leg are refused to you;");
+        text.AppendLine("  they are the owner's word, with a reason. A hold a leg is making the fixes of rings the person after 30 minutes if the leg was never started.");
         text.AppendLine("- A failure in a test a PR does not touch is a bug with a cause to find, and the node files it as an investigation (an issue, priority high, and a");
         text.AppendLine("  flight). The first time it hits a PR the node retries once (queues it again, or runs its failed jobs again). When it comes again, in the same PR or");
         text.AppendLine("  in another flight, a Ring card puts the tower on alert: it names the failure, the investigation and the flights hit, which the node holds (its");
@@ -365,7 +358,7 @@ public static partial class Briefs
         text.AppendLine("- A flight in `pilot status` whose legs are all done, whose PR carries `pilot: changes` and whose PR head is not the head its");
         text.AppendLine("  review read (Summary prints that one as `read head`): no review has read this work. The node's sweep should have started one");
         text.AppendLine($"  and did not, so start it yourself with `{pilot} flight review <code>` rather than wait for a card.");
-        text.AppendLine("- A review that passed, with the autopilot on: the node merges it. Asked in the chat to merge, run the merge yourself.");
+        text.AppendLine("- A review that passed: the node merges it. Asked in the chat to merge, run the merge yourself.");
         text.AppendLine("- Work in the plane only, on its branch; never in the repo's main checkout, never on main. Stay where you are and reach the");
         text.AppendLine("  plane by its full path (`git -C <plane> …`, Read and Edit on its files by path): never the EnterWorktree tool, which asks to");
         text.AppendLine("  move your permission root and leaves you blocked on a prompt nobody can answer (DE1's watchtower, 2026-10-28).");
@@ -376,11 +369,11 @@ public static partial class Briefs
         text.AppendLine();
         text.AppendLine("## What you may do");
         text.AppendLine("- Answer a card, ring cards included, whose choice is to redo the leg (a go-around), a resume or a nudge, when the card's detail shows it is the right one.");
-        text.AppendLine("- With the autopilot on: merge or land a flight whose review passed, rerun its checks, answer or dismiss any card. The node runs");
+        text.AppendLine("- Merge or land a flight whose review passed, rerun its checks, answer or dismiss any card. The node runs");
         text.AppendLine("  these at once and records them; say whom you did it for in `--why`.");
-        text.AppendLine($"- With the autopilot on: start a fixer on a PR outside a flight whose review asked for changes (`{pilot} review fix <owner/repo#n>`).");
+        text.AppendLine($"- Start a fixer on a PR outside a flight whose review asked for changes (`{pilot} review fix <owner/repo#n>`).");
         text.AppendLine("  The node refuses it past its third round, on a design question with no answer yet and on another author's PR not yet given Fix it: those stay the person's unless they ask for it in the chat.");
-        text.AppendLine("- With the autopilot on, three kinds of card are the node's own and you do not press them: a fold the planner asked for (both flights on this node),");
+        text.AppendLine("- Three kinds of card are the node's own and you do not press them: a fold the planner asked for (both flights on this node),");
         text.AppendLine("  Fix it on a fixer that ended without pushing (`pr-fix-ended`, inside the round cap), and End process on a stray the node launched whose owner has ended.");
         text.AppendLine("  The node presses them itself within a minute and leaves a Handled card saying which rule let it; one still open is one its rules did not let through, so it stays the person's.");
         text.AppendLine("- Say something to a worker, to unstick it or to tell it what it is missing.");
@@ -390,11 +383,9 @@ public static partial class Briefs
         text.AppendLine("- Plan and start legs the controller asked for, and open a flight's PR when every leg is done.");
         text.AppendLine();
         text.AppendLine("## What you may not do");
-        text.AppendLine("- With the autopilot off, merge or land a flight, or answer a card that would: the node refuses them from you, unless the");
-        text.AppendLine("  controller tells you to here, in chat, when it raises a card for them to Allow. Say whom you did it for in `--why`.");
         text.AppendLine("- Do anything that is the controller's alone (a merge or a landing, the node's settings and setup, a grant, an update, a restart of");
         text.AppendLine("  yourself) on your own say-so, or silently. When they ask for one in the chat, run its command: the node answers with an");
-        text.AppendLine("  Allow card for them to press (or runs it at once on autopilot and records it), and you say in the chat which it was. When it only");
+        text.AppendLine("  Allow card for them to press (or runs it at once and records it), and you say in the chat which it was. When it only");
         text.AppendLine("  seems a good idea to you, ask them in the chat first, with an ask block. Never go round it with gh or git directly.");
         text.AppendLine("- Force-push or rebase a pushed branch, delete branches or worktrees, or touch main.");
         text.AppendLine("- Close a human-verification issue (milestone 'Human verification: UI that needs eyes') or file one by hand: the node files them, and the");

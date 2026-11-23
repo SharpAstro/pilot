@@ -15,6 +15,18 @@ public sealed partial class NodeState
     }
 
     /// <summary>
+    /// The cards of one <paramref name="kind"/> about one <paramref name="subject"/>, open and closed, newest first: what a look that asks
+    /// once per cause reads at every pass, without copying and sorting the whole store as <see cref="Cards"/> does.
+    /// </summary>
+    public CardRow[] CardsOf(string kind, string subject)
+    {
+        lock (_gate)
+        {
+            return [.. _cards.Values.Where(c => c.Kind == kind && c.Subject == subject).OrderByDescending(c => c.RungAt).ThenByDescending(c => c.Id, StringComparer.Ordinal)];
+        }
+    }
+
+    /// <summary>
     /// Raises a card, numbered by the node; returns it. A card of the same kind about the same subject still open is
     /// that card, not a second one: one event, one card. A Handled card is born closed, a line and nothing to answer.
     /// </summary>
@@ -53,8 +65,8 @@ public sealed partial class NodeState
     public RingJudge? RingJudge { get; set; }
 
     /// <summary>
-    /// Whether the node presses a card raised with this kind, subject, detail and choices itself now (autopilot on,
-    /// <see cref="Flights.NodePress.WouldPress"/>): such a card is never sent to the ring judge.
+    /// Whether the node presses a card raised with this kind, subject, detail and choices itself now
+    /// (<see cref="Flights.NodePress.WouldPress"/>): such a card is never sent to the ring judge.
     /// </summary>
     public Func<string, string, string?, IReadOnlyList<CardChoice>?, bool>? NodePresses { get; set; }
 

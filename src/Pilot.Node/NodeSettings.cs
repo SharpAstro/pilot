@@ -50,7 +50,6 @@ public sealed record NodeSettings
     public const string WatchtowerCompactAboveKey = "watchtower-compact-above";
     public const string MaintenanceKey = "maintenance";
     public const string AcceptFleetFlightsKey = "accept-fleet-flights";
-    public const string AutopilotKey = "autopilot";
     public const string ReviewDeepFirstKey = "review-deep-first";
     public const string DeleteLandedBranchesKey = "delete-landed-branches";
     public const string UserSkillsKey = "user-skills";
@@ -217,7 +216,7 @@ public sealed record NodeSettings
 
     /// <summary>Every key, in the order the Settings page shows them: the node's own, then a range per role.</summary>
     public static IReadOnlyList<string> Keys { get; } =
-        [LanKey, MachineKey, RepoRootsKey, UpdateChannelKey, UpdatePolicyKey, MaxJobsKey, JobsPerRepoKey, GuiSlotsKey, JobMemoryKey, JobPriorityKey, JobPlaneOutputKey, JobBuildCacheKey, LanPortKey, StartLimitKey, PriorityReposKey, PriorityStartLimitKey, WeekLimitKey, WeekPaceKey, SpendAlertKey, WatchtowerCompactShareKey, WatchtowerChatMessagesKey, WatchtowerCompactIdleKey, WatchtowerCompactAboveKey, MergeMethodKey, MaintenanceKey, AcceptFleetFlightsKey, AutopilotKey, ReviewDeepFirstKey, UserSkillsKey, ShortcutTokenKey, RepoTrackersKey, NoAutoMergeReposKey, OpusCapKey, ReviewLimitKey, OneFlightPerRepoKey, SubTaskReposKey, MergeBatchKey, PrWatchIdleKey, AdoptAfterKey, ArchiveLandedAfterKey, MaintenanceEveryKey, MaintenanceIdleKey, PackageAgeDaysKey, GitPruneDaysKey, MaintenancePruneHoursKey, DeleteLandedBranchesKey, MaxGoAroundsKey, ScratchDaysKey, DesignerKeepKey, DiskAlertGbKey, FlightCiBudgetKey, StaleFlightHoursKey, StalePrHoursKey, StaleRecheckHoursKey, StaleCardHoursKey, StaleHoldsKey, StaleUnreachableHoursKey,
+        [LanKey, MachineKey, RepoRootsKey, UpdateChannelKey, UpdatePolicyKey, MaxJobsKey, JobsPerRepoKey, GuiSlotsKey, JobMemoryKey, JobPriorityKey, JobPlaneOutputKey, JobBuildCacheKey, LanPortKey, StartLimitKey, PriorityReposKey, PriorityStartLimitKey, WeekLimitKey, WeekPaceKey, SpendAlertKey, WatchtowerCompactShareKey, WatchtowerChatMessagesKey, WatchtowerCompactIdleKey, WatchtowerCompactAboveKey, MergeMethodKey, MaintenanceKey, AcceptFleetFlightsKey, ReviewDeepFirstKey, UserSkillsKey, ShortcutTokenKey, RepoTrackersKey, NoAutoMergeReposKey, OpusCapKey, ReviewLimitKey, OneFlightPerRepoKey, SubTaskReposKey, MergeBatchKey, PrWatchIdleKey, AdoptAfterKey, ArchiveLandedAfterKey, MaintenanceEveryKey, MaintenanceIdleKey, PackageAgeDaysKey, GitPruneDaysKey, MaintenancePruneHoursKey, DeleteLandedBranchesKey, MaxGoAroundsKey, ScratchDaysKey, DesignerKeepKey, DiskAlertGbKey, FlightCiBudgetKey, StaleFlightHoursKey, StalePrHoursKey, StaleRecheckHoursKey, StaleCardHoursKey, StaleHoldsKey, StaleUnreachableHoursKey,
          .. BenchKeys, .. RoleModels.Roles.Select(RoleModels.RangeKey), SummaryModelKey, WorkerLadderKey];
 
     /// <summary>Whether <paramref name="key"/> is a role's range (<see cref="RoleModels"/>).</summary>
@@ -260,9 +259,6 @@ public sealed record NodeSettings
 
     /// <summary>Whether a repo's ready merge queue entries are merged as one batch (<see cref="MergeBatchKey"/>), its CI run once; off unless set.</summary>
     public bool? MergeBatch { get; init; }
-
-    /// <summary>Whether an assistant's your-only requests run directly (<see cref="AutopilotKey"/>) rather than raising a confirm card; on unless the person saved it off, and only the person may.</summary>
-    public bool? Autopilot { get; init; }
 
     /// <summary>Whether the first review of a large diff runs on the deep model (<see cref="ReviewDeepFirstKey"/>); on unless the person saved it off. A re-review never does.</summary>
     public bool? ReviewDeepFirst { get; init; }
@@ -412,7 +408,7 @@ public sealed record NodeSettings
     /// <summary>Per repo (its folder name), the tracker a bare number means (<see cref="RepoTrackersKey"/>), each entry <c>repo=shortcut</c> or <c>repo=github</c>; a repo left out means GitHub.</summary>
     public IReadOnlyList<string>? RepoTrackers { get; init; }
 
-    /// <summary>The repos (folder names) whose PRs the node never merges by itself (<see cref="NoAutoMergeReposKey"/>), autopilot or not: an assistant's merge raises a card, and a passed flight rings.</summary>
+    /// <summary>The repos (folder names) whose PRs the node never merges by itself (<see cref="NoAutoMergeReposKey"/>): an assistant's merge raises a card, and a passed flight rings.</summary>
     public IReadOnlyList<string>? NoAutoMergeRepos { get; init; }
 
     /// <summary>The repos (folder names) whose flights write their legs to the work item as sub-tasks (<see cref="SubTaskReposKey"/>); a repo left out writes nothing to its tracker.</summary>
@@ -549,7 +545,6 @@ public sealed record NodeSettings
                     JobsPerRepoKey => JsonValue.Create(JobsPerRepo),
                     GuiSlotsKey => JsonValue.Create(GuiSlots),
                     AcceptFleetFlightsKey => JsonValue.Create(AcceptFleetFlights),
-                    AutopilotKey => JsonValue.Create(Autopilot),
                     ReviewDeepFirstKey => JsonValue.Create(ReviewDeepFirst),
                     DeleteLandedBranchesKey => JsonValue.Create(DeleteLandedBranches),
                     UserSkillsKey => JsonValue.Create(UserSkills),
@@ -607,7 +602,6 @@ public sealed record NodeSettings
         JobsPerRepoKey => JobsPerRepo is { } perRepo ? [perRepo.ToString(CultureInfo.InvariantCulture)] : null,
         GuiSlotsKey => GuiSlots is { } guiSlotsSet ? [guiSlotsSet.ToString(CultureInfo.InvariantCulture)] : null,
         AcceptFleetFlightsKey => AcceptFleetFlights is { } accept ? [accept ? "on" : "off"] : null,
-        AutopilotKey => Autopilot is { } autopilot ? [autopilot ? "on" : "off"] : null,
         ReviewDeepFirstKey => ReviewDeepFirst is { } deepFirst ? [deepFirst ? "on" : "off"] : null,
         DeleteLandedBranchesKey => DeleteLandedBranches is { } deleteBranches ? [deleteBranches ? "on" : "off"] : null,
         UserSkillsKey => UserSkills is { } skills ? [skills ? "on" : "off"] : null,
@@ -745,14 +739,6 @@ public sealed record NodeSettings
                 return OnOff(One()) is { } accept
                     ? (settings with { AcceptFleetFlights = accept }, null)
                     : (null, "accept-fleet-flights takes on or off");
-            case AutopilotKey:
-                if (clear)
-                {
-                    return (settings with { Autopilot = null }, null);
-                }
-                return OnOff(One()) is { } autopilot
-                    ? (settings with { Autopilot = autopilot }, null)
-                    : (null, "autopilot takes on or off");
             case ReviewDeepFirstKey:
                 if (clear)
                 {

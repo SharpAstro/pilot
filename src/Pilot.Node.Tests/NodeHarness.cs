@@ -84,9 +84,8 @@ internal sealed class NodeHarness : IAsyncDisposable
     /// <param name="watchtower">Keeps a watchtower, started through the fake workers; off by default, as it would count among them.</param>
     /// <param name="journal">The node's store in place of its files in the data folder: one the test can make fail.</param>
     /// <param name="git">The git the node runs in place of git itself: the in-memory model for a test that is about what the node decides (#952).</param>
-    /// <param name="autopilotOff">Starts the node with the autopilot saved off, so a test of the asks and cards (written when off was the default) tests what it did; false leaves the node on its own default (on).</param>
     /// <param name="jobLauncher">What starts the node's jobs in place of real shells: an in-memory <c>FakeJobLauncher</c> (#933).</param>
-    public static async Task<NodeHarness> StartAsync(CancellationToken cancellationToken, int retainedDeltas = NodeState.DefaultRetainedDeltas, bool holdFirstListing = false, bool watchtower = false, int? lanPort = null, bool localOnly = false, string? folder = null, NodeTraffic? traffic = null, string? machine = null, INodeJournal? journal = null, Pilot.Node.Flights.IJobLauncher? jobLauncher = null, Pilot.Node.Flights.IGit? git = null, Pilot.Node.Flights.JobPriority? jobPriority = null, bool autopilotOff = true)
+    public static async Task<NodeHarness> StartAsync(CancellationToken cancellationToken, int retainedDeltas = NodeState.DefaultRetainedDeltas, bool holdFirstListing = false, bool watchtower = false, int? lanPort = null, bool localOnly = false, string? folder = null, NodeTraffic? traffic = null, string? machine = null, INodeJournal? journal = null, Pilot.Node.Flights.IJobLauncher? jobLauncher = null, Pilot.Node.Flights.IGit? git = null, Pilot.Node.Flights.JobPriority? jobPriority = null)
     {
         // Short: a socket path must fit in 107 bytes, and the temp folder on Windows is already long.
         // An existing folder is a restart: the node starts on the data an earlier one left (see StopKeepingFolderAsync).
@@ -100,7 +99,7 @@ internal sealed class NodeHarness : IAsyncDisposable
         var owner = TestEnvironment.CurrentTest();
         var options = new NodeOptions(Path.Combine(folder, NodeSocket.DefaultFileName), Path.Combine(folder, "data"), retainedDeltas, MachinePrefix: machine, Watchtower: watchtower,
             Lan: lanPort is not null, LanPort: lanPort ?? NodeWire.DefaultLanPort, LanAnnounce: false, LocalOnly: localOnly, LanLoopbackOnly: lanPort is not null, MachineSampling: false, JobPriority: jobPriority ?? Pilot.Node.Flights.JobPriority.BelowNormal,
-            Saved: autopilotOff ? new NodeSettings { Autopilot = false } : null);
+            Saved: null);
         if (!NodeSocket.TryValidate(options.SocketPath, out var tooLong))
         {
             throw new InvalidOperationException(tooLong);

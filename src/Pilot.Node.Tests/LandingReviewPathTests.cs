@@ -18,7 +18,7 @@ public sealed class LandingReviewPathTests : PrReviewTestsBase
     {
         /// <summary>The node's own queueing at the sweep after the verdict.</summary>
         Queue,
-        /// <summary>The Merge choice of the reviewed PR's card (a base with no merge queue).</summary>
+        /// <summary>The Merge choice of the reviewed PR's card (a no-auto-merge repo on a base with no merge queue: elsewhere the node lands it itself).</summary>
         MergeChoice,
     }
 
@@ -36,6 +36,8 @@ public sealed class LandingReviewPathTests : PrReviewTestsBase
         }
         else
         {
+            // The card is the person's only where the node does not land a reviewed, green PR by itself.
+            _reviews.Models = new RoleModels(new NodeSettings { NoAutoMergeRepos = ["widget"] });
             await ReviewedWidget("approve", queue: false);
             _state.Cards(openOnly: true).ShouldContain(c => c.Kind == PrReviews.MergeKind);
             _github.MergeScript.Enqueue(answer);

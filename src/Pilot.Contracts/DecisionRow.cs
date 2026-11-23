@@ -21,7 +21,7 @@ public sealed record DecisionRow
     /// <summary>The one taken.</summary>
     public required string Choice { get; init; }
 
-    /// <summary>Who chose: the name of the autopilot, the watchtower, the person or the node.</summary>
+    /// <summary>Who chose: the node (by its rules), the watchtower or the person.</summary>
     public required string By { get; init; }
 
     /// <summary>As what: one of <see cref="DecisionByKinds"/>.</summary>
@@ -62,10 +62,13 @@ public static class DecisionKinds
 /// <summary>Who a decision's <see cref="DecisionRow.By"/> is.</summary>
 public static class DecisionByKinds
 {
-    public const string Autopilot = "autopilot";
+    public const string NodeRules = "autopilot";
     public const string Watchtower = "watchtower";
     public const string Person = "person";
     public const string Node = "node";
+
+    /// <summary>How a kind or name is shown: the stored value of the node's own rules reads as the node's, never as the old switch's name.</summary>
+    public static string Shown(string value) => value == NodeRules ? "node" : value;
 }
 
 /// <summary>What <c>GET /api/v1/decisions</c> answers: the decisions that match, oldest first.</summary>

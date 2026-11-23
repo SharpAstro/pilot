@@ -25,11 +25,8 @@ public sealed class DeferredPointTests : ReviewTestsBase
         await Fly(flight, "parser");
         (await Run(Verbs.OpenPr, Verbs.FlightTarget(flight.Code), "controller")).Error.ShouldBeNull();
         (await Run(Verbs.Review, Verbs.FlightTarget(flight.Code), Reviewer(flight.Code), "changes", FirstReport)).Error.ShouldBeNull();
-        File.WriteAllText(Path.Combine(F(flight.Code).Worktree, "fix.txt"), "more\n");
-        Git(F(flight.Code).Worktree, "add", ".");
-        Git(F(flight.Code).Worktree, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "fix A and B");
-        (await Run(Verbs.StartReview, Verbs.FlightTarget(flight.Code), "controller")).Error.ShouldBeNull();
-        await Started(_legs, flight.Code);
+        // The node sends the fix round itself; the worker's finish starts the second review.
+        await FixRound(flight.Code, "fix.txt", "Parser.cs");
         return flight.Code;
     }
 

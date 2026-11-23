@@ -25,7 +25,6 @@ public sealed class SpendPageTests
     private static (PilotChrome<RgbaImage> Chrome, SpendView<RgbaImage> Page) Chrome(RgbaImageRenderer renderer)
     {
         var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
-        chrome.Autopilot.OnToggle = _ => Task.FromResult<string?>(null);
         return (chrome, chrome.Spend);
     }
 

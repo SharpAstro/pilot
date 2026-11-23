@@ -51,6 +51,8 @@ public sealed class MergeMirrorTests
     public async Task ChecksRunningMirrorsAsPendingWithHowManyAreDoneAndTheButtonStaysAMergeThatArms()
     {
         await using var node = await NodeHarness.StartOnModelAsync(Ct);
+        // The card as the person sees it: the node does not merge a no-auto-merge repo's passed flight by itself.
+        await MergeArmTests.PersonsMergeOnlyAsync(node);
         var ready = Ready(node);
 
         await Look(node, GhAnswers.MergeState(MergeKinds.Pending, 2, 7));
@@ -66,6 +68,8 @@ public sealed class MergeMirrorTests
     public async Task EachLookUpdatesTheSameCardInPlaceAsTheChecksProgressAndThenAreReady()
     {
         await using var node = await NodeHarness.StartOnModelAsync(Ct);
+        // The card as the person sees it: the node does not merge a no-auto-merge repo's passed flight by itself.
+        await MergeArmTests.PersonsMergeOnlyAsync(node);
         var ready = Ready(node);
 
         foreach (var done in new[] { 2, 5, 6 })
@@ -128,6 +132,8 @@ public sealed class MergeMirrorTests
     public async Task AQueueEntryGitHubDroppedSaysWhyOnTheSameCardAndOffersMergeAgain()
     {
         await using var node = await NodeHarness.StartOnModelAsync(Ct);
+        // The card as the person sees it: the node does not merge a no-auto-merge repo's passed flight by itself.
+        await MergeArmTests.PersonsMergeOnlyAsync(node);
         var ready = Ready(node);
         await Look(node, GhAnswers.MergeState(MergeKinds.Queued, position: 1));
 

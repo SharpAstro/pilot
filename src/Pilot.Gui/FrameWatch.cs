@@ -35,14 +35,13 @@ internal sealed class FrameWatch(ILogger logger, TimeSpan? slowFrame = null)
 
     /// <summary>
     /// What the header of every page shows that the builder reads and the render thread does not get from the pages: this node's
-    /// maintenance and autopilot, the update light's release and, while the light shows, its phase (<paramref name="light"/>,
+    /// maintenance, the update light's release and, while the light shows, its phase (<paramref name="light"/>,
     /// <see cref="Light"/>), and the node pills (each node's name, and when a down one was last heard).
     /// </summary>
-    internal static long Header(bool maintenance, bool autopilot, string? newer, NodeFilter nodes, bool? light = null)
+    internal static long Header(bool maintenance, string? newer, NodeFilter nodes, bool? light = null)
     {
         var hash = new HashCode();
         hash.Add(maintenance);
-        hash.Add(autopilot);
         hash.Add(newer, StringComparer.Ordinal);
         hash.Add(light);
         hash.Add(nodes.All);

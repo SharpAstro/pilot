@@ -280,11 +280,8 @@ public sealed class FollowUpCountTests : ReviewTestsBase
         await Fly(flight, "parser", report: "did nothing of the issue");
         (await Run(Verbs.OpenPr, Verbs.FlightTarget(flight.Code), "controller")).Error.ShouldBeNull();
         (await Run(Verbs.Review, Verbs.FlightTarget(flight.Code), Reviewer(flight.Code), "changes", "## Blocking\n- the guard is missing in Parser.cs:20\n\n## Not blocking\n- a nit in Lexer.cs:3\n")).Error.ShouldBeNull();
-        File.WriteAllText(Path.Combine(F(flight.Code).Worktree, "fix.txt"), "more\n");
-        Git(F(flight.Code).Worktree, "add", ".");
-        Git(F(flight.Code).Worktree, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "fix the guard");
-        (await Run(Verbs.StartReview, Verbs.FlightTarget(flight.Code), "controller")).Error.ShouldBeNull();
-        await Started(_legs, flight.Code);
+        // The node sends the fix round itself; the worker's finish starts the second review.
+        await FixRound(flight.Code, "fix.txt", "Parser.cs");
         var rows = "## Earlier points\n| Point | Answer | Where or why |\n|---|---|---|\n| R1.1 | addressed | Parser.cs:20 |\n| R1.2 | addressed | Lexer.cs:3 |\n| R1.3 | addressed | Lexer.cs:3 |\n";
         (await Run(Verbs.Review, Verbs.FlightTarget(flight.Code), Reviewer(flight.Code), "pass", rows)).Error.ShouldBeNull();
         _github.Pr = _github.Pr! with { State = "MERGED" };
@@ -320,11 +317,8 @@ public sealed class FollowUpCountTests : ReviewTestsBase
         _state.PutFlight(F(flight.Code) with { FollowUpIssue = existing, FollowUpPoints = ["R1.3"], FollowUpFlight = "PIL99" });
         (await Run(Verbs.OpenPr, Verbs.FlightTarget(flight.Code), "controller")).Error.ShouldBeNull();
         (await Run(Verbs.Review, Verbs.FlightTarget(flight.Code), Reviewer(flight.Code), "changes", "## Blocking\n- the guard is missing in Parser.cs:20\n- the lexer wants a rewrite\n")).Error.ShouldBeNull();
-        File.WriteAllText(Path.Combine(F(flight.Code).Worktree, "fix.txt"), "more\n");
-        Git(F(flight.Code).Worktree, "add", ".");
-        Git(F(flight.Code).Worktree, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "fix");
-        (await Run(Verbs.StartReview, Verbs.FlightTarget(flight.Code), "controller")).Error.ShouldBeNull();
-        await Started(_legs, flight.Code);
+        // The node sends the fix round itself; the worker's finish starts the second review.
+        await FixRound(flight.Code, "fix.txt", "Parser.cs");
         (await Run(Verbs.Review, Verbs.FlightTarget(flight.Code), Reviewer(flight.Code), "pass",
             "## Earlier points\n| Point | Answer | Where or why |\n|---|---|---|\n| R1.1 | addressed | fix.txt:1 |\n| R1.2 | deferred: larger than the flight | the lexer wants a rewrite |\n")).Error.ShouldBeNull();
 

@@ -67,7 +67,7 @@ public sealed partial class LegCommander
         // The node's own merge entry for the PR goes too, as TakeMergeBackAsync's RemoveMerge ends it; one a merge command is driving is
         // that command's (a push made from its own bring-up), so only an entry nothing drives ends here.
         EndLeftQueue(flight.Code, why);
-        state.CloseCardsAbout(target, $"{flight.Code}'s PR #{number} was taken out of the merge queue: {why}", PrReady, MergeFailed, PrChecks.AutopilotMergeRefused);
+        state.CloseCardsAbout(target, $"{flight.Code}'s PR #{number} was taken out of the merge queue: {why}", PrReady, MergeFailed, PrChecks.NodeMergeRefused);
         state.RaiseCard(CardBin.Handled, MergeTakenBackKind, target,
             $"{flight.Code}'s PR #{number} was taken out of the merge queue for new commits",
             $"Taken out of the merge queue: {why}. {(turned ? "Its passed review was of the head before them, so it is turned back; the" : "The")} merge is offered again once a fresh review of the new head passes.",

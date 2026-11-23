@@ -52,7 +52,6 @@ public sealed class PullRequestsPageTests
     {
         var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
         chrome.PullRequests.OnRefresh = _ => Task.CompletedTask;
-        chrome.Autopilot.OnToggle = _ => Task.FromResult<string?>(null);
         return (chrome, chrome.PullRequests);
     }
 
@@ -158,14 +157,14 @@ public sealed class PullRequestsPageTests
         text.ShouldContain("8 open · 1 ready · 1 checks running · 1 checks failed · 1 conflicts · 1 changes requested");
         Screen().Counts.ShouldBe("8 open · 1 ready · 1 checks running · 1 checks failed · 1 conflicts · 1 changes requested");
 
-        // Refresh is the page's own button, in the middle of the bar: after the node pills and the counts, before Autopilot, as tall as the ?.
+        // Refresh is the page's own button, in the middle of the bar: after the node pills and the counts, before the update light, as tall as the ?.
         var help = Button(arranged, "about:toggle");
-        foreach (var action in new[] { "prs:refresh", "nodes:all", "nodes:b", AutopilotSwitch.Action })
+        foreach (var action in new[] { "prs:refresh", "nodes:all", "nodes:b", "about:toggle" })
         {
             (Button(arranged, action).Y, Button(arranged, action).Height).ShouldBe((help.Y, help.Height), action);
         }
         Button(arranged, "prs:refresh").X.ShouldBeGreaterThan(Button(arranged, "nodes:b").X);
-        Button(arranged, "prs:refresh").X.ShouldBeLessThan(Button(arranged, AutopilotSwitch.Action).X);
+        Button(arranged, "prs:refresh").X.ShouldBeLessThan(Button(arranged, "about:toggle").X);
 
         // The pills under it, on the row of the repo search: one height and one middle, the same height as the bar's buttons.
         var search = arranged.Single(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.TextInput }).Bounds;
@@ -214,7 +213,7 @@ public sealed class PullRequestsPageTests
         chrome.Nodes.Choices = [new NodeMark("a", "a", "SE1", true), new NodeMark("b", "b", "LE1", false)];
         var arranged = Arrange(renderer, page, Screen(), width);
 
-        foreach (var action in new[] { "prs:refresh", AutopilotSwitch.Action, "about:toggle", "nodes:b" })
+        foreach (var action in new[] { "prs:refresh", "about:toggle", "nodes:b" })
         {
             var bounds = Button(arranged, action);
             bounds.X.ShouldBeGreaterThanOrEqualTo(0f, action);

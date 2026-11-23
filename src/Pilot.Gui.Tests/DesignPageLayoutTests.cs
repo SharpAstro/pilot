@@ -31,7 +31,6 @@ public sealed class DesignPageLayoutTests
                 doc["height"] = 240;
             });
             _chrome = new PilotChrome<RgbaImage>(_renderer, new SessionsView<RgbaImage>(_renderer)) { FontPath = SessionsCapture.FontPath };
-            _chrome.Autopilot.OnToggle = _ => Task.FromResult<string?>(null);
             _chrome.Show(PilotPage.Designs);
             // The open For-you bar takes 300 units off the page (the page stands left of it); these tests pin the layout with it collapsed.
             _chrome.Notifications.Open = false;

@@ -166,12 +166,12 @@ public static partial class Briefs
         "`dotnet build` gives. A check that cannot match CI says why in the Done-when, before it fails.";
 
     /// <summary>
-    /// The line the planner and the worker are told, in autopilot as much as out of it: the machine is the person's, so nothing
+    /// The line the planner and the worker are told, the node running unattended as much as watched: the machine is the person's, so nothing
     /// loads it on purpose without their okay on a card. TIA1910 ran a 24-process CPU burner to imitate a busy CI runner while
     /// it measured a flaky test (DE1 2026-10-29), and the person found it in Task Manager.
     /// </summary>
     internal static string MachineLoadRule(string run) =>
-        "Never load the machine on purpose without the person's explicit okay, in autopilot too: no CPU or GPU burner, no stress or\n" +
+        "Never load the machine on purpose without the person's explicit okay, the node running unattended too: no CPU or GPU burner, no stress or\n" +
         "soak loop, no pool of processes spinning to imitate a busy machine, nothing that holds many cores or the GPU for the load's\n" +
         $"own sake. Ask first with `{run} ring flight/<code>[/<leg>] \"<what load, for how long, and why>\"`, and go on with the rest; only the\n" +
         "person's answer on that card is the okay, never a guess that they would agree. The answer does not reach you by itself: if none\n" +

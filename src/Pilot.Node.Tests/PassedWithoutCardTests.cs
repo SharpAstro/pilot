@@ -14,9 +14,6 @@ public sealed class PassedWithoutCardTests : ReviewTestsBase
 {
     private const string Notes = "Checked.\n\n## Not blocking\n- rename `x` to `count`";
 
-    private void AutopilotOn() =>
-        _legs.Models = new RoleModels(NodeSettings.With(new NodeSettings(), NodeSettings.AutopilotKey, ["on"]).Settings!);
-
     private PrChecks Checks() => new(_state, _github, TimeProvider.System, _flights, _legs);
 
     private async Task<FlightRow> OpenPr(string issue)
@@ -43,9 +40,9 @@ public sealed class PassedWithoutCardTests : ReviewTestsBase
 
     [Fact]
     [Trait("Category", "Slow")]
-    public async Task AFlightPassedWithNoCardGetsOneAndAutopilotMergesIt()
+    public async Task AFlightPassedWithNoCardGetsOneAndTheNodeMergesIt()
     {
-        AutopilotOn();
+        NodeAdvances();
         _github.Checks = ChoiceStatus.Passing;
         var flight = await PassedWithNoCard("1", "fine");
         _ = flight;
@@ -61,12 +58,14 @@ public sealed class PassedWithoutCardTests : ReviewTestsBase
     [Trait("Category", "Slow")]
     public async Task ATrulyFailedCardRaiseKeepsThePassAndOneLookRaisesTheCardOnce()
     {
+        // Checks still pending: the node holds its merge for them, so the look only raises the card.
+        _github.Checks = ChoiceStatus.Pending;
         var flight = await PassedWithNoCard("2", "fine");
 
         await Checks().LookAsync(Ct);
         await Checks().LookAsync(Ct);
 
-        Open().Count(c => c.Kind == LegCommander.PrReady).ShouldBe(1);
+        _state.Cards(openOnly: false).Count(c => c.Kind == LegCommander.PrReady).ShouldBe(1);
         _state.Cards(openOnly: false).Count(c => c.Kind == LegCommander.PrReadyRestoredKind).ShouldBe(1);
         F(flight.Code).Review!.State.ShouldBe(ReviewState.Passed);
         _github.Merged.ShouldBeEmpty();
@@ -76,7 +75,7 @@ public sealed class PassedWithoutCardTests : ReviewTestsBase
     [Trait("Category", "Slow")]
     public async Task AHoldingFlightGetsTheHoldingCardAndItsNotesCardAndIsNotMerged()
     {
-        AutopilotOn();
+        NodeAdvances();
         _github.Checks = ChoiceStatus.Passing;
         var flight = await PassedWithNoCard("3", Notes);
         F(flight.Code).Holding.ShouldNotBeNull();
@@ -85,8 +84,7 @@ public sealed class PassedWithoutCardTests : ReviewTestsBase
 
         F(flight.Code).Holding.ShouldNotBeNull();
         // The card loop of the same look may retitle it from GitHub's state; its own words say it is the holding card.
-        Open().Single(c => c.Kind == LegCommander.PrReady).Detail.ShouldNotBeNull().ShouldContain("The merge is held until each note is made");
-        Open().ShouldContain(c => c.Kind == LegCommander.ReviewNotesKind);
+        Open().Single(c => c.Kind == LegCommander.PrReady).Detail.ShouldNotBeNull().ShouldContain("The review-notes leg makes the review's fixes");
         _github.Merged.ShouldBeEmpty();
     }
 
@@ -133,7 +131,7 @@ public sealed class PassedWithoutCardTests : ReviewTestsBase
     [Trait("Category", "Slow")]
     public async Task APrReadyCardThePersonDismissedIsNotRaisedAgain()
     {
-        AutopilotOn();
+        NodeAdvances();
         _github.Checks = ChoiceStatus.Passing;
         var flight = await OpenPr("7");
         (await Run(Verbs.Review, Verbs.FlightTarget(flight.Code), Reviewer(flight.Code), "pass", "fine")).Error.ShouldBeNull();

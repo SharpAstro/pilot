@@ -64,7 +64,7 @@ public static class LandingAnswers
 
     /// <summary>
     /// Nothing rung and no card showing GitHub's text: a done or retried answer. The flight's own PR-ready card is not counted: it
-    /// is there before the merge (in Ring with the autopilot off), and a retried merge says on it that it waits.
+    /// is there before the merge (in Ring for a no-auto-merge repo), and a retried merge says on it that it waits.
     /// </summary>
     public static void NothingAsks(NodeState state)
     {

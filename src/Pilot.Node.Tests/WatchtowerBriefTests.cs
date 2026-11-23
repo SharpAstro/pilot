@@ -117,20 +117,14 @@ public class WatchtowerBriefTests
     }
 
     [Fact]
-    public void TheHoldRuleDelegatesToAFixerLegOrClearsAndAllowsOnlyAOneLineFixOfItsOwn()
+    public void TheHoldRuleSaysTheNodePlansTheReviewNotesLegAndOnlyTheOwnerClears()
     {
         var brief = Brief();
-        brief.ShouldContain("go to a fixer worker by default");
-        brief.ShouldContain("within a few minutes of the hold");
-        brief.ShouldContain("plan and start a review-notes leg carrying the notes (`pilot leg plan`, then `pilot leg start`");
-        brief.ShouldContain("You do not clear the flight: while a note has no end");
-        brief.ShouldContain("`pilot flight clear` and removing the review-notes leg are refused to you; they are the owner's word, with a reason");
-        brief.ShouldNotContain("when the notes are not worth a round");
-        brief.ShouldNotContain("merges at the reviewed head with the notes");
-        brief.ShouldContain("Say what you did on the review-notes card");
-        brief.ShouldContain("A fix of your own only for a one-line change");
-        brief.ShouldContain("then `pilot flight pr <code>`");
-        brief.ShouldContain("the node has planned the review-notes leg itself");
+        brief.ShouldContain("The node plans the");
+        brief.ShouldContain("review-notes leg itself");
+        brief.ShouldContain("You do not clear the flight: while a note");
+        brief.ShouldContain("`pilot flight clear` and removing the review-notes leg are refused to you");
+        brief.ShouldNotContain("go to a fixer worker by default");
         brief.ShouldNotContain("make the small ones yourself");
     }
 

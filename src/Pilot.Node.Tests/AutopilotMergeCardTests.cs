@@ -6,15 +6,12 @@ using Xunit;
 namespace Pilot.Node.Tests;
 
 /// <summary>
-/// PIL646 (#646): with the autopilot on, a reviewed flight's merge card is a quiet For-you card while its merge waits for checks
-/// or sits in the queue, and rings only when the owner has something to do. With it off, nothing changes.
+/// PIL646 (#646): a reviewed flight's merge card is a quiet For-you card while its merge waits for checks
+/// or sits in the queue, and rings only when the owner has something to do.
 /// </summary>
 public sealed class AutopilotMergeCardTests : ReviewTestsBase
 {
     private static readonly string[] MergeKinds = [LegCommander.PrReady, LegCommander.MergeFailed, "autopilot-merge-refused"];
-
-    private void AutopilotOn() =>
-        _legs.Models = new RoleModels(NodeSettings.With(new NodeSettings(), NodeSettings.AutopilotKey, ["on"]).Settings!);
 
     private CardRow[] MergeCards() => [.. Open().Where(c => MergeKinds.Contains(c.Kind))];
 
@@ -22,9 +19,9 @@ public sealed class AutopilotMergeCardTests : ReviewTestsBase
 
     [Fact]
     [Trait("Category", "Slow")]
-    public async Task OnAutopilotAMergeWaitingForChecksThenQueuedNeverRings()
+    public async Task TheNodesMergeWaitingForChecksThenQueuedNeverRings()
     {
-        AutopilotOn();
+        NodeAdvances();
         _github.Checks = ChoiceStatus.Pending;
         var (flight, _) = await Passed("40");
         MergeCards().ShouldHaveSingleItem().Bin.ShouldBe(CardBin.ForYou);
@@ -49,11 +46,11 @@ public sealed class AutopilotMergeCardTests : ReviewTestsBase
 
     [Fact]
     [Trait("Category", "Slow")]
-    public async Task OnAutopilotAFlightWithALegStillFlyingIsNotMergedNorRungAndMergesOnceTheLegLands()
+    public async Task AFlightWithALegStillFlyingIsNotMergedNorRungAndMergesOnceTheLegLands()
     {
-        // PDF446 and PIL841, 2026-11-07: the review passed while a review-notes leg still flew, the autopilot asked for the merge, the
+        // PDF446 and PIL841, 2026-11-07: the review passed while a review-notes leg still flew, the node asked for the merge, the
         // merge refused it ("has legs not done: review-notes") and a ring offered "Merge once more". The leg is the merge's own wait.
-        AutopilotOn();
+        NodeAdvances();
         _github.Checks = ChoiceStatus.Passing;
         var (flight, _) = await Passed("44");
         var notes = _state.Legs(flight.Code).Single() with { Name = "review-notes", State = LegState.Flying };
@@ -63,21 +60,21 @@ public sealed class AutopilotMergeCardTests : ReviewTestsBase
         await checks.LookAsync(Ct);
 
         _state.Merges().ShouldBeEmpty();
-        _state.Cards().ShouldNotContain(c => c.Kind == PrChecks.AutopilotMergeRefused);
+        _state.Cards().ShouldNotContain(c => c.Kind == PrChecks.NodeMergeRefused);
 
         // The leg lands: the same head is asked now, as it was never marked as tried.
         _state.PutLeg(notes with { State = LegState.Done });
         await checks.LookAsync(Ct);
 
         _state.Merges().ShouldNotBeEmpty();
-        _state.Cards().ShouldNotContain(c => c.Kind == PrChecks.AutopilotMergeRefused);
+        _state.Cards().ShouldNotContain(c => c.Kind == PrChecks.NodeMergeRefused);
     }
 
     [Fact]
     [Trait("Category", "Slow")]
     public async Task AMergeGitHubAnswersWithAlreadyInTheQueueEndsQueuedAndRingsNothing()
     {
-        AutopilotOn();
+        NodeAdvances();
         _github.Checks = ChoiceStatus.Passing;
         var (flight, _) = await Passed("43");
         _github.MergeAnswers = "gh: Pull request is already in the queue";
@@ -86,14 +83,14 @@ public sealed class AutopilotMergeCardTests : ReviewTestsBase
 
         result.Ok.ShouldBeTrue(result.Error);
         result.Way.ShouldBe(MergeWays.Queued);
-        Open().ShouldNotContain(c => c.Kind == LegCommander.MergeFailed || c.Kind == PrChecks.AutopilotMergeRefused || c.Kind == PrChecks.MergeDropped);
+        Open().ShouldNotContain(c => c.Kind == LegCommander.MergeFailed || c.Kind == PrChecks.NodeMergeRefused || c.Kind == PrChecks.MergeDropped);
     }
 
     [Fact]
     [Trait("Category", "Slow")]
     public async Task AMergeGitHubRefusesForARealReasonStillFailsTheMerge()
     {
-        AutopilotOn();
+        NodeAdvances();
         _github.Checks = ChoiceStatus.Passing;
         var (flight, _) = await Passed("44");
         _github.MergeAnswers = "gh: Head sha didn't match expected head oid";
@@ -106,9 +103,9 @@ public sealed class AutopilotMergeCardTests : ReviewTestsBase
 
     [Fact]
     [Trait("Category", "Slow")]
-    public async Task OnAutopilotAMergeWhoseChecksFailRings()
+    public async Task TheNodesMergeWhoseChecksFailRings()
     {
-        AutopilotOn();
+        NodeAdvances();
         _github.Checks = ChoiceStatus.Pending;
         var (flight, _) = await Passed("41");
         (await Run(Verbs.Merge, $"flight/{flight.Code}", "controller", _github.Pr!.Head[..8])).Ok.ShouldBeTrue();
@@ -123,22 +120,5 @@ public sealed class AutopilotMergeCardTests : ReviewTestsBase
         var cards = MergeCards();
         cards.ShouldNotBeEmpty();
         cards.ShouldAllBe(c => c.Bin == CardBin.Ring);
-    }
-
-    [Fact]
-    [Trait("Category", "Slow")]
-    public async Task WithAutopilotOffAPendingMergeCardRingsWithItsMergeChoice()
-    {
-        _github.Checks = ChoiceStatus.Pending;
-        var (flight, _) = await Passed("42");
-        var checks = new PrChecks(_state, _github, TimeProvider.System, _flights, _legs);
-        await checks.LookAsync(Ct);
-
-        var card = MergeCards().ShouldHaveSingleItem();
-        (card.Kind, card.Bin).ShouldBe((LegCommander.PrReady, CardBin.Ring));
-        card.Choices.ShouldContain(c => c.Verb == Verbs.Merge);
-
-        (await Run(Verbs.Merge, $"flight/{flight.Code}", "controller", _github.Pr!.Head[..8])).Ok.ShouldBeTrue();
-        MergeCards().ShouldAllBe(c => c.Bin == CardBin.Ring);
     }
 }

@@ -577,7 +577,7 @@ public sealed partial class Watchtower(
 
     /// <summary>
     /// Whether the watchtower is acting on a message the person sent it: its latest message was theirs, and its session has not
-    /// gone idle since. Then what it asks for in the person's name is an assistant's ask (the autopilot rule); on its own it
+    /// gone idle since. Then what it asks for in the person's name is an assistant's ask (run at once, see <see cref="Autopilot"/>); on its own it
     /// is the lookout, who is never to do what is theirs.
     /// </summary>
     public bool ActingForPerson => _lastFromPerson && Current() is { State: SessionState.Working or SessionState.Waiting };

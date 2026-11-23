@@ -100,7 +100,7 @@ public sealed partial class FlightCommander
         // The PR merged all the same: its row leaves the Pull requests page now, as a landing's does.
         state.ForgetPullRequest(flight.Repo, number);
         state.EndMergeAsMerged(flight.Code, $"#{number} merged without the new leg, whose work goes to a new PR");
-        state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), $"#{number} merged on GitHub without the new leg", LegCommander.PrReady, LegCommander.MergeFailed, PrChecks.AutopilotMergeRefused, "not-landed");
+        state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), $"#{number} merged on GitHub without the new leg", LegCommander.PrReady, LegCommander.MergeFailed, PrChecks.NodeMergeRefused, "not-landed");
         state.RaiseCard(CardBin.ForYou, MergedUnderLegKind, Verbs.FlightTarget(flight.Code),
             $"{flight.Code}'s PR #{number} merged without the new leg",
             $"{why}. GitHub merged #{number} at {CommitRefs.Short(mergedHead)} before the merge could be taken back, so it holds none of the new leg's work: that goes to a new PR from the merged base, which opens when the legs are done (the base merged in, pushed, reviewed as any PR). {flight.Code} stays flying and is not landed.",

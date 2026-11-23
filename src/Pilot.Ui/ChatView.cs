@@ -435,8 +435,6 @@ internal sealed partial class ChatView<TSurface>(Renderer<TSurface> renderer) : 
         set => _entries.CopyText = value;
     }
 
-    /// <summary>The header's Autopilot switch, the same on every page.</summary>
-    public AutopilotSwitch? Autopilot { get; set; }
     
     /// <summary>The header's Night switch, the same on every page.</summary>
     public NightSwitch? Night { get; set; }
@@ -1060,7 +1058,7 @@ internal sealed partial class ChatView<TSurface>(Renderer<TSurface> renderer) : 
         {
             Buttons = buttons,
             Source = held.Problem ?? (CurrentLoad() is null ? "not live" : Node is { } at ? $"the conversation with {at.Name}'s watchtower" : $"held by {WatchtowerOwner}'s watchtower"),
-        }, new TopBarParts(null, null, Autopilot, About, Night, NodePills()));
+        }, new TopBarParts(null, null, About, Night, NodePills()));
 
         if (!ReferenceEquals(Interlocked.Exchange(ref _rowsEpoch, held.Epoch), held.Epoch))
         {

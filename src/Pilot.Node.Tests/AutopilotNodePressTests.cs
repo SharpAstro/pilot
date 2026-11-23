@@ -8,8 +8,8 @@ using Xunit;
 namespace Pilot.Node.Tests;
 
 /// <summary>
-/// The node's own autopilot press (pilot #1269) over an in-memory state and a fake command path: each of the three card kinds is pressed
-/// with the autopilot on and left alone with it off, and each refusal case is left to the person. No process, no wall-clock wait.
+/// The node's own press (pilot #1269) over an in-memory state and a fake command path: each of the three card kinds is pressed by
+/// the node, and each refusal case is left to the person. No process, no wall-clock wait.
 /// </summary>
 public sealed class AutopilotNodePressTests
 {
@@ -19,14 +19,13 @@ public sealed class AutopilotNodePressTests
 
     private readonly NodeState _state;
     private readonly List<CommandRequest> _ran = [];
-    private bool _autopilot = true;
     private bool _mayEndStray = true;
     private string? _whyNoFixer;
     private bool _refuse;
 
     public AutopilotNodePressTests() => _state = new NodeState(new InMemoryJournal(), new ManualTime(Began));
 
-    private NodePress Press() => new(_state, () => _autopilot, (command, _) =>
+    private NodePress Press() => new(_state, (command, _) =>
     {
         _ran.Add(command);
         return Task.FromResult(_refuse ? new CommandResult { Ok = false, Error = "refused", Verb = command.Verb, Target = command.Target, Who = "node", Seq = 1 } : new CommandResult { Ok = true, Verb = command.Verb, Target = command.Target, Who = "node", Seq = 1 });
@@ -63,7 +62,7 @@ public sealed class AutopilotNodePressTests
     {
         var command = _ran.ShouldHaveSingleItem();
         (command.Verb, command.Target, string.Join('|', command.Args), command.Who, command.Autopilot).ShouldBe((Verbs.Answer, Verbs.CardTarget(card.Id), label, "node", true));
-        var handled = _state.Cards().Single(c => c.Kind == CardKinds.AutopilotRan);
+        var handled = _state.Cards().Single(c => c.Kind == CardKinds.NodeRan);
         handled.Bin.ShouldBe(CardBin.Handled);
         var detail = handled.Detail ?? "";
         detail.ShouldContain(card.Id);
@@ -140,18 +139,6 @@ public sealed class AutopilotNodePressTests
     }
 
     [Fact]
-    public async Task WithTheAutopilotOffNothingIsPressed()
-    {
-        _autopilot = false;
-        StrayCard();
-        FixCard();
-        FoldCard();
-        (await PressedAsync()).ShouldBe(0);
-        _ran.ShouldBeEmpty();
-        _state.Cards().ShouldNotContain(c => c.Kind == CardKinds.AutopilotRan);
-    }
-
-    [Fact]
     public async Task AnAnswerTheCardRefusedIsNotRepeatedAndLeavesNoHandledCard()
     {
         _refuse = true;
@@ -160,7 +147,7 @@ public sealed class AutopilotNodePressTests
         (await press.PressAsync(CancellationToken.None)).ShouldBe(0);
         (await press.PressAsync(CancellationToken.None)).ShouldBe(0);
         _ran.Count.ShouldBe(1);
-        _state.Cards().ShouldNotContain(c => c.Kind == CardKinds.AutopilotRan);
+        _state.Cards().ShouldNotContain(c => c.Kind == CardKinds.NodeRan);
     }
 
     [Fact]
@@ -174,14 +161,14 @@ public sealed class AutopilotNodePressTests
     }
 
     [Fact]
-    public void TheNodeOwnsExactlyTheThreeKindsAndOnAutopilotTheRingJudgeNeverSeesThem()
+    public void TheNodeOwnsExactlyTheThreeKindsAndTheRingJudgeNeverSeesThem()
     {
         NodePress.Owns(StraySweep.Kind).ShouldBeTrue();
         NodePress.Owns(CardKinds.Overlap).ShouldBeTrue();
         NodePress.Owns(PrReviews.FixEndedKind).ShouldBeTrue();
         NodePress.Owns(PrReviews.FixOfferKind).ShouldBeFalse();
         var press = Press();
-        _state.NodePresses = (kind, subject, detail, choices) => _autopilot && press.WouldPress(kind, subject, detail, choices);
+        _state.NodePresses = (kind, subject, detail, choices) => press.WouldPress(kind, subject, detail, choices);
         var card = FoldCard();
         card.Bin.ShouldBe(CardBin.Ring);
     }
@@ -225,7 +212,7 @@ public sealed class AutopilotNodePressTests
     {
         // R1.6: the stale close is logged and the look goes on to press.
         var log = new StringWriter();
-        var press = new NodePress(_state, () => true, (command, _) =>
+        var press = new NodePress(_state, (command, _) =>
         {
             _ran.Add(command);
             return Task.FromResult(new CommandResult { Ok = true, Verb = command.Verb, Target = command.Target, Who = "node", Seq = 1 });
@@ -243,9 +230,9 @@ public sealed class AutopilotNodePressTests
     }
 
     [Fact]
-    public async Task ThePressRunsThroughTheRealAnswerPathAsTheNodeAndTheDecisionSaysAutopilotAndTheRulesWhy()
+    public async Task ThePressRunsThroughTheRealAnswerPathAsTheNodeAndTheDecisionSaysTheNodesRulesAndWhy()
     {
-        await using var node = await NodeHarness.StartAsync(TestContext.Current.CancellationToken, autopilotOff: false);
+        await using var node = await NodeHarness.StartAsync(TestContext.Current.CancellationToken);
         // The exact command NodePress sends (Who "node", Autopilot, Why = the rule's reason), through the real NodeCommands. The card's choice is a
         // note, which the in-memory node can run; ending a real process is StraySweep's own test.
         var card = node.State.RaiseCard(CardBin.ForYou, StraySweep.Kind, StrayKey, "Stray dotnet 4242 is still running", null,
@@ -260,7 +247,7 @@ public sealed class AutopilotNodePressTests
         result.Ok.ShouldBeTrue(result.Error);
         node.State.Cards().Single(c => c.Id == card.Id).State.ShouldBe(CardState.Closed);
         var decision = node.State.Decisions().Single(d => d.Subject == StrayKey);
-        (decision.By, decision.ByKind).ShouldBe(("node", DecisionByKinds.Autopilot));
+        (decision.By, decision.ByKind).ShouldBe(("node", DecisionByKinds.NodeRules));
         decision.Reason.ShouldContain(why);
     }
 }

@@ -20,10 +20,11 @@ public sealed class ReviewFollowUpTests : ReviewTestsBase
         await Fly(flight, "parser");
         (await Run(Verbs.OpenPr, Verbs.FlightTarget(flight.Code), "controller")).Error.ShouldBeNull();
         (await Run(Verbs.Review, Verbs.FlightTarget(flight.Code), Reviewer(flight.Code), "changes", firstReport)).Error.ShouldBeNull();
-        File.WriteAllText(Path.Combine(F(flight.Code).Worktree, "fix.txt"), "more\n");
+        File.WriteAllText(Path.Combine(F(flight.Code).Worktree, "Parser.cs"), "more\n");
         Git(F(flight.Code).Worktree, "add", ".");
         Git(F(flight.Code).Worktree, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "fix A, B and C");
-        (await Run(Verbs.StartReview, Verbs.FlightTarget(flight.Code), "controller")).Error.ShouldBeNull();
+        // The node sent the fix round itself; the worker's finish pushes and starts the second review.
+        (await Run(Verbs.FinishLeg, Verbs.LegTarget(flight.Code, "parser"), _state.Legs(flight.Code).Single().Worker!, "done", "fixed")).Error.ShouldBeNull();
         await Started(_legs, flight.Code);
         return flight.Code;
     }
@@ -64,7 +65,7 @@ public sealed class ReviewFollowUpTests : ReviewTestsBase
 
         (await Run(Verbs.Review, Verbs.FlightTarget(code), Reviewer(code), "pass",
             Answers + "\n## Not blocking\n- E could be tidier in Lexer.cs:8\n- F deserves a comment in Parser.cs:40\n")).Error.ShouldBeNull();
-        // A pass with notes holds the flight; a person clears the hold untaken, so the notes were never made.
+        // A pass with notes holds the flight; a person clears the hold without making the notes.
         // Only the person's word clears it with the notes unmade (pilot #1226): a reason, then the as-is merge.
         (await Run(Verbs.Clear, Verbs.FlightTarget(code), "me", "to merge the notes as follow-ups")).Error.ShouldBeNull();
         Task<CommandResult> AsIs() => Run(Verbs.Merge, Verbs.FlightTarget(code), "me", _github.Pr!.Head, "squash", LegCommander.MergeAsIs);

@@ -100,7 +100,7 @@ public sealed partial class PrReviews
             return;
         }
         // Nothing lands open (pilot #1107): the points its reviews left are made by a fixer (or put on the PR as one comment when none can be) before the
-        // queue or an autopilot merge. A flight's PR has its own legs; a hold (a fixer working, or none able to start) leaves no note, so a later sweep goes on.
+        // queue or the node's own merge. A flight's PR has its own legs; a hold (a fixer working, or none able to start) leaves no note, so a later sweep goes on.
         if (!FlightOwns(review))
         {
             if (await EnsureFollowUpAsync(review, cancellationToken) is not { } filed)
@@ -111,8 +111,8 @@ public sealed partial class PrReviews
         }
         if (await github.MergeQueueAsync(review.ClonePath, review.Number, cancellationToken) is null)
         {
-            // On autopilot a base with no queue is merged by the repo's method, as a flight's PR is; off, the person's Merge card.
-            if (await LandOnAutopilotAsync(review, read, cancellationToken))
+            // A base with no queue is merged by the repo's method, as a flight's PR is; a flight's own PR keeps the person's Merge card.
+            if (await LandPassedHandPrAsync(review, read, cancellationToken))
             {
                 return;
             }

@@ -18,7 +18,7 @@ public sealed class NightPagesTests
     private static NodeSummary Summary(string stream) => new()
     {
         Connected = true, Status = "live", Stream = stream, LiveSessions = 3,
-        Node = new NodeInfo { WireVersion = 1, Version = "2.0.9", MachineName = "DESKTOP-7", MachinePrefix = "SE2", ProcessId = 1, StartedAt = Live.At, DataFolder = "/d", SocketPath = "/s", Stream = stream, Autopilot = true },
+        Node = new NodeInfo { WireVersion = 1, Version = "2.0.9", MachineName = "DESKTOP-7", MachinePrefix = "SE2", ProcessId = 1, StartedAt = Live.At, DataFolder = "/d", SocketPath = "/s", Stream = stream },
     };
 
     private static FlightRow Flight(string code, FlightState state) => new()
@@ -41,8 +41,6 @@ public sealed class NightPagesTests
         using var renderer = new RgbaImageRenderer(1280, 800);
         var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
         chrome.Night.On = true;
-        chrome.Autopilot.OnToggle = _ => Task.FromResult<string?>(null);
-        chrome.Autopilot.On = true;
 
         var sessions = new SessionsScreen(SessionLine.Order(
         [

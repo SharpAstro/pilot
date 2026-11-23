@@ -402,7 +402,7 @@ public sealed class LegHoldTests2 : LegHoldTestsBase
 {
     [Fact]
     [Trait("Category", "Slow")]
-    public async Task TheAutopilotStartsNothingWhileALegHoldsAndTheNodeStartsItAfreshWhenTheFakeFeedListsTheVersion()
+    public async Task TheNodeStartsNothingWhileALegHoldsAndStartsItAfreshWhenTheFakeFeedListsTheVersion()
     {
         MakeSiblingARelease();
         _feed.Publish("Drawboard.Core", "1.2.5");

@@ -191,8 +191,6 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pilo
     /// <summary>The header's ? card: which pilot this is and where its things are; null shows no ? (a capture).</summary>
     public AboutCard? About { get; set; }
 
-    /// <summary>The header's Autopilot switch, the same on every page.</summary>
-    public AutopilotSwitch? Autopilot { get; set; }
     
     /// <summary>The header's Night switch, the same on every page.</summary>
     public NightSwitch? Night { get; set; }
@@ -774,7 +772,7 @@ internal sealed class SessionsView<TSurface>(Renderer<TSurface> renderer) : Pilo
             Source = PageHeader.SourceLine(screen.Source, screen.AsOf,
                 string.Join(" · ", new[] { screen.Account, screen.Usage is { } usage ? $"usage {usage}" : null, screen.Outside }.Where(p => p is not null))
                     is { Length: > 0 } more ? more : null),
-        }, new TopBarParts(Nodes, Play, Autopilot, About, Night));
+        }, new TopBarParts(Nodes, Play, About, Night));
 
     // The table, or the open session's transcript in its place.
     private Layout.Node Page(SessionsScreen screen)

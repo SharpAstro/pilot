@@ -18,17 +18,16 @@ public sealed partial class LegCommander
         ReviewNotStarted,
     }
 
-    /// <summary>The Handled card of a findings round the node sent itself on autopilot.</summary>
+    /// <summary>The Handled card of a findings round the node sent itself.</summary>
     public const string NodeFixRoundKind = "review-fix-round";
 
     /// <summary>
-    /// With the autopilot on, sends the flight's last leg round on the review's findings as the card's "Fix the review's findings" press
-    /// would, as the node (<see cref="LegWatch.Who"/>), and says so in a Handled line. False, with nothing sent, when the autopilot is off,
-    /// the leg is at its review go-around cap, the flight is on hold or the go-around is refused; the caller then raises the card.
+    /// Sends the flight's last leg round on the review's findings as the card's "Fix the review's findings" press would, as the node
+    /// (<see cref="LegWatch.Who"/>), and says so in a Handled line. False, with nothing sent, when the leg is at its review go-around cap, the flight is on hold or the go-around is refused; the caller then raises the card.
     /// </summary>
     private async Task<bool> TrySendFindingsRoundAsync(FlightRow flight, string changes, CancellationToken cancellationToken)
     {
-        if (!Models.Autopilot || OnHoldRefusal(flight) is not null
+        if (OnHoldRefusal(flight) is not null
             || state.Legs(flight.Code).OrderBy(l => l.Order).LastOrDefault() is not { State: LegState.Done, ReviewGoArounds: < MaxReviewGoArounds } last)
         {
             return false;
@@ -46,7 +45,7 @@ public sealed partial class LegCommander
             return false;
         }
         state.RaiseCard(CardBin.Handled, NodeFixRoundKind, Verbs.FlightTarget(flight.Code), $"{flight.Code}'s findings: the node started a fix round",
-            $"On autopilot the node had a fresh worker go around {last.Name} with the review's findings as the brief, round {last.ReviewGoArounds + 1} of at most {MaxReviewGoArounds}, as pressing \"Fix the review's findings\" would. Findings:\n{changes}");
+            $"The node had a fresh worker go around {last.Name} with the review's findings as the brief, round {last.ReviewGoArounds + 1} of at most {MaxReviewGoArounds}, as pressing \"Fix the review's findings\" would. Findings:\n{changes}");
         return true;
     }
 

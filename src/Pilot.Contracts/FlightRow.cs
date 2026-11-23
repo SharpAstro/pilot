@@ -358,8 +358,8 @@ public sealed record FlightRow
     public FlightMoveUnknown? MoveUnknown { get; init; }
 
     /// <summary>
-    /// Set while the flight circles in a holding pattern: its review passed with not blocking notes, and the watchtower is making
-    /// the small fixes. Autopilot's merge and the PR-ready card's Merge are held until the watchtower (or the person) clears it
+    /// Set while the flight circles in a holding pattern: its review passed with not blocking notes, and the review-notes leg is making
+    /// the small fixes. The node's merge and the PR-ready card's Merge are held until the watchtower (or the person) clears it
     /// (<c>flight clear</c>) or pushes (<c>flight pr</c>). Null otherwise. Optional, so the wire version does not move.
     /// </summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
@@ -367,7 +367,7 @@ public sealed record FlightRow
 
     /// <summary>
     /// The owner's hold (<c>flight ground</c>, #771): while it stands the node starts nothing for the flight and takes no outward
-    /// step (no leg, worker, planner, reviewer, go-around, base merge, push, PR open or merge), from the autopilot, the sweeps, the
+    /// step (no leg, worker, planner, reviewer, go-around, base merge, push, PR open or merge), from the node's own press, the sweeps, the
     /// watchtower or a card's button alike, until <c>flight unground</c>. Not <see cref="Holding"/> (the review-notes holding pattern, which
     /// only holds the merge) and not <see cref="LegRow.Hold"/> (a leg's wait for a package). Null while the flight is not held.
     /// Optional, so the wire version does not move.
@@ -484,10 +484,8 @@ public sealed record FlightHolding
     public string? By { get; init; }
 
     /// <summary>
-    /// When the watchtower took the hold: it committed in the plane after the review's head, or said <c>flight hold</c>. Null while
-    /// nobody has: the node releases such a hold after a short grace (or at once with no live watchtower) and the flight merges at
-    /// the reviewed head, its notes left on a For-you card. Only a taken hold keeps the merge held, until it is cleared or rings
-    /// after the holding bound. Optional, so the wire version does not move.
+    /// Never set any more (PIL1271: the node plans the review-notes leg and no longer waits for a watchtower to take the hold). Kept
+    /// so a stored row that has it still loads. Optional, so the wire version does not move.
     /// </summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public DateTimeOffset? TakenAt { get; init; }
