@@ -107,11 +107,20 @@ public sealed partial class NodeState
     {
         var json = Serialize(delta);
         _journal.Append(delta, json);
+        var closedNow = delta is CardChangedEvent { Card.State: CardState.Closed } closing && _cards.TryGetValue(closing.Card.Id, out var before) && before.State == CardState.Open ? closing.Card : null;
         ApplyToState(delta);
         _seq = delta.Seq;
         Hold(delta.Seq, json);
         WriteToSinks(json);
         ReportSnapshotOutcome();
+        if (closedNow is not null && _deferredCloses is { } deferred)
+        {
+            deferred.Add(closedNow);
+        }
+        else if (closedNow is not null)
+        {
+            CloseCardsAboutClosed(closedNow);
+        }
     }
 
     /// <summary>Writes one serialized event to every live client; one that cannot keep up is dropped and told. Under the lock.</summary>

@@ -38,15 +38,15 @@ public sealed partial class NodeState
     /// carries a part that changes for one cause (an age, a count), and put in it what makes a new cause (a PR's head, a go-around's count).
     /// </param>
     /// <param name="askedBy">The assistant's session an ask card is about (<see cref="CardKinds.AssistantAsk"/>), and <paramref name="why"/> the message it acted on.</param>
-    public CardRow RaiseCard(CardBin bin, string kind, string subject, string title, string? detail = null, IReadOnlyList<CardChoice>? choices = null, string? link = null, string? askedBy = null, string? why = null, string? summary = null, string? attachment = null, string? attachmentExt = null, string? cause = null)
+    public CardRow RaiseCard(CardBin bin, string kind, string subject, string title, string? detail = null, IReadOnlyList<CardChoice>? choices = null, string? link = null, string? askedBy = null, string? why = null, string? summary = null, string? attachment = null, string? attachmentExt = null, string? cause = null, string? aboutCard = null)
     {
         // With the brain to ask (PIL855), a card that would ring is first filed in For you, silent, and rings only on the brain's verdict
         // (RingJudge): the old path, a ring at once, is what runs with no judge, and what the judge itself falls back to.
         if (bin != CardBin.Ring || RingJudge is not { CanJudge: true } judge || !RingJudge.Wants(kind, choices) || NodePresses?.Invoke(kind, subject, detail, choices) == true)
         {
-            return RaiseCardCore(bin, kind, subject, title, detail, choices, link, askedBy, why, summary, attachment, attachmentExt, cause, out _);
+            return RaiseCardCore(bin, kind, subject, title, detail, choices, link, askedBy, why, summary, attachment, attachmentExt, cause, aboutCard, out _);
         }
-        var card = RaiseCardCore(CardBin.ForYou, kind, subject, title, detail, choices, link, askedBy, why, summary, attachment, attachmentExt, cause, out var created);
+        var card = RaiseCardCore(CardBin.ForYou, kind, subject, title, detail, choices, link, askedBy, why, summary, attachment, attachmentExt, cause, aboutCard, out var created);
         // Only a card this call made: an open one of the same kind and subject is returned as it is, and is not judged again.
         if (created)
         {
@@ -70,7 +70,7 @@ public sealed partial class NodeState
     /// </summary>
     public Func<string, string, string?, IReadOnlyList<CardChoice>?, bool>? NodePresses { get; set; }
 
-    private CardRow RaiseCardCore(CardBin bin, string kind, string subject, string title, string? detail, IReadOnlyList<CardChoice>? choices, string? link, string? askedBy, string? why, string? summary, string? attachment, string? attachmentExt, string? cause, out bool created)
+    private CardRow RaiseCardCore(CardBin bin, string kind, string subject, string title, string? detail, IReadOnlyList<CardChoice>? choices, string? link, string? askedBy, string? why, string? summary, string? attachment, string? attachmentExt, string? cause, string? aboutCard, out bool created)
     {
         created = false;
         lock (_gate)
@@ -115,11 +115,22 @@ public sealed partial class NodeState
             }
             var number = _cards.Count == 0 ? 1 : _cards.Keys.Max(k => int.TryParse(k.AsSpan(1), out var n) ? n : 0) + 1;
             // One PR, one merge card: a pr-ready card replaces an older open merge card of the same subject, however it got there.
+            // The cards about a replaced card close once the new card exists (_deferredCloses): a Handled line raised in between would take
+            // the id this card is about to take.
+            var replaced = new List<CardRow>();
             if (bin != CardBin.Handled && kind == LegCommander.PrReady)
             {
-                foreach (var older in _cards.Values.Where(c => c.State == CardState.Open && IsMergeKind(c.Kind) && c.Subject == subject).ToList())
+                _deferredCloses = replaced;
+                try
                 {
-                    Publish(new CardChangedEvent { Seq = _seq + 1, At = now, Card = older with { State = CardState.Closed, Outcome = $"replaced by c{number}", ClosedBy = "node", ClosedAt = now, Answering = null } });
+                    foreach (var older in _cards.Values.Where(c => c.State == CardState.Open && IsMergeKind(c.Kind) && c.Subject == subject).ToList())
+                    {
+                        Publish(new CardChangedEvent { Seq = _seq + 1, At = now, Card = older with { State = CardState.Closed, Outcome = $"replaced by c{number}", ClosedBy = "node", ClosedAt = now, Answering = null } });
+                    }
+                }
+                finally
+                {
+                    _deferredCloses = null;
                 }
             }
             var card = new CardRow
@@ -139,6 +150,7 @@ public sealed partial class NodeState
                 // The key a dismissal is remembered by, fixed when the card is raised: a later rewording of its title (the brain's, PIL855)
                 // cannot move it, so a dismissed card raised again for the same cause stays dismissed (#853).
                 Cause = key,
+                AboutCard = aboutCard,
                 Attachment = attachment,
                 AttachmentExt = attachment is null ? null : attachmentExt,
                 At = now,
@@ -150,7 +162,44 @@ public sealed partial class NodeState
             card = card with { Commits = CommitsOf(card, link) };
             Publish(new CardAddedEvent { Seq = _seq + 1, At = now, Card = card });
             created = true;
+            foreach (var done in replaced)
+            {
+                CloseCardsAboutClosed(done);
+            }
             return card;
+        }
+    }
+
+    /// <summary>Cards closed while a raise is still to add its own card: the cards about them close after it (PIL1290). Under the lock.</summary>
+    private List<CardRow>? _deferredCloses;
+
+    /// <summary>True when the card with <paramref name="id"/> is open (PIL1290: what a raise that names a card links to).</summary>
+    public bool IsCardOpen(string id)
+    {
+        lock (_gate)
+        {
+            return _cards.TryGetValue(id, out var card) && card.State == CardState.Open;
+        }
+    }
+
+    /// <summary>
+    /// PIL1290: a card closed just now closes the open cards about it (their <see cref="CardRow.AboutCard"/>), each with an outcome naming it
+    /// and what became of it, and a Handled line says so. Called from <see cref="Publish"/>, never from a journal replay. Each close is
+    /// itself a published close, so a chain of cards unwinds and a cycle ends: a card closes once.
+    /// </summary>
+    private void CloseCardsAboutClosed(CardRow closed)
+    {
+        foreach (var about in _cards.Values.Where(c => c.State == CardState.Open && c.AboutCard == closed.Id && c.Id != closed.Id).ToList())
+        {
+            if (_cards[about.Id].State != CardState.Open)
+            {
+                continue;
+            }
+            var now = _time.GetUtcNow();
+            var outcome = $"{closed.Id} closed: {closed.Outcome ?? "closed"}";
+            Publish(new CardChangedEvent { Seq = _seq + 1, At = now, Card = about with { State = CardState.Closed, Outcome = outcome, ClosedBy = "node", ClosedAt = now, Answering = null } });
+            RaiseCardCore(CardBin.Handled, CardKinds.NodeRan, Verbs.CardTarget(about.Id), $"{about.Id} closed with {closed.Id}: {closed.Outcome ?? "closed"}",
+                $"{about.Id} ({about.Title}) asked about {closed.Id} ({closed.Title}), which was closed: {closed.Outcome ?? "closed"}.", null, null, null, null, null, null, null, null, null, out _);
         }
     }
 
@@ -371,6 +420,8 @@ public sealed partial class NodeState
             }
             // An open card may move between Ring and For-you; never to or from Handled, which is born closed.
             var nextBin = bin is { } b && b != CardBin.Handled && card.Bin != CardBin.Handled ? b : card.Bin;
+            // PIL1290: the words a ring on card/<id> put on the card stay through a rewrite of its detail that does not carry them itself.
+            detail = KeepRungWords(card.Detail, detail);
             var next = card with { Title = title, Detail = detail, Choices = Available(choices), Link = link, Kind = kind ?? card.Kind, Bin = nextBin };
             // A card that says something new says it in new words: the summary follows the title and kind, as the raiser wrote it or the table has it.
             next = next with { Summary = summary is null && next.Title == card.Title && next.Kind == card.Kind ? card.Summary : CardSummaries.Resolve(summary, detail, next.Kind, next.Subject, next.Title, next.Choices) };
@@ -442,7 +493,11 @@ public sealed partial class NodeState
 
     private static bool IsMergeKind(string kind) => kind is LegCommander.PrReady or LegCommander.MergeFailed;
 
-    /// <summary>Opens a closed card again, as it was before: an answer whose choice was refused.</summary>
+    /// <summary>
+    /// Opens a closed card again, as it was before: an answer whose choice was refused. PIL1290: the cards about it that its close closed, and those
+    /// that closed with them, as the close unwinds chains (outcome <c>&lt;id&gt; closed: ...</c>, by the node) open again too, since the answer they were closed by never stood, and a Handled
+    /// line says so beside the one that said they closed.
+    /// </summary>
     public void ReopenCard(string id)
     {
         lock (_gate)
@@ -454,9 +509,82 @@ public sealed partial class NodeState
                 {
                     return;
                 }
-                Publish(new CardChangedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Card = card with { State = CardState.Open, Outcome = null, ClosedBy = null, ClosedAt = null, Answering = null } });
+                var now = _time.GetUtcNow();
+                Publish(new CardChangedEvent { Seq = _seq + 1, At = now, Card = card with { State = CardState.Open, Outcome = null, ClosedBy = null, ClosedAt = null, Answering = null } });
+                ReopenCardsAbout(card, now);
             }
         }
+    }
+
+    // Unwinds the cascade the close of `closed` ran, a chain as the close does: each card it closed opens, then those that closed with that one.
+    // A card opens once (only a closed one is read), so a cycle ends.
+    private void ReopenCardsAbout(CardRow closed, DateTimeOffset now)
+    {
+        var cascade = $"{closed.Id} closed: ";
+        foreach (var about in _cards.Values.Where(c => c.State == CardState.Closed && c.AboutCard == closed.Id && c.ClosedBy == "node"
+            && c.Outcome is { } o && o.StartsWith(cascade, StringComparison.Ordinal)).ToList())
+        {
+            Publish(new CardChangedEvent { Seq = _seq + 1, At = now, Card = about with { State = CardState.Open, Outcome = null, ClosedBy = null, ClosedAt = null, Answering = null } });
+            RaiseCardCore(CardBin.Handled, CardKinds.NodeRan, Verbs.CardTarget(about.Id), $"{about.Id} open again with {closed.Id}",
+                $"{about.Id} ({about.Title}) is open again: the answer on {closed.Id} ({closed.Title}) that closed it was refused.", null, null, null, null, null, null, null, null, null, out _);
+            ReopenCardsAbout(about, now);
+        }
+    }
+
+    /// <summary>What <see cref="PutWordsOnCard"/> did: the words went on, nothing changed (the same words again), or the card is not open.</summary>
+    internal enum RungWordsResult { Put, Unchanged, Closed }
+
+    /// <summary>Puts a ring's words on card <paramref name="id"/> (one paragraph per sender), moving it to <paramref name="bin"/> when given. Closed when the card is not open, as when it closed after the caller looked.</summary>
+    internal RungWordsResult PutWordsOnCard(string id, string who, string title, string detail, CardBin? bin)
+    {
+        lock (_gate)
+        {
+            if (!_cards.TryGetValue(id, out var card) || card.State != CardState.Open)
+            {
+                return RungWordsResult.Closed;
+            }
+            var merged = WithRungWords(card.Detail, who, title, detail);
+            return UpdateCard(id, card.Title, merged, card.Choices, card.Link, bin: bin) ? RungWordsResult.Put : RungWordsResult.Unchanged;
+        }
+    }
+
+    /// <summary>The longest a ring's words on a card may be (PIL1290): a raise on card/&lt;id&gt; is a nudge, not a report.</summary>
+    internal const int RungWordsCap = 600;
+
+    // A paragraph a ring on card/<id> put on a card: "From <who>: <title>. <detail>".
+    [System.Text.RegularExpressions.GeneratedRegex(@"^From [^\s:]+: ")]
+    private static partial System.Text.RegularExpressions.Regex RungWordsLead();
+
+    private const string ParagraphBreak = "\n\n";
+
+    private static IEnumerable<string> Paragraphs(string? detail) =>
+        string.IsNullOrWhiteSpace(detail) ? [] : detail.Split(ParagraphBreak, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+    /// <summary>
+    /// PIL1290: <paramref name="detail"/> with <paramref name="who"/>'s words from a ring on the card in place of any they said before, so
+    /// rings from one sender keep one paragraph on the card rather than piling up; the words are cut to <see cref="RungWordsCap"/>.
+    /// </summary>
+    internal static string WithRungWords(string? detail, string who, string title, string said)
+    {
+        var words = $"From {who}: {title}." + (said.Length > 0 ? " " + said : "");
+        if (words.Length > RungWordsCap)
+        {
+            words = words[..(RungWordsCap - 3)].TrimEnd() + "...";
+        }
+        var kept = Paragraphs(detail).Where(p => !p.StartsWith($"From {who}: ", StringComparison.Ordinal));
+        return string.Join(ParagraphBreak, kept.Append(words));
+    }
+
+    // A rewrite of a card's detail that carries none of the ring words the card holds keeps them, after its own text.
+    private static string? KeepRungWords(string? before, string? after)
+    {
+        var rung = Paragraphs(before).Where(p => RungWordsLead().IsMatch(p)).ToList();
+        if (rung.Count == 0 || Paragraphs(after).Any(p => RungWordsLead().IsMatch(p)))
+        {
+            return after;
+        }
+        var rungText = string.Join(ParagraphBreak, rung);
+        return string.IsNullOrWhiteSpace(after) ? rungText : after.TrimEnd() + ParagraphBreak + rungText;
     }
 
     /// <summary>
@@ -485,10 +613,15 @@ public sealed partial class NodeState
     {
         lock (_gate)
         {
-            foreach (var card in _cards.Values.Where(c => c.State == CardState.Open
+            foreach (var listed in _cards.Values.Where(c => c.State == CardState.Open
                 && (c.Subject == subject || c.Subject.StartsWith(subject + "/", StringComparison.Ordinal))
                 && (kinds.Length == 0 || kinds.Contains(c.Kind))).ToList())
             {
+                // Re-read: closing an earlier card may have closed this one (a ring about it) already, with its own outcome.
+                if (_cards[listed.Id] is not { State: CardState.Open } card)
+                {
+                    continue;
+                }
                 var now = _time.GetUtcNow();
                 Publish(new CardChangedEvent { Seq = _seq + 1, At = now, Card = card with { State = CardState.Closed, Outcome = outcome, ClosedBy = closedBy, ClosedAt = now, Answering = null } });
             }
