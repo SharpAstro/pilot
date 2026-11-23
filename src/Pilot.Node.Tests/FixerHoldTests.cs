@@ -91,7 +91,7 @@ public sealed class FixerHoldTests : PrFixTestsBase
         _github.IssueComments.ShouldBeEmpty("no 'fix rounds are spent' comment while a fixer works");
         _github.Merged.ShouldBeEmpty();
         (Row.QueueNote, Row.QueuedAt).ShouldBe((null, null));
-        Row.FollowUpPoints.ShouldBeNullOrEmpty();
+        (Row.FollowUpPoints ?? []).ShouldBeEmpty();
 
         // The fixer ends: the comment is posted once and the PR is queued.
         _state.PutSession(LiveFixer(SessionState.Ended));
