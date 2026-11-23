@@ -206,8 +206,13 @@ public sealed class StaleFlightTests : IAsyncDisposable
             view.Render(pages.Flights, new RectF32(0, 0, 1900, 900));
             var regions = new List<ClickableRegion>();
             view.CollectPaintedRegions(regions);
-            texts = [.. regions.Where(r => r.Result is HitResult.ButtonHit { Action: var a } && IsDestination(a)).Select(r => r.Tooltip!)];
-            texts.Count.ShouldBe(3);
+            // Keyed by flight: a PR chip can be painted more than once on the page, so one hover is read per flight's code.
+            var byFlight = regions
+                .Where(r => r.Result is HitResult.ButtonHit { Action: var a } && IsDestination(a) && r.Tooltip is not null)
+                .GroupBy(r => ((HitResult.ButtonHit)r.Result!).Action.Split(':')[1])
+                .ToDictionary(g => g.Key, g => g.First(r => r.Tooltip!.Length > 0).Tooltip!);
+            byFlight.Keys.Order().ShouldBe(["ORB2", "ORB3", "TIA1"]);
+            texts = [.. byFlight.Values];
         }
 
         // Two stale flights: each says it, in words; TIA1's own says nothing of the kind.
