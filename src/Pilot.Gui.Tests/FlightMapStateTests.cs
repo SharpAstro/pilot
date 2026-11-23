@@ -114,13 +114,13 @@ public sealed class FlightMapStateTests
         using var _ = renderer;
 
         var since = $"CI red since {Live.At.ToLocalTime():HH:mm}";
-        Hit(view, "map:A:destination").Tooltip.ShouldNotBeNull().ShouldContain(since + ": the PR fixer or a go-around fixes it.");
-        var cappedTip = Hit(view, "map:B:destination").Tooltip.ShouldNotBeNull();
+        Hit(view, "flight:A:pr", "flight:A:pr-chip", "map:A:destination").Tooltip.ShouldNotBeNull().ShouldContain(since + ": the PR fixer or a go-around fixes it.");
+        var cappedTip = Hit(view, "flight:B:pr", "flight:B:pr-chip", "map:B:destination").Tooltip.ShouldNotBeNull();
         cappedTip.ShouldContain(since);
         cappedTip.ShouldContain("CI budget spent");
         cappedTip.ShouldNotContain("the PR fixer");
-        Hit(view, "map:C:destination").Tooltip.ShouldNotBeNull().ShouldNotContain("CI red");
-        Hit(view, "map:D:destination").Tooltip.ShouldNotBeNull().ShouldNotContain("CI red");
+        Hit(view, "flight:C:pr", "flight:C:pr-chip", "map:C:destination").Tooltip.ShouldNotBeNull().ShouldNotContain("CI red");
+        Hit(view, "flight:D:pr", "flight:D:pr-chip", "map:D:destination").Tooltip.ShouldNotBeNull().ShouldNotContain("CI red");
     }
 
     [Theory]
