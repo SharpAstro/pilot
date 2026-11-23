@@ -298,6 +298,7 @@ public sealed class AdmissionGate(NodeState state, Func<RoleModels> models, stri
             Counted = counted,
             Priority = [.. state.Flights().Where(f => f.State != FlightState.Landed && IsPriority(f)).Select(f => f.Code).Order(StringComparer.Ordinal)],
             PeersNotCounted = FleetAdmission.Note(view),
+            PeersAway = [.. view.Away],
             WaitingOnPerson = WaitingOnPerson(),
         });
     }

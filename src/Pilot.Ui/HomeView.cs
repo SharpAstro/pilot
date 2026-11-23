@@ -378,7 +378,7 @@ internal sealed class HomeView<TSurface>(Renderer<TSurface> renderer) : PilotWid
         blocks.Add(Layout.Builder.Text("Queue", 13f, Dim).Selectable().RowH(22f));
         if (screen.OpusLine is { } opus)
         {
-            blocks.Add(Layout.Builder.Text(opus, 13f, screen.Flights.Admission?.PeersNotCounted is null ? Palette.Current.Body : Ring).WithTooltip(screen.Flights.Admission?.PeersNotCounted is { } why ? $"{opus}\n{why}" : opus).Selectable().RowH(22f));
+            blocks.Add(Layout.Builder.Text(opus, 13f, screen.Flights.Admission?.PeersNotCounted is null ? Palette.Current.Body : Ring).WithTooltip(string.Join("\n", new[] { opus, screen.Flights.Admission?.PeersNotCounted }.Concat(screen.Flights.Admission?.PeersAway ?? []).Where(l => l is not null))).Selectable().RowH(22f));
         }
         if (queue.Count == 0)
         {
