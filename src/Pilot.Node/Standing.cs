@@ -75,20 +75,23 @@ public sealed record Standing(StandingKind Kind, string? Flight = null, string? 
 
     /// <summary>
     /// What the lookout also does while autopilot is on (PIL1285, the standing goal): an issue and a flight made on its own account, more CI
-    /// budget for a flight (bounded per day, see <see cref="NodeSettings.AutopilotCiGrantsKey"/>), a go-around and a rerun of checks. Each
+    /// budget for a flight (bounded per day, see <see cref="NodeSettings.AutopilotCiGrantsKey"/>) and a go-around (its rerun of checks is in <see cref="LookoutOnAutopilot"/>, as ever). Each
     /// runs as the person's assistant would, needs a <c>--why</c> naming evidence, and leaves a Handled line. With autopilot off the lookout is
     /// refused them as ever; an override (PIL1229) and an ask card stay the person's either way.
     /// </summary>
     public static readonly IReadOnlySet<string> LookoutOnGoal = new HashSet<string>(StringComparer.Ordinal)
     {
-        Verbs.CreateIssue, Verbs.CreateFlight, Verbs.CiBudget, Verbs.GoAround, Verbs.RerunChecks,
+        Verbs.CreateIssue, Verbs.CreateFlight, Verbs.CiBudget, Verbs.GoAround,
     };
 
     /// <summary>
-    /// What an investigator runs as the person's assistant would (PIL1285): the lookout's goal verbs (<see cref="LookoutOnGoal"/>), each on a
+    /// What an investigator runs as the person's assistant would (PIL1285): an issue, a flight, a go-around and a rerun of checks (no CI budget: that answer is the person's or the watchtower's), each on a
     /// <c>--why</c> naming evidence and with a Handled line. Its raises (Handled and For-you lines) and its outcome need no such lift.
     /// </summary>
-    public static readonly IReadOnlySet<string> InvestigatorActs = LookoutOnGoal;
+    public static readonly IReadOnlySet<string> InvestigatorActs = new HashSet<string>(StringComparer.Ordinal)
+    {
+        Verbs.CreateIssue, Verbs.CreateFlight, Verbs.GoAround, Verbs.RerunChecks,
+    };
 
     private static readonly System.Text.RegularExpressions.Regex EvidencePattern = new(
         @"(?<![\w])[jcr]\d{2,}\b|#\d+|\bruns?[ /]+\d{4,}|(?<![\w])(?=[0-9a-f]*\d)(?=[0-9a-f]*[a-f])[0-9a-f]{7,40}\b",
@@ -238,7 +241,7 @@ public sealed record Standing(StandingKind Kind, string? Flight = null, string? 
                 return $"an investigator rings once, through its outcome: {Verbs.Investigated} <subject> ring <what was tried; what is needed>";
             // A goal verb still under this standing here was not lifted (the switch is off): refused with the rest.
             case StandingKind.Investigator when LookoutNever.Contains(command.Verb) && command.Verb != Verbs.Investigated || InvestigatorActs.Contains(command.Verb)
-                || command.Verb is Verbs.Answer or Verbs.Dismiss or Verbs.Stop or Verbs.EndSession or Verbs.Set or Verbs.Tell:
+                || command.Verb is Verbs.CiBudget or Verbs.Answer or Verbs.Dismiss or Verbs.Stop or Verbs.EndSession or Verbs.Set or Verbs.Tell:
                 return $"{command.Verb} is not an investigator's: it files an issue and a flight, acts on evidence, or rings once through {Verbs.Investigated}";
             case StandingKind.Lookout when yourOnly && !AnswersRing(command, state) || LookoutNever.Contains(command.Verb):
                 return $"{command.Verb} is the controller's, not the watchtower's: leave its card open for them";

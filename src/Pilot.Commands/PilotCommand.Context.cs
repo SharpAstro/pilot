@@ -156,11 +156,11 @@ public static partial class PilotCommand
         // A leg command names its leg with --leg, or is run from the plane and finds it.
         private readonly Option<string?> leg = new Option<string?>("--leg") { Description = "The leg, <code>/<leg>; inside a plane, its flying leg" };
 
-        async Task<int> OnLeg(ParseResult parseResult, NodeClient client, string verb, Func<string, string[]> args, CancellationToken ct)
+        async Task<int> OnLeg(ParseResult parseResult, NodeClient client, string verb, Func<string, string[]> args, CancellationToken ct, string? why = null)
         {
             var named = parseResult.GetValue(leg);
             var (target, sender) = named is not null ? (Verbs.FlightTargetPrefix + named, who) : LegHere(await SnapshotAsync(client, ct), cwd, who, verb == Verbs.ValidateLeg);
-            return await Send(client, verb, target, args(target), sender, ct);
+            return await Send(client, verb, target, args(target), sender, ct, why);
         }
     }
 }

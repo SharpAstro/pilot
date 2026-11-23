@@ -41,7 +41,7 @@ public static partial class Briefs
         text.AppendLine($"   `{run} issue create \"<what is wrong>\" --body \"<the cause and the evidence>\" --repo <repo> --why \"<evidence>\"`");
         text.AppendLine($"   `{run} flight create <issue number> --repo <repo> --why \"<evidence>\"`");
         text.AppendLine($"   `{run} {Verbs.Investigated} {key} {Pilot.Node.Flights.Investigator.IssueOutcome} \"<issue #N and flight CODE: the cause, in a line>\"`");
-        text.AppendLine("2. **An action**: one thing the node lets you do settles it (a go-around, a rerun of checks, more CI budget, each with `--why`).");
+        text.AppendLine("2. **An action**: one thing the node lets you do settles it (a go-around, a rerun of checks, each with `--why`).");
         text.AppendLine("   Do it, then report it with its reason:");
         text.AppendLine($"   `{run} {Verbs.Investigated} {key} {Pilot.Node.Flights.Investigator.ActionOutcome} \"<what you did and why, naming the evidence>\"`");
         text.AppendLine("3. **One ring to the person**: only they can settle it (a merge, a setting, a decision of theirs, money, an outside account).");

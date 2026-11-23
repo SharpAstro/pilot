@@ -57,7 +57,24 @@ public sealed partial class Watchtower(
     public RoleModels Models { get; set; } = RoleModels.Unset;
 
     /// <summary>What wakes it on autopilot besides a new card (PIL1285): a stalled flight, a peer going or coming, a repeat; null for one built without.</summary>
-    public AutopilotWakes? Wakes { get; set; }
+    public AutopilotWakes? Wakes
+    {
+        get;
+        set
+        {
+            field = value;
+            if (value is not null)
+            {
+                value.Told = id =>
+                {
+                    lock (_tellsLock)
+                    {
+                        return Tells().ContainsKey(id);
+                    }
+                };
+            }
+        }
+    }
 
     /// <summary>What holds a start while the 5-hour window is spent: the node's one gate, shared with the leg sweep and the compactor.</summary>
     public StartGate Gate { get; set; } = new(state, time);
@@ -1464,12 +1481,15 @@ public sealed partial class Watchtower(
     internal List<CardRow> Untold()
     {
         Wakes?.Look();
+        // A second occurrence is said with its find-the-cause task, not as a fresh card: it is left out only while that wake is pending
+        // (said, it is marked told with it), so a say that fails or a restart before it never hides a card for good.
+        var covered = Wakes?.Covered;
         var now = time.GetUtcNow();
         lock (_tellsLock)
         {
             var tells = Tells();
             return state.Cards(openOnly: true)
-                .Where(c => c.Bin != CardBin.Handled && c.Kind != RaisedKind && c.Subject != Verbs.WatchtowerTarget && Wakes?.Repeats.IsSecond(c.Id) != true
+                .Where(c => c.Bin != CardBin.Handled && c.Kind != RaisedKind && c.Subject != Verbs.WatchtowerTarget && covered?.Contains(c.Id) != true
                     && (!tells.TryGetValue(c.Id, out var told) || c.Bin == CardBin.Ring && now - told.At >= RetellAfter && !told.Retold))
                 .OrderBy(c => c.At)
                 .ToList();
@@ -1524,6 +1544,11 @@ public sealed partial class Watchtower(
                 foreach (var card in fresh)
                 {
                     tells[card.Id] = tells.TryGetValue(card.Id, out var was) ? (was.At, true) : (now, false);
+                }
+                // The cards a wake was about (a repeat's task and its second card) are told with it.
+                foreach (var id in wakes.SelectMany(w => w.Cards ?? []))
+                {
+                    tells.TryAdd(id, (now, false));
                 }
                 SaveTells();
             }

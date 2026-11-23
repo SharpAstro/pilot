@@ -104,6 +104,26 @@ public sealed partial class Investigator(NodeState state, IWorkerLauncher worker
     /// <summary>What a ringing card's detail starts with: the run's words.</summary>
     public const string TriedPrefix = "What was tried and what is needed (investigator): ";
 
+    /// <summary>The Handled line of a run that started: it counts toward the day's bound, and its <c>seen:</c> lines are the triggers it took, kept past a restart.</summary>
+    public const string StartKind = "investigation-start";
+
+    /// <summary>The Handled line of a trigger that joined a live run, with its <c>seen:</c> line.</summary>
+    public const string JoinKind = "investigation-join";
+
+    private const string SeenLead = "seen: ";
+
+    /// <summary>
+    /// What the detail of a card waiting for an investigator starts with. It marks the card as held, so a node that restarted while a run
+    /// was live still finds it and rings it (<see cref="Look"/>); a decision takes the words off.
+    /// </summary>
+    public const string HeldLead = "Held for an investigator (it rings only if one decides it must): ";
+
+    /// <summary>How long a held card may wait with no run holding it before a look rings it (a card just raised is between its raise and its hold).</summary>
+    private static readonly TimeSpan HeldGrace = TimeSpan.FromMinutes(2);
+
+    /// <summary>The detail without <see cref="HeldLead"/>.</summary>
+    public static string Unheld(string? detail) => detail is not null && detail.StartsWith(HeldLead, StringComparison.Ordinal) ? detail[HeldLead.Length..] : detail ?? "";
+
     /// <summary>The machine's code, lower case, that starts every session name.</summary>
     public string Machine { get; init; } = "node";
 
@@ -130,6 +150,8 @@ public sealed partial class Investigator(NodeState state, IWorkerLauncher worker
     private readonly List<DateTimeOffset> _starts = [];
     private readonly HashSet<string> _seen = new(StringComparer.Ordinal);
     private readonly List<Task> _running = [];
+    private bool _seeded;
+    private bool _recovered;
 
     /// <summary>The live runs.</summary>
     public IReadOnlyList<InvestigationRun> Runs
@@ -160,7 +182,30 @@ public sealed partial class Investigator(NodeState state, IWorkerLauncher worker
             var today = Day(time.GetUtcNow());
             lock (_lock)
             {
+                Seed();
                 return _starts.Count(s => Day(s) == today);
+            }
+        }
+    }
+
+    // What an earlier node left (its start and join lines) is what this one knows of the day's starts and the triggers taken: a restart
+    // neither starts the day's count again from 0 nor takes a find-the-cause task or a stale flight a second time. Called with the lock held.
+    private void Seed()
+    {
+        if (_seeded)
+        {
+            return;
+        }
+        _seeded = true;
+        foreach (var card in state.Cards().Where(c => c.Kind is StartKind or JoinKind))
+        {
+            if (card.Kind == StartKind)
+            {
+                _starts.Add(card.At);
+            }
+            foreach (var line in (card.Detail ?? "").Split('\n').Where(l => l.StartsWith(SeenLead, StringComparison.Ordinal)))
+            {
+                _seen.Add(line[SeenLead.Length..].Trim());
             }
         }
     }
@@ -179,8 +224,9 @@ public sealed partial class Investigator(NodeState state, IWorkerLauncher worker
     public void Hold(CardRow card)
     {
         var (key, target) = SubjectOf(card.Subject, card.Id);
+        var detail = Unheld(card.Detail);
         var evidence = $"Card {card.Id} ({card.Kind}) about {card.Subject}, raised {Stamp(card.At)} to ring: {card.Title}"
-            + (string.IsNullOrWhiteSpace(card.Detail) ? "" : $"\n{card.Detail.Trim()}")
+            + (string.IsNullOrWhiteSpace(detail) ? "" : $"\n{detail.Trim()}")
             + (card.Choices.Length > 0 ? $"\nIt offers: {string.Join("; ", card.Choices.Select(c => $"{c.Label} ({c.Verb} {c.Target} {string.Join(' ', c.Args ?? [])})".Trim()))}" : "");
         var began = Begin(InvestigationTrigger.Ring, key, target, [evidence], card.Id);
         if (began is InvestigationStart.Bound or InvestigationStart.Held or InvestigationStart.Off)
@@ -199,7 +245,7 @@ public sealed partial class Investigator(NodeState state, IWorkerLauncher worker
     /// A trigger on <paramref name="key"/>: joins the live run on it, or starts one under the bound and the gate. <paramref name="held"/> is a
     /// card that waits for the outcome. Never throws for a start that fails: the held cards ring and say so.
     /// </summary>
-    public InvestigationStart Begin(InvestigationTrigger trigger, string key, string target, IReadOnlyList<string> evidence, string? held = null)
+    public InvestigationStart Begin(InvestigationTrigger trigger, string key, string target, IReadOnlyList<string> evidence, string? held = null, string? seen = null)
     {
         if (!On())
         {
@@ -208,6 +254,7 @@ public sealed partial class Investigator(NodeState state, IWorkerLauncher worker
         InvestigationRun run;
         lock (_lock)
         {
+            Seed();
             if (_runs.TryGetValue(key, out var live))
             {
                 live.Triggers.Add(trigger);
@@ -217,6 +264,8 @@ public sealed partial class Investigator(NodeState state, IWorkerLauncher worker
                     live.Held.Add(held);
                 }
                 Log?.Invoke($"investigator: {trigger} on {key} joins {live.Name}");
+                // Said as a line, so a restart knows the trigger was taken.
+                state.RaiseCard(CardBin.Handled, JoinKind, target, $"A {trigger} trigger on {key} joined {live.Name}", SeenDetail($"{trigger} on {key} ({live.Name}).", seen));
                 return InvestigationStart.Joined;
             }
             var today = Day(time.GetUtcNow());
@@ -243,6 +292,7 @@ public sealed partial class Investigator(NodeState state, IWorkerLauncher worker
             }
             _runs[key] = run;
             _starts.Add(run.StartedAt);
+            state.RaiseCard(CardBin.Handled, StartKind, target, $"An investigator of {key} started on {trigger}", SeenDetail($"{run.Name} on {string.Join(", ", run.Triggers)}.", seen));
         }
         // Started outside the lock: a launcher that fails at once rings the held cards, which goes through the node's state.
         var start = StartAsync(run);
@@ -253,6 +303,8 @@ public sealed partial class Investigator(NodeState state, IWorkerLauncher worker
         }
         return InvestigationStart.Started;
     }
+
+    private static string SeenDetail(string said, string? seen) => seen is null ? said : $"{said}\n{SeenLead}{seen}";
 
     private async Task StartAsync(InvestigationRun run)
     {
@@ -268,11 +320,18 @@ public sealed partial class Investigator(NodeState state, IWorkerLauncher worker
             var brief = Briefs.Investigator(run.Name, run.Key, run.Target, run.Triggers, evidence, Pilot);
             var job = await workers.StartAsync(new WorkerStart(run.Name, folder, null, brief, models.Model(RoleModels.Investigator), models.Effort(RoleModels.Investigator),
                 Reason: SessionStartReasons.Investigator), CancellationToken.None).ConfigureAwait(false);
+            bool live;
             lock (_lock)
             {
                 run.Job = job;
+                live = _runs.TryGetValue(run.Key, out var current) && ReferenceEquals(current, run);
             }
             Log?.Invoke($"investigator: {run.Name} started ({job}) on {string.Join(", ", run.Triggers)}");
+            if (!live)
+            {
+                // The run was released while its session was starting (the switch went off, the time ran out): nothing else would stop it.
+                await StopAsync(job, $"{SessionEndReasons.Person}: the run ended while its session started").ConfigureAwait(false);
+            }
         }
         catch (Exception ex) when (ex is not OutOfMemoryException)
         {
@@ -387,6 +446,7 @@ public sealed partial class Investigator(NodeState state, IWorkerLauncher worker
             {
                 Release(run, "the switch was turned off before it decided", SessionEndReasons.Person);
             }
+            RingStranded(now, "the switch is off");
             return;
         }
         foreach (var run in Runs.Where(r => now - r.StartedAt >= RunFor))
@@ -394,6 +454,7 @@ public sealed partial class Investigator(NodeState state, IWorkerLauncher worker
             Release(run, $"the investigator gave no outcome in {Waited.Coarse(RunFor)}", SessionEndReasons.InvestigatorTimedOut);
         }
 
+        RingStranded(now, null);
         var cards = state.Cards();
         foreach (var task in cards.Where(c => c.Kind == CardKinds.RepeatTask && now - c.At < TimeSpan.FromDays(1)).OrderBy(c => c.At))
         {
@@ -411,17 +472,40 @@ public sealed partial class Investigator(NodeState state, IWorkerLauncher worker
         }
     }
 
+    // A card held for an investigator that no live run holds is stranded: its run died with the node (an update, a settings save) or
+    // never began. The first look of a node rings what the last one left, saying so; a later look rings one that has waited past the
+    // grace, which is more than the instant between a card's raise and its hold. Without this the person would never hear of it.
+    private void RingStranded(DateTimeOffset now, string? why)
+    {
+        bool first;
+        HashSet<string> holding;
+        lock (_lock)
+        {
+            first = !_recovered;
+            _recovered = true;
+            holding = [.. _runs.Values.SelectMany(r => r.Held)];
+        }
+        foreach (var card in state.Cards(openOnly: true).Where(c => c.Bin == CardBin.ForYou && c.Detail is not null && c.Detail.StartsWith(HeldLead, StringComparison.Ordinal) && !holding.Contains(c.Id)))
+        {
+            if (first || now - card.At >= HeldGrace)
+            {
+                RingCard(card.Id, $"Rung without an investigation: {why ?? (first ? "the node restarted before an investigator decided it" : "no investigator holds it")}.");
+            }
+        }
+    }
+
     // A trigger the look found: taken once, unless the gate held it (it is taken again at a later look).
     private void Take(string seen, InvestigationTrigger trigger, string key, string target, string evidence)
     {
         lock (_lock)
         {
+            Seed();
             if (_seen.Contains(seen))
             {
                 return;
             }
         }
-        if (Begin(trigger, key, target, [evidence]) is InvestigationStart.Held or InvestigationStart.Off)
+        if (Begin(trigger, key, target, [evidence], seen: seen) is InvestigationStart.Held or InvestigationStart.Off)
         {
             return;
         }
@@ -479,7 +563,8 @@ public sealed partial class Investigator(NodeState state, IWorkerLauncher worker
         {
             return false;
         }
-        state.UpdateCard(now.Id, now.Title, words + (string.IsNullOrWhiteSpace(now.Detail) ? "" : "\n\n" + now.Detail), now.Choices, now.Link, bin: CardBin.Ring);
+        var detail = Unheld(now.Detail);
+        state.UpdateCard(now.Id, now.Title, words + (string.IsNullOrWhiteSpace(detail) ? "" : "\n\n" + detail), now.Choices, now.Link, bin: CardBin.Ring);
         return true;
     }
 
@@ -489,7 +574,8 @@ public sealed partial class Investigator(NodeState state, IWorkerLauncher worker
         {
             return;
         }
-        state.UpdateCard(now.Id, now.Title, QuietPrefix + why + (string.IsNullOrWhiteSpace(now.Detail) ? "" : "\n\n" + now.Detail), now.Choices, now.Link, bin: CardBin.ForYou);
+        var detail = Unheld(now.Detail);
+        state.UpdateCard(now.Id, now.Title, QuietPrefix + why + (string.IsNullOrWhiteSpace(detail) ? "" : "\n\n" + detail), now.Choices, now.Link, bin: CardBin.ForYou);
     }
 
     // The bound's one ring of the day, for a trigger with no card of its own; an open one is the same card (RaiseCard's own rule).

@@ -3,7 +3,8 @@ using Pilot.Contracts;
 namespace Pilot.Node.Flights;
 
 /// <summary>What the watchtower is to be woken for: a key (told once) and the words.</summary>
-public sealed record Wake(string Key, string Text);
+/// <param name="Cards">The cards the wake is about (a repeat's task and its second card): said with it, they are marked told, and until then they are not said as fresh ones.</param>
+public sealed record Wake(string Key, string Text, IReadOnlyList<string>? Cards = null);
 
 /// <summary>
 /// PIL1285: what wakes the watchtower on autopilot besides a new card: a flight in the air with no progress for
@@ -63,17 +64,36 @@ public sealed class AutopilotWakes(NodeState state, RepeatDetector repeats, Time
             {
                 _pending.RemoveAll(w => w.Key == wake.Key);
                 _said.Add(wake.Key);
+                foreach (var id in wake.Cards ?? [])
+                {
+                    _said.Add($"card:{id}");
+                }
             }
         }
     }
 
-    private void Add(string key, string text)
+    /// <summary>Whether the watchtower was told of a card (its persisted tells): a repeat task already told is not told again after a restart.</summary>
+    public Func<string, bool> Told { get; set; } = _ => false;
+
+    /// <summary>The ids of the cards a pending wake is about: the watchtower leaves them out of its fresh cards until the wake is said.</summary>
+    public IReadOnlySet<string> Covered
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _pending.SelectMany(w => w.Cards ?? []).ToHashSet(StringComparer.Ordinal);
+            }
+        }
+    }
+
+    private void Add(string key, string text, IReadOnlyList<string>? cards = null)
     {
         lock (_lock)
         {
             if (!_said.Contains(key) && _pending.All(w => w.Key != key))
             {
-                _pending.Add(new Wake(key, text));
+                _pending.Add(new Wake(key, text, cards));
             }
         }
     }
@@ -103,6 +123,8 @@ public sealed class AutopilotWakes(NodeState state, RepeatDetector repeats, Time
         }
     }
 
+    private static string[] Ids(CardRow task, string? second) => second is null ? [task.Id] : [task.Id, second];
+
     /// <summary>One look: stalled flights and repeats. Off, it does nothing and holds nothing.</summary>
     public void Look()
     {
@@ -129,7 +151,8 @@ public sealed class AutopilotWakes(NodeState state, RepeatDetector repeats, Time
             var last = move.At;
             foreach (var job in jobs.Where(j => j.Flight == flight.Code))
             {
-                last = new[] { last, job.StartedAt, job.EndedAt ?? default }.Max();
+                // A job of the flight that is still running or queued is work going on, not a stall.
+                last = new[] { last, job.StartedAt, job.EndedAt ?? now }.Max();
             }
             if (now - last >= bound)
             {
@@ -141,7 +164,21 @@ public sealed class AutopilotWakes(NodeState state, RepeatDetector repeats, Time
         }
         foreach (var repeat in repeats.Look())
         {
-            Add(repeat.Key, repeat.Told);
+            Add(repeat.Key, repeat.Told, Ids(repeat.Task, repeat.Second));
+        }
+        // A task the node found before a restart (or whose say failed) whose watchtower was never told: its wake is made again from the
+        // task itself, which the store keeps, so the notice of a second occurrence is never lost with the memory.
+        var covered = Covered;
+        foreach (var task in cards.Where(c => c.Kind == CardKinds.RepeatTask && now - c.At < repeats.Window && !Told(c.Id) && !covered.Contains(c.Id)))
+        {
+            lock (_lock)
+            {
+                if (_said.Contains($"card:{task.Id}"))
+                {
+                    continue;
+                }
+            }
+            Add($"task:{task.Id}", RepeatDetector.TaskText(task), Ids(task, RepeatDetector.SecondCardOf(task)));
         }
     }
 }

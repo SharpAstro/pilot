@@ -167,8 +167,15 @@ public sealed class Digest(NodeState state, TimeProvider time) : BackgroundServi
             return lines;
         }
         var decisions = state.Decisions(since: since).Where(d => d.At <= now).ToList();
-        var by = decisions.Where(d => d.ByKind is DecisionByKinds.Watchtower or Investigator.By).ToList();
-        var filed = by.Where(d => d.ByKind == Investigator.By && d.Choice == Investigator.IssueOutcome).ToList();
+        // A goal verb the watchtower or an investigator ran is recorded by the node's own path (Autopilot.Handled), by the session's name and
+        // as the node's rules: it is theirs by who ran it. The sessions' rows (or their names, for a row since gone) say who is who.
+        var actors = state.Sessions().Where(s => s.Role is SessionRole.Watchtower or SessionRole.Investigator).Select(s => s.Name).ToHashSet(StringComparer.Ordinal);
+        bool Theirs(DecisionRow d) => d.ByKind is DecisionByKinds.Watchtower or Investigator.By
+            || d.ByKind == DecisionByKinds.NodeRules && (actors.Contains(d.By) || Sessions.SessionRoles.IsInvestigatorName(d.By));
+        bool Files(DecisionRow d) => d.ByKind == Investigator.By ? d.Choice == Investigator.IssueOutcome
+            : d.ByKind == DecisionByKinds.NodeRules && (d.Question.StartsWith($"Run {Verbs.CreateIssue} ", StringComparison.Ordinal) || d.Question.StartsWith($"Run {Verbs.CreateFlight} ", StringComparison.Ordinal));
+        var by = decisions.Where(Theirs).ToList();
+        var filed = by.Where(Files).ToList();
         var escalated = by.Where(d => d.ByKind == Investigator.By && d.Choice == Investigator.RingOutcome).ToList();
         var did = by.Except(filed).Except(escalated)
             .Select(d => $"{d.Subject}: {d.Choice} ({d.By}), {d.Reason}")

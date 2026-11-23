@@ -46,7 +46,7 @@ public sealed partial class NodeState
         // rings the person. Off, the investigator holds nothing and the path below is as before.
         if (bin == CardBin.Ring && Investigations is { } investigations && investigations.Holds(kind, choices) && NodePresses?.Invoke(kind, subject, detail, choices) != true)
         {
-            var waiting = RaiseCardCore(CardBin.ForYou, kind, subject, title, detail, choices, link, askedBy, why, summary, attachment, attachmentExt, cause, aboutCard, out var made);
+            var waiting = RaiseCardCore(CardBin.ForYou, kind, subject, title, Investigator.HeldLead + detail, choices, link, askedBy, why, summary, attachment, attachmentExt, cause, aboutCard, out var made);
             if (made)
             {
                 investigations.Hold(waiting);
