@@ -977,6 +977,29 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
         {
             return state.Complete(command, refused);
         }
+        // PIL1290: a ring or for-you raise on card/<id> is about the card itself: its words go on that card, which is rung again
+        // (ring) or left in its bin (for-you); no second card. A handled raise stays a born-closed line about the card.
+        if (bin.Value != CardBin.Handled && command.Target.StartsWith(Verbs.CardTargetPrefix, StringComparison.Ordinal))
+        {
+            var id = command.Target[Verbs.CardTargetPrefix.Length..];
+            var target = state.Cards().FirstOrDefault(c => c.Id == id);
+            if (target is null)
+            {
+                return state.Complete(command, $"There is no card {id}");
+            }
+            if (target.State != CardState.Open)
+            {
+                return state.Complete(command, $"Card {id} is closed ({target.Outcome ?? "no outcome recorded"}): it cannot be raised again");
+            }
+            var said = $"From {command.Who}: {title}." + (detail.Length > 0 ? " " + detail : "");
+            var merged = string.IsNullOrWhiteSpace(target.Detail) ? said : target.Detail + "\n\n" + said;
+            state.UpdateCard(id, target.Title, merged, target.Choices, target.Link, bin: bin.Value == CardBin.Ring ? CardBin.Ring : null);
+            if (bin.Value == CardBin.Ring)
+            {
+                state.RingAgain(id);
+            }
+            return state.Complete(command, null);
+        }
         // PIL1290: a ring or for-you card that names exactly one open card (c27881) is about it, and closes when it does.
         string? aboutCard = null;
         if (bin.Value != CardBin.Handled)

@@ -65,6 +65,65 @@ public sealed class RingAboutCardTests
         node.State.Cards().Where(c => c.Kind == "watchtower").ShouldAllBe(c => c.AboutCard == null);
     }
 
+    private static async Task<string?> RingCard(NodeHarness node, string id, string bin, string title, string? detail = null)
+    {
+        string[] args = detail is null ? [bin, title] : [bin, title, detail];
+        return (await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Raise, Target = Verbs.CardTarget(id), Args = args, Who = "wt" }, Ct)).Response.ShouldNotBeNull().Error;
+    }
+
+    [Fact]
+    public async Task RingingACardByItsIdPutsTheWordsOnItMovesItToRingAndRaisesNoOther()
+    {
+        await using var node = await NodeHarness.StartAsync(Ct);
+        var a = node.State.RaiseCard(CardBin.ForYou, "pr-ready", "flight/TIA1", "TIA1 needs a round", null,
+            [new CardChoice { Label = "Allow one more round", Verb = Verbs.Raise, Target = "flight/TIA1", Args = ["handled", "round allowed"] }]);
+
+        (await RingCard(node, a.Id, "ring", "Please press Allow", "It has waited a day.")).ShouldBeNull();
+
+        var now = node.State.Cards().Single();
+        now.Id.ShouldBe(a.Id);
+        now.Bin.ShouldBe(CardBin.Ring);
+        now.RungAgainAt.ShouldNotBeNull();
+        now.Detail.ShouldNotBeNull().ShouldContain("From wt: Please press Allow. It has waited a day.");
+        Open(node).Select(c => c.Id).ShouldBe([a.Id]);
+
+        (await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Answer, Target = Verbs.CardTarget(a.Id), Args = ["Allow one more round"], Who = "cli" }, Ct))
+            .Response.ShouldNotBeNull().Error.ShouldBeNull();
+        Open(node).ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task ARingCardRungAgainKeepsItsIdAndAForYouRaiseLeavesItsBin()
+    {
+        await using var node = await NodeHarness.StartAsync(Ct);
+        var ring = RaiseAsk(node);
+        var quiet = node.State.RaiseCard(CardBin.ForYou, "pr-ready", "flight/TIA2", "TIA2 is parked", null);
+
+        (await RingCard(node, ring.Id, "ring", "Still waiting")).ShouldBeNull();
+        (await RingCard(node, quiet.Id, "for-you", "A note for you")).ShouldBeNull();
+
+        node.State.Cards().Count().ShouldBe(2);
+        node.State.Cards().Single(c => c.Id == ring.Id).RungAgainAt.ShouldNotBeNull();
+        var kept = node.State.Cards().Single(c => c.Id == quiet.Id);
+        kept.Bin.ShouldBe(CardBin.ForYou);
+        kept.Detail.ShouldNotBeNull().ShouldContain("From wt: A note for you.");
+    }
+
+    [Fact]
+    public async Task RingingAClosedOrMissingCardIsRefusedAndAHandledRaiseStaysALine()
+    {
+        await using var node = await NodeHarness.StartAsync(Ct);
+        var a = RaiseAsk(node);
+        node.State.CloseCard(a.Id, "dismissed", "cli");
+
+        (await RingCard(node, a.Id, "ring", "Too late")).ShouldNotBeNull().ShouldContain("dismissed");
+        (await RingCard(node, "c999999", "ring", "Nobody")).ShouldNotBeNull().ShouldContain("no card");
+        Open(node).ShouldBeEmpty();
+
+        (await RingCard(node, a.Id, "handled", "A line about it")).ShouldBeNull();
+        node.State.Cards().Count(c => c.Bin == CardBin.Handled && c.Subject == Verbs.CardTarget(a.Id)).ShouldBe(1);
+    }
+
     [Fact]
     public async Task ClosingTheAskingCardLeavesTheCardItIsAboutOpen()
     {

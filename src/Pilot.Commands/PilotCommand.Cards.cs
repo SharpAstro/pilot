@@ -87,7 +87,7 @@ public static partial class PilotCommand
             var dismiss = Action(new Command("dismiss", "Close the card with nothing done") { Arguments = { card, dismissReason }, Options = { actingOn } },
                 (p, client, ct) => Send(client, Verbs.Dismiss, Verbs.CardTarget(p.GetValue(card)!), p.GetValue(dismissReason) ?? [], who, ct, p.GetValue(actingOn)));
 
-            var subject = Arg("subject", "What it is about: flight/<code>, flight/<code>/<leg>, session/<id> or node");
+            var subject = Arg("subject", "What it is about: flight/<code>, flight/<code>/<leg>, session/<id>, node or card/<id> (an open card: its words are added to that card, which is rung again, and no second card is raised)");
             var cardTitle = Arg("title", "The card in a line");
             var detail = new Option<string?>("--detail") { Description = "What else is needed to decide" };
             var attachment = new Option<string?>("--attachment") { Description = "An image for the card, shown as a thumbnail that opens full size: the <id>.<ext> of a copy the node holds, or the path of an image file (png, jpg, jpeg, gif, webp or bmp, at most 10 MB) that is uploaded first" };
