@@ -3,10 +3,11 @@ using Pilot.Contracts;
 namespace Pilot.Node.Flights;
 
 /// <summary>
-/// The node presses three kinds of card itself (pilot #1269), as the node and through the same answer a person's
+/// The node presses four kinds of card itself (pilot #1269, #1311), as the node and through the same answer a person's
 /// press takes, so every guard of the card's own command still applies: a fold the planner asked for on two flights of this node, Fix it
-/// on a fixer that ended without pushing (where the watchtower's own <c>review fix</c> would be let through), and End process on a stray
-/// the node launched whose owner has ended and that is not tied to it by folder only. These are the node's own rules deciding, so no
+/// on a fixer that ended without pushing (where the watchtower's own <c>review fix</c> would be let through), End process on a stray
+/// the node launched whose owner has ended and that is not tied to it by folder only, and Review the fixer's push
+/// (<c>pr-fix-pushed-unreviewed</c>) on an open PR whose head GitHub reads now has no review. These are the node's own rules deciding, so no
 /// watchtower press goes through a command a classifier can refuse. A card pressed here is closed by its answer, which records a
 /// decision by the node's rules, and a Handled card names the card and the rule that let the node press it. A card the node tried and was refused is not tried again (the person's card stays open).
 /// </summary>
@@ -24,6 +25,9 @@ public sealed class NodePress(NodeState state, Func<CommandRequest, Cancellation
     /// <summary>Why no fixer may start on a PR now (<see cref="PrReviews.WhyNoFixerAsync"/>); null when one may, a text when not.</summary>
     public Func<PrRef, CancellationToken, Task<string?>> WhyNoFixer { get; init; } = (_, _) => Task.FromResult<string?>("no review is known here");
 
+    /// <summary>Why no review may start on a PR's head now (<see cref="PrReviews.WhyNoReviewAsync"/>); null when one may, a text when not.</summary>
+    public Func<PrRef, CancellationToken, Task<string?>> WhyNoReview { get; init; } = (_, _) => Task.FromResult<string?>("no review is known here");
+
     /// <summary>Closes the refused-press cards whose target is gone, at each look (<see cref="StaleRefused"/>); null closes none.</summary>
     public StaleRefused? Stale { get; init; }
 
@@ -33,20 +37,21 @@ public sealed class NodePress(NodeState state, Func<CommandRequest, Cancellation
     private readonly HashSet<string> _tried = new(StringComparer.Ordinal);
 
     /// <summary>Whether a card of this kind may be pressed by the node, so the ring judge and the watchtower leave it to the node.</summary>
-    public static bool Owns(string kind) => kind is StraySweep.Kind or CardKinds.Overlap or PrReviews.FixEndedKind;
+    public static bool Owns(string kind) => kind is StraySweep.Kind or CardKinds.Overlap or PrReviews.FixEndedKind or PrReviews.PushedUnreviewedKind;
 
     /// <summary>
     /// Whether the node would press a card raised now with this kind, subject, detail and choices, so the ring judge leaves it to the node
-    /// (<see cref="NodeState.NodePresses"/>): only a card one of its rules takes, not every card of its three kinds. An overlap card the
+    /// (<see cref="NodeState.NodePresses"/>): only a card one of its rules takes, not every card of its four kinds. An overlap card the
     /// planner did not ask to fold, a stray the node may not end, or a Fix it whose fixer left work still goes to the judge (R1.7). The
     /// Fix it rule's last part (the round cap and the PR's author, asked of GitHub) is not read here, so a card that part refuses skips the
-    /// judge and is left to the person as a plain For you card.
+    /// judge and is left to the person as a plain For you card. The Review rule's read of GitHub's head is not made here either, so it answers from the choices alone.
     /// </summary>
     public bool WouldPress(string kind, string subject, string? detail, IReadOnlyList<CardChoice>? choices) => kind switch
     {
         StraySweep.Kind => StrayRule(subject, choices ?? []) is not null,
         CardKinds.Overlap => FoldRule(subject, choices ?? []) is not null,
         PrReviews.FixEndedKind => FixChoice(detail, choices ?? []) is not null,
+        PrReviews.PushedUnreviewedKind => ReviewChoice(choices ?? []) is not null,
         _ => false,
     };
 
@@ -74,7 +79,7 @@ public sealed class NodePress(NodeState state, Func<CommandRequest, Cancellation
         }
     }
 
-    /// <summary>One look: presses each open card of the three kinds the node's rules decide; returns how many it pressed.</summary>
+    /// <summary>One look: presses each open card of the four kinds the node's rules decide; returns how many it pressed.</summary>
     public async Task<int> PressAsync(CancellationToken cancellationToken)
     {
         // A refused press whose target is gone closes before any press: the look is the node's, not a press.
@@ -136,10 +141,19 @@ public sealed class NodePress(NodeState state, Func<CommandRequest, Cancellation
                     return new Rule(fix, "the fixer ended without pushing, and the round cap, the PR's author and its design questions let the watchtower's own review fix through");
                 }
                 return null;
+            case PrReviews.PushedUnreviewedKind:
+                if (ReviewChoice(card.Choices) is { } review && PrRef.Parse(card.Subject) is { } reviewPr
+                    && await WhyNoReview(reviewPr, cancellationToken) is null)
+                {
+                    return new Rule(review, "the fixer's push has no review yet: the PR is open and its head as GitHub reads it now has none");
+                }
+                return null;
             default:
                 return null;
         }
     }
+
+    private static CardChoice? ReviewChoice(IReadOnlyList<CardChoice> choices) => choices.FirstOrDefault(c => c.Verb == Verbs.ReviewPr);
 
     private Rule? StrayRule(string subject, IReadOnlyList<CardChoice> choices) =>
         choices.FirstOrDefault(c => c.Verb == Verbs.EndStray) is { } end && MayEndStray(subject)
