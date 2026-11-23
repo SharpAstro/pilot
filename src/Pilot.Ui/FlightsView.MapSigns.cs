@@ -25,6 +25,7 @@ internal sealed partial class FlightsView<TSurface>
         DestinationStatus.Armed => "armed",
         DestinationStatus.Queued => "queued",
         DestinationStatus.Conflicts => "conflicts",
+        DestinationStatus.ChecksRed => "CI red",
         // The sign is a leg's name wide; the whole words (PullRequestStates.RebaseOnlyLabel) are on its hover.
         DestinationStatus.RebaseOnly => "rebase only",
         _ => "merged",
@@ -35,14 +36,14 @@ internal sealed partial class FlightsView<TSurface>
 
     /// <summary>
     /// The destination's tone from the PR's status alone (design-language section 1), so its colour and its word always agree. Failed
-    /// only for a conflict; a failed leg is red on its own airport and named in the row's note, its PR still reads open in amber; a
+    /// only for trouble: a conflict or red CI; a failed leg is red on its own airport and named in the row's note, its PR still reads open in amber; a
     /// review asking for changes is work in progress, never red; Queued, Armed and the not-yet-reviewed are amber; Passed is progress.
     /// Each status keeps its word (<see cref="StatusWord"/>), so colour never carries it alone.
     /// </summary>
     internal static MapTone DestinationColour(DestinationStatus status) => status switch
     {
         DestinationStatus.Merged => MapTone.Landed,
-        DestinationStatus.Conflicts => MapTone.Failed,
+        DestinationStatus.Conflicts or DestinationStatus.ChecksRed => MapTone.Failed,
         DestinationStatus.NoPr => MapTone.Neutral,
         DestinationStatus.Changes or DestinationStatus.Passed or DestinationStatus.RebaseOnly => MapTone.Progress,
         _ => MapTone.Waiting,
@@ -76,6 +77,10 @@ internal sealed partial class FlightsView<TSurface>
         {
             DestinationStatus.RebaseOnly => FlightMap.RebaseOnlyTip,
             DestinationStatus.Conflicts => "Conflicts with the base: it needs a fix (go around).",
+            // StatusOf returns ChecksRed only when Ci.RedSince is set. While the CI budget has stopped the node (CappedWhy), nothing fixes it until the owner answers.
+            // A red streak can be days old, so a time on an earlier day carries its date (against the line's Now, the screen's moment).
+            DestinationStatus.ChecksRed => $"CI red since {LocalWhen.Of(line.Row.Ci!.RedSince!.Value, line.Now ?? line.Row.Ci.RedSince.Value)}: "
+                + (line.Row.Ci.CappedWhy is { Length: > 0 } capped ? $"nothing fixes it until you answer ({capped})." : "the PR fixer or a go-around fixes it."),
             _ => null,
         };
         // A stale flight says so first, as its plane does: a flight with no Flying leg has no plane, so its destination is where the map says it.

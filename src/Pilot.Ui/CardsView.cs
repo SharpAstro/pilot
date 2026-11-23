@@ -26,14 +26,7 @@ internal sealed record HeldNode(NodeMark Node, DateTimeOffset Since, int Rings, 
     internal const int LineFits = 84;
 
     /// <summary>When it went down in the reader's own time: the clock alone today, with the day before it on another.</summary>
-    public string When
-    {
-        get
-        {
-            var at = Since.ToLocalTime();
-            return at.Date == Now.ToLocalTime().Date ? at.ToString("HH:mm", System.Globalization.CultureInfo.InvariantCulture) : at.ToString("ddd d MMM HH:mm", System.Globalization.CultureInfo.InvariantCulture);
-        }
-    }
+    public string When => LocalWhen.Of(Since, Now);
 
     /// <summary>What it held, <c>3 ringing, 2 for you held</c>; empty when it held nothing.</summary>
     public string Counts

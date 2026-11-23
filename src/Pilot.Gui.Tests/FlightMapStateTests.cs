@@ -1,3 +1,4 @@
+using System.Globalization;
 using DIR.Lib;
 using Pilot.Commands;
 using Pilot.Contracts;
@@ -9,7 +10,7 @@ namespace Pilot.Gui.Tests;
 
 /// <summary>
 /// The flight map tells the truth (pilot #1298), read from the one state model (<see cref="FlightPhases"/>): a destination is red only
-/// for a conflict or a failed leg, the plane is drawn only on a flying leg, a queued flight has no plane and says why it waits, and the
+/// for a conflict or red CI, the plane is drawn only on a flying leg, a queued flight has no plane and says why it waits, and the
 /// header's counts are the ones <c>pilot status</c> prints. All on the CPU render, no display.
 /// </summary>
 public sealed class FlightMapStateTests
@@ -55,7 +56,7 @@ public sealed class FlightMapStateTests
         var data = new TheoryData<string, bool, string>();
         foreach (var night in new[] { false, true })
         {
-            foreach (var name in new[] { "conflicts", "failed-leg", "changes", "passed", "armed", "queue", "reviewing", "open", "merged" })
+            foreach (var name in new[] { "conflicts", "ci-red", "failed-leg", "changes", "passed", "armed", "queue", "reviewing", "open", "merged" })
             {
                 data.Add(name, night, name);
             }
@@ -69,6 +70,7 @@ public sealed class FlightMapStateTests
         return name switch
         {
             "conflicts" => (FlightMapWorld.Flight("A", review: FlightMapWorld.Review(ReviewState.Passed, "pilot: conflicts")), done, "Failed", "conflicts"),
+            "ci-red" => (FlightMapWorld.Flight("A", review: FlightMapWorld.Review(ReviewState.Passed)) with { Ci = new FlightCi { RedSince = Live.At } }, done, "Failed", "CI red"),
             "failed-leg" => (FlightMapWorld.Flight("A"), [FlightMapWorld.Leg("A", LegState.Done), FlightMapWorld.Leg("A", LegState.Failed, 2)], "Held", "open"),
             "changes" => (FlightMapWorld.Flight("A", review: FlightMapWorld.Review(ReviewState.Changes)), [FlightMapWorld.Leg("A", LegState.Done), FlightMapWorld.Leg("A", LegState.Flying, 2)], "Flying", "changes"),
             "passed" => (FlightMapWorld.Flight("A", review: FlightMapWorld.Review(ReviewState.Passed)), done, "Flying", "passed"),
@@ -92,13 +94,71 @@ public sealed class FlightMapStateTests
         var colour = CentreOf(renderer.Surface, Hit(view, "flight:A:pr", "flight:A:pr-chip", "map:A:destination"));
         var expected = tone switch { "Failed" => p.Failed, "Flying" => p.Flying, "Held" => p.Held, _ => p.Landed };
         Same(colour, expected).ShouldBeTrue($"{name}: destination {colour} should be {tone} {expected}");
-        // Red (the palette's Failed) is for a conflict only (a failed leg is red on its airport, not on the PR); colour never carries
+        // Red (the palette's Failed) is for trouble only, a conflict or red CI (a failed leg is red on its airport, not on the PR); colour never carries
         // the state alone.
         if (tone != "Failed" && !Same(p.Failed, p.Held) && !Same(p.Failed, p.Flying))
         {
             Same(colour, p.Failed).ShouldBeFalse($"{name} is not red");
         }
         view.MapWords.Select(w => w.Text).ShouldContain(word);
+    }
+
+    [Fact]
+    public void TheRedCiHoverSaysSinceWhenAndWhatToDoAndOtherStatesDoNot()
+    {
+        var done = new[] { FlightMapWorld.Leg("A", LegState.Done), FlightMapWorld.Leg("B", LegState.Done), FlightMapWorld.Leg("C", LegState.Done), FlightMapWorld.Leg("D", LegState.Done), FlightMapWorld.Leg("E", LegState.Done) };
+        var red = FlightMapWorld.Flight("A", review: FlightMapWorld.Review(ReviewState.Passed)) with { Ci = new FlightCi { RedSince = Live.At } };
+        var capped = FlightMapWorld.Flight("B", review: FlightMapWorld.Review(ReviewState.Passed)) with { Ci = new FlightCi { RedSince = Live.At, CappedWhy = "CI budget spent" } };
+        var conflict = FlightMapWorld.Flight("C", review: FlightMapWorld.Review(ReviewState.Passed, "pilot: conflicts"));
+        var open = FlightMapWorld.Flight("D");
+        // Red since two days before the screen's moment (Live.At, the lines' Now): another local day in any time zone.
+        var earlier = Live.At.AddDays(-2).AddMinutes(-46);
+        var old = FlightMapWorld.Flight("E", review: FlightMapWorld.Review(ReviewState.Passed)) with { Ci = new FlightCi { RedSince = earlier } };
+        var (renderer, view) = Show(FlightMapWorld.Lines([red, capped, conflict, open, old], done), 1800, 1000, night: false);
+        using var _ = renderer;
+
+        // Red today: the clock alone, no day.
+        var since = $"CI red since {Live.At.ToLocalTime().ToString("HH:mm", CultureInfo.InvariantCulture)}:";
+        Hit(view, "flight:A:pr", "flight:A:pr-chip", "map:A:destination").Tooltip.ShouldNotBeNull().ShouldContain(since + " the PR fixer or a go-around fixes it.");
+        // Red since an earlier day: the day is in the hover, so yesterday's red never reads as today's time.
+        var dated = earlier.ToLocalTime().ToString("ddd d MMM HH:mm", CultureInfo.InvariantCulture);
+        Hit(view, "flight:E:pr", "flight:E:pr-chip", "map:E:destination").Tooltip.ShouldNotBeNull().ShouldContain($"CI red since {dated}: the PR fixer or a go-around fixes it.");
+        var cappedTip = Hit(view, "flight:B:pr", "flight:B:pr-chip", "map:B:destination").Tooltip.ShouldNotBeNull();
+        cappedTip.ShouldContain(since);
+        cappedTip.ShouldContain("CI budget spent");
+        cappedTip.ShouldNotContain("the PR fixer");
+        Hit(view, "flight:C:pr", "flight:C:pr-chip", "map:C:destination").Tooltip.ShouldNotBeNull().ShouldNotContain("CI red");
+        Hit(view, "flight:D:pr", "flight:D:pr-chip", "map:D:destination").Tooltip.ShouldNotBeNull().ShouldNotContain("CI red");
+    }
+
+    [Theory]
+    [InlineData(900, 700, false)]
+    [InlineData(1800, 1000, false)]
+    [InlineData(900, 700, true)]
+    [InlineData(1800, 1000, true)]
+    public void ARedCiDestinationIsDrawnBesideTheOtherStatesWithNoWordOverAnother(int width, int height, bool night)
+    {
+        var (flights, legs) = FlightMapWorld.World();
+        var redFlight = FlightMapWorld.Flight("RCI", review: FlightMapWorld.Review(ReviewState.Passed)) with { Ci = new FlightCi { RedSince = Live.At } };
+        var (renderer, view) = Show(FlightMapWorld.Lines([.. flights, redFlight], [.. legs, FlightMapWorld.Leg("RCI", LegState.Done)]), width, height, night);
+        using var _ = renderer;
+
+        var words = view.MapWords;
+        words.Select(w => w.Text).ShouldContain("CI red");
+        var faults = new List<string>();
+        for (var i = 0; i < words.Count; i++)
+        {
+            for (var j = i + 1; j < words.Count; j++)
+            {
+                var (a, b) = (words[i].Box, words[j].Box);
+                if (MathF.Min(a.X + a.Width, b.X + b.Width) - MathF.Max(a.X, b.X) > TextOverlap.Tolerance
+                    && MathF.Min(a.Y + a.Height, b.Y + b.Height) - MathF.Max(a.Y, b.Y) > TextOverlap.Tolerance)
+                {
+                    faults.Add($"'{words[i].Text}' over '{words[j].Text}'");
+                }
+            }
+        }
+        faults.ShouldBeEmpty();
     }
 
     [Theory]
