@@ -104,7 +104,10 @@ public sealed partial class NodeState
             var next = Available(card.Choices, card.Kind, facts);
             // PIL1325: a For you or Ring card whose every choice now waits on something that clears by itself needs no person: it closes
             // with the reason, and is not reopened when the reason clears (the node's own step takes over then).
-            if (card.Bin is CardBin.ForYou or CardBin.Ring && SelfClearingReason(next, card.Kind, facts) is { } reason)
+            // A PR-ready card is the exception: its leg wait is LegCommander.ShowLegWait's, which closes it with the LegWaitOutcome the restore
+            // reads (so the card comes back once the legs land) and raises the Handled line saying what the merge waits for. Closing it here
+            // with a bare reason left neither, and the card never came back. Its Merge is marked until the next look at the PR.
+            if (card.Bin is CardBin.ForYou or CardBin.Ring && card.Kind != LegCommander.PrReady && SelfClearingReason(next, card.Kind, facts) is { } reason)
             {
                 var now = _time.GetUtcNow();
                 Publish(new CardChangedEvent { Seq = _seq + 1, At = now, Card = card with { Choices = next, State = CardState.Closed, Outcome = reason, ClosedBy = "node", ClosedAt = now, Answering = null } });
