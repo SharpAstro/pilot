@@ -135,9 +135,9 @@ public sealed class NotificationsPageTests
         history.ShouldBeGreaterThan(needs, "Needs you comes first");
         // The row is the whole card, its title in words (a wrap), so the title is found by one of them.
         texts.FindIndex(t => t.StartsWith("ready", StringComparison.Ordinal)).ShouldBeInRange(needs, history);
-        var three = texts.FindIndex(history, t => t == "three");
-        var two = texts.FindIndex(history, t => t == "two");
-        var one = texts.FindIndex(history, t => t == "one");
+        var three = texts.FindIndex(history, t => t.Trim() == "three");
+        var two = texts.FindIndex(history, t => t.Trim() == "two");
+        var one = texts.FindIndex(history, t => t.Trim() == "one");
         three.ShouldBeGreaterThan(history, string.Join(" | ", texts.Skip(history)));
         two.ShouldBeGreaterThan(three, "newest first");
         one.ShouldBeGreaterThan(two);
