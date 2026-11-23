@@ -118,6 +118,16 @@ public sealed class GhRecordingTests
     }
 
     [Fact]
+    public void ACiRunCarriesItsRunAttemptAndOneWithoutItIsOnItsFirst()
+    {
+        var json = Recording("ci-runs", "completed");
+        GhCli.CiRunOf(GhCli.ParseCiRuns(json.Replace("\"run_attempt\":1", "\"run_attempt\":3", StringComparison.Ordinal), DateTimeOffset.UnixEpoch).ShouldHaveSingleItem(), 0)
+            .Attempt.ShouldBe(3);
+        GhCli.CiRunOf(GhCli.ParseCiRuns(json.Replace("\"run_attempt\":1,", "", StringComparison.Ordinal), DateTimeOffset.UnixEpoch).ShouldHaveSingleItem(), 0)
+            .Attempt.ShouldBe(1);
+    }
+
+    [Fact]
     public void ACompletedCiRunCarriesItsStartAndEnd()
     {
         var row = GhCli.ParseCiRuns(Recording("ci-runs", "completed"), DateTimeOffset.UnixEpoch).ShouldHaveSingleItem();
