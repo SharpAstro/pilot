@@ -743,7 +743,7 @@ internal sealed partial class FlightsView<TSurface>
         var color = !MapLayers.ShowPrStates ? P.RouteAhead : d.Status switch
         {
             DestinationStatus.Merged => Landed,
-            _ => DestinationColour(d.Status, route.Phase) switch
+            _ => DestinationColour(d.Status) switch
             {
                 MapTone.Failed => Failed,
                 MapTone.Progress => Flying,

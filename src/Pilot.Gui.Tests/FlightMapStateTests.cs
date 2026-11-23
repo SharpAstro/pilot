@@ -69,7 +69,7 @@ public sealed class FlightMapStateTests
         return name switch
         {
             "conflicts" => (FlightMapWorld.Flight("A", review: FlightMapWorld.Review(ReviewState.Passed, "pilot: conflicts")), done, "Failed", "conflicts"),
-            "failed-leg" => (FlightMapWorld.Flight("A"), [FlightMapWorld.Leg("A", LegState.Done), FlightMapWorld.Leg("A", LegState.Failed, 2)], "Failed", "open"),
+            "failed-leg" => (FlightMapWorld.Flight("A"), [FlightMapWorld.Leg("A", LegState.Done), FlightMapWorld.Leg("A", LegState.Failed, 2)], "Held", "open"),
             "changes" => (FlightMapWorld.Flight("A", review: FlightMapWorld.Review(ReviewState.Changes)), [FlightMapWorld.Leg("A", LegState.Done), FlightMapWorld.Leg("A", LegState.Flying, 2)], "Flying", "changes"),
             "passed" => (FlightMapWorld.Flight("A", review: FlightMapWorld.Review(ReviewState.Passed)), done, "Flying", "passed"),
             "armed" => (FlightMapWorld.Flight("A", review: FlightMapWorld.Review(ReviewState.Passed)) with { MergeWhenGreen = ["abc", "squash"] }, done, "Held", "armed"),
@@ -92,7 +92,8 @@ public sealed class FlightMapStateTests
         var colour = CentreOf(renderer.Surface, Hit(view, "flight:A:pr", "flight:A:pr-chip", "map:A:destination"));
         var expected = tone switch { "Failed" => p.Failed, "Flying" => p.Flying, "Held" => p.Held, _ => p.Landed };
         Same(colour, expected).ShouldBeTrue($"{name}: destination {colour} should be {tone} {expected}");
-        // Red (the palette's Failed) is for a conflict and a failed leg only; colour never carries the state alone.
+        // Red (the palette's Failed) is for a conflict only (a failed leg is red on its airport, not on the PR); colour never carries
+        // the state alone.
         if (tone != "Failed" && !Same(p.Failed, p.Held) && !Same(p.Failed, p.Flying))
         {
             Same(colour, p.Failed).ShouldBeFalse($"{name} is not red");

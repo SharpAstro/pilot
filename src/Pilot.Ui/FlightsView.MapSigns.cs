@@ -34,15 +34,15 @@ internal sealed partial class FlightsView<TSurface>
     internal enum MapTone { Failed, Progress, Waiting, Neutral, Landed }
 
     /// <summary>
-    /// The destination's tone from the PR's status and the flight's phase (design-language section 1). Failed only for a conflict or a
-    /// failed leg; a review asking for changes is work in progress, never red; Queued, Armed and the not-yet-reviewed are amber;
-    /// Passed is progress. Each status keeps its word (<see cref="StatusWord"/>), so colour never carries it alone.
+    /// The destination's tone from the PR's status alone (design-language section 1), so its colour and its word always agree. Failed
+    /// only for a conflict; a failed leg is red on its own airport and named in the row's note, its PR still reads open in amber; a
+    /// review asking for changes is work in progress, never red; Queued, Armed and the not-yet-reviewed are amber; Passed is progress.
+    /// Each status keeps its word (<see cref="StatusWord"/>), so colour never carries it alone.
     /// </summary>
-    internal static MapTone DestinationColour(DestinationStatus status, FlightPhase phase) => status switch
+    internal static MapTone DestinationColour(DestinationStatus status) => status switch
     {
         DestinationStatus.Merged => MapTone.Landed,
         DestinationStatus.Conflicts => MapTone.Failed,
-        _ when phase == FlightPhase.Failed => MapTone.Failed,
         DestinationStatus.NoPr => MapTone.Neutral,
         DestinationStatus.Changes or DestinationStatus.Passed or DestinationStatus.RebaseOnly => MapTone.Progress,
         _ => MapTone.Waiting,
