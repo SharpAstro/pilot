@@ -144,7 +144,8 @@ public sealed class NoModelReviewTests : ReviewTestsBase
         var start = _clock.GetUtcNow();
         _github.CiRuns[flight.Branch] = ManyPushes(start, 12);
         _github.Checks = ChoiceStatus.Failing;
-        _github.FailedChecks[number] = [Review(2011)];
+        // The check names the same attempt as the run list does (same id, same completion time), so one log read answers both.
+        _github.FailedChecks[number] = [Review(2011) with { CompletedAt = _github.CiRuns[flight.Branch].First(r => r.Id == 2011).CompletedAt }];
         foreach (var run in _github.CiRuns[flight.Branch].Where(r => r.Conclusion == "failure"))
         {
             _github.RunLogs[run.Id] = NoModelLog();
