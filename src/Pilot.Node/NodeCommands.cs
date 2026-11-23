@@ -999,8 +999,8 @@ public sealed partial class NodeCommands(IServiceProvider services, NodeState st
             {
                 return state.Complete(command, $"Card {id} is closed ({target.Outcome ?? "no outcome recorded"}): it cannot be raised again");
             }
-            var said = $"From {command.Who}: {title}." + (detail.Length > 0 ? " " + detail : "");
-            var merged = string.IsNullOrWhiteSpace(target.Detail) ? said : target.Detail + "\n\n" + said;
+            // One paragraph per sender, replaced by their next ring and capped; the node's own rewrites of the detail keep it (UpdateCard).
+            var merged = NodeState.WithRungWords(target.Detail, command.Who, title, detail);
             state.UpdateCard(id, target.Title, merged, target.Choices, target.Link, bin: bin.Value == CardBin.Ring ? CardBin.Ring : null);
             if (bin.Value == CardBin.Ring)
             {

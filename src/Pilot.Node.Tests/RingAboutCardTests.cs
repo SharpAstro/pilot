@@ -1,4 +1,5 @@
 using Pilot.Contracts;
+using Microsoft.Extensions.DependencyInjection;
 using Shouldly;
 using Xunit;
 
@@ -190,8 +191,83 @@ public sealed class RingAboutCardTests
     public async Task AnAttachmentOnARingAboutACardIsRefusedInWords()
     {
         await using var node = await NodeHarness.StartAsync(Ct);
-        var a = RaiseAsk(node);
-        var response = (await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Raise, Target = Verbs.CardTarget(a.Id), Args = ["ring", "Look"], Who = "wt", Attachment = "nothing.png" }, Ct)).Response.ShouldNotBeNull();
-        response.Error.ShouldNotBeNull();
+        var a = node.State.RaiseCard(CardBin.ForYou, "pr-ready", "flight/TIA1", "TIA1 needs a round", "The node's words.");
+        // An image the node holds, so the attachment passes KeepCardImage and reaches the guard on a ring about an existing card.
+        var image = node.App.Services.GetRequiredService<Attachments>().AddIdeaImage([1, 2, 3], "png");
+
+        var response = (await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Raise, Target = Verbs.CardTarget(a.Id), Args = ["ring", "Look"], Who = "wt", Attachment = $"{image}.png" }, Ct)).Response.ShouldNotBeNull();
+
+        response.Error.ShouldNotBeNull().ShouldContain("existing card");
+        var kept = node.State.Cards().Single();
+        kept.Detail.ShouldBe("The node's words.");
+        kept.Bin.ShouldBe(CardBin.ForYou);
+        kept.RungAgainAt.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task ARefusedAnswerOpensTheCardAndTheRingItClosedAgain()
+    {
+        await using var node = await NodeHarness.StartAsync(Ct);
+        // A choice the node refuses: raise takes ring, for-you or handled.
+        var a = node.State.RaiseCard(CardBin.Ring, "pr-ready", "flight/TIA1", "TIA1 needs a round", null,
+            [new CardChoice { Label = "Refused", Verb = Verbs.Raise, Target = "flight/TIA1", Args = ["nope", "x"] }]);
+        await RaiseAbout(node, $"Press Refused on {a.Id}", "flight/TIA2");
+        var ring = node.State.Cards().Single(c => c.Kind == "watchtower");
+
+        (await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Answer, Target = Verbs.CardTarget(a.Id), Args = ["Refused"], Who = "cli" }, Ct))
+            .Response.ShouldNotBeNull().Error.ShouldNotBeNull().ShouldContain("was refused");
+
+        Open(node).Select(c => c.Id).Order().ShouldBe(new[] { a.Id, ring.Id }.Order());
+        node.State.Cards().Single(c => c.Id == ring.Id).Outcome.ShouldBeNull();
+        node.State.Cards().Any(c => c.Bin == CardBin.Handled && c.Title == $"{ring.Id} open again with {a.Id}").ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task TwoRingsFromOneSenderLeaveOneParagraphAndANodeRewriteKeepsIt()
+    {
+        await using var node = await NodeHarness.StartAsync(Ct);
+        var a = node.State.RaiseCard(CardBin.ForYou, "pr-ready", "flight/TIA1", "TIA1 needs a round", "The node's words.");
+
+        (await RingCard(node, a.Id, "ring", "First nudge")).ShouldBeNull();
+        (await RingCard(node, a.Id, "ring", "Second nudge", new string('x', 2000))).ShouldBeNull();
+
+        var detail = node.State.Cards().Single().Detail.ShouldNotBeNull();
+        detail.ShouldStartWith("The node's words.");
+        detail.ShouldNotContain("First nudge");
+        detail.ShouldContain("From wt: Second nudge.");
+        detail.Length.ShouldBeLessThan("The node's words.".Length + NodeState.RungWordsCap + 4);
+
+        // The node rewrites the card's detail from its own words: the ring's paragraph stays.
+        var card = node.State.Cards().Single();
+        node.State.UpdateCard(a.Id, card.Title, "The node's new words.", card.Choices, card.Link).ShouldBeTrue();
+        var rewritten = node.State.Cards().Single().Detail.ShouldNotBeNull();
+        rewritten.ShouldStartWith("The node's new words.");
+        rewritten.ShouldContain("From wt: Second nudge.");
+    }
+
+    [Fact]
+    public async Task ARingAboutACardStillClosesWithItAfterTheNodeRestarts()
+    {
+        var first = await NodeHarness.StartAsync(Ct);
+        var folder = first.Folder;
+        string aId, ringId;
+        try
+        {
+            aId = RaiseAsk(first).Id;
+            await RaiseAbout(first, $"Press {aId}", "flight/TIA2");
+            ringId = first.State.Cards().Single(c => c.Kind == "watchtower").Id;
+        }
+        finally
+        {
+            await first.StopKeepingFolderAsync();
+        }
+
+        await using var node = await NodeHarness.StartAsync(Ct, folder: folder);
+        node.State.Cards().Single(c => c.Id == ringId).AboutCard.ShouldBe(aId);
+
+        node.State.CloseCard(aId, "dismissed", "cli");
+
+        Open(node).ShouldBeEmpty();
+        node.State.Cards().Single(c => c.Id == ringId).Outcome.ShouldBe($"{aId} closed: dismissed");
     }
 }

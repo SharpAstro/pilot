@@ -420,6 +420,8 @@ public sealed partial class NodeState
             }
             // An open card may move between Ring and For-you; never to or from Handled, which is born closed.
             var nextBin = bin is { } b && b != CardBin.Handled && card.Bin != CardBin.Handled ? b : card.Bin;
+            // PIL1290: the words a ring on card/<id> put on the card stay through a rewrite of its detail that does not carry them itself.
+            detail = KeepRungWords(card.Detail, detail);
             var next = card with { Title = title, Detail = detail, Choices = Available(choices), Link = link, Kind = kind ?? card.Kind, Bin = nextBin };
             // A card that says something new says it in new words: the summary follows the title and kind, as the raiser wrote it or the table has it.
             next = next with { Summary = summary is null && next.Title == card.Title && next.Kind == card.Kind ? card.Summary : CardSummaries.Resolve(summary, detail, next.Kind, next.Subject, next.Title, next.Choices) };
@@ -491,7 +493,11 @@ public sealed partial class NodeState
 
     private static bool IsMergeKind(string kind) => kind is LegCommander.PrReady or LegCommander.MergeFailed;
 
-    /// <summary>Opens a closed card again, as it was before: an answer whose choice was refused.</summary>
+    /// <summary>
+    /// Opens a closed card again, as it was before: an answer whose choice was refused. PIL1290: the cards about it that its close closed
+    /// (outcome <c>&lt;id&gt; closed: ...</c>, by the node) open again too, since the answer they were closed by never stood, and a Handled
+    /// line says so beside the one that said they closed.
+    /// </summary>
     public void ReopenCard(string id)
     {
         lock (_gate)
@@ -503,9 +509,57 @@ public sealed partial class NodeState
                 {
                     return;
                 }
-                Publish(new CardChangedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Card = card with { State = CardState.Open, Outcome = null, ClosedBy = null, ClosedAt = null, Answering = null } });
+                var now = _time.GetUtcNow();
+                Publish(new CardChangedEvent { Seq = _seq + 1, At = now, Card = card with { State = CardState.Open, Outcome = null, ClosedBy = null, ClosedAt = null, Answering = null } });
+                var cascade = $"{id} closed: ";
+                foreach (var about in _cards.Values.Where(c => c.State == CardState.Closed && c.AboutCard == id && c.ClosedBy == "node"
+                    && c.Outcome is { } o && o.StartsWith(cascade, StringComparison.Ordinal)).ToList())
+                {
+                    Publish(new CardChangedEvent { Seq = _seq + 1, At = now, Card = about with { State = CardState.Open, Outcome = null, ClosedBy = null, ClosedAt = null, Answering = null } });
+                    RaiseCardCore(CardBin.Handled, CardKinds.NodeRan, Verbs.CardTarget(about.Id), $"{about.Id} open again with {id}",
+                        $"{about.Id} ({about.Title}) is open again: the answer on {id} ({card.Title}) that closed it was refused.", null, null, null, null, null, null, null, null, null, out _);
+                }
             }
         }
+    }
+
+    /// <summary>The longest a ring's words on a card may be (PIL1290): a raise on card/&lt;id&gt; is a nudge, not a report.</summary>
+    internal const int RungWordsCap = 600;
+
+    // A paragraph a ring on card/<id> put on a card: "From <who>: <title>. <detail>".
+    [System.Text.RegularExpressions.GeneratedRegex(@"^From [^\s:]+: ")]
+    private static partial System.Text.RegularExpressions.Regex RungWordsLead();
+
+    private const string ParagraphBreak = "\n\n";
+
+    private static IEnumerable<string> Paragraphs(string? detail) =>
+        string.IsNullOrWhiteSpace(detail) ? [] : detail.Split(ParagraphBreak, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+    /// <summary>
+    /// PIL1290: <paramref name="detail"/> with <paramref name="who"/>'s words from a ring on the card in place of any they said before, so
+    /// rings from one sender keep one paragraph on the card rather than piling up; the words are cut to <see cref="RungWordsCap"/>.
+    /// </summary>
+    internal static string WithRungWords(string? detail, string who, string title, string said)
+    {
+        var words = $"From {who}: {title}." + (said.Length > 0 ? " " + said : "");
+        if (words.Length > RungWordsCap)
+        {
+            words = words[..(RungWordsCap - 3)].TrimEnd() + "...";
+        }
+        var kept = Paragraphs(detail).Where(p => !p.StartsWith($"From {who}: ", StringComparison.Ordinal));
+        return string.Join(ParagraphBreak, kept.Append(words));
+    }
+
+    // A rewrite of a card's detail that carries none of the ring words the card holds keeps them, after its own text.
+    private static string? KeepRungWords(string? before, string? after)
+    {
+        var rung = Paragraphs(before).Where(p => RungWordsLead().IsMatch(p)).ToList();
+        if (rung.Count == 0 || Paragraphs(after).Any(p => RungWordsLead().IsMatch(p)))
+        {
+            return after;
+        }
+        var rungText = string.Join(ParagraphBreak, rung);
+        return string.IsNullOrWhiteSpace(after) ? rungText : after.TrimEnd() + ParagraphBreak + rungText;
     }
 
     /// <summary>
