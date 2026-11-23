@@ -22,9 +22,11 @@ internal static class WrappedProse
     }
 
     /// <summary>
-    /// One line of <paramref name="text"/> that ends in an ellipsis where the column is narrower than it (a plain text leaf is cut by the
-    /// clip with nothing to say so): its words in a wrap capped at one line (the engine ends a capped wrap in an ellipsis only when it drops a child, so one leaf is never cut so), whole on hover. For a line that keeps its own line (a
-    /// command's or its output's, a message typed as lines) where <see cref="Of"/>'s words would reflow it. <paramref name="cut"/> takes the words form whatever the length: a line of at most 80 characters is one text leaf, which a narrow column clips with no ellipsis (#1160, the design page's title line).
+    /// One line of <paramref name="text"/> that ends in an ellipsis where the column is narrower than it: its words in a wrap capped at one
+    /// line, whole on hover. Since DIR.Lib 11.95 the engine ends any leaf wider than its line in an ellipsis, a capped wrap's last word included
+    /// (SharpAstro/DIR.Lib#275), not only a wrap that drops a child. For a line that keeps its own line (a command's or its output's, a message
+    /// typed as lines) where <see cref="Of"/>'s words would reflow it. <paramref name="cut"/> takes the words form whatever the length: a line of
+    /// at most 80 characters is otherwise one text leaf, whole in a copy and in a test (#1160, the design page's title line).
     /// </summary>
     public static Layout.Node OneLine(string text, float size, RGBAColor32 color, TextAlign hAlign = TextAlign.Near, TextAlign vAlign = TextAlign.Near, bool selectable = true, bool cut = false) =>
         !cut && text.Length <= OneLineChars
