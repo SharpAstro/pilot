@@ -30,7 +30,7 @@ public sealed record AdmissionRow
     /// the setter turns that into empty, or the node fails to start serializing it back (RespectNullableAnnotations).</remarks>
     public string[] WaitingOnPerson { get; init => field = value ?? []; } = [];
 
-    /// <summary>Peers that are away (PIL1312), one line each (<c>LE1 away since 14:03 UTC: skipped until it answers</c>), said once here instead of as "did not answer" on every line. Optional: an older store hands it null.</summary>
+    /// <summary>Peers that are away (PIL1312), one line each (<c>LE1 away since 2026-11-24 14:03 UTC: skipped until it answers</c>), said once here instead of as "did not answer" on every line. Optional: an older store hands it null.</summary>
     public string[] PeersAway { get; init => field = value ?? []; } = [];
 
     /// <summary>The line the clients show: <c>Opus 2/3</c>, or <c>Opus 2 (no cap)</c>, with <c>, peers not counted</c> when so.</summary>

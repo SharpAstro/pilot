@@ -96,9 +96,9 @@ public sealed class PeerPresence(TimeProvider time, Func<TimeSpan> bound, Action
         return [.. names.Where(IsAway).Select(n => (n, Since(n)!.Value)).OrderBy(a => a.n, StringComparer.OrdinalIgnoreCase)];
     }
 
-    /// <summary>The line that says a peer is away: <c>LE1 away since 14:03 UTC: skipped until it answers</c>.</summary>
+    /// <summary>The line that says a peer is away: <c>LE1 away since 2026-11-24 14:03 UTC: skipped until it answers</c>.</summary>
     public static string Line(string name, DateTimeOffset since) =>
-        $"{name} away since {since.UtcDateTime.ToString("HH:mm", CultureInfo.InvariantCulture)} UTC: skipped until it answers";
+        $"{name} away since {since.UtcDateTime.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture)} UTC: skipped until it answers";
 
     private DateTimeOffset? Since(string name)
     {

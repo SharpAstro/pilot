@@ -108,10 +108,30 @@ public sealed class PeerPresenceTests
 
         peer.Calls.ShouldBe(1);
         view.NotCounted.ShouldBeEmpty();
-        view.Away.ShouldHaveSingleItem().ShouldBe("LE1 away since 12:00 UTC: skipped until it answers");
+        view.Away.ShouldHaveSingleItem().ShouldBe("LE1 away since 2026-11-24 12:00 UTC: skipped until it answers");
         view.Known.ShouldBe(1);
         FleetAdmission.Note(view).ShouldBeNull();
-        _said.ShouldHaveSingleItem().ShouldBe(("peer-away", "LE1 away since 12:00 UTC: skipped until it answers"));
+        _said.ShouldHaveSingleItem().ShouldBe(("peer-away", "LE1 away since 2026-11-24 12:00 UTC: skipped until it answers"));
+    }
+
+    [Fact]
+    public async Task A_fleet_wide_setting_names_an_away_peer_as_unreachable()
+    {
+        var peer = new FakePeer("LE1");
+        var presence = new PeerPresence(_clock, () => Bound, (kind, title, _) => _said.Add((kind, title)));
+        var state = new NodeState(new InMemoryJournal(), TimeProvider.System);
+        var models = new RoleModels(NodeSettings.With(new NodeSettings(), "opus-cap", ["5"]).Settings!);
+        var gate = new AdmissionGate(state, () => models, "AA1", _clock);
+        gate.Fleet.Fleet = new PresenceFleet(new OneFleet(peer), presence);
+        await gate.Fleet.RefreshAsync(Ct);
+        _clock.Advance(Bound + TimeSpan.FromMinutes(1));
+        await gate.Fleet.RefreshAsync(Ct);
+
+        var sent = gate.PushFleet("opus-cap", ["5"]);
+
+        var one = sent.ShouldHaveSingleItem();
+        one.Outcome.ShouldBe(AdmissionGate.FleetSendOutcome.Unreachable);
+        one.Node.ShouldContain("LE1");
     }
 
     [Fact]
@@ -166,7 +186,7 @@ public sealed class PeerPresenceTests
         var thrown = await Should.ThrowAsync<PeerAwayException>(() => fleet.Peers()[0].NodeAsync(Ct));
 
         thrown.ShouldBeAssignableTo<IOException>();
-        thrown.Message.ShouldBe("LE1 away since 12:00 UTC: skipped until it answers");
+        thrown.Message.ShouldBe("LE1 away since 2026-11-24 12:00 UTC: skipped until it answers");
         peer.Calls.ShouldBe(1);
         presence.AwaySince("LE1").ShouldBe(Noon);
         presence.Away().Select(a => a.Name).ShouldBe(["LE1"]);

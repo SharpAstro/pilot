@@ -8,7 +8,7 @@ namespace Pilot.Node.Tests;
 /// <summary>An away peer (PIL1312) is said once, on the admission row, in 'pilot status' and its markdown, not as 'did not answer' on every line.</summary>
 public sealed class AwayStatusTests
 {
-    private const string Away = "LE1 away since 14:03 UTC: skipped until it answers";
+    private const string Away = "LE1 away since 2026-11-24 14:03 UTC: skipped until it answers";
 
     private static SnapshotEvent Snapshot(AdmissionRow admission) => new()
     {

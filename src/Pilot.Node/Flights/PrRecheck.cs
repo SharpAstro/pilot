@@ -271,6 +271,7 @@ public sealed class PrRecheck : IHostedService
 
     private async Task<Outcome> RecheckAsync(Entry entry, CancellationToken cancellationToken)
     {
+        entry.Silent.Clear();
         PullRequest pr;
         try
         {
@@ -651,7 +652,6 @@ public sealed class PrRecheck : IHostedService
     /// <summary>The endpoint of a peer that holds a flight on, or a review of, the PR; null when none does. A peer that does not answer holds nothing for this.</summary>
     private async Task<string?> PeerHasAsync(Entry entry, CancellationToken cancellationToken)
     {
-        entry.Silent.Clear();
         foreach (var peer in Fleet?.Peers() ?? [])
         {
             if (!peer.HasGrant)
@@ -667,7 +667,7 @@ public sealed class PrRecheck : IHostedService
                     return peer.Name;
                 }
             }
-            catch (Exception ex) when (FleetAdmission.Unreachable(ex) && !cancellationToken.IsCancellationRequested)
+            catch (Exception ex) when ((FleetAdmission.Unreachable(ex) || ex is InvalidOperationException) && !cancellationToken.IsCancellationRequested)
             {
                 entry.Silent.Add(peer.Name);
                 await Error.WriteLineAsync($"pr recheck: {peer.Name} did not say what it holds: {ex.Message}");

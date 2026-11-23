@@ -423,6 +423,17 @@ public sealed class PrRecheckTests1 : PrRecheckTestsBase
     }
 
     [Fact]
+    public async Task APeerThatThrowsInvalidOperationLeavesThePrToThisNode()
+    {
+        _fleet.Peers.Add(new Peer("a.local:1") { Throws = new InvalidOperationException("not connected") });
+
+        await LookAsync();
+
+        Review().ShouldNotBeNull();
+        _state.Cards().ShouldNotContain(c => c.Kind == PrRecheck.FailedKind);
+    }
+
+    [Fact]
     public async Task APeerThatTimesOutLeavesThePrToThisNode()
     {
         _fleet.Peers.Add(new Peer("a.local:1") { Throws = new TimeoutException("no answer") });

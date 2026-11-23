@@ -375,6 +375,7 @@ public sealed class AdmissionGate(NodeState state, Func<RoleModels> models, stri
         }
         // Peers the read could not reach already say why, as <c>host (did not answer: ...)</c>.
         sent.AddRange(view.NotCounted.Select(n => new FleetSent(n, FleetSendOutcome.Unreachable)));
+        sent.AddRange(view.Away.Select(a => new FleetSent(a, FleetSendOutcome.Unreachable)));
         return sent;
     }
 
