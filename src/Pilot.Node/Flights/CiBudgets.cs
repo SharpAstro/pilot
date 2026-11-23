@@ -34,16 +34,17 @@ public static class CiBudgets
 
     /// <summary>
     /// The flight's CI as these runs say it, over <paramref name="before"/> (which keeps what the node decided: the extra budgets, the
-    /// stop and the answer). Cancelled runs count as spend, never as red or green.
+    /// stop and the answer). Cancelled runs count as spend, never as red or green. PIL1283: a run in <paramref name="noModel"/> (an
+    /// outside review that never reached a model) counts as spend and as a run, but neither as failed nor toward the red streak.
     /// </summary>
-    public static FlightCi Count(IReadOnlyList<CiRun> runs, FlightCi? before, DateTimeOffset now) =>
+    public static FlightCi Count(IReadOnlyList<CiRun> runs, FlightCi? before, DateTimeOffset now, IReadOnlySet<long>? noModel = null) =>
         (before ?? new FlightCi()) with
         {
             RunnerMinutes = runs.Sum(r => r.RunnerMinutes),
             Runs = runs.Count,
-            Failed = runs.Count(Failed),
+            Failed = runs.Count(r => Failed(r) && noModel?.Contains(r.Id) != true),
             Cancelled = runs.Count(r => r.Conclusion == "cancelled"),
-            RedSince = RedSince(runs),
+            RedSince = RedSince(runs, noModel),
             CountedAt = now,
         };
 
@@ -54,7 +55,7 @@ public static class CiBudgets
     public static DateTimeOffset? RedSince(IReadOnlyList<CiRun> runs)
     {
         DateTimeOffset? since = null;
-        foreach (var workflow in runs.Where(r => r.CompletedAt is not null && r.Conclusion is not (null or "cancelled" or "skipped")).GroupBy(r => r.Name))
+        foreach (var workflow in runs.Where(r => r.CompletedAt is not null && r.Conclusion is not (null or "cancelled" or "skipped") && noModel?.Contains(r.Id) != true).GroupBy(r => r.Name))
         {
             var finished = workflow.OrderByDescending(r => r.CompletedAt).ToList();
             if (!Failed(finished[0]))

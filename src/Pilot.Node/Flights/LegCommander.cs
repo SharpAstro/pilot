@@ -27,6 +27,9 @@ public sealed partial class LegCommander(
     // Which failed runs never reached a model, read once from their logs (pilot #1283).
     private readonly OutsideReviews _outsideReviews = new(github, time);
 
+    /// <summary>The node's memory of which failed runs never reached a model (one log read per run id).</summary>
+    internal OutsideReviews OutsideReviews => _outsideReviews;
+
     /// <summary>How long a worker that finished its own leg has to end its turn and report before it is stopped.</summary>
     public TimeSpan SelfFinishGrace { get; init; } = TimeSpan.FromSeconds(90);
 

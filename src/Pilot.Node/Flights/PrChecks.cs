@@ -1000,7 +1000,20 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             {
                 continue;
             }
-            var counted = CiBudgets.Count(runs, current.Ci, now);
+            // PIL1283: a failed run whose log says the outside review never reached a model is neither failed nor red (its log is read once per run id).
+            HashSet<long> noModel = [];
+            if (legs is not null)
+            {
+                foreach (var run in runs.Where(r => r.Conclusion is "failure" or "timed_out" or "startup_failure"))
+                {
+                    var answer = await legs.OutsideReviews.AskAsync(flight.RepoPath, run.Id, cancellationToken);
+                    if (answer is { Known: true, NoModel: not null })
+                    {
+                        noModel.Add(run.Id);
+                    }
+                }
+            }
+            var counted = CiBudgets.Count(runs, current.Ci, now, noModel);
             // PIL1023: a flight waiting on a person (a review loop card, another card for the owner) does not run its red clock.
             // A cap already set is judged as before: only a new red cap is held back, so a card opening later never lifts a stop nobody answered.
             var wait = counted.CappedWhy is null ? CiBudgets.WaitOnPerson(state.Cards(), flight.Code, counted.RedSince) : default;

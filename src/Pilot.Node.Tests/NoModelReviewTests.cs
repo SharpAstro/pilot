@@ -123,6 +123,74 @@ public sealed class NoModelReviewTests : ReviewTestsBase
         Unavailable().ShouldHaveSingleItem();
     }
 
+    // Many pushes: every push leaves a review run that failed and a build run that passed, all finished a day before the end of the test.
+    private CiRun[] ManyPushes(DateTimeOffset firstDone, int pushes)
+    {
+        var runs = new List<CiRun>();
+        for (var i = 0; i < pushes; i++)
+        {
+            var done = firstDone.AddMinutes(20 * i);
+            runs.Add(GhAnswers.CiRun(1000 + i, 4, "success", "CI", started: done.AddMinutes(-5), completedAt: done));
+            runs.Add(GhAnswers.CiRun(2000 + i, 1, "failure", "review", started: done.AddMinutes(-2), completedAt: done.AddMinutes(1)));
+        }
+        return [.. runs];
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task OverManyPushesPastTheRedBoundOnlyReviewFailingWithNoModelNeitherSendsBackNorCapsTheFlight()
+    {
+        var (flight, number) = await Passed("67");
+        var start = _clock.GetUtcNow();
+        _github.CiRuns[flight.Branch] = ManyPushes(start, 12);
+        _github.Checks = ChoiceStatus.Failing;
+        _github.FailedChecks[number] = [Review(2011)];
+        foreach (var run in _github.CiRuns[flight.Branch].Where(r => r.Conclusion == "failure"))
+        {
+            _github.RunLogs[run.Id] = NoModelLog();
+        }
+        _github.RunLogs[2011] = NoModelLog();
+        var checks = new PrChecks(_state, _github, _clock, _flights, _legs) { CiInterval = TimeSpan.Zero };
+
+        await checks.LookAsync(Ct);
+        _clock.Advance(CiBudgets.RedBound + TimeSpan.FromHours(2));
+        await checks.LookAsync(Ct);
+        await checks.LookAtCiAsync(Ct);
+
+        NothingSentBack(flight);
+        Kinds().ShouldNotContain(CiBudgets.CapKind);
+        var ci = F(flight.Code).Ci.ShouldNotBeNull();
+        (ci.Failed, ci.RedSince, ci.CappedWhy).ShouldBe((0, null, null));
+        ci.Runs.ShouldBe(24);
+        ci.RunnerMinutes.ShouldBe(12 * 5);
+        _github.RunLogReads.ShouldBe(12, "each failed run's log is read once across the looks");
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task TheSameRunsWithAReviewThatHasFindingsGoRedAndCapPastTheBound()
+    {
+        var (flight, number) = await Passed("68");
+        var start = _clock.GetUtcNow();
+        _github.CiRuns[flight.Branch] = ManyPushes(start, 12);
+        _github.Checks = ChoiceStatus.Failing;
+        _github.FailedChecks[number] = [Review(2011)];
+        foreach (var run in _github.CiRuns[flight.Branch].Where(r => r.Conclusion == "failure"))
+        {
+            _github.RunLogs[run.Id] = FindingsLog;
+        }
+        var checks = new PrChecks(_state, _github, _clock, _flights, _legs) { CiInterval = TimeSpan.Zero };
+
+        _clock.Advance(CiBudgets.RedBound + TimeSpan.FromHours(2));
+        await checks.LookAtCiAsync(Ct);
+
+        var ci = F(flight.Code).Ci.ShouldNotBeNull();
+        ci.Failed.ShouldBe(12);
+        ci.RedSince.ShouldNotBeNull();
+        ci.CappedWhy.ShouldNotBeNull().ShouldContain("red for");
+        _state.Cards().ShouldContain(c => c.Kind == CiBudgets.CapKind);
+    }
+
     [Fact]
     [Trait("Category", "Slow")]
     public async Task AReviewRunWithFindingsIsSentBackAsToday()
