@@ -267,6 +267,8 @@ public sealed partial class LegCommander
         {
             throw new FlightException($"git could not push {flight.Branch}: {push.Why}");
         }
+        // A push moves the PR's head and starts its CI: its next read is within 30 s, not at the end of a long wait (pilot #1293).
+        state.PrPolls.MarkDue(flight.RepoPath, flight.Branch);
     }
 
     /// <summary>

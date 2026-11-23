@@ -87,6 +87,29 @@ public sealed class NodeTrafficTests
         }
     }
 
+    [Fact]
+    public async Task AGhStartIsCountedByKindAndCallerInTheWindowOfTheNodesClock()
+    {
+        var clock = new Clock(new DateTimeOffset(2026, 11, 23, 10, 5, 0, TimeSpan.Zero));
+        // The seam hands back this very process, so nothing is started; no bytes are measured, so no job object is made for it.
+        var traffic = new NodeTraffic { Time = clock, Starter = _ => Process.GetCurrentProcess() };
+
+        var (process, counted) = await traffic.StartAsync("gh", new ProcessStartInfo("gh", ["pr", "view", "5"]), canUseNetwork: false, Ct, caller: "PrChecks.LookAsync");
+        process.Dispose();
+        counted.Dispose();
+        (await traffic.StartAsync("git", new ProcessStartInfo("git", ["status"]), canUseNetwork: false, Ct, caller: "Git")).Process.Dispose();
+        var (unnamed, child) = await traffic.StartAsync("gh", new ProcessStartInfo("gh", ["api", "repos/o/r"]), canUseNetwork: false, Ct);
+        unnamed.Dispose();
+        child.Dispose();
+
+        clock.Now = clock.Now.AddMinutes(10);
+        var window = traffic.GhCalls.Last().ShouldNotBeNull();
+        window.Start.ShouldBe(new DateTimeOffset(2026, 11, 23, 10, 0, 0, TimeSpan.Zero));
+        window.Calls.ShouldBe(2, "only gh starts are gh calls");
+        window.Kinds.Single(k => k.Kind == "pr view").Callers.ShouldBe([("PrChecks.LookAsync", 1L)]);
+        window.Kinds.Single(k => k.Kind == "api rest").Callers.ShouldBe([("unknown", 1L)]);
+    }
+
     [Theory]
     [InlineData("fetch --quiet origin", true)]
     [InlineData("-C some/dir push origin HEAD", true)]
