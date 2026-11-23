@@ -18,8 +18,8 @@ public sealed class FixtureTests
         var snapshot = JsonSerializer.Deserialize(File.ReadAllText(FixturePath), PilotJsonContext.Default.NodeEvent).ShouldBeOfType<SnapshotEvent>();
 
         snapshot.Sessions.Length.ShouldBe(7);
-        // The sample feeds the GUI captures too; a fixer or designer row joins it with the GUI's own label (the store fixture 2.1.1-contract3 holds one).
-        snapshot.Sessions.Select(s => s.Role).Distinct().Order().ShouldBe(Enum.GetValues<SessionRole>().Where(r => r is not (SessionRole.Fixer or SessionRole.Designer)));
+        // The sample feeds the GUI captures too; a fixer, designer or investigator row joins it with the GUI's own label (the store fixtures 2.1.1-contract3 and 2.1.1-contract13 hold them).
+        snapshot.Sessions.Select(s => s.Role).Distinct().Order().ShouldBe(Enum.GetValues<SessionRole>().Where(r => r is not (SessionRole.Fixer or SessionRole.Designer or SessionRole.Investigator)));
         snapshot.Sessions.Select(s => s.State).Distinct().Order().ShouldBe(Enum.GetValues<SessionState>());
         snapshot.Sessions.Select(s => s.Kind).Distinct().Order().ShouldBe(Enum.GetValues<SessionKind>());
         snapshot.Sessions.Select(s => s.Id).ShouldBeUnique();

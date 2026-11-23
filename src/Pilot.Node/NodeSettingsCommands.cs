@@ -498,7 +498,7 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         RoleModels.Worker => "A leg's worker, unless its plan names a model (leg plan --model), which wins",
         RoleModels.Planner => "Plans a flight's legs from its issue: short-lived, and decides everything after it",
         RoleModels.Designer => "Makes a design in its draft folder from the brief and publishes a version once the check is clean: one session per design, started again with its context on each brief piece",
-        RoleModels.Investigator => "Autopilot's thinking tier: a short session the node starts with the evidence in its brief (a repeat, a stale flight, a card bound for the ring, the digest) that ends with one decision: an issue and a flight, an action, or one ring to you",
+        RoleModels.Investigator => "The thinking tier of the standing goal: a short session the node starts with the evidence in its brief (a repeat, a stale flight, a card bound for the ring, the digest) that ends with one decision: an issue and a flight, an action, or one ring to you",
         _ => "Reviews a flight's PR before its merge card",
     };
 

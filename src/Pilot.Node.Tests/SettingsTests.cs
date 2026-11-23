@@ -765,7 +765,7 @@ public sealed class SettingsTests : IDisposable
     public void EachRoleHasItsRangeAndTheDefaultPairIsWhatASessionStartsOn()
     {
         var defaults = new RoleModels(null);
-        RoleModels.Roles.Select(defaults.Model).ShouldBe(["sonnet", "sonnet", "opus", "opus", "opus"]);
+        RoleModels.Roles.Select(defaults.Model).ShouldBe(["sonnet", "sonnet", "opus", "opus", "opus", "opus"]);
         RoleModels.Roles.Select(defaults.Effort).ShouldAllBe(e => e == null);
         RoleModels.Unset.Model(RoleModels.Worker).ShouldBeNull();
 
