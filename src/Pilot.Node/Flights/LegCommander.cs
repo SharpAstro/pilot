@@ -25,7 +25,7 @@ public sealed partial class LegCommander(
     public NamedLock Lock => _one;
 
     // What a flight's review leaves on its PR on GitHub: the COMMENT review, the pilot/review status, the pilot: label.
-    private readonly PrMarks _marks = new(state, gitHub, options);
+    private readonly PrMarks _marks = new(state, LookGitHub.Of(gitHub, state.PrPolls), options);
 
     // Which failed runs never reached a model, read once from their logs (pilot #1283).
     private readonly OutsideReviews _outsideReviews = new(gitHub, time);
