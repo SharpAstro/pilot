@@ -18,7 +18,8 @@ public sealed partial class LegCommander
         // node's own rebase does, instead of refusing as busy, and reads the flight afresh (pilot #871: a loaded run refused it).
         await WaitForFlightFreeAsync(flight.Code, OpeningPr, cancellationToken);
         flight = FlightOf(command.Target);
-        if (VerbPreconditions.OpenPr(flight, state.Legs(flight.Code)) is { } refused)
+        var legs = state.Legs(flight.Code);
+        if (VerbPreconditions.OpenPr(flight, legs) is { } refused)
         {
             throw new FlightException(refused.Why);
         }

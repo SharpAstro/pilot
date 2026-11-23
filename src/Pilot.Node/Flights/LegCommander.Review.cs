@@ -42,7 +42,8 @@ public sealed partial class LegCommander
     private async Task StartReviewAsync(FlightRow flight, CancellationToken cancellationToken, bool quiet = false, string? who = null)
     {
         string? reviewedHead = null;
-        if (VerbPreconditions.StartReview(flight, state.Legs(flight.Code)) is { } refused)
+        var legs = state.Legs(flight.Code);
+        if (VerbPreconditions.StartReview(flight, legs) is { } refused)
         {
             throw new FlightException(refused.Why);
         }
