@@ -139,8 +139,7 @@ public sealed class StopGateTests : IDisposable
     public async Task AnUntrackedScratchTestIsNamedAndTheRingOffersDelete()
     {
         Directory.CreateDirectory(Path.Combine(Plane, "src", "X.Tests"));
-        File.WriteAllText(Path.Combine(Plane, "src", "X.Tests", "ScratchLookTests.cs"), "//
-");
+        File.WriteAllText(Path.Combine(Plane, "src", "X.Tests", "ScratchLookTests.cs"), "//\n");
 
         var reason = JsonDocument.Parse((await Decide(Plane)).ShouldNotBeNull()).RootElement.GetProperty("reason").GetString().ShouldNotBeNull();
         reason.ShouldContain("commit");
@@ -163,10 +162,8 @@ public sealed class StopGateTests : IDisposable
     [Fact]
     public async Task AModifiedTrackedFileRingsWithOnlyCommit()
     {
-        File.WriteAllText(Path.Combine(Plane, "README.md"), "changed
-");
-        File.WriteAllText(Path.Combine(Plane, "ScratchNew.cs"), "//
-");
+        File.WriteAllText(Path.Combine(Plane, "README.md"), "changed\n");
+        File.WriteAllText(Path.Combine(Plane, "ScratchNew.cs"), "//\n");
         (await Decide(Plane)).ShouldNotBeNull();
         (await Decide(Plane, active: true)).ShouldBeNull();
 
