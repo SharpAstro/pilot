@@ -535,7 +535,7 @@ public sealed partial class NodeState
     internal enum RungWordsResult { Put, Unchanged, Closed }
 
     /// <summary>Puts a ring's words on card <paramref name="id"/> (one paragraph per sender), moving it to <paramref name="bin"/> when given. Closed when the card is not open, as when it closed after the caller looked.</summary>
-    internal RungWordsResult PutWordsOnCard(string id, string who, string title, string? detail, CardBin? bin)
+    internal RungWordsResult PutWordsOnCard(string id, string who, string title, string detail, CardBin? bin)
     {
         lock (_gate)
         {

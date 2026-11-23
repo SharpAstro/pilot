@@ -247,10 +247,10 @@ public sealed class RingAboutCardTests
     {
         await using var node = await NodeHarness.StartAsync(Ct);
         var a = RaiseAsk(node);
-        node.State.PutWordsOnCard(a.Id, "wt", "Look", null, CardBin.Ring).ShouldBe(NodeState.RungWordsResult.Put);
-        node.State.PutWordsOnCard(a.Id, "wt", "Look", null, CardBin.Ring).ShouldBe(NodeState.RungWordsResult.Unchanged);
+        node.State.PutWordsOnCard(a.Id, "wt", "Look", "", CardBin.Ring).ShouldBe(NodeState.RungWordsResult.Put);
+        node.State.PutWordsOnCard(a.Id, "wt", "Look", "", CardBin.Ring).ShouldBe(NodeState.RungWordsResult.Unchanged);
         node.State.CloseCard(a.Id, "dismissed", "cli");
-        node.State.PutWordsOnCard(a.Id, "wt", "Too late", null, CardBin.Ring).ShouldBe(NodeState.RungWordsResult.Closed);
+        node.State.PutWordsOnCard(a.Id, "wt", "Too late", "", CardBin.Ring).ShouldBe(NodeState.RungWordsResult.Closed);
         node.State.Cards().Single(x => x.Id == a.Id).Detail.ShouldNotContain("Too late");
     }
 
