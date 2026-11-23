@@ -8,8 +8,11 @@ namespace Pilot.Node.Flights;
 /// decides nothing. A PR merged on GitHub itself (a person, another tool) is noticed too: its card closes and its flight
 /// lands, as a merge through the card would; one closed without a merge closes its card.
 /// </summary>
-public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time, FlightCommander? flights = null, LegCommander? legs = null) : BackgroundService
+public sealed class PrChecks(NodeState state, IGitHub gitHub, TimeProvider time, FlightCommander? flights = null, LegCommander? legs = null) : BackgroundService
 {
+    // Reads of a flight's PR inside a look are answered from one read per repo (LookSnapshot); outside a look they go to GitHub as ever.
+    private readonly IGitHub github = LookGitHub.Of(gitHub);
+
     /// <summary>Where this says what it would have said on stderr: the node's log (pilot #416), nothing for one built without.</summary>
     public TextWriter Error { get; set; } = TextWriter.Null;
 
@@ -1035,6 +1038,8 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
     /// <summary>One look at every open PR-ready card's PR.</summary>
     public async Task LookAsync(CancellationToken cancellationToken)
     {
+        // One read per repo for the whole look (pilot #1293): the flights' PR, merge state, checks and queue reads below are answered from it.
+        using var snapshot = LookSnapshot.Begin();
         await RestorePassedWithoutCardAsync(cancellationToken);
         await LookAtHoldsAsync(cancellationToken);
         // A failure's investigation that landed lets the flights held for it go: re-queued, rerun, or their leg check run again.

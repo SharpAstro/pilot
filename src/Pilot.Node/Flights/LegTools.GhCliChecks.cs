@@ -188,14 +188,8 @@ public sealed partial class GhCli
         try
         {
             using var doc = JsonDocument.Parse(json);
-            var checks = doc.RootElement.EnumerateArray().Select(c => (Bucket: TextOf(c, "bucket"), Name: TextOf(c, "name"), Link: TextOf(c, "link"))).Where(c => c.Bucket is not null).ToList();
-            var failed = checks.FirstOrDefault(c => c.Bucket is "fail" or "cancel");
-            var status = checks.Count == 0 ? null
-                : failed.Bucket is not null ? ChoiceStatus.Failing
-                : checks.Any(c => c.Bucket == "pending") ? ChoiceStatus.Pending
-                : checks.Any(c => c.Bucket == "pass") ? ChoiceStatus.Passing
-                : null;
-            return status is null ? null : new ChecksSummary(status, checks.Count(c => c.Bucket != "pending"), checks.Count, failed.Name, failed.Link);
+            var checks = doc.RootElement.EnumerateArray().Select(c => (Bucket: TextOf(c, "bucket"), Name: TextOf(c, "name"), Link: TextOf(c, "link"))).Where(c => c.Bucket is not null).Select(c => (Bucket: c.Bucket!, c.Name, c.Link)).ToList();
+            return SummariseChecks(checks);
         }
         catch (JsonException)
         {

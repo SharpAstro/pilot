@@ -13,8 +13,11 @@ namespace Pilot.Node.Flights;
 /// gets a fresh worker briefed from the work, never from an earlier worker's conversation.
 /// </summary>
 public sealed partial class LegCommander(
-    NodeState state, IWorkerLauncher workers, ICheckRunner checks, IGitHub github, IGit git, Planes planes, FlightCommander flights, NodeOptions options, TimeProvider time)
+    NodeState state, IWorkerLauncher workers, ICheckRunner checks, IGitHub gitHub, IGit git, Planes planes, FlightCommander flights, NodeOptions options, TimeProvider time)
 {
+    // Reads of a flight's PR inside a PrChecks look are answered from its snapshot (LookSnapshot); anywhere else they go to GitHub.
+    private readonly IGitHub github = LookGitHub.Of(gitHub);
+
     // The one lock of the leg verbs, which says what holds it (a command waiting past LockWait.Patience is told).
     private readonly NamedLock _one = new(time);
 

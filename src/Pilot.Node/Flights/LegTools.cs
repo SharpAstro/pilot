@@ -162,6 +162,13 @@ public interface IGitHub
     /// </summary>
     Task<MergeState?> MergeStateAsync(string repoPath, int number, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// The newest open PRs of the repo at <paramref name="repoPath"/>, each with everything the single reads answer for it, from one
+    /// GraphQL call (pilot #1293: one read per repo per look, not three per PR). Null when GitHub would not say, and by default:
+    /// the caller then reads each PR on its own.
+    /// </summary>
+    Task<OpenPullRequest[]?> OpenPullRequestsByHeadAsync(string repoPath, CancellationToken cancellationToken) => Task.FromResult<OpenPullRequest[]?>(null);
+
     /// <summary>The PR whose head is <paramref name="branch"/> in the repo at <paramref name="repoPath"/>, or null without one.</summary>
     Task<PullRequest?> PullRequestAsync(string repoPath, string branch, CancellationToken cancellationToken);
 
