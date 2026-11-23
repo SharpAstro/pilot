@@ -19,6 +19,8 @@ internal enum DestinationStatus
     Armed,
     Queued,
     Conflicts,
+    /// <summary>Red CI: the PR branch's latest finished run is red and nothing green followed (<see cref="FlightCi.RedSince"/> is set).</summary>
+    ChecksRed,
     /// <summary>
     /// Mergeable but not rebaseable on a base that merges by rebase (<see cref="FlightRow.RebaseOnly"/>): known and handled, it lands
     /// squashed. Drawn as handled, never as trouble (pilot #1299).
@@ -194,8 +196,9 @@ internal sealed class FlightMap
     public MapRoute? Route(string flight, string? node = null) => Routes.FirstOrDefault(r => r.Flight == flight && (node is null || r.Node == node));
 
     /// <summary>
-    /// The destination's status from what the row carries. Not told by the row: a PR's failing checks (only a merge waiting for
-    /// them is), and conflicts before the node's look has set the label; those read as the state before them.
+    /// The destination's status from what the row carries. Red CI is told by <see cref="FlightCi.RedSince"/> and wins over an armed
+    /// merge, a review state and rebase only, but not over a conflict, a merge queue or a merge. Not told by the row: conflicts
+    /// before the node's look has set the label; those read as the state before them.
     /// </summary>
     public static DestinationStatus StatusOf(FlightRow flight)
     {
@@ -215,6 +218,10 @@ internal sealed class FlightMap
         if (flight.Review?.LabelOverride?.Contains("conflicts", StringComparison.OrdinalIgnoreCase) == true)
         {
             return DestinationStatus.Conflicts;
+        }
+        if (flight.Ci?.RedSince is not null)
+        {
+            return DestinationStatus.ChecksRed;
         }
         if (flight.MergeWhenGreen is { Length: > 0 })
         {
