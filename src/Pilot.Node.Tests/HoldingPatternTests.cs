@@ -24,6 +24,11 @@ public sealed class HoldingPatternTests : ReviewTestsBase
         await Fly(flight, "parser");
         (await Run(Verbs.OpenPr, Verbs.FlightTarget(flight.Code), "controller")).Error.ShouldBeNull();
         (await Run(Verbs.Review, Verbs.FlightTarget(flight.Code), Reviewer(flight.Code), "pass", report)).Error.ShouldBeNull();
+        // The fixture's PR sits at the head the review passed, as a real one does until a push (the restore after a leg wait reads it).
+        if (F(flight.Code).Holding is not null)
+        {
+            _github.Pr = _github.Pr! with { Head = F(flight.Code).Review!.ReviewedHead! };
+        }
         return flight;
     }
 
@@ -530,6 +535,28 @@ public sealed class HoldingPatternTests : ReviewTestsBase
         await checks.LookAsync(Ct);
         var ring = Open().Single(c => c.Kind == LegCommander.HoldingTimeoutKind);
         ring.Summary.ShouldNotBeNull().ShouldContain($"{LegCommander.ReviewNotesLeg} leg was planned and never started");
+        _github.Merged.ShouldBeEmpty();
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task APrReadyCardAPersonDismissedRingsNoTimeoutCardPastTheBound()
+    {
+        NodeAdvances();
+        var flight = await Reviewed("41", Notes);
+        // The review-notes leg stays planned and never starts, so past the bound the hold reaches the head lookup (as in the never-started test).
+        var ready = Open().Where(c => c.Kind == LegCommander.PrReady).ShouldHaveSingleItem();
+        // A person's own dismissal (not the node's leg-wait close) leaves HoldingHead nothing to merge: the hold stays quiet.
+        _state.CloseCard(ready.Id, "read it, leaving it", "me");
+        var clock = new ManualTime(F(flight.Code).Holding!.Since);
+        var checks = TimedChecks(clock, live: true);
+
+        clock.Advance(TimeSpan.FromMinutes(31));
+        await checks.LookAsync(Ct);
+        await checks.LookAsync(Ct);
+
+        Open().ShouldNotContain(c => c.Kind == LegCommander.HoldingTimeoutKind);
+        F(flight.Code).Holding.ShouldNotBeNull();
         _github.Merged.ShouldBeEmpty();
     }
 

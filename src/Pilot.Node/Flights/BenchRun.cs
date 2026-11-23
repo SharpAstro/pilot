@@ -200,10 +200,9 @@ public sealed class BenchRun(NodeState state, NodeOptions options, RepoCatalog r
             }
             var title = $"The {repo.Name} benchmark {(job.State == JobState.Succeeded ? "finished" : "ended badly")}";
             var refs = legs.Count == 1 ? legs[0].Ref : $"{legs[0].Ref} against {legs[1].Ref}";
-            var card = state.RaiseCard(CardBin.ForYou, CardKind, Verbs.RepoTarget(repo.Path), title, $"{refs} (job {jobId}).\n\n{body}{note}",
+            state.RaiseCard(CardBin.ForYou, CardKind, Verbs.RepoTarget(repo.Path), title, $"{refs} (job {jobId}).\n\n{body}{note}",
                 [new CardChoice { Label = "Mark it read", Verb = Verbs.Dismiss, Target = "" }],
                 summary: $"Read the tables of {refs}: the benchmark {(job.State == JobState.Succeeded ? "finished" : "ended badly")}; nothing else waits on you.");
-            state.AimDismiss(card);
         }
         catch (Exception ex)
         {

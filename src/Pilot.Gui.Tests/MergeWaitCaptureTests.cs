@@ -9,8 +9,8 @@ namespace Pilot.Gui.Tests;
 
 /// <summary>
 /// A held merge's button says what it waits for (#918): the legs not done, a leg whose check reruns, CI running, a check failed;
-/// a plain Merge only when a press would go through. The words are the node's (<c>LegCommander.LegWaitWords</c>, the checks'
-/// progress); this checks what the card shows of them, and writes captures for the PR when a person asks.
+/// a plain Merge only when a press would go through. The words are the checks' progress and, from a node
+/// before PIL1294 (which shows a leg wait as a Handled line instead), the legs it waits for; this checks what the card shows of them, and writes captures for the PR when a person asks.
 /// </summary>
 public sealed class MergeWaitCaptureTests
 {
