@@ -169,9 +169,9 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
         {
             OpenLimitFrom(error);
         }
-        var result = state.Complete(command, error, way, sessionId);
+        var result = state.Complete(command, error, way, sessionId, waiting: parts.Note);
         var outcome = duplicate ? $"skipped: request id {command.RequestId} was already sent{(sessionId is null ? "" : $" as {sessionId}")}"
-            : error is null ? "delivered" +(sessionId is null ? "" : $" as {sessionId}") : $"refused: {error}";
+            : error is null ? (parts.Note ?? "delivered") + (sessionId is null ? "" : $" as {sessionId}") : $"refused: {error}";
         await log.WriteLineAsync($"{(compact ? "compact" : "say")}: who={command.Who} from={SenderKind(command.Who)} target={command.Target} way={way ?? "none"}{(route is null ? "" : $" route={route}")} {outcome} ({parts.Line(clock.Elapsed)})");
         await log.FlushAsync(cancellationToken);
         return result;
@@ -341,6 +341,9 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
         public TimeSpan? Gate { get; set; }
         public TimeSpan? Look { get; set; }
         public TimeSpan? Choose { get; set; }
+
+        /// <summary>What a say redirected to a leg's current worker tells the sender; null when it went where it was addressed.</summary>
+        public string? Note { get; set; }
         public TimeSpan? Deliver { get; set; }
 
         /// <summary><c>51118 ms: gate 3 ms, look 12 ms, choose 0 ms, deliver 185 ms</c>; a part not reached is left out.</summary>
@@ -409,7 +412,18 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
             parts.Look = step.Elapsed;
             step.Restart();
             var rows = state.Sessions();
-            var row = Find(rows, id) ?? throw new SessionDeliveryException($"There is no session {id}: give its row id, or the name of one live session, as pilot sessions lists them");
+            var row = Find(rows, id) ?? FindReplacedWorker(rows, id) ?? throw new SessionDeliveryException($"There is no session {id}: give its row id, or the name of one live session, as pilot sessions lists them");
+            if (ReplacedWorker(row, rows, out var currentWorker) is { } replacedJob)
+            {
+                // A worker its leg no longer names (stopped, ended or replaced by a go-around) is never resumed, for any sender and
+                // however it was named (#1206): the words go to the leg's current worker, or are refused when that one is not live.
+                if (currentWorker is null)
+                {
+                    throw new SessionDeliveryException($"{row.Name} ({row.Id}) was replaced by {replacedJob}; the node does not wake a replaced worker");
+                }
+                parts.Note = $"delivered to {currentWorker.Id} ({currentWorker.Name}), the leg's current worker; {row.Id} was replaced";
+                row = currentWorker;
+            }
             // The same request id said to this row again, by resume or relay, is the first's delivery, not a second one (PIL595).
             var deliveredKey = command.RequestId is { Length: > 0 } rid ? $"{row.Id}\n{rid}" : null;
             if (deliveredKey is not null)
@@ -540,6 +554,28 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
     /// </summary>
     public static string? ReplyTo(SessionRow[] rows, SessionRow recipient, string? who) =>
         who is { Length: > 0 } && Find(rows, who) is { } sender && sender.Id != recipient.Id ? sender.Id : null;
+
+    /// <summary>
+    /// The job a worker's leg now names when that is not <paramref name="row"/>, else null; <paramref name="current"/> is that job's row when it is
+    /// live (working, waiting or idle), else null. Not a worker row, or a leg that names no job: null.
+    /// </summary>
+    private string? ReplacedWorker(SessionRow row, SessionRow[] rows, out SessionRow? current)
+    {
+        current = null;
+        if (row is not { Role: SessionRole.Worker, Flight: { Length: > 0 } flight, Leg: { Length: > 0 } leg }
+            || state.Legs(flight).FirstOrDefault(l => l.Name == leg) is not { WorkerJob: { Length: > 0 } job }
+            || job == row.Id)
+        {
+            return null;
+        }
+        current = rows.FirstOrDefault(r => r.Id == job && r.State is SessionState.Working or SessionState.Waiting or SessionState.Idle);
+        return job;
+    }
+
+    /// <summary>A name or session id that only an ended worker row has, whose leg flies another job now: that row, so the say is refused as replaced and not as unknown.</summary>
+    private SessionRow? FindReplacedWorker(SessionRow[] rows, string name) =>
+        rows.Where(r => r.Role == SessionRole.Worker && (r.Name == name || r.SessionId == name || r.EarlierSessionIds?.Contains(name) == true)).OrderByDescending(r => r.StartedAt)
+            .FirstOrDefault(r => ReplacedWorker(r, rows, out _) is not null);
 
     /// <summary>The live session that replaced <paramref name="row"/>: a background one of the same name and role, started later, that is not an earlier copy of it. Null when none.</summary>
     internal static SessionRow? ReplacedBy(SessionRow row, SessionRow[] rows, string? watchtower = null)
