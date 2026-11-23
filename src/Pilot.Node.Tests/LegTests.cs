@@ -877,6 +877,21 @@ internal sealed class FakeGitHub : IGitHub
     /// <summary>When set, reading a failed run yields nothing, as a gh that could not read it.</summary>
     public bool FailedRunFails { get; set; }
 
+    /// <summary>What <c>gh run view --log-failed</c> prints per run id; a run not listed, or listed null, is one gh could not read.</summary>
+    public Dictionary<long, string?> RunLogs { get; } = [];
+
+    /// <summary>When set, reading a run's log fails as a gh that could not reach GitHub.</summary>
+    public bool RunLogFails { get; set; }
+
+    /// <summary>How many run logs were asked for.</summary>
+    public int RunLogReads { get; private set; }
+
+    public Task<string?> RunFailedLogAsync(string repoPath, long runId, CancellationToken cancellationToken)
+    {
+        RunLogReads++;
+        return RunLogFails ? throw new FlightException("gh could not reach GitHub") : Task.FromResult(RunLogs.GetValueOrDefault(runId));
+    }
+
     public Task<FailedRun?> FailedRunAsync(string repoPath, int number, bool mergeGroup, CancellationToken cancellationToken) =>
         Task.FromResult(!FailedRunFails && FailedRuns.TryGetValue((number, mergeGroup), out var run) ? run : null);
 

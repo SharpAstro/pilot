@@ -366,6 +366,39 @@ public sealed partial class GhCli
     private static DateTimeOffset? StampOf(JsonElement element, string property) =>
         TextOf(element, property) is { } text && DateTimeOffset.TryParse(text, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out var at) && at.Year > 1 ? at : null;
 
+    public async Task<FailedCheck[]> FailedChecksAsync(string repoPath, int number, CancellationToken cancellationToken)
+    {
+        var (_, output, _) = await RunAsync(["pr", "checks", number.ToString(System.Globalization.CultureInfo.InvariantCulture), "--json", ChecksFields], repoPath, cancellationToken);
+        return ParseFailedChecks(output);
+    }
+
+    /// <summary>Every failed check of <c>gh pr checks --json bucket,name,link</c>'s answer, with the run id its link names; empty when it is no JSON.</summary>
+    internal static FailedCheck[] ParseFailedChecks(string json)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            return [.. doc.RootElement.EnumerateArray()
+                .Where(c => TextOf(c, "bucket") is "fail" or "cancel")
+                .Select(c =>
+                {
+                    var link = TextOf(c, "link");
+                    var m = link is null ? Match.Empty : Regex.Match(link, @"/actions/runs/(\d+)");
+                    return new FailedCheck(TextOf(c, "name") ?? "", link, m.Success ? long.Parse(m.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture) : null);
+                })];
+        }
+        catch (JsonException)
+        {
+            return [];
+        }
+    }
+
+    public async Task<string?> RunFailedLogAsync(string repoPath, long runId, CancellationToken cancellationToken)
+    {
+        var (exit, log, _) = await RunAsync(["run", "view", runId.ToString(System.Globalization.CultureInfo.InvariantCulture), "--log-failed"], repoPath, cancellationToken);
+        return exit != 0 ? null : log.Length > FailedLogLimit ? log[^FailedLogLimit..] : log;
+    }
+
     public async Task<int> RerunFailedChecksAsync(string repoPath, int number, CancellationToken cancellationToken)
     {
         var (_, output, _) = await RunAsync(["pr", "checks", number.ToString(System.Globalization.CultureInfo.InvariantCulture), "--json", "bucket,link"], repoPath, cancellationToken);

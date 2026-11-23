@@ -52,6 +52,9 @@ public sealed record MergeQueueState(string State, string Head, bool Queued, int
 /// <paramref name="Done"/> of <paramref name="Total"/> checks finished (a skipped one is finished), and the first that failed by
 /// <paramref name="FailedName"/> and <paramref name="FailedLink"/>, the page of its run.
 /// </summary>
+/// <summary>A failed check of a PR: its name, its page and the workflow run behind it (null for a check that is no workflow run).</summary>
+public sealed record FailedCheck(string Name, string? Link, long? RunId);
+
 public sealed record ChecksSummary(string Status, int Done, int Total, string? FailedName = null, string? FailedLink = null);
 
 /// <summary>
@@ -292,6 +295,15 @@ public interface IGitHub
     /// read that fails is no failure to look at, and never an exception that stops a look.
     /// </summary>
     Task<FailedRun?> FailedRunAsync(string repoPath, int number, bool mergeGroup, CancellationToken cancellationToken) => Task.FromResult<FailedRun?>(null);
+
+    /// <summary>Every failed check of PR <paramref name="number"/> with its page and run; empty when there is none or GitHub would not say.</summary>
+    Task<FailedCheck[]> FailedChecksAsync(string repoPath, int number, CancellationToken cancellationToken) => Task.FromResult<FailedCheck[]>([]);
+
+    /// <summary>
+    /// What <c>gh run view --log-failed</c> prints for run <paramref name="runId"/>: the empty string when it printed nothing; null when gh
+    /// could not say, which is no answer and asked again.
+    /// </summary>
+    Task<string?> RunFailedLogAsync(string repoPath, long runId, CancellationToken cancellationToken) => Task.FromResult<string?>(null);
 
     /// <summary>Where PR <paramref name="number"/> stands in its base's merge queue; null when its base has none, or GitHub would not say.</summary>
     Task<MergeQueueState?> MergeQueueAsync(string repoPath, int number, CancellationToken cancellationToken);
