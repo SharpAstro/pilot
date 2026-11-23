@@ -111,7 +111,8 @@ public sealed class FixerHoldTests : PrFixTestsBase
         await _reviews.SweepAsync(Ct);
 
         _github.Merged.ShouldBeEmpty();
-        var card = _state.Cards(openOnly: true).Where(c => c.Kind == PrReviews.FixerWorkHeldKind).ShouldHaveSingleItem($"DBG state={Row.State} verdict={Row.Verdict} note={Row.QueueNote} qat={Row.QueuedAt} head={Row.Head} wt={Row.FixWorktree} exists={Directory.Exists(FixWorktree)} cards={string.Join(",", _state.Cards().Select(x => x.Kind))}");
+        var dbgHeld = await _reviews.FixerHoldAsync(Row, await _github.PullRequestOfAsync("acme/widget", 7, Ct), Ct);
+        var card = _state.Cards(openOnly: true).Where(c => c.Kind == PrReviews.FixerWorkHeldKind).ShouldHaveSingleItem($"DBG held={dbgHeld} status={PrOrigins.Git(FixWorktree, "status", "--porcelain")} clone={Row.ClonePath} vs {WidgetClone} sessions={string.Join(",", _state.Sessions().Select(x => x.Name + ":" + x.State))} DBG state={Row.State} verdict={Row.Verdict} note={Row.QueueNote} qat={Row.QueuedAt} head={Row.Head} wt={Row.FixWorktree} exists={Directory.Exists(FixWorktree)} cards={string.Join(",", _state.Cards().Select(x => x.Kind))}");
         card.Detail.ShouldNotBeNull().ShouldContain(FixWorktree);
         card.Detail.ShouldContain("1 file not committed (half.txt)");
         File.Exists(Path.Combine(FixWorktree, "half.txt")).ShouldBeTrue();
