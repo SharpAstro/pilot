@@ -33,6 +33,15 @@ public class WatchtowerBriefTests
     }
 
     [Fact]
+    public void TheBriefSaysToRingTheExistingCardNotRaiseASecond()
+    {
+        var brief = Brief();
+
+        brief.ShouldContain("card/<id>");
+        brief.ShouldContain("ring that card (card/<id>), never a second card about it");
+    }
+
+    [Fact]
     public void TheBriefOfAHugeStateIsAtMostSixThousandCharacters()
     {
         var flights = Enumerable.Range(1, 30).Select(i => Flight(i, held: i % 3 == 0)).ToList();
