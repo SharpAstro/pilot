@@ -1,3 +1,4 @@
+using Pilot.Contracts;
 using System.Collections.Concurrent;
 
 namespace Pilot.Node.Flights;
