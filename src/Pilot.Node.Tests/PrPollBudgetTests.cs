@@ -269,8 +269,8 @@ public sealed class PrPollBudgetTests
         rig.GitHub.MergeOf[12] = GhAnswers.MergeState(MergeKinds.Blocked, done: 3, total: 3, failedName: "build", failedLink: "https://github.com/o/r/actions/runs/1");
         (await hour.SeenWithinAsync(() => MergeChoice(rig, "PBA2") != redBefore, interval)).ShouldNotBeNull("red CI is seen within one interval");
 
-        // A queued merge is told by GitHub's merge state of the PR: seen once the node reads it again.
-        var mergeReads = () => rig.GitHub.Reads.TryGetValue((RepoB, nameof(IGitHub.MergeStateAsync)), out var n) ? n : 0;
+        // A queued merge is told by GitHub's merge state of the PR, which the repo's batch read carries: seen once the node reads the batch again.
+        var mergeReads = () => rig.GitHub.Reads.TryGetValue((RepoB, nameof(IGitHub.OpenPullRequestsByHeadAsync)), out var n) ? n : 0;
         var queuedBefore = mergeReads();
         rig.GitHub.MergeOf[14] = GhAnswers.MergeState(MergeKinds.Queued, position: 1);
         (await hour.SeenWithinAsync(() => mergeReads() > queuedBefore, interval)).ShouldNotBeNull("a queued PR is seen within one interval");
