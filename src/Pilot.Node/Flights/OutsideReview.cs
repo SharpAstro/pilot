@@ -141,12 +141,42 @@ public sealed class OutsideReviews(IGitHub github, TimeProvider? time = null)
     private readonly Dictionary<long, int> _attempts = [];
     private readonly Lock _lock = new();
 
+    // When each entry above was last read or written, so a write can drop what has sat unused past Keep.
+    private readonly Dictionary<(long RunId, int Attempt), DateTimeOffset> _runsUsed = [];
+    private readonly Dictionary<long, DateTimeOffset> _attemptsUsed = [];
+
+    /// <summary>
+    /// How long an unused entry is kept. A day is past the 15 hours a no-reset run's reruns span, so an entry in use is never dropped; and a dropped
+    /// entry costs only a read from gh again, never a wrong answer.
+    /// </summary>
+    public static readonly TimeSpan Keep = TimeSpan.FromDays(1);
+
+    private void Prune(DateTimeOffset now)
+    {
+        var cutoff = now - Keep;
+        foreach (var key in _runsUsed.Where(e => e.Value < cutoff).Select(e => e.Key).ToList())
+        {
+            _runsUsed.Remove(key);
+            _runs.Remove(key);
+        }
+        foreach (var key in _attemptsUsed.Where(e => e.Value < cutoff).Select(e => e.Key).ToList())
+        {
+            _attemptsUsed.Remove(key);
+            _attempts.Remove(key);
+        }
+    }
+
     /// <summary>What is known of attempt <paramref name="attempt"/> of run <paramref name="runId"/> without reading anything: false when its log was never read.</summary>
     public bool TryKnown(long runId, int attempt, [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out RunReview? review)
     {
         lock (_lock)
         {
-            return _runs.TryGetValue((runId, attempt), out review);
+            if (_runs.TryGetValue((runId, attempt), out review))
+            {
+                _runsUsed[(runId, attempt)] = _time.GetUtcNow();
+                return true;
+            }
+            return false;
         }
     }
 
@@ -180,7 +210,10 @@ public sealed class OutsideReviews(IGitHub github, TimeProvider? time = null)
         var review = OutsideReview.Jobs(log, _time.GetUtcNow());
         lock (_lock)
         {
+            var now = _time.GetUtcNow();
+            Prune(now);
             _runs[(runId, attempt)] = review;
+            _runsUsed[(runId, attempt)] = now;
         }
         return review;
     }
@@ -198,6 +231,7 @@ public sealed class OutsideReviews(IGitHub github, TimeProvider? time = null)
             {
                 if (_attempts.TryGetValue(job, out var known))
                 {
+                    _attemptsUsed[job] = _time.GetUtcNow();
                     return known;
                 }
             }
@@ -207,7 +241,10 @@ public sealed class OutsideReviews(IGitHub github, TimeProvider? time = null)
         {
             lock (_lock)
             {
+                var now = _time.GetUtcNow();
+                Prune(now);
                 _attempts[id] = asked;
+                _attemptsUsed[id] = now;
             }
         }
         return attempt;
@@ -221,6 +258,7 @@ public sealed class OutsideReviews(IGitHub github, TimeProvider? time = null)
             foreach (var key in _runs.Keys.Where(k => k.RunId == runId).ToList())
             {
                 _runs.Remove(key);
+                _runsUsed.Remove(key);
             }
         }
     }

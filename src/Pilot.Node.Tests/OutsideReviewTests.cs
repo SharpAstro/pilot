@@ -237,8 +237,57 @@ public sealed class OutsideReviewTests
         GhCli.FailedJobs("{}").ShouldBeNull();
     }
 
+    [Fact]
+    public async Task AnEntryUntouchedPastKeepIsReadAgain()
+    {
+        var gh = new FakeGitHub();
+        gh.RunLogs[1] = RealLog();
+        gh.RunLogs[2] = RealLog();
+        var clock = new FixedTime(Noon);
+        var reviews = new OutsideReviews(gh, clock);
+        await reviews.AskRunAsync("repo", 1, 1, null, CancellationToken.None);
+        (await reviews.AttemptAsync("repo", 1, 100, CancellationToken.None)).ShouldBe(1);
+
+        clock.Now += OutsideReviews.Keep + TimeSpan.FromHours(1);
+        await reviews.AskRunAsync("repo", 2, 1, null, CancellationToken.None); // a write drops what sat unused
+        (await reviews.AttemptAsync("repo", 2, 101, CancellationToken.None)).ShouldBe(1);
+        reviews.TryKnown(1, 1, out _).ShouldBeFalse();
+
+        await reviews.AskRunAsync("repo", 1, 1, null, CancellationToken.None);
+        gh.RunLogReads.ShouldBe(3, "the dropped entry is read from gh again");
+        (await reviews.AttemptAsync("repo", 1, 100, CancellationToken.None)).ShouldBe(1);
+        gh.RunAttemptReads.ShouldBe(3, "the dropped job's attempt is asked again");
+    }
+
+    [Fact]
+    public async Task AnEntryReadWithinKeepIsKept()
+    {
+        var gh = new FakeGitHub();
+        gh.RunLogs[1] = RealLog();
+        gh.RunLogs[2] = RealLog();
+        var clock = new FixedTime(Noon);
+        var reviews = new OutsideReviews(gh, clock);
+        await reviews.AskRunAsync("repo", 1, 1, null, CancellationToken.None);
+        (await reviews.AttemptAsync("repo", 1, 100, CancellationToken.None)).ShouldBe(1);
+
+        clock.Now += TimeSpan.FromHours(20);
+        await reviews.AskRunAsync("repo", 1, 1, null, CancellationToken.None); // a hit renews it
+        (await reviews.AttemptAsync("repo", 1, 100, CancellationToken.None)).ShouldBe(1);
+
+        clock.Now += TimeSpan.FromHours(20); // 40 hours since the write, 20 since the last use
+        await reviews.AskRunAsync("repo", 2, 1, null, CancellationToken.None);
+        (await reviews.AttemptAsync("repo", 2, 101, CancellationToken.None)).ShouldBe(1);
+
+        reviews.TryKnown(1, 1, out _).ShouldBeTrue();
+        (await reviews.AttemptAsync("repo", 1, 100, CancellationToken.None)).ShouldBe(1);
+        gh.RunLogReads.ShouldBe(2);
+        gh.RunAttemptReads.ShouldBe(2);
+    }
+
     private sealed class FixedTime(DateTimeOffset now) : TimeProvider
     {
-        public override DateTimeOffset GetUtcNow() => now;
+        public DateTimeOffset Now { get; set; } = now;
+
+        public override DateTimeOffset GetUtcNow() => Now;
     }
 }
