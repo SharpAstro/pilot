@@ -232,7 +232,7 @@ internal sealed class PilotChrome<TSurface>
         Spend.Arranged = nodes => TextCheck.Observe("spend", nodes, DpiScale);
         Designs.Arranged = nodes => TextCheck.Observe(Designs.OpenId is null ? "designs" : "design page", nodes, DpiScale);
         Notifications.OpenPage = () => Show(PilotPage.Notifications);
-        NotificationsPage = new NotificationsView<TSurface>(renderer) { Host = Notifications };
+        NotificationsPage = new NotificationsView<TSurface>(renderer) { Host = Notifications, Gallery = sessions.Gallery };
         NotificationsPage.Arranged = nodes => TextCheck.Observe("notifications", nodes, DpiScale);
         Tooltips = new TooltipLayer<TSurface>(renderer);
         NotificationsLayer = new NotificationsLayer<TSurface>(renderer);
