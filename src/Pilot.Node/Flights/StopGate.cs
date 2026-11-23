@@ -7,8 +7,8 @@ namespace Pilot.Node.Flights;
 
 /// <summary>
 /// The node's answer to a Stop hook: a session ending its turn in a flight's plane with files not committed there is
-/// told to commit them and carries on, once per turn; a second stop is let through and rings, so a
-/// session that will not commit cannot loop. Nothing is left behind starts here, before a leg finishes or a flight lands.
+/// told to commit them, or delete them if they are scratch, and carries on, once per turn; a second stop is let through and rings, so a
+/// session that will not commit cannot loop. The ring offers 'Tell it to commit', and 'Tell it to delete them' too when every file is untracked. Nothing is left behind starts here, before a leg finishes or a flight lands.
 /// </summary>
 /// <remarks>
 /// Only a plane the node flies counts: Claude Code makes its own worktrees under <c>.claude/worktrees</c> too, and a
@@ -45,15 +45,24 @@ public sealed class StopGate(NodeState state, Planes planes)
             return null;
         }
 
-        // Work is committed, never dropped: a file that is clearly not work (build output, a scratch file) goes in .gitignore or is
-        // named in the commit message, and nothing is deleted without someone having looked at it.
-        var reason = $"{uncommitted} in {flight.Worktree}: commit them before you stop. A file that is clearly not work (build output, a scratch file) goes in .gitignore or is named in the commit message; never delete a file silently. Nothing is left behind in a plane.";
+        // Real work is committed. A file the session made only to look (a scratch test or capture) is deleted by the session
+        // itself, on this nudge or a button a person pressed, and named in its report: the node never removes a file.
+        var files = await planes.UncommittedFilesAsync(flight.Worktree, cancellationToken);
+        var scratch = files.Where(l => l.StartsWith("??", StringComparison.Ordinal)).Select(Name).Where(IsLikelyScratch).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        var likely = scratch.Count > 0 ? $" {string.Join(", ", scratch)} looks like scratch." : "";
+        var reason = $"{uncommitted} in {flight.Worktree}: commit them, or delete them if they are scratch you made (a look-only test or capture), checking git status is clean after.{likely} Real work is committed; a file that is not work but must stay goes in .gitignore. Nothing is left behind in a plane.";
         // Claude Code sets stop_hook_active on a stop that a Stop hook already sent back to work: told once this turn.
         if (hook.TryGetProperty("stop_hook_active", out var active) && active.ValueKind == JsonValueKind.True)
         {
-            var files = await planes.UncommittedFilesAsync(flight.Worktree, cancellationToken);
+            var choices = new List<CardChoice> { new() { Label = "Tell it to commit", Verb = Verbs.Say, Target = Verbs.SessionTarget(sessionId), Args = [reason] } };
+            if (files.Count > 0 && files.All(l => l.StartsWith("??", StringComparison.Ordinal)))
+            {
+                var named = string.Join(", ", files.Select(Name).Distinct(StringComparer.Ordinal));
+                choices.Add(new CardChoice { Label = "Tell it to delete them", Verb = Verbs.Say, Target = Verbs.SessionTarget(sessionId),
+                    Args = [$"Delete these untracked files from {flight.Worktree}: {named}. Then check git status is clean, and say so in your report."] });
+            }
             state.RaiseCard(CardBin.Ring, Kind, subject, $"{flight.Code}: a session stopped with {uncommitted}", $"it was told once to commit them and stopped again, so the node will not tell it a third time by itself",
-                [new CardChoice { Label = "Tell it to commit", Verb = Verbs.Say, Target = Verbs.SessionTarget(sessionId), Args = [reason] }],
+                choices,
                 summary: Summary(flight.Code, files));
             return null;
         }
@@ -79,6 +88,19 @@ public sealed class StopGate(NodeState state, Planes planes)
             : $"{count} files, {string.Join(", ", names.Take(3))}{(count > 3 ? " and more" : "")}";
         return $"The worker of {code} was told once to commit {which} and stopped again with {(count == 1 ? "it" : "them")} still there. It can be told once more; the files stay in the plane until they are committed.";
     }
+
+    private static string Name(string porcelain)
+    {
+        var p = porcelain.Length > 3 ? porcelain[3..] : porcelain;
+        if (p.Contains(" -> ", StringComparison.Ordinal)) p = p[(p.LastIndexOf(" -> ", StringComparison.Ordinal) + 4)..];
+        return Path.GetFileName(p.Trim().Trim('"').TrimEnd('/', '\'));
+    }
+
+    /// <summary>Whether a file name (not its path) looks like scratch: *Scratch*, Zz* or Tmp*, any case.</summary>
+    internal static bool IsLikelyScratch(string name) =>
+        name.Contains("Scratch", StringComparison.OrdinalIgnoreCase)
+        || name.StartsWith("Zz", StringComparison.OrdinalIgnoreCase)
+        || name.StartsWith("Tmp", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>The flight not landed whose plane holds <paramref name="cwd"/>, the plane itself or a folder in it.</summary>
     internal static FlightRow? PlaneAt(NodeState state, string cwd)
