@@ -255,7 +255,18 @@ public static partial class NodeApp
         });
         builder.Services.AddSingleton(services => new PeerPresence(services.GetRequiredService<TimeProvider>(),
             () => TimeSpan.FromHours(services.GetRequiredService<RoleModels>().Stale.UnreachableHours),
-            (kind, title, detail) => services.GetRequiredService<NodeState>().RaiseCard(CardBin.Handled, kind, Verbs.NodeTarget, title, detail)));
+            (kind, title, detail) =>
+            {
+                var state = services.GetRequiredService<NodeState>();
+                if (kind == PeerAway.Returned)
+                {
+                    state.RaiseCard(CardBin.Handled, PeerAway.Returned, Verbs.NodeTarget, title, detail);
+                }
+                else
+                {
+                    state.RaiseCard(CardBin.Handled, PeerAway.Kind, Verbs.NodeTarget, title, detail);
+                }
+            }));
         builder.Services.AddSingleton(services => new PresenceFleet(new HeldTokenFleet(Environment.GetEnvironmentVariable("PILOT_CLIENT_GRANTS") is { Length: > 0 } grants
                 ? grants
                 : Path.Combine(options.DataFolder, "client-grants.json"),

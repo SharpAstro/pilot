@@ -111,7 +111,7 @@ public sealed class PeerPresenceTests
         view.Away.ShouldHaveSingleItem().ShouldBe("LE1 away since 12:00 UTC: skipped until it answers");
         view.Known.ShouldBe(1);
         FleetAdmission.Note(view).ShouldBeNull();
-        _said.ShouldHaveSingleItem().ShouldBe((PeerAway.Kind, "LE1 away since 12:00 UTC: skipped until it answers"));
+        _said.ShouldHaveSingleItem().ShouldBe(("peer-away", "LE1 away since 12:00 UTC: skipped until it answers"));
     }
 
     [Fact]
@@ -153,7 +153,7 @@ public sealed class PeerPresenceTests
         var view = await admission.RefreshAsync(Ct);
         view.Peers.Select(p => p.Name).ShouldBe(["LE1"]);
         view.Away.ShouldBeEmpty();
-        _said.Select(s => s.Kind).ShouldBe([PeerAway.Kind, PeerAway.Returned]);
+        _said.Select(s => s.Kind).ShouldBe(["peer-away", "peer-back"]);
     }
 
     [Fact]
