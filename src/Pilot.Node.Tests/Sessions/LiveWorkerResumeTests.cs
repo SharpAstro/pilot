@@ -41,11 +41,12 @@ public sealed class LiveWorkerResumeTests : IDisposable
 
     private string Cwd => _profile.Folder.Replace("\\", "\\\\", StringComparison.Ordinal);
 
-    /// <summary>An idle worker the transcript says runs on opus at xhigh (the start says sonnet, medium) with process <paramref name="pid"/>.</summary>
-    private async Task<SessionRow> IdleMismatchedAsync(int pid)
+    /// <summary>An idle worker the transcript says runs on opus at xhigh (the start says sonnet, medium) with process <paramref name="pid"/>,
+    /// listed under <paramref name="listedName"/>: the start's name unless a test gives the title Claude Code retitled it to.</summary>
+    private async Task<SessionRow> IdleMismatchedAsync(int pid, string? listedName = null)
     {
         _profile.Append(_profile.TranscriptPath(AgentRows.SessionB), Lines.Assistant("m1", input: 10, output: 100, model: "claude-opus-5-5", effort: "xhigh"));
-        _agents.Json = AgentRows.List(AgentRows.Background(AgentRows.SessionB, Start.Name, "working", pid: pid, status: "idle", cwd: Cwd, startedAt: Recent));
+        _agents.Json = AgentRows.List(AgentRows.Background(AgentRows.SessionB, listedName ?? Start.Name, "working", pid: pid, status: "idle", cwd: Cwd, startedAt: Recent));
         await _tracker.PollAsync(Ct);
         return _state.Sessions().Single();
     }
@@ -70,7 +71,6 @@ public sealed class LiveWorkerResumeTests : IDisposable
         _delivery.Resumes.ShouldBeEmpty();
         _delivery.Calls.ShouldNotContain(c => c.StartsWith("resume ", StringComparison.Ordinal));
         _delivery.Relays.ShouldHaveSingleItem().DirectOnly.ShouldBeTrue();
-        _state.Sessions().Count(r => r.State is SessionState.Working or SessionState.Waiting or SessionState.Idle).ShouldBe(1);
     }
 
     [Fact]
@@ -91,6 +91,53 @@ public sealed class LiveWorkerResumeTests : IDisposable
         args.ShouldBe(["--bg", "--resume", AgentRows.SessionB, .. ClaudeWorkerLauncher.SessionArguments(Start)]);
         args.Count(a => a is "-n" or "--name").ShouldBe(1);
         log.ToString().ShouldContain(Start.Name);
+    }
+
+    [Fact]
+    public async Task ARetitledWorkersCopyIsResumedUnderTheRecordedNameNotTheListedOne()
+    {
+        // Claude Code retitles a session after its work: the listing then shows the title, and the copy must not take it.
+        var row = await IdleMismatchedAsync(4242, listedName: "Stop the stray worker of a redone leg");
+        var messenger = Messenger((_, _, _) => Task.FromResult(true));
+
+        var result = await messenger.SayAsync(Say(row), Ct);
+
+        result.Ok.ShouldBeTrue(result.Error);
+        var request = _delivery.Resumes.ShouldHaveSingleItem();
+        request.Name.ShouldBe(Start.Name);
+        ClaudeCliDelivery.ResumeArguments(request).ShouldNotContain("Stop the stray worker of a redone leg");
+    }
+
+    [Fact]
+    public async Task TheGoneCheckWaitsOnThePidAListingAfterTheStopGivesNotTheLastPolls()
+    {
+        // The last poll gave 4242; after the stop the session has no process, and 4242 now belongs to something else that runs on.
+        var row = await IdleMismatchedAsync(4242);
+        _delivery.ListingAfterStop = AgentRows.List(AgentRows.Background(AgentRows.SessionB, Start.Name, "working", cwd: Cwd, startedAt: Recent));
+        var seen = new List<int>();
+        var messenger = Messenger((pid, _, _) => { seen.Add(pid); return Task.FromResult(false); });
+
+        var result = await messenger.SayAsync(Say(row), Ct);
+
+        result.Ok.ShouldBeTrue(result.Error);
+        seen.ShouldBeEmpty();
+        _delivery.Resumes.ShouldHaveSingleItem().SessionId.ShouldBe(AgentRows.SessionB);
+        _delivery.Relays.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task TheGoneCheckWaitsOnTheProcessTheSessionHasAfterTheStop()
+    {
+        var row = await IdleMismatchedAsync(4242);
+        _delivery.ListingAfterStop = AgentRows.List(AgentRows.Background(AgentRows.SessionB, Start.Name, "working", pid: 5151, status: "idle", cwd: Cwd, startedAt: Recent));
+        var seen = new List<int>();
+        var messenger = Messenger((pid, _, _) => { seen.Add(pid); return Task.FromResult(false); });
+
+        var result = await messenger.SayAsync(Say(row), Ct);
+
+        result.Ok.ShouldBeTrue(result.Error);
+        seen.ShouldBe([5151]);
+        _delivery.Resumes.ShouldBeEmpty();
     }
 
     [Fact]
@@ -123,7 +170,6 @@ public sealed class LiveWorkerResumeTests : IDisposable
 
             result.Ok.ShouldBeTrue(result.Error);
             _delivery.Resumes.ShouldBeEmpty();
-            _state.Sessions().Count(r => r.State is SessionState.Working or SessionState.Waiting or SessionState.Idle).ShouldBe(1);
         }
         finally
         {

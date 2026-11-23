@@ -413,6 +413,8 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
             step.Restart();
             var rows = state.Sessions();
             var row = Find(rows, id) ?? FindReplacedWorker(rows, id) ?? throw new SessionDeliveryException($"There is no session {id}: give its row id, or the name of one live session, as pilot sessions lists them");
+            // A say carried to the leg's current worker goes by its session id: the replaced one may still be live under the same name.
+            var redirected = false;
             if (ReplacedWorker(row, rows, out var currentWorker) is { } replacedJob)
             {
                 // A worker its leg no longer names (stopped, ended or replaced by a go-around) is never resumed, for any sender and
@@ -423,13 +425,14 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
                 }
                 parts.Note = $"delivered to {currentWorker.Id} ({currentWorker.Name}), the leg's current worker; {row.Id} was replaced";
                 // The node's own words (LegWatch.Who) to a replaced worker land here too: that is meant, they belong to the current one.
-                row = currentWorker;
+                var addressed = row;
                 // The same fresh look the addressed row got: a current worker idle a poll ago may be mid-turn now, and Choose would
                 // then stop and resume it.
-                await tracker.LookAsync(row.Id, cancellationToken);
-                row = Find(state.Sessions(), row.Id) is { } looked && looked.State is SessionState.Working or SessionState.Waiting or SessionState.Idle
+                await tracker.LookAsync(currentWorker.Id, cancellationToken);
+                row = Find(state.Sessions(), currentWorker.Id) is { } looked && looked.State is SessionState.Working or SessionState.Waiting or SessionState.Idle
                     ? looked
-                    : throw new SessionDeliveryException($"{row.Name} ({row.Id}) was replaced by {replacedJob}; the node does not wake a replaced worker");
+                    : throw new SessionDeliveryException($"{addressed.Name} ({addressed.Id}) was replaced by {replacedJob}, which is no longer live; the node does not wake a replaced worker");
+                redirected = true;
             }
             // The same request id said to this row again, by resume or relay, is the first's delivery, not a second one (PIL595).
             var deliveredKey = command.RequestId is { Length: > 0 } rid ? $"{row.Id}\n{rid}" : null;
@@ -520,7 +523,7 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
                     // name, which would carry the words to the successor.
                     // The node's own say (a job's outcome, a card, a nudge) to a session it names by row id goes the same way when
                     // another live session shares the name: it is the node that knows which session it means, so it is not refused (#841).
-                    var direct = replacedBy is not null || (command.Who == Flights.LegWatch.Who && HasLiveNamesakes(row, rows));
+                    var direct = replacedBy is not null || redirected || (command.Who == Flights.LegWatch.Who && HasLiveNamesakes(row, rows));
                     if (!direct)
                     {
                         RefuseAmbiguous(row, rows);
@@ -695,14 +698,12 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
                 await delivery.StopAsync(row.SessionId, cancellationToken);
                 await EndWatchersAsync(row, captured);
             }
-            if (WaitGone is { } waitGone && tracker.PidOf(row.Id) is { } oldPid && !await waitGone(oldPid, GoneWait, cancellationToken))
+            // The pid is read from a listing taken after the stop, not the last poll's: that one may have ended and been reused,
+            // and a wait on it would take another process for the session. Only a background row reaches here (Choose resumes no other kind).
+            if (WaitGone is { } waitGone && await tracker.PidNowAsync(row, cancellationToken) is { } oldPid && !await waitGone(oldPid, GoneWait, cancellationToken))
             {
                 await log.WriteLineAsync($"{row.Name} ({row.Id}): process {oldPid} still runs after its stop; not resumed, the words go to it");
                 await log.FlushAsync(CancellationToken.None);
-                if (row.Kind != SessionKind.Background)
-                {
-                    throw new SessionDeliveryException($"{row.Name} ({row.Id}) still runs as process {oldPid}; resuming it would start a second copy beside it");
-                }
                 return null;
             }
             var listedName = tracker.ListedName(row);

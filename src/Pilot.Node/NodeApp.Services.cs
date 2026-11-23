@@ -825,24 +825,7 @@ public static partial class NodeApp
         // The relay's throwaway session runs in a folder of the node's own, as v1's runs in its state folder.
         builder.Services.AddSingleton<ISessionDelivery>(services => new ClaudeCliDelivery(
             services.GetRequiredService<IClaudeAgents>(), relayFolder, services.GetRequiredService<SessionTrackerOptions>().Profile) { RosterFile = SessionRoster.FileIn(options.DataFolder) });
-        builder.Services.AddSingleton(services => new SessionMessenger(
-            services.GetRequiredService<NodeState>(),
-            services.GetRequiredService<SessionTracker>(),
-            services.GetRequiredService<ISessionDelivery>(),
-            logWriter,
-            services.GetRequiredService<StartOptionsBook>(),
-            services.GetRequiredService<SessionLedger>())
-        {
-            Outage = services.GetRequiredService<TurnOutage>(), Clock = services.GetRequiredService<TimeProvider>(),
-            // Ending a session cancels the jobs it owns.
-            CancelJobs = (owners, who) => services.GetRequiredService<JobRunner>().CancelOwnedBy(owners, who),
-            Sends = services.GetRequiredService<SendLog>(),
-            Timings = services.GetRequiredService<SendTimings>(),
-            Removal = services.GetRequiredService<ClaudeJobRemoval>(),
-            WaitGone = SessionMessenger.WaitProcessGoneAsync,
-            Watchers = new SessionWatchers(OsProcessTable.Instance),
-            Streams = () => services.GetRequiredService<Watchtower>(),
-        });
+        AddSessionMessenger(builder, logWriter);
     }
 
     /// <summary>The relay's throwaway session runs in this folder of the node's own, as v1's runs in its state folder.</summary>

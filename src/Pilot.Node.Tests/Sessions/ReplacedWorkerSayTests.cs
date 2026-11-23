@@ -139,6 +139,46 @@ public sealed class ReplacedWorkerSayTests : IDisposable
     }
 
     [Fact]
+    public async Task ACurrentWorkerIdleAtTheFirstLookButGoneAtItsOwnIsRefusedNamingTheAddressedWorker()
+    {
+        var (old, next) = GoneRound(SessionState.Idle);
+        var started = DateTimeOffset.UtcNow.AddMinutes(-5).ToUnixTimeMilliseconds();
+        _agents.Json = AgentRows.List(AgentRows.Background(next.SessionId, WorkerName, "working", status: "idle", cwd: "C:/work/plane", startedAt: started));
+        // The current worker ends between the look at the addressed worker and the look at it.
+        _agents.AfterListing = () => _agents.Json = AgentRows.List(AgentRows.Background(next.SessionId, WorkerName, "failed", cwd: "C:/work/plane", startedAt: started));
+
+        var result = await _messenger.SayAsync(Say(old.Id), Ct);
+
+        result.Ok.ShouldBeFalse();
+        var error = result.Error.ShouldNotBeNull();
+        error.ShouldStartWith($"{old.Name} ({old.Id}) was replaced by {next.Id}, which is no longer live");
+        _delivery.Resumes.ShouldBeEmpty();
+        _delivery.Relays.ShouldBeEmpty();
+        _delivery.Calls.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task ASayToAStillLiveReplacedWorkerReachesAMidTurnCurrentOneBySessionId()
+    {
+        // The PIL1191 shape: the old worker is still live under the leg's worker name, the current one is mid-turn. Relaying by
+        // name would be ambiguous; the redirect knows the session, so it goes there directly.
+        var old = Worker(AgentRows.SessionA, SessionState.Idle, DateTimeOffset.UtcNow.AddMinutes(-30));
+        var next = Worker(AgentRows.SessionB, SessionState.Working, DateTimeOffset.UtcNow.AddMinutes(-5));
+        _state.PutSession(old);
+        _state.PutSession(next);
+        _state.PutLeg(new LegRow { Flight = Flight, Name = Leg, Order = 1, Goal = "g", DoneWhen = "d", State = LegState.Flying, WorkerJob = next.Id });
+
+        var result = await _messenger.SayAsync(Say(old.Id), Ct);
+
+        result.Ok.ShouldBeTrue(result.Error);
+        result.Made.ShouldNotBeNull().ShouldContain($"delivered to {next.Id}");
+        var relay = _delivery.Relays.ShouldHaveSingleItem();
+        relay.SessionId.ShouldBe(next.SessionId);
+        relay.DirectOnly.ShouldBeTrue();
+        _delivery.Resumes.ShouldBeEmpty();
+    }
+
+    [Fact]
     public async Task TheNodesOwnWordsToAReplacedWorkerAreRedirectedToo()
     {
         var (old, next) = GoneRound(SessionState.Working);
