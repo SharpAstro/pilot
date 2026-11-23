@@ -150,4 +150,39 @@ public sealed class SelfClearingCardTests
         card.Bin.ShouldBe(CardBin.ForYou);
         card.State.ShouldBe(CardState.Open);
     }
+
+    [Fact]
+    public void ASyncThatClosesAGatingCardRunsAgainAndSettlesEveryOtherCard()
+    {
+        // A PR-ready card is a gating kind (its opening or closing changes what other choices read), so the pass that closes it asks for
+        // one more pass; the cards the first pass already looked at are read again against the state the close left.
+        var state = NewState();
+        state.PutFlight(Flight());
+        var gating = state.RaiseCard(CardBin.ForYou, LegCommander.PrReady, "flight/TIA1", "TIA1's PR is ready", null, [StartReview()]);
+        var other = state.RaiseCard(CardBin.ForYou, "review-failed", "flight/TIA1", "TIA1's review did not start", null, [StartReview()]);
+        gating.State.ShouldBe(CardState.Open);
+        other.State.ShouldBe(CardState.Open);
+
+        state.PutLeg(Leg(LegState.Flying));
+
+        var cards = state.Cards();
+        cards.Single(c => c.Id == gating.Id).State.ShouldBe(CardState.Closed);
+        cards.Single(c => c.Id == gating.Id).Outcome.ShouldBe(Waits);
+        cards.Single(c => c.Id == other.Id).State.ShouldBe(CardState.Closed);
+        cards.Count(c => c.State == CardState.Open).ShouldBe(0);
+    }
+
+    [Fact]
+    public void ARaiseWhoseDetailChangesPerCallIsStillOneHandledLine()
+    {
+        var state = NewState();
+        state.PutFlight(Flight());
+        state.PutLeg(Leg(LegState.Flying));
+
+        var first = state.RaiseCard(CardBin.Ring, "review-failed", "flight/TIA1", "TIA1's review did not start", "it failed 3 min ago", [StartReview()]);
+        var second = state.RaiseCard(CardBin.Ring, "review-failed", "flight/TIA1", "TIA1's review did not start", "it failed 4 min ago", [StartReview()]);
+
+        second.Id.ShouldBe(first.Id);
+        state.Cards().Count(c => c.Kind == "review-failed").ShouldBe(1);
+    }
 }

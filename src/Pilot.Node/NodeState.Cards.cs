@@ -55,10 +55,12 @@ public sealed partial class NodeState
                     {
                         return open;
                     }
-                    var said = $"{detail}{(detail is { Length: > 0 } ? " " : "")}Nothing to press: {selfClearing}.";
+                    // The line is matched by the reason it ends with, never by the caller's detail, which may change per call (an age, a count).
+                    var reasonLine = $"Nothing to press: {selfClearing}.";
+                    var said = $"{detail}{(detail is { Length: > 0 } ? " " : "")}{reasonLine}";
                     if (_cards.Values.Where(c => c.Kind == kind && c.Subject == subject).OrderByDescending(c => CardNumber(c.Id)).FirstOrDefault() is
                         { State: CardState.Closed, ClosedBy: "node" } newest
-                        && (newest.Bin == CardBin.Handled && newest.Detail == said || newest.Outcome == selfClearing))
+                        && (newest.Bin == CardBin.Handled && newest.Detail is { } line && line.EndsWith(reasonLine, StringComparison.Ordinal) || newest.Outcome == selfClearing))
                     {
                         return newest;
                     }

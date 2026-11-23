@@ -23,7 +23,7 @@ internal static class ChoiceAvailability
     internal sealed class Facts
     {
         private readonly Dictionary<string, FlightRow> _flights;
-        private readonly ILookup<string, LegRow> _legs;
+        private readonly Dictionary<string, LegRow[]> _legs;
 
         internal Facts(IEnumerable<FlightRow> flights, IEnumerable<LegRow> legs, IEnumerable<CardRow> cards, IReadOnlyCollection<SessionRow> sessions)
         {
@@ -32,7 +32,7 @@ internal static class ChoiceAvailability
             {
                 _flights[flight.Code] = flight;
             }
-            _legs = legs.ToLookup(l => l.Flight, StringComparer.OrdinalIgnoreCase);
+            _legs = legs.GroupBy(l => l.Flight, StringComparer.OrdinalIgnoreCase).ToDictionary(g => g.Key, g => g.ToArray(), StringComparer.OrdinalIgnoreCase);
             OpenCards = [.. cards.Where(c => c.State == CardState.Open)];
             Sessions = sessions;
         }
@@ -43,7 +43,7 @@ internal static class ChoiceAvailability
 
         internal FlightRow? Flight(string code) => _flights.GetValueOrDefault(code);
 
-        internal IReadOnlyCollection<LegRow> LegsOf(string code) => [.. _legs[code]];
+        internal IReadOnlyCollection<LegRow> LegsOf(string code) => _legs.GetValueOrDefault(code) ?? [];
     }
 
     /// <summary>Why the node would refuse <paramref name="choice"/> now, in the words the card and the refusal share; null when nothing stops it.</summary>
