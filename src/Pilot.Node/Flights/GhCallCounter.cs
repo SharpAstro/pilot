@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Globalization;
 using Microsoft.Extensions.Hosting;
+using Pilot.Contracts;
 
 namespace Pilot.Node.Flights;
 
