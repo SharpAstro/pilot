@@ -330,6 +330,8 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PilotWid
     /// <summary>The header's ? card: which pilot this is and where its things are.</summary>
     public AboutCard? About { get; set; }
 
+    /// <summary>The header's Autopilot switch, the same on every page.</summary>
+    public AutopilotSwitch? Autopilot { get; set; }
     
     /// <summary>The header's Night switch, the same on every page.</summary>
     public NightSwitch? Night { get; set; }
@@ -592,7 +594,7 @@ internal sealed class JobsView<TSurface>(Renderer<TSurface> renderer) : PilotWid
             Hidden = screen.Hidden,
             HiddenAction = "jobs:play-all",
             Source = PageHeader.SourceLine(screen.Source, screen.AsOf, screen.Outside),
-        }, new TopBarParts(Nodes, Play, About, Night));
+        }, new TopBarParts(Nodes, Play, Autopilot, About, Night));
 
     private Layout.Node Main(JobsScreen screen)
     {

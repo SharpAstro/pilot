@@ -1410,7 +1410,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
 
     /// <summary>
     /// A button in a page's header row: a pill as tall as the header's ? and +, its word centred in it, so every button on
-    /// the row shares one height and one middle (SE1, 2026-10-25: Sync, All repos and the others each stood their own height).
+    /// the row shares one height and one middle (SE1, 2026-10-25: Sync, All repos and Autopilot each stood their own height).
     /// </summary>
     internal static Layout.Node HeaderPill(string label, string action, Action onClick, (RGBAColor32 Bg, RGBAColor32 Hover)? tint = null, RGBAColor32? textColor = null) =>
         HeaderPill(label, action, _ => onClick(), tint, textColor);

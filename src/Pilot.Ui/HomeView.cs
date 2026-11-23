@@ -205,6 +205,8 @@ internal sealed class HomeView<TSurface>(Renderer<TSurface> renderer) : PilotWid
     /// <summary>Whether this window's node is in maintenance: the page says so, under the two verdicts. Set by the host from the node's <see cref="NodeInfo.Maintenance"/>.</summary>
     public bool Maintenance { get; set; }
 
+    /// <summary>The header's Autopilot switch, the same on every page.</summary>
+    public AutopilotSwitch? Autopilot { get; set; }
     
     /// <summary>The header's Night switch, the same on every page.</summary>
     public NightSwitch? Night { get; set; }
@@ -342,7 +344,7 @@ internal sealed class HomeView<TSurface>(Renderer<TSurface> renderer) : PilotWid
         {
             Source = PageHeader.SourceLine(screen.Flights.Source, screen.Flights.AsOf),
             Lines = Maintenance ? [Layout.Builder.Text(MaintenanceNotice.LineFor(Palette.Current), 12f, Ring).Selectable().RowH(20f)] : [],
-        }, new TopBarParts(Nodes, null, About, Night));
+        }, new TopBarParts(Nodes, null, Autopilot, About, Night));
 
     private void Section(List<Layout.Node> blocks, string title, IReadOnlyList<HomeChip> chips, string none)
     {

@@ -1660,8 +1660,13 @@ take a flight another node of the fleet routes to it. Both are in `GET /api/v1/n
 `AcceptsFleetFlights`), and `pilot status` prints a `maintenance` line while it is on. `set node maintenance on|off` is
 the one setting a LAN grant may change (the Fleet row menu's way); every other `set` and `setup` stays this machine's.
 
-The `autopilot` setting is gone (PIL1271): a stored settings file that still has the key loads, the key is ignored, and `pilot settings set autopilot`
-says it is gone. What it turned on (fix rounds, review-notes legs, merges, fixers, the watchtower's presses) is what pilot always does.
+The `autopilot` setting is back with its v2 meaning (PIL1285): while on, the watchtower runs with a standing goal (Sonnet keeps
+watch, Opus thinks, the person only as a last resort). It is per node, off by default, in force at once, and only the person
+changes it (`pilot settings set autopilot on|off`, or the top bar's Autopilot switch): an assistant, the lookout and a flight's
+session are refused with "autopilot is the person's to change". The file stores it as `autopilotGoal`, a new member, because
+before PIL1271 `autopilot` was a different switch; a settings file still holding that old member loads with it ignored, so no node
+wakes up with the standing goal on after an update. It is in `GET /api/v1/node` and the node row (`Autopilot`), `pilot status`
+prints an `autopilot` line, and a remote node's switch in the GUI shows the state and does not click (the setting is that machine's).
 
 Two per-repo settings (#254) are lists, keyed by the repo's folder name and in force at once, like `priority-repos`:
 - `repo-trackers` takes `repo=tracker` entries (`pilot settings set repo-trackers bullclip-backend=shortcut`), `tracker`

@@ -176,6 +176,11 @@ public sealed record Standing(StandingKind Kind, string? Flight = null, string? 
     public string? Refusal(CommandRequest command, NodeState state)
     {
         var yourOnly = YourOnly(command, state);
+        // The autopilot switch is the person's alone: whoever asks and however, only the person changes it.
+        if (command.Verb == Verbs.Set && Kind != StandingKind.Person && command.Args is [{ } key, ..] && string.Equals(key.Trim(), NodeSettings.AutopilotKey, StringComparison.OrdinalIgnoreCase))
+        {
+            return "autopilot is the person's to change: set it from the GUI, or from a terminal you run yourself";
+        }
         switch (Kind)
         {
             // What the watchtower asks leave for is the person's to give: a session that could answer its own prompt would have none.

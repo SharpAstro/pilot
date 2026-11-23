@@ -294,6 +294,7 @@ public sealed class LinkedDesignsViewTests
         using var renderer = new RgbaImageRenderer((uint)width, (uint)height);
         using var accent = Pilot.Ui.Palette.StandardForCapture(null);
         var (chrome, _, _) = Chrome(renderer);
+        chrome.Autopilot.OnToggle = _ => Task.FromResult<string?>(null);
         Layout.Node tree;
         if (page == "ideas")
         {

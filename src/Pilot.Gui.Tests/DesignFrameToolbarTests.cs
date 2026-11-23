@@ -21,6 +21,7 @@ public sealed class DesignFrameToolbarTests
             PageTime.Zone = TimeZoneInfo.Utc;
             Screen = PageData.DesignsFor("sample", Now);
             Chrome = new PilotChrome<RgbaImage>(_renderer, new SessionsView<RgbaImage>(_renderer)) { FontPath = SessionsCapture.FontPath };
+            Chrome.Autopilot.OnToggle = _ => Task.FromResult<string?>(null);
             Chrome.Show(PilotPage.Designs);
             Router = new InputRouter(Chrome.Designs.Ui, new BackgroundTaskTracker(), () => { }) { Widgets = () => Chrome.Widgets };
             View.Open("DSN-1");

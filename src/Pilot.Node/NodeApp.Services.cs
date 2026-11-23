@@ -617,6 +617,7 @@ public static partial class NodeApp
                 return new NodeRowPublisher(state, () => new NodeRow
                 {
                     Maintenance = models.Maintenance,
+                    Autopilot = models.Autopilot,
                     AcceptsFleetFlights = models.AcceptsFleetFlights,
                     Account = state.Usage()?.Account,
                     CanRunGui = services.GetRequiredService<JobRunner>().GuiWhy() is null,

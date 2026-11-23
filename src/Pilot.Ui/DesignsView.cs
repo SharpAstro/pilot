@@ -275,6 +275,9 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
     /// <summary>The header's ? card.</summary>
     public AboutCard? About { get; set; }
 
+    /// <summary>The header's Autopilot switch.</summary>
+    public AutopilotSwitch? Autopilot { get; set; }
+
     /// <summary>The header's Night switch.</summary>
     public NightSwitch? Night
     {
@@ -913,7 +916,7 @@ internal sealed partial class DesignsView<TSurface> : PilotWidgetBase<TSurface>
             Counts = OpenId is { } ? "" : $"{screen.Rows.Length} {(screen.Rows.Length == 1 ? "design" : "designs")}",
             CountsFit = true,
             Source = PageHeader.SourceLine(screen.Source, screen.AsOf),
-        }, new TopBarParts(Nodes, null, About, Night));
+        }, new TopBarParts(Nodes, null, Autopilot, About, Night));
         _ideas = screen.Ideas ?? [];
         var body = OpenId is null
             ? List(screen)

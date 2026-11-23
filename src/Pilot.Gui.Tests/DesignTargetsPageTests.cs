@@ -27,6 +27,7 @@ public sealed class DesignTargetsPageTests
         {
             _screen = PageData.TargetsDesigns(Now, edit);
             Chrome = new PilotChrome<RgbaImage>(_renderer, new SessionsView<RgbaImage>(_renderer)) { FontPath = SessionsCapture.FontPath };
+            Chrome.Autopilot.OnToggle = _ => Task.FromResult<string?>(null);
             Chrome.Show(PilotPage.Designs);
             Chrome.Designs.Open("DSN-7");
         }

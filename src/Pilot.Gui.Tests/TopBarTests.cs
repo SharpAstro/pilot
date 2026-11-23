@@ -9,7 +9,7 @@ using Xunit;
 namespace Pilot.Gui.Tests;
 
 /// <summary>
-/// The one top bar (#231): every page, Home included, shows <b>pilot v2</b> and its name, the node pills, the update
+/// The one top bar (#231): every page, Home included, shows <b>pilot v2</b> and its name, the node pills, Autopilot, the update
 /// light and ?, in one height on one baseline and nothing clipped at 1280 px; the page supplies only its counts and its own
 /// buttons, which stand in the middle of the bar.
 /// </summary>
@@ -24,6 +24,7 @@ public sealed class TopBarTests
     {
         var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
         chrome.Nodes.Choices = [Here, Other];
+        chrome.Autopilot.OnToggle = _ => Task.FromResult<string?>(null);
         chrome.About.Newer = () => "2.0.9-beta.1";
         chrome.About.Restart = () => { };
         return chrome;
@@ -69,7 +70,7 @@ public sealed class TopBarTests
         return found[0].Bounds;
     }
 
-    /// <summary>The same bar on every page: its name, the node pills, the update light and ? present, one height, one baseline.</summary>
+    /// <summary>The same bar on every page: its name, the node pills, Autopilot, the update light and ? present, one height, one baseline.</summary>
     [Fact]
     public void EveryPageShowsTheSameBar()
     {
@@ -99,18 +100,20 @@ public sealed class TopBarTests
             help ??= question;
             (question.X, question.Y, question.Width, question.Height).ShouldBe((help.Value.X, help.Value.Y, help.Value.Width, help.Value.Height), page);
             foreach (var action in chatPage
-                ? new[] { "chat:node:a", "chat:node:b", "about:restart" }
+                ? new[] { "chat:node:a", "chat:node:b", AutopilotSwitch.Action, "about:restart" }
                 : settingsPage
-                    ? new[] { "about:restart" }
-                    : new[] { "nodes:all", "nodes:a", "nodes:b", "about:restart" })
+                    ? new[] { AutopilotSwitch.Action, "about:restart" }
+                    : new[] { "nodes:all", "nodes:a", "nodes:b", AutopilotSwitch.Action, "about:restart" })
             {
                 var bounds = arranged.Where(a => a.Node.Hit is HitResult.ButtonHit b && b.Action == action).Select(a => a.Bounds).ToList();
                 bounds.Count.ShouldBe(1, $"{page}: {action}");
                 (bounds[0].Y, bounds[0].Height).ShouldBe((question.Y, question.Height), $"{page}: {action}");
             }
 
-            // The update light, then ? at the right edge, in that order.
+            // Autopilot, then the update light, then ? at the right edge, in that order.
+            var autopilot = Button(arranged, AutopilotSwitch.Action);
             var light = Button(arranged, "about:restart");
+            autopilot.X.ShouldBeLessThan(light.X, page);
             light.X.ShouldBeLessThan(question.X, page);
             (question.X + question.Width).ShouldBeLessThanOrEqualTo(Width, page);
 
@@ -121,7 +124,7 @@ public sealed class TopBarTests
                 continue;
             }
             Button(arranged, chatPage ? "chat:node:a" : "nodes:all").X.ShouldBeGreaterThan(name.X + name.Width, page);
-            Button(arranged, chatPage ? "chat:node:b" : "nodes:b").X.ShouldBeLessThan(light.X, page);
+            Button(arranged, chatPage ? "chat:node:b" : "nodes:b").X.ShouldBeLessThan(autopilot.X, page);
         }
     }
 
@@ -204,7 +207,7 @@ public sealed class TopBarTests
         }
     }
 
-    /// <summary>The page's own buttons stand in the middle of the bar: after its counts, before the update light, as tall as the ?.</summary>
+    /// <summary>The page's own buttons stand in the middle of the bar: after its counts, before Autopilot, as tall as the ?.</summary>
     [Fact]
     public void ThePagesButtonsStandInItsSlot()
     {
@@ -217,13 +220,13 @@ public sealed class TopBarTests
         var question = Button(arranged, "about:toggle");
         var sync = Button(arranged, "repos:sync");
         var all = Button(arranged, "repos:all");
-        var light = Button(arranged, "about:restart");
+        var autopilot = Button(arranged, AutopilotSwitch.Action);
 
         foreach (var button in new[] { sync, all })
         {
             (button.Y, button.Height).ShouldBe((question.Y, question.Height));
             button.X.ShouldBeGreaterThan(Button(arranged, "nodes:b").X);
-            (button.X + button.Width).ShouldBeLessThan(light.X);
+            (button.X + button.Width).ShouldBeLessThan(autopilot.X);
         }
         sync.X.ShouldBeLessThan(all.X);
     }

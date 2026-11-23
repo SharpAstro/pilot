@@ -494,6 +494,18 @@ public sealed partial class RoleModels
         }
     }
 
+    /// <summary>Whether the autopilot switch is on (<see cref="NodeSettings.AutopilotKey"/>): the watchtower runs with a standing goal. In force at once; off unless the person set it on.</summary>
+    public bool Autopilot
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _settings.Autopilot ?? false;
+            }
+        }
+    }
+
     /// <summary>Whether the node is willing to take a flight another node routes to it (<see cref="NodeSettings.AcceptFleetFlightsKey"/>); off unless set.</summary>
     public bool AcceptsFleetFlights
     {

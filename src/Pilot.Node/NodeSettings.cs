@@ -50,6 +50,13 @@ public sealed record NodeSettings
     public const string WatchtowerCompactAboveKey = "watchtower-compact-above";
     public const string MaintenanceKey = "maintenance";
     public const string AcceptFleetFlightsKey = "accept-fleet-flights";
+    /// <summary>The autopilot switch (PIL1285): the watchtower runs with a standing goal. The CLI key; the file holds it as <see cref="AutopilotFileMember"/>.</summary>
+    public const string AutopilotKey = "autopilot";
+    /// <summary>
+    /// The member the file stores <see cref="AutopilotKey"/> under. Not "autopilot": before PIL1271 that member was a different switch
+    /// (on unless saved off), and a file still holding it must not turn the watchtower's standing goal on after an update.
+    /// </summary>
+    public const string AutopilotFileMember = "autopilotGoal";
     public const string ReviewDeepFirstKey = "review-deep-first";
     public const string DeleteLandedBranchesKey = "delete-landed-branches";
     public const string UserSkillsKey = "user-skills";
@@ -216,7 +223,7 @@ public sealed record NodeSettings
 
     /// <summary>Every key, in the order the Settings page shows them: the node's own, then a range per role.</summary>
     public static IReadOnlyList<string> Keys { get; } =
-        [LanKey, MachineKey, RepoRootsKey, UpdateChannelKey, UpdatePolicyKey, MaxJobsKey, JobsPerRepoKey, GuiSlotsKey, JobMemoryKey, JobPriorityKey, JobPlaneOutputKey, JobBuildCacheKey, LanPortKey, StartLimitKey, PriorityReposKey, PriorityStartLimitKey, WeekLimitKey, WeekPaceKey, SpendAlertKey, WatchtowerCompactShareKey, WatchtowerChatMessagesKey, WatchtowerCompactIdleKey, WatchtowerCompactAboveKey, MergeMethodKey, MaintenanceKey, AcceptFleetFlightsKey, ReviewDeepFirstKey, UserSkillsKey, ShortcutTokenKey, RepoTrackersKey, NoAutoMergeReposKey, OpusCapKey, ReviewLimitKey, OneFlightPerRepoKey, SubTaskReposKey, MergeBatchKey, PrWatchIdleKey, AdoptAfterKey, ArchiveLandedAfterKey, MaintenanceEveryKey, MaintenanceIdleKey, PackageAgeDaysKey, GitPruneDaysKey, MaintenancePruneHoursKey, DeleteLandedBranchesKey, MaxGoAroundsKey, ScratchDaysKey, DesignerKeepKey, DiskAlertGbKey, FlightCiBudgetKey, StaleFlightHoursKey, StalePrHoursKey, StaleRecheckHoursKey, StaleCardHoursKey, StaleHoldsKey, StaleUnreachableHoursKey,
+        [LanKey, MachineKey, RepoRootsKey, UpdateChannelKey, UpdatePolicyKey, MaxJobsKey, JobsPerRepoKey, GuiSlotsKey, JobMemoryKey, JobPriorityKey, JobPlaneOutputKey, JobBuildCacheKey, LanPortKey, StartLimitKey, PriorityReposKey, PriorityStartLimitKey, WeekLimitKey, WeekPaceKey, SpendAlertKey, WatchtowerCompactShareKey, WatchtowerChatMessagesKey, WatchtowerCompactIdleKey, WatchtowerCompactAboveKey, MergeMethodKey, MaintenanceKey, AcceptFleetFlightsKey, AutopilotKey, ReviewDeepFirstKey, UserSkillsKey, ShortcutTokenKey, RepoTrackersKey, NoAutoMergeReposKey, OpusCapKey, ReviewLimitKey, OneFlightPerRepoKey, SubTaskReposKey, MergeBatchKey, PrWatchIdleKey, AdoptAfterKey, ArchiveLandedAfterKey, MaintenanceEveryKey, MaintenanceIdleKey, PackageAgeDaysKey, GitPruneDaysKey, MaintenancePruneHoursKey, DeleteLandedBranchesKey, MaxGoAroundsKey, ScratchDaysKey, DesignerKeepKey, DiskAlertGbKey, FlightCiBudgetKey, StaleFlightHoursKey, StalePrHoursKey, StaleRecheckHoursKey, StaleCardHoursKey, StaleHoldsKey, StaleUnreachableHoursKey,
          .. BenchKeys, .. RoleModels.Roles.Select(RoleModels.RangeKey), SummaryModelKey, WorkerLadderKey];
 
     /// <summary>Whether <paramref name="key"/> is a role's range (<see cref="RoleModels"/>).</summary>
@@ -259,6 +266,9 @@ public sealed record NodeSettings
 
     /// <summary>Whether a repo's ready merge queue entries are merged as one batch (<see cref="MergeBatchKey"/>), its CI run once; off unless set.</summary>
     public bool? MergeBatch { get; init; }
+
+    /// <summary>Whether the watchtower runs with a standing goal (<see cref="AutopilotKey"/>); off unless the person set it on, and only the person may. Stored as <see cref="AutopilotFileMember"/>.</summary>
+    public bool? Autopilot { get; init; }
 
     /// <summary>Whether the first review of a large diff runs on the deep model (<see cref="ReviewDeepFirstKey"/>); on unless the person saved it off. A re-review never does.</summary>
     public bool? ReviewDeepFirst { get; init; }
@@ -448,6 +458,9 @@ public sealed record NodeSettings
         return (settings with { FleetRoles = fleet.Count == 0 ? null : fleet }, null);
     }
 
+    /// <summary>The member the file holds <paramref name="key"/> under: the key itself, but for <see cref="AutopilotKey"/>.</summary>
+    private static string FileMember(string key) => key == AutopilotKey ? AutopilotFileMember : key;
+
     public static string PathIn(string dataFolder) => Path.Combine(dataFolder, FileName);
 
     /// <summary>The file at <paramref name="file"/>; none, or one that is not a JSON object, is no settings at all.</summary>
@@ -471,7 +484,7 @@ public sealed record NodeSettings
         var settings = new NodeSettings();
         foreach (var key in Keys)
         {
-            if (root[key] is { } value && Values(value) is { } values && With(settings, key, values) is { Settings: { } read })
+            if (root[FileMember(key)] is { } value && Values(value) is { } values && With(settings, key, values) is { Settings: { } read })
             {
                 settings = read;
             }
@@ -535,7 +548,7 @@ public sealed record NodeSettings
         {
             if (Get(key) is { } values)
             {
-                root[key] = key switch
+                root[FileMember(key)] = key switch
                 {
                     LanKey => JsonValue.Create(Lan),
                     MaintenanceKey => JsonValue.Create(Maintenance),
@@ -545,6 +558,7 @@ public sealed record NodeSettings
                     JobsPerRepoKey => JsonValue.Create(JobsPerRepo),
                     GuiSlotsKey => JsonValue.Create(GuiSlots),
                     AcceptFleetFlightsKey => JsonValue.Create(AcceptFleetFlights),
+                    AutopilotKey => JsonValue.Create(Autopilot),
                     ReviewDeepFirstKey => JsonValue.Create(ReviewDeepFirst),
                     DeleteLandedBranchesKey => JsonValue.Create(DeleteLandedBranches),
                     UserSkillsKey => JsonValue.Create(UserSkills),
@@ -602,6 +616,7 @@ public sealed record NodeSettings
         JobsPerRepoKey => JobsPerRepo is { } perRepo ? [perRepo.ToString(CultureInfo.InvariantCulture)] : null,
         GuiSlotsKey => GuiSlots is { } guiSlotsSet ? [guiSlotsSet.ToString(CultureInfo.InvariantCulture)] : null,
         AcceptFleetFlightsKey => AcceptFleetFlights is { } accept ? [accept ? "on" : "off"] : null,
+        AutopilotKey => Autopilot is { } autopilot ? [autopilot ? "on" : "off"] : null,
         ReviewDeepFirstKey => ReviewDeepFirst is { } deepFirst ? [deepFirst ? "on" : "off"] : null,
         DeleteLandedBranchesKey => DeleteLandedBranches is { } deleteBranches ? [deleteBranches ? "on" : "off"] : null,
         UserSkillsKey => UserSkills is { } skills ? [skills ? "on" : "off"] : null,
@@ -739,6 +754,14 @@ public sealed record NodeSettings
                 return OnOff(One()) is { } accept
                     ? (settings with { AcceptFleetFlights = accept }, null)
                     : (null, "accept-fleet-flights takes on or off");
+            case AutopilotKey:
+                if (clear)
+                {
+                    return (settings with { Autopilot = null }, null);
+                }
+                return OnOff(One()) is { } autopilot
+                    ? (settings with { Autopilot = autopilot }, null)
+                    : (null, "autopilot takes on or off");
             case ReviewDeepFirstKey:
                 if (clear)
                 {

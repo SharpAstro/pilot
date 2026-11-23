@@ -161,6 +161,8 @@ internal sealed partial class IdeasView<TSurface>(Renderer<TSurface> renderer) :
     /// <summary>The header's Night switch, the window's one night state; null is the day palette.</summary>
     public NightSwitch? Night { get; set; }
 
+    public AutopilotSwitch? Autopilot { get; set; }
+
     public AboutCard? About { get; set; }
 
     public NodeFilter? Nodes { get; set; }

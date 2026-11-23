@@ -5,7 +5,7 @@ namespace Pilot.Ui;
 /// <summary>
 /// What a page says of itself in the top bar (#231): its name, its counts, its own buttons and the lines under the bar. A page
 /// builds no header of its own; it hands one of these to <see cref="TopBar.Build"/>, which lays it out beside what every page
-/// shares (the node and In play pills, the update light and ?).
+/// shares (the node and In play pills, Autopilot, the update light and ?).
 /// </summary>
 /// <param name="Title">The page's name after <c>pilot v2</c>: <c>flights</c>, <c>background tasks</c>.</param>
 internal sealed record PageHeader(string Title)
@@ -48,14 +48,15 @@ internal sealed record PageHeader(string Title)
 /// <summary>What a page's bar shares with every other page: the window's own pieces, as the chrome holds them.</summary>
 /// <param name="Nodes">The window's node selection, whose pills the bar shows while there is more than one node.</param>
 /// <param name="Play">The In play / Everything choice, on the pages that use it; null shows no pills.</param>
+/// <param name="Autopilot">The Autopilot switch.</param>
 /// <param name="About">The ? card, and the update light before it.</param>
 /// <param name="Night">The Night switch, whose state paints the bar on every page.</param>
 /// <param name="NodePills">Pills that stand in place of <paramref name="Nodes"/>' multi-select ones: the Chat page's single choice of watchtower.</param>
-internal sealed record TopBarParts(NodeFilter? Nodes, PlayFilter? Play, AboutCard? About, NightSwitch? Night = null, IReadOnlyList<Layout.Node>? NodePills = null);
+internal sealed record TopBarParts(NodeFilter? Nodes, PlayFilter? Play, AutopilotSwitch? Autopilot, AboutCard? About, NightSwitch? Night = null, IReadOnlyList<Layout.Node>? NodePills = null);
 
 /// <summary>
 /// The one top bar every page shows, Home included (#231): <b>pilot v2</b> and the page's name, then the node pills and the In
-/// play pills where the page uses them; the page's counts and buttons in the middle; the update light and ? at the
+/// play pills where the page uses them; the page's counts and buttons in the middle; Autopilot, the update light and ? at the
 /// right on every page. Under it, the source line and the page's extra lines. Every page's bar is this one tree, so the heights,
 /// the baseline and the order cannot drift.
 /// </summary>
@@ -114,12 +115,16 @@ internal static class TopBar
             items.AddRange(PlayFilter.Summary(parts.Play, page.Counts, page.Hidden, page.HiddenAction, palette.Body, palette.RowHoverBg, night));
         }
         items.AddRange(page.Buttons);
-        // Night is on every page, so it stands in the shared corner. It flowed with the page's own buttons only while the
+        // Night is on every page, so it stands in the shared corner with Autopilot. It flowed with the page's own buttons only while the
         // corner was a fixed reserve that had to suit the narrowest page; the measured corner keeps it on the first line on every page.
         var shared = new List<Layout.Node>();
         if (parts.Night is { } nightSwitch)
         {
             shared.Add(nightSwitch.Button());
+        }
+        if (parts.Autopilot is { } autopilot)
+        {
+            shared.Add(autopilot.Button(night));
         }
         if (parts.About is { } about)
         {
