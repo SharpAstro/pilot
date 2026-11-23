@@ -74,6 +74,13 @@ public static partial class SessionRoles
     [GeneratedRegex(@"^[a-z]{2}[0-9]+-dsn[0-9]+-designer$", RegexOptions.CultureInvariant)]
     private static partial Regex DesignerName();
 
+    /// <summary>An investigator as the node names it, <c>&lt;machine&gt;-investigate-&lt;subject&gt;</c> (<c>de1-investigate-pil1285</c>, <c>de1-investigate-c2737</c>).</summary>
+    [GeneratedRegex(@"^[a-z]{2}[0-9]+-investigate-[a-z0-9._-]+$", RegexOptions.CultureInvariant)]
+    private static partial Regex InvestigatorName();
+
+    /// <summary>Whether a session name is an investigator's (PIL1285).</summary>
+    public static bool IsInvestigatorName(string? name) => name is { Length: > 0 } && InvestigatorName().IsMatch(name);
+
     /// <summary>Whether a session name is a design's designer's.</summary>
     public static bool IsDesignerName(string? name) => name is { Length: > 0 } && DesignerName().IsMatch(name);
 
@@ -132,6 +139,12 @@ public static partial class SessionRoles
         if (IsDesignerName(name))
         {
             return new SessionRoleInfo(SessionRole.Designer, null, null, null);
+        }
+
+        // <machine>-investigate-<subject> is autopilot's investigator (PIL1285): it flies no flight, whatever its subject names.
+        if (IsInvestigatorName(name))
+        {
+            return new SessionRoleInfo(SessionRole.Investigator, null, null, null);
         }
 
         if (name is { Length: > 0 } && MachineWorkerName().Match(name) is { Success: true } named)

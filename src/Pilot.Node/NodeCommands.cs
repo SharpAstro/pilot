@@ -247,6 +247,24 @@ public sealed partial class NodeCommands(IServiceProvider services, NodeState st
             command = command with { Autopilot = true };
             goalVerb = true;
         }
+        // PIL1285: an investigator runs the same goal verbs on evidence, and never an override, whatever --why it gives.
+        if (standing.Kind == StandingKind.Investigator)
+        {
+            if (DecisionSources.IsOverride(command, ReviewerOfTarget(command)))
+            {
+                return state.Complete(command, DecisionSources.OverrideIsThePersons(command));
+            }
+            if (Standing.InvestigatorActs.Contains(command.Verb) && watchtower.Models.Autopilot)
+            {
+                if (!Standing.NamesEvidence(command.Why))
+                {
+                    return state.Complete(command, $"{command.Verb} from an investigator needs --why naming the evidence (a job id such as j962, a card id, a commit, a run): the Handled line keeps it");
+                }
+                standing = new Standing(StandingKind.Assistant);
+                command = command with { Autopilot = true };
+                goalVerb = true;
+            }
+        }
         if (standing.Kind == StandingKind.Lookout && Standing.LookoutOnAutopilot.Contains(command.Verb))
         {
             standing = new Standing(StandingKind.Assistant);
@@ -470,6 +488,15 @@ public sealed partial class NodeCommands(IServiceProvider services, NodeState st
         if (command.Verb == Verbs.Raise)
         {
             return Raise(command);
+        }
+        if (command.Verb == Verbs.Investigated)
+        {
+            var args = command.Args ?? [];
+            if (args.Length == 0)
+            {
+                return state.Complete(command, $"{Verbs.Investigated} takes the subject, then {string.Join(", ", Investigator.Outcomes)}, then why");
+            }
+            return state.Complete(command, Get<Investigator>().Outcome(command.Who, command.Target, args[0].Trim(), string.Join(' ', args.Skip(1))));
         }
         if (command.Verb == Verbs.AnswerGrant)
         {

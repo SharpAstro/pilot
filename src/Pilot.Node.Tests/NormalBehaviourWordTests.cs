@@ -37,6 +37,7 @@ public sealed partial class NormalBehaviourWordTests
         "\"autopilot\"",                     // MergeBy / DecisionByKinds value and the refused settings key, stored by older releases
         "autopilot-stall-minutes", "AutopilotStallMinutesKey", "DefaultAutopilotStallMinutes", "Autopilot stall minutes", // PIL1285: the stall bound
         "autopilot-repeat",                  // card kind of the find-the-cause task
+        "autopilot-investigations", "AutopilotInvestigationsKey", "DefaultAutopilotInvestigations", "AutopilotInvestigations", "Autopilot investigations", // PIL1285: the investigator bound
         "autopilot-ran",                     // card kind of the Handled line, stored in old journals
         "autopilot-merge-refused",           // card kind of the merge refusal, stored in old journals
         "autopilot is gone",                 // the message of a refused `set autopilot`

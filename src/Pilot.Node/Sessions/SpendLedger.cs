@@ -66,7 +66,7 @@ public static class SpendWindows
 /// <summary>Which role of the ledger a session is: the node's fixers carry no role of their own.</summary>
 public static partial class SpendRoles
 {
-    /// <summary>planner, worker, reviewer, fixer, watchtower, pilot or adhoc.</summary>
+    /// <summary>planner, worker, reviewer, fixer, watchtower, investigator, pilot or adhoc.</summary>
     public static string Of(string? sessionName, SessionRole role) =>
         role == SessionRole.Fixer || SessionRoles.IsFixerName(sessionName)
             ? "fixer"
@@ -77,6 +77,7 @@ public static partial class SpendRoles
                 SessionRole.Worker => "worker",
                 SessionRole.Reviewer => "reviewer",
                 SessionRole.Planner => "planner",
+                SessionRole.Investigator => "investigator",
                 _ => "adhoc",
             };
 }

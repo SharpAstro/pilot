@@ -42,6 +42,17 @@ public sealed partial class NodeState
     {
         // With the brain to ask (PIL855), a card that would ring is first filed in For you, silent, and rings only on the brain's verdict
         // (RingJudge): the old path, a ring at once, is what runs with no judge, and what the judge itself falls back to.
+        // With the switch on (PIL1285), a card bound for the ring waits in For you, quietly, until an investigator decides it; nothing else
+        // rings the person. Off, the investigator holds nothing and the path below is as before.
+        if (bin == CardBin.Ring && Investigations is { } investigations && investigations.Holds(kind, choices) && NodePresses?.Invoke(kind, subject, detail, choices) != true)
+        {
+            var waiting = RaiseCardCore(CardBin.ForYou, kind, subject, title, detail, choices, link, askedBy, why, summary, attachment, attachmentExt, cause, aboutCard, out var made);
+            if (made)
+            {
+                investigations.Hold(waiting);
+            }
+            return waiting;
+        }
         if (bin != CardBin.Ring || RingJudge is not { CanJudge: true } judge || !RingJudge.Wants(kind, choices) || NodePresses?.Invoke(kind, subject, detail, choices) == true)
         {
             return RaiseCardCore(bin, kind, subject, title, detail, choices, link, askedBy, why, summary, attachment, attachmentExt, cause, aboutCard, out _);
@@ -60,6 +71,9 @@ public sealed partial class NodeState
     /// still, or once more, there. Not the stale-card hours (2): a dismissed card back every two hours is the nagging #853 set out to end.
     /// </summary>
     public TimeSpan DismissalHolds { get; set; } = TimeSpan.FromDays(1);
+
+    /// <summary>The investigator (<see cref="Flights.Investigator"/>, PIL1285): with the switch on it holds a ring until a run decides it; null holds none.</summary>
+    public Investigator? Investigations { get; set; }
 
     /// <summary>The brain's word before a ring (<see cref="Flights.RingJudge"/>); null rings at once, as before.</summary>
     public RingJudge? RingJudge { get; set; }

@@ -23,6 +23,12 @@ public enum StandingKind
     FlightSession,
 
     /// <summary>
+    /// An investigator (PIL1285): autopilot's short Opus run on one subject. It runs the lookout's goal verbs on evidence, raises
+    /// Handled and For-you lines, and reports its one outcome (<see cref="Verbs.Investigated"/>); never a your-only verb, an override or an ask's answer.
+    /// </summary>
+    Investigator,
+
+    /// <summary>
     /// Another node, under a grant: as before the standings, and never the settings, setup or grants of this machine. It may send
     /// <see cref="Verbs.FlightChanges"/>, which only reads the files of this node's own flight's plane (the overlap check of its planners).
     /// </summary>
@@ -78,6 +84,12 @@ public sealed record Standing(StandingKind Kind, string? Flight = null, string? 
         Verbs.CreateIssue, Verbs.CreateFlight, Verbs.CiBudget, Verbs.GoAround, Verbs.RerunChecks,
     };
 
+    /// <summary>
+    /// What an investigator runs as the person's assistant would (PIL1285): the lookout's goal verbs (<see cref="LookoutOnGoal"/>), each on a
+    /// <c>--why</c> naming evidence and with a Handled line. Its raises (Handled and For-you lines) and its outcome need no such lift.
+    /// </summary>
+    public static readonly IReadOnlySet<string> InvestigatorActs = LookoutOnGoal;
+
     private static readonly System.Text.RegularExpressions.Regex EvidencePattern = new(
         @"(?<![\w])[jcr]\d{2,}\b|#\d+|\bruns?[ /]+\d{4,}|(?<![\w])(?=[0-9a-f]*\d)(?=[0-9a-f]*[a-f])[0-9a-f]{7,40}\b",
         System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
@@ -92,7 +104,7 @@ public sealed record Standing(StandingKind Kind, string? Flight = null, string? 
     /// </summary>
     private static readonly IReadOnlySet<string> LookoutNever = new HashSet<string>(StringComparer.Ordinal)
     {
-        Verbs.Review, Verbs.PostReview, Verbs.FixPr, Verbs.Ground, Verbs.Unground, Verbs.SyncRepos, Verbs.CreateIssue, Verbs.Fold, Verbs.Separate, Verbs.ConnectOverlap, Verbs.DesignReplan, Verbs.PlanIdea, Verbs.DropIdea, Verbs.EditIdea, Verbs.TidyIdea, Verbs.BreakUpIssue, Verbs.AcceptBreakUp, Verbs.ProposeMilestone, Verbs.SaveTidyIdea, Verbs.FoldIdea, Verbs.SetMilestone, Verbs.PinIssue, Verbs.MarkDesign, Verbs.DesignFromIdea, Verbs.DesignLink, Verbs.DesignUnlink, Verbs.DesignBuild, Verbs.DesignIssue, Verbs.SetPriority, Verbs.CheckReady, Verbs.SuggestMilestones, Verbs.AcceptMilestones,
+        Verbs.Investigated, Verbs.Review, Verbs.PostReview, Verbs.FixPr, Verbs.Ground, Verbs.Unground, Verbs.SyncRepos, Verbs.CreateIssue, Verbs.Fold, Verbs.Separate, Verbs.ConnectOverlap, Verbs.DesignReplan, Verbs.PlanIdea, Verbs.DropIdea, Verbs.EditIdea, Verbs.TidyIdea, Verbs.BreakUpIssue, Verbs.AcceptBreakUp, Verbs.ProposeMilestone, Verbs.SaveTidyIdea, Verbs.FoldIdea, Verbs.SetMilestone, Verbs.PinIssue, Verbs.MarkDesign, Verbs.DesignFromIdea, Verbs.DesignLink, Verbs.DesignUnlink, Verbs.DesignBuild, Verbs.DesignIssue, Verbs.SetPriority, Verbs.CheckReady, Verbs.SuggestMilestones, Verbs.AcceptMilestones,
     };
 
     /// <summary>
@@ -101,7 +113,7 @@ public sealed record Standing(StandingKind Kind, string? Flight = null, string? 
     /// </summary>
     private static readonly IReadOnlySet<string> FlightSessionNever = new HashSet<string>(StringComparer.Ordinal)
     {
-        Verbs.Order, Verbs.OrderDone, Verbs.PostReview, Verbs.FixPr, Verbs.Fold, Verbs.Separate, Verbs.ConnectOverlap, Verbs.DesignReplan, Verbs.CreateIssue, Verbs.CreateFlight, Verbs.WithdrawFlight, Verbs.SyncRepos, Verbs.PlanIdea, Verbs.DropIdea, Verbs.EditIdea, Verbs.TidyIdea, Verbs.BreakUpIssue, Verbs.AcceptBreakUp, Verbs.ProposeMilestone, Verbs.SaveTidyIdea, Verbs.FoldIdea, Verbs.SetMilestone, Verbs.PinIssue, Verbs.MarkDesign, Verbs.DesignFromIdea, Verbs.DesignLink, Verbs.DesignUnlink, Verbs.DesignBuild, Verbs.DesignIssue, Verbs.SetPriority, Verbs.CheckReady, Verbs.SuggestMilestones, Verbs.AcceptMilestones,
+        Verbs.Investigated, Verbs.Order, Verbs.OrderDone, Verbs.PostReview, Verbs.FixPr, Verbs.Fold, Verbs.Separate, Verbs.ConnectOverlap, Verbs.DesignReplan, Verbs.CreateIssue, Verbs.CreateFlight, Verbs.WithdrawFlight, Verbs.SyncRepos, Verbs.PlanIdea, Verbs.DropIdea, Verbs.EditIdea, Verbs.TidyIdea, Verbs.BreakUpIssue, Verbs.AcceptBreakUp, Verbs.ProposeMilestone, Verbs.SaveTidyIdea, Verbs.FoldIdea, Verbs.SetMilestone, Verbs.PinIssue, Verbs.MarkDesign, Verbs.DesignFromIdea, Verbs.DesignLink, Verbs.DesignUnlink, Verbs.DesignBuild, Verbs.DesignIssue, Verbs.SetPriority, Verbs.CheckReady, Verbs.SuggestMilestones, Verbs.AcceptMilestones,
     };
 
     /// <summary>
@@ -120,6 +132,13 @@ public sealed record Standing(StandingKind Kind, string? Flight = null, string? 
             return new Standing(lookoutForPerson ? StandingKind.Assistant : StandingKind.Lookout);
         }
         var who = command.Who;
+        // An investigator is known by its row's role, or before its first poll by its name (<machine>-investigate-<subject>).
+        if (command.Agent && (state.Sessions().FirstOrDefault(s => string.Equals(s.Name, who, StringComparison.Ordinal)) is { } own
+                ? own.Role == SessionRole.Investigator
+                : SessionRoles.IsInvestigatorName(who)))
+        {
+            return new Standing(StandingKind.Investigator);
+        }
         if (state.Legs().FirstOrDefault(l => string.Equals(l.Worker, who, StringComparison.Ordinal) || string.Equals(l.Validator, who, StringComparison.Ordinal)) is { } leg)
         {
             return new Standing(StandingKind.FlightSession, leg.Flight);
@@ -213,6 +232,14 @@ public sealed record Standing(StandingKind Kind, string? Flight = null, string? 
             // not a flight session's. A hand connection (no --anyway) a flight session may drop on its own flight.
             case StandingKind.Lookout or StandingKind.FlightSession when DropsOverlapAnswer(command):
                 return $"{command.Verb} {Verbs.AnywayFlag} undoes the controller's answer to an overlap: it is theirs, not {(Kind == StandingKind.Lookout ? "the watchtower's" : "a flight session's")}";
+            case StandingKind.Investigator when yourOnly:
+                return $"{command.Verb} is the controller's, not an investigator's: end with {Verbs.Investigated} ring and say what they need to do";
+            case StandingKind.Investigator when command.Verb == Verbs.Raise && (command.Args ?? []) is ["ring", ..]:
+                return $"an investigator rings once, through its outcome: {Verbs.Investigated} <subject> ring <what was tried; what is needed>";
+            // A goal verb still under this standing here was not lifted (the switch is off): refused with the rest.
+            case StandingKind.Investigator when LookoutNever.Contains(command.Verb) && command.Verb != Verbs.Investigated || InvestigatorActs.Contains(command.Verb)
+                || command.Verb is Verbs.Answer or Verbs.Dismiss or Verbs.Stop or Verbs.EndSession or Verbs.Set or Verbs.Tell:
+                return $"{command.Verb} is not an investigator's: it files an issue and a flight, acts on evidence, or rings once through {Verbs.Investigated}";
             case StandingKind.Lookout when yourOnly && !AnswersRing(command, state) || LookoutNever.Contains(command.Verb):
                 return $"{command.Verb} is the controller's, not the watchtower's: leave its card open for them";
             // A session says its own state only; the person and the watchtower may say any session's.

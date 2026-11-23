@@ -87,6 +87,9 @@ public sealed record NodeSettings
     /// <summary>Minutes a flight in the air may show no progress before the watchtower is woken for it while autopilot is on.</summary>
     public const string AutopilotStallMinutesKey = "autopilot-stall-minutes";
     public const int DefaultAutopilotStallMinutes = 60;
+    /// <summary>The most investigator runs the node starts per local day while autopilot is on; past it the one ring says the bound is reached.</summary>
+    public const string AutopilotInvestigationsKey = "autopilot-investigations";
+    public const int DefaultAutopilotInvestigations = 8;
     /// <summary>Hours a flight's PR may stay red before the node stops pushing for it (PIL795).</summary>
     public const int FlightCiRedHours = 3;
 
@@ -229,7 +232,7 @@ public sealed record NodeSettings
 
     /// <summary>Every key, in the order the Settings page shows them: the node's own, then a range per role.</summary>
     public static IReadOnlyList<string> Keys { get; } =
-        [LanKey, MachineKey, RepoRootsKey, UpdateChannelKey, UpdatePolicyKey, MaxJobsKey, JobsPerRepoKey, GuiSlotsKey, JobMemoryKey, JobPriorityKey, JobPlaneOutputKey, JobBuildCacheKey, LanPortKey, StartLimitKey, PriorityReposKey, PriorityStartLimitKey, WeekLimitKey, WeekPaceKey, SpendAlertKey, WatchtowerCompactShareKey, WatchtowerChatMessagesKey, WatchtowerCompactIdleKey, WatchtowerCompactAboveKey, MergeMethodKey, MaintenanceKey, AcceptFleetFlightsKey, AutopilotKey, ReviewDeepFirstKey, UserSkillsKey, ShortcutTokenKey, RepoTrackersKey, NoAutoMergeReposKey, OpusCapKey, ReviewLimitKey, OneFlightPerRepoKey, SubTaskReposKey, MergeBatchKey, PrWatchIdleKey, AdoptAfterKey, ArchiveLandedAfterKey, MaintenanceEveryKey, MaintenanceIdleKey, PackageAgeDaysKey, GitPruneDaysKey, MaintenancePruneHoursKey, DeleteLandedBranchesKey, MaxGoAroundsKey, ScratchDaysKey, DesignerKeepKey, DiskAlertGbKey, FlightCiBudgetKey, AutopilotCiGrantsKey, AutopilotStallMinutesKey, StaleFlightHoursKey, StalePrHoursKey, StaleRecheckHoursKey, StaleCardHoursKey, StaleHoldsKey, StaleUnreachableHoursKey,
+        [LanKey, MachineKey, RepoRootsKey, UpdateChannelKey, UpdatePolicyKey, MaxJobsKey, JobsPerRepoKey, GuiSlotsKey, JobMemoryKey, JobPriorityKey, JobPlaneOutputKey, JobBuildCacheKey, LanPortKey, StartLimitKey, PriorityReposKey, PriorityStartLimitKey, WeekLimitKey, WeekPaceKey, SpendAlertKey, WatchtowerCompactShareKey, WatchtowerChatMessagesKey, WatchtowerCompactIdleKey, WatchtowerCompactAboveKey, MergeMethodKey, MaintenanceKey, AcceptFleetFlightsKey, AutopilotKey, ReviewDeepFirstKey, UserSkillsKey, ShortcutTokenKey, RepoTrackersKey, NoAutoMergeReposKey, OpusCapKey, ReviewLimitKey, OneFlightPerRepoKey, SubTaskReposKey, MergeBatchKey, PrWatchIdleKey, AdoptAfterKey, ArchiveLandedAfterKey, MaintenanceEveryKey, MaintenanceIdleKey, PackageAgeDaysKey, GitPruneDaysKey, MaintenancePruneHoursKey, DeleteLandedBranchesKey, MaxGoAroundsKey, ScratchDaysKey, DesignerKeepKey, DiskAlertGbKey, FlightCiBudgetKey, AutopilotCiGrantsKey, AutopilotStallMinutesKey, AutopilotInvestigationsKey, StaleFlightHoursKey, StalePrHoursKey, StaleRecheckHoursKey, StaleCardHoursKey, StaleHoldsKey, StaleUnreachableHoursKey,
          .. BenchKeys, .. RoleModels.Roles.Select(RoleModels.RangeKey), SummaryModelKey, WorkerLadderKey];
 
     /// <summary>Whether <paramref name="key"/> is a role's range (<see cref="RoleModels"/>).</summary>
@@ -368,6 +371,9 @@ public sealed record NodeSettings
 
     /// <summary>Minutes of no progress after which the watchtower is woken for a flight (<see cref="AutopilotStallMinutesKey"/>); <see cref="DefaultAutopilotStallMinutes"/> unless set.</summary>
     public int? AutopilotStallMinutes { get; init; }
+
+    /// <summary>Investigator runs per local day on autopilot (<see cref="AutopilotInvestigationsKey"/>); <see cref="DefaultAutopilotInvestigations"/> unless set.</summary>
+    public int? AutopilotInvestigations { get; init; }
 
     /// <summary>The staleness bounds (<see cref="StaleKeys"/>); each its default unless set.</summary>
     public int? StaleFlightHours { get; init; }
@@ -590,6 +596,7 @@ public sealed record NodeSettings
                     FlightCiBudgetKey => JsonValue.Create(FlightCiBudget),
                     AutopilotCiGrantsKey => JsonValue.Create(AutopilotCiGrants),
                     AutopilotStallMinutesKey => JsonValue.Create(AutopilotStallMinutes),
+                    AutopilotInvestigationsKey => JsonValue.Create(AutopilotInvestigations),
                     StaleFlightHoursKey or StalePrHoursKey or StaleRecheckHoursKey or StaleCardHoursKey or StaleHoldsKey or StaleUnreachableHoursKey => JsonValue.Create(StaleValue(key)),
                     JobMemoryKey => JsonValue.Create(JobMemoryGigabytes),
                     BenchSpotPriceKey => JsonValue.Create(BenchSpotPrice),
@@ -666,6 +673,7 @@ public sealed record NodeSettings
         FlightCiBudgetKey => FlightCiBudget is { } ciBudget ? [ciBudget.ToString(CultureInfo.InvariantCulture)] : null,
         AutopilotCiGrantsKey => AutopilotCiGrants is { } ciGrants ? [ciGrants.ToString(CultureInfo.InvariantCulture)] : null,
         AutopilotStallMinutesKey => AutopilotStallMinutes is { } stallMinutes ? [stallMinutes.ToString(CultureInfo.InvariantCulture)] : null,
+        AutopilotInvestigationsKey => AutopilotInvestigations is { } investigations ? [investigations.ToString(CultureInfo.InvariantCulture)] : null,
         StaleFlightHoursKey or StalePrHoursKey or StaleRecheckHoursKey or StaleCardHoursKey or StaleHoldsKey or StaleUnreachableHoursKey => StaleValue(key) is { } stale ? [stale.ToString(CultureInfo.InvariantCulture)] : null,
         JobPriorityKey => JobPriority is { } priority ? [Pilot.Node.Flights.JobPriorities.Name(priority)] : null,
         JobMemoryKey => JobMemoryGigabytes is { } memory ? [memory.ToString(CultureInfo.InvariantCulture)] : null,
@@ -1065,6 +1073,14 @@ public sealed record NodeSettings
                 return int.TryParse(One(), NumberStyles.None, CultureInfo.InvariantCulture, out var stallMinutes) && stallMinutes is >= 5 and <= 1440
                     ? (settings with { AutopilotStallMinutes = stallMinutes }, null)
                     : (null, "autopilot-stall-minutes takes a number of minutes, 5 to 1440");
+            case AutopilotInvestigationsKey:
+                if (clear)
+                {
+                    return (settings with { AutopilotInvestigations = null }, null);
+                }
+                return int.TryParse(One(), NumberStyles.None, CultureInfo.InvariantCulture, out var investigations) && investigations is >= 0 and <= 100
+                    ? (settings with { AutopilotInvestigations = investigations }, null)
+                    : (null, "autopilot-investigations takes a number, 0 to 100");
             case JobPriorityKey:
                 if (clear)
                 {
