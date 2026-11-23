@@ -961,56 +961,49 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
     }
 
     /// <summary>
-    /// PIL1283: the failed runs of <paramref name="runs"/> whose log says the outside review never reached a model. Only an outside review's
-    /// logs are read: the runs behind the PR's own failed checks now (which the send-back path reads anyway, under the same key), and the other
-    /// failed runs of a workflow one of those showed to be a no-model review; a run read before is answered from memory. A real test failure of
-    /// an earlier push is never downloaded. Each read is once per run and <c>run_attempt</c>; one gh could not make counts the run as failed this time.
+    /// PIL1283: the failed runs of <paramref name="runs"/> whose log says the outside review never reached a model, every failed job of the run
+    /// (<see cref="CiRun.FailedJobs"/>, else the jobs its log names) a no-model review. Workflow by workflow, and from the runs alone, so the
+    /// node's memory is not needed (it is empty after a restart):
+    /// <list type="bullet">
+    /// <item>a red workflow has the oldest and the newest run of its red streak read (<see cref="CiBudgets.RedStreak"/>): the oldest is the run
+    /// its red clock counts from unless it never reached a model, and a findings run or one still going at the top cannot hide an earlier
+    /// no-model streak;</item>
+    /// <item>a workflow one of those reads, or the memory, shows to be a no-model review has every failed run of it read.</item>
+    /// </list>
+    /// So a red workflow of real failures costs at most two reads, and an earlier real test failure of a workflow green now is never downloaded.
+    /// Each read is once per run and <c>run_attempt</c>; one gh could not make counts the run as failed this time.
     /// </summary>
-    private async Task<HashSet<long>> NoModelRunsAsync(OutsideReviews reviews, FlightRow flight, CiRun[] runs, CancellationToken cancellationToken)
+    private static async Task<HashSet<long>> NoModelRunsAsync(OutsideReviews reviews, FlightRow flight, CiRun[] runs, CancellationToken cancellationToken)
     {
         HashSet<long> noModel = [];
-        var failed = runs.Where(r => r.Conclusion is "failure" or "timed_out" or "startup_failure").ToArray();
-        if (failed.Length == 0)
+        foreach (var workflow in runs.GroupBy(r => r.Name))
         {
-            return noModel;
-        }
-        HashSet<long> current = [];
-        if (flight.PullRequest is { } number)
-        {
-            try
+            var failed = workflow.Where(CiBudgets.Failed).ToList();
+            if (failed.Count == 0)
             {
-                current = [.. (await github.FailedChecksAsync(flight.RepoPath, number, cancellationToken)).Select(c => c.RunId).OfType<long>()];
+                continue;
             }
-            catch (Exception ex) when (ex is FlightException or System.ComponentModel.Win32Exception or IOException)
+            var review = failed.Any(r => reviews.TryKnown(r.Id, r.Attempt, out var known) && known.Run(r.FailedJobs) is not null);
+            if (!review && CiBudgets.RedStreak(workflow) is [var newest, ..] streak)
             {
-                // Only what is known from earlier reads counts this time.
+                review = await NoModelAsync(streak[^1]) || (streak.Count > 1 && await NoModelAsync(newest));
             }
-        }
-        HashSet<string> reviewWorkflows = new(StringComparer.Ordinal);
-        foreach (var run in failed.Where(r => current.Contains(r.Id)))
-        {
-            if (await reviews.AskAsync(flight.RepoPath, run.Id, run.Attempt, cancellationToken) is { Known: true, NoModel: not null })
+            if (!review)
             {
-                noModel.Add(run.Id);
-                reviewWorkflows.Add(run.Name);
+                continue;
             }
-        }
-        foreach (var run in failed.Where(r => !current.Contains(r.Id)))
-        {
-            if (reviews.TryKnown(run.Id, run.Attempt, out var known))
+            foreach (var run in failed)
             {
-                if (known is not null)
+                if (await NoModelAsync(run))
                 {
                     noModel.Add(run.Id);
                 }
             }
-            else if (reviewWorkflows.Contains(run.Name)
-                && await reviews.AskAsync(flight.RepoPath, run.Id, run.Attempt, cancellationToken) is { Known: true, NoModel: not null })
-            {
-                noModel.Add(run.Id);
-            }
         }
         return noModel;
+
+        async Task<bool> NoModelAsync(CiRun run) =>
+            await reviews.AskRunAsync(flight.RepoPath, run.Id, run.Attempt, run.FailedJobs, cancellationToken) is { Known: true, NoModel: not null };
     }
 
     /// <summary>How often a flight's CI spend is counted: each count reads the runs of its branch and the jobs of each run still going.</summary>

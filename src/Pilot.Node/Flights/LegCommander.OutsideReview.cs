@@ -37,7 +37,9 @@ public sealed partial class LegCommander
     /// blocked by the red check as before. A Handled card says it once for the head, and a run past its reset is run again once.
     /// A failed check whose log or attempt gh could not read, a check that is no workflow run, a review with findings and a mix with any other
     /// failed check all return false, so today's path is taken for that look (a read that failed is asked again at the next look).
-    /// Each run is asked once however many of its jobs failed, keyed by its <c>run_attempt</c> as the CI count keys it.
+    /// Each failed check is judged by its own job's lines of its run's log, so a no-model review job beside a build job that failed in the same
+    /// run is a real failure. A run's log is read once per <c>run_attempt</c> (as the CI count keys it) however many of its jobs failed, and
+    /// the attempt is asked once per job id, since a rerun makes new jobs.
     /// </summary>
     public async Task<bool> OutsideReviewOnlyAsync(FlightRow flight, int number, string head, CancellationToken cancellationToken)
     {
@@ -54,24 +56,29 @@ public sealed partial class LegCommander
         {
             return false;
         }
+        var attempts = new Dictionary<long, int>();
         var found = new List<(FailedCheck Check, NoModelReview Review)>();
-        foreach (var check in failed.DistinctBy(c => c.RunId))
+        foreach (var check in failed)
         {
             var runId = check.RunId!.Value;
-            int? attempt;
-            try
+            if (!attempts.TryGetValue(runId, out var attempt))
             {
-                attempt = await github.RunAttemptAsync(flight.RepoPath, runId, cancellationToken);
+                int? asked;
+                try
+                {
+                    asked = await _outsideReviews.AttemptAsync(flight.RepoPath, runId, check.JobId, cancellationToken);
+                }
+                catch (Exception ex) when (ex is FlightException or System.ComponentModel.Win32Exception or IOException)
+                {
+                    return false;
+                }
+                if (asked is not { } known)
+                {
+                    return false;
+                }
+                attempts[runId] = attempt = known;
             }
-            catch (Exception ex) when (ex is FlightException or System.ComponentModel.Win32Exception or IOException)
-            {
-                return false;
-            }
-            if (attempt is not { } known)
-            {
-                return false;
-            }
-            var answer = await _outsideReviews.AskAsync(flight.RepoPath, runId, known, cancellationToken);
+            var answer = await _outsideReviews.AskJobAsync(flight.RepoPath, runId, attempt, check.Name, cancellationToken);
             if (!answer.Known || answer.NoModel is not { } review)
             {
                 return false;
@@ -79,7 +86,8 @@ public sealed partial class LegCommander
             found.Add((check, review));
         }
         var now = time.GetUtcNow();
-        foreach (var (check, review) in found)
+        // A run is run again (gh run rerun --failed) once for all its no-model jobs.
+        foreach (var (check, review) in found.DistinctBy(f => f.Check.RunId))
         {
             var runId = check.RunId!.Value;
             var due = _outsideDue.GetOrAdd(runId, _ => OutsideDue(runId, review, now));
@@ -103,7 +111,7 @@ public sealed partial class LegCommander
             }
             if (_outsideCarded.TryAdd($"{flight.Code} {CommitRefs.Short(head)}", 0))
             {
-                var (title, next) = OutsideCard(review, due, _outsideNoResetReruns.GetValueOrDefault(runId));
+                var (title, next) = OutsideCard(review, due);
                 state.RaiseCard(CardBin.Handled, OutsideReviewUnavailable, Verbs.FlightTarget(flight.Code),
                     $"{flight.Code}'s PR #{number}: outside review {check.Name} {title}",
                     $"{review.Reason}. The review job never reached a model, so nothing was sent back and no failed check was counted; {next}",
@@ -131,18 +139,14 @@ public sealed partial class LegCommander
         return (last ?? now) + wait;
     }
 
-    // The card's title after the check's name, and what the node does next, worded by whether the log named a reset time.
-    private static (string Title, string Next) OutsideCard(NoModelReview review, DateTimeOffset due, int reruns)
+    // The card's title after the check's name, and what the node does next, worded by whether the log named a reset time. The card is raised
+    // at the first look of a head, before any rerun of its runs, so the due time is always a time: the bound's stop is said here, up front.
+    private static (string Title, string Next) OutsideCard(NoModelReview review, DateTimeOffset due)
     {
         static string Utc(DateTimeOffset at) => at.ToString("yyyy-MM-dd HH:mm 'UTC'", CultureInfo.InvariantCulture);
         if (review.ResetsAt is not null)
         {
             return ($"is unavailable until {Utc(due)}", $"the node runs it again once after {Utc(due)}. The red check still blocks the merge until then.");
-        }
-        if (due == DateTimeOffset.MaxValue)
-        {
-            return ("is unavailable, and its log named no reset time",
-                $"the node ran it again {reruns} times and has stopped; run it again by hand once the outside review works. The red check blocks the merge until it passes.");
         }
         return ($"is unavailable and its log named no reset time: run again at {Utc(due)}",
             $"the node runs it again at {Utc(due)}, then with waits doubling up to {OutsideReviewRetryCeiling.TotalHours:0} hours, at most {OutsideReviewRetriesWithoutReset} times, and then stops. The red check still blocks the merge until it passes.");

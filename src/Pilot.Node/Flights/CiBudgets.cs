@@ -30,7 +30,8 @@ public static class CiBudgets
     /// <summary>How long a flight's CI may stay red, in a row, before the node stops pushing for it.</summary>
     public static TimeSpan RedBound { get; } = TimeSpan.FromHours(NodeSettings.FlightCiRedHours);
 
-    private static bool Failed(CiRun run) => run.Conclusion is "failure" or "timed_out" or "startup_failure";
+    /// <summary>Whether a run failed (failure, timed out, failed to start): what <see cref="FlightCi.Failed"/> counts and what makes a workflow red.</summary>
+    public static bool Failed(CiRun run) => run.Conclusion is "failure" or "timed_out" or "startup_failure";
 
     /// <summary>
     /// The flight's CI as these runs say it, over <paramref name="before"/> (which keeps what the node decided: the extra budgets, the
@@ -55,18 +56,24 @@ public static class CiBudgets
     public static DateTimeOffset? RedSince(IReadOnlyList<CiRun> runs, IReadOnlySet<long>? noModel = null)
     {
         DateTimeOffset? since = null;
-        foreach (var workflow in runs.Where(r => r.CompletedAt is not null && r.Conclusion is not (null or "cancelled" or "skipped") && noModel?.Contains(r.Id) != true).GroupBy(r => r.Name))
+        foreach (var workflow in runs.Where(r => noModel?.Contains(r.Id) != true).GroupBy(r => r.Name))
         {
-            var finished = workflow.OrderByDescending(r => r.CompletedAt).ToList();
-            if (!Failed(finished[0]))
+            if (RedStreak(workflow) is not [.., var first])
             {
                 continue;
             }
-            var start = finished.TakeWhile(Failed).Last().CompletedAt!.Value;
+            var start = first.CompletedAt!.Value;
             since = since is { } earlier && earlier < start ? earlier : start;
         }
         return since;
     }
+
+    /// <summary>
+    /// The red streak of one workflow's <paramref name="runs"/>, newest first: its finished runs (cancelled and skipped ones aside) from the
+    /// latest back to the last that did not fail, when the latest failed; empty when it is not red. <see cref="RedSince"/> counts from its last.
+    /// </summary>
+    public static List<CiRun> RedStreak(IEnumerable<CiRun> runs) =>
+        [.. runs.Where(r => r.CompletedAt is not null && r.Conclusion is not (null or "cancelled" or "skipped")).OrderByDescending(r => r.CompletedAt).TakeWhile(Failed)];
 
     /// <summary>The kind of the node's own card about a flight's CI going red (PrChecks). It is about the CI, not a wait on a person, so it never holds the red clock.</summary>
     public const string ChecksFailedKind = "pr-checks-failed";

@@ -67,6 +67,25 @@ public sealed class CiBudgetTests : ReviewTestsBase
     }
 
     [Fact]
+    public void AWorkflowsRedStreakIsItsFailedRunsNewestFirstBackToItsLastGreenAndEmptyWhileGreen()
+    {
+        CiRun[] runs =
+        [
+            CiOf(6, 1, null, "review"),
+            CiOf(5, 1, "failure", "review", Now.AddHours(-1)),
+            CiOf(4, 1, "cancelled", "review", Now.AddHours(-2)),
+            CiOf(3, 1, "timed_out", "review", Now.AddHours(-3)),
+            CiOf(2, 1, "success", "review", Now.AddHours(-4)),
+            CiOf(1, 1, "failure", "review", Now.AddHours(-5)),
+        ];
+
+        // A run still going and a cancelled one are neither red nor green; the red clock counts from the streak's oldest.
+        CiBudgets.RedStreak(runs).Select(r => r.Id).ShouldBe([5L, 3L]);
+        CiBudgets.RedSince(runs).ShouldBe(Now.AddHours(-3));
+        CiBudgets.RedStreak([.. runs, CiOf(7, 1, "success", "review", Now)]).ShouldBeEmpty();
+    }
+
+    [Fact]
     public void CountingKeepsWhatTheNodeDecidedAndOnlyReplacesTheNumbers()
     {
         var before = new FlightCi { Extra = 2, CappedWhy = "past it", Answer = Verbs.CiSplit, RunnerMinutes = 1 };

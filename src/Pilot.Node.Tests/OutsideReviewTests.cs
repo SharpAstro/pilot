@@ -71,6 +71,29 @@ public sealed class OutsideReviewTests
         OutsideReview.Read(diff, Noon).ShouldBeNull();
     }
 
+    // A run of two failed jobs: the review that never reached a model, and a build that did not compile.
+    private static string ReviewBesideABrokenBuild() =>
+        RealLog() + "\nbuild (linux)\tBuild\t2026-11-22T14:06:42.0000000Z src/Foo.cs(3,9): error CS1002: ; expected";
+
+    [Fact]
+    public void EachJobIsJudgedByItsOwnLinesAndARunIsNoModelOnlyWhenEveryFailedJobIs()
+    {
+        var jobs = OutsideReview.Jobs(ReviewBesideABrokenBuild(), Noon);
+
+        jobs.Jobs.Keys.ShouldBe(["review", "build (linux)"], ignoreOrder: true);
+        jobs.Job("review").ShouldNotBeNull().Reason.ShouldBe("You've hit your individual spend limit");
+        jobs.Job("build (linux)").ShouldBeNull("its lines carry no marker");
+        jobs.Job("lint").ShouldBeNull("a job the log does not name is not known to be a review");
+
+        jobs.Run().ShouldBeNull("the build failed beside the review");
+        OutsideReview.Read(ReviewBesideABrokenBuild(), Noon).ShouldBeNull();
+        jobs.Run(["review"]).ShouldNotBeNull("only the review failed, by the run's jobs");
+        jobs.Run(["review", "build (linux)"]).ShouldBeNull();
+        jobs.Run(["review", "test (windows)"]).ShouldBeNull("a job that failed without a failed step's log is a real failure");
+        jobs.Run([]).ShouldBeNull("a run with no failed job is no review that never reached a model");
+        OutsideReview.Jobs(RealLog(), Noon).Run().ShouldNotBeNull();
+    }
+
     [Fact]
     public async Task TheCacheReadsARunsLogOnceOverTwoAsks()
     {
@@ -78,14 +101,28 @@ public sealed class OutsideReviewTests
         gh.RunLogs[45029777689] = RealLog();
         gh.RunLogs[7] = "";
         var reviews = new OutsideReviews(gh, new FixedTime(Noon));
-        var first = await reviews.AskAsync("repo", 45029777689, 1, CancellationToken.None);
-        var second = await reviews.AskAsync("repo", 45029777689, 1, CancellationToken.None);
+        var first = await reviews.AskRunAsync("repo", 45029777689, 1, null, CancellationToken.None);
+        var second = await reviews.AskJobAsync("repo", 45029777689, 1, "review", CancellationToken.None);
         gh.RunLogReads.ShouldBe(1);
         first.Known.ShouldBeTrue();
         first.NoModel.ShouldNotBeNull();
         second.NoModel.ShouldBe(first.NoModel);
-        await reviews.AskAsync("repo", 7, 1, CancellationToken.None);
+        await reviews.AskRunAsync("repo", 7, 1, null, CancellationToken.None);
         gh.RunLogReads.ShouldBe(2);
+    }
+
+    [Fact]
+    public async Task TheJobsOfOneRunShareOneReadAndEachHasItsOwnVerdict()
+    {
+        var gh = new FakeGitHub();
+        gh.RunLogs[3] = ReviewBesideABrokenBuild();
+        var reviews = new OutsideReviews(gh, new FixedTime(Noon));
+
+        (await reviews.AskJobAsync("repo", 3, 1, "review", CancellationToken.None)).NoModel.ShouldNotBeNull();
+        (await reviews.AskJobAsync("repo", 3, 1, "build (linux)", CancellationToken.None)).ShouldBe(new OutsideReviewAnswer(true, null));
+        (await reviews.AskRunAsync("repo", 3, 1, null, CancellationToken.None)).ShouldBe(new OutsideReviewAnswer(true, null));
+        (await reviews.AskRunAsync("repo", 3, 1, ["review"], CancellationToken.None)).NoModel.ShouldNotBeNull();
+        gh.RunLogReads.ShouldBe(1);
     }
 
     [Fact]
@@ -94,17 +131,34 @@ public sealed class OutsideReviewTests
         var gh = new FakeGitHub();
         gh.RunLogs[9] = RealLog();
         var reviews = new OutsideReviews(gh, new FixedTime(Noon));
-        (await reviews.AskAsync("repo", 9, 1, CancellationToken.None)).NoModel.ShouldNotBeNull();
-        (await reviews.AskAsync("repo", 9, 1, CancellationToken.None)).NoModel.ShouldNotBeNull();
+        (await reviews.AskRunAsync("repo", 9, 1, null, CancellationToken.None)).NoModel.ShouldNotBeNull();
+        (await reviews.AskJobAsync("repo", 9, 1, "review", CancellationToken.None)).NoModel.ShouldNotBeNull();
         gh.RunLogReads.ShouldBe(1, "the same attempt is answered from memory");
         reviews.TryKnown(9, 2, out _).ShouldBeFalse();
 
         // Someone ran it again and this time the model answered with findings: attempt 2 is read, and is a real failure.
         gh.RunLogs[9] = Line("##[error]The chrome review found 2 high-confidence finding(s); the PR comment lists them.");
-        (await reviews.AskAsync("repo", 9, 2, CancellationToken.None)).ShouldBe(new OutsideReviewAnswer(true, null));
+        (await reviews.AskJobAsync("repo", 9, 2, "review", CancellationToken.None)).ShouldBe(new OutsideReviewAnswer(true, null));
         gh.RunLogReads.ShouldBe(2);
         reviews.TryKnown(9, 1, out var first).ShouldBeTrue();
-        first.ShouldNotBeNull("attempt 1's own answer is unchanged");
+        first.ShouldNotBeNull().Run().ShouldNotBeNull("attempt 1's own answer is unchanged");
+    }
+
+    [Fact]
+    public async Task AJobsAttemptIsAskedOncePerJobIdAndARerunsNewJobIsAskedAfresh()
+    {
+        var gh = new FakeGitHub();
+        var reviews = new OutsideReviews(gh, new FixedTime(Noon));
+
+        (await reviews.AttemptAsync("repo", 9, 100, CancellationToken.None)).ShouldBe(1);
+        (await reviews.AttemptAsync("repo", 9, 100, CancellationToken.None)).ShouldBe(1);
+        gh.RunAttemptReads.ShouldBe(1, "a job id names one attempt");
+
+        gh.RunAttempts[9] = 2;
+        (await reviews.AttemptAsync("repo", 9, 101, CancellationToken.None)).ShouldBe(2, "the rerun's job is a new id");
+        (await reviews.AttemptAsync("repo", 9, null, CancellationToken.None)).ShouldBe(2);
+        (await reviews.AttemptAsync("repo", 9, null, CancellationToken.None)).ShouldBe(2);
+        gh.RunAttemptReads.ShouldBe(4, "a check that names no job is asked every time");
     }
 
     [Fact]
@@ -113,8 +167,8 @@ public sealed class OutsideReviewTests
         var gh = new FakeGitHub();
         gh.RunLogs[1] = "test\tRun\t2026-11-22T14:06:41.1Z Failed!";
         var reviews = new OutsideReviews(gh, new FixedTime(Noon));
-        (await reviews.AskAsync("repo", 1, 1, CancellationToken.None)).ShouldBe(new OutsideReviewAnswer(true, null));
-        await reviews.AskAsync("repo", 1, 1, CancellationToken.None);
+        (await reviews.AskRunAsync("repo", 1, 1, null, CancellationToken.None)).ShouldBe(new OutsideReviewAnswer(true, null));
+        await reviews.AskRunAsync("repo", 1, 1, null, CancellationToken.None);
         gh.RunLogReads.ShouldBe(1);
     }
 
@@ -123,33 +177,55 @@ public sealed class OutsideReviewTests
     {
         var gh = new FakeGitHub();
         var reviews = new OutsideReviews(gh, new FixedTime(Noon));
-        (await reviews.AskAsync("repo", 5, 1, CancellationToken.None)).ShouldBe(OutsideReviewAnswer.Unknown);
+        (await reviews.AskRunAsync("repo", 5, 1, null, CancellationToken.None)).ShouldBe(OutsideReviewAnswer.Unknown);
         gh.RunLogFails = true;
-        (await reviews.AskAsync("repo", 5, 1, CancellationToken.None)).ShouldBe(OutsideReviewAnswer.Unknown);
+        (await reviews.AskJobAsync("repo", 5, 1, "review", CancellationToken.None)).ShouldBe(OutsideReviewAnswer.Unknown);
         gh.RunLogFails = false;
         gh.RunLogs[5] = RealLog();
-        var answer = await reviews.AskAsync("repo", 5, 1, CancellationToken.None);
+        var answer = await reviews.AskRunAsync("repo", 5, 1, null, CancellationToken.None);
         gh.RunLogReads.ShouldBe(3);
         answer.Known.ShouldBeTrue();
         answer.NoModel.ShouldNotBeNull();
     }
 
     [Fact]
-    public void EveryFailedCheckIsListedWithItsRunIdNotOnlyTheFirst()
+    public void EveryFailedCheckIsListedWithItsRunIdAndJobIdNotOnlyTheFirst()
     {
         const string json = """
             [
               {"bucket":"pass","name":"build","link":"https://github.com/o/r/actions/runs/1/job/9"},
               {"bucket":"fail","name":"review","link":"https://github.com/o/r/actions/runs/45029777689/job/2"},
               {"bucket":"cancel","name":"test","link":"https://github.com/o/r/actions/runs/77/job/3"},
+              {"bucket":"fail","name":"setup","link":"https://github.com/o/r/actions/runs/78"},
               {"bucket":"fail","name":"external","link":"https://example.com/status"}
             ]
             """;
         GhCli.ParseFailedChecks(json).ShouldBe([
-            new FailedCheck("review", "https://github.com/o/r/actions/runs/45029777689/job/2", 45029777689),
-            new FailedCheck("test", "https://github.com/o/r/actions/runs/77/job/3", 77),
-            new FailedCheck("external", "https://example.com/status", null)]);
+            new FailedCheck("review", "https://github.com/o/r/actions/runs/45029777689/job/2", 45029777689, 2),
+            new FailedCheck("test", "https://github.com/o/r/actions/runs/77/job/3", 77, 3),
+            new FailedCheck("setup", "https://github.com/o/r/actions/runs/78", 78, null),
+            new FailedCheck("external", "https://example.com/status", null, null)]);
         GhCli.ParseFailedChecks("not json").ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void TheFailedJobsOfARunAreEachJobsLatestAttemptThatFailed()
+    {
+        const string jobs = """
+            {"total_count":5,"jobs":[
+              {"name":"review","run_attempt":1,"conclusion":"failure"},
+              {"name":"review","run_attempt":2,"conclusion":"failure"},
+              {"name":"build (linux)","run_attempt":1,"conclusion":"failure"},
+              {"name":"build (linux)","run_attempt":2,"conclusion":"success"},
+              {"name":"test (windows)","run_attempt":1,"conclusion":"timed_out"},
+              {"name":"lint","run_attempt":1,"conclusion":"cancelled"},
+              {"name":"docs","run_attempt":2,"conclusion":null}]}
+            """;
+
+        GhCli.FailedJobs(jobs).ShouldBe(["review", "test (windows)"], ignoreOrder: true);
+        GhCli.FailedJobs("""{"jobs":[]}""").ShouldBeEmpty();
+        GhCli.FailedJobs("not json").ShouldBeNull();
+        GhCli.FailedJobs("{}").ShouldBeNull();
     }
 
     private sealed class FixedTime(DateTimeOffset now) : TimeProvider

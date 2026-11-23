@@ -38,7 +38,12 @@ public sealed record WorkflowRun(long Id, string Name, string Status, string? Co
 /// <param name="StartedAt">When it started (its first attempt).</param>
 /// <param name="CompletedAt">When it last completed; null while it runs.</param>
 /// <param name="Attempt">Its <c>run_attempt</c>: 1, and one more for each time it was run again (pilot #1283 keys a run's log by it).</param>
-public sealed record CiRun(long Id, string Name, string Status, string? Conclusion, string Event, DateTimeOffset StartedAt, DateTimeOffset? CompletedAt, double RunnerMinutes, int Attempt = 1);
+/// <param name="FailedJobs">
+/// The names of its jobs that failed in their latest attempt, read from the same jobs answer as its runner minutes; null when that answer
+/// could not be read. Pilot #1283 counts a run as an outside review that never reached a model only when every one of them is.
+/// </param>
+public sealed record CiRun(long Id, string Name, string Status, string? Conclusion, string Event, DateTimeOffset StartedAt, DateTimeOffset? CompletedAt, double RunnerMinutes, int Attempt = 1,
+    IReadOnlyList<string>? FailedJobs = null);
 
 /// <summary>
 /// Where a PR stands in its base's merge queue. <paramref name="State"/> and <paramref name="Head"/> are the PR's own
@@ -48,8 +53,11 @@ public sealed record CiRun(long Id, string Name, string Status, string? Conclusi
 /// </summary>
 public sealed record MergeQueueState(string State, string Head, bool Queued, int? Position = null, DateTimeOffset? RemovedAt = null, string? RemovedReason = null);
 
-/// <summary>A failed check of a PR: its name, its page and the workflow run behind it (null for a check that is no workflow run).</summary>
-public sealed record FailedCheck(string Name, string? Link, long? RunId);
+/// <summary>
+/// A failed check of a PR: its name (its job's name), its page, the workflow run behind it (null for a check that is no workflow run) and the
+/// job its page names (<c>/job/&lt;id&gt;</c>, one attempt's job: a rerun makes a new one).
+/// </summary>
+public sealed record FailedCheck(string Name, string? Link, long? RunId, long? JobId = null);
 
 /// <summary>
 /// Where a PR's checks stand: <paramref name="Status"/> a <see cref="ChoiceStatus"/> (failing, pending, passing),

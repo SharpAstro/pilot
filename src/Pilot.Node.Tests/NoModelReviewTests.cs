@@ -23,11 +23,30 @@ public sealed class NoModelReviewTests : ReviewTestsBase
 
     private static string NoModelLog() => File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Fixtures", "gh", "failed-run-log-no-model.log"));
 
-    private static FailedCheck Review(long run = ReviewRun) => new("review", $"https://github.com/x/tianwen/actions/runs/{run}/job/9", run);
+    // A check's link names its run and its job, one attempt's job: a rerun makes a new job id.
+    private static FailedCheck Review(long run = ReviewRun, long job = 9) => new("review", $"https://github.com/x/tianwen/actions/runs/{run}/job/{job}", run, job);
 
-    private static FailedCheck Build() => new("build (linux)", $"https://github.com/x/tianwen/actions/runs/{BuildRun}/job/8", BuildRun);
+    private static FailedCheck Build(long run = BuildRun) => new("build (linux)", $"https://github.com/x/tianwen/actions/runs/{run}/job/8", run, 8);
 
     private const string FindingsLog = "review\tUNKNOWN STEP\t2026-11-22T14:06:41.0000000Z the review found 2 points: a null is read before it is checked";
+
+    private const string BrokenBuildLog = "build (linux)\tBuild\t2026-11-22T14:06:42.0000000Z src/Foo.cs(3,9): error CS1002: ; expected";
+
+    // The node restarted: a commander whose memory of which runs never reached a model starts empty, over the same store and GitHub.
+    private LegCommander Restarted() =>
+        new(_state, _workers, new FakeChecks(), _github, _git, new Planes(_git), _flights,
+            new NodeOptions(Path.Combine(_root, "node.sock"), Path.Combine(_root, "data"), MachinePrefix: "DU1"), _clock);
+
+    // The test clock's now in whole seconds, as a recorded run's times are.
+    private DateTimeOffset Now()
+    {
+        var now = _clock.GetUtcNow();
+        return now.AddTicks(-(now.Ticks % TimeSpan.TicksPerSecond));
+    }
+
+    // A person-wait card holds the red clock (PIL1023); a test about the red clock closes them, and moves past the bound from then.
+    private void NoPersonWaits(FlightRow flight) =>
+        _state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), "closed by the test", [.. _state.Cards().Where(c => c.Kind != CiBudgets.CapKind).Select(c => c.Kind).Distinct()]);
 
     private string[] Kinds() => [.. _state.Cards().Select(c => c.Kind)];
 
@@ -212,17 +231,107 @@ public sealed class NoModelReviewTests : ReviewTestsBase
         ci.Runs.ShouldBe(24);
         ci.RunnerMinutes.ShouldBe(12 * 5);
         _github.RunLogReads.ShouldBe(12, "each failed run's log is read once across the looks");
+        _github.RunAttemptReads.ShouldBe(1, "the check's job names one attempt, asked once");
 
-        // Someone runs the latest review again and it finds things: attempt 2 is read once, by whichever path asks first, and is red.
+        // Someone runs the latest review again and it finds things: attempt 2 (a new job) is read once, by whichever path asks first, and is red.
         _github.CiRuns[flight.Branch] = [.. _github.CiRuns[flight.Branch].Select(r => r.Id == 2011 ? r with { Attempt = 2, CompletedAt = _clock.GetUtcNow() } : r)];
         _github.RunAttempts[2011] = 2;
         _github.RunLogs[2011] = FindingsLog;
+        _github.FailedChecks[number] = [Review(2011, job: 10)];
         await checks.LookAtCiAsync(Ct);
         var after = F(flight.Code).Ci.ShouldNotBeNull();
         after.Failed.ShouldBe(1);
         after.RedSince.ShouldNotBeNull();
         await checks.LookAsync(Ct);
         _github.RunLogReads.ShouldBe(13, "the new attempt is one more read, shared by the send-back path");
+        _github.RunAttemptReads.ShouldBe(2);
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AfterARestartEarlierNoModelReviewRunsAreNeitherFailedNorRedWhileTheLatestReviewRunsNorOnceItHasFindings()
+    {
+        var (flight, number) = await Passed("72");
+        NoPersonWaits(flight);
+        _clock.Advance(CiBudgets.RedBound + TimeSpan.FromHours(1));
+        var now = Now();
+        // Eleven pushes whose reviews never reached a model, the last of them over four hours ago, past the red bound had they counted; the
+        // latest push's build passed and its review is still going, so it is no failed check and the CI count has only the runs to go on.
+        var earlier = ManyPushes(now - TimeSpan.FromHours(8), 11);
+        foreach (var run in earlier.Where(r => r.Conclusion == "failure"))
+        {
+            _github.RunLogs[run.Id] = NoModelLog();
+        }
+        var build = GhAnswers.CiRun(1011, 4, "success", "CI", started: now.AddMinutes(-15), completedAt: now.AddMinutes(-10));
+        _github.CiRuns[flight.Branch] = [.. earlier, build, GhAnswers.CiRun(2011, 1, null, "review", started: now.AddMinutes(-5))];
+        _github.Checks = ChoiceStatus.Pending;
+
+        var checks = new PrChecks(_state, _github, _clock, _flights, Restarted()) { CiInterval = TimeSpan.Zero };
+        await checks.LookAtCiAsync(Ct);
+
+        var running = F(flight.Code).Ci.ShouldNotBeNull();
+        (running.Failed, running.RedSince, running.CappedWhy).ShouldBe((0, null, null));
+        _github.RunLogReads.ShouldBe(11, "the oldest of the review's red streak shows it never reached a model, then every failed run of it is read");
+
+        // Restarted again, and the latest review has finished with findings: it alone is failed, and the red clock counts from it.
+        var findingsAt = now.AddMinutes(-1);
+        _github.CiRuns[flight.Branch] = [.. earlier, build, GhAnswers.CiRun(2011, 1, "failure", "review", started: now.AddMinutes(-5), completedAt: findingsAt)];
+        _github.RunLogs[2011] = FindingsLog;
+        _github.Checks = ChoiceStatus.Failing;
+        _github.FailedChecks[number] = [Review(2011)];
+        checks = new PrChecks(_state, _github, _clock, _flights, Restarted()) { CiInterval = TimeSpan.Zero };
+        await checks.LookAtCiAsync(Ct);
+
+        var findings = F(flight.Code).Ci.ShouldNotBeNull();
+        (findings.Failed, findings.RedSince, findings.CappedWhy).ShouldBe((1, findingsAt, null));
+        Kinds().ShouldNotContain(CiBudgets.CapKind);
+        _github.RunLogReads.ShouldBe(11 + 12);
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task ARunWhoseJobsAnswerNamesAFailedJobItsLogDoesNotIsAFailedRun()
+    {
+        var (flight, _) = await Passed("73");
+        var now = Now();
+        // One run's review never reached a model and its tests timed out, which leaves no failed step's log; another run's review alone failed.
+        _github.CiRuns[flight.Branch] =
+        [
+            GhAnswers.CiRun(3000, 6, "failure", "CI", started: now.AddMinutes(-20), completedAt: now.AddMinutes(-10)) with { FailedJobs = ["review", "test (windows)"] },
+            GhAnswers.CiRun(3001, 1, "failure", "Chrome review", started: now.AddMinutes(-20), completedAt: now.AddMinutes(-19)) with { FailedJobs = ["review"] },
+        ];
+        _github.RunLogs[3000] = NoModelLog();
+        _github.RunLogs[3001] = NoModelLog();
+        var checks = new PrChecks(_state, _github, _clock, _flights, _legs) { CiInterval = TimeSpan.Zero };
+
+        await checks.LookAtCiAsync(Ct);
+
+        var ci = F(flight.Code).Ci.ShouldNotBeNull();
+        (ci.Failed, ci.RedSince).ShouldBe((1, now.AddMinutes(-10)));
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task ANoModelReviewJobBesideABuildJobThatFailedInTheSameRunIsSentBackAsChangesAndCountedAsFailed()
+    {
+        var (flight, number) = await Passed("71");
+        var now = Now();
+        const long run = 45029777700;
+        _github.Checks = ChoiceStatus.Failing;
+        _github.FailedChecks[number] = [Review(run), Build(run)];
+        _github.RunLogs[run] = NoModelLog() + "\n" + BrokenBuildLog;
+        _github.CiRuns[flight.Branch] = [GhAnswers.CiRun(run, 5, "failure", "CI", started: now.AddMinutes(-10), completedAt: now.AddMinutes(-2))];
+        var checks = new PrChecks(_state, _github, _clock, _flights, _legs) { CiInterval = TimeSpan.Zero };
+
+        await checks.LookAsync(Ct);
+        await checks.LookAsync(Ct);
+        await checks.LookAsync(Ct);
+
+        Unavailable().ShouldBeEmpty();
+        F(flight.Code).Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Changes);
+        var ci = F(flight.Code).Ci.ShouldNotBeNull();
+        (ci.Failed, ci.RedSince).ShouldBe((1, now.AddMinutes(-2)));
+        _github.RunLogReads.ShouldBe(1, "the run's log is read once for both its jobs and both paths");
     }
 
     [Fact]
@@ -305,7 +414,7 @@ public sealed class NoModelReviewTests : ReviewTestsBase
         _github.Checks = ChoiceStatus.Failing;
         _github.FailedChecks[number] = [Review(), Build()];
         _github.RunLogs[ReviewRun] = NoModelLog();
-        _github.RunLogs[BuildRun] = "build\tBuild\t2026-11-22T14:06:41.0000000Z error CS1002: ; expected";
+        _github.RunLogs[BuildRun] = BrokenBuildLog;
         var checks = new PrChecks(_state, _github, TimeProvider.System, _flights, _legs);
 
         await checks.LookAsync(Ct);

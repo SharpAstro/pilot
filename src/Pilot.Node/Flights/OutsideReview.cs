@@ -24,31 +24,46 @@ public static partial class OutsideReview
     private static partial Regex Reset();
 
     // gh run view --log-failed: "<job>\t<step>\t<timestamp>Z <text>".
-    [GeneratedRegex(@"^[^\t]*\t[^\t]*\t\d{4}-\d\d-\d\dT[\d:.]+Z ?", RegexOptions.CultureInvariant)]
+    [GeneratedRegex(@"^(?<job>[^\t]*)\t[^\t]*\t\d{4}-\d\d-\d\dT[\d:.]+Z ?", RegexOptions.CultureInvariant)]
     private static partial Regex LinePrefix();
 
     /// <summary>
-    /// The verdict of a failed run's <paramref name="log"/>: null unless it carries the no-model marker on a line of its own output (not
-    /// the script's text, not a diff line); otherwise the CLI's reason and the next reset time after <paramref name="now"/>.
+    /// The verdict of a failed run's <paramref name="log"/> as a whole: null unless every job its lines name never reached a model
+    /// (<see cref="RunReview.Run"/> over <see cref="Jobs"/>); otherwise the first such job's reason and reset time.
     /// </summary>
-    public static NoModelReview? Read(string? log, DateTimeOffset now)
+    public static NoModelReview? Read(string? log, DateTimeOffset now) => Jobs(log, now).Run();
+
+    /// <summary>
+    /// Each job a failed run's <paramref name="log"/> names (its lines' first column, the job's name as its check shows it) with the job's own
+    /// verdict: null unless one of that job's lines carries the no-model marker as its own output (not the script's text, not a diff line);
+    /// otherwise the CLI's reason and the next reset time after <paramref name="now"/>. A line with no job column belongs to the job "".
+    /// </summary>
+    public static RunReview Jobs(string? log, DateTimeOffset now)
     {
-        if (string.IsNullOrEmpty(log))
+        var jobs = new Dictionary<string, NoModelReview?>(StringComparer.Ordinal);
+        foreach (var raw in (log ?? "").Split('\n'))
         {
-            return null;
-        }
-        foreach (var raw in log.Split('\n'))
-        {
-            var line = LinePrefix().Replace(raw.TrimEnd('\r'), "").Trim();
-            if (line.Length == 0 || line[0] is '+' or '-' or '>' || !Marker().IsMatch(line))
+            var text = raw.TrimEnd('\r');
+            var prefix = LinePrefix().Match(text);
+            if (!prefix.Success && text.Trim().Length == 0)
+            {
+                continue;
+            }
+            var job = prefix.Success ? prefix.Groups["job"].Value : "";
+            var line = (prefix.Success ? text[prefix.Length..] : text).Trim();
+            if (!jobs.TryGetValue(job, out var known))
+            {
+                jobs[job] = known = null;
+            }
+            if (known is not null || line.Length == 0 || line[0] is '+' or '-' or '>' || !Marker().IsMatch(line))
             {
                 continue;
             }
             var said = CliSaid().Match(line) is { Success: true } m ? m.Groups["said"].Value : "";
             var reason = said.Length == 0 ? "the run ended before the model answered" : said.Split(" · ", 2)[0].Trim();
-            return new NoModelReview(reason, said, ResetAfter(said, now));
+            jobs[job] = new NoModelReview(reason, said, ResetAfter(said, now));
         }
-        return null;
+        return new RunReview(jobs);
     }
 
     /// <summary>The next UTC instant after <paramref name="now"/> that <paramref name="text"/> names ("resets 10pm (UTC)"); null when absent or unparseable.</summary>
@@ -68,38 +83,83 @@ public static partial class OutsideReview
     }
 }
 
-/// <summary>What <see cref="OutsideReviews"/> knows of a run: <see cref="Known"/> false when gh could not say (ask again), else the verdict or null for a real failure.</summary>
+/// <summary>
+/// What one attempt of a failed run's log says, job by job (<see cref="OutsideReview.Jobs"/>): each job its lines name, with its verdict (null
+/// for a job whose lines say nothing of a model that never answered: a real failure, a review with findings).
+/// </summary>
+public sealed class RunReview(IReadOnlyDictionary<string, NoModelReview?> jobs)
+{
+    /// <summary>Each job the log names, with its verdict.</summary>
+    public IReadOnlyDictionary<string, NoModelReview?> Jobs { get; } = jobs;
+
+    /// <summary>The verdict of the failed job (or check) named <paramref name="job"/>: null when the log names it without the marker, or not at all.</summary>
+    public NoModelReview? Job(string job) => Jobs.GetValueOrDefault(job);
+
+    /// <summary>
+    /// The verdict of the run: no-model only when it has a failed job and every one never reached a model, then the first one's verdict.
+    /// The failed jobs are <paramref name="failedJobs"/> when the caller knows them (the run's jobs answer, which also names a job that
+    /// failed without a failed step's log), else the jobs the log names. A no-model review beside a build that failed is a real failure.
+    /// </summary>
+    public NoModelReview? Run(IReadOnlyCollection<string>? failedJobs = null)
+    {
+        NoModelReview? first = null;
+        foreach (var job in failedJobs ?? (IEnumerable<string>)Jobs.Keys)
+        {
+            if (Job(job) is not { } review)
+            {
+                return null;
+            }
+            first ??= review;
+        }
+        return first;
+    }
+}
+
+/// <summary>What <see cref="OutsideReviews"/> knows of a failed job or run: <see cref="Known"/> false when gh could not say (ask again), else the verdict or null for a real failure.</summary>
 public readonly record struct OutsideReviewAnswer(bool Known, NoModelReview? NoModel)
 {
     public static OutsideReviewAnswer Unknown { get; } = new(false, null);
 }
 
 /// <summary>
-/// The node's memory of which failed runs never reached a model. A completed attempt's log does not change, so each run's log is read once per
-/// attempt and the answer kept. The key is the run id and its <c>run_attempt</c> (a rerun, by anyone, keeps the id and gets the next attempt and a
-/// new log), which both callers read from the same REST field, so one attempt is one read whichever path asks first, and two failed jobs of one
-/// run share it. A read gh could not make is not kept and is asked again at the next look, and is never read as no-model.
+/// The node's memory of which failed jobs never reached a model, keyed by run id, <c>run_attempt</c> and job. A completed attempt's log does not
+/// change, so each run's log is read once per attempt (a rerun, by anyone, keeps the id and gets the next attempt and a new log), and what each
+/// of its jobs said is kept. Both callers read the attempt from the same REST field, so one attempt is one read whichever path asks first, and
+/// the failed jobs of one run share it. A read gh could not make is not kept and is asked again at the next look, and is never read as no-model.
 /// </summary>
 public sealed class OutsideReviews(IGitHub github, TimeProvider? time = null)
 {
     private readonly TimeProvider _time = time ?? TimeProvider.System;
-    private readonly Dictionary<(long RunId, int Attempt), NoModelReview?> _answers = [];
+
+    // Per run and attempt, the verdict of each job its failed log names.
+    private readonly Dictionary<(long RunId, int Attempt), RunReview> _runs = [];
+
+    // Per job id (a check's /job/<id>): the attempt of its run it belongs to. A rerun makes new jobs with new ids, so the pair never changes.
+    private readonly Dictionary<long, int> _attempts = [];
     private readonly Lock _lock = new();
 
     /// <summary>What is known of attempt <paramref name="attempt"/> of run <paramref name="runId"/> without reading anything: false when its log was never read.</summary>
-    public bool TryKnown(long runId, int attempt, out NoModelReview? noModel)
+    public bool TryKnown(long runId, int attempt, [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out RunReview? review)
     {
         lock (_lock)
         {
-            return _answers.TryGetValue((runId, attempt), out noModel);
+            return _runs.TryGetValue((runId, attempt), out review);
         }
     }
 
-    public async Task<OutsideReviewAnswer> AskAsync(string repoPath, long runId, int attempt, CancellationToken cancellationToken)
+    /// <summary>The verdict of failed job (or check) <paramref name="job"/> of attempt <paramref name="attempt"/> of run <paramref name="runId"/>, by its own lines of the run's log.</summary>
+    public async Task<OutsideReviewAnswer> AskJobAsync(string repoPath, long runId, int attempt, string job, CancellationToken cancellationToken) =>
+        await ReadAsync(repoPath, runId, attempt, cancellationToken) is { } review ? new OutsideReviewAnswer(true, review.Job(job)) : OutsideReviewAnswer.Unknown;
+
+    /// <summary>The verdict of attempt <paramref name="attempt"/> of run <paramref name="runId"/> as a whole: <see cref="RunReview.Run"/> over <paramref name="failedJobs"/>.</summary>
+    public async Task<OutsideReviewAnswer> AskRunAsync(string repoPath, long runId, int attempt, IReadOnlyCollection<string>? failedJobs, CancellationToken cancellationToken) =>
+        await ReadAsync(repoPath, runId, attempt, cancellationToken) is { } review ? new OutsideReviewAnswer(true, review.Run(failedJobs)) : OutsideReviewAnswer.Unknown;
+
+    private async Task<RunReview?> ReadAsync(string repoPath, long runId, int attempt, CancellationToken cancellationToken)
     {
         if (TryKnown(runId, attempt, out var known))
         {
-            return new OutsideReviewAnswer(true, known);
+            return known;
         }
         string? log;
         try
@@ -108,18 +168,46 @@ public sealed class OutsideReviews(IGitHub github, TimeProvider? time = null)
         }
         catch (Exception ex) when (ex is FlightException or System.ComponentModel.Win32Exception or IOException)
         {
-            return OutsideReviewAnswer.Unknown;
+            return null;
         }
         if (log is null)
         {
-            return OutsideReviewAnswer.Unknown;
+            return null;
         }
-        var verdict = OutsideReview.Read(log, _time.GetUtcNow());
+        var review = OutsideReview.Jobs(log, _time.GetUtcNow());
         lock (_lock)
         {
-            _answers[(runId, attempt)] = verdict;
+            _runs[(runId, attempt)] = review;
         }
-        return new OutsideReviewAnswer(true, verdict);
+        return review;
+    }
+
+    /// <summary>
+    /// The <c>run_attempt</c> of run <paramref name="runId"/> that its failed check's job <paramref name="jobId"/> belongs to: asked of GitHub
+    /// once per job id, since a job id names one attempt, and every look when the check names no job. Null when gh could not say; a gh
+    /// failure is thrown as <see cref="IGitHub.RunAttemptAsync"/> throws it.
+    /// </summary>
+    public async Task<int?> AttemptAsync(string repoPath, long runId, long? jobId, CancellationToken cancellationToken)
+    {
+        if (jobId is { } job)
+        {
+            lock (_lock)
+            {
+                if (_attempts.TryGetValue(job, out var known))
+                {
+                    return known;
+                }
+            }
+        }
+        var attempt = await github.RunAttemptAsync(repoPath, runId, cancellationToken);
+        if (attempt is { } asked && jobId is { } id)
+        {
+            lock (_lock)
+            {
+                _attempts[id] = asked;
+            }
+        }
+        return attempt;
     }
 
     /// <summary>Forgets what the log of <paramref name="runId"/> said, every attempt of it: a run run again keeps its id and gets a new log.</summary>
@@ -127,9 +215,9 @@ public sealed class OutsideReviews(IGitHub github, TimeProvider? time = null)
     {
         lock (_lock)
         {
-            foreach (var key in _answers.Keys.Where(k => k.RunId == runId).ToList())
+            foreach (var key in _runs.Keys.Where(k => k.RunId == runId).ToList())
             {
-                _answers.Remove(key);
+                _runs.Remove(key);
             }
         }
     }

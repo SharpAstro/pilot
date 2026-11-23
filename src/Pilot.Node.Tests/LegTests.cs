@@ -897,8 +897,16 @@ internal sealed class FakeGitHub : IGitHub
     /// <summary>The <c>run_attempt</c> of each run id; one not listed is on its first attempt, as <see cref="CiRun.Attempt"/>'s default.</summary>
     public System.Collections.Concurrent.ConcurrentDictionary<long, int> RunAttempts { get; } = new();
 
-    public Task<int?> RunAttemptAsync(string repoPath, long runId, CancellationToken cancellationToken) =>
-        Task.FromResult<int?>(RunAttempts.GetValueOrDefault(runId, 1));
+    /// <summary>How many times a run's attempt was asked for.</summary>
+    public int RunAttemptReads => _runAttemptReads;
+
+    private int _runAttemptReads;
+
+    public Task<int?> RunAttemptAsync(string repoPath, long runId, CancellationToken cancellationToken)
+    {
+        Interlocked.Increment(ref _runAttemptReads);
+        return Task.FromResult<int?>(RunAttempts.GetValueOrDefault(runId, 1));
+    }
 
     /// <summary>The run ids that were asked to run again, in order.</summary>
     public ConcurrentQueue<long> RunReruns { get; } = [];
