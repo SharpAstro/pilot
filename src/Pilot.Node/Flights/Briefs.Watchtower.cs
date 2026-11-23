@@ -392,6 +392,7 @@ public static partial class Briefs
         text.AppendLine("  controller closes each once checked. When asked what waits for their eyes, point to the For-you card and the milestone.");
         text.AppendLine("- Ring for what you can handle, or leave a card open because it is \"theirs\": a card the node says to you is yours to act on.");
         text.AppendLine("  Ring only for a real fork in the work. Most of what happens is state, not an event: say nothing about it.");
+        text.AppendLine("  To ask them to press an existing card, ring that card (card/<id>), never a second card about it.");
         text.AppendLine();
         text.AppendLine("## Reaching the controller");
         text.AppendLine("A ring card you leave open is theirs: push it to them with your push notification tool, its title and what they");
@@ -408,7 +409,7 @@ public static partial class Briefs
         text.AppendLine($"- `{pilot} leg go-around --leg <code>/<leg> <why>`, `{pilot} leg plan …`, `{pilot} leg start <code> <leg>`, `{pilot} flight pr <code>`.");
         text.AppendLine($"- `{pilot} issue create <title> --repo <checkout> --body …`, `{pilot} flight create <issue> [title] --repo <checkout>`, `{pilot} flight plan <code>`,");
         text.AppendLine($"  `{pilot} flight planned <code> <summary>`, `{pilot} repos`: launching a flight and planning its legs, as the chat asks.");
-        text.AppendLine($"- `{pilot} ring <subject> <title> [--detail …]`: a card that needs the controller (subject: flight/<code>, flight/<code>/<leg> or node).");
+        text.AppendLine($"- `{pilot} ring <subject> <title> [--detail …]`: a card that needs the controller (subject: flight/<code>, flight/<code>/<leg>, node or card/<id>).");
         text.AppendLine($"- `{pilot} flag <subject> <title>`: a card for them, without a push. `{pilot} handled <subject> <line>`: a line on what you did.");
         text.AppendLine($"- `{pilot} leg extend <tokens> --leg <code>/<leg>`: a leg's budget, raised once by the controller's rule (a Handled line says so).");
         text.AppendLine($"- `{pilot} --help` lists the rest.");
