@@ -1731,8 +1731,9 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
                 && (leg is { State: LegState.Done, FinishedAt: { } finished } && now - finished > StrayGrace || (leg.WorkerJob is not null && leg.WorkerJob != row.Id)))
             {
                 why = leg.State == LegState.Done ? $"its leg {flight}/{legName} is done" : $"its leg {flight}/{legName} was redone and has another worker";
-                if (leg.State != LegState.Done)
+                if (leg.State != LegState.Done && sessions.Any(r => r.Id == leg.WorkerJob && r.State is SessionState.Working or SessionState.Waiting or SessionState.Idle))
                 {
+                    // Only when the leg's current worker is a live row: otherwise this is the leg's only session and a person chooses (Stop it).
                     currentWorker = leg.WorkerJob;
                 }
             }
@@ -1797,7 +1798,9 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
         {
             result = state.Complete(new CommandRequest { Verb = Verbs.EndSession, Target = subject, Who = Who }, ex.Message);
         }
-        if (!result.Ok)
+        // A session that ended between the look and the stop is done, not unconfirmed.
+        var ended = !result.Ok && state.Sessions().FirstOrDefault(r => r.Id == row.Id) is not { State: SessionState.Working or SessionState.Waiting or SessionState.Idle };
+        if (!result.Ok && !ended)
         {
             // The messenger raises this card itself when its stop fails; it is one card per session, so a second raise is the same card.
             Sessions.SessionMessenger.RaiseStopUnconfirmed(state, row, $"{row.Name} ({row.Id}) is a duplicate worker of a redone leg and could not be stopped: {result.Error}. Not confirmed: the session may still run.",

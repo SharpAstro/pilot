@@ -146,6 +146,7 @@ public sealed class StraySessionTests
     public async Task AFailedStopOfADuplicateWorkerRaisesStopUnconfirmedAndNoToldAfterCard()
     {
         _state.PutSession(Row("old22222", "de1-tia1-parser", SessionRole.Worker, "TIA1", "parser"));
+        _state.PutSession(Row("work1111", "de1-tia1-parser", SessionRole.Worker, "TIA1", "parser"));
         var tries = 0;
         var watch = new LegWatch(_state, (c, _) => { tries++; return Task.FromResult(_state.Complete(c, "claude stop failed")); }, _time) { Ledger = _ledger };
 
@@ -155,6 +156,36 @@ public sealed class StraySessionTests
         tries.ShouldBe(1);
         _state.Cards(openOnly: true).Where(c => c.Kind == SessionMessenger.StopUnconfirmedKind).ShouldHaveSingleItem().Subject.ShouldBe("session/old22222");
         _state.Cards().Where(c => c.Kind is LegWatch.DuplicateWorkerEnded or LegWatch.StraySession).ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task AnOldWorkerWhoseLegsCurrentWorkerIsNotLiveKeepsTheStopItCardAndIsNotEnded()
+    {
+        _state.PutSession(Row("old22222", "de1-tia1-parser", SessionRole.Worker, "TIA1", "parser"));
+        var ended = 0;
+        var watch = new LegWatch(_state, (c, _) => { ended++; return Task.FromResult(_state.Complete(c, null)); }, _time) { Ledger = _ledger };
+
+        await watch.LookAsync(Ct);
+
+        ended.ShouldBe(0);
+        _state.Cards(openOnly: true).Count(c => c.Kind == LegWatch.StraySession).ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task AStopThatFindsTheSessionEndedAlreadyRingsNothingAndStillTellsAfter()
+    {
+        _state.PutSession(Row("old22222", "de1-tia1-parser", SessionRole.Worker, "TIA1", "parser"));
+        _state.PutSession(Row("work1111", "de1-tia1-parser", SessionRole.Worker, "TIA1", "parser"));
+        var watch = new LegWatch(_state, (c, _) =>
+        {
+            _state.PutSession(_state.Sessions().First(r => r.Id == "old22222") with { State = SessionState.Ended });
+            return Task.FromResult(_state.Complete(c, "old has ended already"));
+        }, _time) { Ledger = _ledger };
+
+        await watch.LookAsync(Ct);
+
+        _state.Cards().Where(c => c.Kind == SessionMessenger.StopUnconfirmedKind).ShouldBeEmpty();
+        _state.Cards().Where(c => c.Kind == LegWatch.DuplicateWorkerEnded).ShouldHaveSingleItem();
     }
 
     [Fact]

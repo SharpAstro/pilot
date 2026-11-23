@@ -81,8 +81,9 @@ public sealed class ReplacedWorkerSayTests : IDisposable
         _delivery.Resumes.ShouldNotContain(r => r.SessionId == old.SessionId);
         if (by != "name")
         {
-            result.Waiting.ShouldNotBeNull().ShouldContain($"delivered to {next.Id}");
+            result.Made.ShouldNotBeNull().ShouldContain($"delivered to {next.Id}");
         }
+        result.Waiting.ShouldBeNull();
         _state.Sessions().Count(r => r.Leg == Leg && r.State is SessionState.Working or SessionState.Waiting or SessionState.Idle).ShouldBe(1);
     }
 
@@ -101,5 +102,52 @@ public sealed class ReplacedWorkerSayTests : IDisposable
         result.Error.ShouldNotBeNull().ShouldContain("was replaced by");
         _delivery.Calls.ShouldBeEmpty();
         _state.Sessions().Count(r => r.Leg == Leg && r.State is SessionState.Working or SessionState.Waiting or SessionState.Idle).ShouldBe(0);
+    }
+
+    [Theory]
+    [InlineData("id")]
+    [InlineData("session")]
+    [InlineData("name")]
+    public async Task ASayToAStillLiveReplacedWorkerGoesToTheCurrentOneOnly(string by)
+    {
+        var old = Worker(AgentRows.SessionA, SessionState.Idle, DateTimeOffset.UtcNow.AddMinutes(-30));
+        var next = Worker(AgentRows.SessionB, SessionState.Idle, DateTimeOffset.UtcNow.AddMinutes(-5));
+        _state.PutSession(old);
+        _state.PutSession(next);
+        _state.PutLeg(new LegRow { Flight = Flight, Name = Leg, Order = 1, Goal = "g", DoneWhen = "d", State = LegState.Flying, WorkerJob = next.Id });
+        var target = by switch { "id" => old.Id, "session" => old.SessionId, _ => old.Name };
+
+        var result = await _messenger.SayAsync(Say(target), Ct);
+
+        result.Ok.ShouldBeTrue(result.Error);
+        result.Waiting.ShouldBeNull();
+        _delivery.Resumes.ShouldNotContain(r => r.SessionId == old.SessionId);
+        _delivery.Calls.ShouldNotContain(c => c.Contains(old.SessionId, StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task ACurrentWorkerIdleInTheRowButWorkingAtTheLookIsRelayedToAndNotResumed()
+    {
+        var (old, next) = GoneRound(SessionState.Idle);
+        _agents.Json = AgentRows.List(AgentRows.Background(next.SessionId, WorkerName, "working", status: "working", cwd: "C:/work/plane", startedAt: DateTimeOffset.UtcNow.AddMinutes(-5).ToUnixTimeMilliseconds()));
+
+        var result = await _messenger.SayAsync(Say(old.Id), Ct);
+
+        result.Ok.ShouldBeTrue(result.Error);
+        _delivery.Resumes.ShouldBeEmpty();
+        _delivery.Calls.ShouldNotContain(c => c.StartsWith("stop ", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task TheNodesOwnWordsToAReplacedWorkerAreRedirectedToo()
+    {
+        var (old, next) = GoneRound(SessionState.Working);
+        var command = new CommandRequest { Verb = Verbs.Say, Target = Verbs.SessionTarget(old.Id), Args = ["a word"], Who = Pilot.Node.Flights.LegWatch.Who };
+
+        var result = await _messenger.SayAsync(command, Ct);
+
+        result.Ok.ShouldBeTrue(result.Error);
+        result.Made.ShouldNotBeNull().ShouldContain($"delivered to {next.Id}");
+        _delivery.Resumes.ShouldBeEmpty();
     }
 }
