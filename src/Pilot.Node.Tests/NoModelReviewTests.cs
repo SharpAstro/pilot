@@ -186,7 +186,7 @@ public sealed class NoModelReviewTests : ReviewTestsBase
 
         var ci = F(flight.Code).Ci.ShouldNotBeNull();
         ci.Failed.ShouldBe(12);
-        ci.RedSince.ShouldNotBeNull();
+        ci.RedSince.ShouldNotBeNull(string.Join(" | ", _github.CiRuns[flight.Branch].Take(4).Select(r => $"{r.Id} {r.Name} {r.Conclusion} {r.CompletedAt:O}")));
         ci.CappedWhy.ShouldNotBeNull().ShouldContain("red for");
         _state.Cards().ShouldContain(c => c.Kind == CiBudgets.CapKind);
     }
