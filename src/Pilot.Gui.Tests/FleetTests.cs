@@ -162,7 +162,21 @@ public sealed class FleetTests
             leaf.Bounds.Y.ShouldBeGreaterThanOrEqualTo(previousBottom - 0.5f, part);
             previousBottom = leaf.Bounds.Y + leaf.Bounds.Height;
         }
-        FleetLine.From("node.sock", here: true, canCommand: true, null, Summary("s1", "ada@example.org"), Live.At).GhShort.ShouldBeNull();
+        var here = FleetLine.From("node.sock", here: true, canCommand: true, null, Summary("s1", "ada@example.org"), Live.At);
+        here.GhShort.ShouldBeNull();
+
+        // A look a person can take: the page with this node's row and one without a gh line, day and night. PILOT_TEST_CAPTURE_DIR, or a
+        // GUI job's PILOT_JOB_ARTIFACTS, names the folder; without either nothing is written.
+        if ((Environment.GetEnvironmentVariable("PILOT_TEST_CAPTURE_DIR") ?? Environment.GetEnvironmentVariable("PILOT_JOB_ARTIFACTS")) is { Length: > 0 } capture)
+        {
+            Directory.CreateDirectory(capture);
+            foreach (var (name, night) in new[] { ("day", false), ("night", true) })
+            {
+                chrome.Night.On = night;
+                chrome.Render(new SessionsScreen([], "test", Live.At), null, null, null, new FleetScreen([here, line], Live.At), new RectF32(0, 0, width, 400));
+                File.WriteAllBytes(Path.Combine(capture, $"fleet-gh-window-{name}-{width}.png"), PngWriter.Encode(renderer.Surface.Pixels, width, 400));
+            }
+        }
     }
 
     [Fact]

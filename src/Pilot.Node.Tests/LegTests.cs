@@ -1199,8 +1199,12 @@ internal sealed class FakeGitHub : IGitHub
     /// <summary>When set, a status write fails with it, as GitHub refusing it.</summary>
     public string? StatusFails { get; set; }
 
+    /// <summary>Called with the commit as a status write begins, before it is answered: what the node's own state held just before the write.</summary>
+    public Action<string>? OnStatus { get; set; }
+
     public Task SetCommitStatusAsync(string repoPath, string sha, string state, string description, string? targetUrl, CancellationToken cancellationToken)
     {
+        OnStatus?.Invoke(sha);
         if (StatusFails is { } why)
         {
             return Task.FromException(new FlightException(why));

@@ -29,10 +29,10 @@ internal sealed class PrPollSchedule(TimeProvider time)
     /// <summary>A red, conflicting, draft or unknown PR waits on the node's own fix (which marks it due when it pushes) or on a person: the least wait.</summary>
     public static readonly TimeSpan StuckWait = MinCiWait;
 
-    // How long a repo's CI really takes, as its own batch reads say (the longest check run of a PR whose checks all completed): what a running CI is waited for by.
+    // How long a repo's CI really takes, as its own batch reads say (the lower median over its PRs whose checks all completed, see TypicalRunLength): what a running CI is waited for by.
     private readonly ConcurrentDictionary<string, TimeSpan> _runLength = new(StringComparer.OrdinalIgnoreCase);
 
-    /// <summary>How long CI runs in this repo: what the repo's last completed checks took, or <see cref="UsualCiRun"/> for a repo not seen with a completed run yet.</summary>
+    /// <summary>How long CI runs in this repo: the typical completed run of its last batch read that had one (<see cref="TypicalRunLength"/>), or <see cref="UsualCiRun"/> for a repo not seen with a completed run yet.</summary>
     public TimeSpan RunLength(string repoPath) => _runLength.TryGetValue(repoPath, out var length) ? length : UsualCiRun;
 
     private sealed record Entry(DateTimeOffset NextRead, string Head, DateTimeOffset? PendingSince, int PassingReads);
@@ -55,6 +55,9 @@ internal sealed class PrPollSchedule(TimeProvider time)
         var now = time.GetUtcNow();
         return branches.Any(b => !_prs.TryGetValue((repoPath, b), out var entry) || entry.NextRead <= now);
     }
+
+    /// <summary>When the PR of <paramref name="branch"/> is read next; null when it has no next-read time yet (it is due).</summary>
+    internal DateTimeOffset? NextRead(string repoPath, string branch) => _prs.TryGetValue((repoPath, branch), out var entry) ? entry.NextRead : null;
 
     /// <summary>The node did something to the PR of <paramref name="branch"/> (pushed it, queued or armed its merge, closed it): it is read again within <paramref name="within"/> at the latest.</summary>
     public void MarkDue(string repoPath, string branch, TimeSpan? within = null)
@@ -89,7 +92,7 @@ internal sealed class PrPollSchedule(TimeProvider time)
         _last[repoPath] = batch;
         var now = time.GetUtcNow();
         // Any open PR of the repo with completed checks teaches how long its CI takes, a flight's or not.
-        if (batch.Where(p => p.CiRunLength is { } length && length > TimeSpan.Zero).Select(p => p.CiRunLength!.Value).DefaultIfEmpty().Max() is { } learned && learned > TimeSpan.Zero)
+        if (TypicalRunLength(batch) is { } learned)
         {
             _runLength[repoPath] = learned;
         }
@@ -99,6 +102,18 @@ internal sealed class PrPollSchedule(TimeProvider time)
             var pr = batch.FirstOrDefault(p => p.HeadBranch == branch);
             _prs.AddOrUpdate((repoPath, branch), _ => Next(null, pr, now, usual), (_, before) => Next(before, pr, now, usual));
         }
+    }
+
+    /// <summary>
+    /// The repo's usual CI length as one batch says it: the lower median of its PRs' completed run lengths, null when none has one. Not the
+    /// longest: one PR whose check ran long (a queue wait, a rerun, a runner that came late) would set the wait of every flight of the repo to
+    /// it, and a 3 minute CI would be waited for by 25. The lower median, so of two PRs the shorter wins and a late sight costs one more read
+    /// at most; an outlier sets the length only when most PRs of the repo agree with it.
+    /// </summary>
+    internal static TimeSpan? TypicalRunLength(IEnumerable<OpenPullRequest> batch)
+    {
+        TimeSpan[] lengths = [.. batch.Select(p => p.CiRunLength).OfType<TimeSpan>().Where(l => l > TimeSpan.Zero).Order()];
+        return lengths.Length == 0 ? null : lengths[(lengths.Length - 1) / 2];
     }
 
     private Entry Next(Entry? before, OpenPullRequest? pr, DateTimeOffset now, TimeSpan usual)

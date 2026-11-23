@@ -72,7 +72,12 @@ public sealed class GhCallCounter(TimeProvider time)
         return args.Count > 1 && !args[1].StartsWith('-') ? $"{args[0]} {args[1]}" : args[0];
     }
 
-    /// <summary>The counter's now: a call site takes it before a gh call whose cost it will report, so <see cref="RecordCost"/> finds the call's window.</summary>
+    /// <summary>
+    /// The counter's now: a call site takes it before a gh call whose cost it will report, so <see cref="RecordCost"/> finds the call's window.
+    /// It is taken before the call waits for a process slot, while <c>NodeTraffic.StartAsync</c> counts the call when its process starts: a
+    /// window edge that falls between the two finds no call in the window taken, and the cost stays in the next one. A gap of milliseconds and
+    /// a point or two, left as it is.
+    /// </summary>
     public DateTimeOffset Now => time.GetUtcNow();
 
     private Cell CellOf(string kind, string caller, DateTimeOffset? at = null)

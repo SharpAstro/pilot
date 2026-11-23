@@ -344,6 +344,52 @@ public sealed class PrPollBudgetTests
     }
 
     [Fact]
+    public async Task OneLongRunInTheBatchDoesNotSetTheWaitOfEveryFlightOfTheRepo()
+    {
+        var hour = new HourRig();
+        var github = hour.Rig.GitHub;
+        var start = hour.Time.GetUtcNow();
+        // Three other open PRs of the repo, not flights': two whose CI took 3 minutes, and one whose check ran 25 (it waited for a runner, or was rerun).
+        foreach (var (number, minutes) in new[] { (97, 3), (98, 25), (99, 3) })
+        {
+            github.PrOf[$"other{number}"] = GhAnswers.PullRequestByBranch(number: number, head: $"head{number}", url: $"https://github.com/o/r/pull/{number}", mergeable: "MERGEABLE");
+            github.SummaryOf[number] = GhAnswers.ChecksOf(ChoiceStatus.Passing, 3, 3);
+            github.CiLength[number] = TimeSpan.FromMinutes(minutes);
+            github.OpenBranches[RepoA].Enqueue($"other{number}");
+        }
+        // The flights' checks started with the push, at the start.
+        github.CiStarted[11] = start;
+        github.CiStarted[12] = start;
+
+        await hour.LookAsync();
+
+        var schedule = hour.Rig.State.PrPolls;
+        schedule.RunLength(RepoA).ShouldBe(TimeSpan.FromMinutes(3), "the repo's CI takes 3 minutes, as most of its PRs say");
+        foreach (var branch in new[] { "flight/pba1", "flight/pba2" })
+        {
+            var next = schedule.NextRead(RepoA, branch);
+            next.ShouldNotBeNull(branch);
+            var wait = next.Value - start;
+            // About 3 to 5 minutes (the CI's 3, at least MinCiWait's 2), not the 25 of the one long run.
+            wait.ShouldBeGreaterThanOrEqualTo(TimeSpan.FromMinutes(3), branch);
+            wait.ShouldBeLessThanOrEqualTo(TimeSpan.FromMinutes(5), branch);
+        }
+    }
+
+    [Fact]
+    public void TheRepoCiLengthIsTheLowerMedianOfTheBatchCompletedRuns()
+    {
+        static OpenPullRequest Pr(int minutes) =>
+            new($"b{minutes}", GhAnswers.PullRequestByBranch(number: minutes + 1), null, null, false, null, CiRunLength: minutes > 0 ? TimeSpan.FromMinutes(minutes) : null);
+
+        PrPollSchedule.TypicalRunLength([]).ShouldBeNull();
+        PrPollSchedule.TypicalRunLength([Pr(0)]).ShouldBeNull("a PR whose checks still run says nothing of the length");
+        PrPollSchedule.TypicalRunLength([Pr(25), Pr(3)]).ShouldBe(TimeSpan.FromMinutes(3), "of two, the shorter: a late sight costs one more read at most");
+        PrPollSchedule.TypicalRunLength([Pr(3), Pr(25), Pr(4), Pr(0)]).ShouldBe(TimeSpan.FromMinutes(4));
+        PrPollSchedule.TypicalRunLength([Pr(25), Pr(3), Pr(25)]).ShouldBe(TimeSpan.FromMinutes(25), "a length most PRs agree on is the repo's");
+    }
+
+    [Fact]
     public async Task AFlightWithAReadyCardAndALegToFlyStillHasItsCiCountedAtEachRead()
     {
         var hour = new HourRig();
