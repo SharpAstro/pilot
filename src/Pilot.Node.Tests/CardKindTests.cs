@@ -230,12 +230,13 @@ public sealed class CardKindTests
     /// What only the node's rules decide is a NodePress, so the watchtower never presses it through a CLI command Claude Code's classifier can
     /// refuse (#1311: <c>review pr</c> on pr-fix-pushed-unreviewed). Each marked kind is one NodePress owns, and offers the verb NodePress presses on it;
     /// each NodePress kind is marked; and a kind that offers one of NodePress's verbs is marked or named as the person's, with its reason.
-    /// What each scan sees, and what it does not. The unmarked-kind scan reads only the <c>Verbs.Name</c> constants in a raising call's own
-    /// arguments, so a kind that builds its choices in a list before the call (or through a helper) is not seen by it: such a kind can offer
-    /// Review or Fix it unmarked and unnamed and this guard stays green. A whole-file read would close that, but the raising files are shared
-    /// by many kinds and it flagged ten that offer no such verb. A marked kind and a PersonsOwn entry are read by a word match of
-    /// <c>Verbs.Name</c> in the kind's raising files and ChoiceFiles, per file and not per kind: an entry stays valid after its own kind
-    /// stops offering the verb while another kind in the same files still does.
+    /// What each scan sees, and what it does not. The unmarked-kind scan reads the <c>Verbs.Name</c> constants in a raising call's own
+    /// arguments, and, when a call passes its choices as a plain identifier, those of the enclosing member (CardSource.Calls, ListBuiltVerbs),
+    /// so a kind that builds its choices in a list before the call is seen. It still cannot see a list built in another member, a field or a
+    /// helper, and a member raising several kinds gives each the verbs of all of them. A marked kind is read in two ways: its calls and, failing
+    /// that, a word match of <c>Verbs.Name</c> in its raising files; a PersonsOwn entry only by that word match in its raising files and
+    /// ChoiceFiles. Both matches are per file and not per kind: an entry stays valid after its own kind stops offering the verb while
+    /// another kind in the same files still does.
     /// </summary>
     [Fact]
     public void EveryKindTheNodeAloneDecidesIsANodePressAndNoKindOffersItsVerbsUnmarked()
@@ -276,7 +277,7 @@ public sealed class CardKindTests
         }
         foreach (var entry in CardKindCatalog.All.Where(e => !e.NodePressed))
         {
-            // Only the verbs in the kind's own call arguments: a word match in a whole file flags every kind sharing it (ten kinds did).
+            // The verbs of the kind's own calls (arguments, or the enclosing member for a list built before the call): a word match in a whole file flags every kind sharing it (ten kinds did).
             var verbs = (offered.GetValueOrDefault(entry.Kind) ?? []).Where(asNames.ContainsKey).Order().ToList();
             var named = CardKindCatalog.PersonsOwn.TryGetValue(entry.Kind, out var reason);
             if (verbs.Count > 0 && !named)

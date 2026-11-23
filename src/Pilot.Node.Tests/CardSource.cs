@@ -79,6 +79,30 @@ internal static class CardSource
         return calls;
     }
 
+    /// <summary>
+    /// The verbs of a card whose choices are built in a list before the call: when the call's own arguments name no <c>Verbs.X</c> but pass a
+    /// plain identifier, the <c>Verbs.X</c> constants of the enclosing member (from the last line declaring one at the class's indent to the
+    /// next closing brace at that indent) are read as that call's choices. A member that raises several kinds gives each the verbs of all of
+    /// them, so this can over-report; a list built in another member, a field or a helper is still not seen.
+    /// </summary>
+    private static IEnumerable<string> ListBuiltVerbs(string text, int callAt, string after)
+    {
+        if (Regex.IsMatch(after, @"Verbs\.") || !Regex.IsMatch(after, @"(?<![\w.])[a-z]\w*\s*(?:,|$)"))
+        {
+            return [];
+        }
+        var head = text[..callAt];
+        var decl = Regex.Matches(head, @"^    (?!\s|[{}\[/])[^
+;=]*\(.*$", RegexOptions.Multiline).LastOrDefault();
+        if (decl is null)
+        {
+            return [];
+        }
+        var end = Regex.Match(text[callAt..], @"^    \}", RegexOptions.Multiline);
+        var body = text[decl.Index..(end.Success ? callAt + end.Index : text.Length)];
+        return Regex.Matches(body, @"Verbs\.(\w+)").Select(v => v.Groups[1].Value);
+    }
+
     /// <summary>Every <c>Label = …</c> in <paramref name="source"/>: a choice's button text.</summary>
     public static List<LabelUse> Labels(string file, string source)
     {
