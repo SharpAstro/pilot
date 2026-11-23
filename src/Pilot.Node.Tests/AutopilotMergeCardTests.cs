@@ -66,7 +66,7 @@ public sealed class AutopilotMergeCardTests : ReviewTestsBase
         _state.PutLeg(notes with { State = LegState.Done });
         await checks.LookAsync(Ct);
 
-        if (_state.Merges().Count == 0) throw new Exception("DBG " + string.Join(" | ", _state.Cards(openOnly: false).Select(c => $"{c.Kind}/{c.State}/{c.Outcome}")) + " F=" + _state.Flights().First().Review?.ReviewedHead + " PR=" + _github.Pr?.Head + " legs=" + string.Join(",", _state.Legs(flight.Code).Select(l => l.Name + l.State)));
+        if (!_state.Merges().Any()) throw new Exception("DBG " + string.Join(" | ", _state.Cards(openOnly: false).Select(c => $"{c.Kind}/{c.State}/{c.Outcome}")) + " F=" + _state.Flights().First().Review?.ReviewedHead + " PR=" + _github.Pr?.Head + " legs=" + string.Join(",", _state.Legs(flight.Code).Select(l => l.Name + l.State)));
         _state.Merges().ShouldNotBeEmpty();
         _state.Cards().ShouldNotContain(c => c.Kind == PrChecks.NodeMergeRefused);
     }
