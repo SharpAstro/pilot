@@ -32,7 +32,7 @@ public sealed class MergeFixtureCardTests
         {
             Code = "TIA1", Repo = "tianwen", RepoPath = node.Folder, Issue = 1, Branch = "flight/tia1", Worktree = Path.Combine(node.Folder, "plane-TIA1"),
             Base = "main", State = FlightState.Flying, CreatedAt = DateTimeOffset.UtcNow, PullRequest = 63, PullRequestUrl = PrUrl,
-            Review = new ReviewRow { State = ReviewState.Changes, Reviewer = "du1-tia1-review", StartedAt = DateTimeOffset.UtcNow },
+            Review = new ReviewRow { State = ReviewState.Passed, Reviewer = "du1-tia1-review", StartedAt = DateTimeOffset.UtcNow, ReviewedHead = PrHead },
         });
         node.State.PutLeg(new LegRow { Flight = "TIA1", Name = "parser", Order = 1, Goal = "g", DoneWhen = "d", State = LegState.Done });
         node.GitHub.Pr = GhAnswers.PullRequestByBranch(number: 63, head: PrHead, url: PrUrl);
