@@ -250,7 +250,7 @@ public sealed class FailureInvestigations(NodeState state, IGitHub github, Failu
             try
             {
                 await github.CommentIssueAsync(site.RepoPath, existing.Issue,
-                    $"Seen again in {Place(site)}: {run}, {WhereWords(site.Where)}{InJobs(failure.Jobs)}.\n\nAssertion message: {failure.Message}", cancellationToken);
+                    $"Seen again in {Place(site)}: {run}, {WhereWords(site.Where)}{InJobs(failure.Jobs)}.\n\n{(group.Count > 1 ? $"{group.Count} tests of {cls} failed:\n{TestLines(group)}" : $"Assertion message: {failure.Message}")}", cancellationToken);
             }
             catch (FlightException ex)
             {
@@ -348,23 +348,20 @@ public sealed class FailureInvestigations(NodeState state, IGitHub github, Failu
         var subject = code.Length > 0 ? Verbs.FlightTarget(code) : $"{Verbs.RepoTargetPrefix}{site.RepoPath}";
         state.RaiseCard(CardBin.ForYou, CardKind, subject,
             $"{site.Name}#{issue.Number}: {test} failed in a PR that does not touch {(group.Count > 1 ? "them" : "it")}, {(code.Length > 0 ? $"{code} investigates" : "no flight could be made for it")}",
-            $"{Place(site)}: {run}, {WhereWords(site.Where)}.\n\nTest: {(failure.Test.Length > 0 ? failure.Test : "none, an error line")}\nAssertion message: {failure.Message}\n\nIt is a bug with a cause to find, filed as {site.Name}#{issue.Number} with priority high."
+            $"{Place(site)}: {run}, {WhereWords(site.Where)}.\n\n{(group.Count > 1 ? $"{group.Count} tests of {FailureSignature.ClassOf(failure.Test)} failed:\n{TestLines(group)}" : $"Test: {(failure.Test.Length > 0 ? failure.Test : "none, an error line")}\nAssertion message: {failure.Message}")}\n\nIt is a bug with a cause to find, filed as {site.Name}#{issue.Number} with priority high."
             + (notes.Count > 0 ? $"\n\nNot done: {string.Join("; ", notes)}." : ""),
             link: IssueLink(site, issue.Number));
         return (code, issue.Number);
     }
 
-    private static string TestLines(IReadOnlyList<Found> group) => string.Join("
-", group.Select(f => $"- {f.Test}: {f.Message}"));
+    private static string TestLines(IReadOnlyList<Found> group) => string.Join("\n", group.Select(f => $"- {f.Test}: {f.Message}"));
 
     private static string Body(FailureSite site, string run, IReadOnlyList<Found> group)
     {
         var failure = group[0];
         var what = group.Count > 1
-            ? $"- Tests: {group.Count} of {FailureSignature.ClassOf(failure.Test)}, each with its message
-{TestLines(group)}"
-            : $"- Test: {(failure.Test.Length > 0 ? failure.Test : "none, an error line")}
-- Assertion message: {failure.Message}";
+            ? $"- Tests: {group.Count} of {FailureSignature.ClassOf(failure.Test)}, each with its message\n{TestLines(group)}"
+            : $"- Test: {(failure.Test.Length > 0 ? failure.Test : "none, an error line")}\n- Assertion message: {failure.Message}";
         return $"""
         A test the PR does not touch failed. This is a bug with a cause to find.
 
