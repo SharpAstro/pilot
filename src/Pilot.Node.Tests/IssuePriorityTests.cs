@@ -98,7 +98,7 @@ public sealed class IssuePriorityTests : LegCommanderTestsBase
     public void AQueueIsOrderedUrgentHighMediumUnsetLowAndOldestFirstWithinEach()
     {
         var at = new DateTimeOffset(2026, 11, 1, 8, 0, 0, TimeSpan.Zero);
-        FleetFlight F(string code, IssuePriority? level, int minutes) => new("DU1", code, "tianwen", Pilot.Node.Flights.FlightPhase.Ready) { Level = level, Since = at.AddMinutes(minutes) };
+        FleetFlight F(string code, IssuePriority? level, int minutes) => new("DU1", code, "tianwen", AdmissionPhase.Ready) { Level = level, Since = at.AddMinutes(minutes) };
         var input = new AdmissionInput([],
             [F("LOW1", IssuePriority.Low, 0), F("NONE1", null, 1), F("MED1", IssuePriority.Medium, 2), F("HIGH2", IssuePriority.High, 4), F("URG1", IssuePriority.Urgent, 5),
              F("HIGH1", IssuePriority.High, 3), F("NONE0", null, 0)], 0, false);
