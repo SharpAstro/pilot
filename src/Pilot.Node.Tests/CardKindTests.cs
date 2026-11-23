@@ -453,6 +453,23 @@ public sealed class CardKindTests
     }
 
     [Fact]
+    public void ARecordCardWhoseLastArgumentIsPlainTextGetsNoVerbsFromItsSiblingsInTheMember()
+    {
+        const string source = """
+            class C
+            {
+                void Run(string said)
+                {
+                    state.RaiseCard(CardBin.Handled, "x-word", "s", "x answered", said);
+                    state.RaiseCard(CardBin.Ring, "x-other", "s", "needs a look", null, [new CardChoice { Label = "Fix it", Verb = Verbs.FixPr, Target = "t" }]);
+                }
+            }
+            """;
+
+        CardSource.Calls("Sample.cs", source).Single(c => c.KindExpr.Contains("x-word")).ChoiceVerbs.ShouldBeEmpty();
+    }
+
+    [Fact]
     public void TheScannerSkipsCommentsAndStringsThatLookLikeCalls()
     {
         const string source = """

@@ -81,7 +81,7 @@ internal static class CardSource
 
     /// <summary>
     /// The verbs of a card whose choices are built in a list before the call: when the call's own arguments name no <c>Verbs.X</c> but pass a
-    /// plain identifier, the <c>Verbs.X</c> constants of the enclosing member (from the last line declaring one at the class's indent to the
+    /// identifier that a line of the member declares beside <c>CardChoice</c>, the <c>Verbs.X</c> constants of the enclosing member (from the last line declaring one at the class's indent to the
     /// next closing brace at that indent) are read as that call's choices. A member that raises several kinds gives each the verbs of all of
     /// them, so this can over-report; a list built in another member, a field or a helper is still not seen.
     /// </summary>
@@ -99,6 +99,14 @@ internal static class CardSource
         }
         var end = Regex.Match(text[callAt..], @"^    \}", RegexOptions.Multiline);
         var body = text[decl.Index..(end.Success ? callAt + end.Index : text.Length)];
+        // Only an identifier a line of the member declares beside CardChoice is a choice list; a plain text argument (a title's detail) is not.
+        var before = text[decl.Index..callAt];
+        var isList = Regex.Matches(after, @"(?<![\w.])([a-z]\w*)\s*(?:,|$)")
+            .Any(a => Regex.IsMatch(before, @"^[^\n]*CardChoice[^\n]*\b" + a.Groups[1].Value + @"\b", RegexOptions.Multiline));
+        if (!isList)
+        {
+            return [];
+        }
         var found = new List<string>();
         foreach (Match v in Regex.Matches(body, @"Verbs\.(\w+)"))
         {
