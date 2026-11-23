@@ -49,7 +49,7 @@ public sealed partial class NodeState
     /// refuses a Merge on its PR, an open PR-ready or merge-failed card offering a go-around lets a done leg go round. A card of these kinds
     /// that opens or closes re-marks every open card (#1325's review, R1.4).
     /// </summary>
-    internal static bool GatesChoices(string kind) => kind is Flights.PrReviews.DesignKind or LegCommander.PrReady or LegCommander.MergeFailed;
+    internal static bool GatesChoices(string kind) => kind is global::Pilot.Node.Flights.PrReviews.DesignKind or LegCommander.PrReady or LegCommander.MergeFailed;
 
     // A sync under way, and whether something it did (a card it closed) asks for another pass with what that changed.
     private bool _syncingChoices;
