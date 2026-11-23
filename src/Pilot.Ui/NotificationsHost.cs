@@ -83,6 +83,9 @@ internal sealed class NotificationsHost
     /// <summary>The page's list scroll, which a terminal takes the scroll bar away from.</summary>
     internal ListScrollController PageScroll => _page.ListScroll;
 
+    /// <summary>Whether the card is one of the feed's open ones (it needs the person), as of the last <see cref="Sync"/>.</summary>
+    internal bool IsOpen(CardRow card, string? node) => _ids.ContainsKey((node, card.Id));
+
     /// <summary>
     /// A feed notification with no card (a pilot event) drawn by the one card component from its title, text, node and time; set by the chrome.
     /// </summary>

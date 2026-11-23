@@ -589,7 +589,9 @@ internal sealed class PilotChrome<TSurface>
         var now = _cardsNow;
         var same = now.Open.Where(c => c.Id == card.Id).ToList();
         var open = same.FirstOrDefault(c => now.NodeOf(c)?.Name == node) ?? (same.Count == 1 ? same[0] : null);
-        return open is not null ? Cards.FullCard(open, now.NodeOf(open), closed: false) : Cards.FullCard(card, null, closed: true);
+        // Whether the card is open is the feed's word (it is what Needs you lists), not the last frame's screen: a frame a test or the terminal
+        // synced without a screen would otherwise draw every open card closed.
+        return Notifications.IsOpen(card, node) ? Cards.FullCard(open ?? card, open is null ? null : now.NodeOf(open), closed: false) : Cards.FullCard(card, null, closed: true);
     }
 
     /// <summary>What a toast's summary shows whole, three lines of a 320-wide toast at 12pt; past it the toast says it is cut.</summary>
