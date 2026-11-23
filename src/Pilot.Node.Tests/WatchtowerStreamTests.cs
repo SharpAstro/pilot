@@ -152,7 +152,7 @@ public sealed class WatchtowerStreamTests : IDisposable
         };
         _delivery = new FakeSessionDelivery(_agents);
         _tower = NewTower();
-        _messenger = new SessionMessenger(_state, _tracker, _delivery, new StringWriter(), ledger: _ledger) { Streams = () => _tower };
+        _messenger = new SessionMessenger(_state, _tracker, _delivery, TextWriter.Synchronized(new StringWriter()), ledger: _ledger) { Streams = () => _tower };
         _state.PutFlight(new FlightRow
         {
             Code = "TIA9", Repo = "tianwen", RepoPath = "/r", Issue = 9, Branch = "flight/tia9", Worktree = "/r/w", Base = "main",

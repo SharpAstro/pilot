@@ -23,7 +23,7 @@ public sealed class SayLookTests : IDisposable
     private readonly HashSet<int> _alive = [Pid];
     private readonly SessionTracker _tracker;
     private readonly FakeSessionDelivery _delivery;
-    private readonly StringWriter _log = new StringWriter();
+    private readonly TextWriter _log = TextWriter.Synchronized(new StringWriter());
     private readonly SessionMessenger _messenger;
 
     public SayLookTests()

@@ -172,7 +172,7 @@ public sealed class CurrentSessionTests : IDisposable
         var tracker = new SessionTracker(_state, agents, profile.Options(), () => false, TimeProvider.System,
             Microsoft.Extensions.Logging.Abstractions.NullLogger<SessionTracker>.Instance);
         var delivery = new FakeSessionDelivery(agents);
-        var messenger = new SessionMessenger(_state, tracker, delivery, new StringWriter());
+        var messenger = new SessionMessenger(_state, tracker, delivery, TextWriter.Synchronized(new StringWriter()));
         var old = new SessionRow
         {
             Id = "t0000001", SessionId = "t0000001-0000-4000-8000-000000000000", Name = "du1-watchtower", Kind = SessionKind.Background, Cwd = profile.Folder,

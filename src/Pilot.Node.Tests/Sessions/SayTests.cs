@@ -146,7 +146,7 @@ public sealed class SayTests : IDisposable
     private readonly CollectingSink _sink = new CollectingSink();
     private readonly SessionTracker _tracker;
     private readonly FakeSessionDelivery _delivery;
-    private readonly StringWriter _log = new StringWriter();
+    private readonly TextWriter _log = TextWriter.Synchronized(new StringWriter());
     private readonly SessionMessenger _messenger;
 
     public SayTests()

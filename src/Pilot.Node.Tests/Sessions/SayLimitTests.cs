@@ -20,7 +20,7 @@ public sealed class SayLimitTests : IDisposable
     private readonly NodeState _state;
     private readonly TurnOutage _outage;
     private readonly FakeSessionDelivery _delivery;
-    private readonly StringWriter _log = new();
+    private readonly TextWriter _log = TextWriter.Synchronized(new StringWriter());
     private readonly SessionMessenger _messenger;
     private readonly SessionTracker _tracker;
 

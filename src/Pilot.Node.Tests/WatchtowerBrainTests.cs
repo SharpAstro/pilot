@@ -50,7 +50,7 @@ public sealed class WatchtowerBrainTests : IDisposable
             Error = new StringWriter(),
             Models = ModelsOf("opus-high..opus-high"),
         };
-        _messenger = new SessionMessenger(_state, tracker, new FakeSessionDelivery(_agents), new StringWriter(), ledger: _ledger) { Streams = () => _tower };
+        _messenger = new SessionMessenger(_state, tracker, new FakeSessionDelivery(_agents), TextWriter.Synchronized(new StringWriter()), ledger: _ledger) { Streams = () => _tower };
         _compactor = new Compactor(_state, _tower, Run, _time) { Models = _tower.Models, Error = new StringWriter() };
         _state.PutFlight(new FlightRow
         {
