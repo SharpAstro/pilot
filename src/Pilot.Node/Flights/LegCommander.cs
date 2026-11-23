@@ -28,7 +28,7 @@ public sealed partial class LegCommander(
     private readonly PrMarks _marks = new(state, gitHub, options);
 
     // Which failed runs never reached a model, read once from their logs (pilot #1283).
-    private readonly OutsideReviews _outsideReviews = new(github, time);
+    private readonly OutsideReviews _outsideReviews = new(gitHub, time);
 
     /// <summary>The node's memory of which failed runs never reached a model (one log read per run id).</summary>
     internal OutsideReviews OutsideReviews => _outsideReviews;
