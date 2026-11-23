@@ -1681,7 +1681,9 @@ thinks**: the `investigator` role (`investigator-range`, `opus..opus-high` unles
 session the node starts with the evidence in its brief, on a find-the-cause task, a flight past its stale bound, a card about to ring the
 person, and the digest. A run ends with exactly one outcome: an issue plus a flight (`pilot investigated <subject> issue`), an action
 recorded with its reason (`action`), or one notification to the person that says what was tried (`ring`). With autopilot on nothing rings
-the person unless a run decided it. `autopilot-investigations` (8 unless set) bounds the runs per local day; past it one card says so.
+the person unless a run decided it (a card waiting for a run when the node restarts rings at the next node's first look, saying so; the day's
+count and the triggers taken are read back from the start lines the runs leave). An investigator runs `create-issue`, `create-flight`, `go-around` and
+`rerun-checks` on a `--why` naming evidence, never `ci-budget`. `autopilot-investigations` (8 unless set) bounds the runs per local day; past it one card says so.
 There is one autopilot per node: each node's own setting and its own watchtower, with no fleet-wide switch.
 The digest has an Autopilot part while the switch is on: what the watchtower and investigators did, filed and escalated, line by line with
 each why, and the investigator role's tokens for the period from the spend ledger (the ledger prices no cost, so only tokens are said).

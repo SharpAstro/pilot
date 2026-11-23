@@ -450,7 +450,7 @@ public static partial class Briefs
         text.AppendLine();
         text.AppendLine(AutopilotGoalHeading);
         text.AppendLine("The person has autopilot on. You run with a standing goal, and the node lets you do what it needs without refusing you:");
-        text.AppendLine($"`{pilot} create-issue`, `create-flight`, `flight ci-budget`, `go-around` and `rerun-checks`. Each needs `--why` naming the evidence");
+        text.AppendLine($"`{pilot} create-issue`, `create-flight`, `flight ci-budget` and `go-around` (and `rerun-checks`, which needs no `--why`). Each of the first four needs `--why` naming the evidence");
         text.AppendLine("(a job id, a card id, a commit, a run); one that names none is refused. Each run is a Handled line with its why.");
         text.AppendLine("1. Flights keep flying. A flight that is stalled, held or out of budget gets moved along: a go-around, a split, a move, or a rerun");
         text.AppendLine("   once the cause of what stopped it is gone. Do not press the same thing twice for the same cause.");
