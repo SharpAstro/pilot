@@ -76,6 +76,9 @@ public sealed class PrRecheck : IHostedService
 
         public bool Running;
 
+        /// <summary>Peers that did not answer the last look for a holder; a failure card names them.</summary>
+        public List<string> Silent { get; } = [];
+
         public bool Again;
 
         public bool Stale;
@@ -631,8 +634,9 @@ public sealed class PrRecheck : IHostedService
     {
         var subject = Verbs.PrTarget(entry.Repo, entry.Number);
         state.CloseCardsAbout(subject, "tried again", FailedKind);
+        var silent = entry.Silent.Count == 0 ? "" : $" Could not reach: {string.Join(", ", entry.Silent)}.";
         state.RaiseCard(CardBin.ForYou, FailedKind, subject, $"The recheck of {Short(entry.Repo, entry.Number)} could not run",
-            $"{why}. The label stays on the PR; take it off and put it back to try again.", link: link);
+            $"{why}.{silent} The label stays on the PR; take it off and put it back to try again.", link: link);
     }
 
     private FlightRow? OwnFlight(Entry entry) =>
@@ -647,6 +651,7 @@ public sealed class PrRecheck : IHostedService
     /// <summary>The endpoint of a peer that holds a flight on, or a review of, the PR; null when none does. A peer that does not answer holds nothing for this.</summary>
     private async Task<string?> PeerHasAsync(Entry entry, CancellationToken cancellationToken)
     {
+        entry.Silent.Clear();
         foreach (var peer in Fleet?.Peers() ?? [])
         {
             if (!peer.HasGrant)
@@ -662,8 +667,9 @@ public sealed class PrRecheck : IHostedService
                     return peer.Name;
                 }
             }
-            catch (Exception ex) when (ex is HttpRequestException or TimeoutException or IOException or InvalidOperationException)
+            catch (Exception ex) when (FleetAdmission.Unreachable(ex) && !cancellationToken.IsCancellationRequested)
             {
+                entry.Silent.Add(peer.Name);
                 await Error.WriteLineAsync($"pr recheck: {peer.Name} did not say what it holds: {ex.Message}");
             }
         }
