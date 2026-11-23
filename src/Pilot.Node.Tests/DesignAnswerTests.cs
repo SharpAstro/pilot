@@ -19,6 +19,34 @@ public sealed class DesignAnswerTests : PrFixTestsBase
     private void Comment(string author, string body, TimeSpan from) =>
         _github.PrConversation.Enqueue((7, new PrComment(author, body, DateTimeOffset.UtcNow + from)));
 
+    [Theory]
+    [InlineData("close it as superseded by #2478")]
+    [InlineData("Close the PR.")]
+    [InlineData("This PR is superseded; drop it.")]
+    [InlineData("Superseded by #12")]
+    [InlineData("Leave it as is")]
+    [InlineData("keep main as it is")]
+    [InlineData("Leave everything unchanged")]
+    public void AnAnswerThatNamesThePrOrLeavesThingsAsTheyAreAsksForNoCode(string answer) => PrReviews.AsksForNoCode(answer).ShouldBeTrue();
+
+    [Theory]
+    [InlineData("Option B: close the handle in Dispose")]
+    [InlineData("drop the cache layer")]
+    [InlineData("Keep it a library, no service.")]
+    [InlineData("Withdraw the retry from the client")]
+    [InlineData("Use a closed set of states")]
+    public void AnAnswerThatIsCodeDoesNotAskForNoCode(string answer) => PrReviews.AsksForNoCode(answer).ShouldBeFalse();
+
+    [Fact]
+    public void TheFixerBriefsNoChangeListAndTheClassifierAgreeOnItsOwnPhrases()
+    {
+        // The brief says "close it or the PR, it is superseded by #N, drop it, leave it as it is, keep main as it is": each reads as no code.
+        foreach (var phrase in new[] { "close it", "superseded by #4", "drop it", "leave it as it is", "keep main as it is" })
+        {
+            PrReviews.AsksForNoCode(phrase).ShouldBeTrue(phrase);
+        }
+    }
+
     [Fact]
     public async Task AnAnswerCommentAfterTheReviewStartsAFixerWhoseBriefHoldsTheQuestionAndTheAnswer()
     {

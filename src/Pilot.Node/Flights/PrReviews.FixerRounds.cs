@@ -118,9 +118,14 @@ public sealed partial class PrReviews
             var left = await LeftWorkAsync(review, cancellationToken);
             // Ended on its own with the head unmoved: resumed once per fixer job before any card (pilot #1309). Only a second end, or a resume
             // that could not be delivered, falls through to the card.
-            if (review.FixerJob is { } ended && !string.Equals(review.FixerResumedJob, ended, StringComparison.Ordinal) && ResumeFixer is { } resume)
+            // A fixer a person or the watchtower stopped reads Ended too: waking it would undo the stop, so it goes straight to the card.
+            var stoppedOnPurpose = sessions.Any(s => Ledger?.Find([s.SessionId, s.Id, .. s.EarlierSessionIds ?? []]) is { EndReason: not null and not SessionEndReasons.Finished });
+            if (!stoppedOnPurpose && review.FixerJob is { } ended && !string.Equals(review.FixerResumedJob, ended, StringComparison.Ordinal) && ResumeFixer is { } resume)
             {
-                state.PutPrReview(review with { FixerResumedJob = ended });
+                if (Of(PrRef.Parse($"{review.Repo}#{review.Number}")!) is { } latest)
+                {
+                    state.PutPrReview(latest with { FixerResumedJob = ended });
+                }
                 string? refused;
                 try
                 {
@@ -171,9 +176,21 @@ public sealed partial class PrReviews
             noCode ? [] : [new CardChoice { Label = FixLabel, Verb = Verbs.FixPr, Target = subject }], link: review.Url);
     }
 
-    /// <summary>True when a design answer asks for no change to the code: close, supersede, drop or abandon the PR.</summary>
-    internal static bool AsksForNoCode(string answer) =>
-        System.Text.RegularExpressions.Regex.IsMatch(answer, @"\b(close[ds]?|supersede[ds]?|drop|abandon(ed)?|withdraw)\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+    /// <summary>
+    /// True when a design answer asks for no change to the code: it names the PR itself ("close it", "close the PR", "this PR is superseded",
+    /// "superseded by #N", "drop the PR") or says to leave things as they are ("leave it as is", "keep main as it is"). "Close the handle in Dispose"
+    /// or "drop the cache layer" are code and do not match. The fixer brief's no-change list says the same.
+    /// </summary>
+    internal static bool AsksForNoCode(string answer) => NoCodeAnswer().IsMatch(answer);
+
+    [System.Text.RegularExpressions.GeneratedRegex(
+        @"\b(?:close[ds]?\s+(it|this|the\s+(pr|pull\s+request)|this\s+(pr|pull\s+request))"
+        + @"|(this\s+pr|the\s+pr|it)\s+(is|can\s+be|should\s+be|to\s+be)\s+(closed|superseded|dropped|abandoned|withdrawn)"
+        + @"|supersede[ds]?\s+by\s+(#|pr)"
+        + @"|(drop|abandon|withdraw)\s+(it|this|the\s+pr|this\s+pr)"
+        + @"|(leave|keep)\s+(it|main|this|things|everything)?\s*(as\s+(it\s+is|is)|unchanged))\b",
+        System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
+    private static partial System.Text.RegularExpressions.Regex NoCodeAnswer();
 
     /// <summary>What the node says to a fixer that ended its turn with the PR's head unmoved: what is left, then what to do about it.</summary>
     private static string ResumeText(PrReviewRow review, string? left) =>
