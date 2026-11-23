@@ -10,8 +10,7 @@ namespace Pilot.Node.Tests;
 /// A review that asks a question of design (a finding starting <c>design:</c>) is fixed once the question has an answer: the words
 /// given on <c>review fix</c> (posted on the PR first), or the PR's author's comment after the review. Without one it is refused.
 /// </summary>
-/// <remarks>Slow: every test fixes a PR in a real clone and worktree (5.3 to 11.1 s under load).</remarks>
-[Trait("Category", "Slow")]
+/// <remarks>Runs on <c>FakeRepoGit</c>: no test here calls <c>RealGit()</c>, so the class is not Slow and the process-start guard holds it.</remarks>
 public sealed class DesignAnswerTests : PrFixTestsBase
 {
     private const string Question = "README.md:1 design: should this be a service at all?";
@@ -21,6 +20,8 @@ public sealed class DesignAnswerTests : PrFixTestsBase
 
     [Theory]
     [InlineData("close it as superseded by #2478")]
+    [InlineData("Close it as a duplicate of #31")]
+    [InlineData("close it or the PR")]
     [InlineData("Close the PR.")]
     [InlineData("This PR is superseded; drop it.")]
     [InlineData("Superseded by #12")]
@@ -39,6 +40,10 @@ public sealed class DesignAnswerTests : PrFixTestsBase
     [InlineData("Close this connection")]
     [InlineData("Close it in the finally block")]
     [InlineData("Flush the stream before it is closed")]
+    [InlineData("Close it as soon as the response is read")]
+    [InlineData("Close it and reopen on error")]
+    [InlineData("Drop it and use a plain list instead")]
+    [InlineData("Drop this and use the cache")]
     public void AnAnswerThatIsCodeDoesNotAskForNoCode(string answer) => PrReviews.AsksForNoCode(answer).ShouldBeFalse();
 
     private void Green(string head)

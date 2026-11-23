@@ -179,15 +179,18 @@ public sealed partial class PrReviews
     /// <summary>
     /// True when a design answer asks for no change to the code: it names the PR itself ("close it", "close the PR", "this PR is superseded",
     /// "superseded by #N", "drop the PR") or says to leave things as they are ("leave it as is", "keep main as it is"). "Close the handle in Dispose"
-    /// or "drop the cache layer" are code and do not match. A bare "it" or "this" counts only where it ends the clause ("close it.", "drop it",
-    /// "close it as superseded"), so "close this connection", "close it in the finally block" and "drop this cache layer" stay code; "is closed"
-    /// counts only for the PR ("this PR is closed"), so "before it is closed" stays code. The fixer brief's no-change list says the same.
+    /// or "drop the cache layer" are code and do not match. A bare "it" or "this" counts only where it ends the clause ("close it.", "drop it"), or
+    /// where the next words are one of two named tails: "as superseded", "as a duplicate", "as obsolete" or "as answered" (the issue's "close it as
+    /// superseded by #N"), and "or the PR" / "or this pull request" (the brief's "close it or the PR"). Any other words after it keep it code, so
+    /// "close this connection", "close it in the finally block", "close it as soon as the response is read", "close it and reopen on error",
+    /// "drop it and use a plain list" and "drop this cache layer" stay code; "is closed" counts only for the PR ("this PR is closed"), so "before it
+    /// is closed" stays code. The fixer brief's no-change list says the same.
     /// </summary>
     internal static bool AsksForNoCode(string answer) => NoCodeAnswer().IsMatch(answer);
 
     private const string ThePr = @"(?:the|this)\s+(?:pr|pull\s+request)";
 
-    private const string BareIt = @"(?:it|this)(?=\s*(?:[.,;:!]|$)|\s+(?:as|or|and)\b)";
+    private const string BareIt = @"(?:it|this)(?=\s*(?:[.,;:!]|$)|\s+as\s+(?:superseded|a\s+duplicate|obsolete|answered)\b|\s+or\s+" + ThePr + @"\b)";
 
     [System.Text.RegularExpressions.GeneratedRegex(
         @"\b(?:close[ds]?\s+(?:" + ThePr + "|" + BareIt + ")"
