@@ -19,6 +19,36 @@ public sealed record VerbRefusal(string Why, bool ClearsByItself = false, MergeR
 /// </summary>
 public static class VerbPreconditions
 {
+    /// <summary>The verbs <see cref="For"/> has a predicate for (pilot #1325): a card offering one is marked from it and its command refuses with its words.</summary>
+    public static readonly IReadOnlySet<string> Covered = new HashSet<string>
+    {
+        Verbs.StartReview, Verbs.GoAround, Verbs.StartLeg, Verbs.Merge, Verbs.RerunChecks, Verbs.OpenPr,
+    };
+
+    /// <summary>
+    /// The flight and leg verbs a card offers that have no state precondition the node can mark, each with why, so a guard can tell
+    /// "none" from "forgotten". A verb that gains a precondition moves to <see cref="Covered"/>.
+    /// </summary>
+    public static readonly IReadOnlyDictionary<string, string> NoPrecondition = new Dictionary<string, string>
+    {
+        [Verbs.Land] = "landing is what a flight in any state may be asked for; the command's own checks read the plane and GitHub, not node state",
+        [Verbs.FlyAnyway] = "it releases a hold on a package wait, which is the state it is offered in",
+        [Verbs.Disconnect] = "it ends a connection between flights, whatever state either is in",
+        [Verbs.ExtendBudget] = "it raises a leg's budget, which any leg may have",
+        [Verbs.RemoveLeg] = "the command's checks read the leg's own rows as it removes it, with nothing to mark beforehand",
+        [Verbs.PlanFlight] = "it asks for a plan, which a flight with no legs or a refused plan is offered",
+        [Verbs.FinishLeg] = "the command judges the leg's worker and plane as it runs",
+        [Verbs.Fold] = "an overlap answer: the overlap card is the state it is offered in",
+        [Verbs.ConnectOverlap] = "an overlap answer: the overlap card is the state it is offered in",
+        [Verbs.Separate] = "an overlap answer: the overlap card is the state it is offered in",
+        [Verbs.FixPr] = "a PR verb: what refuses it is the PR's review state, read from GitHub",
+        [Verbs.Review] = "a PR verb: what refuses it is the PR's review state, read from GitHub",
+        [Verbs.AllowRound] = "a PR verb: the round cap it lifts is read from the review's rounds",
+        [Verbs.Clear] = "it clears a flight's review notes, which any flight may do",
+        [Verbs.FlightPriority] = "a priority may be set on a flight in any state",
+        [Verbs.MoveFlight] = "the command judges the peer and the push as it runs",
+    };
+
     /// <summary>The words that refuse a step on a flight on the owner's hold; null when it is not held. The one predicate every gate asks.</summary>
     public static string? OnHold(FlightRow flight) =>
         flight.OnHold is { } hold
