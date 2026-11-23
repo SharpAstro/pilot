@@ -152,6 +152,11 @@ public sealed partial class PrReviews
         {
             var status = await git.RunAsync(["status", "--porcelain"], worktree, cancellationToken);
             var ahead = await git.RunAsync(["log", "--format=%h %s", $"{head}..HEAD"], worktree, cancellationToken);
+            if (!ahead.Ok)
+            {
+                // The PR's head is not in this clone (someone else pushed it): what HEAD has that no remote branch has is what is not pushed.
+                ahead = await git.RunAsync(["log", "--format=%h %s", "HEAD", "--not", "--remotes"], worktree, cancellationToken);
+            }
             var files = status.Ok ? status.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) : [];
             var commits = ahead.Ok ? ahead.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) : [];
             var parts = new List<string>();
