@@ -128,6 +128,42 @@ public sealed class FleetTests
         }
     }
 
+    /// <summary>The gh window has a row of its own under the commands line, drawn short and clear of the lines above it, with the whole line on hover (PIL1293).</summary>
+    [Theory]
+    [InlineData(1280)]
+    [InlineData(700)]
+    public void TheGhWindowHasItsOwnRowAndNeverDisplacesTheCommandsLine(int width)
+    {
+        const string full = "gh, last 15 min: 412 calls, ~1380 points; pr view x188 (PrChecks.LookAsync x120, LegCommander.PrimeAsync x40, RepoWatch.SweepAsync x28), api graphql x120 (GhCli.OpenPullRequestsByHeadAsync x120), issue view x60 (LegCommander.PrimeAsync x60), api rest x30 (GhCli.Labels x30), pr checks x14 (PrChecks.LookAsync x14)";
+        var info = Summary("s2", "bo@example.org").Node! with
+        {
+            Traffic = new NodeTrafficRow { Hour = Live.At, HttpIn = 3_000_000, HttpOut = 1_000_000, ChildBytes = 9_000_000, GitRuns = 4, GhRuns = 20 },
+            CommandTimings = [new CommandTimingRow { Verb = "merge", Count = 2, P50Ms = 100, P95Ms = 4800 }],
+            GhCalls = full,
+        };
+        var line = FleetLine.From("10.0.0.9:47731", here: false, canCommand: true, null, Summary("s2", "bo@example.org") with { Node = info }, Live.At);
+
+        line.GhCalls.ShouldBe(full);
+        line.GhShort.ShouldBe("gh, last 15 min: 412 calls, ~1380 points · pr view x188");
+        line.Commands.ShouldBe("commands p95 4.8 s");
+        line.TrafficLines.Length.ShouldBe(3);
+        using var renderer = new RgbaImageRenderer((uint)width, 400);
+        var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
+        chrome.Show(PilotPage.Fleet);
+
+        var arranged = Layout.Engine.Arrange(chrome.Fleet.Tree(new FleetScreen([line], Live.At)), new Rect<float>(0, 0, width, 400), new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, 1f));
+        var leaves = arranged.Where(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text }).ToArray();
+        string TextOf(dynamic a) => ((Layout.Content.Text)((Layout.Node.Leaf)a.Node).Content).Value;
+        var previousBottom = leaves.Where(a => TextOf(a).StartsWith("10.0.0.9:47731", StringComparison.Ordinal)).ShouldHaveSingleItem() is var where ? where.Bounds.Y + where.Bounds.Height : 0f;
+        foreach (var part in new[] { .. line.TrafficLines, line.GhShort! })
+        {
+            var leaf = leaves.Where(a => TextOf(a) == part).ShouldHaveSingleItem();
+            leaf.Bounds.Y.ShouldBeGreaterThanOrEqualTo(previousBottom - 0.5f, part);
+            previousBottom = leaf.Bounds.Y + leaf.Bounds.Height;
+        }
+        FleetLine.From("node.sock", here: true, canCommand: true, null, Summary("s1", "ada@example.org"), Live.At).GhShort.ShouldBeNull();
+    }
+
     [Fact]
     public void ARowOffersOpenAndConnectAsItsGrantAllows()
     {

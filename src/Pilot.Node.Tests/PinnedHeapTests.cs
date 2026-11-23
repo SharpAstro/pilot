@@ -161,6 +161,17 @@ public sealed class PinnedHeapTests
             .ShouldContain("**heap** heap 2.8 GB");
     }
 
+    /// <summary>Status prints the node's last gh window next to the heap line, in the text and in the markdown (PIL1293).</summary>
+    [Fact]
+    public void StatusShowsTheLastGhWindow()
+    {
+        var empty = new SnapshotEvent { Seq = 0, At = DateTimeOffset.UnixEpoch, Stream = "s", Sessions = [], Notes = [] };
+        const string window = "gh, last 15 min: 40 calls, ~120 points; pr view x30 (PrChecks.LookAsync)";
+        PilotCommand.Status(empty, ghCalls: window).ShouldContain("gh  " + window);
+        PilotCommand.Status(empty).ShouldNotContain("gh  ");
+        StatusMarkdown.Build(empty, ghCalls: window).ShouldContain("**gh** gh, last 15 min: 40 calls");
+    }
+
     [Fact]
     public void TheHourlyTrafficLineCarriesTheHeapBeforeTheCallers()
     {

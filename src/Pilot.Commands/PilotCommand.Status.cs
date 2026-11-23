@@ -74,7 +74,7 @@ public static partial class PilotCommand
     /// The flights and their legs, a line each, and the live sessions. Landed flights are left out unless <paramref name="all"/>,
     /// with a line saying how many; a flight asked for by <paramref name="code"/>, or the newest, shows whatever its state.
     /// </summary>
-    internal static string Status(SnapshotEvent snapshot, bool newestOnly = false, string? code = null, bool maintenance = false, bool all = false, IReadOnlyCollection<SendTimingRow>? sendTimings = null, IReadOnlyCollection<CommandTimingRow>? commandTimings = null, NodeHeapRow? heap = null, string? reboot = null, string? thisNode = null, bool? canRunGui = null, string? guiReason = null, DateTimeOffset? now = null, TimeZoneInfo? zone = null)
+    internal static string Status(SnapshotEvent snapshot, bool newestOnly = false, string? code = null, bool maintenance = false, bool all = false, IReadOnlyCollection<SendTimingRow>? sendTimings = null, IReadOnlyCollection<CommandTimingRow>? commandTimings = null, NodeHeapRow? heap = null, string? reboot = null, string? thisNode = null, bool? canRunGui = null, string? guiReason = null, DateTimeOffset? now = null, TimeZoneInfo? zone = null, string? ghCalls = null)
     {
         var text = new System.Text.StringBuilder();
         if (!newestOnly && code is null && canRunGui is { } gui)
@@ -111,6 +111,10 @@ public static partial class PilotCommand
         if (!newestOnly && code is null && heap is not null)
         {
             text.AppendLine($"heap  {heap.Line()}");
+        }
+        if (!newestOnly && code is null && !string.IsNullOrEmpty(ghCalls))
+        {
+            text.AppendLine($"gh  {ghCalls}");
         }
         if (!newestOnly && code is null && snapshot.Usage?.Account is { } account)
         {
@@ -273,12 +277,14 @@ public static partial class PilotCommand
                 SendTimingRow[]? timings = null;
                 CommandTimingRow[]? commandTimings = null;
                 NodeHeapRow? heap = null;
+                string? ghCalls = null;
                 try
                 {
                     var info = await client.GetNodeAsync(ct);
                     timings = info.SendTimings ?? [];
                     commandTimings = info.CommandTimings ?? [];
                     heap = info.Heap;
+                    ghCalls = info.GhCalls;
                     maintenance = info.Maintenance;
                     reboot = info.Reboot;
                     canRunGui = info.CanRunGui;
@@ -293,8 +299,8 @@ public static partial class PilotCommand
                 var everyFlight = parseResult.GetValue(allFlights);
                 var format = parseResult.GetValue(outputFormat);
                 var copies = format is "plain" or "text" ? new Dictionary<string, string>() : await AttachmentCopies.ResolveAsync(AttachmentCopies.Of(snapshot), client, dataFolder, ct);
-                await WriteAsync(format, () => Status(snapshot, code: asked, maintenance: maintenance, all: everyFlight, sendTimings: timings, commandTimings: commandTimings, heap: heap, reboot: reboot, thisNode: thisNode, canRunGui: canRunGui, guiReason: guiReason),
-                    () => StatusMarkdown.Build(snapshot, maintenance, everyFlight, copies, timings, commandTimings, heap, reboot, thisNode, asked));
+                await WriteAsync(format, () => Status(snapshot, code: asked, maintenance: maintenance, all: everyFlight, sendTimings: timings, commandTimings: commandTimings, heap: heap, reboot: reboot, thisNode: thisNode, canRunGui: canRunGui, guiReason: guiReason, ghCalls: ghCalls),
+                    () => StatusMarkdown.Build(snapshot, maintenance, everyFlight, copies, timings, commandTimings, heap, reboot, thisNode, asked, ghCalls: ghCalls));
                 return 0;
             });
             var attachmentsOwner = new Argument<string?>("flight-or-session") { Description = "A flight's code or a session's name; none lists every one", Arity = ArgumentArity.ZeroOrOne };

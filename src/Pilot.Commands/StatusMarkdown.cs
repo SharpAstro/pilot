@@ -12,7 +12,7 @@ internal static class StatusMarkdown
 {
     private static readonly string[] ImageExtensions = [".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp"];
 
-    internal static string Build(SnapshotEvent snapshot, bool maintenance = false, bool all = false, IReadOnlyDictionary<string, string>? copies = null, IReadOnlyCollection<SendTimingRow>? sendTimings = null, IReadOnlyCollection<CommandTimingRow>? commandTimings = null, NodeHeapRow? heap = null, string? reboot = null, string? thisNode = null, string? code = null, DateTimeOffset? now = null, TimeZoneInfo? zone = null)
+    internal static string Build(SnapshotEvent snapshot, bool maintenance = false, bool all = false, IReadOnlyDictionary<string, string>? copies = null, IReadOnlyCollection<SendTimingRow>? sendTimings = null, IReadOnlyCollection<CommandTimingRow>? commandTimings = null, NodeHeapRow? heap = null, string? reboot = null, string? thisNode = null, string? code = null, DateTimeOffset? now = null, TimeZoneInfo? zone = null, string? ghCalls = null)
     {
         var text = new StringBuilder();
         text.AppendLine("# pilot status").AppendLine();
@@ -40,6 +40,10 @@ internal static class StatusMarkdown
         if (heap is not null)
         {
             facts.Add($"**heap** {Text(heap.Line())}");
+        }
+        if (!string.IsNullOrEmpty(ghCalls))
+        {
+            facts.Add($"**gh** {Text(ghCalls)}");
         }
         if (snapshot.Usage?.Account is { } account)
         {
