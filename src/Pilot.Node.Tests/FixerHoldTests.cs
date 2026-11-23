@@ -55,7 +55,7 @@ public sealed class FixerHoldTests : PrFixTestsBase
         var job = new JobRow
         {
             Id = "j4032", Command = "dotnet build", Cwd = _root, State = JobState.Running, Owner = "feed1234", LogPath = Path.Combine(_root, "j4032.log"),
-            Timeout = TimeSpan.FromMinutes(30),
+            Timeout = TimeSpan.FromMinutes(30), StartedAt = new DateTimeOffset(2026, 11, 23, 0, 0, 0, TimeSpan.Zero),
         };
         _state.PutJob(job);
 
@@ -65,7 +65,7 @@ public sealed class FixerHoldTests : PrFixTestsBase
         _github.Merged.ShouldBeEmpty();
         (Row.QueueNote, Row.QueuedAt).ShouldBe((null, null));
 
-        _state.PutJob(job with { State = JobState.Ended });
+        _state.PutJob(job with { State = JobState.Succeeded });
         await _reviews.SweepAsync(Ct);
 
         _github.Merged.ShouldHaveSingleItem().Number.ShouldBe(7);

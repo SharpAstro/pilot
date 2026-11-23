@@ -557,7 +557,7 @@ public sealed class PrFixTests3 : PrFixTestsBase
         _state.PutSession(FixerSession(SessionState.Ended));
         var job = new JobRow
         {
-            Id = "j4009", Command = "dotnet build", Cwd = _root, State = open, LogPath = Path.Combine(_root, "j4009.log"), Timeout = TimeSpan.FromMinutes(30),
+            Id = "j4009", Command = "dotnet build", Cwd = _root, State = open, LogPath = Path.Combine(_root, "j4009.log"), Timeout = TimeSpan.FromMinutes(30), StartedAt = new DateTimeOffset(2026, 11, 23, 0, 0, 0, TimeSpan.Zero),
             Owner = byId ? Row.FixerJob : "an-earlier-id", OwnerName = byId ? null : fixer,
         };
         _state.PutJob(job);
@@ -568,7 +568,7 @@ public sealed class PrFixTests3 : PrFixTestsBase
         Row.Fixer.ShouldBe(fixer);
         Row.FixerJob.ShouldNotBeNull();
 
-        _state.PutJob(job with { State = JobState.Ended });
+        _state.PutJob(job with { State = JobState.Succeeded });
         await _reviews.SweepAsync(Ct);
 
         _state.Cards(openOnly: true).Where(c => c.Kind == PrReviews.FixEndedKind).ShouldHaveSingleItem();
