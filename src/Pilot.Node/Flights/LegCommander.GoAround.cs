@@ -60,9 +60,6 @@ public sealed partial class LegCommander
             _conflictRounds.TryRemove(KeyValuePair.Create(flight.Code, asked));
         }
         var forConflict = leg.State == LegState.Done && conflictRound;
-        // A done leg goes around too when the review asked for changes: that is how they are made.
-        // Or when its armed merge failed (a PR-ready card turned to say which check): the same card offers it.
-        // Or when a PR review's design question on the flight's PR has its answer: the person's word, so the leg goes round with it.
         // A flight held for an investigation (the same failure hit more than one PR) is sent round by nobody until it lands: the failure
         // is not its work's, and a round would only burn a go-around on a bug with a cause to find. The person's word passes.
         if (Alerts?.HoldOf(flight.Code) is { } failureHold && !IsPerson(flight, command.Who) && command.PersonsWord is null)
