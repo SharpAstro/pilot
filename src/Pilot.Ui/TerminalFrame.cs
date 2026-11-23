@@ -40,10 +40,10 @@ internal static class TerminalFrame
 
     /// <summary>
     /// The frame as the terminal paints it: <see cref="Tree"/> arranged in the <paramref name="columns"/> by <paramref name="rows"/> grid and
-    /// cropped by <see cref="Clip"/>, and the router's due <paramref name="tooltip"/> (cell coordinates) arranged last, so it paints over the page and the panel, as the GUI's tooltip layer does. It is added after the crop and registers no region, so the hit test is unchanged. Program.cs paints this result and the wireframe sweep judges it, so a test arranges exactly what the
+    /// cropped by <see cref="Clip"/>, the open attachment <paramref name="viewer"/> over all of it (the one declaration the GUI paints too), and the router's due <paramref name="tooltip"/> (cell coordinates) arranged last, so it paints over the page and the panel, as the GUI's tooltip layer does. It is added after the crop and registers no region, so the hit test is unchanged. Program.cs paints this result and the wireframe sweep judges it, so a test arranges exactly what the
     /// terminal draws. <paramref name="measure"/> is Console.Lib's CellMeasureContext.PixelAuthored, which Pilot.Ui does not hold.
     /// </summary>
-    public static ImmutableArray<Layout.ArrangedNode<int>> Build(Layout.Node rail, Layout.Node page, Layout.Node? cards, int columns, int rows, Layout.IMeasureContext<int> measure, TooltipRequest? tooltip = null, (NotificationsHost Host, PilotPage Shown)? bar = null)
+    public static ImmutableArray<Layout.ArrangedNode<int>> Build(Layout.Node rail, Layout.Node page, Layout.Node? cards, int columns, int rows, Layout.IMeasureContext<int> measure, TooltipRequest? tooltip = null, (NotificationsHost Host, PilotPage Shown)? bar = null, Layout.Node? viewer = null)
     {
         var window = new Rect<int>(0, 0, columns, rows);
         if (bar is { } sized)
@@ -52,6 +52,11 @@ internal static class TerminalFrame
             sized.Host.RoomUnits = NotificationsHost.TerminalRoom(columns);
         }
         var frame = Clip(Layout.Engine.Arrange(Tree(rail, page, cards, bar), window, measure));
+        // An open attachment viewer covers the whole terminal, after the crop and before the tooltip; it registers its close region, so a click anywhere hits it.
+        if (viewer is not null)
+        {
+            frame = frame.AddRange(Layout.Engine.Arrange(viewer, window, measure));
+        }
         return tooltip is { } due ? frame.AddRange(Layout.Engine.Arrange(TooltipLayer<RgbaImage>.Tree(due), window, measure)) : frame;
     }
 
