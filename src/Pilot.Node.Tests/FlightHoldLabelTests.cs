@@ -288,6 +288,26 @@ public sealed class FlightHoldLabelTests : ReviewTestsBase
                 .ShouldContain("taken out of the merge queue");
         }
 
+        /// <summary>pilot #1293: a flight waiting on a connected flight (Held) is not read by the sweep, though its issue carries the hold label; once Flying it is read.</summary>
+        [Fact]
+        [Trait("Category", "Slow")]
+        public async Task AFlightWaitingOnAConnectedFlightIsNotReadByTheSweepButTheSameFlightFlyingIs()
+        {
+            var repo = Clone();
+            _github.Issues[1] = "labelled";
+            _github.SetIssueLabels(1, PilotMarks.Hold);
+            Fly(repo, 1, state: FlightState.Held);
+
+            await Look(repo);
+            _github.IssueLabelReads.ShouldBe(0, "no labels of a held flight's issue are read");
+            F(1).OnHold.ShouldBeNull();
+
+            _state.PutFlight(F(1) with { State = FlightState.Flying });
+            await Look(repo);
+            _github.IssueLabelReads.ShouldBeGreaterThan(0);
+            F(1).OnHold.ShouldNotBeNull();
+        }
+
         [Fact]
         [Trait("Category", "Slow")]
         public async Task AHoldWhoseLabelWriteFailedStaysHeldAndTheSweepPutsTheLabelOnAgain()

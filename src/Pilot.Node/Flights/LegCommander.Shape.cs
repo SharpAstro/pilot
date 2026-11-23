@@ -160,6 +160,7 @@ public sealed partial class LegCommander
             throw new FlightException($"the old head could not be kept ({kept.Why})");
         }
         await LeasePushAsync(plane, flight.Branch, old, cancellationToken);
+        state.PrPolls.MarkDue(flight.RepoPath, flight.Branch);
         return (shaped, old, null);
     }
 }

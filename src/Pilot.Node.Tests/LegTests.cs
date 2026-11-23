@@ -1035,6 +1035,12 @@ internal sealed class FakeGitHub : IGitHub
         return Task.CompletedTask;
     }
 
+    /// <summary>When the oldest running check of a PR (by number) started, as the batch read says it (<see cref="OpenPullRequest.CiStartedAt"/>).</summary>
+    public ConcurrentDictionary<int, DateTimeOffset> CiStarted { get; } = [];
+
+    /// <summary>How long the longest check of a PR (by number) with all checks done took, as the batch read says it (<see cref="OpenPullRequest.CiRunLength"/>).</summary>
+    public ConcurrentDictionary<int, TimeSpan> CiLength { get; } = [];
+
     /// <summary>The branches whose open PRs <see cref="OpenPullRequestsByHeadAsync"/> lists, by repo path; a repo not named has no batch answer (null), as a gh that could not say.</summary>
     public ConcurrentDictionary<string, ConcurrentQueue<string>> OpenBranches { get; } = new(StringComparer.OrdinalIgnoreCase);
 
@@ -1057,7 +1063,8 @@ internal sealed class FakeGitHub : IGitHub
                     continue;
                 }
                 found.Add(new OpenPullRequest(branch, pr, await MergeStateAsync(repoPath, pr.Number, cancellationToken), await ChecksSummaryAsync(repoPath, pr.Number, cancellationToken),
-                    await AutoMergeArmedAsync(repoPath, pr.Number, cancellationToken) == true, await MergeQueueAsync(repoPath, pr.Number, cancellationToken)));
+                    await AutoMergeArmedAsync(repoPath, pr.Number, cancellationToken) == true, await MergeQueueAsync(repoPath, pr.Number, cancellationToken),
+                    CiStarted.TryGetValue(pr.Number, out var started) ? started : null, CiLength.TryGetValue(pr.Number, out var length) ? length : null));
             }
             return [.. found];
         }
@@ -1264,8 +1271,21 @@ internal sealed class FakeGitHub : IGitHub
     /// <summary>Every comment made on an issue, by number.</summary>
     public ConcurrentQueue<(int Number, string Body)> IssueComments { get; } = [];
 
-    public Task<string[]> IssueLabelsAsync(string repoPath, int number, CancellationToken cancellationToken) =>
-        Task.FromResult(IssueLabelsReadFails is null && IssueLabels.TryGetValue(number, out var labels) ? InOrder(labels).ToArray() : []);
+    private int _labelListReads;
+
+    /// <summary>How many times <see cref="IssueLabelsAsync"/> was asked (<see cref="IssueLabelsOrThrowAsync"/> asks it too): a held flight's issue is never read (pilot #1293).</summary>
+    public int IssueLabelListReads => Volatile.Read(ref _labelListReads);
+
+    private int _priorityReads;
+
+    /// <summary>How many times <see cref="IssuePriorityAsync"/> was asked.</summary>
+    public int PriorityReads => Volatile.Read(ref _priorityReads);
+
+    public Task<string[]> IssueLabelsAsync(string repoPath, int number, CancellationToken cancellationToken)
+    {
+        Interlocked.Increment(ref _labelListReads);
+        return Task.FromResult(IssueLabelsReadFails is null && IssueLabels.TryGetValue(number, out var labels) ? InOrder(labels).ToArray() : []);
+    }
 
     /// <summary>When set, a label read that must tell failure from absence (<see cref="IGitHub.IssueLabelsOrThrowAsync"/>) fails with it, as gh exiting non-zero; the plain read answers none, as the real one does.</summary>
     public string? IssueLabelsReadFails { get; set; }
@@ -1400,8 +1420,11 @@ internal sealed class FakeGitHub : IGitHub
     /// <summary>When set, writing the Priority field fails with it, as GitHub refusing it.</summary>
     public string? PrioritySetFails { get; set; }
 
-    public Task<PriorityRead> IssuePriorityAsync(string repoPath, int number, CancellationToken cancellationToken) =>
-        Task.FromResult(HasPriorityField ? new PriorityRead(true, IssuePriorities.TryGetValue(number, out var level) ? level : null) : PriorityRead.NoField);
+    public Task<PriorityRead> IssuePriorityAsync(string repoPath, int number, CancellationToken cancellationToken)
+    {
+        Interlocked.Increment(ref _priorityReads);
+        return Task.FromResult(HasPriorityField ? new PriorityRead(true, IssuePriorities.TryGetValue(number, out var level) ? level : null) : PriorityRead.NoField);
+    }
 
     public Task SetIssuePriorityAsync(string repoPath, int number, IssuePriority? level, CancellationToken cancellationToken)
     {

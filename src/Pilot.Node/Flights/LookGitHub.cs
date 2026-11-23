@@ -93,6 +93,8 @@ internal sealed class LookSnapshot : IDisposable
         }
     }
 
+    // A PR this snapshot does not hold (merged, closed, none yet, beyond the 50 newest, or a branch of a flight BranchesOf leaves out) is read singly by LookGitHub at every look,
+    // whatever the schedule says: the budget does not cover that case, it is as it was before the batch.
     /// <summary>The entry of PR <paramref name="number"/> (or of <paramref name="branch"/> when <paramref name="number"/> is null), unless a write dropped it.</summary>
     public async Task<OpenPullRequest?> EntryAsync(IGitHub github, string repoPath, int? number, string? branch, CancellationToken cancellationToken)
     {

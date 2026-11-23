@@ -283,6 +283,80 @@ public sealed class PrPollBudgetTests
     }
 
     [Fact]
+    public async Task ACiThatEndsAfterThreeMinutesIsSeenAtTheNextIntervalNotAfterTheUsualEight()
+    {
+        var hour = new HourRig();
+        var github = hour.Rig.GitHub;
+        var start = hour.Time.GetUtcNow();
+        // Another open PR of the repo, not a flight's, whose checks all ended after 3 minutes: how long this repo's CI takes, as its own batch says.
+        github.PrOf["other"] = GhAnswers.PullRequestByBranch(number: 99, head: "head99", url: "https://github.com/o/r/pull/99", mergeable: "MERGEABLE");
+        github.SummaryOf[99] = GhAnswers.ChecksOf(ChoiceStatus.Passing, 3, 3);
+        github.CiLength[99] = TimeSpan.FromMinutes(3);
+        github.OpenBranches[RepoA].Enqueue("other");
+        // The flights' checks started with the push, at the start.
+        github.CiStarted[11] = start;
+        github.CiStarted[12] = start;
+
+        // The first look, right after the push, reads the repo once: its PRs are due again at what GitHub's start time and the repo's 3 minutes say.
+        hour.Time.Advance(Tick);
+        await hour.LookAsync();
+        var firstReads = github.Reads[(RepoA, nameof(IGitHub.OpenPullRequestsByHeadAsync))];
+
+        // CI ends at minute 3.
+        TimeSpan? seenAt = null;
+        var ended = false;
+        var readsAtEnd = 0;
+        while (hour.Time.GetUtcNow() - start <= TimeSpan.FromMinutes(10))
+        {
+            hour.Time.Advance(Tick);
+            var now = hour.Time.GetUtcNow();
+            if (!ended && now - start >= TimeSpan.FromMinutes(3))
+            {
+                github.SummaryOf[11] = GhAnswers.ChecksOf(ChoiceStatus.Passing, 3, 3);
+                github.CiStarted.TryRemove(11, out _);
+                ended = true;
+                readsAtEnd = github.Reads[(RepoA, nameof(IGitHub.OpenPullRequestsByHeadAsync))];
+            }
+            await hour.LookAsync();
+            if (ended && github.Reads[(RepoA, nameof(IGitHub.OpenPullRequestsByHeadAsync))] > readsAtEnd)
+            {
+                seenAt = now - start;
+                break;
+            }
+        }
+
+        firstReads.ShouldBe(1);
+        seenAt.ShouldNotBeNull("the end of CI is seen");
+        // About 3 to 5 minutes (one interval after it ended), not the 8 of a repo not seen yet.
+        seenAt.Value.ShouldBeLessThanOrEqualTo(TimeSpan.FromMinutes(5));
+        seenAt.Value.ShouldBeLessThan(PrPollSchedule.UsualCiRun);
+    }
+
+    [Fact]
+    public async Task AFlightWithAReadyCardAndALegToFlyStillHasItsCiCountedAtEachRead()
+    {
+        var hour = new HourRig();
+        var github = hour.Rig.GitHub;
+        // A review-notes leg still to fly: the card loop is the one reader of this flight's repo, after the CI count.
+        hour.Rig.State.PutLeg(new LegRow { Flight = "PBA1", Name = "notes", Order = 1, Goal = "g", DoneWhen = "d", State = LegState.Flying });
+        github.CiRuns["flight/pba1"] = [];
+
+        await hour.LookAsync();
+        var first = github.CiReads;
+        first.ShouldBeGreaterThan(0);
+
+        // Not due (CI running, 8 minutes): nothing is asked, however the look is ordered.
+        hour.Time.Advance(TimeSpan.FromMinutes(3));
+        await hour.LookAsync();
+        github.CiReads.ShouldBe(first);
+
+        // Due: the runs are asked again, past CiInterval, and the count goes on.
+        hour.Time.Advance(PrPollSchedule.UsualCiRun);
+        await hour.LookAsync();
+        github.CiReads.ShouldBeGreaterThan(first);
+    }
+
+    [Fact]
     public async Task APushTheNodeMakesMarksItsPrDueAtOnce()
     {
         var hour = new HourRig();
