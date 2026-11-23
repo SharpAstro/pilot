@@ -215,7 +215,7 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
         state.EndFlyingLegsOfLanded();
         await LookAtReviewsAsync(sessions, now, cancellationToken);
         await LookAtValidatorsAsync(sessions, now, cancellationToken);
-        LookAtStrays(sessions, now);
+        await LookAtStraysAsync(sessions, now, cancellationToken);
         LookAtWaiting(sessions, now);
         await LookAtLegWaitsAsync(now, cancellationToken);
         await LookAtLegRechecksAsync(now, cancellationToken);
@@ -1063,36 +1063,7 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
         return worker.ContextWindow > 0 && worker.ContextTokens > FullShare * worker.ContextWindow ? IdleCause.Full : IdleCause.Room;
     }
 
-    /// <summary>
-    /// The jobs of a session's own (pilot #777): owned by its id, session id or an earlier one, or by its name (a replaced session
-    /// keeps its name), and for a worker (a <paramref name="leg"/> given) also the leg's own flight and leg.
-    /// </summary>
-    private IEnumerable<JobRow> JobsOf(SessionRow session, LegRow? leg = null) => state.Jobs().Where(j =>
-        (j.Owner is { Length: > 0 } owner && (owner == session.Id || owner == session.SessionId || session.EarlierSessionIds?.Contains(owner) == true))
-        || string.Equals(j.OwnerName, session.Name, StringComparison.OrdinalIgnoreCase)
-        || (leg is not null && string.Equals(j.Flight, leg.Flight, StringComparison.OrdinalIgnoreCase) && string.Equals(j.Leg, leg.Name, StringComparison.OrdinalIgnoreCase)));
-
-    /// <summary>
-    /// A session's wait on jobs of its own (pilot #893), the one rule for a reviewer, a validator and a worker: a job still queued
-    /// or running is a wait, not a stall, even when its turn ended and Claude Code dropped it from its listing (a --bg session ended
-    /// by design resumes on the job's end), unless it failed. <see cref="Spoken"/> is the latest of a job's end and of its outcome
-    /// being told, so a resumed session is given its turn and the idle grace from then rather than from its stale last response.
-    /// Not filtering on <c>Gone</c> also holds a session someone stopped from outside while its job is open. That is on purpose
-    /// and bounded: the job's end resumes any ended session through the usual say path, the job has a timeout, and once it has
-    /// ended the idle clock starts from <see cref="Spoken"/>, so a session that never takes its turn is told, restarted or rung.
-    /// </summary>
-    private readonly record struct OwnJobWait(bool Open, DateTimeOffset? Spoken);
-
-    private OwnJobWait OwnJobsWait(SessionRow row, LegRow? leg = null)
-    {
-        if (row.State == SessionState.Failed)
-        {
-            return new OwnJobWait(false, null);
-        }
-        var jobs = JobsOf(row, leg).ToArray();
-        var spoken = jobs.SelectMany(j => new[] { j.EndedAt, j.ToldAt, j.RetoldAt }).Where(t => t is not null).Select(t => t!.Value).DefaultIfEmpty().Max();
-        return new OwnJobWait(jobs.Any(j => j.State is JobState.Running or JobState.Queued), spoken == default ? null : spoken);
-    }
+    private OwnJobWait OwnJobsWait(SessionRow row, LegRow? leg = null) => OwnJobWait.Of(state, row, leg);
 
     /// <summary>The detail's lead for a worker idle with room in its context: the cause, in plain words.</summary>
     private static string RoomLead(SessionRow worker) => worker.ContextWindow > 0
@@ -1717,7 +1688,7 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
     /// A live background session whose flight has landed, whose leg is done or was redone (its worker is no longer the leg's), or
     /// that the ledger has no entry for rings once, with Stop as the way on. Every look sees it again; the card is raised once.
     /// </summary>
-    private void LookAtStrays(SessionRow[] sessions, DateTimeOffset now)
+    private async Task LookAtStraysAsync(SessionRow[] sessions, DateTimeOffset now, CancellationToken cancellationToken)
     {
         // A stray card for a session that is no longer live closes: Stop it would have nothing to stop.
         foreach (var card in state.Cards(openOnly: true).Where(c => c.Kind == StraySession).ToList())
@@ -1743,6 +1714,7 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
         foreach (var row in sessions.Where(s => s is { Kind: SessionKind.Background, Gone: false, Archived: false } && s.State is not (SessionState.Ended or SessionState.Failed)))
         {
             string? why = WindDown.Why(state, Ledger, row);
+            string? currentWorker = null;
             // A role's current session (the watchtower now, a flying leg's current worker, a live flight's planner or reviewer, an
             // open PR's reviewer or fixer) is never rung with Stop here, whatever a landed flight or the ledger's end reason says
             // of an earlier session of that role.
@@ -1759,6 +1731,11 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
                 && (leg is { State: LegState.Done, FinishedAt: { } finished } && now - finished > StrayGrace || (leg.WorkerJob is not null && leg.WorkerJob != row.Id)))
             {
                 why = leg.State == LegState.Done ? $"its leg {flight}/{legName} is done" : $"its leg {flight}/{legName} was redone and has another worker";
+                if (leg.State != LegState.Done && sessions.Any(r => r.Id == leg.WorkerJob && r.State is SessionState.Working or SessionState.Waiting or SessionState.Idle))
+                {
+                    // Only when the leg's current worker is a live row: otherwise this is the leg's only session and a person chooses (Stop it).
+                    currentWorker = leg.WorkerJob;
+                }
             }
             if (why is null && Ledger is not null && Ledger.Find([row.SessionId, row.Id, .. row.EarlierSessionIds ?? []]) is null)
             {
@@ -1776,6 +1753,17 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
                 continue;
             }
             var subject = Verbs.SessionTarget(row.Id);
+            if (why is not null && currentWorker is not null)
+            {
+                // A duplicate of a redone leg's worker (PIL1206): the node ends it itself and tells the person afterwards.
+                // A stop tried is not tried again before the stop grace, so a stop that does not take is not retried on every look.
+                if (!_duplicateTried.TryGetValue(row.Id, out var tried) || now - tried >= StopGrace)
+                {
+                    _duplicateTried[row.Id] = now;
+                    await EndDuplicateWorkerAsync(row, why, currentWorker, cancellationToken);
+                }
+                continue;
+            }
             if (why is null || state.Cards(openOnly: true).Any(c => c.Kind == StraySession && c.Subject == subject) || !_strays.Add(row.Id))
             {
                 continue;
@@ -1783,6 +1771,47 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
             state.RaiseCard(CardBin.Ring, StraySession, subject, $"{row.Name} is running but should not be", why,
                 [new CardChoice { Label = "Stop it", Verb = Verbs.Stop, Target = subject }],
                 summary: $"{row.Name} is still running: {why}. Stop it ends the session.");
+        }
+    }
+
+    /// <summary>The kind of the Handled card that says afterwards the node ended a duplicate worker of a redone leg.</summary>
+    public const string DuplicateWorkerEnded = "duplicate-worker-ended";
+
+    // Duplicate workers the node ended and said so for, once each.
+    private readonly HashSet<string> _duplicatesEnded = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, DateTimeOffset> _duplicateTried = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Ends a live worker of a redone leg (its WorkerJob is another row) through the node's own end-session path, says so in a
+    /// Handled card once the stop is confirmed, and raises the stop-unconfirmed ring when it does not take. The leg's current worker never gets here.
+    /// </summary>
+    private async Task EndDuplicateWorkerAsync(SessionRow row, string why, string currentWorker, CancellationToken cancellationToken)
+    {
+        var subject = Verbs.SessionTarget(row.Id);
+        var reason = $"{SessionEndReasons.DuplicateWorker}: {why}; the current worker is {currentWorker}";
+        CommandResult result;
+        try
+        {
+            result = await run(new CommandRequest { Verb = Verbs.EndSession, Target = subject, Args = [reason], Who = Who }, cancellationToken);
+        }
+        catch (Exception ex) when (ex is IOException or InvalidOperationException or System.ComponentModel.Win32Exception)
+        {
+            result = state.Complete(new CommandRequest { Verb = Verbs.EndSession, Target = subject, Who = Who }, ex.Message);
+        }
+        // A session that ended between the look and the stop is done, not unconfirmed.
+        var ended = !result.Ok && state.Sessions().FirstOrDefault(r => r.Id == row.Id) is not { State: SessionState.Working or SessionState.Waiting or SessionState.Idle };
+        if (!result.Ok && !ended)
+        {
+            // The messenger raises this card itself when its stop fails; it is one card per session, so a second raise is the same card.
+            Sessions.SessionMessenger.RaiseStopUnconfirmed(state, row, $"{row.Name} ({row.Id}) is a duplicate worker of a redone leg and could not be stopped: {result.Error}. Not confirmed: the session may still run.",
+                "end-session by the node", reason);
+            return;
+        }
+        if (_duplicatesEnded.Add(row.Id))
+        {
+            state.RaiseCard(CardBin.Handled, DuplicateWorkerEnded, subject, $"{row.Name} was ended: a duplicate worker",
+                $"{why}. The node ended {row.Id}; the leg's current worker is {currentWorker}, which is untouched.",
+                summary: $"The node ended {row.Name} ({row.Id}), a second worker of a redone leg. The current worker, {currentWorker}, goes on. Nothing to do.");
         }
     }
 

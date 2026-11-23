@@ -360,9 +360,9 @@ public static class TerminalWireframeSweepTests
         ("pull requests | many | 160x44", "EmptyRows", "a filled container is arranged 2 rows tall but its content sits on row 42 only; 1 row(s) are empty inside its fill (own vertical padding 0 row(s), visible border 0 row(s))"), // pilot #1077
         ("jobs | many | 160x44", "EmptyRows", "a filled container is arranged 18 rows tall but its content sits on row 26 only; 17 row(s) are empty inside its fill (own vertical padding 0 row(s), visible border 0 row(s))"), // Console.Lib #78
         ("settings | long | 80x24", "SolidStrip", "a filled node one row tall and 43 cells wide holds nothing and is painted solid; a rule should be a thin line, not a bar"), // Console.Lib #77
-        ("pull requests | long | 80x24", "EmptyRows", "a filled container is arranged 2 rows tall but its content sits on row 11 only; 1 row(s) are empty inside its fill (own vertical padding 0 row(s), visible border 0 row(s))"), // pilot #1077
-        ("pull requests | long | 80x24", "EmptyRows", "a filled container is arranged 2 rows tall but its content sits on row 13 only; 1 row(s) are empty inside its fill (own vertical padding 0 row(s), visible border 0 row(s))"), // pilot #1077
-        ("pull requests | long | 80x24", "EmptyRows", "a filled container is arranged 2 rows tall but its content sits on row 21 only; 1 row(s) are empty inside its fill (own vertical padding 0 row(s), visible border 0 row(s))"), // pilot #1077
+        ("pull requests | long | 80x24", "EmptyRows", "a filled container is arranged 2 rows tall but its content sits on row 12 only; 1 row(s) are empty inside its fill (own vertical padding 0 row(s), visible border 0 row(s))"), // pilot #1077
+        ("pull requests | long | 80x24", "EmptyRows", "a filled container is arranged 2 rows tall but its content sits on row 14 only; 1 row(s) are empty inside its fill (own vertical padding 0 row(s), visible border 0 row(s))"), // pilot #1077
+        ("pull requests | long | 80x24", "EmptyRows", "a filled container is arranged 2 rows tall but its content sits on row 22 only; 1 row(s) are empty inside its fill (own vertical padding 0 row(s), visible border 0 row(s))"), // pilot #1077
     ];
 }
 

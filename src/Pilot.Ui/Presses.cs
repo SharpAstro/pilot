@@ -108,7 +108,7 @@ internal sealed class Presses
                 refused = ex.Message;
             }
             // The outcome is recorded before the press stops being pending: a draw (or a reader of IsTaken) between the two saw
-            // neither, so a switch read its old state for a frame (a test failed on CI so, #842's queue run).
+            // neither, so a switch read its old state for a frame (AutopilotSwitchTests failed on CI so, #842's queue run).
             if (refused is null)
             {
                 NoteTaken(key);

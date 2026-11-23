@@ -192,6 +192,9 @@ internal sealed partial class PullRequestsView<TSurface>(Renderer<TSurface> rend
     /// <summary>The header's ? card, the same on every page.</summary>
     public AboutCard? About { get; set; }
 
+    /// <summary>The header's Autopilot switch, the same on every page.</summary>
+    public AutopilotSwitch? Autopilot { get; set; }
+
     /// <summary>The window's node selection, whose pills the header shows while there is more than one node.</summary>
     public NodeFilter? Nodes { get; set; }
 

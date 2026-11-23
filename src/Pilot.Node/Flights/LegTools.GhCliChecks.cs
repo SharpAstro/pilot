@@ -495,10 +495,10 @@ public sealed partial class GhCli
         return exit != 0 ? null : log.Length > FailedLogLimit ? log[^FailedLogLimit..] : log;
     }
 
-    public async Task<int?> RunAttemptAsync(string repoPath, long runId, CancellationToken cancellationToken)
+    public async Task<RunState?> RunStateAsync(string repoPath, long runId, CancellationToken cancellationToken)
     {
-        var (exit, output, _) = await RunAsync(["api", $"repos/{{owner}}/{{repo}}/actions/runs/{runId}", "--jq", ".run_attempt"], repoPath, cancellationToken);
-        return exit == 0 && int.TryParse(output.Trim(), System.Globalization.CultureInfo.InvariantCulture, out var attempt) && attempt > 0 ? attempt : null;
+        var (exit, output, _) = await RunAsync(["api", $"repos/{{owner}}/{{repo}}/actions/runs/{runId}", "--jq", "[.run_attempt, .status, .updated_at] | @tsv"], repoPath, cancellationToken);
+        return exit == 0 ? RunState.Parse(output) : null;
     }
 
     public async Task RerunRunAsync(string repoPath, long runId, CancellationToken cancellationToken)

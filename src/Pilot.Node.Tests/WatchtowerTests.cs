@@ -873,7 +873,7 @@ public sealed class WatchtowerTests : IDisposable
             Ledger = new SessionLedger(SessionLedger.FileIn(_folder), time);
             Tracker = new SessionTracker(state, Agents, _profile.Options(), () => false, time, NullLogger<SessionTracker>.Instance) { Launched = Ledger };
             Delivery = new FakeSessionDelivery(Agents);
-            Messenger = new SessionMessenger(state, Tracker, Delivery, new StringWriter(), ledger: Ledger)
+            Messenger = new SessionMessenger(state, Tracker, Delivery, TextWriter.Synchronized(new StringWriter()), ledger: Ledger)
             {
                 CancelJobs = (owners, who) =>
                 {

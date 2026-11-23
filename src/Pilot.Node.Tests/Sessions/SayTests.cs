@@ -7,6 +7,39 @@ using Xunit;
 namespace Pilot.Node.Tests.Sessions;
 
 /// <summary>
+/// A messenger log that concurrent says can write to and a test can read. <c>TextWriter.Synchronized</c> serialises the writes but
+/// its <c>ToString</c> is the type name, and a plain <c>StringWriter</c> throws "Destination is too short" under concurrent writes.
+/// </summary>
+internal sealed class SynchronizedLog : TextWriter
+{
+    private readonly StringWriter _inner = new StringWriter();
+    private readonly TextWriter _sync;
+
+    public SynchronizedLog() => _sync = TextWriter.Synchronized(_inner);
+
+    public override System.Text.Encoding Encoding => _inner.Encoding;
+
+    public override void Write(char value) => _sync.Write(value);
+
+    public override void Write(string? value) => _sync.Write(value);
+
+    public override void WriteLine(string? value) => _sync.WriteLine(value);
+
+    public override Task WriteAsync(string? value) => _sync.WriteAsync(value);
+
+    public override Task WriteLineAsync(string? value) => _sync.WriteLineAsync(value);
+
+    /// <summary>The text written so far.</summary>
+    public override string ToString()
+    {
+        lock (_sync)
+        {
+            return _inner.ToString();
+        }
+    }
+}
+
+/// <summary>
 /// The <c>claude</c> calls behind <c>say</c>, recorded and never run. A test says what the listing shows after a stop and
 /// after a resume, as Claude Code would.
 /// </summary>
@@ -29,12 +62,35 @@ internal sealed class FakeSessionDelivery(FakeClaudeAgents agents) : ISessionDel
         }
     }
 
-    public List<ResumeRequest> Resumes { get; } = [];
+    private readonly List<ResumeRequest> _resumes = [];
+    private readonly List<RelayRequest> _relays = [];
+
+    /// <summary>Every resume asked for, as a snapshot taken under the lock the writes hold (a list read while another thread adds throws).</summary>
+    public IReadOnlyList<ResumeRequest> Resumes
+    {
+        get
+        {
+            lock (_calls)
+            {
+                return [.. _resumes];
+            }
+        }
+    }
 
     /// <summary>The session id a resume continues under: <see cref="Copy"/>, or the resumed one's own for a resume in place.</summary>
     public string? ResumesAs { get; set; }
 
-    public List<RelayRequest> Relays { get; } = [];
+    /// <summary>Every relay asked for, as a snapshot under the same lock as the writes.</summary>
+    public IReadOnlyList<RelayRequest> Relays
+    {
+        get
+        {
+            lock (_calls)
+            {
+                return [.. _relays];
+            }
+        }
+    }
 
     /// <summary>The listing once the stopped session's process has gone.</summary>
     public string? ListingAfterStop { get; set; }
@@ -73,7 +129,7 @@ internal sealed class FakeSessionDelivery(FakeClaudeAgents agents) : ISessionDel
         Record($"resume {request.SessionId}");
         lock (_calls)
         {
-            Resumes.Add(request);
+            _resumes.Add(request);
         }
         if (ListingAfterResume is { } listing)
         {
@@ -94,7 +150,7 @@ internal sealed class FakeSessionDelivery(FakeClaudeAgents agents) : ISessionDel
         Record($"relay {request.Name}");
         lock (_calls)
         {
-            Relays.Add(request);
+            _relays.Add(request);
         }
         if (DuringRelay is { } during)
         {
@@ -123,7 +179,7 @@ public sealed class SayTests : IDisposable
     private readonly CollectingSink _sink = new CollectingSink();
     private readonly SessionTracker _tracker;
     private readonly FakeSessionDelivery _delivery;
-    private readonly StringWriter _log = new StringWriter();
+    private readonly SynchronizedLog _log = new SynchronizedLog();
     private readonly SessionMessenger _messenger;
 
     public SayTests()

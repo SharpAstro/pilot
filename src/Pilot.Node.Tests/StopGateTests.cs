@@ -10,7 +10,7 @@ using Xunit;
 namespace Pilot.Node.Tests;
 
 /// <summary>
-/// A Stop in a flight's plane with files not committed is sent back to commit them, once per turn; a second stop is let
+/// A Stop in a flight's plane with files not committed is sent back to commit or delete them, once per turn; a second stop is let
 /// through and rings. Every other stop goes through in silence. Over a repo of the test's own, on the in-memory git model.
 /// </summary>
 public sealed class StopGateTests : IDisposable
@@ -81,7 +81,8 @@ public sealed class StopGateTests : IDisposable
         reason.ShouldContain("1 file not committed");
         reason.ShouldContain("stray.txt");
         reason.ShouldContain("commit them");
-        // Work is committed, never dropped (the owner, 2026-11-03): a file that is not work goes in .gitignore or the commit message.
+        reason.ShouldContain("delete them if they are scratch");
+        // The word is delete, never drop; a file that is not work but must stay goes in .gitignore.
         reason.ShouldNotContain("drop", Case.Insensitive);
         reason.ShouldContain(".gitignore");
         // Told, not rung: the session is still at it.
@@ -110,11 +111,11 @@ public sealed class StopGateTests : IDisposable
         ring.Bin.ShouldBe(CardBin.Ring);
         ring.Subject.ShouldBe(Verbs.LegTarget("TIA7", "parser"));
         ring.Title.ShouldContain("stray.txt");
-        ring.Detail.ShouldNotBeNull().ShouldStartWith("it was told once to commit them");
-        var again = ring.Choices.ShouldHaveSingleItem();
+        ring.Detail.ShouldNotBeNull().ShouldStartWith("it was told once to commit or delete them");
+        var again = ring.Choices[0];
         again.Verb.ShouldBe(Verbs.Say);
         again.Target.ShouldBe(Verbs.SessionTarget(AgentRows.SessionA));
-        // The only choice is to tell it to commit: no card button drops files.
+        // The first choice is to commit; the word is delete, never drop.
         again.Label.ShouldBe("Tell it to commit");
         again.Args.ShouldHaveSingleItem().ShouldNotContain("drop", Case.Insensitive);
         // The summary names the file, says it was told once and stopped again, and does not repeat the button.
@@ -132,6 +133,67 @@ public sealed class StopGateTests : IDisposable
         _repos.Run(Plane, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "stray");
         (await Decide(Plane)).ShouldBeNull();
         Rings().ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task AnUntrackedScratchTestIsNamedAndTheRingOffersDelete()
+    {
+        Directory.CreateDirectory(Path.Combine(Plane, "src", "X.Tests"));
+        File.WriteAllText(Path.Combine(Plane, "src", "X.Tests", "ScratchLookTests.cs"), "//\n");
+
+        var reason = JsonDocument.Parse((await Decide(Plane)).ShouldNotBeNull()).RootElement.GetProperty("reason").GetString().ShouldNotBeNull();
+        reason.ShouldContain("commit");
+        reason.ShouldContain("delete");
+        reason.ShouldContain("ScratchLookTests.cs looks like scratch");
+
+        (await Decide(Plane, active: true)).ShouldBeNull();
+        var choices = Rings().ShouldHaveSingleItem().Choices;
+        choices.Select(c => c.Label).ShouldBe(["Tell it to commit", "Tell it to delete them"]);
+        var del = choices[1];
+        del.Verb.ShouldBe(Verbs.Say);
+        del.Target.ShouldBe(Verbs.SessionTarget(AgentRows.SessionA));
+        var text = del.Args.ShouldHaveSingleItem();
+        // The path from the plane's root, so the session deletes exactly that file.
+        text.ShouldContain("src/X.Tests/ScratchLookTests.cs");
+        text.ShouldContain("Delete");
+        text.ShouldContain("git status is clean");
+        text.ShouldContain("report");
+    }
+
+    [Theory]
+    [InlineData("ScratchLookTests.cs", true)]
+    [InlineData("mySCRATCH.cs", true)]
+    [InlineData("ZzProbe.cs", true)]
+    [InlineData("zzprobe.cs", true)]
+    [InlineData("TmpCapture.png", true)]
+    [InlineData("tmp.txt", true)]
+    [InlineData("ParserTests.cs", false)]
+    [InlineData("AtmpTests.cs", false)]
+    [InlineData("Fizz.cs", false)]
+    public void IsLikelyScratchNamesEachPrefixAndTheWordInAnyCase(string name, bool scratch) =>
+        StopGate.IsLikelyScratch(name).ShouldBe(scratch);
+
+    [Fact]
+    public async Task AZzOrTmpFileIsNamedAsLikelyScratchToo()
+    {
+        File.WriteAllText(Path.Combine(Plane, "ZzLook.cs"), "//\n");
+        File.WriteAllText(Path.Combine(Plane, "tmpshot.png"), "x\n");
+        File.WriteAllText(Path.Combine(Plane, "real.cs"), "//\n");
+
+        var reason = JsonDocument.Parse((await Decide(Plane)).ShouldNotBeNull()).RootElement.GetProperty("reason").GetString().ShouldNotBeNull();
+        reason.ShouldMatch(@"(ZzLook\.cs, tmpshot\.png|tmpshot\.png, ZzLook\.cs) looks like scratch\.");
+        reason.ShouldNotContain("real.cs looks");
+    }
+
+    [Fact]
+    public async Task AModifiedTrackedFileRingsWithOnlyCommit()
+    {
+        File.WriteAllText(Path.Combine(Plane, "README.md"), "changed\n");
+        File.WriteAllText(Path.Combine(Plane, "ScratchNew.cs"), "//\n");
+        (await Decide(Plane)).ShouldNotBeNull();
+        (await Decide(Plane, active: true)).ShouldBeNull();
+
+        Rings().ShouldHaveSingleItem().Choices.ShouldHaveSingleItem().Label.ShouldBe("Tell it to commit");
     }
 
     [Fact]

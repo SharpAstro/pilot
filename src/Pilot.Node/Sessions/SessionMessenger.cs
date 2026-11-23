@@ -169,9 +169,9 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
         {
             OpenLimitFrom(error);
         }
-        var result = state.Complete(command, error, way, sessionId);
+        var result = state.Complete(command, error, way, sessionId, made: parts.Note);
         var outcome = duplicate ? $"skipped: request id {command.RequestId} was already sent{(sessionId is null ? "" : $" as {sessionId}")}"
-            : error is null ? "delivered" +(sessionId is null ? "" : $" as {sessionId}") : $"refused: {error}";
+            : error is null ? (parts.Note ?? "delivered") + (sessionId is null ? "" : $" as {sessionId}") : $"refused: {error}";
         await log.WriteLineAsync($"{(compact ? "compact" : "say")}: who={command.Who} from={SenderKind(command.Who)} target={command.Target} way={way ?? "none"}{(route is null ? "" : $" route={route}")} {outcome} ({parts.Line(clock.Elapsed)})");
         await log.FlushAsync(cancellationToken);
         return result;
@@ -341,6 +341,9 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
         public TimeSpan? Gate { get; set; }
         public TimeSpan? Look { get; set; }
         public TimeSpan? Choose { get; set; }
+
+        /// <summary>What a say redirected to a leg's current worker tells the sender; null when it went where it was addressed.</summary>
+        public string? Note { get; set; }
         public TimeSpan? Deliver { get; set; }
 
         /// <summary><c>51118 ms: gate 3 ms, look 12 ms, choose 0 ms, deliver 185 ms</c>; a part not reached is left out.</summary>
@@ -409,7 +412,28 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
             parts.Look = step.Elapsed;
             step.Restart();
             var rows = state.Sessions();
-            var row = Find(rows, id) ?? throw new SessionDeliveryException($"There is no session {id}: give its row id, or the name of one live session, as pilot sessions lists them");
+            var row = Find(rows, id) ?? FindReplacedWorker(rows, id) ?? throw new SessionDeliveryException($"There is no session {id}: give its row id, or the name of one live session, as pilot sessions lists them");
+            // A say carried to the leg's current worker goes by its session id: the replaced one may still be live under the same name.
+            var redirected = false;
+            if (ReplacedWorker(row, rows, out var currentWorker) is { } replacedJob)
+            {
+                // A worker its leg no longer names (stopped, ended or replaced by a go-around) is never resumed, for any sender and
+                // however it was named (#1206): the words go to the leg's current worker, or are refused when that one is not live.
+                if (currentWorker is null)
+                {
+                    throw new SessionDeliveryException($"{row.Name} ({row.Id}) was replaced by {replacedJob}; the node does not wake a replaced worker");
+                }
+                parts.Note = $"delivered to {currentWorker.Id} ({currentWorker.Name}), the leg's current worker; {row.Id} was replaced";
+                // The node's own words (LegWatch.Who) to a replaced worker land here too: that is meant, they belong to the current one.
+                var addressed = row;
+                // The same fresh look the addressed row got: a current worker idle a poll ago may be mid-turn now, and Choose would
+                // then stop and resume it.
+                await tracker.LookAsync(currentWorker.Id, cancellationToken);
+                row = Find(state.Sessions(), currentWorker.Id) is { } looked && looked.State is SessionState.Working or SessionState.Waiting or SessionState.Idle
+                    ? looked
+                    : throw new SessionDeliveryException($"{addressed.Name} ({addressed.Id}) was replaced by {replacedJob}, which is no longer live; the node does not wake a replaced worker");
+                redirected = true;
+            }
             // The same request id said to this row again, by resume or relay, is the first's delivery, not a second one (PIL595).
             var deliveredKey = command.RequestId is { Length: > 0 } rid ? $"{row.Id}\n{rid}" : null;
             if (deliveredKey is not null)
@@ -481,6 +505,14 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
                 case SayWays.Resumed:
                     var resumeClock = Stopwatch.StartNew();
                     var resumedAs = await ResumeAsync(row, text, cancellationToken);
+                    if (resumedAs is null)
+                    {
+                        // The old process outlived its stop (#1206): a resume would run a second copy beside it, so the words go to the one running.
+                        var liveRoute = await delivery.RelayAsync(new RelayRequest(row.Name, row.Kind, text, ClaudeCliDelivery.RelayFrom(command.Who), ReplyTo(rows, row, command.Who), row.SessionId, DirectOnly: true), cancellationToken);
+                        parts.Deliver = step.Elapsed;
+                        Remember(deliveredKey, SayWays.Relayed, null, liveRoute, command, text, began);
+                        return (SayWays.Relayed, null, liveRoute, false);
+                    }
                     Timings?.Record(SendTimings.Resume, resumeClock.Elapsed, $"target={command.Target}");
                     parts.Deliver = step.Elapsed;
                     ledger?.Resumed([row.SessionId, row.Id, .. row.EarlierSessionIds ?? []], compact ? SessionStartReasons.Compaction : "say");
@@ -491,7 +523,7 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
                     // name, which would carry the words to the successor.
                     // The node's own say (a job's outcome, a card, a nudge) to a session it names by row id goes the same way when
                     // another live session shares the name: it is the node that knows which session it means, so it is not refused (#841).
-                    var direct = replacedBy is not null || (command.Who == Flights.LegWatch.Who && HasLiveNamesakes(row, rows));
+                    var direct = replacedBy is not null || redirected || (command.Who == Flights.LegWatch.Who && HasLiveNamesakes(row, rows));
                     if (!direct)
                     {
                         RefuseAmbiguous(row, rows);
@@ -540,6 +572,28 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
     /// </summary>
     public static string? ReplyTo(SessionRow[] rows, SessionRow recipient, string? who) =>
         who is { Length: > 0 } && Find(rows, who) is { } sender && sender.Id != recipient.Id ? sender.Id : null;
+
+    /// <summary>
+    /// The job a worker's leg now names when that is not <paramref name="row"/>, else null; <paramref name="current"/> is that job's row when it is
+    /// live (working, waiting or idle), else null. Not a worker row, or a leg that names no job: null.
+    /// </summary>
+    private string? ReplacedWorker(SessionRow row, SessionRow[] rows, out SessionRow? current)
+    {
+        current = null;
+        if (row is not { Role: SessionRole.Worker, Flight: { Length: > 0 } flight, Leg: { Length: > 0 } leg }
+            || state.Legs(flight).FirstOrDefault(l => l.Name == leg) is not { WorkerJob: { Length: > 0 } job }
+            || job == row.Id)
+        {
+            return null;
+        }
+        current = rows.FirstOrDefault(r => r.Id == job && r.State is SessionState.Working or SessionState.Waiting or SessionState.Idle);
+        return job;
+    }
+
+    /// <summary>A name or session id that only an ended worker row has, whose leg flies another job now: that row, so the say is refused as replaced and not as unknown.</summary>
+    private SessionRow? FindReplacedWorker(SessionRow[] rows, string name) =>
+        rows.Where(r => r.Role == SessionRole.Worker && (r.Name == name || r.SessionId == name || r.EarlierSessionIds?.Contains(name) == true)).OrderByDescending(r => r.StartedAt)
+            .FirstOrDefault(r => ReplacedWorker(r, rows, out _) is not null);
 
     /// <summary>The live session that replaced <paramref name="row"/>: a background one of the same name and role, started later, that is not an earlier copy of it. Null when none.</summary>
     internal static SessionRow? ReplacedBy(SessionRow row, SessionRow[] rows, string? watchtower = null)
@@ -591,7 +645,45 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
 
     private static bool HasLiveNamesakes(SessionRow row, SessionRow[] rows) => LiveNamesakes(row, rows).Count > 0;
 
-    private async Task<string> ResumeAsync(SessionRow row, string text, CancellationToken cancellationToken)
+    /// <summary>How long a stopped session's process is given to end before a resume is refused (#1206); a test shortens it.</summary>
+    public TimeSpan GoneWait { get; init; } = TimeSpan.FromSeconds(10);
+
+    /// <summary>
+    /// Waits for process <c>pid</c> to end, at most the given time (an await on its exit, never a spin); true when it is gone. A test replaces
+    /// it with a fake. Null (a test's messenger) checks nothing; the node sets <see cref="WaitProcessGoneAsync"/>.
+    /// </summary>
+    public Func<int, TimeSpan, CancellationToken, Task<bool>>? WaitGone { get; init; }
+
+    /// <summary>The real check: awaits the process's exit for at most <paramref name="wait"/>.</summary>
+    internal static async Task<bool> WaitProcessGoneAsync(int pid, TimeSpan wait, CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var process = Process.GetProcessById(pid);
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeout.CancelAfter(wait);
+            await process.WaitForExitAsync(timeout.Token);
+            return true;
+        }
+        catch (ArgumentException)
+        {
+            return true; // no such process
+        }
+        catch (InvalidOperationException)
+        {
+            return true;
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Resumes <paramref name="row"/>'s session. Null when its old process is still running after the stop:
+    /// a resume then would start a second session beside it (#1206), so the caller relays to the live one instead.
+    /// </summary>
+    private async Task<string?> ResumeAsync(SessionRow row, string text, CancellationToken cancellationToken)
     {
         if (!Directory.Exists(row.Cwd))
         {
@@ -606,6 +698,14 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
                 await delivery.StopAsync(row.SessionId, cancellationToken);
                 await EndWatchersAsync(row, captured);
             }
+            // The pid is read from a listing taken after the stop, not the last poll's: that one may have ended and been reused,
+            // and a wait on it would take another process for the session. Only a background row reaches here (Choose resumes no other kind).
+            if (WaitGone is { } waitGone && await tracker.PidNowAsync(row, cancellationToken) is { } oldPid && !await waitGone(oldPid, GoneWait, cancellationToken))
+            {
+                await log.WriteLineAsync($"{row.Name} ({row.Id}): process {oldPid} still runs after its stop; not resumed, the words go to it");
+                await log.FlushAsync(CancellationToken.None);
+                return null;
+            }
             var listedName = tracker.ListedName(row);
             // The options the node started the session with: by its ids (a compaction's continuation keeps the row's id and
             // earlier ids) and else by its name, which a compaction keeps too.
@@ -614,8 +714,15 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
             // and so is one whose flags on file lost the name or model it was started with (a copy an earlier resume made).
             var onFile = tracker.Profile.HasRespawnFlags(row.SessionId) && !tracker.IsMismatched(row.Id)
                 && (recorded is null || tracker.Profile.RespawnFlagsCover(row.SessionId, recorded.Arguments));
-            var resumed = await delivery.ResumeAsync(new ResumeRequest(row.SessionId, listedName, row.Cwd, text, RemoteControl: row.RemoteControlUrl is not null,
+            // The recorded name (--name at the start) wins over the listed one, which Claude Code retitles.
+            var named = recorded?.Name ?? listedName;
+            var resumed = await delivery.ResumeAsync(new ResumeRequest(row.SessionId, named, row.Cwd, text, RemoteControl: row.RemoteControlUrl is not null,
                 StartOptions: recorded?.Arguments, OptionsOnFile: onFile), cancellationToken);
+            if (tracker.IsMismatched(row.Id))
+            {
+                await log.WriteLineAsync($"{row.Name} ({row.Id}): resumed as a copy on its recorded options under the name {named}, after the old process was seen gone");
+                await log.FlushAsync(CancellationToken.None);
+            }
             tracker.CompleteResume(row.Id, resumed);
             return resumed;
         }

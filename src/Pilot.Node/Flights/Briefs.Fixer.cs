@@ -70,6 +70,8 @@ public static partial class Briefs
             text.AppendLine();
             text.AppendLine("### Answer");
             text.AppendLine(answer);
+            text.AppendLine();
+            text.AppendLine("If the answer asks for no change to the code (close it or the PR, it is superseded by #N, drop it, leave it as it is, keep main as it is), push nothing and say \"no change: the answer is <answer>\" in your PR comment; the node raises the card for the owner, since a fixer may not close a PR.");
         }
         text.AppendLine();
         text.AppendLine("Make each change asked for, in the tree as it stands: check a finding against the code before you act on it, and if");
@@ -106,7 +108,8 @@ public static partial class Briefs
         text.AppendLine($"- Comment on the PR once (`gh pr comment {review.Number} -R {review.Repo}`) with each finding and what you did about it.");
         text.AppendLine("- Commit with messages that say what changed and why. Open no PR and merge nothing.");
         text.AppendLine("- If GitHub refuses a push because the PR has merged (or is in a merge queue and is merging), the node follows up a merged PR's commits: commit, say so, and end your turn. Do not dequeue the PR or open a new one yourself.");
-        text.AppendLine("- End your turn once the push and the comment are done.");
+        text.AppendLine("- End your turn once the push and the comment are done. A turn never ends with work uncommitted or unpushed unless your PR comment says what stopped it.");
+        text.AppendLine("- Ending a turn on a `pilot run` job is fine: the job's end wakes you.");
         return text.ToString();
     }
 }

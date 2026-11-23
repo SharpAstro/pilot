@@ -22,7 +22,7 @@ public sealed class SendTimingTests : IDisposable
     private readonly TempProfile _profile = new TempProfile();
     private readonly FakeClaudeAgents _agents = new FakeClaudeAgents();
     private readonly NodeState _state = new NodeState(new InMemoryJournal(), TimeProvider.System);
-    private readonly StringWriter _log = new StringWriter();
+    private readonly SynchronizedLog _log = new SynchronizedLog();
     private readonly SessionTracker _tracker;
     private readonly FakeSessionDelivery _delivery;
 

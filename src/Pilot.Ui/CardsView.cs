@@ -27,14 +27,7 @@ internal sealed record HeldNode(NodeMark Node, DateTimeOffset Since, int Rings, 
     internal const int LineFits = 84;
 
     /// <summary>When it went down in the reader's own time: the clock alone today, with the day before it on another.</summary>
-    public string When
-    {
-        get
-        {
-            var at = Since.ToLocalTime();
-            return at.Date == Now.ToLocalTime().Date ? at.ToString("HH:mm", System.Globalization.CultureInfo.InvariantCulture) : at.ToString("ddd d MMM HH:mm", System.Globalization.CultureInfo.InvariantCulture);
-        }
-    }
+    public string When => LocalWhen.Of(Since, Now);
 
     /// <summary>What it held, <c>3 ringing, 2 for you held</c>; empty when it held nothing.</summary>
     public string Counts
@@ -1476,7 +1469,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
 
     /// <summary>
     /// A button in a page's header row: a pill as tall as the header's ? and +, its word centred in it, so every button on
-    /// the row shares one height and one middle (SE1, 2026-10-25: Sync, All repos and the others each stood their own height).
+    /// the row shares one height and one middle (SE1, 2026-10-25: Sync, All repos and Autopilot each stood their own height).
     /// </summary>
     internal static Layout.Node HeaderPill(string label, string action, Action onClick, (RGBAColor32 Bg, RGBAColor32 Hover)? tint = null, RGBAColor32? textColor = null) =>
         HeaderPill(label, action, _ => onClick(), tint, textColor);

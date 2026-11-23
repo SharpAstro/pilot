@@ -972,6 +972,21 @@ if (feed is not null && client is not null && clients is not null)
             return refused;
         }, $"take {role}-range from {node.Where}");
     }
+    // The header's Autopilot switch: this window's node, set as the person (only the person may; the node refuses anyone else).
+    // The switch follows the node's own answer on the next look, never the click, so a refusal leaves it as it was. On a remote node
+    // it shows the state and does not click: the node keeps autopilot "for this machine only", as the Settings page is gated.
+    if (remoteEndpoint is null)
+    {
+        chrome.Autopilot.OnToggle = on => Tracked(async () =>
+        {
+            var (refused, said) = await AutopilotCommands.TrySetAsync(client, on, GuiSay.Who, cts.Token);
+            view.SayStatus = said;
+            Note($"pilot-gui: {said}");
+            loop.RequestRedraw();
+            return refused;
+        }, $"autopilot {(on ? "on" : "off")}");
+        chrome.Autopilot.Changed = loop.RequestRedraw;
+    }
     // The Settings page: this machine's node only, as its route is (a node on the LAN keeps its settings to itself).
     if (remoteEndpoint is null)
     {
@@ -1109,7 +1124,7 @@ if (feed is not null)
                 var shownPage = (PilotPage)Volatile.Read(ref pagesWanted);
                 if (!asked && !moved && shownPage == PilotPage.Home && Volatile.Read(ref latest) is { } last && last.Item1.Cards.Merged.Count == 0
                     && frameWatch.Drawn(ask, FrameWatch.Fingerprint(last.Item1, last.Item2, now, shownPage, version,
-                        FrameWatch.Header(chrome.Home.Maintenance, feed.NewerInstalled, chrome.Nodes, FrameWatch.Light(chrome.About, Volatile.Read(ref lightShown))))))
+                        FrameWatch.Header(chrome.Home.Maintenance, chrome.Autopilot.On, feed.NewerInstalled, chrome.Nodes, FrameWatch.Light(chrome.About, Volatile.Read(ref lightShown))))))
                 {
                     continue;
                 }
@@ -1120,12 +1135,14 @@ if (feed is not null)
                 var fleetScreen = fleetWatch.Screen(nodeWhere, hereSummary, CanCommand, Volatile.Read(ref held).Entries, now);
                 // This window's node in maintenance: Home and Flights say so (a plain flag, read by the render thread).
                 chrome.Home.Maintenance = chrome.Flights.Maintenance = hereSummary is { Connected: true, Node.Maintenance: true };
+                // And its autopilot, in every header's switch.
+                chrome.Autopilot.On = hereSummary is { Connected: true, Node.Autopilot: true };
                 // The once-a-second look finds nothing new on an idle page, and a node event often changes nothing on the shown
                 // one: what was built reads as what is drawn, so no frame is asked. A row's own "ago" turning over shows as
                 // different text.
                 var made = Tuple.Create(pages, fleetScreen);
                 Volatile.Write(ref latest, made);
-                var header = FrameWatch.Header(chrome.Home.Maintenance, feed.NewerInstalled, chrome.Nodes, FrameWatch.Light(chrome.About, Volatile.Read(ref lightShown)));
+                var header = FrameWatch.Header(chrome.Home.Maintenance, chrome.Autopilot.On, feed.NewerInstalled, chrome.Nodes, FrameWatch.Light(chrome.About, Volatile.Read(ref lightShown)));
                 var worth = frameWatch.WorthAFrame(ask, FrameWatch.Fingerprint(pages, fleetScreen, now, (PilotPage)Volatile.Read(ref pagesWanted), version, header,
                     FrameWatch.LanLine(chrome.Flights.Lan, now)));
                 frameWatch.Built(System.Diagnostics.Stopwatch.GetElapsedTime(buildStarted));

@@ -227,7 +227,7 @@ public static partial class NodeApp
     {
         builder.Services.AddSingleton(services =>
         {
-            var flights = ActivatorUtilities.CreateInstance<FlightCommander>(services);
+            var flights = WithWakes(ActivatorUtilities.CreateInstance<FlightCommander>(services), services);
             flights.Models = services.GetRequiredService<RoleModels>();
             flights.Machine = options.Machine;
             flights.Attachments = services.GetRequiredService<Attachments>();
@@ -423,7 +423,7 @@ public static partial class NodeApp
     {
         builder.Services.AddSingleton(services =>
         {
-            var reviews = ActivatorUtilities.CreateInstance<PrReviews>(services);
+            var reviews = WithFixerResume(ActivatorUtilities.CreateInstance<PrReviews>(services), services);
             reviews.Models = services.GetRequiredService<RoleModels>();
             reviews.Slots = services.GetRequiredService<AdmissionGate>();
             reviews.Error = logWriter;
@@ -515,7 +515,7 @@ public static partial class NodeApp
                 Transcripts = services.GetRequiredService<TranscriptBook>(),
                 // The watchtower is one long-lived claude -p stream-json process the node owns (PIL855).
                 Streams = new ClaudeStreamProcessLauncher(),
-                Ledger = services.GetRequiredService<SessionLedger>(),
+                Ledger = services.GetRequiredService<SessionLedger>(), Wakes = services.GetRequiredService<AutopilotWakes>(),
                 Prepare = start => services.GetRequiredService<ClaudeWorkerLauncher>().WithMcp(start),
             };
         });
@@ -616,7 +616,7 @@ public static partial class NodeApp
                 var watchtower = services.GetRequiredService<Watchtower>();
                 return new NodeRowPublisher(state, () => new NodeRow
                 {
-                    Maintenance = models.Maintenance,
+                    Maintenance = models.Maintenance, Autopilot = models.Autopilot,
                     AcceptsFleetFlights = models.AcceptsFleetFlights,
                     Account = state.Usage()?.Account,
                     CanRunGui = services.GetRequiredService<JobRunner>().GuiWhy() is null,
@@ -753,6 +753,8 @@ public static partial class NodeApp
         builder.Services.AddSingleton(services => new Digest(services.GetRequiredService<NodeState>(), services.GetRequiredService<TimeProvider>())
         {
             Bounds = () => services.GetRequiredService<RoleModels>().Stale,
+            Autopilot = () => services.GetRequiredService<RoleModels>().Autopilot,
+            Ledger = services.GetRequiredService<SpendLedger>(),
         });
         builder.Services.AddHostedService(services => services.GetRequiredService<Digest>());
         // The follow-up backlog's counts per repo, and the ring for an issue with no flight after a day (pilot #1226).
@@ -825,24 +827,7 @@ public static partial class NodeApp
         // The relay's throwaway session runs in a folder of the node's own, as v1's runs in its state folder.
         builder.Services.AddSingleton<ISessionDelivery>(services => new ClaudeCliDelivery(
             services.GetRequiredService<IClaudeAgents>(), relayFolder, services.GetRequiredService<SessionTrackerOptions>().Profile) { RosterFile = SessionRoster.FileIn(options.DataFolder) });
-        builder.Services.AddSingleton(services => new SessionMessenger(
-            services.GetRequiredService<NodeState>(),
-            services.GetRequiredService<SessionTracker>(),
-            services.GetRequiredService<ISessionDelivery>(),
-            logWriter,
-            services.GetRequiredService<StartOptionsBook>(),
-            services.GetRequiredService<SessionLedger>())
-        {
-            Outage = services.GetRequiredService<TurnOutage>(),
-            Clock = services.GetRequiredService<TimeProvider>(),
-            // Ending a session cancels the jobs it owns.
-            CancelJobs = (owners, who) => services.GetRequiredService<JobRunner>().CancelOwnedBy(owners, who),
-            Sends = services.GetRequiredService<SendLog>(),
-            Timings = services.GetRequiredService<SendTimings>(),
-            Removal = services.GetRequiredService<ClaudeJobRemoval>(),
-            Watchers = new SessionWatchers(OsProcessTable.Instance),
-            Streams = () => services.GetRequiredService<Watchtower>(),
-        });
+        AddSessionMessenger(builder, logWriter);
     }
 
     /// <summary>The relay's throwaway session runs in this folder of the node's own, as v1's runs in its state folder.</summary>

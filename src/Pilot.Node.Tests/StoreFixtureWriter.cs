@@ -114,6 +114,8 @@ public static class StoreFixtureWriter
         state.PutSession(first with { Id = "fffffff0", SessionId = "fffffff0-0000-4000-8000-000000000000", Name = "a session the journal adds" });
         state.PutSession(first with { SpendWeighted = first.SpendWeighted + 1000 });
         state.RemoveSession(sample.Sessions[^1].Id);
+        // An investigator (PIL1285, store contract 13): a role an older node cannot read.
+        state.PutSession(first with { Id = "fffffff1", SessionId = "fffffff1-0000-4000-8000-000000000000", Name = "de1-investigate-pil1", Role = SessionRole.Investigator, Flight = null, Leg = null });
 
         // A command result and a note, and a decision.
         state.Execute(Note("a note in the journal"));

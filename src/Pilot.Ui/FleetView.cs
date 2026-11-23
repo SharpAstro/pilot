@@ -41,6 +41,9 @@ internal sealed record NodeSummary
     /// <summary>Flights on the owner's hold, counted in no other column (<see cref="FlightCounts"/>).</summary>
     public int OnHold { get; init; }
 
+    /// <summary>Flights waiting for admission, counted in no other column (<see cref="FlightCounts"/>).</summary>
+    public int Queued { get; init; }
+
     public int JobsRunning { get; init; }
 
     public int JobsQueued { get; init; }
@@ -80,7 +83,7 @@ internal sealed record FleetLine
     /// <summary>Whether it never said hello: not connected and no <see cref="NodeInfo"/> ever received.</summary>
     public bool NeverReached { get; init; }
 
-    /// <summary>Whether the node was heard and cannot be reached now: its counts, account, usage and maintenance are its last words, drawn dimmed and dated by <see cref="LastHeard"/>.</summary>
+    /// <summary>Whether the node was heard and cannot be reached now: its counts, account, usage, autopilot and maintenance are its last words, drawn dimmed and dated by <see cref="LastHeard"/>.</summary>
     public bool LastKnown { get; init; }
 
     /// <summary>When a <see cref="LastKnown"/> node went quiet (its last word, in this machine's time); null for any other row.</summary>
@@ -106,6 +109,12 @@ internal sealed record FleetLine
 
     /// <summary>Whether the row offers Maintenance on / off: a node this user may command (this window's, or a granted one) and that answers now.</summary>
     public bool CanSetMaintenance => CanCommand && Connected;
+
+    /// <summary>Whether the node says its autopilot is on (its <see cref="NodeInfo.Autopilot"/>). For a <see cref="LastKnown"/> node it is the last word; false for one never reached.</summary>
+    public bool Autopilot { get; init; }
+
+    /// <summary>What the row says of the autopilot, <c>autopilot on</c> or <c>autopilot off</c>; for a <see cref="LastKnown"/> node its last word; null for one never reached.</summary>
+    public string? AutopilotWord => Connected || LastKnown ? (Autopilot ? "autopilot on" : "autopilot off") : null;
 
     /// <summary>The mark a node in maintenance wears on its row.</summary>
     public const string MaintenanceMark = MaintenanceIcon + " " + MaintenanceWord;
@@ -186,7 +195,7 @@ internal sealed record FleetLine
     public string[] StateLines => LastKnown && State.IndexOf(" (", StringComparison.Ordinal) is > 0 and var cut ? [State[..cut], State[(cut + 1)..]] : [State];
 
     public string ToDumpLine() => string.Join(" | ", Machine, Where + (Here ? " (this window)" : ""), State, Account, Usage.Length == 0 ? "-" : Usage, Sessions, Flights, Jobs,
-        Rings == 0 ? "no rings" : $"{Rings} ringing", CanCommand ? "can command" : ConnectAgain ?? "watch only") + (Maintenance ? " | " + MaintenanceMark + (AsOf is { } asOf ? " " + asOf : "") : "")
+        Rings == 0 ? "no rings" : $"{Rings} ringing", CanCommand ? "can command" : ConnectAgain ?? "watch only") + (AutopilotWord is { } autopilot ? " | " + autopilot : "") + (Maintenance ? " | " + MaintenanceMark + (AsOf is { } asOf ? " " + asOf : "") : "")
         + (JobHolder is { } holder ? " | " + holder : "")
         + (JobFailing is { } failing ? " | " + failing : "")
         + (Watchtower is { } watchtower ? " | " + watchtower : "") + (WatchtowerMark is { } mark ? " | " + mark : "")
@@ -222,6 +231,7 @@ internal sealed record FleetLine
             NeverReached = !summary.Connected && summary.Node is null,
             Held = canCommand && !here,
             Maintenance = (summary.Connected || lastKnown) && summary.Node is { Maintenance: true },
+            Autopilot = (summary.Connected || lastKnown) && summary.Node is { Autopilot: true },
             Watchtower = !summary.Connected ? Pilot.Commands.WatchtowerWords.NotReached : Pilot.Commands.WatchtowerWords.Line(health, now ?? DateTimeOffset.UtcNow),
             WatchtowerChurning = health is { Churning: true },
             WatchtowerStarts = health?.StartsLast24h ?? 0,
@@ -234,7 +244,7 @@ internal sealed record FleetLine
             // A node heard and quiet keeps its last words (dimmed, dated); one never heard has none, and its dashes say so.
             Sessions = !summary.Connected && !lastKnown ? "—" : summary.WaitingOnYou > 0 ? $"{summary.LiveSessions} live · {summary.WaitingOnYou} waiting on you" : $"{summary.LiveSessions} live",
             WaitingOnYou = summary.Connected ? summary.WaitingOnYou : 0,
-            Flights = !summary.Connected && !lastKnown ? "—" : Counted("none in the air", (summary.Flying, "flying"), (summary.Held, "held"), (summary.OnHold, "on hold")) + (summary.LegWait is { } wait ? $" · {wait}" : ""),
+            Flights = !summary.Connected && !lastKnown ? "—" : Counted("none in the air", (summary.Flying, "flying"), (summary.Queued, "queued"), (summary.Held, "held"), (summary.OnHold, "on hold")) + (summary.LegWait is { } wait ? $" · {wait}" : ""),
             Jobs = !summary.Connected && !lastKnown ? "—" : Counted("none", (summary.JobsRunning, "running"), (summary.JobsQueued, "queued")),
             JobHolder = summary.Connected || lastKnown ? summary.JobHolder : null,
             JobFailing = summary.Connected || lastKnown ? summary.JobFailing : null,
@@ -586,6 +596,8 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     /// <summary>The header's ? card: which pilot this is and where its things are.</summary>
     public AboutCard? About { get; set; }
 
+    /// <summary>The header's Autopilot switch, the same on every page.</summary>
+    public AutopilotSwitch? Autopilot { get; set; }
     
     /// <summary>The header's Night switch, the same on every page.</summary>
     public NightSwitch? Night { get; set; }
@@ -672,7 +684,7 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         {
             Counts = screen.Summary,
             Source = Said ?? "every node heard on the LAN or granted to you, each on its own account · watching needs no grant, commanding one does",
-        }, new TopBarParts(Nodes, null, About, Night));
+        }, new TopBarParts(Nodes, null, Autopilot, About, Night));
 
     private Layout.Node Main(FleetScreen screen)
     {
@@ -827,12 +839,13 @@ internal sealed class FleetView<TSurface>(Renderer<TSurface> renderer) : PilotWi
                 line.GhShort is { } ghShort ? Layout.Builder.Text(ghShort, 11f, Dim).Selectable().Whole(line.GhCalls!).RowH(16f) : Layout.Builder.Text("", 11f, Dim).RowH(0f)),
             Layout.Builder.VStack(
                 Layout.Builder.Text(line.Account, 13f, line.LastKnown ? Dim : Body).Selectable().Whole(line.Account).RowH(22f),
-                line.Maintenance || line.WatchtowerMark is not null
+                line.Maintenance || line.AutopilotWord is not null || line.WatchtowerMark is not null
                     ? Layout.Builder.HStack([
                             .. (line.Maintenance ? [Layout.Builder.HStack(
                                 Layout.Builder.Text(Palette.Glyph(FleetLine.MaintenanceIcon, "!"), 11f, Ringing).Selectable().WFixed(MarkIconWidth),
                                 Layout.Builder.Text(FleetLine.MaintenanceWord + (line.AsOf is { } asOf ? " " + asOf : ""), 11f, Ringing).Selectable().WAuto()).WAuto()] : (Layout.Node[])[]),
                             .. (line.WatchtowerMark is { } towerMark ? [Layout.Builder.Text(towerMark, 11f, Ringing).Selectable().WAuto()] : (Layout.Node[])[]),
+                            .. (line.AutopilotWord is { } autopilot ? [Layout.Builder.Text(autopilot, 11f, line.Autopilot && !line.LastKnown ? Live : Dim).Selectable().WAuto()] : (Layout.Node[])[]),
                             Layout.Builder.Text(line.Connected ? line.Usage : "", 11f, Dim).Selectable().WStar()]).WithGap(MarkGap).RowH(18f)
                     : Layout.Builder.Text(line.Connected ? line.Usage : "", 11f, Dim).Selectable().RowH(18f),
                 // An unreachable node's last known usage and its status (when last heard, why) each have a line of their own, so they read in full.

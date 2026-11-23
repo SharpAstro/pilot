@@ -33,6 +33,7 @@ internal static class CardKindCatalog
     private const string LegHoldRelease = "Flights/LegCommander.HoldRelease.cs";
     private const string HumanVerification = "Flights/LegCommander.HumanVerification.cs";
     private const string LegMerge = "Flights/LegCommander.Merge.cs";
+    private const string Quiet = "Flights/LegCommander.QuietWaits.cs";
     private const string LegQueuedPush = "Flights/LegCommander.QueuedPush.cs";
     private const string Lay = "Flights/LegCommander.Lay.cs";
     private const string Shape = "Flights/LegCommander.Shape.cs";
@@ -96,7 +97,7 @@ internal static class CardKindCatalog
         new("leg-retired", "Handled", [LegFinish], "FalseRingTests.ALegRetiredOnTheControllersWordEndsRetiredWithNoCardAndNoChoices_c3623"),
         new("leg-no-go", "Ring", [LegStart], "CardSummaryRaiserTests.TheNoGoSummaryNamesTheChoicesTheCardOffers", "the validator's report says the tree is not as the leg's brief assumes", [nameof(Verbs.RemoveLeg), nameof(Verbs.PlanFlight)]),
         new("leg-validating", "Handled", [LegStart], "ValidatorTests.ALaterLegStartsAValidatorOnTheWorkerModelAtLowEffortAndNoWorker"),
-        new("leg-cap", "ForYou", [LegPlan], "PlannedLegCapTests.TheSecondExtraLegRaisesAForYouCardNamingTheFlightAndTheCounts"),
+        new("leg-cap", "ForYou|Handled", [LegPlan], "PlannedLegCapTests.TheSecondExtraLegRaisesAForYouCardNamingTheFlightAndTheCounts"),
         new("leg-ticker-started", "Handled", [LegStart], "LegTickingPassTests.An_ended_worker_with_commits_and_nothing_ticked_gets_a_ticker_that_finishes_the_leg_with_no_ring"),
         new("leg-removed", "Handled", [LegPlan], "LegTests.APlannedLegIsRemovedTheLegsAfterItKeepTheirOrderAndAHandledCardSaysWhy"),
         new("leg-holding", "Handled", ["Flights/LegCommander.Hold.cs"], "LegHoldTests.AWorkerFailingOnAPackageASiblingIsPublishingHoldsItsLegWithNoRingAndItsWorkerStopped"),
@@ -125,13 +126,16 @@ internal static class CardKindCatalog
         new("human-verification", "ForYou", [HumanVerification], "HumanVerificationFilingTests.AFlaggedPassFilesEachItemInTheMilestoneAndRaisesOneCard"),
         new("human-verification-refused", "Handled", [HumanVerification], "HumanVerificationFilingTests.ARefusedGhCallKeepsTheVerdictAndRaisesAHandledCard"),
         new("holding-cleared", "Handled", [LegReviewHold], "HoldingPatternTests.ClearByTheWatchtowerLetsTheNodeMergeIt"),
-        new("pr-ready-restored", "Handled", [LegReview], "PassedWithoutCardTests.AFlightPassedWithNoCardGetsOneAndTheNodeMergesIt"),
+        new("pr-waits-for-legs", "Handled", [Quiet], "MergeFixtureCardTests.AReadyCardOfAFlightWithALegStillToFlyIsAHandledLineAndTheNodeMergesOnceTheLegLands"),
+        new("merge-armed-by-node", "Handled", [Quiet], "MergeArmTests.ANodeArmedMergeWaitingOnItsChecksIsAHandledLineAndFailingChecksRaiseTheCard"),
+        new("pr-ready-restored", "Handled", [Quiet], "PassedWithoutCardTests.AFlightPassedWithNoCardGetsOneAndTheNodeMergesIt"),
         new("holding-timeout", "Ring", [Checks], "HoldingPatternTests.PastTheBoundTheTimeoutCardRingsAndMergeAsItIsMerges", "the flight's holding pattern on its row is past its timeout and its PR is still open on GitHub", [nameof(Verbs.Merge), nameof(Verbs.Land)]),
         new("owner-decision", "ForYou", ["Flights/LegCommander.FollowUp.cs", "Flights/PrReviews.FollowUp.cs"], "DeferredPointTests.AnOwnerDecisionPointRaisesACardWithTheQuestionAndCreatesNoIssue"),
         new("review-notes-cap", "Ring", [LegReview], "ReviewNotesCapTests.APassWithNotesPastTheCapRingsTheOwnerAndPlansNoLeg", "the flight's re-reviews raised new notes after each of its review-notes legs, up to the cap, so the node plans no more", [nameof(Verbs.Clear), nameof(Verbs.Dismiss)]),
         new("notes-unmade", "Ring", [LegReviewHold], "NotesUnmadeTests.ANodeThatDoesNotAdvanceRingsTheOwnerAtOnceAndKeepsTheHold", "the flight's passed review left notes with no end (read from its rounds and the review-notes legs' reports), and the node could plan no review-notes leg (or has none left under the cap)", [nameof(Verbs.Clear), nameof(Verbs.Dismiss)]),
         new("review-loop", "Ring", [LegReview], "ReviewLoopTests.TheThirdRoundWithChangesRaisesAWatchtowerCardWithEachRoundsFindings", "the review's stored rounds show a third answer still asking for changes, and passing it over the findings is an override that is the person's", [nameof(Verbs.Review), nameof(Verbs.AllowRound)]),
         new("stray-session", "Ring", ["Flights/LegWatch.cs"], "WindDownTests.TheSweepRingsOnceForALiveSessionOfALandedFlightAndOnceForOneTheLedgerDoesNotKnow", "a live session's flight has landed (read from the flight row), or the session ledger does not know it", [nameof(Verbs.Stop)]),
+        new("duplicate-worker-ended", "Handled", ["Flights/LegWatch.cs"], "StraySessionTests.AWorkerThatIsNotTheLegsCurrentOneIsEndedByTheNodeWithNoRing"),
 
         // Flights: landing, moving, PRs.
         new("review-fix-round", "Handled", ["Flights/LegCommander.ReviewChanges.cs"], "NodeFixRoundTests.AChangesVerdictSendsTheLastLegRoundAsTheNodeWithTheFindingsAsItsBrief"),
@@ -141,7 +145,7 @@ internal static class CardKindCatalog
         new("rebase-only", "Handled", ["Flights/LegCommander.RebaseOnly.cs"], "RebaseBlockedTests.WithALegFlyingNothingIsPushedAndTheFlightAndAHandledCardSayItLandsSquashedUntilTheLegEndsThenItReshapes"),
         new("lay-failed", "ForYou", [Shape], "RebaseLayFlightTests.AMergeThatIsNotCleanPushesNothingAndRingsOnce"),
         new("drop-unexplained", "Handled|Ring", [Lay], "RebaseLayFlightTests.ADroppedPrWhoseCauseIsNotFoundRingsOnceAndIsNeverQueuedAgain", "a PR the base dropped has no cause the node can find on GitHub", [nameof(Verbs.Merge)]),
-        new("pr-ready", "Ring", [LegReview, Lay], "PrFlightReviewTests.AnApproveAtTheFlightsHeadPassesItsReviewAndMarksItsPrReady", "the PR's state on GitHub is open, the review passed at its current head, and its checks are read", [nameof(Verbs.Merge)]),
+        new("pr-ready", "Ring", [LegReview, Lay, LegMerge], "PrFlightReviewTests.AnApproveAtTheFlightsHeadPassesItsReviewAndMarksItsPrReady", "the PR's state on GitHub is open, the review passed at its current head, and its checks are read", [nameof(Verbs.Merge)]),
         new("pr-checks-failed", "Ring", [Checks, Recheck], "NodeCardTests.ThePrCheckAndConflictSummariesNoLongerSendSomeoneToTheFlightPage", "the PR's checks on GitHub failed at its current head", [nameof(Verbs.FixPr), nameof(Verbs.Merge)]),
         new("outside-review-unavailable", "Handled", ["Flights/LegCommander.OutsideReview.cs"], "NoModelReviewTests.TheCardKindIsPinnedAsAHandledCardTitledWithTheFlightTheCheckAndTheResetTime"),
         new("merge-taken-back", "Handled", [LegMerge, LegQueuedPush], "MergeTakeBackTests.PlanLegOnAQueuedMergeDequeuesAndTheCardSaysSo"),
@@ -243,6 +247,12 @@ internal static class CardKindCatalog
         new("persons-word", "Handled", ["NodeCommands.cs"], "PersonsWordTests.AFailedLegIsMarkedDoneAnywayAtThePersonsWord"),
         new("assistant-ask", "ForYou", ["Autopilot.cs"], "AutopilotTests.ANoAutoMergeReposAssistantsMergeRaisesAForYouConfirmCardAndDoesNotMerge"),
         new("autopilot-ran", "Handled", ["Autopilot.cs", Checks, "Flights/NodePress.cs"], "AutopilotTests.TheSameMergeGoesThroughRecordedWithTheSessionAndMessageAndAHandledCardSaysIt"),
+        new("autopilot-repeat", "Handled", ["Flights/RepeatDetector.cs"], "RepeatDetectorTests.TheSecondCardOfAKindOnTheSameSubjectOpensOneHandledTaskNamingBothWithTheirEvidence"),
+        new("investigation", "Handled", ["Flights/Investigator.cs"], "InvestigatorTests.AnActionOutcomeIsAHandledLineAndADecisionByTheInvestigatorAndEndsTheSession"),
+        new("investigation-start", "Handled", ["Flights/Investigator.cs"], "InvestigatorTests.AStartedRunLeavesAHandledLineThatASecondNodeReadsBack"),
+        new("investigation-join", "Handled", ["Flights/Investigator.cs"], "InvestigatorTests.AStartedRunLeavesAHandledLineThatASecondNodeReadsBack"),
+        new("investigator-ring", "Ring", ["Flights/Investigator.cs"], "InvestigatorTests.ARingOutcomeOnASubjectWithNoHeldCardRaisesOneRingSayingWhatWasTried", "an investigator run the node started on the subject reported the ring outcome, naming what was tried and what is needed", [nameof(Verbs.Tell)]),
+        new("investigator-bound", "Ring", ["Flights/Investigator.cs"], "InvestigatorTests.PastThePerDayBoundATriggerWithNoCardRingsOneBoundCard", "the node started the autopilot-investigations number of runs this local day and another trigger came", [nameof(Verbs.Set)]),
         new("grant-asked", "Ring", ["NodeLan.cs"], "NodeCardTests.AGrantAskIsARingCardWhoseChoicesSaySoInPlainWords", "the asking node's grant is not yet answered in the node's grants", [nameof(Verbs.AnswerGrant)]),
         new("update", "Ring|ForYou|Handled", ["Updates/NodeUpdater.cs", "Updates/UpdateRollback.cs"], "UpdateTests.AskRaisesACardWithUpdateOnce", "the published version is newer than the running node's, or the update record says the new version did not start twice and the node went back", [nameof(Verbs.Update), nameof(Verbs.NoteIdea)]),
         new("restart", "Handled", ["NodeSettingsCommands.cs"], "NodeRestartTests.ARestartStartsTheSuccessorStopsTheNodeAndLogsAHandledLineNamingTheCaller"),

@@ -12,7 +12,7 @@ internal static class StatusMarkdown
 {
     private static readonly string[] ImageExtensions = [".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp"];
 
-    internal static string Build(SnapshotEvent snapshot, bool maintenance = false, bool all = false, IReadOnlyDictionary<string, string>? copies = null, IReadOnlyCollection<SendTimingRow>? sendTimings = null, IReadOnlyCollection<CommandTimingRow>? commandTimings = null, NodeHeapRow? heap = null, string? reboot = null, string? thisNode = null, string? code = null, DateTimeOffset? now = null, TimeZoneInfo? zone = null, string? ghCalls = null)
+    internal static string Build(SnapshotEvent snapshot, bool maintenance = false, bool? autopilot = null, bool all = false, IReadOnlyDictionary<string, string>? copies = null, IReadOnlyCollection<SendTimingRow>? sendTimings = null, IReadOnlyCollection<CommandTimingRow>? commandTimings = null, NodeHeapRow? heap = null, string? reboot = null, string? thisNode = null, string? code = null, DateTimeOffset? now = null, TimeZoneInfo? zone = null, string? ghCalls = null)
     {
         var text = new StringBuilder();
         text.AppendLine("# pilot status").AppendLine();
@@ -24,6 +24,12 @@ internal static class StatusMarkdown
         if (reboot is { Length: > 0 })
         {
             facts.Add($"**reboot** {reboot} (`pilot node reboot status`)");
+        }
+        if (autopilot is { } piloting)
+        {
+            facts.Add(piloting
+                ? "**autopilot** on: the watchtower runs with a standing goal (only the person changes it: `pilot settings set autopilot off`)"
+                : "**autopilot** off (only the person changes it: `pilot settings set autopilot on`)");
         }
         if (sendTimings is not null)
         {
@@ -106,7 +112,7 @@ internal static class StatusMarkdown
             {
                 FlightState.Held => $"held, waiting for {FlightWaiting.For(flight)}",
                 FlightState.Landed => flight.MovedTo?.Text ?? "landed",
-                _ => FlightWaiting.HoldingText(flight) is { } holding ? $"flying, {holding}" : "flying",
+                _ => FlightPhases.Of(flight, snapshot.Legs) == FlightPhase.Queued && FlightPhases.QueuedWhy(flight, snapshot.Legs) is { } why ? $"queued: {why}" : FlightWaiting.HoldingText(flight) is { } holding ? $"flying, {holding}" : "flying",
             };
             text.AppendLine($"### {flight.Code} · {Text(flight.Title ?? flight.Item.Noun)}").AppendLine();
             var issue = $"{flight.Repo} {flight.Item.Display}";

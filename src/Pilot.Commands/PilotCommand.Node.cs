@@ -32,12 +32,12 @@ public static partial class PilotCommand
                 (p, client, ct) => Send(client, Verbs.Update, Verbs.NodeTarget,
                     [p.GetValue(updateCheck) ? "check" : "install", .. p.GetValue(updateAdopt) ? new[] { "--adopt" } : []], who, ct, p.GetValue(actingOn)));
             // node restart: the node starts its successor and stops, as for a setting or an update, so a session never kills the process.
-            var nodeRestartWhy = Words("why", "Why, for its Handled line", required: false);
+            var nodeRestartWhy = Words("reason", "Why, for its Handled line", required: false);
             var nodeRestart = Action(new Command("restart", "Restart the node in place: its flights, sessions and jobs carry on (jobs are not waited for; the answer says how many)")
                 { Arguments = { nodeRestartWhy }, Options = { actingOn } },
                 (p, client, ct) => Send(client, Verbs.RestartNode, Verbs.NodeTarget, p.GetValue(nodeRestartWhy) ?? [], who, ct, p.GetValue(actingOn)));
             // node reboot: the machine made ready to reboot (#916), never rebooted by the node itself.
-            var rebootWhy = Words("why", "Why, for its Handled line", required: false);
+            var rebootWhy = Words("reason", "Why, for its Handled line", required: false);
             var rebootRequest = Action(new Command("request", "Make the machine ready to reboot: maintenance mode, and every live session told to commit, push and write its state to a file; the node collects them and says when it can reboot")
                 { Arguments = { rebootWhy }, Options = { actingOn } },
                 (p, client, ct) => Send(client, Verbs.Reboot, Verbs.NodeTarget, ["request", .. p.GetValue(rebootWhy) ?? []], who, ct, p.GetValue(actingOn)));
@@ -72,7 +72,7 @@ public static partial class PilotCommand
                     return Send(client, Verbs.Maintenance, Verbs.NodeTarget, [.. flags], who, ct, p.GetValue(actingOn), deadline: MaintenanceDeadline);
                 });
             // node lift-limit: a usage limit that is another login's (#1123). The card has the same choice; this is for a card marked read.
-            var liftWhy = Words("why", "Why the limit does not hold, for the record", required: false);
+            var liftWhy = Words("reason", "Why the limit does not hold, for the record", required: false);
             var liftLimit = Action(new Command("lift-limit", "End the usage limit the node holds its starts for, when the limit is not this login's (you logged in again and sessions take turns): the node starts sessions again, and a limit of a session that began before now no longer counts")
                 { Arguments = { liftWhy }, Options = { actingOn } },
                 (p, client, ct) => Send(client, Verbs.LiftLimit, Verbs.NodeTarget, p.GetValue(liftWhy) ?? [], who, ct, p.GetValue(actingOn)));
@@ -225,8 +225,8 @@ public static partial class PilotCommand
             });
             var settingKey = Arg("setting", "lan, machine, repo-roots, update-channel, update-policy, max-jobs, job-memory or lan-port");
             var settingValue = Words("value", "Its value (every folder, for repo-roots); none, or default, takes it out", required: false);
-            var setFleet = new Option<bool>("--fleet") { Description = "For a role range (worker-range, planner-range, reviewer-range, designer-range, watchtower-range): set the fleet's range, pushed to every node, not only this node's own; written after the value" };
-            var set = Action(new Command("set", "Save a setting; the node restarts to run with it at once, jobs carry on. A role range (worker-range, planner-range, reviewer-range, designer-range, watchtower-range) takes --fleet after the value to set the fleet's layer") { Arguments = { settingKey, settingValue }, Options = { actingOn, setFleet } },
+            var setFleet = new Option<bool>("--fleet") { Description = "For a role range (worker-range, planner-range, reviewer-range, designer-range, investigator-range, watchtower-range): set the fleet's range, pushed to every node, not only this node's own; written after the value" };
+            var set = Action(new Command("set", "Save a setting; the node restarts to run with it at once, jobs carry on. A role range (worker-range, planner-range, reviewer-range, designer-range, investigator-range, watchtower-range) takes --fleet after the value to set the fleet's layer") { Arguments = { settingKey, settingValue }, Options = { actingOn, setFleet } },
                 (p, client, ct) => Send(client, Verbs.Set, Verbs.NodeTarget, [p.GetValue(settingKey)!, .. p.GetValue(settingValue) ?? [], .. p.GetValue(setFleet) ? new[] { "--fleet" } : []], who, ct, p.GetValue(actingOn)));
             var checkKey = Arg("check", "autostart, no-autostart, hooks, merge-guard, claude-permissions, lan, firewall, defender or trust");
             var defenderProcesses = new Option<bool>("--processes") { Description = "With defender: exclude pilot-node, dotnet, MSBuild, VBCSCompiler, testhost, git, git-lfs, git-remote-https and every *Tests*.exe runner built under the repo roots as processes too, not only the folders" };

@@ -27,7 +27,7 @@ public sealed class SessionEndTests : IDisposable
         _ledger = new SessionLedger(SessionLedger.FileIn(_folder), TimeProvider.System);
         _tracker = new SessionTracker(_state, _agents, _profile.Options(), () => false, TimeProvider.System, NullLogger<SessionTracker>.Instance) { Launched = _ledger };
         _delivery = new FakeSessionDelivery(_agents);
-        _messenger = new SessionMessenger(_state, _tracker, _delivery, new StringWriter(), ledger: _ledger)
+        _messenger = new SessionMessenger(_state, _tracker, _delivery, TextWriter.Synchronized(new StringWriter()), ledger: _ledger)
         {
             CancelJobs = (owners, who) =>
             {

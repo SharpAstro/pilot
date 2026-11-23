@@ -369,6 +369,76 @@ public sealed class CiBudgetTests : ReviewTestsBase
         (ended.Waiting, ended.LastEnded).ShouldBe((false, Now.AddHours(-1)));
     }
 
+    private static FlightRow Queueing(string? queued, DateTimeOffset? admitted = null) => new()
+    {
+        Code = "PIL9", Repo = "pilot", RepoPath = "/r", Branch = "flight/PIL9", Title = "t", Issue = 9, Worktree = "/w", Base = "main",
+        State = FlightState.Flying, CreatedAt = Now.AddDays(-2), Queued = queued, AdmittedAt = admitted,
+    };
+
+    [Fact]
+    public void TheRedClockStopsWhileTheFlightIsQueuedAndCountsAgainFromItsAdmission()
+    {
+        // The issue's scenario: red at T, queued for the repo until T+4h, admitted at T+4h; the clock then counts again from the admission.
+        var t = Now;
+        var red = CiBudgets.Count([CiOf(1, 10, "failure", completed: t)], null, t);
+        var queuedWhy = "waiting for the repo: held by PIL1";
+
+        var during = CiBudgets.WaitInQueue(Queueing(queuedWhy), [], red.RedSince);
+        during.Waiting.ShouldBeTrue();
+        CiBudgets.Why(red, 4, t.AddHours(3.5), during).ShouldBeNull();
+
+        var admittedAt = t.AddHours(4);
+        var after = CiBudgets.WaitInQueue(Queueing(null, admittedAt), [], red.RedSince);
+        (after.Waiting, after.LastEnded).ShouldBe((false, admittedAt));
+        CiBudgets.Why(red, 4, admittedAt, after).ShouldBeNull("no cap at the moment it was admitted");
+        CiBudgets.Why(red, 4, admittedAt.AddHours(2.9), after).ShouldBeNull();
+        CiBudgets.Why(red, 4, t.AddHours(7.1), after).ShouldNotBeNull().ShouldContain("red for 3.1 hours");
+    }
+
+    [Fact]
+    public void AQueuedFlightIsStillCappedOnRunnerHoursAndALegFlyingEndsTheQueueWait()
+    {
+        var spent = CiBudgets.Count([CiOf(1, 5 * 60, "failure", completed: Now.AddHours(-30))], null, Now);
+        var wait = CiBudgets.WaitInQueue(Queueing("waiting for an Opus slot"), [], spent.RedSince);
+        CiBudgets.Why(spent, 4, Now, wait).ShouldNotBeNull().ShouldContain("runner-hours");
+
+        var flying = new LegRow { Flight = "PIL9", Name = "a", Order = 1, Goal = "g", DoneWhen = "d", State = LegState.Flying };
+        CiBudgets.WaitInQueue(Queueing("waiting for an Opus slot"), [flying], null).Waiting.ShouldBeFalse();
+    }
+
+    [Fact]
+    public void AnAdmissionBeforeTheRedStreakIsNotAnEndAndCombiningTakesTheLaterEnd()
+    {
+        CiBudgets.WaitInQueue(Queueing(null, Now.AddHours(-9)), [], Now.AddHours(-5)).LastEnded.ShouldBeNull();
+        var combined = CiBudgets.Combine(new CiBudgets.PersonWait(false, Now.AddHours(-2)), new CiBudgets.PersonWait(true, Now.AddHours(-1)));
+        (combined.Waiting, combined.LastEnded).ShouldBe((true, Now.AddHours(-1)));
+        CiBudgets.Combine(default, default).ShouldBe(default);
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AQueuedFlightIsNotCappedForRedAndIsOnlyOnceItHasBeenRedForTheBoundSinceAdmission()
+    {
+        var flight = await NewFlight("71", "parser");
+        await Fly(flight, "parser");
+        await Run(Verbs.OpenPr, Verbs.FlightTarget(flight.Code), "controller");
+        flight = F(flight.Code);
+        var clock = DateTimeOffset.UtcNow;
+        _github.CiRuns[flight.Branch] = [CiOf(1, 20, "failure", completed: clock.AddHours(-30))];
+        _state.UpdateFlight(flight.Code, f => f with { Queued = "waiting for the repo: held by PIL1" });
+
+        await Checks().LookAtCiAsync(Ct);
+        F(flight.Code).Ci!.CappedWhy.ShouldBeNull();
+
+        _state.UpdateFlight(flight.Code, f => f with { Queued = null, AdmittedAt = clock.AddHours(-1) });
+        await Checks().LookAtCiAsync(Ct);
+        F(flight.Code).Ci!.CappedWhy.ShouldBeNull("admitted an hour ago: the clock counts from then");
+
+        _state.UpdateFlight(flight.Code, f => f with { AdmittedAt = clock.AddHours(-4) });
+        await Checks().LookAtCiAsync(Ct);
+        F(flight.Code).Ci!.CappedWhy.ShouldNotBeNull();
+    }
+
     [Fact]
     [Trait("Category", "Slow")]
     public async Task ARedCiDoesNotCapAFlightWhileAReviewLoopCardIsOpenAndCountsFromItsCloseAfter()

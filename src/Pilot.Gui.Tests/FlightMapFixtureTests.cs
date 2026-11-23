@@ -92,9 +92,9 @@ public sealed class FlightMapFixtureTests
 
         destination.Status.ToString().ShouldBe(status);
         destination.PullRequest.ShouldBe(pr);
-        // Every leg of these is done: the plane of an open PR waits on its sign, and the sign still answers its point.
+        // Every leg of these is done: no plane waits on the sign (pilot #1298), and the sign answers its point.
         route.Airports.ShouldAllBe(a => a.State == AirportState.Done);
-        route.PlaneAtDestination.ShouldBe(status != "Merged");
+        route.Plane.ShouldBeNull();
         var hit = map.At(destination.X, destination.Y).ShouldNotBeNull();
         (hit.Kind, hit.Flight, hit.PullRequest).ShouldBe((MapHitKind.Destination, flight, pr));
     }
@@ -145,13 +145,11 @@ public sealed class FlightMapFixtureTests
                 }
             }
         }
-        // A plane's target is its ring's square, and a plane parked on its destination is in the destination's, as wide: the words
+        // A plane's target is its ring's square: the words
         // under its stop and the code over it stay outside it (at 14 it cut them).
         var regions = new List<ClickableRegion>();
         view.CollectPaintedRegions(regions);
-        var parked = view.Map.Routes.Where(r => r.PlaneAtDestination).Select(r => $"map:{r.Flight}:destination").ToHashSet();
-        parked.ShouldNotBeEmpty();
-        var planes = regions.Where(r => r.Result is HitResult.ButtonHit { Action: var a } && (a.StartsWith("map:") && a.EndsWith(":plane") || parked.Contains(a))).ToList();
+        var planes = regions.Where(r => r.Result is HitResult.ButtonHit { Action: var a } && a.StartsWith("map:") && a.EndsWith(":plane")).ToList();
         // Zoomed in far, the planes panned out of the body have no region; the ones in view are checked.
         if (zoom > 1.5f)
         {

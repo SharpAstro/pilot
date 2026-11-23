@@ -85,33 +85,36 @@ public sealed class MergeFixtureCardTests
     [Theory]
     [InlineData("ready")]
     [InlineData("pending")]
-    public async Task AReadyCardOfAFlightWithALegStillToFlyOffersNoMergeAndSaysWhatItWaitsForUntilTheLegLands(string fixture)
+    public async Task AReadyCardOfAFlightWithALegStillToFlyIsAHandledLineAndTheNodeMergesOnceTheLegLands(string fixture)
     {
-        // PIL853: a review-notes leg was planned after the card was raised; the card and the PR row said "ready" with a Merge that
-        // answered "has legs not done: review-notes-2".
-        await using var node = await NodeHarness.StartAsync(Ct);
+        // PIL853, PIL1294: a review-notes leg was planned after the card was raised; its Merge is refused ("has legs not done"), so the
+        // card is no For you card: it closes and a Handled line says what the merge waits for.
+        await using var node = await NodeHarness.StartOnModelAsync(Ct);
         var ready = Ready(node);
         node.State.PutLeg(new LegRow { Flight = "TIA1", Name = "review-notes", Order = 2, Goal = "g", DoneWhen = "d", State = LegState.Flying });
 
         await Look(node, Read(fixture));
 
-        var card = Card(node, ready);
-        card.State.ShouldBe(CardState.Open);
-        // A mark, not a button: Blocked, naming the leg, with the reviewed head kept for the node's own merge and the holding bound.
-        var mark = card.Choices.Single(c => c.Verb == Verbs.Merge);
-        (mark.Status, mark.Note, mark.Args[0]).ShouldBe((ChoiceStatus.WaitsForLegs, "review-notes", PrHead));
-        var legs = node.State.Legs("TIA1");
-        card.Title.ShouldBe($"TIA1's PR #63 merges once review-notes is done (legs {legs.Length - 1}/{legs.Length} done)");
+        Card(node, ready).State.ShouldBe(CardState.Closed);
+        node.State.Cards(openOnly: true).Where(c => c.Bin != CardBin.Handled).ShouldBeEmpty();
+        var line = node.State.Cards().Single(c => c.Kind == "pr-waits-for-legs");
+        (line.Bin, line.State).ShouldBe((CardBin.Handled, CardState.Closed));
+        line.Title.ShouldBe("TIA1's PR #63 merges once review-notes lands");
 
-        // GitHub gives no merge state (UNKNOWN right after a push): the wait stays, the Merge no button (review of #924).
+        // Another look says nothing new: one line per wait, not one per look.
         node.GitHub.Merge = null;
         await node.App.Services.GetRequiredService<PrChecks>().LookAsync(Ct);
-        Card(node, ready).Choices.Single(c => c.Verb == Verbs.Merge).Status.ShouldBe(ChoiceStatus.WaitsForLegs);
+        node.State.Cards().Count(c => c.Kind == "pr-waits-for-legs").ShouldBe(1);
 
-        // The leg lands: the next look offers the Merge again, as GitHub has the PR.
+        // The leg lands: the node's merge anchor is raised again, as GitHub has the PR.
+        node.State.PutFlight(node.State.Flights().Single() with { Review = new ReviewRow { State = ReviewState.Passed, Reviewer = "du1-tia1-review", StartedAt = DateTimeOffset.UtcNow, ReviewedHead = PrHead } });
         node.State.PutLeg(node.State.Legs("TIA1").Single(l => l.Name == "review-notes") with { State = LegState.Done });
         await Look(node, Read(fixture));
-        Card(node, ready).Choices.Single(c => c.Verb == Verbs.Merge).Status.ShouldBe(fixture == "ready" ? ChoiceStatus.Passing : ChoiceStatus.Pending);
+        node.State.Cards().Any(c => c.Kind == LegCommander.PrReady && c.Id != ready.Id).ShouldBeTrue();
+
+        // And the node merges from it: the wait costs the flight nothing but time.
+        await Look(node, Read(fixture));
+        node.State.Merges().ShouldNotBeEmpty();
     }
 
     [Theory]
@@ -217,18 +220,5 @@ public sealed class MergeFixtureCardTests
         (state.Kind, state.Reason).ShouldBe((MergeKinds.Armed, "a review"));
         // Checks still running: GitHub waits for them, which is the armed merge's own line.
         Read("armed").Reason.ShouldBeNull();
-    }
-    [Fact]
-    public void AHeldMergeNamesEachLegNotDoneAndALegWhoseCheckReruns()
-    {
-        // #918: "Merge · waits for review-notes-3 (check rerunning)", in the leg order, the done legs left out.
-        LegRow Leg(string name, int order, LegState state, LegRecheck? recheck = null) =>
-            new() { Flight = "PIL909", Name = name, Order = order, Goal = "g", DoneWhen = "d", State = state, Recheck = recheck };
-        var running = new LegRecheck { Check = "dotnet test", Since = DateTimeOffset.UnixEpoch };
-
-        LegCommander.LegWaitWords([Leg("review-notes-3", 3, LegState.Flying, running), Leg("one", 1, LegState.Done), Leg("review-notes-4", 4, LegState.Planned)])
-            .ShouldBe("review-notes-3 (check rerunning), review-notes-4");
-        LegCommander.LegWaitWords([Leg("review-notes", 2, LegState.Flying, running with { Outcome = "passed" })]).ShouldBe("review-notes", "a rerun that ended is no longer running");
-        LegCommander.LegWaitWords([Leg("one", 1, LegState.Done)]).ShouldBeEmpty();
     }
 }

@@ -50,6 +50,13 @@ public sealed record NodeSettings
     public const string WatchtowerCompactAboveKey = "watchtower-compact-above";
     public const string MaintenanceKey = "maintenance";
     public const string AcceptFleetFlightsKey = "accept-fleet-flights";
+    /// <summary>The autopilot switch (PIL1285): the watchtower runs with a standing goal. The CLI key; the file holds it as <see cref="AutopilotFileMember"/>.</summary>
+    public const string AutopilotKey = "autopilot";
+    /// <summary>
+    /// The member the file stores <see cref="AutopilotKey"/> under. Not "autopilot": before PIL1271 that member was a different switch
+    /// (on unless saved off), and a file still holding it must not turn the watchtower's standing goal on after an update.
+    /// </summary>
+    public const string AutopilotFileMember = "autopilotGoal";
     public const string ReviewDeepFirstKey = "review-deep-first";
     public const string DeleteLandedBranchesKey = "delete-landed-branches";
     public const string UserSkillsKey = "user-skills";
@@ -74,6 +81,15 @@ public sealed record NodeSettings
     /// </summary>
     public const string FlightCiBudgetKey = "flight-ci-budget";
     public const int DefaultFlightCiBudget = 8;
+    /// <summary>The most CI grants the watchtower may give one flight per local day while autopilot is on; the person is not bound by it.</summary>
+    public const string AutopilotCiGrantsKey = "autopilot-ci-grants";
+    public const int DefaultAutopilotCiGrants = 1;
+    /// <summary>Minutes a flight in the air may show no progress before the watchtower is woken for it while autopilot is on.</summary>
+    public const string AutopilotStallMinutesKey = "autopilot-stall-minutes";
+    public const int DefaultAutopilotStallMinutes = 60;
+    /// <summary>The most investigator runs the node starts per local day while autopilot is on; past it the one ring says the bound is reached.</summary>
+    public const string AutopilotInvestigationsKey = "autopilot-investigations";
+    public const int DefaultAutopilotInvestigations = 8;
     /// <summary>Hours a flight's PR may stay red before the node stops pushing for it (PIL795).</summary>
     public const int FlightCiRedHours = 3;
 
@@ -216,7 +232,7 @@ public sealed record NodeSettings
 
     /// <summary>Every key, in the order the Settings page shows them: the node's own, then a range per role.</summary>
     public static IReadOnlyList<string> Keys { get; } =
-        [LanKey, MachineKey, RepoRootsKey, UpdateChannelKey, UpdatePolicyKey, MaxJobsKey, JobsPerRepoKey, GuiSlotsKey, JobMemoryKey, JobPriorityKey, JobPlaneOutputKey, JobBuildCacheKey, LanPortKey, StartLimitKey, PriorityReposKey, PriorityStartLimitKey, WeekLimitKey, WeekPaceKey, SpendAlertKey, WatchtowerCompactShareKey, WatchtowerChatMessagesKey, WatchtowerCompactIdleKey, WatchtowerCompactAboveKey, MergeMethodKey, MaintenanceKey, AcceptFleetFlightsKey, ReviewDeepFirstKey, UserSkillsKey, ShortcutTokenKey, RepoTrackersKey, NoAutoMergeReposKey, OpusCapKey, ReviewLimitKey, OneFlightPerRepoKey, SubTaskReposKey, MergeBatchKey, PrWatchIdleKey, AdoptAfterKey, ArchiveLandedAfterKey, MaintenanceEveryKey, MaintenanceIdleKey, PackageAgeDaysKey, GitPruneDaysKey, MaintenancePruneHoursKey, DeleteLandedBranchesKey, MaxGoAroundsKey, ScratchDaysKey, DesignerKeepKey, DiskAlertGbKey, FlightCiBudgetKey, StaleFlightHoursKey, StalePrHoursKey, StaleRecheckHoursKey, StaleCardHoursKey, StaleHoldsKey, StaleUnreachableHoursKey,
+        [LanKey, MachineKey, RepoRootsKey, UpdateChannelKey, UpdatePolicyKey, MaxJobsKey, JobsPerRepoKey, GuiSlotsKey, JobMemoryKey, JobPriorityKey, JobPlaneOutputKey, JobBuildCacheKey, LanPortKey, StartLimitKey, PriorityReposKey, PriorityStartLimitKey, WeekLimitKey, WeekPaceKey, SpendAlertKey, WatchtowerCompactShareKey, WatchtowerChatMessagesKey, WatchtowerCompactIdleKey, WatchtowerCompactAboveKey, MergeMethodKey, MaintenanceKey, AcceptFleetFlightsKey, AutopilotKey, ReviewDeepFirstKey, UserSkillsKey, ShortcutTokenKey, RepoTrackersKey, NoAutoMergeReposKey, OpusCapKey, ReviewLimitKey, OneFlightPerRepoKey, SubTaskReposKey, MergeBatchKey, PrWatchIdleKey, AdoptAfterKey, ArchiveLandedAfterKey, MaintenanceEveryKey, MaintenanceIdleKey, PackageAgeDaysKey, GitPruneDaysKey, MaintenancePruneHoursKey, DeleteLandedBranchesKey, MaxGoAroundsKey, ScratchDaysKey, DesignerKeepKey, DiskAlertGbKey, FlightCiBudgetKey, AutopilotCiGrantsKey, AutopilotStallMinutesKey, AutopilotInvestigationsKey, StaleFlightHoursKey, StalePrHoursKey, StaleRecheckHoursKey, StaleCardHoursKey, StaleHoldsKey, StaleUnreachableHoursKey,
          .. BenchKeys, .. RoleModels.Roles.Select(RoleModels.RangeKey), SummaryModelKey, WorkerLadderKey];
 
     /// <summary>Whether <paramref name="key"/> is a role's range (<see cref="RoleModels"/>).</summary>
@@ -259,6 +275,9 @@ public sealed record NodeSettings
 
     /// <summary>Whether a repo's ready merge queue entries are merged as one batch (<see cref="MergeBatchKey"/>), its CI run once; off unless set.</summary>
     public bool? MergeBatch { get; init; }
+
+    /// <summary>Whether the watchtower runs with a standing goal (<see cref="AutopilotKey"/>); off unless the person set it on, and only the person may. Stored as <see cref="AutopilotFileMember"/>.</summary>
+    public bool? Autopilot { get; init; }
 
     /// <summary>Whether the first review of a large diff runs on the deep model (<see cref="ReviewDeepFirstKey"/>); on unless the person saved it off. A re-review never does.</summary>
     public bool? ReviewDeepFirst { get; init; }
@@ -346,6 +365,15 @@ public sealed record NodeSettings
 
     /// <summary>Runner-hours of CI a flight may spend (<see cref="FlightCiBudgetKey"/>); <see cref="DefaultFlightCiBudget"/> unless set.</summary>
     public int? FlightCiBudget { get; init; }
+
+    /// <summary>CI grants the watchtower may give one flight per local day on autopilot (<see cref="AutopilotCiGrantsKey"/>); <see cref="DefaultAutopilotCiGrants"/> unless set.</summary>
+    public int? AutopilotCiGrants { get; init; }
+
+    /// <summary>Minutes of no progress after which the watchtower is woken for a flight (<see cref="AutopilotStallMinutesKey"/>); <see cref="DefaultAutopilotStallMinutes"/> unless set.</summary>
+    public int? AutopilotStallMinutes { get; init; }
+
+    /// <summary>Investigator runs per local day on autopilot (<see cref="AutopilotInvestigationsKey"/>); <see cref="DefaultAutopilotInvestigations"/> unless set.</summary>
+    public int? AutopilotInvestigations { get; init; }
 
     /// <summary>The staleness bounds (<see cref="StaleKeys"/>); each its default unless set.</summary>
     public int? StaleFlightHours { get; init; }
@@ -448,6 +476,9 @@ public sealed record NodeSettings
         return (settings with { FleetRoles = fleet.Count == 0 ? null : fleet }, null);
     }
 
+    /// <summary>The member the file holds <paramref name="key"/> under: the key itself, but for <see cref="AutopilotKey"/>.</summary>
+    private static string FileMember(string key) => key == AutopilotKey ? AutopilotFileMember : key;
+
     public static string PathIn(string dataFolder) => Path.Combine(dataFolder, FileName);
 
     /// <summary>The file at <paramref name="file"/>; none, or one that is not a JSON object, is no settings at all.</summary>
@@ -471,7 +502,7 @@ public sealed record NodeSettings
         var settings = new NodeSettings();
         foreach (var key in Keys)
         {
-            if (root[key] is { } value && Values(value) is { } values && With(settings, key, values) is { Settings: { } read })
+            if (root[FileMember(key)] is { } value && Values(value) is { } values && With(settings, key, values) is { Settings: { } read })
             {
                 settings = read;
             }
@@ -535,7 +566,7 @@ public sealed record NodeSettings
         {
             if (Get(key) is { } values)
             {
-                root[key] = key switch
+                root[FileMember(key)] = key switch
                 {
                     LanKey => JsonValue.Create(Lan),
                     MaintenanceKey => JsonValue.Create(Maintenance),
@@ -545,6 +576,7 @@ public sealed record NodeSettings
                     JobsPerRepoKey => JsonValue.Create(JobsPerRepo),
                     GuiSlotsKey => JsonValue.Create(GuiSlots),
                     AcceptFleetFlightsKey => JsonValue.Create(AcceptFleetFlights),
+                    AutopilotKey => JsonValue.Create(Autopilot),
                     ReviewDeepFirstKey => JsonValue.Create(ReviewDeepFirst),
                     DeleteLandedBranchesKey => JsonValue.Create(DeleteLandedBranches),
                     UserSkillsKey => JsonValue.Create(UserSkills),
@@ -562,6 +594,9 @@ public sealed record NodeSettings
                     MaintenancePruneHoursKey => JsonValue.Create(MaintenancePruneHours),
                     DiskAlertGbKey => JsonValue.Create(DiskAlertGb),
                     FlightCiBudgetKey => JsonValue.Create(FlightCiBudget),
+                    AutopilotCiGrantsKey => JsonValue.Create(AutopilotCiGrants),
+                    AutopilotStallMinutesKey => JsonValue.Create(AutopilotStallMinutes),
+                    AutopilotInvestigationsKey => JsonValue.Create(AutopilotInvestigations),
                     StaleFlightHoursKey or StalePrHoursKey or StaleRecheckHoursKey or StaleCardHoursKey or StaleHoldsKey or StaleUnreachableHoursKey => JsonValue.Create(StaleValue(key)),
                     JobMemoryKey => JsonValue.Create(JobMemoryGigabytes),
                     BenchSpotPriceKey => JsonValue.Create(BenchSpotPrice),
@@ -602,6 +637,7 @@ public sealed record NodeSettings
         JobsPerRepoKey => JobsPerRepo is { } perRepo ? [perRepo.ToString(CultureInfo.InvariantCulture)] : null,
         GuiSlotsKey => GuiSlots is { } guiSlotsSet ? [guiSlotsSet.ToString(CultureInfo.InvariantCulture)] : null,
         AcceptFleetFlightsKey => AcceptFleetFlights is { } accept ? [accept ? "on" : "off"] : null,
+        AutopilotKey => Autopilot is { } autopilot ? [autopilot ? "on" : "off"] : null,
         ReviewDeepFirstKey => ReviewDeepFirst is { } deepFirst ? [deepFirst ? "on" : "off"] : null,
         DeleteLandedBranchesKey => DeleteLandedBranches is { } deleteBranches ? [deleteBranches ? "on" : "off"] : null,
         UserSkillsKey => UserSkills is { } skills ? [skills ? "on" : "off"] : null,
@@ -635,6 +671,9 @@ public sealed record NodeSettings
         MaintenancePruneHoursKey => MaintenancePruneHours is { } pruneHours ? [pruneHours] : null,
         DiskAlertGbKey => DiskAlertGb is { } alertGb ? [alertGb.ToString(CultureInfo.InvariantCulture)] : null,
         FlightCiBudgetKey => FlightCiBudget is { } ciBudget ? [ciBudget.ToString(CultureInfo.InvariantCulture)] : null,
+        AutopilotCiGrantsKey => AutopilotCiGrants is { } ciGrants ? [ciGrants.ToString(CultureInfo.InvariantCulture)] : null,
+        AutopilotStallMinutesKey => AutopilotStallMinutes is { } stallMinutes ? [stallMinutes.ToString(CultureInfo.InvariantCulture)] : null,
+        AutopilotInvestigationsKey => AutopilotInvestigations is { } investigations ? [investigations.ToString(CultureInfo.InvariantCulture)] : null,
         StaleFlightHoursKey or StalePrHoursKey or StaleRecheckHoursKey or StaleCardHoursKey or StaleHoldsKey or StaleUnreachableHoursKey => StaleValue(key) is { } stale ? [stale.ToString(CultureInfo.InvariantCulture)] : null,
         JobPriorityKey => JobPriority is { } priority ? [Pilot.Node.Flights.JobPriorities.Name(priority)] : null,
         JobMemoryKey => JobMemoryGigabytes is { } memory ? [memory.ToString(CultureInfo.InvariantCulture)] : null,
@@ -739,6 +778,14 @@ public sealed record NodeSettings
                 return OnOff(One()) is { } accept
                     ? (settings with { AcceptFleetFlights = accept }, null)
                     : (null, "accept-fleet-flights takes on or off");
+            case AutopilotKey:
+                if (clear)
+                {
+                    return (settings with { Autopilot = null }, null);
+                }
+                return OnOff(One()) is { } autopilot
+                    ? (settings with { Autopilot = autopilot }, null)
+                    : (null, "autopilot takes on or off");
             case ReviewDeepFirstKey:
                 if (clear)
                 {
@@ -1010,6 +1057,30 @@ public sealed record NodeSettings
                 return int.TryParse(One(), NumberStyles.None, CultureInfo.InvariantCulture, out var ciBudget) && ciBudget is >= 1 and <= 1000
                     ? (settings with { FlightCiBudget = ciBudget }, null)
                     : (null, "flight-ci-budget takes a number of runner-hours, 1 to 1000");
+            case AutopilotCiGrantsKey:
+                if (clear)
+                {
+                    return (settings with { AutopilotCiGrants = null }, null);
+                }
+                return int.TryParse(One(), NumberStyles.None, CultureInfo.InvariantCulture, out var ciGrants) && ciGrants is >= 0 and <= 20
+                    ? (settings with { AutopilotCiGrants = ciGrants }, null)
+                    : (null, "autopilot-ci-grants takes a number, 0 to 20");
+            case AutopilotStallMinutesKey:
+                if (clear)
+                {
+                    return (settings with { AutopilotStallMinutes = null }, null);
+                }
+                return int.TryParse(One(), NumberStyles.None, CultureInfo.InvariantCulture, out var stallMinutes) && stallMinutes is >= 5 and <= 1440
+                    ? (settings with { AutopilotStallMinutes = stallMinutes }, null)
+                    : (null, "autopilot-stall-minutes takes a number of minutes, 5 to 1440");
+            case AutopilotInvestigationsKey:
+                if (clear)
+                {
+                    return (settings with { AutopilotInvestigations = null }, null);
+                }
+                return int.TryParse(One(), NumberStyles.None, CultureInfo.InvariantCulture, out var investigations) && investigations is >= 0 and <= 100
+                    ? (settings with { AutopilotInvestigations = investigations }, null)
+                    : (null, "autopilot-investigations takes a number, 0 to 100");
             case JobPriorityKey:
                 if (clear)
                 {

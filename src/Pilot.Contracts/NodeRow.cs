@@ -1,13 +1,16 @@
 namespace Pilot.Contracts;
 
 /// <summary>
-/// What the node says it is and a client shows live (<see cref="NodeInfo"/>'s changing part): maintenance, whether it takes
+/// What the node says it is and a client shows live (<see cref="NodeInfo"/>'s changing part): maintenance, autopilot, whether it takes
 /// fleet flights, its account and its watchtower's words. A node row on the stream, so a client never polls <c>GET /api/v1/node</c> for
 /// them. The fixed fields (version, process, folders) and the traffic counts stay with the route.
 /// </summary>
 public sealed record NodeRow
 {
     public bool Maintenance { get; init; }
+
+    /// <summary>Whether the autopilot switch is on (PIL1285): the watchtower runs with a standing goal. Off unless the person set it; an older reader skips it and an older row reads as off.</summary>
+    public bool Autopilot { get; init; }
 
     public bool AcceptsFleetFlights { get; init; }
 
@@ -30,7 +33,7 @@ public sealed record NodeRow
     /// summary move with the clock and are left out, so only a state, start, count, churn or end reason is a change.
     /// </summary>
     public static bool Differs(NodeRow held, NodeRow next) =>
-        held.Maintenance != next.Maintenance || held.AcceptsFleetFlights != next.AcceptsFleetFlights
+        held.Maintenance != next.Maintenance || held.Autopilot != next.Autopilot || held.AcceptsFleetFlights != next.AcceptsFleetFlights
         || held.Account != next.Account || held.CanRunGui != next.CanRunGui || held.GuiReason != next.GuiReason || held.ArchivedFlights != next.ArchivedFlights || WatchtowerDiffers(held.Watchtower, next.Watchtower);
 
     private static bool WatchtowerDiffers(WatchtowerHealth? held, WatchtowerHealth? next) =>

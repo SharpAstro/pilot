@@ -35,6 +35,7 @@ public sealed class DesignToolbarCaptureTests
                     using var renderer = new RgbaImageRenderer((uint)width, (uint)height);
                     var screen = PageData.DesignsFor("sample", Now);
                     var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
+                    chrome.Autopilot.OnToggle = _ => Task.FromResult<string?>(null);
                     // The chrome sets the palette from its own Night switch at each render, so the switch is what picks the palette.
                     chrome.Night.On = ReferenceEquals(palette, Palette.Night);
                     chrome.Show(PilotPage.Designs);

@@ -123,11 +123,11 @@ public sealed class FleetAdmission(string machine, TimeProvider time)
         foreach (var f in peer.Load.Flights)
         {
             var role = live[f.Code].Select(s => (SessionRole?)s.Role).OrderBy(r => r == SessionRole.Reviewer ? 0 : 1).FirstOrDefault();
-            var phase = f.State == FlightState.Landed ? FlightPhase.Landed
-                : f.State == FlightState.Held || f.FoldedInto is not null ? FlightPhase.Held
+            var phase = f.State == FlightState.Landed ? AdmissionPhase.Landed
+                : f.State == FlightState.Held || f.FoldedInto is not null ? AdmissionPhase.Held
                 : peer.Load.Sessions is not null
-                    ? role == SessionRole.Reviewer ? FlightPhase.InReview : role is not null ? FlightPhase.Flying : f.Queued is not null ? FlightPhase.Ready : FlightPhase.Held
-                    : f.Review is { State: ReviewState.Reviewing } ? FlightPhase.InReview : f.Queued is not null ? FlightPhase.Ready : f.State == FlightState.Flying ? FlightPhase.Flying : FlightPhase.Held;
+                    ? role == SessionRole.Reviewer ? AdmissionPhase.InReview : role is not null ? AdmissionPhase.Flying : f.Queued is not null ? AdmissionPhase.Ready : AdmissionPhase.Held
+                    : f.Review is { State: ReviewState.Reviewing } ? AdmissionPhase.InReview : f.Queued is not null ? AdmissionPhase.Ready : f.State == FlightState.Flying ? AdmissionPhase.Flying : AdmissionPhase.Held;
             var waits = f.Connections.Select(c => new FlightWait(peer.Name, c, WaitKind.Connection))
                 .Concat(f.PeerConnections.Select(c => new FlightWait(c.Node, c.Code, WaitKind.PeerConnection)))
                 .Concat(f.PackageWaits.Select(w => new FlightWait(peer.Name, w.Producer, WaitKind.Package)));

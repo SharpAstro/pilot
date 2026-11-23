@@ -94,9 +94,9 @@ public static partial class PilotCommand
             var validate = Action(new Command("validate", "Answer as a leg's validator: go starts its worker; no-go rings with the stale facts") { Arguments = { verdict, validateReport }, Options = { leg } },
                 (p, client, ct) => OnLeg(p, client, Verbs.ValidateLeg, _ => [p.GetValue(verdict)!, .. p.GetValue(validateReport) ?? []], ct));
 
-            var why = Words("why", "Why: the fresh worker is told it");
-            var goAround = Action(new Command("go-around", "Stop the leg's worker and start a fresh one, told why") { Arguments = { why }, Options = { leg } },
-                (p, client, ct) => OnLeg(p, client, Verbs.GoAround, _ => [Join(p, why)], ct));
+            var goAroundReason = Words("reason", "Why: the fresh worker is told it");
+            var goAround = Action(new Command("go-around", "Stop the leg's worker and start a fresh one, told why") { Arguments = { goAroundReason }, Options = { leg, actingOn } },
+                (p, client, ct) => OnLeg(p, client, Verbs.GoAround, _ => [Join(p, goAroundReason)], ct, p.GetValue(actingOn)));
 
             var forFile = new Option<string?>("--for-file") { Description = "A file whose appearance wakes the worker (a relative path is from here)" };
             var until = new Option<string?>("--until") { Description = "A time: alone it wakes the worker then; with --for-file it rings once past it and goes on waiting (14:30, or 2026-10-27T09:00)" };

@@ -239,6 +239,9 @@ public static class CardKinds
 
     /// <summary>A card the watchtower answered or dismissed at the person's word in its chat, as a Handled line: what it did and the words it acted on.</summary>
     public const string PersonsWord = "persons-word";
+
+    /// <summary>A card kind or a failure cause that came a second time on the same subject, as a Handled task: find the cause, do not press again.</summary>
+    public const string RepeatTask = "autopilot-repeat";
 }
 
 /// <summary>How long a thing has gone on, as a card or a banner says it: <c>under 1 m</c>, <c>37 m</c>, <c>9 h 37 m</c>, <c>2 d 3 h</c>.</summary>
@@ -300,6 +303,8 @@ public static class ChoiceStatus
     /// <summary>
     /// The node's own wait: a leg of the flight (a review-notes leg making the review's fixes) is still to fly, and the merge is
     /// refused until it lands; <see cref="CardChoice.Note"/> names the legs. Not a button, and not a failure: it ends by itself (#918).
+    /// Since PIL1294 the node no longer keeps a card open for this wait (a Handled line says it); the status stays on the wire
+    /// because an older node, or a card written before, still carries it and the views read it.
     /// </summary>
     public const string WaitsForLegs = "waits-for-legs";
 

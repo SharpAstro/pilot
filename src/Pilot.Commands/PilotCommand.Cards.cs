@@ -65,7 +65,7 @@ public static partial class PilotCommand
     private sealed partial class BuildContext
     {
         /// <summary>Makes the cards, answer, dismiss, and the commands that raise a card (ring, flag, handled).</summary>
-        internal (Command, Command, Command, Command, Command, Command) CardCommands()
+        internal (Command, Command, Command, Command, Command, Command, Command) CardCommands()
         {
             // cards
             var all = new Option<bool>("--all") { Description = "Closed cards and Handled lines too" };
@@ -112,7 +112,14 @@ public static partial class PilotCommand
             var flag = Raise("flag", "for-you", "Raise a card for the controller, without a push");
             var handled = Raise("handled", "handled", "Log a line on what was handled, born closed");
 
-            return (cards, answer, dismiss, ring, flag, handled);
+            // PIL1285: an investigator's one outcome. The node records it, rings once for ring, and ends the run.
+            var investigatedSubject = Arg("subject", "What the run is about: the flight code, card id or digest its brief names");
+            var outcome = Arg("outcome", "issue (an issue and a flight were made), action (one thing done) or ring (the person is needed)");
+            var outcomeWhy = Words("why", "Why, naming the evidence; for ring, what was tried and the one thing the person needs to do");
+            var investigated = Action(new Command(Verbs.Investigated, "An investigator's one outcome: recorded as a Handled line and a decision, and the run ends") { Arguments = { investigatedSubject, outcome, outcomeWhy } },
+                (p, client, ct) => Send(client, Verbs.Investigated, p.GetValue(investigatedSubject)!, [p.GetValue(outcome)!, .. p.GetValue(outcomeWhy) ?? []], who, ct));
+
+            return (cards, answer, dismiss, ring, flag, handled, investigated);
         }
 
         /// <summary>The image extensions a card's image may have: the ones the node keeps.</summary>

@@ -131,6 +131,29 @@ public sealed class FlightMapTests
         FlightMap.StatusOf(WithPr(Flight("A", FlightState.Landed)) with { LandedAt = Live.At }).ShouldBe(DestinationStatus.Merged);
     }
 
+    // PIL1298:R1.13: red CI (FlightCi.RedSince) is its own status; conflicts, the merge queue and a merge win over it.
+    [Fact]
+    public void RedCiIsItsOwnDestinationStatusAndOnlyConflictsQueuedAndMergedWinOverIt()
+    {
+        var red = new FlightCi { RedSince = Live.At };
+        var open = WithPr(Flight("A")) with { Ci = red };
+        FlightMap.StatusOf(open).ShouldBe(DestinationStatus.ChecksRed);
+        FlightMap.StatusOf((WithPr(Flight("A")) with { GitHubDraft = true }) with { Ci = red }).ShouldBe(DestinationStatus.ChecksRed);
+        foreach (var state in new[] { ReviewState.Reviewing, ReviewState.Passed, ReviewState.Changes })
+        {
+            FlightMap.StatusOf(open with { Review = Review(state, null) }).ShouldBe(DestinationStatus.ChecksRed);
+        }
+        FlightMap.StatusOf(open with { MergeWhenGreen = ["abc", "squash"] }).ShouldBe(DestinationStatus.ChecksRed);
+        FlightMap.StatusOf(open with { RebaseOnly = "known, lands squashed" }).ShouldBe(DestinationStatus.ChecksRed);
+        FlightMap.StatusOf(open with { Review = Review(ReviewState.Passed, "pilot: conflicts") }).ShouldBe(DestinationStatus.Conflicts);
+        FlightMap.StatusOf(open with { MergeQueue = "in the merge queue, position 2" }).ShouldBe(DestinationStatus.Queued);
+        FlightMap.StatusOf((WithPr(Flight("A", FlightState.Landed)) with { LandedAt = Live.At }) with { Ci = red }).ShouldBe(DestinationStatus.Merged);
+        FlightMap.StatusOf(Flight("A") with { Ci = red }).ShouldBe(DestinationStatus.NoPr);
+        FlightMap.StatusOf(WithPr(Flight("A")) with { Ci = new FlightCi { RedSince = null } }).ShouldBe(DestinationStatus.Open);
+        FlightsView<RgbaImage>.DestinationColour(DestinationStatus.ChecksRed).ShouldBe(FlightsView<RgbaImage>.MapTone.Failed);
+        FlightsView<RgbaImage>.StatusWord(DestinationStatus.ChecksRed).ShouldBe("CI red");
+    }
+
     // pilot #1299: rebase only is its own status, read from the row; a real conflict wins over it and keeps its own.
     [Fact]
     public void ARebaseOnlyFlightHasItsOwnDestinationStatusAndARealConflictKeepsItsOwn()
@@ -157,12 +180,12 @@ public sealed class FlightMapTests
     }
 
     [Fact]
-    public void ThePlaneWaitsAtTheDestinationOnceEveryLegIsDone()
+    public void NoPlaneIsParkedAtTheDestinationOnceEveryLegIsDone()
     {
+        // pilot #1298: nothing flies, so nothing is drawn flying.
         var route = Map(Line(WithPr(Flight("A")), De1, null, Leg("A", "only", 1, LegState.Done))).Route("A")!;
 
-        route.Plane!.Leg.ShouldBeNull();
-        route.Plane.X.ShouldBe(route.Destination.X);
+        route.Plane.ShouldBeNull();
     }
 
     [Fact]
@@ -251,7 +274,7 @@ public sealed class FlightMapTests
         route.Gate.ShouldNotBeNull();
         route.Gate.WaitsFor.ShouldBe("A");
         route.Gate.X.ShouldBeLessThan(route.Airports[0].X);
-        route.Plane!.X.ShouldBe(route.Gate.X);
+        route.Plane.ShouldBeNull();
     }
 
     [Fact]
@@ -297,27 +320,24 @@ public sealed class FlightMapTests
     }
 
     [Fact]
-    public void APlaneParkedOnItsDestinationLeavesThePointToTheDestinationOutToItsRing()
+    public void TheDestinationAndTheGateStayClickableWithNoPlaneOnThem()
     {
-        // Every leg done and the PR open, and a flight with no legs yet: the plane waits on the destination in both.
+        // Every leg done and the PR open, a flight with no legs yet, and a held flight: no plane on the sign or the gate (pilot #1298).
         var map = Map(
             Line(WithPr(Flight("A")), De1, null, Leg("A", "one", 1, LegState.Done), Leg("A", "two", 2, LegState.Done)),
-            Line(WithPr(Flight("B")), De1));
+            Line(WithPr(Flight("B")), De1),
+            Line(Flight("D", FlightState.Held, "A"), De1));
 
         foreach (var code in new[] { "A", "B" })
         {
             var route = map.Route(code)!;
-            route.PlaneAtDestination.ShouldBeTrue();
+            route.Plane.ShouldBeNull();
             var d = route.Destination;
             map.At(d.X, d.Y).ShouldBe(new MapHit(MapHitKind.Destination, code, PullRequest: 7, Node: "de1"));
-            // The plane's ring is wider than the sign: its edge is the destination's too.
-            map.At(d.X + FlightMap.PlaneRadius - 0.5f, d.Y)!.Value.Kind.ShouldBe(MapHitKind.Destination);
         }
-        // A plane at a flying leg and one at a gate are still the plane's.
-        var flying = Map(Line(Flight("C"), De1, null, Leg("C", "one", 1, LegState.Flying))).Route("C")!;
-        flying.PlaneAtDestination.ShouldBeFalse();
-        var held = Map(Line(Flight("D", FlightState.Held, "C"), De1)).Route("D")!;
-        held.PlaneAtDestination.ShouldBeFalse();
+        var held = map.Route("D")!;
+        held.Plane.ShouldBeNull();
+        map.At(held.Gate!.X, held.Gate.Y).ShouldBe(new MapHit(MapHitKind.Gate, "D", Node: "de1"));
     }
 
     [Fact]

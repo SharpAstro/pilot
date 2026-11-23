@@ -35,6 +35,12 @@ public static partial class Briefs
         text.AppendLine("Leave nothing behind in the plane: every change is committed before you finish (the node refuses a done leg");
         text.AppendLine("whose plane holds files not committed), and scratch output goes outside the plane, never into it. Once your");
         text.AppendLine("leg is done, commit nothing more here: a late commit would miss the PR; a change after it is a redo of the leg (a go-around).");
+        // pilot #1306: three workers wrote a scratch test (ZzCaptureScratch.cs, ScratchLookTests.cs, TmpRowCapture.cs) only to look at a
+        // capture and left it untracked in the plane; the rule is for every leg, UI or not.
+        text.AppendLine("A capture made only to look at goes into the job's artifacts folder (PILOT_JOB_ARTIFACTS) or its tmp folder, never into the repo.");
+        text.AppendLine("Render it through a capture test the repo already keeps (one that writes when PILOT_TEST_CAPTURE is set, as pilot's Gui tests do),");
+        text.AppendLine("pointed outside the plane; add no scratch test to the repo's test project for it. A scratch test or file made in the plane anyway");
+        text.AppendLine("is deleted before you finish, and your report says so. Real work stays committed.");
         // A plane behind its base builds against what main has moved past: PIL818's plane, 77 commits behind, failed its check on
         // CS0108 from a sibling main had already moved off (j4448, owner 2026-11-10: "always update the branch when starting, or restarting").
         text.AppendLine($"First, every time you start (a go-around and a resume included), bring the base in: `git fetch origin` then");

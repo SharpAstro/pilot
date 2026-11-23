@@ -1,0 +1,322 @@
+using System.Globalization;
+using DIR.Lib;
+using Pilot.Commands;
+using Pilot.Contracts;
+using Pilot.Ui;
+using Shouldly;
+using Xunit;
+
+namespace Pilot.Gui.Tests;
+
+/// <summary>
+/// The flight map tells the truth (pilot #1298), read from the one state model (<see cref="FlightPhases"/>): a destination is red only
+/// for a conflict or red CI, the plane is drawn only on a flying leg, a queued flight has no plane and says why it waits, and the
+/// header's counts are the ones <c>pilot status</c> prints. All on the CPU render, no display.
+/// </summary>
+public sealed class FlightMapStateTests
+{
+    private static (RgbaImageRenderer Renderer, FlightsView<RgbaImage> View) Show(FlightLine[] lines, int width, int height, bool night, Action<FlightsView<RgbaImage>>? setup = null)
+    {
+        var renderer = new RgbaImageRenderer((uint)width, (uint)height);
+        var view = new FlightsView<RgbaImage>(renderer) { FontPath = SessionsCapture.FontPath, Mode = FlightsViewMode.Canvas, Night = new NightSwitch { On = night } };
+        view.OnOpen = _ => { };
+        setup?.Invoke(view);
+        view.Render(new FlightsScreen(lines, "test", Live.At), new RectF32(0, 0, width, height));
+        return (renderer, view);
+    }
+
+
+    private static ClickableRegion Hit(FlightsView<RgbaImage> view, params string[] actions)
+    {
+        var regions = new List<ClickableRegion>();
+        view.CollectPaintedRegions(regions);
+        return regions.Single(r => r.Result is HitResult.ButtonHit { Action: var a } && actions.Contains(a));
+    }
+
+    private static bool Has(FlightsView<RgbaImage> view, string action)
+    {
+        var regions = new List<ClickableRegion>();
+        view.CollectPaintedRegions(regions);
+        return regions.Any(r => r.Result is HitResult.ButtonHit { Action: var a } && a == action);
+    }
+
+    // The pixel at a region's centre: the destination square's colour (every flight here has a PR, so the sign is solid).
+    private static RGBAColor32 CentreOf(RgbaImage image, ClickableRegion r)
+    {
+        var (x, y) = ((int)(r.X + r.Width / 2f), (int)(r.Y + r.Height / 2f));
+        var i = (y * image.Width + x) * 4;
+        return new RGBAColor32(image.Pixels[i], image.Pixels[i + 1], image.Pixels[i + 2], 0xff);
+    }
+
+    private static bool Same(RGBAColor32 a, RGBAColor32 b) => a.Red == b.Red && a.Green == b.Green && a.Blue == b.Blue;
+
+    // Each state of a flight whose legs are all in and whose PR stands as given: the colour of its destination and the word it keeps.
+    public static TheoryData<string, bool, string> Destinations()
+    {
+        var data = new TheoryData<string, bool, string>();
+        foreach (var night in new[] { false, true })
+        {
+            foreach (var name in new[] { "conflicts", "ci-red", "failed-leg", "changes", "passed", "armed", "queue", "reviewing", "open", "merged" })
+            {
+                data.Add(name, night, name);
+            }
+        }
+        return data;
+    }
+
+    private static (FlightRow Row, LegRow[] Legs, string Tone, string Word) DestinationCase(string name)
+    {
+        var done = new[] { FlightMapWorld.Leg("A", LegState.Done) };
+        return name switch
+        {
+            "conflicts" => (FlightMapWorld.Flight("A", review: FlightMapWorld.Review(ReviewState.Passed, "pilot: conflicts")), done, "Failed", "conflicts"),
+            "ci-red" => (FlightMapWorld.Flight("A", review: FlightMapWorld.Review(ReviewState.Passed)) with { Ci = new FlightCi { RedSince = Live.At } }, done, "Failed", "CI red"),
+            "failed-leg" => (FlightMapWorld.Flight("A"), [FlightMapWorld.Leg("A", LegState.Done), FlightMapWorld.Leg("A", LegState.Failed, 2)], "Held", "open"),
+            "changes" => (FlightMapWorld.Flight("A", review: FlightMapWorld.Review(ReviewState.Changes)), [FlightMapWorld.Leg("A", LegState.Done), FlightMapWorld.Leg("A", LegState.Flying, 2)], "Flying", "changes"),
+            "passed" => (FlightMapWorld.Flight("A", review: FlightMapWorld.Review(ReviewState.Passed)), done, "Flying", "passed"),
+            "armed" => (FlightMapWorld.Flight("A", review: FlightMapWorld.Review(ReviewState.Passed)) with { MergeWhenGreen = ["abc", "squash"] }, done, "Held", "armed"),
+            "queue" => (FlightMapWorld.Flight("A") with { MergeQueue = "in the merge queue, position 2" }, done, "Held", "queued"),
+            "reviewing" => (FlightMapWorld.Flight("A", review: FlightMapWorld.Review(ReviewState.Reviewing)), done, "Held", "reviewing"),
+            "open" => (FlightMapWorld.Flight("A"), done, "Held", "open"),
+            _ => (FlightMapWorld.Flight("A", FlightState.Landed) with { LandedAt = Live.At }, done, "Landed", "merged"),
+        };
+    }
+
+    [Theory]
+    [MemberData(nameof(Destinations))]
+    public void TheDestinationColourFollowsTheStateAndEachStateKeepsItsWord(string name, bool night, string _)
+    {
+        var (row, legs, tone, word) = DestinationCase(name);
+        var p = night ? Palette.Night : Palette.Standard;
+        var (renderer, view) = Show(FlightMapWorld.Lines([row], legs), 1800, 800, night);
+        using var __ = renderer;
+
+        var colour = CentreOf(renderer.Surface, Hit(view, "flight:A:pr", "flight:A:pr-chip", "map:A:destination"));
+        var expected = tone switch { "Failed" => p.Failed, "Flying" => p.Flying, "Held" => p.Held, _ => p.Landed };
+        Same(colour, expected).ShouldBeTrue($"{name}: destination {colour} should be {tone} {expected}");
+        // Red (the palette's Failed) is for trouble only, a conflict or red CI (a failed leg is red on its airport, not on the PR); colour never carries
+        // the state alone.
+        if (tone != "Failed" && !Same(p.Failed, p.Held) && !Same(p.Failed, p.Flying))
+        {
+            Same(colour, p.Failed).ShouldBeFalse($"{name} is not red");
+        }
+        view.MapWords.Select(w => w.Text).ShouldContain(word);
+    }
+
+    [Fact]
+    public void TheRedCiHoverSaysSinceWhenAndWhatToDoAndOtherStatesDoNot()
+    {
+        var done = new[] { FlightMapWorld.Leg("A", LegState.Done), FlightMapWorld.Leg("B", LegState.Done), FlightMapWorld.Leg("C", LegState.Done), FlightMapWorld.Leg("D", LegState.Done), FlightMapWorld.Leg("E", LegState.Done) };
+        var red = FlightMapWorld.Flight("A", review: FlightMapWorld.Review(ReviewState.Passed)) with { Ci = new FlightCi { RedSince = Live.At } };
+        var capped = FlightMapWorld.Flight("B", review: FlightMapWorld.Review(ReviewState.Passed)) with { Ci = new FlightCi { RedSince = Live.At, CappedWhy = "CI budget spent" } };
+        var conflict = FlightMapWorld.Flight("C", review: FlightMapWorld.Review(ReviewState.Passed, "pilot: conflicts"));
+        var open = FlightMapWorld.Flight("D");
+        // Red since two days before the screen's moment (Live.At, the lines' Now): another local day in any time zone.
+        var earlier = Live.At.AddDays(-2).AddMinutes(-46);
+        var old = FlightMapWorld.Flight("E", review: FlightMapWorld.Review(ReviewState.Passed)) with { Ci = new FlightCi { RedSince = earlier } };
+        var (renderer, view) = Show(FlightMapWorld.Lines([red, capped, conflict, open, old], done), 1800, 1000, night: false);
+        using var _ = renderer;
+
+        // Red today: the clock alone, no day.
+        var since = $"CI red since {Live.At.ToLocalTime().ToString("HH:mm", CultureInfo.InvariantCulture)}:";
+        Hit(view, "flight:A:pr", "flight:A:pr-chip", "map:A:destination").Tooltip.ShouldNotBeNull().ShouldContain(since + " the PR fixer or a go-around fixes it.");
+        // Red since an earlier day: the day is in the hover, so yesterday's red never reads as today's time.
+        var dated = earlier.ToLocalTime().ToString("ddd d MMM HH:mm", CultureInfo.InvariantCulture);
+        Hit(view, "flight:E:pr", "flight:E:pr-chip", "map:E:destination").Tooltip.ShouldNotBeNull().ShouldContain($"CI red since {dated}: the PR fixer or a go-around fixes it.");
+        var cappedTip = Hit(view, "flight:B:pr", "flight:B:pr-chip", "map:B:destination").Tooltip.ShouldNotBeNull();
+        cappedTip.ShouldContain(since);
+        cappedTip.ShouldContain("CI budget spent");
+        cappedTip.ShouldNotContain("the PR fixer");
+        Hit(view, "flight:C:pr", "flight:C:pr-chip", "map:C:destination").Tooltip.ShouldNotBeNull().ShouldNotContain("CI red");
+        Hit(view, "flight:D:pr", "flight:D:pr-chip", "map:D:destination").Tooltip.ShouldNotBeNull().ShouldNotContain("CI red");
+    }
+
+    [Theory]
+    [InlineData(900, 700, false)]
+    [InlineData(1800, 1000, false)]
+    [InlineData(900, 700, true)]
+    [InlineData(1800, 1000, true)]
+    public void ARedCiDestinationIsDrawnBesideTheOtherStatesWithNoWordOverAnother(int width, int height, bool night)
+    {
+        var (flights, legs) = FlightMapWorld.World();
+        var redFlight = FlightMapWorld.Flight("RCI", review: FlightMapWorld.Review(ReviewState.Passed)) with { Ci = new FlightCi { RedSince = Live.At } };
+        var (renderer, view) = Show(FlightMapWorld.Lines([.. flights, redFlight], [.. legs, FlightMapWorld.Leg("RCI", LegState.Done)]), width, height, night);
+        using var _ = renderer;
+
+        var words = view.MapWords;
+        words.Select(w => w.Text).ShouldContain("CI red");
+        var faults = new List<string>();
+        for (var i = 0; i < words.Count; i++)
+        {
+            for (var j = i + 1; j < words.Count; j++)
+            {
+                var (a, b) = (words[i].Box, words[j].Box);
+                if (MathF.Min(a.X + a.Width, b.X + b.Width) - MathF.Max(a.X, b.X) > TextOverlap.Tolerance
+                    && MathF.Min(a.Y + a.Height, b.Y + b.Height) - MathF.Max(a.Y, b.Y) > TextOverlap.Tolerance)
+                {
+                    faults.Add($"'{words[i].Text}' over '{words[j].Text}'");
+                }
+            }
+        }
+        faults.ShouldBeEmpty();
+    }
+
+    [Theory]
+    [InlineData("LND", false)]
+    [InlineData("HLD", false)]
+    [InlineData("HLT", false)]
+    [InlineData("QRW", false)]
+    [InlineData("QNL", false)]
+    [InlineData("QDN", false)]
+    [InlineData("FLY", true)]
+    [InlineData("FAL", false)]
+    [InlineData("CNF", false)]
+    [InlineData("CNQ", false)]
+    [InlineData("CHG", true)]
+    [InlineData("BTW", false)]
+    public void ThePlaneIsDrawnOnlyOnAFlyingLeg(string code, bool plane)
+    {
+        var (flights, legs) = FlightMapWorld.World();
+        var (renderer, view) = Show(FlightMapWorld.Lines(flights, legs), 1800, 1000, night: false);
+        using var _ = renderer;
+
+        var route = view.Map.Route(code)!;
+        (route.Plane is not null).ShouldBe(plane, $"{code} plane");
+        Has(view, $"map:{code}:plane").ShouldBe(plane);
+        // Only the held flight has a gate, and it stays clickable with nothing parked on it.
+        (route.Gate is not null).ShouldBe(code == "HLT");
+        if (route.Gate is { } gate)
+        {
+            Has(view, $"map:{code}:gate").ShouldBeTrue();
+        }
+        if (route.Plane is { } p)
+        {
+            // On the airport of the leg that flies: not at a gate, not on the destination, not on a planned or failed leg.
+            p.Leg.ShouldNotBeNull();
+            var at = route.Airports.Single(a => a.Leg == p.Leg);
+            at.State.ShouldBe(AirportState.Flying);
+            p.X.ShouldBe(at.X);
+            p.X.ShouldNotBe(route.Destination.X);
+        }
+    }
+
+    // The note a queued flight's row draws: its reason whole, beside its code, at the map's default zoom, whatever its legs are.
+    [Theory]
+    [InlineData("QRW", FlightMapWorld.Why)]
+    [InlineData("QNL", FlightMapWorld.PlannerWhy)]
+    [InlineData("QDN", FlightMapWorld.ReviewWhy)]
+    public void AQueuedFlightHasNoPlaneAndItsReasonIsDrawnWholeOnItsRow(string code, string why)
+    {
+        var (flights, legs) = FlightMapWorld.World();
+        var (renderer, view) = Show(FlightMapWorld.Lines(flights, legs), 1800, 1000, night: false);
+        using var _ = renderer;
+
+        var route = view.Map.Route(code)!;
+        route.Phase.ShouldBe(FlightPhase.Queued);
+        route.QueuedWhy.ShouldBe(why);
+        route.Plane.ShouldBeNull();
+        view.MapWords.Select(w => w.Text).ShouldContain($"queued: {why}");
+        Hit(view, $"map:{code}:note").Tooltip.ShouldNotBeNull().ShouldContain(why);
+        // A flight whose leg flies has no queue reason and no note.
+        view.Map.Route("FLY")!.QueuedWhy.ShouldBeNull();
+        view.Map.Route("FLY")!.Note.ShouldBeNull();
+    }
+
+    [Fact]
+    public void AtEveryZoomTheWholeQueueReasonIsOnTheNotesHover()
+    {
+        var (flights, legs) = FlightMapWorld.World();
+        foreach (var zoom in new[] { 0.5f, 1.0f, 1.5f, 3f })
+        {
+            var (renderer, view) = Show(FlightMapWorld.Lines(flights, legs), 1800, 1000, night: false, v => v.Viewport.SetScale(zoom));
+            using var _ = renderer;
+            view.Render(new FlightsScreen(FlightMapWorld.Lines(flights, legs), "test", Live.At), new RectF32(0, 0, 1800, 1000));
+
+            Hit(view, "map:QRW:note").Tooltip.ShouldNotBeNull().ShouldContain(FlightMapWorld.Why);
+            view.MapWords.Select(w => w.Text).ShouldContain(t => t.StartsWith("queued", StringComparison.Ordinal));
+        }
+    }
+
+    [Theory]
+    [InlineData("BTW", "between legs")]
+    [InlineData("FAL", "leg failed: node-merge-queue-leg2")]
+    [InlineData("CHG", "making review changes")]
+    [InlineData("HLD", "on hold by seb: wait")]
+    public void AFlightWithNoPlaneToSayWhereItIsSaysSoInWords(string code, string words)
+    {
+        var (flights, legs) = FlightMapWorld.World();
+        var (renderer, view) = Show(FlightMapWorld.Lines(flights, legs), 1800, 1000, night: false);
+        using var _ = renderer;
+
+        var route = view.Map.Route(code)!;
+        route.Note.ShouldNotBeNull().Text.ShouldStartWith(words);
+        view.MapWords.Select(w => w.Text).ShouldContain(t => t.StartsWith(words, StringComparison.Ordinal) && !t.EndsWith('…'));
+    }
+
+    [Fact]
+    public void TheHeaderCountsAreThoseOfPilotStatus()
+    {
+        var (flights, legs) = FlightMapWorld.World();
+        var counts = FlightCounts.Of(flights, legs);
+        var screen = new FlightsScreen(FlightMapWorld.Lines(flights, legs), "", Live.At);
+        screen.Counts.ShouldContain($"{counts.Flying} flying · {counts.Queued} queued · {counts.Held} held · {counts.OnHold} on hold");
+        counts.Queued.ShouldBe(3);
+
+        var snapshot = new SnapshotEvent { Seq = 1, At = Live.At.AddHours(1), Stream = "s", Sessions = [], Notes = [], Flights = flights, Legs = legs };
+        var status = PilotCommand.Status(snapshot).Split('\n');
+        status.Count(l => l.Contains(", flying")).ShouldBe(counts.Flying);
+        status.Count(l => l.Contains(", queued: ")).ShouldBe(counts.Queued);
+        // A flight in conflict whose fix leg waits for a slot is in conflict, not queued: pilot status and the header agree on it.
+        status.Single(l => l.StartsWith("CNQ ", StringComparison.Ordinal)).ShouldNotContain("queued");
+        // Its own section in the markdown says the same; the queue list above the sections (QueuedFlight.Of) is the wider
+        // admission queue, which names every leg waiting for a slot, so only the flight's state line is checked.
+        var markdown = StatusMarkdown.Build(snapshot).Split('\n');
+        var section = Array.FindIndex(markdown, l => l.StartsWith("### CNQ ", StringComparison.Ordinal));
+        section.ShouldBeGreaterThan(0);
+        markdown.Skip(section + 1).First(l => l.Trim().Length > 0).ShouldStartWith("**flying");
+
+        // The map's own count of planes is the flights whose leg flies: never more than the flying count, and none for the queued.
+        var (renderer, view) = Show(FlightMapWorld.Lines(flights, legs), 1800, 1000, night: false);
+        using var _ = renderer;
+        view.Map.Routes.Count(r => r.Plane is not null).ShouldBe(2);
+        view.Map.Routes.Count(r => r.Phase == FlightPhase.Queued).ShouldBe(counts.Queued);
+    }
+
+    [Theory]
+    [InlineData(900, 700, false)]
+    [InlineData(1800, 1000, false)]
+    [InlineData(900, 700, true)]
+    [InlineData(1800, 1000, true)]
+    public void NoWordOnTheMapIsDrawnOverAnotherAndTheNewWordsReadOnTheLand(int width, int height, bool night)
+    {
+        var (flights, legs) = FlightMapWorld.World();
+        var (renderer, view) = Show(FlightMapWorld.Lines(flights, legs), width, height, night);
+        using var _ = renderer;
+
+        var words = view.MapWords;
+        var faults = new List<string>();
+        for (var i = 0; i < words.Count; i++)
+        {
+            for (var j = i + 1; j < words.Count; j++)
+            {
+                var (a, b) = (words[i].Box, words[j].Box);
+                if (MathF.Min(a.X + a.Width, b.X + b.Width) - MathF.Max(a.X, b.X) > TextOverlap.Tolerance
+                    && MathF.Min(a.Y + a.Height, b.Y + b.Height) - MathF.Max(a.Y, b.Y) > TextOverlap.Tolerance)
+                {
+                    faults.Add($"'{words[i].Text}' over '{words[j].Text}'");
+                }
+            }
+        }
+        faults.ShouldBeEmpty();
+
+        // The row notes (queue reason, between legs, a failed leg) are drawn in the palette's MapNote: 4.5:1 on both lands in Standard. Night is red
+        // only and its strongest ramp step that is not the accent is 3.3:1, so there the floor is 3:1 (large text and icons).
+        var p = night ? Palette.Night : Palette.Standard;
+        var floor = night ? 3.0 : 4.5;
+        Contrast.Ratio(p.MapNote, p.LandHere).ShouldBeGreaterThanOrEqualTo(floor);
+        Contrast.Ratio(p.MapNote, p.Land).ShouldBeGreaterThanOrEqualTo(floor);
+
+        // Night's note colour is its Bright, one value, so a change to one is a change to both.
+        Palette.Night.MapNote.ShouldBe(Palette.Night.Bright);
+    }
+}

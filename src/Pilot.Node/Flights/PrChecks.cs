@@ -937,11 +937,12 @@ public sealed class PrChecks(NodeState state, IGitHub gitHub, TimeProvider time,
                 await legs.SettleNodeHoldAsync(flight.Code, holding.Since, cancellationToken);
                 continue;
             }
-            // The bound counts from the review.
+            // The bound counts from the review. The head is the open PR-ready card's; a card the node closed for a leg wait (PIL1294) leaves
+            // the reviewed head on the flight's review. A card a person dismissed rings nothing, as before.
             if (now - holding.Since < HoldingBound
                 || cards.Any(c => c.Subject == subject)
                 || (_holdingRung.TryGetValue(key, out var rung) && now - rung < HoldingBound)
-                || state.Cards(openOnly: true).FirstOrDefault(c => c.Kind == LegCommander.PrReady && c.Subject == subject)?.Choices.FirstOrDefault(c => c.Verb == Verbs.Merge) is not { Args: [{ } head, ..] })
+                || HoldingHead(subject, flight) is not { } head)
             {
                 continue;
             }
@@ -958,6 +959,20 @@ public sealed class PrChecks(NodeState state, IGitHub gitHub, TimeProvider time,
                 new CardChoice { Label = "Keep waiting", Verb = Verbs.Dismiss, Target = Verbs.CardTarget(card.Id), Args = ["waiting for the watchtower"] },
             ]);
         }
+    }
+
+    /// <summary>
+    /// The head a holding flight's timeout card merges: the open PR-ready card's Merge head, or, where the node itself closed that card
+    /// for a leg wait (<see cref="LegCommander.LegWaitOutcome"/>), the flight's reviewed head. Null otherwise (no card, or one a person closed).
+    /// </summary>
+    private string? HoldingHead(string subject, FlightRow flight)
+    {
+        if (state.Cards(openOnly: true).FirstOrDefault(c => c.Kind == LegCommander.PrReady && c.Subject == subject) is { } open)
+        {
+            return open.Choices.FirstOrDefault(c => c.Verb == Verbs.Merge) is { Args: [{ } cardHead, ..] } ? cardHead : null;
+        }
+        var latest = state.Cards(openOnly: false).Where(c => c.Kind == LegCommander.PrReady && c.Subject == subject).OrderByDescending(c => c.ClosedAt ?? c.At).FirstOrDefault();
+        return latest?.Outcome?.StartsWith(LegCommander.LegWaitOutcome, StringComparison.Ordinal) == true ? flight.Review?.ReviewedHead : null;
     }
 
     /// <summary>
@@ -1066,7 +1081,8 @@ public sealed class PrChecks(NodeState state, IGitHub gitHub, TimeProvider time,
     /// <c>flight-ci-budget</c> or red for more than three hours the flight is capped: its pushes are refused with the numbers, and one
     /// For-you card rings the owner with continue, land what is green, or split. The card is raised once for a cap; the owner's
     /// <c>continue</c> lifts the cap for one more budget, and a budget raised in the settings lifts it by itself. PIL1023: the red
-    /// bound does not run while the flight waits on a person and restarts when that wait ends (<see cref="CiBudgets.WaitOnPerson"/>); a cap
+    /// bound does not run while the flight waits on a person and restarts when that wait ends (<see cref="CiBudgets.WaitOnPerson"/>); PIL1321: a wait
+    /// for admission in the queue counts the same (<see cref="CiBudgets.WaitInQueue"/>); a cap
     /// already set stays until answered, only a new red cap is held back.
     /// </summary>
     internal async Task LookAtCiAsync(CancellationToken cancellationToken)
@@ -1108,7 +1124,10 @@ public sealed class PrChecks(NodeState state, IGitHub gitHub, TimeProvider time,
             var counted = CiBudgets.Count(runs, current.Ci, now, noModel);
             // PIL1023: a flight waiting on a person (a review loop card, another card for the owner) does not run its red clock.
             // A cap already set is judged as before: only a new red cap is held back, so a card opening later never lifts a stop nobody answered.
-            var wait = counted.CappedWhy is null ? CiBudgets.WaitOnPerson(state.Cards(), flight.Code, counted.RedSince) : default;
+            // PIL1321: so does a flight queued for admission (its repo held, the Opus cap), which could not fly to fix anything.
+            var wait = counted.CappedWhy is null
+                ? CiBudgets.Combine(CiBudgets.WaitOnPerson(state.Cards(), flight.Code, counted.RedSince), CiBudgets.WaitInQueue(current, state.Legs(flight.Code), counted.RedSince))
+                : default;
             var why = CiBudgets.Why(counted, budget, now, wait);
             var subject = Verbs.FlightTarget(flight.Code);
             if (why is not null && counted.CappedWhy is null)

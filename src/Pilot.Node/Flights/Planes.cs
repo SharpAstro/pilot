@@ -822,9 +822,12 @@ public sealed class Planes(IGit git, RemovalQueue? queue = null)
     /// <summary>Whether the plane holds changes not committed, in a line, or null when it is clean (or gone).</summary>
     public async Task<string?> UncommittedAsync(string worktree, CancellationToken cancellationToken)
     {
-        var lines = await UncommittedFilesAsync(worktree, cancellationToken);
-        return lines.Count == 0 ? null : $"{lines.Count} file{(lines.Count == 1 ? "" : "s")} not committed ({string.Join(", ", lines.Take(3).Select(l => l.Trim()))}{(lines.Count > 3 ? ", ..." : "")})";
+        return Describe(await UncommittedFilesAsync(worktree, cancellationToken));
     }
+
+    /// <summary>The one-line account of <paramref name="lines"/> (porcelain lines), or null when there are none.</summary>
+    public static string? Describe(IReadOnlyList<string> lines) =>
+        lines.Count == 0 ? null : $"{lines.Count} file{(lines.Count == 1 ? "" : "s")} not committed ({string.Join(", ", lines.Take(3).Select(l => l.Trim()))}{(lines.Count > 3 ? ", ..." : "")})";
 
     /// <summary>The plane's changes not committed, one porcelain line each (<c>?? stray.txt</c>); none when it is clean, gone or unreadable.</summary>
     public async Task<IReadOnlyList<string>> UncommittedFilesAsync(string worktree, CancellationToken cancellationToken)
@@ -833,7 +836,8 @@ public sealed class Planes(IGit git, RemovalQueue? queue = null)
         {
             return [];
         }
-        var status = await git.RunAsync(["status", "--porcelain"], worktree, cancellationToken);
+        // -uall: real git folds an untracked folder into one "?? dir/" line, which would name a folder, not the files in it.
+        var status = await git.RunAsync(["status", "--porcelain", "-uall"], worktree, cancellationToken);
         return status.Ok ? status.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries) : [];
     }
 

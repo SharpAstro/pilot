@@ -174,6 +174,8 @@ internal sealed class ReposView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     /// <summary>The header's ? card: which pilot this is and where its things are.</summary>
     public AboutCard? About { get; set; }
 
+    /// <summary>The header's Autopilot switch, the same on every page.</summary>
+    public AutopilotSwitch? Autopilot { get; set; }
     
     /// <summary>The header's Night switch, the same on every page.</summary>
     public NightSwitch? Night { get; set; }
@@ -301,7 +303,7 @@ internal sealed class ReposView<TSurface>(Renderer<TSurface> renderer) : PilotWi
                 CardsView<TSurface>.HeaderPill("All repos", "repos:all", () => ShowAll = !ShowAll, ShowAll ? Lit : null),
             ],
             Lines = lines,
-        }, new TopBarParts(Nodes, null, About, Night));
+        }, new TopBarParts(Nodes, null, Autopilot, About, Night));
     }
 
     /// <summary><c>sync: 2 updated, 1 skipped</c>: what the outcome list adds up to.</summary>

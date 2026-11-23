@@ -69,6 +69,19 @@ public sealed class LegAdmissionTests : LegCommanderTestsBase
         var flying = Leg1("TIA1", "one");
         flying.State.ShouldBe(LegState.Flying);
         flying.Queued.ShouldBeNull();
+        // PIL1321: the end of the wait is stamped on the flight, for the CI red clock.
+        _state.Flights().Single().AdmittedAt.ShouldNotBeNull();
+    }
+
+    [Fact]
+    public async Task ALegThatNeverWaitedLeavesNoAdmissionStamp()
+    {
+        Settings(cap: 0);
+        await Flight(1, "one");
+
+        (await Leg(Verbs.StartLeg, Verbs.LegTarget("TIA1", "one"))).Ok.ShouldBeTrue();
+
+        _state.Flights().Single().AdmittedAt.ShouldBeNull();
     }
 
     [Fact]
@@ -103,6 +116,7 @@ public sealed class LegAdmissionTests : LegCommanderTestsBase
 
         _workers.Started.ShouldHaveSingleItem().Name.ShouldBe("du1-tia1-plan");
         _state.Flights().Single().Queued.ShouldBeNull();
+        _state.Flights().Single().AdmittedAt.ShouldNotBeNull();
     }
 
     [Fact]

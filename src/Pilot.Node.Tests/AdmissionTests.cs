@@ -15,12 +15,12 @@ public sealed class AdmissionTests
 
     private static AdmissionInput Repo(params FleetFlight[] flights) => new([], flights, 3, true);
 
-    private static FleetFlight Flight(string code, string repo, FlightPhase phase, string node = "DE1", int age = 0, params FlightWait[] waits) =>
+    private static FleetFlight Flight(string code, string repo, AdmissionPhase phase, string node = "DE1", int age = 0, params FlightWait[] waits) =>
         new(node, code, repo, phase) { Waits = waits, Since = T0.AddMinutes(age) };
 
     // A held flight whose plane is up, so it holds its repo while it waits.
     private static FleetFlight Holding(string code, string repo, string node = "DE1", params FlightWait[] waits) =>
-        new(node, code, repo, FlightPhase.Held) { Holds = true, Waits = waits };
+        new(node, code, repo, AdmissionPhase.Held) { Holds = true, Waits = waits };
 
     private static AdmissionRequest Start(string flight, string? model = "opus", string node = "DE1") => new(AdmissionRole.Worker, model, node, flight);
 
@@ -69,15 +69,15 @@ public sealed class AdmissionTests
     }
 
     [Theory]
-    [InlineData(FlightPhase.Flying, true)]
-    [InlineData(FlightPhase.InReview, true)]
-    [InlineData(FlightPhase.Fixing, true)]
-    [InlineData(FlightPhase.CiWait, false)]
-    [InlineData(FlightPhase.MergeQueue, false)]
-    [InlineData(FlightPhase.Landed, false)]
-    public void ARepoIsHeldByALegOrAPrInReviewOrFixingButNotByOneWaitingOnCiOrTheQueue(FlightPhase phase, bool holds)
+    [InlineData(AdmissionPhase.Flying, true)]
+    [InlineData(AdmissionPhase.InReview, true)]
+    [InlineData(AdmissionPhase.Fixing, true)]
+    [InlineData(AdmissionPhase.CiWait, false)]
+    [InlineData(AdmissionPhase.MergeQueue, false)]
+    [InlineData(AdmissionPhase.Landed, false)]
+    public void ARepoIsHeldByALegOrAPrInReviewOrFixingButNotByOneWaitingOnCiOrTheQueue(AdmissionPhase phase, bool holds)
     {
-        var input = Repo(Flight("TIA1", "tianwen", phase), Flight("TIA2", "tianwen", FlightPhase.Ready));
+        var input = Repo(Flight("TIA1", "tianwen", phase), Flight("TIA2", "tianwen", AdmissionPhase.Ready));
         var decision = Admission.Decide(input, Start("TIA2"));
         if (holds)
         {
@@ -92,7 +92,7 @@ public sealed class AdmissionTests
     [Fact]
     public void TheModeOffHoldsNothingAndAnotherRepoIsFree()
     {
-        var flights = new[] { Flight("TIA1", "tianwen", FlightPhase.Flying), Flight("TIA2", "tianwen", FlightPhase.Ready), Flight("PIL1", "pilot", FlightPhase.Ready) };
+        var flights = new[] { Flight("TIA1", "tianwen", AdmissionPhase.Flying), Flight("TIA2", "tianwen", AdmissionPhase.Ready), Flight("PIL1", "pilot", AdmissionPhase.Ready) };
         Admission.Decide(new AdmissionInput([], flights, 3, false), Start("TIA2")).ShouldBeOfType<AdmissionDecision.Admit>();
         Admission.Decide(new AdmissionInput([], flights, 3, true), Start("PIL1")).ShouldBeOfType<AdmissionDecision.Admit>();
     }
@@ -100,7 +100,7 @@ public sealed class AdmissionTests
     [Fact]
     public void AFlightThatHoldsItsRepoGoesOnWithItsNextSession()
     {
-        var input = Repo(Flight("TIA1", "tianwen", FlightPhase.InReview), Flight("TIA2", "tianwen", FlightPhase.Ready));
+        var input = Repo(Flight("TIA1", "tianwen", AdmissionPhase.InReview), Flight("TIA2", "tianwen", AdmissionPhase.Ready));
         Admission.Decide(input, new AdmissionRequest(AdmissionRole.Fixer, "opus", "DE1", "TIA1")).ShouldBeOfType<AdmissionDecision.Admit>();
     }
 
@@ -109,9 +109,9 @@ public sealed class AdmissionTests
     {
         // TIA2 is older, but the held TIA3 (same repo) connects from TIA4, so TIA4 goes first.
         var input = Repo(
-            Flight("TIA2", "tianwen", FlightPhase.Ready, age: 0),
-            Flight("TIA4", "tianwen", FlightPhase.Ready, age: 5),
-            Flight("TIA3", "tianwen", FlightPhase.Held, age: 1, waits: new FlightWait("DE1", "TIA4", WaitKind.Connection)));
+            Flight("TIA2", "tianwen", AdmissionPhase.Ready, age: 0),
+            Flight("TIA4", "tianwen", AdmissionPhase.Ready, age: 5),
+            Flight("TIA3", "tianwen", AdmissionPhase.Held, age: 1, waits: new FlightWait("DE1", "TIA4", WaitKind.Connection)));
         Admission.Decide(input, Start("TIA4")).ShouldBeOfType<AdmissionDecision.Admit>();
         Admission.Decide(input, Start("TIA2")).ShouldBeOfType<AdmissionDecision.Wait>().Why.ShouldContain("TIA4 goes first");
     }
@@ -119,7 +119,7 @@ public sealed class AdmissionTests
     [Fact]
     public void WithoutDependentsTheOlderFlightGoesFirst()
     {
-        var input = Repo(Flight("TIA2", "tianwen", FlightPhase.Ready, age: 0), Flight("TIA4", "tianwen", FlightPhase.Ready, age: 5));
+        var input = Repo(Flight("TIA2", "tianwen", AdmissionPhase.Ready, age: 0), Flight("TIA4", "tianwen", AdmissionPhase.Ready, age: 5));
         Admission.Decide(input, Start("TIA2")).ShouldBeOfType<AdmissionDecision.Admit>();
         Admission.Decide(input, Start("TIA4")).ShouldBeOfType<AdmissionDecision.Wait>();
     }
@@ -130,7 +130,7 @@ public sealed class AdmissionTests
         // PIL12 holds the repo and waits for PIL15's package; PIL15 waits for the repo.
         var input = Repo(
             Holding("PIL12", "pilot", waits: new FlightWait("DE1", "PIL15", WaitKind.Package)),
-            Flight("PIL15", "pilot", FlightPhase.Ready));
+            Flight("PIL15", "pilot", AdmissionPhase.Ready));
         var decision = Admission.Decide(input, Start("PIL15")).ShouldBeOfType<AdmissionDecision.AdmitToBreakCycle>();
         decision.Card.ShouldStartWith("two PIL flights in the air: PIL12 waits for PIL15's package and PIL15 for the repo");
     }
@@ -140,7 +140,7 @@ public sealed class AdmissionTests
     {
         // TIA1 wants the repo; TIA2 holds it and waits for DIR3; DIR3 holds dir.lib and waits for TIA1 to land.
         var input = Repo(
-            Flight("TIA1", "tianwen", FlightPhase.Ready),
+            Flight("TIA1", "tianwen", AdmissionPhase.Ready),
             Holding("TIA2", "tianwen", waits: new FlightWait("DE1", "DIR3", WaitKind.Connection)),
             Holding("DIR3", "DIR.Lib", waits: new FlightWait("DE1", "TIA1", WaitKind.Connection)));
         var card = Admission.Decide(input, Start("TIA1")).ShouldBeOfType<AdmissionDecision.AdmitToBreakCycle>().Card;
@@ -153,7 +153,7 @@ public sealed class AdmissionTests
     {
         var input = Repo(
             Holding("PIL12", "pilot", waits: new FlightWait("SE1", "PIL15", WaitKind.PeerConnection)),
-            Flight("PIL15", "pilot", FlightPhase.Ready, node: "SE1"));
+            Flight("PIL15", "pilot", AdmissionPhase.Ready, node: "SE1"));
         Admission.Decide(input, Start("PIL15", node: "SE1")).ShouldBeOfType<AdmissionDecision.AdmitToBreakCycle>().Card.ShouldContain("PIL15 on SE1 to land");
     }
 
@@ -163,14 +163,14 @@ public sealed class AdmissionTests
         // A chain: DIR2 waits for DIR3, which holds dir.lib; TIA1 waits for DIR2's package. No cycle, so DIR2 waits.
         var chain = Repo(
             Holding("TIA1", "tianwen", waits: new FlightWait("DE1", "DIR2", WaitKind.Package)),
-            Flight("DIR2", "DIR.Lib", FlightPhase.Ready),
-            Flight("DIR3", "DIR.Lib", FlightPhase.Flying));
+            Flight("DIR2", "DIR.Lib", AdmissionPhase.Ready),
+            Flight("DIR3", "DIR.Lib", AdmissionPhase.Flying));
         Admission.Decide(chain, Start("DIR2")).ShouldBeOfType<AdmissionDecision.Wait>().Why.ShouldContain("DIR3");
         // Close it: DIR3 now waits for TIA1.
         var cyclic = Repo(
             Holding("TIA1", "tianwen", waits: new FlightWait("DE1", "DIR2", WaitKind.Package)),
             Holding("DIR3", "DIR.Lib", waits: new FlightWait("DE1", "TIA1", WaitKind.Connection)),
-            Flight("DIR2", "DIR.Lib", FlightPhase.Ready));
+            Flight("DIR2", "DIR.Lib", AdmissionPhase.Ready));
         Admission.Decide(cyclic, Start("DIR2")).ShouldBeOfType<AdmissionDecision.AdmitToBreakCycle>().Card.ShouldContain("DIR2's package");
     }
 
@@ -179,8 +179,8 @@ public sealed class AdmissionTests
     {
         var input = Repo(
             Holding("PIL12", "pilot", waits: new FlightWait("DE1", "PIL15", WaitKind.Package)),
-            Flight("PIL15", "pilot", FlightPhase.Ready, age: 0),
-            Flight("PIL16", "pilot", FlightPhase.Ready, age: 1));
+            Flight("PIL15", "pilot", AdmissionPhase.Ready, age: 0),
+            Flight("PIL16", "pilot", AdmissionPhase.Ready, age: 1));
         Admission.Decide(input, Start("PIL15")).ShouldBeOfType<AdmissionDecision.AdmitToBreakCycle>();
         Admission.Decide(input, Start("PIL16")).ShouldBeOfType<AdmissionDecision.Wait>();
     }
@@ -188,12 +188,12 @@ public sealed class AdmissionTests
     [Fact]
     public void APriorityFlightIsExemptFromBothRulesYetCountsInTheOpusFigure()
     {
-        var holder = Flight("TIA1", "tianwen", FlightPhase.Flying);
-        var priority = Flight("TIA2", "tianwen", FlightPhase.Ready) with { Priority = true };
+        var holder = Flight("TIA1", "tianwen", AdmissionPhase.Flying);
+        var priority = Flight("TIA2", "tianwen", AdmissionPhase.Ready) with { Priority = true };
         var full = new AdmissionInput([Opus("a"), Opus("b"), Opus("c")], [holder, priority], 3, true);
         Admission.Decide(full, Start("TIA2")).ShouldBeOfType<AdmissionDecision.Admit>();
         // Its own session is in the figure, so another flight's start sees the slot it takes.
-        var counted = new AdmissionInput([Opus("a"), Opus("b"), Opus("TIA2/x")], [Flight("PIL1", "pilot", FlightPhase.Ready)], 3, true);
+        var counted = new AdmissionInput([Opus("a"), Opus("b"), Opus("TIA2/x")], [Flight("PIL1", "pilot", AdmissionPhase.Ready)], 3, true);
         Admission.Decide(counted, Start("PIL1")).ShouldBeOfType<AdmissionDecision.Wait>().Why.ShouldContain("TIA2/x");
     }
 
@@ -202,7 +202,7 @@ public sealed class AdmissionTests
     {
         var input = new AdmissionInput([Opus("a")], [
             Holding("PIL12", "pilot", waits: new FlightWait("DE1", "PIL15", WaitKind.Package)),
-            Flight("PIL15", "pilot", FlightPhase.Ready)], 1, true);
+            Flight("PIL15", "pilot", AdmissionPhase.Ready)], 1, true);
         Admission.Decide(input, Start("PIL15")).ShouldBeOfType<AdmissionDecision.Wait>().Why.ShouldStartWith("waiting for an Opus slot");
     }
 
@@ -248,10 +248,10 @@ public sealed class AdmissionTests
     {
         // Released from a hold together, each with a leg done: each held the repo and each was admitted, five at once (SE1, 2026-11-09).
         var input = Repo(
-            Flight("PIL895", "pilot", FlightPhase.Flying, age: 0),
-            Flight("PIL891", "pilot", FlightPhase.Flying, age: 5),
-            Flight("PIL893", "pilot", FlightPhase.InReview, age: 10),
-            Flight("TIA9", "tianwen", FlightPhase.Flying, age: 20));
+            Flight("PIL895", "pilot", AdmissionPhase.Flying, age: 0),
+            Flight("PIL891", "pilot", AdmissionPhase.Flying, age: 5),
+            Flight("PIL893", "pilot", AdmissionPhase.InReview, age: 10),
+            Flight("TIA9", "tianwen", AdmissionPhase.Flying, age: 20));
 
         Admission.Decide(input, Start("PIL895")).ShouldBeOfType<AdmissionDecision.Admit>();
         var waits = Admission.Decide(input, Start("PIL891")).ShouldBeOfType<AdmissionDecision.Wait>();
@@ -271,7 +271,7 @@ public sealed class AdmissionTests
         // flights others wait for): were it a candidate, PIL15 would wait for the flight that waits for it. PIL15 goes.
         var input = Repo(
             Holding("PIL12", "pilot", waits: new FlightWait("DE1", "PIL15", WaitKind.Package)) with { Level = Pilot.Contracts.IssuePriority.Urgent, Since = T0 },
-            Flight("PIL15", "pilot", FlightPhase.Flying, age: 30) with { Level = Pilot.Contracts.IssuePriority.Low });
+            Flight("PIL15", "pilot", AdmissionPhase.Flying, age: 30) with { Level = Pilot.Contracts.IssuePriority.Low });
         Admission.Decide(input, Start("PIL15")).ShouldBeOfType<AdmissionDecision.Admit>();
     }
 
@@ -279,7 +279,7 @@ public sealed class AdmissionTests
     public void APriorityFlightIsOutsideTheOneHolderRule()
     {
         // PIL2 is a priority flight and the older holder, so it would rank first; it is outside the rule, so PIL1 does not wait for it.
-        var input = Repo(Flight("PIL2", "pilot", FlightPhase.Flying, age: 0) with { Priority = true }, Flight("PIL1", "pilot", FlightPhase.Flying, age: 5));
+        var input = Repo(Flight("PIL2", "pilot", AdmissionPhase.Flying, age: 0) with { Priority = true }, Flight("PIL1", "pilot", AdmissionPhase.Flying, age: 5));
         Admission.Decide(input, Start("PIL1")).ShouldBeOfType<AdmissionDecision.Admit>();
         Admission.Decide(input, Start("PIL2")).ShouldBeOfType<AdmissionDecision.Admit>();
     }
@@ -288,7 +288,7 @@ public sealed class AdmissionTests
     public void AHeldAskingFlightWithNobodyElseReadyOnTheRepoGetsADecision()
     {
         // PIL1 waits for PIL2 (another repo), holds no repo, and nobody on pilot wants it: the set of flights wanting the repo is empty.
-        var input = Repo(Flight("PIL1", "pilot", FlightPhase.Held, waits: new FlightWait("DE1", "DIR2", WaitKind.Connection)), Flight("DIR2", "DIR.Lib", FlightPhase.Flying));
+        var input = Repo(Flight("PIL1", "pilot", AdmissionPhase.Held, waits: new FlightWait("DE1", "DIR2", WaitKind.Connection)), Flight("DIR2", "DIR.Lib", AdmissionPhase.Flying));
         Should.NotThrow(() => Admission.Decide(input, Start("PIL1")));
     }
 
@@ -298,9 +298,9 @@ public sealed class AdmissionTests
         // PIL2 is Ready on the repo but a priority flight, so it is outside the wanting set; PIL1 (held, asking) is not Ready either. The set
         // is empty and nobody holds the repo: this threw (First() of nothing) before the fix. A priority asker never reaches RepoVerdict.
         var input = Repo(
-            Flight("PIL1", "pilot", FlightPhase.Held, waits: new FlightWait("DE1", "DIR2", WaitKind.Connection)),
-            Flight("PIL2", "pilot", FlightPhase.Ready) with { Priority = true },
-            Flight("DIR2", "DIR.Lib", FlightPhase.Flying));
+            Flight("PIL1", "pilot", AdmissionPhase.Held, waits: new FlightWait("DE1", "DIR2", WaitKind.Connection)),
+            Flight("PIL2", "pilot", AdmissionPhase.Ready) with { Priority = true },
+            Flight("DIR2", "DIR.Lib", AdmissionPhase.Flying));
         Admission.Decide(input, Start("PIL1")).ShouldBeOfType<AdmissionDecision.Admit>();
     }
 
@@ -309,7 +309,7 @@ public sealed class AdmissionTests
     {
         // PIL1 (held, asking) waits for PIL2, which holds the repo and waits for PIL1: a cycle with no flight wanting the repo.
         var input = Repo(
-            Flight("PIL1", "pilot", FlightPhase.Held, waits: new FlightWait("DE1", "PIL2", WaitKind.Connection)),
+            Flight("PIL1", "pilot", AdmissionPhase.Held, waits: new FlightWait("DE1", "PIL2", WaitKind.Connection)),
             Holding("PIL2", "pilot", waits: new FlightWait("DE1", "PIL1", WaitKind.Connection)));
         Admission.Decide(input, Start("PIL1")).ShouldBeOfType<AdmissionDecision.Wait>().Why.ShouldContain("PIL2");
     }

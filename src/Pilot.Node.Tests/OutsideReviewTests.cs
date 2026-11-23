@@ -35,6 +35,15 @@ public sealed class OutsideReviewTests
         OutsideReview.ResetAfter("resets 10pm (UTC)", Noon.AddHours(10))!.Value.ShouldBe(DateTimeOffset.Parse("2026-11-23T22:00:00Z", System.Globalization.CultureInfo.InvariantCulture));
     }
 
+    [Fact]
+    public void TheResetIsTheNextOneAfterTheLogLinesOwnTimeWhateverTheTimeOfTheRead()
+    {
+        // The recorded line is of 2026-11-22 14:06 UTC: read at noon or three days later, the reset is the same 22:00 that day.
+        var at = DateTimeOffset.Parse("2026-11-22T22:00:00Z", System.Globalization.CultureInfo.InvariantCulture);
+        OutsideReview.Read(RealLog(), Noon)!.ResetsAt.ShouldBe(at);
+        OutsideReview.Read(RealLog(), Noon.AddDays(3))!.ResetsAt.ShouldBe(at);
+    }
+
     [Theory]
     [InlineData("")]
     [InlineData("resets soon")]
@@ -145,20 +154,18 @@ public sealed class OutsideReviewTests
     }
 
     [Fact]
-    public async Task AJobsAttemptIsAskedOncePerJobIdAndARerunsNewJobIsAskedAfresh()
+    public void AJobsAttemptIsRememberedPerJobIdAndARerunsNewJobTakesTheRunStatesAttempt()
     {
-        var gh = new FakeGitHub();
-        var reviews = new OutsideReviews(gh, new FixedTime(Noon));
+        var reviews = new OutsideReviews(new FakeGitHub(), new FixedTime(Noon));
 
-        (await reviews.AttemptAsync("repo", 9, 100, CancellationToken.None)).ShouldBe(1);
-        (await reviews.AttemptAsync("repo", 9, 100, CancellationToken.None)).ShouldBe(1);
-        gh.RunAttemptReads.ShouldBe(1, "a job id names one attempt");
+        reviews.Attempt(100, new RunState(1, true, Noon)).ShouldBe(1);
+        reviews.Attempt(100, null).ShouldBe(1, "a job id names one attempt, so an unreadable run state changes nothing");
+        reviews.Attempt(100, new RunState(2, true, Noon)).ShouldBe(1, "the job's own attempt wins over the run's newer one");
 
-        gh.RunAttempts[9] = 2;
-        (await reviews.AttemptAsync("repo", 9, 101, CancellationToken.None)).ShouldBe(2, "the rerun's job is a new id");
-        (await reviews.AttemptAsync("repo", 9, null, CancellationToken.None)).ShouldBe(2);
-        (await reviews.AttemptAsync("repo", 9, null, CancellationToken.None)).ShouldBe(2);
-        gh.RunAttemptReads.ShouldBe(4, "a check that names no job is asked every time");
+        reviews.Attempt(101, new RunState(2, true, Noon)).ShouldBe(2, "the rerun's job is a new id");
+        reviews.Attempt(null, new RunState(2, true, Noon)).ShouldBe(2);
+        reviews.Attempt(null, null).ShouldBeNull("a check with no job and no readable state has no attempt");
+        reviews.Attempt(102, null).ShouldBeNull();
     }
 
     [Fact]
@@ -228,8 +235,56 @@ public sealed class OutsideReviewTests
         GhCli.FailedJobs("{}").ShouldBeNull();
     }
 
+    [Fact]
+    public async Task AnEntryUntouchedPastKeepIsReadAgain()
+    {
+        var gh = new FakeGitHub();
+        gh.RunLogs[1] = RealLog();
+        gh.RunLogs[2] = RealLog();
+        var clock = new FixedTime(Noon);
+        var reviews = new OutsideReviews(gh, clock);
+        await reviews.AskRunAsync("repo", 1, 1, null, CancellationToken.None);
+        reviews.Attempt(100, new RunState(1, true, Noon)).ShouldBe(1);
+
+        clock.Now += OutsideReviews.Keep + TimeSpan.FromHours(1);
+        await reviews.AskRunAsync("repo", 2, 1, null, CancellationToken.None); // a write drops what sat unused
+        reviews.Attempt(101, new RunState(1, true, Noon)).ShouldBe(1);
+        reviews.TryKnown(1, 1, out _).ShouldBeFalse();
+
+        await reviews.AskRunAsync("repo", 1, 1, null, CancellationToken.None);
+        gh.RunLogReads.ShouldBe(3, "the dropped entry is read from gh again");
+        reviews.Attempt(100, null).ShouldBeNull("the dropped job's attempt is no longer remembered");
+        reviews.Attempt(100, new RunState(2, true, Noon)).ShouldBe(2, "it is taken from the run state again");
+    }
+
+    [Fact]
+    public async Task AnEntryReadWithinKeepIsKept()
+    {
+        var gh = new FakeGitHub();
+        gh.RunLogs[1] = RealLog();
+        gh.RunLogs[2] = RealLog();
+        var clock = new FixedTime(Noon);
+        var reviews = new OutsideReviews(gh, clock);
+        await reviews.AskRunAsync("repo", 1, 1, null, CancellationToken.None);
+        reviews.Attempt(100, new RunState(1, true, Noon)).ShouldBe(1);
+
+        clock.Now += TimeSpan.FromHours(20);
+        await reviews.AskRunAsync("repo", 1, 1, null, CancellationToken.None); // a hit renews it
+        reviews.Attempt(100, new RunState(1, true, Noon)).ShouldBe(1);
+
+        clock.Now += TimeSpan.FromHours(20); // 40 hours since the write, 20 since the last use
+        await reviews.AskRunAsync("repo", 2, 1, null, CancellationToken.None);
+        reviews.Attempt(101, new RunState(1, true, Noon)).ShouldBe(1);
+
+        reviews.TryKnown(1, 1, out _).ShouldBeTrue();
+        reviews.Attempt(100, null).ShouldBe(1, "the job's attempt is still remembered");
+        gh.RunLogReads.ShouldBe(2);
+    }
+
     private sealed class FixedTime(DateTimeOffset now) : TimeProvider
     {
-        public override DateTimeOffset GetUtcNow() => now;
+        public DateTimeOffset Now { get; set; } = now;
+
+        public override DateTimeOffset GetUtcNow() => Now;
     }
 }

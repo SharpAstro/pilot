@@ -58,10 +58,8 @@ public sealed partial class PrReviews
                 {
                     var why = "the answer to its design question was given and its fixer ended without a push";
                     state.PutPrReview(review with { QueueNote = why });
-                    state.RaiseCard(CardBin.ForYou, MergeKind, subject, $"{review.Repo}#{review.Number} was not queued",
-                        $"Reviewed {review.Verdict} at {at}, but the fix its design answer called for was never pushed. Merge it at this head if you are content with it as it is.",
-                        [new CardChoice { Label = "Merge the PR", Verb = Verbs.Merge, Target = subject, Args = [review.Head] }], link: review.Url,
-                        summary: $"Merge it at this head if you are content with it: {why}.");
+                    // The same card the fixer-ended path raises (a fix-missing card, or the close card), never a Merge one; raised once per kind and subject.
+                    RaiseDesignFixMissingCard(review, subject, $"{review.Repo}#{review.Number}");
                 }
                 return null;
             }

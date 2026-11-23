@@ -19,8 +19,35 @@ public sealed partial class NormalBehaviourWordTests
     /// </summary>
     private static readonly string[] Allowed =
     [
+        // PIL1285: the word is a real feature again, the switch whose meaning is "the watchtower runs with a standing goal". These
+        // are the switch's own names and sentences; they come first, so a longer phrase is taken out before a shorter one inside it.
+        // PIL1285, the standing goal: the switch's CI-grant bound, its refusal and the goal section of the watchtower's rules.
+        "autopilot-ci-grants", "AutopilotCiGrants", "Autopilot CI grants", "while autopilot is on", "With autopilot on", "on autopilot needs",
+        "has autopilot on", "(autopilot)", "bool autopilot", "if (autopilot)", "autopilot: ", "autopilot))", "autopilot,", "autopilot ="  ,
+        "autopilot  on: the watchtower runs with a standing goal", // the status line
+        "autopilot  off (only the person",                         // the status line
+        "**autopilot** on: the watchtower",                        // the status line, as markdown
+        "**autopilot** off (only the person",                      // the status line, as markdown
+        "autopilot takes on or off",                               // the settings value's refusal
+        "autopilot is the person's to change",                     // the person-only refusal
+        "Autopilot is on: the watchtower runs with a standing goal", // the switch's tooltip (AutopilotSwitch)
+        "Autopilot is off: the watchtower runs with no standing goal", // ditto
+        "Autopilot stays {(",                                        // the switch's refusal line
+        "autopilot {(",                                              // the switch's asking, refusal and reply lines
+        "\"autopilot:toggle\"",                                      // the switch's press action
+        "\"autopilot on\"", "\"autopilot off\"",                    // a node's switch on the Fleet line (FleetView)
+        "NodeInfo.Autopilot\"",                                      // a doc comment's cref to the node's switch (AutopilotSwitch, FleetView)
+        "\"AutopilotSwitch.OnToggle\"", "\"AutopilotSwitch.On\"",   // a doc comment's cref to the switch's members (PilotChrome)
+        "autopilotGoal",                                           // the file member (an old "autopilot" member is ignored)
+        "Autopilot switch",                                        // README: the top bar's switch
+        "AutopilotKey",                                            // identifier of the setting's key
+        "AutopilotFileMember",                                     // identifier of the file member
         "\"autopilot\"",                     // MergeBy / DecisionByKinds value and the refused settings key, stored by older releases
-        "autopilot-ran",                     // card kind of the Handled line, stored in old journals
+        "autopilot-stall-minutes", "AutopilotStallMinutesKey", "DefaultAutopilotStallMinutes", "Autopilot stall minutes", // PIL1285: the stall bound
+        "autopilot-repeat",                  // card kind of the find-the-cause task
+        "autopilot-investigations", "AutopilotInvestigationsKey", "DefaultAutopilotInvestigations", "AutopilotInvestigations", "Autopilot investigations", // PIL1285: the investigator bound
+        "Autopilot v2 has two tiers", "one autopilot per node", "has an Autopilot part", "\"Autopilot:\"", // PIL1285: README and the digest's part
+        "autopilot-ran",                   // card kind of the Handled line, stored in old journals
         "autopilot-merge-refused",           // card kind of the merge refusal, stored in old journals
         "autopilot is gone",                 // the message of a refused `set autopilot`
         "`autopilot` setting is gone",       // README: says the setting is gone

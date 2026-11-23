@@ -267,6 +267,7 @@ public sealed class PageTextOverlapTests
         chrome.Jobs.CanCommand = true;
         chrome.Cards.CanTell = true;
         chrome.Nodes.Choices = data.Nodes;
+        chrome.Autopilot.OnToggle = _ => Task.FromResult<string?>(null);
         chrome.About.Newer = () => "2.0.9-beta.1";
         chrome.About.Restart = () => { };
         // A window opens with the For you bar docked; a case that wants it over the page says so in its setup.

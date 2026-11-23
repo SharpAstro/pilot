@@ -285,7 +285,7 @@ done only with every change committed (its worker's brief says so, and the node 
 refused while the plane holds commits past the reviewed head, so a late commit cannot miss the PR; landing by hand is
 refused while the plane holds a commit on no remote and not in its base (compared by patch, so rebase-merged work
 counts as in); a flight whose PR was merged on GitHub with something left out does not land but rings with it. Before
-any of that, a session ending its turn in a plane with files not committed is sent back to commit them (the Stop gate,
+any of that, a session ending its turn in a plane with files not committed is sent back to commit them, or delete them if they are scratch it made (the Stop gate,
 under Hooks). Once
 landed, the plane's worktree is removed and its branch kept. PRs are merged by rebase unless the node's `merge-method`
 says otherwise, so every commit's subject, which a repo's docs may cite, reaches main.
@@ -1660,8 +1660,38 @@ take a flight another node of the fleet routes to it. Both are in `GET /api/v1/n
 `AcceptsFleetFlights`), and `pilot status` prints a `maintenance` line while it is on. `set node maintenance on|off` is
 the one setting a LAN grant may change (the Fleet row menu's way); every other `set` and `setup` stays this machine's.
 
-The `autopilot` setting is gone (PIL1271): a stored settings file that still has the key loads, the key is ignored, and `pilot settings set autopilot`
-says it is gone. What it turned on (fix rounds, review-notes legs, merges, fixers, the watchtower's presses) is what pilot always does.
+The `autopilot` setting is back with its v2 meaning (PIL1285): while on, the watchtower runs with a standing goal (Sonnet keeps
+watch, Opus thinks, the person only as a last resort). It is per node, off by default, in force at once, and only the person
+changes it (`pilot settings set autopilot on|off`, or the top bar's Autopilot switch): an assistant, the lookout and a flight's
+session are refused with "autopilot is the person's to change". The file stores it as `autopilotGoal`, a new member, because
+before PIL1271 `autopilot` was a different switch; a settings file still holding that old member loads with it ignored, so no node
+wakes up with the standing goal on after an update. It is in `GET /api/v1/node` and the node row (`Autopilot`), `pilot status`
+prints an `autopilot` line, and a remote node's switch in the GUI shows the state and does not click (the setting is that machine's).
+
+`autopilot-ci-grants` (a number, 0 to 20; 1 unless set) bounds what the watchtower spends on its own while autopilot is on: it may
+grant one flight more CI budget (`pilot flight ci-budget <flight> continue --why <evidence>`) at most that many times per local day.
+A further grant that day is refused with a line saying it is the person's, and the watchtower rings them. With autopilot on the lookout
+also runs `create-issue`, `create-flight` and `go-around` on a `--why` that names evidence (a job id, a card id, a commit, a run); each
+leaves a Handled line and a decision with that why. With it off they are refused as before. `rerun-checks` is the exception: the lookout
+runs it with no why, the switch on or off, as it did before PIL1285. `go-around` takes the worker's reason as its words and the evidence
+as `--why` (over MCP: `reason` and `why`).
+
+Autopilot v2 has two tiers (PIL1285). **Sonnet keeps watch**: the watchtower, woken by a new card, a flight with no progress for
+`autopilot-stall-minutes` (60 unless set), a peer node going offline or coming back, and a repeated failure; the repeat detector turns
+the second card of one kind or the second failure cause on a flight into one "find the cause" task instead of a third press. Each wake is
+said once: a stall said is kept with the watchtower's tells (`watchtower-told`) while its flight is in the air, so a node restart does
+not say it again, and a move of the flight starts a new one; a restarted node only notes each peer's first sight, so no peer wake
+is said again either. **Opus
+thinks**: the `investigator` role (`investigator-range`, `opus..opus-high` unless set, separate from the watchtower's range) is a short
+session the node starts with the evidence in its brief, on a find-the-cause task, a flight past its stale bound, a card about to ring the
+person, and the digest. A run ends with exactly one outcome: an issue plus a flight (`pilot investigated <subject> issue`), an action
+recorded with its reason (`action`), or one notification to the person that says what was tried (`ring`). With autopilot on nothing rings
+the person unless a run decided it (a card waiting for a run when the node restarts rings at the next node's first look, saying so; the day's
+count and the triggers taken are read back from the start lines the runs leave). An investigator runs `create-issue`, `create-flight`, `go-around` and
+`rerun-checks` on a `--why` naming evidence, never `ci-budget`. `autopilot-investigations` (8 unless set) bounds the runs per local day; past it one card says so.
+There is one autopilot per node: each node's own setting and its own watchtower, with no fleet-wide switch.
+The digest has an Autopilot part while the switch is on: what the watchtower and investigators did, filed and escalated, line by line with
+each why, and the investigator role's tokens for the period from the spend ledger (the ledger prices no cost, so only tokens are said).
 
 Two per-repo settings (#254) are lists, keyed by the repo's folder name and in force at once, like `priority-repos`:
 - `repo-trackers` takes `repo=tracker` entries (`pilot settings set repo-trackers bullclip-backend=shortcut`), `tracker`
@@ -1988,10 +2018,9 @@ puts it right.
 
 **The Stop gate: nothing is left behind in a plane.** A session that ends its turn in a flight's plane (its cwd the
 plane's worktree or a folder in it, of a flight not landed) with files not committed there is sent back: the node
-answers `{"decision":"block","reason":"…"}`, the reason naming the files (`git status --porcelain`, the first three)
-and telling it to commit or drop them, and Claude Code carries on with that as the session's next instruction. Once
+answers `{"decision":"block","reason":"…"}`, the reason naming the files (`git status --porcelain`, the first three, read with `-uall` so a new folder lists its files) and telling it to commit them, or delete them if they are scratch it made, and Claude Code carries on with that as the session's next instruction. Once
 per turn: a stop Claude Code marks `stop_hook_active` (one a Stop hook already sent back) is let through, and if the
-files are still there the node rings (`stopped-uncommitted`, about the flying leg, with **Tell it again**); a later
+files are still there the node rings (`stopped-uncommitted`, about the flying leg, with **Tell it to commit** and, when the files are untracked, **Tell it to delete them**); a later
 stop with the plane clean closes the ring. Only a plane the node flies counts, not Claude Code's own worktrees beside
 it under `.claude/worktrees`; every other session, a subagent and any other event get no answer. This is why Stop's
 handler is not `async`: Claude Code never reads an async hook's output. It waits for the node at most 2 s, and no
