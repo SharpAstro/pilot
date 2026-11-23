@@ -108,6 +108,14 @@ public sealed partial class NodeState
         var json = Serialize(delta);
         _journal.Append(delta, json);
         var closedNow = delta is CardChangedEvent { Card.State: CardState.Closed } closing && _cards.TryGetValue(closing.Card.Id, out var before) && before.State == CardState.Open ? closing.Card : null;
+        // PIL1325 (R1.4): a card a choice's predicate reads (a design question, a PR-ready or merge-failed card) that opens or closes re-marks the open cards.
+        var gateMoved = delta switch
+        {
+            CardAddedEvent { Card: { State: CardState.Open } added } => GatesChoices(added.Kind),
+            CardChangedEvent { Card: var changed } => GatesChoices(changed.Kind)
+                && (_cards.TryGetValue(changed.Id, out var was) ? was.State == CardState.Open : false) != (changed.State == CardState.Open),
+            _ => false,
+        };
         ApplyToState(delta);
         _seq = delta.Seq;
         Hold(delta.Seq, json);
@@ -120,6 +128,10 @@ public sealed partial class NodeState
         else if (closedNow is not null)
         {
             CloseCardsAboutClosed(closedNow);
+        }
+        if (gateMoved)
+        {
+            SyncChoiceAvailability();
         }
     }
 

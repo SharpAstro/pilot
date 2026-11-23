@@ -50,6 +50,50 @@ public sealed class SelfClearingCardTests
     }
 
     [Fact]
+    public void RaisedTwiceWhileTheCauseStandsItIsOneHandledLine()
+    {
+        var state = NewState();
+        state.PutFlight(Flight());
+        state.PutLeg(Leg(LegState.Flying));
+
+        var first = state.RaiseCard(CardBin.Ring, "review-failed", "flight/TIA1", "TIA1's review did not start", "it failed", [StartReview()]);
+        var second = state.RaiseCard(CardBin.Ring, "review-failed", "flight/TIA1", "TIA1's review did not start", "it failed", [StartReview()]);
+
+        second.Id.ShouldBe(first.Id);
+        state.Cards().Count(c => c.Kind == "review-failed").ShouldBe(1);
+    }
+
+    [Fact]
+    public void RaisedAgainAfterTheSyncClosedItForTheSameReasonItIsThatCard()
+    {
+        var state = NewState();
+        state.PutFlight(Flight());
+        var raised = state.RaiseCard(CardBin.ForYou, "review-failed", "flight/TIA1", "TIA1's review did not start", null, [StartReview()]);
+        state.PutLeg(Leg(LegState.Flying));
+        state.Cards().Single(c => c.Id == raised.Id).State.ShouldBe(CardState.Closed);
+
+        var again = state.RaiseCard(CardBin.ForYou, "review-failed", "flight/TIA1", "TIA1's review did not start", null, [StartReview()]);
+
+        again.Id.ShouldBe(raised.Id);
+        state.Cards().Count(c => c.Kind == "review-failed").ShouldBe(1);
+    }
+
+    [Fact]
+    public void ADifferentReasonIsANewLine()
+    {
+        var state = NewState();
+        state.PutFlight(Flight());
+        state.PutLeg(Leg(LegState.Flying));
+        var first = state.RaiseCard(CardBin.Ring, "review-failed", "flight/TIA1", "TIA1's review did not start", "it failed", [StartReview()]);
+
+        state.PutLeg(Leg(LegState.Flying) with { Name = "review-notes-4", Order = 2 });
+        var second = state.RaiseCard(CardBin.Ring, "review-failed", "flight/TIA1", "TIA1's review did not start", "it failed", [StartReview()]);
+
+        second.Id.ShouldNotBe(first.Id);
+        second.Detail.ShouldNotBeNull().ShouldContain("review-notes-3, review-notes-4");
+    }
+
+    [Fact]
     public void AnOpenForYouCardClosesWhenItsOnlyChoiceTurnsSelfClearingUnavailableAndDoesNotReopen()
     {
         var state = NewState();

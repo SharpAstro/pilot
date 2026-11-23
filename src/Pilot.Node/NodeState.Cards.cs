@@ -44,14 +44,26 @@ public sealed partial class NodeState
         // land) is a Handled line saying so, not a card to press a refused button on.
         if (bin is CardBin.ForYou or CardBin.Ring && choices is { Count: > 0 })
         {
-            string? selfClearing;
             lock (_gate)
             {
-                selfClearing = SelfClearingReason(choices, kind);
-            }
-            if (selfClearing is not null)
-            {
-                return RaiseCardCore(CardBin.Handled, kind, subject, title, $"{detail}{(detail is { Length: > 0 } ? " " : "")}Nothing to press: {selfClearing}.", choices, link, askedBy, why, summary, attachment, attachmentExt, cause, aboutCard, out _);
+                if (SelfClearingReason(choices, kind) is { } selfClearing)
+                {
+                    // Raised again while the cause stands, it is the same line, not one more (#1325's review, R1.3): an open card of this kind
+                    // and subject is that card, as for any raise, and so is the newest card of it when the node closed it for this very reason
+                    // (a Handled line this raise wrote before, or a card the sync closed with the reason as its outcome).
+                    if (_cards.Values.FirstOrDefault(c => c.State == CardState.Open && c.Kind == kind && c.Subject == subject) is { } open)
+                    {
+                        return open;
+                    }
+                    var said = $"{detail}{(detail is { Length: > 0 } ? " " : "")}Nothing to press: {selfClearing}.";
+                    if (_cards.Values.Where(c => c.Kind == kind && c.Subject == subject).OrderByDescending(c => CardNumber(c.Id)).FirstOrDefault() is
+                        { State: CardState.Closed, ClosedBy: "node" } newest
+                        && (newest.Bin == CardBin.Handled && newest.Detail == said || newest.Outcome == selfClearing))
+                    {
+                        return newest;
+                    }
+                    return RaiseCardCore(CardBin.Handled, kind, subject, title, said, choices, link, askedBy, why, summary, attachment, attachmentExt, cause, aboutCard, out _);
+                }
             }
         }
         // With the brain to ask (PIL855), a card that would ring is first filed in For you, silent, and rings only on the brain's verdict
@@ -97,6 +109,9 @@ public sealed partial class NodeState
     /// (<see cref="Flights.NodePress.WouldPress"/>): such a card is never sent to the ring judge.
     /// </summary>
     public Func<string, string, string?, IReadOnlyList<CardChoice>?, bool>? NodePresses { get; set; }
+
+    // A card's number from its id (c12 is 12): the order the node raised them in.
+    private static int CardNumber(string id) => int.TryParse(id.AsSpan(1), out var n) ? n : 0;
 
     private CardRow RaiseCardCore(CardBin bin, string kind, string subject, string title, string? detail, IReadOnlyList<CardChoice>? choices, string? link, string? askedBy, string? why, string? summary, string? attachment, string? attachmentExt, string? cause, string? aboutCard, out bool created)
     {

@@ -170,6 +170,54 @@ public sealed class ChoicePreconditionTests
         choices.Single(c => c.Label == "Release").Status.ShouldBeNull();
     }
 
+    // ---- a card the predicates read opens or closes: every open card is marked again (#1325's review, R1.4) ----
+
+    [Fact]
+    public void ADesignQuestionRaisedAfterThePrReadyCardMarksItsMergeAndOneDismissedClearsIt()
+    {
+        const string PrUrl = "https://github.com/SharpAstro/tianwen/pull/7";
+        var pr = PrRef.Parse(PrUrl)!;
+        var state = NewState();
+        state.PutFlight(Flight() with { Review = new ReviewRow { State = ReviewState.Passed, Reviewer = "du1-tia1-review", StartedAt = Start }, PullRequestUrl = PrUrl });
+        state.PutLeg(Leg("parser", 1, LegState.Done));
+        var ready = state.RaiseOpen(CardBin.ForYou, LegCommander.PrReady, "flight/TIA1", "TIA1's PR is ready", null,
+            [new CardChoice { Label = "Merge", Verb = Verbs.Merge, Target = "flight/TIA1", Args = ["abc1234"] }]);
+        MergeOf(state, ready.Id).Status.ShouldBeNull();
+
+        var design = state.RaiseCard(CardBin.ForYou, PrReviews.DesignKind, Verbs.PrTarget(pr.Repo, pr.Number), "a design question", null,
+            [new CardChoice { Label = "Answer", Verb = Verbs.Land, Target = "flight/TIA1" }]);
+
+        MergeOf(state, ready.Id).ShouldSatisfyAllConditions(
+            c => c.Status.ShouldBe(ChoiceStatus.Unavailable),
+            c => c.Note.ShouldBe($"TIA1's PR {pr} has an open design question (card {design.Id}): answer it or dismiss it first"));
+
+        state.CloseCard(design.Id, "dismissed", "cli").ShouldBeTrue();
+
+        MergeOf(state, ready.Id).ShouldSatisfyAllConditions(c => c.Status.ShouldBeNull(), c => c.Note.ShouldBeNull());
+    }
+
+    [Fact]
+    public void APrReadyCardOfferingAGoAroundOpensAndClosesTheGoAroundOfADoneLegOnAnotherCard()
+    {
+        var state = NewState();
+        state.PutFlight(Flight());
+        state.PutLeg(Leg("parser", 1, LegState.Done));
+        var other = state.RaiseOpen(CardBin.ForYou, "test-card", "flight/TIA1", "a card", null,
+            [new CardChoice { Label = "Redo", Verb = Verbs.GoAround, Target = "flight/TIA1/parser", Args = ["why"] }]);
+        state.Cards().Single(c => c.Id == other.Id).Choices.First().Status.ShouldBe(ChoiceStatus.Unavailable);
+
+        var ready = state.RaiseOpen(CardBin.ForYou, LegCommander.PrReady, "flight/TIA1", "TIA1's PR is ready", null,
+            [new CardChoice { Label = "Go around", Verb = Verbs.GoAround, Target = "flight/TIA1/parser", Args = ["why"] }]);
+
+        state.Cards().Single(c => c.Id == other.Id).Choices.First().Status.ShouldBeNull();
+
+        state.CloseCard(ready.Id, "dismissed", "cli").ShouldBeTrue();
+
+        state.Cards().Single(c => c.Id == other.Id).Choices.First().Status.ShouldBe(ChoiceStatus.Unavailable);
+    }
+
+    private static CardChoice MergeOf(NodeState state, string id) => state.Cards().Single(c => c.Id == id).Choices.Single(c => c.Verb == Verbs.Merge);
+
     // ---- the command: refused with the card's words, and nothing runs ----
 
     [Theory]
@@ -229,6 +277,7 @@ public sealed class ChoicePreconditionTests
     [InlineData(Verbs.RerunChecks, "flight/TIA1", "held", "passed", "parser:done", false, "TIA1 is held")]
     [InlineData(Verbs.RerunChecks, "flight/TIA1", "landed", "passed", "parser:done", false, "TIA1 is landed")]
     [InlineData(Verbs.RerunChecks, "flight/TIA1", "flying", "none", "parser:done", false, "TIA1 has not been reviewed; open its PR with the node (flight pr), which starts the review")]
+    [InlineData(Verbs.RerunChecks, "flight/TIA1", "flying", "reviewing", "parser:done", false, "TIA1's review is reviewing, not passed")]
     [InlineData(Verbs.RerunChecks, "flight/TIA1", "flying", "changes", "parser:done", false, "TIA1's review is changes, not passed")]
     [InlineData(Verbs.RerunChecks, "flight/TIA1", "flying", "passed", "parser:done", true, "TIA1's PR {pr} has an open design question (card {design}): answer it or dismiss it first")]
     [Trait("Category", "Slow")]
