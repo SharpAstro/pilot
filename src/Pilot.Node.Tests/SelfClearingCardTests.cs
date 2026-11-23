@@ -181,6 +181,25 @@ public sealed class SelfClearingCardTests
     }
 
     [Fact]
+    public void APrReadyCardOnAFlightWithALegStillFlyingIsNotSelfClearedAndItsMergeReadsUnavailable()
+    {
+        // The exemption: while legs are open a PR-ready card's wait is LegCommander.ShowLegWait's, which closes it with the outcome the restore
+        // sweep reads. A Handled line from RaiseCard would read as a closed merge card and the card would never come back. Until the next look
+        // at the PR the card stays open For you, its Merge honestly marked unavailable.
+        var state = NewState();
+        state.PutFlight(Flight() with { Review = new ReviewRow { State = ReviewState.Passed, Reviewer = "du1-tia1-review", StartedAt = Start } });
+        state.PutLeg(Leg(LegState.Flying));
+
+        var card = state.RaiseCard(CardBin.ForYou, LegCommander.PrReady, "flight/TIA1", "TIA1's PR is ready", null,
+            [new CardChoice { Label = "Merge", Verb = Verbs.Merge, Target = "flight/TIA1" }]);
+
+        card.Bin.ShouldBe(CardBin.ForYou);
+        card.State.ShouldBe(CardState.Open);
+        card.Choices.Single().Status.ShouldBe(ChoiceStatus.Unavailable);
+        state.Cards().Single(c => c.Id == card.Id).State.ShouldBe(CardState.Open);
+    }
+
+    [Fact]
     public void ARaiseWhoseDetailChangesPerCallIsStillOneHandledLine()
     {
         var state = NewState();
