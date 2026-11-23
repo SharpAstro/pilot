@@ -11,7 +11,7 @@ namespace Pilot.Node.Flights;
 public sealed class PrChecks(NodeState state, IGitHub gitHub, TimeProvider time, FlightCommander? flights = null, LegCommander? legs = null) : BackgroundService
 {
     // Reads of a flight's PR inside a look are answered from one read per repo (LookSnapshot); outside a look they go to GitHub as ever.
-    private readonly IGitHub github = LookGitHub.Of(gitHub);
+    private readonly IGitHub github = LookGitHub.Of(gitHub, state.PrPolls);
 
     /// <summary>Where this says what it would have said on stderr: the node's log (pilot #416), nothing for one built without.</summary>
     public TextWriter Error { get; set; } = TextWriter.Null;
@@ -870,7 +870,7 @@ public sealed class PrChecks(NodeState state, IGitHub gitHub, TimeProvider time,
                 state.CloseCard(card.Id, "the hold ended", "node");
             }
         }
-        foreach (var flight in flights.Where(f => f is { State: not FlightState.Landed, Holding: not null, PullRequest: not null, OnHold: null }))
+        foreach (var flight in flights.Where(f => f is { State: not FlightState.Landed and not FlightState.Held, Holding: not null, PullRequest: not null, OnHold: null }))
         {
             var holding = flight.Holding!;
             var key = $"{flight.Code} {holding.Since.UtcTicks}";
@@ -979,6 +979,11 @@ public sealed class PrChecks(NodeState state, IGitHub gitHub, TimeProvider time,
             {
                 continue;
             }
+            // Poll by state (pilot #1293): in a look that read nothing of the flight's repo none of its PRs was due, and its runs are not asked either.
+            if (LookSnapshot.Current is { } look && !look.ReadFresh(flight.RepoPath) && _ciCounted.ContainsKey(flight.Code))
+            {
+                continue;
+            }
             CiRun[] runs;
             try
             {
@@ -1035,11 +1040,16 @@ public sealed class PrChecks(NodeState state, IGitHub gitHub, TimeProvider time,
         }
     }
 
+    // The branches of a repo whose PR the node reads: the flights flying with a PR and not on hold. A held flight (waiting on a connected flight) reads nothing.
+    private string[] BranchesOf(string repoPath) =>
+        [.. state.Flights().Where(f => f is { State: FlightState.Flying, PullRequest: not null, OnHold: null } && string.Equals(f.RepoPath, repoPath, StringComparison.OrdinalIgnoreCase)).Select(f => f.Branch)];
+
     /// <summary>One look at every open PR-ready card's PR.</summary>
     public async Task LookAsync(CancellationToken cancellationToken)
     {
         // One read per repo for the whole look (pilot #1293): the flights' PR, merge state, checks and queue reads below are answered from it.
-        using var snapshot = LookSnapshot.Begin();
+        // Each PR has its own next-read time (state.PrPolls): a repo none of whose flights' PRs is due is not read, its PRs answered from its last read.
+        using var snapshot = LookSnapshot.Begin(state.PrPolls, BranchesOf);
         await RestorePassedWithoutCardAsync(cancellationToken);
         await LookAtHoldsAsync(cancellationToken);
         // A failure's investigation that landed lets the flights held for it go: re-queued, rerun, or their leg check run again.
@@ -1076,6 +1086,11 @@ public sealed class PrChecks(NodeState state, IGitHub gitHub, TimeProvider time,
             }
             // An armed merge is MergeWhenGreenAsync's: GitHub is read there, and what it says is put on the card there.
             if (flight.MergeWhenGreen is not null)
+            {
+                continue;
+            }
+            // A flight waiting on a connected flight reads nothing (pilot #1293): not its PR, its issue fields nor its labels.
+            if (flight.State == FlightState.Held)
             {
                 continue;
             }

@@ -19,21 +19,34 @@ internal sealed class LookSnapshot : IDisposable
 
     private volatile bool _over;
 
-    private LookSnapshot()
+    // The poll schedule and the flights' branches by repo: with them a repo whose PRs are none due is answered from its last batch, not read.
+    private readonly PrPollSchedule? _schedule;
+
+    private readonly Func<string, string[]>? _branchesOf;
+
+    // The repos this look read from GitHub (not answered from the last read): what a poll that costs a call of its own waits for.
+    private readonly ConcurrentDictionary<string, byte> _fresh = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>True when this look read <paramref name="repoPath"/>'s open PRs from GitHub itself, so its PRs were due.</summary>
+    public bool ReadFresh(string repoPath) => _fresh.ContainsKey(repoPath);
+
+    private LookSnapshot(PrPollSchedule? schedule, Func<string, string[]>? branchesOf)
     {
+        _schedule = schedule;
+        _branchesOf = branchesOf;
     }
 
     /// <summary>The snapshot of the look this flow is in; null outside a look and after it ended.</summary>
     public static LookSnapshot? Current => Ambient.Value is { _over: false } snapshot ? snapshot : null;
 
     /// <summary>Starts a look's snapshot for this flow; a look inside a look joins the outer one.</summary>
-    public static IDisposable Begin()
+    public static IDisposable Begin(PrPollSchedule? schedule = null, Func<string, string[]>? branchesOf = null)
     {
         if (Current is not null)
         {
             return NoScope.Instance;
         }
-        var snapshot = new LookSnapshot();
+        var snapshot = new LookSnapshot(schedule, branchesOf);
         Ambient.Value = snapshot;
         return snapshot;
     }
@@ -56,11 +69,23 @@ internal sealed class LookSnapshot : IDisposable
     }
 
     // A failed read is no answer for the whole look: each read of it goes to GitHub on its own, never a second batch.
-    private static async Task<OpenPullRequest[]?> ReadAsync(IGitHub github, string repoPath, CancellationToken cancellationToken)
+    private async Task<OpenPullRequest[]?> ReadAsync(IGitHub github, string repoPath, CancellationToken cancellationToken)
     {
         try
         {
-            return await github.OpenPullRequestsByHeadAsync(repoPath, cancellationToken);
+            var branches = _branchesOf?.Invoke(repoPath) ?? [];
+            // Poll by state: no PR of the repo is due, so what the last read said stands (a PR in it is read singly only when it is not in the batch).
+            if (_schedule is { } schedule && schedule.Last(repoPath) is { } last && !schedule.Due(repoPath, branches))
+            {
+                return last;
+            }
+            var read = await github.OpenPullRequestsByHeadAsync(repoPath, cancellationToken);
+            if (read is not null)
+            {
+                _schedule?.Read(repoPath, branches, read);
+            }
+            _fresh[repoPath] = 0;
+            return read;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -98,10 +123,13 @@ internal sealed class LookSnapshot : IDisposable
 /// A PR the snapshot does not hold (merged, closed, none yet, beyond its page) is read on its own, as before. Writes are never answered
 /// from it: each goes to GitHub and drops what the look read of its PR.
 /// </summary>
-internal sealed class LookGitHub(IGitHub inner) : IGitHub
+internal sealed class LookGitHub(IGitHub inner, PrPollSchedule? schedule = null) : IGitHub
 {
-    /// <summary><paramref name="github"/> behind a look's snapshot; one that is behind it already is returned as it is.</summary>
-    public static IGitHub Of(IGitHub github) => github as LookGitHub ?? new LookGitHub(github);
+    /// <summary>
+    /// <paramref name="github"/> behind a look's snapshot; one that is behind it already is returned as it is. With a <paramref name="schedule"/>
+    /// every write to a PR marks it due (pilot #1293), whether it is made inside a look or not, so what the node did is seen within 30 s.
+    /// </summary>
+    public static IGitHub Of(IGitHub github, PrPollSchedule? schedule = null) => github as LookGitHub ?? new LookGitHub(github, schedule);
 
     public async Task<PullRequest?> PullRequestAsync(string repoPath, string branch, CancellationToken cancellationToken) =>
         LookSnapshot.Current is { } look && await look.EntryAsync(inner, repoPath, null, branch, cancellationToken) is { } entry
@@ -146,6 +174,7 @@ internal sealed class LookGitHub(IGitHub inner) : IGitHub
         finally
         {
             LookSnapshot.Current?.Drop(repoPath, number);
+            schedule?.MarkDueNumber(repoPath, number);
         }
     }
 
@@ -158,6 +187,7 @@ internal sealed class LookGitHub(IGitHub inner) : IGitHub
         finally
         {
             LookSnapshot.Current?.Drop(repoPath);
+            schedule?.MarkRepoDue(repoPath);
         }
     }
 
@@ -192,6 +222,7 @@ internal sealed class LookGitHub(IGitHub inner) : IGitHub
     {
         var made = await inner.CreateAsync(repoPath, branch, baseBranch, title, body, cancellationToken);
         LookSnapshot.Current?.Drop(repoPath);
+        schedule?.MarkDue(repoPath, branch);
         return made;
     }
 
@@ -199,6 +230,7 @@ internal sealed class LookGitHub(IGitHub inner) : IGitHub
     {
         var made = await inner.OpenDraftAsync(repoPath, branch, baseBranch, title, body, cancellationToken);
         LookSnapshot.Current?.Drop(repoPath);
+        schedule?.MarkDue(repoPath, branch);
         return made;
     }
 
