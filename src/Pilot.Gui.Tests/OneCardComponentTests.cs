@@ -33,7 +33,7 @@ public sealed class OneCardComponentTests
         ],
     };
 
-    private enum Fit { Toast, Panel, Page }
+    public enum Fit { Toast, Panel, Page }
 
     private static (Layout.Node Tree, ImmutableArray<Layout.ArrangedNode<float>> Arranged) Build(Fit fit, float width, float dpi)
     {
