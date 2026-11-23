@@ -19,7 +19,7 @@ public sealed partial class PrReviews
     /// <summary>
     /// The For-you card of a fixer that pushed when the review of the pushed head could not start. It is about a head newer than the
     /// review row's, so it is outside <see cref="ReviewCardKinds"/>, which a sweep closes once the head is past the review's own;
-    /// a newer review of the PR closes it.
+    /// a newer review of the PR closes it, and so does the sweep that reads the PR as merged or closed (it is a PR-acting kind).
     /// </summary>
     public const string PushedUnreviewedKind = "pr-fix-pushed-unreviewed";
 

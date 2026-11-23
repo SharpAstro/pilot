@@ -19,6 +19,7 @@ public static partial class NodeApp
                     var reviews = services.GetRequiredService<PrReviews>();
                     return reviews.Of(pr) is { } review ? await reviews.WhyNoFixerAsync(pr, review, cancellationToken) : "no review is known here";
                 },
+                WhyNoReview = (pr, cancellationToken) => services.GetRequiredService<PrReviews>().WhyNoReviewAsync(pr, cancellationToken),
                 Stale = new StaleRefused(services.GetRequiredService<NodeState>())
                 {
                     Time = services.GetRequiredService<TimeProvider>(),

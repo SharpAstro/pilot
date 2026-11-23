@@ -682,6 +682,31 @@ public sealed class PrRecheckTests2 :PrRecheckTestsBase
         _state.Cards(openOnly: true).ShouldContain(c => c.Kind == PrReviews.PushedUnreviewedKind);
     }
 
+    [Theory]
+    [InlineData("MERGED", "merged")]
+    [InlineData("CLOSED", "closed")]
+    public async Task TheFixersUnreviewedPushCardClosesOnceThePrIsMergedOrClosed(string prState, string said)
+    {
+        // The node presses Review on this card on each look (#1311); a PR that is gone must not keep it, or the press reads GitHub for ever.
+        _github.Login = "ada";
+        await ReviewedAsync("changes");
+        PrOrigins.Git(Path.Combine(_root, "work-widget"), "push", "-q", "origin", "HEAD:refs/heads/feature/seven");
+        _github.Prs["acme/widget#7"] = Pr("OPEN") with { HeadRef = "feature/seven" };
+        (await _reviews.RunAsync(new CommandRequest { Verb = Verbs.FixPr, Target = "pr/acme/widget#7", Who = "controller" }, Ct)).Error.ShouldBeNull();
+        var moved = PrOrigins.Push(Path.Combine(_root, "work-widget"), 7, "the fixer's push");
+        _github.Prs["acme/widget#7"] = Pr("OPEN") with { Head = moved, HeadRef = "feature/seven" };
+        _workers.Fail = new FlightException("claude would not start");
+        await _reviews.SweepAsync(Ct);
+        var card = _state.Cards(openOnly: true).Where(c => c.Kind == PrReviews.PushedUnreviewedKind).ShouldHaveSingleItem();
+
+        _github.Prs["acme/widget#7"] = Pr(prState) with { Head = moved, HeadRef = "feature/seven" };
+        await _reviews.SweepAsync(Ct);
+
+        var closed = _state.Cards().Single(c => c.Id == card.Id);
+        (closed.State, closed.ClosedBy).ShouldBe((CardState.Closed, "node"));
+        closed.Outcome.ShouldNotBeNull().ShouldContain($"acme/widget#7 is {said}");
+    }
+
     [Fact]
     public async Task TheFixerGuardSaysNoForARepoTheNodeDoesNotTrack()
     {

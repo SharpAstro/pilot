@@ -373,8 +373,7 @@ public static partial class Briefs
         text.AppendLine("  these at once and records them; say whom you did it for in `--why`.");
         text.AppendLine($"- Start a fixer on a PR outside a flight whose review asked for changes (`{pilot} review fix <owner/repo#n>`).");
         text.AppendLine("  The node refuses it past its third round, on a design question with no answer yet and on another author's PR not yet given Fix it: those stay the person's unless they ask for it in the chat.");
-        text.AppendLine("- Three kinds of card are the node's own and you do not press them: a fold the planner asked for (both flights on this node),");
-        text.AppendLine("  Fix it on a fixer that ended without pushing (`pr-fix-ended`, inside the round cap), and End process on a stray the node launched whose owner has ended.");
+        text.AppendLine($"- Some kinds of card are the node's own ({NodePress.Kinds.Count} today) and you do not press them: " + string.Join(", ", NodePress.Kinds.Select(k => k.What)) + ".");
         text.AppendLine("  The node presses them itself within a minute and leaves a Handled card saying which rule let it; one still open is one its rules did not let through, so it stays the person's.");
         text.AppendLine("- Say something to a worker, to unstick it or to tell it what it is missing.");
         text.AppendLine("- Dismiss a For-you or Handled card whose thing has passed, saying why. A ring card is the controller's to close: the node");

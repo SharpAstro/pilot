@@ -252,11 +252,13 @@ public sealed partial class PrReviews
     }
 
     /// <summary>
-    /// Every kind whose choice acts on the PR (the review's own, Merge the PR, the queue's refusal, a fixer round's end): once the PR is
-    /// merged or closed, a press on any of them can only be refused. A design question is closed with them: a PR that is gone has
-    /// nothing left for the answer to change.
+    /// Every kind whose choice acts on the PR (the review's own, Merge the PR, the queue's refusal, a fixer round's end, a fixer's push
+    /// whose review could not start): once the PR is merged or closed, a press on any of them can only be refused. A design question is
+    /// closed with them: a PR that is gone has nothing left for the answer to change. The unreviewed push is about a head newer than the
+    /// review's, so only this merged-or-closed read closes it here, never <see cref="CloseCardsPastHead"/>; without it the node's own
+    /// press of Review (#1311) would read GitHub on every look for a PR that is gone.
     /// </summary>
-    private static readonly string[] PrActingCardKinds = [.. ReviewCardKinds, MergeKind, QueueRefusedKind, FixEndedKind];
+    private static readonly string[] PrActingCardKinds = [.. ReviewCardKinds, MergeKind, QueueRefusedKind, FixEndedKind, PushedUnreviewedKind];
 
     /// <summary>
     /// Reads GitHub once per PR with a card of theirs open. A PR read as MERGED or CLOSED closes those cards, naming the state, and ends
