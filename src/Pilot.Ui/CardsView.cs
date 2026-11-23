@@ -234,11 +234,6 @@ internal sealed record CardsScreen(IReadOnlyList<CardRow> Open, IReadOnlyList<Ca
     }
 }
 
-/// <summary>
-/// The cards panel down the window's right side, as the design's home screen has the watchtower's: what waits on the
-/// controller on top, each card with its buttons (its choices, and Dismiss), then what was handled, a line each. A
-/// button runs through <see cref="OnAnswer"/> or <see cref="OnDismiss"/>; the node closes the card and the stream says so.
-/// </summary>
 /// <summary>Where a card is drawn: the one component (<c>CardsView.Card</c>) lays out the same parts in the same order for each.</summary>
 internal enum CardFit
 {
@@ -250,6 +245,11 @@ internal enum CardFit
     Page,
 }
 
+/// <summary>
+/// The cards panel down the window's right side, as the design's home screen has the watchtower's: what waits on the
+/// controller on top, each card with its buttons (its choices, and Dismiss), then what was handled, a line each. A
+/// button runs through <see cref="OnAnswer"/> or <see cref="OnDismiss"/>; the node closes the card and the stream says so.
+/// </summary>
 internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWidgetBase<TSurface>(renderer)
 {
     /// <summary>Design units, scaled by DpiScale.</summary>
@@ -998,8 +998,6 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
 
     /// <param name="closed">Closed while the panel was held: drawn where and as it was, marked closed, its buttons dead.</param>
     /// <param name="merged">A merge that finished a moment ago (<see cref="CardsScreen.Merged"/>): in the live green, marked merged, with only its Merged chip.</param>
-    /// <param name="full">The whole card, for the Notifications page (the owner, 2026-11-22: "in the notification tab it should always show the full
-    /// thing with all options"): its detail open and uncut, with no fold to toggle, and no frame of its own, as the page's row is its frame.</param>
     /// <param name="fit">Where the card is drawn (<see cref="CardFit"/>): the one component lays out the same parts in the same order for each; only the width it
     /// is given and the fit differ. A toast draws no frame and no buttons of its own (the library's toast frame and button row carry them); the panel's and the
     /// page's frame come from the toast's tokens.</param>
