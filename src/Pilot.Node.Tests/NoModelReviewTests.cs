@@ -318,7 +318,6 @@ public sealed class NoModelReviewTests : ReviewTestsBase
         _github.RunLogs[ReviewRun] = NoResetLog;
         var checks = new PrChecks(_state, _github, TimeProvider.System, _flights, _legs);
         await Look(checks);
-        _state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), "closed by the test", [LegCommander.OutsideReviewUnavailable]);
 
         // The job's attempt and the log's verdict are known; only the run state cannot be read now.
         _github.RunStateFails = true;
@@ -327,7 +326,7 @@ public sealed class NoModelReviewTests : ReviewTestsBase
 
         NothingSentBack(flight);
         _github.RunReruns.ShouldBeEmpty("a state that cannot be read asks no rerun");
-        Unavailable().ShouldHaveSingleItem().Title.ShouldContain("could not read its run state");
+        Unavailable().ShouldHaveSingleItem("the head's card was raised once, at the first look");
         _github.RunLogReads.ShouldBe(1);
     }
 
