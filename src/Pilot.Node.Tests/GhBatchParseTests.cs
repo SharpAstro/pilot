@@ -118,7 +118,7 @@ public sealed class GhBatchParseTests
         (batch.Merge is null).ShouldBe(kind is null);
 
         batch.Checks.ShouldBe(s.Checks is null ? null : GhCli.ParseChecks(ViewChecks(s)));
-        batch.AutoMergeArmed.ShouldBe(GhCli.ParseAutoMergeArmed(ViewMergeState(s)));
+        ((bool?)batch.AutoMergeArmed).ShouldBe(GhCli.ParseAutoMergeArmed(ViewMergeState(s)));
     }
 
     [Fact]
