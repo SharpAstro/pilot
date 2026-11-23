@@ -1498,14 +1498,8 @@ public sealed partial class Watchtower(
             return false;
         }
 
-        var text = fresh.Count == 0 ? string.Join("
-
-", wakes.Select(w => w.Text))
-            : wakes.Count == 0 ? CardNotice.Compose(fresh) : string.Join("
-
-", wakes.Select(w => w.Text)) + "
-
-" + CardNotice.Compose(fresh);
+        var wakeText = string.Join("\n\n", wakes.Select(w => w.Text));
+        var text = fresh.Count == 0 ? wakeText : wakes.Count == 0 ? CardNotice.Compose(fresh) : wakeText + "\n\n" + CardNotice.Compose(fresh);
         int retells;
         lock (_tellsLock)
         {
