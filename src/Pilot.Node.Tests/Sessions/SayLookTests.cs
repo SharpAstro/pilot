@@ -23,7 +23,7 @@ public sealed class SayLookTests : IDisposable
     private readonly HashSet<int> _alive = [Pid];
     private readonly SessionTracker _tracker;
     private readonly FakeSessionDelivery _delivery;
-    private readonly TextWriter _log = TextWriter.Synchronized(new StringWriter());
+    private readonly SynchronizedLog _log = new SynchronizedLog();
     private readonly SessionMessenger _messenger;
 
     public SayLookTests()
@@ -103,7 +103,7 @@ public sealed class SayLookTests : IDisposable
         (await say).Way.ShouldBe(SayWays.Relayed);
         stuckPoll.IsCompleted.ShouldBeFalse();
         // The measure of a say on a loaded node: its whole time under 2 s while the listing has not even started its process.
-        var line = _log.ToString()!.Trim();
+        var line = _log.ToString().Trim();
         TestContext.Current.TestOutputHelper?.WriteLine(line);
         var total = System.Text.RegularExpressions.Regex.Match(line, @"delivered \((\d+) ms: gate \d+ ms, look \d+ ms, choose \d+ ms, deliver \d+ ms\)");
         total.Success.ShouldBeTrue(line);
