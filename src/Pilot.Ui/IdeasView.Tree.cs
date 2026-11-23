@@ -355,7 +355,8 @@ internal sealed partial class IdeasView<TSurface>
     ];
 
     // A word this long may not fit a narrow line and Markdown does not break one (a bare URL, a path): it is broken after its
-    // separators (and a piece with none at its humps) with a space, as WrappedProse breaks the other pages' long words. Code (fenced or in backticks) and links are left whole.
+    // separators (and a piece with none at its humps) with a space, as WrappedProse breaks the other pages' long words. Code (fenced or in backticks) and links are left whole,
+    // and no space goes beside a ~, so a struck-through run (~~word~~) keeps its markup; a table row's cells still break after their |.
     private const int LongWord = 24;
 
     internal static string Soften(string markdown)
@@ -378,8 +379,10 @@ internal sealed partial class IdeasView<TSurface>
             {
                 return word;
             }
-            // After its separators, and a piece still past a line (an identifier with none) at its humps, as WrappedProse breaks it.
-            return string.Join(' ', WrappedProse.Break(word));
+            // After its separators, and a piece still past a line (an identifier with none) at its humps, as WrappedProse breaks it. A space
+            // beside a ~ would part a strikethrough's ~~ from its text, which ends the strikethrough, so the pieces either side of one run on.
+            var pieces = WrappedProse.Break(word).ToArray();
+            return string.Concat(pieces.Select((piece, i) => i > 0 && !pieces[i - 1].EndsWith('~') && !piece.StartsWith('~') ? " " + piece : piece));
         }
     }
 

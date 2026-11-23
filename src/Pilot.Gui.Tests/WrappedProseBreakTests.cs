@@ -1,3 +1,4 @@
+using DIR.Lib;
 using Pilot.Ui;
 using Shouldly;
 using Xunit;
@@ -50,5 +51,15 @@ public sealed class WrappedProseBreakTests
         var pieces = WrappedProse.Break(run).ToArray();
         string.Concat(pieces).ShouldBe(run);
         pieces.ShouldAllBe(p => p.Length <= WrappedProse.LongWord);
+    }
+
+    [Fact]
+    public void AnIdeaBreaksATableRowAfterItsPipesAndKeepsAStrikethroughWhole()
+    {
+        // The Ideas page's Markdown (IdeasView.Soften) breaks a long word with real spaces: a tight table row stays a row, its cells parted after each |.
+        IdeasView<RgbaImage>.Soften("|NameOfTheColumn|ValueOfTheColumn|Description|").ShouldBe("| NameOfTheColumn| ValueOfTheColumn| Description|");
+        // No space goes beside a ~: a strikethrough's ~~ stays on its text, and a filter's terms run on after their ~ and break after their |.
+        IdeasView<RgbaImage>.Soften("~~src/Pilot.Ui/WrappedProse.cs~~").ShouldBe("~~src/ Pilot. Ui/ WrappedProse. cs~~");
+        IdeasView<RgbaImage>.Soften("FullyQualifiedName~TopBarTests|FullyQualifiedName~RailTests").ShouldBe("FullyQualifiedName~TopBarTests| FullyQualifiedName~RailTests");
     }
 }
