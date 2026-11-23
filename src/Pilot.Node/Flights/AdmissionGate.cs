@@ -91,12 +91,12 @@ public sealed class AdmissionGate(NodeState state, Func<RoleModels> models, stri
         {
             var role = live.Where(s => s.Flight == f.Code).Select(s => (SessionRole?)s.Role).Concat(starts.Where(s => s.Flight == f.Code).Select(s => (SessionRole?)(s.Role == AdmissionRole.Reviewer ? SessionRole.Reviewer : SessionRole.Worker)))
                 .OrderBy(r => r == SessionRole.Reviewer ? 0 : 1).FirstOrDefault();
-            var phase = f.State == FlightState.Landed ? FlightPhase.Landed
-                : f.State == FlightState.Held || f.FoldedInto is not null ? FlightPhase.Held
-                : role == SessionRole.Reviewer ? FlightPhase.InReview
-                : role is not null ? FlightPhase.Flying
-                : string.Equals(f.Code, asking, StringComparison.OrdinalIgnoreCase) || f.Queued is not null || state.Legs(f.Code).Any(l => l.Queued is not null) ? FlightPhase.Ready
-                : FlightPhase.Held;
+            var phase = f.State == FlightState.Landed ? AdmissionPhase.Landed
+                : f.State == FlightState.Held || f.FoldedInto is not null ? AdmissionPhase.Held
+                : role == SessionRole.Reviewer ? AdmissionPhase.InReview
+                : role is not null ? AdmissionPhase.Flying
+                : string.Equals(f.Code, asking, StringComparison.OrdinalIgnoreCase) || f.Queued is not null || state.Legs(f.Code).Any(l => l.Queued is not null) ? AdmissionPhase.Ready
+                : AdmissionPhase.Held;
             var waits = f.Connections.Select(c => new FlightWait(machine, c, WaitKind.Connection))
                 .Concat(f.PeerConnections.Select(c => new FlightWait(c.Node, c.Code, WaitKind.PeerConnection)))
                 .Concat(f.PackageWaits.Select(w => new FlightWait(machine, w.Producer, WaitKind.Package)));

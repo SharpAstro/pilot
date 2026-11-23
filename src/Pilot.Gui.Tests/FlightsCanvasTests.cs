@@ -411,9 +411,9 @@ public sealed class FlightsCanvasTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public void AClickOnADestinationWithItsPlaneParkedOnItOpensThePr(bool listed)
+    public void AClickOnADestinationWithNoPlaneOnItOpensThePr(bool listed)
     {
-        // Every leg done and the PR open: the plane waits on the destination, the usual state of a flight with an open PR.
+        // Every leg done and the PR open: no plane waits on the destination (pilot #1298), the usual state of a flight with an open PR.
         var row = WithPr(Flight("A"));
         var line = FlightLine.Build([row], [], Live.At, [Leg("A", "parser", 1, LegState.Done), Leg("A", "drawing", 2, LegState.Done)])[0];
         var opened = new List<string>();
@@ -435,11 +435,11 @@ public sealed class FlightsCanvasTests
         });
         using var _ = renderer;
         var route = view.Map.Route("A")!;
-        route.PlaneAtDestination.ShouldBeTrue();
+        route.Plane.ShouldBeNull();
         var map = view.Map.At(route.Destination.X, route.Destination.Y).ShouldNotBeNull();
         (map.Kind, map.PullRequest).ShouldBe((MapHitKind.Destination, 7));
 
-        // The sign's centre: the plane's ring is drawn there, and no target of the plane's is over the sign's.
+        // The sign's centre: no target of a plane's is over the sign's.
         var sign = Region(view, t => t.StartsWith("tianwen PR #7: open\n", StringComparison.Ordinal));
         var top = TopAt(view, sign.X + sign.Width / 2f, sign.Y + sign.Height / 2f).ShouldNotBeNull();
         top.Result.ShouldBe(new HitResult.ButtonHit(listed ? "flight:A:pr-chip" : "flight:A:pr"));
@@ -455,7 +455,7 @@ public sealed class FlightsCanvasTests
             opened.ShouldBe(["https://github.com/x/y/pull/7"]);
         }
         view.Selected.ShouldBe(0);
-        // The plane's own target is not drawn there, and its hover says the flight under the PR.
+        // Its hover says the flight under the PR.
         top.Tooltip.ShouldNotBeNull().ShouldContain("A · ");
     }
 
@@ -516,17 +516,12 @@ public sealed class FlightsCanvasTests
     }
 
     [Theory]
-    [InlineData(false, false)]
-    [InlineData(false, true)]
-    [InlineData(true, false)]
-    [InlineData(true, true)]
-    public void APlaneIsDrawnInItsRingAndNotOnceItsFlightHasLanded(bool parked, bool night)
+    [InlineData(false)]
+    [InlineData(true)]
+    public void APlaneIsDrawnInItsRingAndNotOnceItsFlightHasLanded(bool night)
     {
-        // On its flying leg, or parked on its destination with every leg done and the PR open; then the same flight landed, which
-        // has no plane and keeps its stops where they were.
-        LegRow[] legs = parked
-            ? [Leg("A", "parser", 1, LegState.Done), Leg("A", "drawing", 2, LegState.Done)]
-            : [Leg("A", "parser", 1, LegState.Done), Leg("A", "drawing", 2, LegState.Flying), Leg("A", "polish", 3, LegState.Planned)];
+        // On its flying leg; then the same flight landed, which has no plane and keeps its stops where they were.
+        LegRow[] legs = [Leg("A", "parser", 1, LegState.Done), Leg("A", "drawing", 2, LegState.Flying), Leg("A", "polish", 3, LegState.Planned)];
         FlightLine[] Line(FlightState state) => [FlightLine.Build([WithPr(Flight("A", state))], [], Live.At, legs)[0]];
         var (flying, view) = Show(FlightsViewMode.Canvas, 1280, Line(FlightState.Flying), v => v.Night = new NightSwitch { On = night });
         using var _ = flying;
@@ -534,14 +529,14 @@ public sealed class FlightsCanvasTests
         using var __ = landed;
         var bright = (night ? Palette.Night : Palette.Standard).Bright;
 
-        view.Map.Route("A")!.PlaneAtDestination.ShouldBe(parked);
+        view.Map.Route("A")!.Plane.ShouldNotBeNull();
         landedView.Map.Route("A")!.Plane.ShouldBeNull();
-        // The plane's own target, or for one parked on its sign the sign's, which is as wide as the ring.
-        var ring = Hit(view, parked ? "map:A:destination" : "map:A:plane");
+        // The plane's own target, as wide as the ring.
+        var ring = Hit(view, "map:A:plane");
         ring.Width.ShouldBe(2f * FlightMap.PlaneRadius * view.Viewport.Scale, 0.5f);
         BrightIn(flying.Surface, ring, bright).ShouldBeGreaterThan(10);
         // The landed flight's stop under it is centred where the plane was, and nothing in the ring's square is Bright.
-        var stop = Hit(landedView, parked ? "map:A:destination" : "map:A:leg:drawing");
+        var stop = Hit(landedView, "map:A:leg:drawing");
         (stop.X + stop.Width / 2f).ShouldBe(ring.X + ring.Width / 2f, 0.5f);
         (stop.Y + stop.Height / 2f).ShouldBe(ring.Y + ring.Height / 2f, 0.5f);
         BrightIn(landed.Surface, ring, bright).ShouldBe(0);

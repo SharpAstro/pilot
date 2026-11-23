@@ -44,7 +44,7 @@ internal sealed record HomeScreen(FlightsScreen Flights, SessionsScreen Sessions
         get
         {
             // A stale flight (its node unreachable) is a last known row: it is not counted as flying.
-            var flights = FlightCounts.Of(Flights.Lines.Where(l => l.Stale is null).Select(l => l.Row)).Flying;
+            var flights = FlightCounts.Of(Flights.Lines.Where(l => l.Stale is null).Select(l => l.Row), Flights.Lines.Where(l => l.Stale is null).SelectMany(l => l.LegRows)).Flying;
             // Only a flight not landed has a leg in the air: a row a node left flying on a landed flight is not one.
             var legs = Flights.Lines.Where(l => l.Stale is null && l.Row.State != FlightState.Landed).Sum(l => l.LegRows.Count(leg => leg.State == LegState.Flying));
             var workers = Sessions.Lines.Count(l => l.IsLive && l.Row.Role == SessionRole.Worker);
@@ -68,7 +68,7 @@ internal sealed record HomeScreen(FlightsScreen Flights, SessionsScreen Sessions
             var rings = Cards.Open.Count(c => c.Bin == CardBin.Ring);
             var forYou = Cards.Open.Count(c => c.Bin == CardBin.ForYou);
             // One count with the Flights header and the Fleet line: a flight on the owner's hold is counted there, once, not as held.
-            var held = FlightCounts.Of(Flights.Lines.Where(l => l.Stale is null).Select(l => l.Row)).Held;
+            var held = FlightCounts.Of(Flights.Lines.Where(l => l.Stale is null).Select(l => l.Row), Flights.Lines.Where(l => l.Stale is null).SelectMany(l => l.LegRows)).Held;
             var cleared = Cards.Open.Count(c => c.Choices.Any(ch => ch.Status == ChoiceStatus.Passing));
             // A move that failed leaves the flight here until the person retries it (or the node does): it waits on them.
             var moves = Flights.Lines.Count(l => l.MoveMark is not null);

@@ -4,7 +4,7 @@ using Pilot.Contracts;
 namespace Pilot.Node.Flights;
 
 /// <summary>Where a flight is, as far as admission cares: whether it holds its repo and whether it wants to start.</summary>
-public enum FlightPhase
+public enum AdmissionPhase
 {
     /// <summary>It waits for flights or packages it connects from; nothing runs.</summary>
     Held,
@@ -74,7 +74,7 @@ public sealed record FleetSession(string Node, string Label, string? Model, bool
 public sealed record FlightWait(string Node, string Code, WaitKind Kind);
 
 /// <summary>One flight on one node, a node of the wait-for graph.</summary>
-public sealed record FleetFlight(string Node, string Code, string Repo, FlightPhase Phase)
+public sealed record FleetFlight(string Node, string Code, string Repo, AdmissionPhase Phase)
 {
     /// <summary>What it waits for: connections, peer connections, package waits and folds.</summary>
     public IReadOnlyList<FlightWait> Waits { get; init; } = [];
@@ -92,7 +92,7 @@ public sealed record FleetFlight(string Node, string Code, string Repo, FlightPh
     public bool? Holds { get; init; }
 
     /// <summary>A leg flying, a PR in review or being fixed holds the repo; a PR only waiting on CI or the merge queue does not.</summary>
-    public bool HoldsRepo => Holds ?? Phase is FlightPhase.Flying or FlightPhase.InReview or FlightPhase.Fixing;
+    public bool HoldsRepo => Holds ?? Phase is AdmissionPhase.Flying or AdmissionPhase.InReview or AdmissionPhase.Fixing;
 
     internal string Key => Admission.KeyOf(Node, Code);
 }
@@ -155,12 +155,12 @@ public static class Admission
         // means one of them, the first in the queue's order, and the others wait for it. Each was admitted as a holder before, so
         // five pilot flights flew at once with the mode on (SE1, 2026-11-09). A deterministic order, so two holders never wait on
         // each other.
-        if (input.OneFlightPerRepo && flight is not null && flight.HoldsRepo && flight.Phase != FlightPhase.Landed
+        if (input.OneFlightPerRepo && flight is not null && flight.HoldsRepo && flight.Phase != AdmissionPhase.Landed
             && FirstHolder(input, flight) is { } first && first.Key != flight.Key)
         {
             return new AdmissionDecision.Wait($"waiting for the repo {flight.Repo}: {Name(first, flight)} goes first ({HoldsBecause(first)}); one flight per repo");
         }
-        if (input.OneFlightPerRepo && flight is not null && !flight.HoldsRepo && flight.Phase != FlightPhase.Landed)
+        if (input.OneFlightPerRepo && flight is not null && !flight.HoldsRepo && flight.Phase != AdmissionPhase.Landed)
         {
             switch (RepoVerdict(input, flight))
             {
@@ -199,7 +199,7 @@ public static class Admission
     /// </summary>
     public static IReadOnlyList<string> Order(AdmissionInput input, string node, IEnumerable<string> codes)
     {
-        var live = input.Flights.Where(f => f.Phase != FlightPhase.Landed).ToArray();
+        var live = input.Flights.Where(f => f.Phase != AdmissionPhase.Landed).ToArray();
         var dependents = Dependents(live, live.ToDictionary(f => f.Key, StringComparer.Ordinal));
         var wanted = codes.ToArray();
         var flights = wanted.Select(c => input.Flights.FirstOrDefault(f => f.Node.Equals(node, StringComparison.OrdinalIgnoreCase) && f.Code.Equals(c, StringComparison.OrdinalIgnoreCase)))
@@ -210,7 +210,7 @@ public static class Admission
     // Admit (null stands for it), a wait for the repo, or the break of a cycle.
     private static AdmissionDecision? RepoVerdict(AdmissionInput input, FleetFlight flight)
     {
-        var live = input.Flights.Where(f => f.Phase != FlightPhase.Landed).ToArray();
+        var live = input.Flights.Where(f => f.Phase != AdmissionPhase.Landed).ToArray();
         var byKey = live.ToDictionary(f => f.Key, StringComparer.Ordinal);
         var holders = live.Where(f => f.Key != flight.Key && f.HoldsRepo && SameRepo(f, flight)).ToArray();
         var dependents = Dependents(live, byKey);
@@ -255,23 +255,23 @@ public static class Admission
     // flight waiting on the flight that waits on it.
     private static FleetFlight? FirstHolder(AdmissionInput input, FleetFlight flight)
     {
-        var live = input.Flights.Where(f => f.Phase != FlightPhase.Landed).ToArray();
+        var live = input.Flights.Where(f => f.Phase != AdmissionPhase.Landed).ToArray();
         var dependents = Dependents(live, live.ToDictionary(f => f.Key, StringComparer.Ordinal));
-        return live.Where(f => f.HoldsRepo && !f.Priority && f.Phase != FlightPhase.Held && SameRepo(f, flight)).OrderBy(f => f, Ranking(dependents)).FirstOrDefault();
+        return live.Where(f => f.HoldsRepo && !f.Priority && f.Phase != AdmissionPhase.Held && SameRepo(f, flight)).OrderBy(f => f, Ranking(dependents)).FirstOrDefault();
     }
 
     private static bool SameRepo(FleetFlight a, FleetFlight b) => a.Repo.Equals(b.Repo, StringComparison.OrdinalIgnoreCase);
 
-    private static bool WantsRepo(FleetFlight flight) => flight.Phase == FlightPhase.Ready && !flight.HoldsRepo;
+    private static bool WantsRepo(FleetFlight flight) => flight.Phase == AdmissionPhase.Ready && !flight.HoldsRepo;
 
     private static string Name(FleetFlight flight, FleetFlight asker) =>
         flight.Node.Equals(asker.Node, StringComparison.OrdinalIgnoreCase) ? flight.Code : $"{flight.Code} on {flight.Node}";
 
     private static string HoldsBecause(FleetFlight flight) => flight.Phase switch
     {
-        FlightPhase.Flying => "a leg is flying",
-        FlightPhase.InReview => "its PR is in review",
-        FlightPhase.Fixing => "its PR is being fixed",
+        AdmissionPhase.Flying => "a leg is flying",
+        AdmissionPhase.InReview => "its PR is in review",
+        AdmissionPhase.Fixing => "its PR is being fixed",
         _ => "its plane is up",
     };
 

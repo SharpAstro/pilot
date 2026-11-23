@@ -200,17 +200,29 @@ public sealed class StaleFlightTests : IAsyncDisposable
         var texts = Texts(view.Tree(pages.Flights), renderer);
         if (view.CanvasShown)
         {
-            // The map draws its words on one leaf; what each plane says to the pointer is the same brief as the Home chip's.
+            // The map draws its words on one leaf; what each flight's destination says to the pointer ends in the same brief as the
+            // Home chip's. The destination, not the plane: every flight has one, where a plane is drawn only on a Flying leg (pilot #1298),
+            // so held ORB3 has none.
             view.Render(pages.Flights, new RectF32(0, 0, 1900, 900));
             var regions = new List<ClickableRegion>();
             view.CollectPaintedRegions(regions);
-            texts = [.. regions.Where(r => r.Result is HitResult.ButtonHit { Action: var a } && a.EndsWith(":plane", StringComparison.Ordinal)).Select(r => r.Tooltip!)];
+            // Keyed by flight: a PR chip can be painted more than once on the page, so a flight's hovers are read together, one text per code.
+            var byFlight = regions
+                .Where(r => r.Result is HitResult.ButtonHit { Action: var a } && IsDestination(a) && r.Tooltip is not null)
+                .GroupBy(r => ((HitResult.ButtonHit)r.Result!).Action.Split(':')[1])
+                .ToDictionary(g => g.Key, g => string.Join("\n", g.Select(r => r.Tooltip!)));
+            byFlight.Keys.Order().ShouldBe(["ORB2", "ORB3", "TIA1"]);
+            texts = [.. byFlight.Values];
         }
 
         // Two stale flights: each says it, in words; TIA1's own says nothing of the kind.
         texts.Count(t => t.Contains(Mark, StringComparison.Ordinal)).ShouldBe(2);
         texts.Count(t => t.Contains("stale", StringComparison.Ordinal)).ShouldBe(2);
     }
+
+    // A flight's destination on the map: its PR on the Pull requests page, its PR's link, or, with neither, the destination itself.
+    private static bool IsDestination(string action) =>
+        action.EndsWith(":pr-chip", StringComparison.Ordinal) || action.EndsWith(":pr", StringComparison.Ordinal) || action.EndsWith(":destination", StringComparison.Ordinal);
 
     private PilotChrome<RgbaImage> Chrome(RgbaImageRenderer renderer)
     {
