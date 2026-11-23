@@ -24,7 +24,7 @@ public static partial class OutsideReview
     private static partial Regex Reset();
 
     // gh run view --log-failed: "<job>\t<step>\t<timestamp>Z <text>".
-    [GeneratedRegex(@"^(?<job>[^\t]*)\t[^\t]*\t\d{4}-\d\d-\d\dT[\d:.]+Z ?", RegexOptions.CultureInvariant)]
+    [GeneratedRegex(@"^(?<job>[^\t]*)\t[^\t]*\t(?<stamp>\d{4}-\d\d-\d\dT[\d:.]+Z) ?", RegexOptions.CultureInvariant)]
     private static partial Regex LinePrefix();
 
     /// <summary>
@@ -36,7 +36,7 @@ public static partial class OutsideReview
     /// <summary>
     /// Each job a failed run's <paramref name="log"/> names (its lines' first column, the job's name as its check shows it) with the job's own
     /// verdict: null unless one of that job's lines carries the no-model marker as its own output (not the script's text, not a diff line);
-    /// otherwise the CLI's reason and the next reset time after <paramref name="now"/>. A line with no job column belongs to the job "".
+    /// otherwise the CLI's reason and the next reset time after the line's own time (<paramref name="now"/> when the line has none). A line with no job column belongs to the job "".
     /// </summary>
     public static RunReview Jobs(string? log, DateTimeOffset now)
     {
@@ -61,7 +61,10 @@ public static partial class OutsideReview
             }
             var said = CliSaid().Match(line) is { Success: true } m ? m.Groups["said"].Value : "";
             var reason = said.Length == 0 ? "the run ended before the model answered" : said.Split(" · ", 2)[0].Trim();
-            jobs[job] = new NoModelReview(reason, said, ResetAfter(said, now));
+            // The reset is the next one after the line's own time, so a log read again later (after a node restart) names the same instant;
+            // a line with no readable time falls back to the time of the read.
+            var stamped = prefix.Success && DateTimeOffset.TryParse(prefix.Groups["stamp"].Value, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.AssumeUniversal, out var at) ? at : now;
+            jobs[job] = new NoModelReview(reason, said, ResetAfter(said, stamped));
         }
         return new RunReview(jobs);
     }
@@ -138,12 +141,42 @@ public sealed class OutsideReviews(IGitHub github, TimeProvider? time = null)
     private readonly Dictionary<long, int> _attempts = [];
     private readonly Lock _lock = new();
 
+    // When each entry above was last read or written, so a write can drop what has sat unused past Keep.
+    private readonly Dictionary<(long RunId, int Attempt), DateTimeOffset> _runsUsed = [];
+    private readonly Dictionary<long, DateTimeOffset> _attemptsUsed = [];
+
+    /// <summary>
+    /// How long an unused entry is kept. A day is past the 15 hours a no-reset run's reruns span, so an entry in use is never dropped; and a dropped
+    /// entry costs only a read from gh again, never a wrong answer.
+    /// </summary>
+    public static readonly TimeSpan Keep = TimeSpan.FromDays(1);
+
+    private void Prune(DateTimeOffset now)
+    {
+        var cutoff = now - Keep;
+        foreach (var key in _runsUsed.Where(e => e.Value < cutoff).Select(e => e.Key).ToList())
+        {
+            _runsUsed.Remove(key);
+            _runs.Remove(key);
+        }
+        foreach (var key in _attemptsUsed.Where(e => e.Value < cutoff).Select(e => e.Key).ToList())
+        {
+            _attemptsUsed.Remove(key);
+            _attempts.Remove(key);
+        }
+    }
+
     /// <summary>What is known of attempt <paramref name="attempt"/> of run <paramref name="runId"/> without reading anything: false when its log was never read.</summary>
     public bool TryKnown(long runId, int attempt, [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out RunReview? review)
     {
         lock (_lock)
         {
-            return _runs.TryGetValue((runId, attempt), out review);
+            if (_runs.TryGetValue((runId, attempt), out review))
+            {
+                _runsUsed[(runId, attempt)] = _time.GetUtcNow();
+                return true;
+            }
+            return false;
         }
     }
 
@@ -174,40 +207,43 @@ public sealed class OutsideReviews(IGitHub github, TimeProvider? time = null)
         {
             return null;
         }
-        var review = OutsideReview.Jobs(log, _time.GetUtcNow());
+        var now = _time.GetUtcNow();
+        var review = OutsideReview.Jobs(log, now);
         lock (_lock)
         {
+            Prune(now);
             _runs[(runId, attempt)] = review;
+            _runsUsed[(runId, attempt)] = now;
         }
         return review;
     }
 
     /// <summary>
-    /// The <c>run_attempt</c> of run <paramref name="runId"/> that its failed check's job <paramref name="jobId"/> belongs to: asked of GitHub
-    /// once per job id, since a job id names one attempt, and every look when the check names no job. Null when gh could not say; a gh
-    /// failure is thrown as <see cref="IGitHub.RunAttemptAsync"/> throws it.
+    /// The <c>run_attempt</c> that a failed check's job <paramref name="jobId"/> belongs to: the remembered one (a job id names one attempt, a
+    /// rerun makes new jobs), else the one <paramref name="run"/> carries, remembered by job id. Null when neither is known.
     /// </summary>
-    public async Task<int?> AttemptAsync(string repoPath, long runId, long? jobId, CancellationToken cancellationToken)
+    public int? Attempt(long? jobId, RunState? run)
     {
-        if (jobId is { } job)
+        lock (_lock)
         {
-            lock (_lock)
+            var now = _time.GetUtcNow();
+            if (jobId is { } job && _attempts.TryGetValue(job, out var known))
             {
-                if (_attempts.TryGetValue(job, out var known))
-                {
-                    return known;
-                }
+                _attemptsUsed[job] = now;
+                return known;
             }
-        }
-        var attempt = await github.RunAttemptAsync(repoPath, runId, cancellationToken);
-        if (attempt is { } asked && jobId is { } id)
-        {
-            lock (_lock)
+            if (run is null)
             {
-                _attempts[id] = asked;
+                return null;
             }
+            if (jobId is { } id)
+            {
+                Prune(now);
+                _attempts[id] = run.Attempt;
+                _attemptsUsed[id] = now;
+            }
+            return run.Attempt;
         }
-        return attempt;
     }
 
     /// <summary>Forgets what the log of <paramref name="runId"/> said, every attempt of it: a run run again keeps its id and gets a new log.</summary>
@@ -218,6 +254,7 @@ public sealed class OutsideReviews(IGitHub github, TimeProvider? time = null)
             foreach (var key in _runs.Keys.Where(k => k.RunId == runId).ToList())
             {
                 _runs.Remove(key);
+                _runsUsed.Remove(key);
             }
         }
     }

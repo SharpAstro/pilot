@@ -662,9 +662,10 @@ public sealed class LegWatchTests
         _time.Advance(TimeSpan.FromMinutes(4));
         await _watch.LookAsync(Ct);
 
-        _said.Count.ShouldBe(2);
-        // (The first worker still shows as a stray in this test, as a real one is stopped by the node; only the idle ring is looked at.)
-        var card = Open().Where(c => c.Kind != LegWatch.StraySession).ShouldHaveSingleItem();
+        // The first worker is a duplicate of the redone leg now: the node ends it itself (PIL1206), nothing else is said.
+        _said.Count.ShouldBe(3);
+        _said[2].Verb.ShouldBe(Verbs.EndSession);
+        var card = Open().ShouldHaveSingleItem();
         (card.Bin, card.Kind).ShouldBe((CardBin.Ring, LegWatch.Idle));
         card.Title.ShouldBe("TIA1 is stuck: its worker's memory is full again");
         card.Title.ShouldNotContain("nudged");
