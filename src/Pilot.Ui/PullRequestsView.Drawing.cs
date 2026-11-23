@@ -480,7 +480,7 @@ internal sealed partial class PullRequestsView<TSurface>
     // A chip's hover: its words, and for the two conflict kinds what each means for the person.
     internal static string StateTip(PullRequestRow pr) => pr.Kind switch
     {
-        PullRequestKind.RebaseOnly => FlightsView.RebaseOnlyTip,
+        PullRequestKind.RebaseOnly => FlightMap.RebaseOnlyTip,
         PullRequestKind.Conflicts => $"{pr.Label}: it conflicts with the base and needs a fix (go around).",
         _ => pr.Label,
     };

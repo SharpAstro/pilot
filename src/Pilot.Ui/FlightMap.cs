@@ -84,6 +84,9 @@ internal readonly record struct MapHit(MapHitKind Kind, string Flight, string? L
 /// </summary>
 internal sealed class FlightMap
 {
+    /// <summary>The hover for a rebase-only PR, on the map and on the Pull requests page: known, harmless, why.</summary>
+    internal const string RebaseOnlyTip = PullRequestStates.RebaseOnlyLabel + ". A merge of the base that resolved a conflict cannot be replayed by rebase, so the PR lands squashed as one commit. Nothing to fix.";
+
     public const float Slot = 72f;
     public const float RowHeight = 72f;
     /// <summary>

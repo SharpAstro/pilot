@@ -463,8 +463,6 @@ internal sealed partial class FlightsView<TSurface>
         return LabelChars - number.Length < 4 || repo.Length == 0 ? $"PR #{pr}" : Fit(repo, LabelChars - number.Length) + number;
     }
 
-    internal const string RebaseOnlyTip = PullRequestStates.RebaseOnlyLabel + ". A merge of the base that resolved a conflict cannot be replayed by rebase, so the PR lands squashed as one commit. Nothing to fix.";
-
     // What a destination says on hover: its PR by repo and number and where it stands, then the flight's brief.
     private string DestinationTip(FlightLine line, MapDestination d)
     {
@@ -473,7 +471,7 @@ internal sealed partial class FlightsView<TSurface>
         var first = !MapLayers.ShowPrStates ? sign : d.PullRequest is null ? $"{repo}: {StatusWord(d.Status)}" : $"{sign}: {StatusWord(d.Status)}";
         var why = !MapLayers.ShowPrStates ? null : d.Status switch
         {
-            DestinationStatus.RebaseOnly => RebaseOnlyTip,
+            DestinationStatus.RebaseOnly => FlightMap.RebaseOnlyTip,
             DestinationStatus.Conflicts => "Conflicts with the base: it needs a fix (go around).",
             _ => null,
         };
