@@ -37,7 +37,8 @@ public sealed record WorkflowRun(long Id, string Name, string Status, string? Co
 /// <param name="Conclusion">Null until it has completed.</param>
 /// <param name="StartedAt">When it started (its first attempt).</param>
 /// <param name="CompletedAt">When it last completed; null while it runs.</param>
-public sealed record CiRun(long Id, string Name, string Status, string? Conclusion, string Event, DateTimeOffset StartedAt, DateTimeOffset? CompletedAt, double RunnerMinutes);
+/// <param name="Attempt">Its <c>run_attempt</c>: 1, and one more for each time it was run again (pilot #1283 keys a run's log by it).</param>
+public sealed record CiRun(long Id, string Name, string Status, string? Conclusion, string Event, DateTimeOffset StartedAt, DateTimeOffset? CompletedAt, double RunnerMinutes, int Attempt = 1);
 
 /// <summary>
 /// Where a PR stands in its base's merge queue. <paramref name="State"/> and <paramref name="Head"/> are the PR's own
@@ -48,7 +49,7 @@ public sealed record CiRun(long Id, string Name, string Status, string? Conclusi
 public sealed record MergeQueueState(string State, string Head, bool Queued, int? Position = null, DateTimeOffset? RemovedAt = null, string? RemovedReason = null);
 
 /// <summary>A failed check of a PR: its name, its page and the workflow run behind it (null for a check that is no workflow run).</summary>
-public sealed record FailedCheck(string Name, string? Link, long? RunId, DateTimeOffset? CompletedAt = null);
+public sealed record FailedCheck(string Name, string? Link, long? RunId);
 
 /// <summary>
 /// Where a PR's checks stand: <paramref name="Status"/> a <see cref="ChoiceStatus"/> (failing, pending, passing),
@@ -304,6 +305,12 @@ public interface IGitHub
     /// could not say, which is no answer and asked again.
     /// </summary>
     Task<string?> RunFailedLogAsync(string repoPath, long runId, CancellationToken cancellationToken) => Task.FromResult<string?>(null);
+
+    /// <summary>
+    /// The <c>run_attempt</c> of workflow run <paramref name="runId"/>, read from the same REST field as <see cref="CiRun.Attempt"/> so both
+    /// sides key a run's log alike; null when gh could not say.
+    /// </summary>
+    Task<int?> RunAttemptAsync(string repoPath, long runId, CancellationToken cancellationToken) => Task.FromResult<int?>(null);
 
     /// <summary>
     /// Runs the failed jobs of workflow run <paramref name="runId"/> again (<c>gh run rerun --failed</c>). The default does nothing, as a gh

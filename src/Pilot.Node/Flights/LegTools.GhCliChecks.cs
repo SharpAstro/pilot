@@ -76,10 +76,10 @@ public sealed partial class GhCli
     internal static string CiRunsEndpoint(string branch) => $"repos/{{owner}}/{{repo}}/actions/runs?branch={Uri.EscapeDataString(branch)}&per_page=100";
 
     /// <summary>The keys of each entry of <c>workflow_runs</c> that <see cref="ParseCiRuns"/> reads; a recording of the answer carries at least these.</summary>
-    internal const string CiRunKeys = "id,name,status,conclusion,event,run_started_at,created_at,updated_at";
+    internal const string CiRunKeys = "id,name,status,conclusion,event,run_started_at,created_at,updated_at,run_attempt";
 
     /// <summary>One run of <see cref="ParseCiRuns"/> before its runner minutes are known.</summary>
-    internal sealed record CiRunRow(long Id, string Name, string Status, string? Conclusion, string Event, DateTimeOffset StartedAt, DateTimeOffset Updated)
+    internal sealed record CiRunRow(long Id, string Name, string Status, string? Conclusion, string Event, DateTimeOffset StartedAt, DateTimeOffset Updated, int Attempt = 1)
     {
         public bool Completed => Status == "completed";
     }
@@ -101,14 +101,15 @@ public sealed partial class GhCli
             }
             var started = StampOf(r, "run_started_at") ?? StampOf(r, "created_at") ?? now;
             rows.Add(new CiRunRow(id, TextOf(r, "name") ?? "", TextOf(r, "status") ?? "", TextOf(r, "conclusion") is { Length: > 0 } conclusion ? conclusion : null,
-                TextOf(r, "event") ?? "", started, StampOf(r, "updated_at") ?? started));
+                TextOf(r, "event") ?? "", started, StampOf(r, "updated_at") ?? started,
+                r.TryGetProperty("run_attempt", out var attempt) && attempt.TryGetInt32(out var a) && a > 0 ? a : 1));
         }
         return rows;
     }
 
     /// <summary>A parsed run with its runner minutes: a completed run carries when it ended, one still going does not.</summary>
     internal static CiRun CiRunOf(CiRunRow r, double minutes) =>
-        new(r.Id, r.Name, r.Status, r.Conclusion, r.Event, r.StartedAt, r.Completed ? r.Updated : null, minutes);
+        new(r.Id, r.Name, r.Status, r.Conclusion, r.Event, r.StartedAt, r.Completed ? r.Updated : null, minutes, r.Attempt);
 
     public async Task<CiRun[]> CiRunsAsync(string repoPath, string branch, CancellationToken cancellationToken)
     {
@@ -368,7 +369,7 @@ public sealed partial class GhCli
 
     public async Task<FailedCheck[]> FailedChecksAsync(string repoPath, int number, CancellationToken cancellationToken)
     {
-        var (_, output, _) = await RunAsync(["pr", "checks", number.ToString(System.Globalization.CultureInfo.InvariantCulture), "--json", ChecksFields + ",completedAt"], repoPath, cancellationToken);
+        var (_, output, _) = await RunAsync(["pr", "checks", number.ToString(System.Globalization.CultureInfo.InvariantCulture), "--json", ChecksFields], repoPath, cancellationToken);
         return ParseFailedChecks(output);
     }
 
@@ -384,7 +385,7 @@ public sealed partial class GhCli
                 {
                     var link = TextOf(c, "link");
                     var m = link is null ? Match.Empty : Regex.Match(link, @"/actions/runs/(\d+)");
-                    return new FailedCheck(TextOf(c, "name") ?? "", link, m.Success ? long.Parse(m.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture) : null, StampOf(c, "completedAt"));
+                    return new FailedCheck(TextOf(c, "name") ?? "", link, m.Success ? long.Parse(m.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture) : null);
                 })];
         }
         catch (JsonException)
@@ -397,6 +398,12 @@ public sealed partial class GhCli
     {
         var (exit, log, _) = await RunAsync(["run", "view", runId.ToString(System.Globalization.CultureInfo.InvariantCulture), "--log-failed"], repoPath, cancellationToken);
         return exit != 0 ? null : log.Length > FailedLogLimit ? log[^FailedLogLimit..] : log;
+    }
+
+    public async Task<int?> RunAttemptAsync(string repoPath, long runId, CancellationToken cancellationToken)
+    {
+        var (exit, output, _) = await RunAsync(["api", $"repos/{{owner}}/{{repo}}/actions/runs/{runId}", "--jq", ".run_attempt"], repoPath, cancellationToken);
+        return exit == 0 && int.TryParse(output.Trim(), System.Globalization.CultureInfo.InvariantCulture, out var attempt) && attempt > 0 ? attempt : null;
     }
 
     public async Task RerunRunAsync(string repoPath, long runId, CancellationToken cancellationToken)

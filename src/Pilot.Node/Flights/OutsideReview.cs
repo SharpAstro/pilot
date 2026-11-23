@@ -75,23 +75,31 @@ public readonly record struct OutsideReviewAnswer(bool Known, NoModelReview? NoM
 }
 
 /// <summary>
-/// The node's memory of which failed runs never reached a model. A completed attempt's log does not change, so each run id's log is read once per attempt
-/// (the run id and the time the attempt completed: a rerun, by anyone, keeps the id and gets a new time and a new log) and the answer kept; a read gh could not make is not kept and is asked again at the next look, and is never read as no-model.
+/// The node's memory of which failed runs never reached a model. A completed attempt's log does not change, so each run's log is read once per
+/// attempt and the answer kept. The key is the run id and its <c>run_attempt</c> (a rerun, by anyone, keeps the id and gets the next attempt and a
+/// new log), which both callers read from the same REST field, so one attempt is one read whichever path asks first, and two failed jobs of one
+/// run share it. A read gh could not make is not kept and is asked again at the next look, and is never read as no-model.
 /// </summary>
 public sealed class OutsideReviews(IGitHub github, TimeProvider? time = null)
 {
     private readonly TimeProvider _time = time ?? TimeProvider.System;
-    private readonly Dictionary<(long RunId, DateTimeOffset? Attempt), NoModelReview?> _answers = [];
+    private readonly Dictionary<(long RunId, int Attempt), NoModelReview?> _answers = [];
     private readonly Lock _lock = new();
 
-    public async Task<OutsideReviewAnswer> AskAsync(string repoPath, long runId, DateTimeOffset? attempt, CancellationToken cancellationToken)
+    /// <summary>What is known of attempt <paramref name="attempt"/> of run <paramref name="runId"/> without reading anything: false when its log was never read.</summary>
+    public bool TryKnown(long runId, int attempt, out NoModelReview? noModel)
     {
         lock (_lock)
         {
-            if (_answers.TryGetValue((runId, attempt), out var known))
-            {
-                return new OutsideReviewAnswer(true, known);
-            }
+            return _answers.TryGetValue((runId, attempt), out noModel);
+        }
+    }
+
+    public async Task<OutsideReviewAnswer> AskAsync(string repoPath, long runId, int attempt, CancellationToken cancellationToken)
+    {
+        if (TryKnown(runId, attempt, out var known))
+        {
+            return new OutsideReviewAnswer(true, known);
         }
         string? log;
         try
@@ -114,7 +122,7 @@ public sealed class OutsideReviews(IGitHub github, TimeProvider? time = null)
         return new OutsideReviewAnswer(true, verdict);
     }
 
-    /// <summary>Forgets what the log of <paramref name="runId"/> said: a run run again keeps its id and gets a new log.</summary>
+    /// <summary>Forgets what the log of <paramref name="runId"/> said, every attempt of it: a run run again keeps its id and gets a new log.</summary>
     public void Forget(long runId)
     {
         lock (_lock)

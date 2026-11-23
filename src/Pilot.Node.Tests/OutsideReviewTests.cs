@@ -78,14 +78,33 @@ public sealed class OutsideReviewTests
         gh.RunLogs[45029777689] = RealLog();
         gh.RunLogs[7] = "";
         var reviews = new OutsideReviews(gh, new FixedTime(Noon));
-        var first = await reviews.AskAsync("repo", 45029777689, null, CancellationToken.None);
-        var second = await reviews.AskAsync("repo", 45029777689, null, CancellationToken.None);
+        var first = await reviews.AskAsync("repo", 45029777689, 1, CancellationToken.None);
+        var second = await reviews.AskAsync("repo", 45029777689, 1, CancellationToken.None);
         gh.RunLogReads.ShouldBe(1);
         first.Known.ShouldBeTrue();
         first.NoModel.ShouldNotBeNull();
         second.NoModel.ShouldBe(first.NoModel);
-        await reviews.AskAsync("repo", 7, null, CancellationToken.None);
+        await reviews.AskAsync("repo", 7, 1, CancellationToken.None);
         gh.RunLogReads.ShouldBe(2);
+    }
+
+    [Fact]
+    public async Task OneAttemptIsOneReadAndANewAttemptIsReadAfreshSoFindingsAfterARerunAreNotHidden()
+    {
+        var gh = new FakeGitHub();
+        gh.RunLogs[9] = RealLog();
+        var reviews = new OutsideReviews(gh, new FixedTime(Noon));
+        (await reviews.AskAsync("repo", 9, 1, CancellationToken.None)).NoModel.ShouldNotBeNull();
+        (await reviews.AskAsync("repo", 9, 1, CancellationToken.None)).NoModel.ShouldNotBeNull();
+        gh.RunLogReads.ShouldBe(1, "the same attempt is answered from memory");
+        reviews.TryKnown(9, 2, out _).ShouldBeFalse();
+
+        // Someone ran it again and this time the model answered with findings: attempt 2 is read, and is a real failure.
+        gh.RunLogs[9] = Line("##[error]The chrome review found 2 high-confidence finding(s); the PR comment lists them.");
+        (await reviews.AskAsync("repo", 9, 2, CancellationToken.None)).ShouldBe(new OutsideReviewAnswer(true, null));
+        gh.RunLogReads.ShouldBe(2);
+        reviews.TryKnown(9, 1, out var first).ShouldBeTrue();
+        first.ShouldNotBeNull("attempt 1's own answer is unchanged");
     }
 
     [Fact]
@@ -94,8 +113,8 @@ public sealed class OutsideReviewTests
         var gh = new FakeGitHub();
         gh.RunLogs[1] = "test\tRun\t2026-11-22T14:06:41.1Z Failed!";
         var reviews = new OutsideReviews(gh, new FixedTime(Noon));
-        (await reviews.AskAsync("repo", 1, null, CancellationToken.None)).ShouldBe(new OutsideReviewAnswer(true, null));
-        await reviews.AskAsync("repo", 1, null, CancellationToken.None);
+        (await reviews.AskAsync("repo", 1, 1, CancellationToken.None)).ShouldBe(new OutsideReviewAnswer(true, null));
+        await reviews.AskAsync("repo", 1, 1, CancellationToken.None);
         gh.RunLogReads.ShouldBe(1);
     }
 
@@ -104,12 +123,12 @@ public sealed class OutsideReviewTests
     {
         var gh = new FakeGitHub();
         var reviews = new OutsideReviews(gh, new FixedTime(Noon));
-        (await reviews.AskAsync("repo", 5, null, CancellationToken.None)).ShouldBe(OutsideReviewAnswer.Unknown);
+        (await reviews.AskAsync("repo", 5, 1, CancellationToken.None)).ShouldBe(OutsideReviewAnswer.Unknown);
         gh.RunLogFails = true;
-        (await reviews.AskAsync("repo", 5, null, CancellationToken.None)).ShouldBe(OutsideReviewAnswer.Unknown);
+        (await reviews.AskAsync("repo", 5, 1, CancellationToken.None)).ShouldBe(OutsideReviewAnswer.Unknown);
         gh.RunLogFails = false;
         gh.RunLogs[5] = RealLog();
-        var answer = await reviews.AskAsync("repo", 5, null, CancellationToken.None);
+        var answer = await reviews.AskAsync("repo", 5, 1, CancellationToken.None);
         gh.RunLogReads.ShouldBe(3);
         answer.Known.ShouldBeTrue();
         answer.NoModel.ShouldNotBeNull();

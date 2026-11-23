@@ -960,6 +960,59 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
         }
     }
 
+    /// <summary>
+    /// PIL1283: the failed runs of <paramref name="runs"/> whose log says the outside review never reached a model. Only an outside review's
+    /// logs are read: the runs behind the PR's own failed checks now (which the send-back path reads anyway, under the same key), and the other
+    /// failed runs of a workflow one of those showed to be a no-model review; a run read before is answered from memory. A real test failure of
+    /// an earlier push is never downloaded. Each read is once per run and <c>run_attempt</c>; one gh could not make counts the run as failed this time.
+    /// </summary>
+    private async Task<HashSet<long>> NoModelRunsAsync(OutsideReviews reviews, FlightRow flight, CiRun[] runs, CancellationToken cancellationToken)
+    {
+        HashSet<long> noModel = [];
+        var failed = runs.Where(r => r.Conclusion is "failure" or "timed_out" or "startup_failure").ToArray();
+        if (failed.Length == 0)
+        {
+            return noModel;
+        }
+        HashSet<long> current = [];
+        if (flight.PullRequest is { } number)
+        {
+            try
+            {
+                current = [.. (await github.FailedChecksAsync(flight.RepoPath, number, cancellationToken)).Select(c => c.RunId).OfType<long>()];
+            }
+            catch (Exception ex) when (ex is FlightException or System.ComponentModel.Win32Exception or IOException)
+            {
+                // Only what is known from earlier reads counts this time.
+            }
+        }
+        HashSet<string> reviewWorkflows = new(StringComparer.Ordinal);
+        foreach (var run in failed.Where(r => current.Contains(r.Id)))
+        {
+            if (await reviews.AskAsync(flight.RepoPath, run.Id, run.Attempt, cancellationToken) is { Known: true, NoModel: not null })
+            {
+                noModel.Add(run.Id);
+                reviewWorkflows.Add(run.Name);
+            }
+        }
+        foreach (var run in failed.Where(r => !current.Contains(r.Id)))
+        {
+            if (reviews.TryKnown(run.Id, run.Attempt, out var known))
+            {
+                if (known is not null)
+                {
+                    noModel.Add(run.Id);
+                }
+            }
+            else if (reviewWorkflows.Contains(run.Name)
+                && await reviews.AskAsync(flight.RepoPath, run.Id, run.Attempt, cancellationToken) is { Known: true, NoModel: not null })
+            {
+                noModel.Add(run.Id);
+            }
+        }
+        return noModel;
+    }
+
     /// <summary>How often a flight's CI spend is counted: each count reads the runs of its branch and the jobs of each run still going.</summary>
     public TimeSpan CiInterval { get; init; } = TimeSpan.FromMinutes(2);
 
@@ -1000,19 +1053,8 @@ public sealed class PrChecks(NodeState state, IGitHub github, TimeProvider time,
             {
                 continue;
             }
-            // PIL1283: a failed run whose log says the outside review never reached a model is neither failed nor red (its log is read once per run id).
-            HashSet<long> noModel = [];
-            if (legs is not null)
-            {
-                foreach (var run in runs.Where(r => r.Conclusion is "failure" or "timed_out" or "startup_failure"))
-                {
-                    var answer = await legs.OutsideReviews.AskAsync(flight.RepoPath, run.Id, run.CompletedAt, cancellationToken);
-                    if (answer is { Known: true, NoModel: not null })
-                    {
-                        noModel.Add(run.Id);
-                    }
-                }
-            }
+            // PIL1283: a failed run whose log says the outside review never reached a model is neither failed nor red.
+            HashSet<long> noModel = legs is null ? [] : await NoModelRunsAsync(legs.OutsideReviews, current, runs, cancellationToken);
             var counted = CiBudgets.Count(runs, current.Ci, now, noModel);
             // PIL1023: a flight waiting on a person (a review loop card, another card for the owner) does not run its red clock.
             // A cap already set is judged as before: only a new red cap is held back, so a card opening later never lifts a stop nobody answered.
