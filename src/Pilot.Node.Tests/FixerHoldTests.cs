@@ -112,7 +112,8 @@ public sealed class FixerHoldTests : PrFixTestsBase
 
         _github.Merged.ShouldBeEmpty();
         var preCards = string.Join(",", _state.Cards().Select(x => x.Kind + ":" + x.State));
-        var sel =_state.PrReviews().Count(r => r is { Verdict: "approve" or "comment", QueuedAt: null, QueueNote: null, State: not PrReviewState.Reviewing }); var dbgHeld = "sel=" + sel + " fixerHold=" + await _reviews.FixerHoldAsync(Row, await _github.PullRequestOfAsync("acme/widget", 7, Ct), Ct) + " cardsAfter=" + _state.Cards().Count(c => c.Kind == PrReviews.FixerWorkHeldKind);
+        preCards.ShouldBe("x" + string.Join(",", Row.Raised) + Row.State);
+        var sel = _state.PrReviews().Count(r => r is { Verdict: "approve" or "comment", QueuedAt: null, QueueNote: null, State: not PrReviewState.Reviewing }); var dbgHeld = "sel=" + sel + " fixerHold=" + await _reviews.FixerHoldAsync(Row, await _github.PullRequestOfAsync("acme/widget", 7, Ct), Ct) + " cardsAfter=" + _state.Cards().Count(c => c.Kind == PrReviews.FixerWorkHeldKind);
         var card = _state.Cards(openOnly: true).Where(c => c.Kind == PrReviews.FixerWorkHeldKind).ShouldHaveSingleItem($"DBG pre={preCards} held={dbgHeld} status={PrOrigins.Git(FixWorktree, "status", "--porcelain")} clone={Row.ClonePath} vs {WidgetClone} sessions={string.Join(",", _state.Sessions().Select(x => x.Name + ":" + x.State))} DBG state={Row.State} verdict={Row.Verdict} note={Row.QueueNote} qat={Row.QueuedAt} head={Row.Head} wt={Row.FixWorktree} exists={Directory.Exists(FixWorktree)} cards={string.Join(",", _state.Cards().Select(x => x.Kind + ":" + x.State))} raised={string.Join(",", Row.Raised)}");
         card.Detail.ShouldNotBeNull().ShouldContain(FixWorktree);
         card.Detail.ShouldContain("1 file not committed (half.txt)");
