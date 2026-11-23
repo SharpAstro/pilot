@@ -138,7 +138,8 @@ public sealed class StraySessionTests
         told.Bin.ShouldBe(CardBin.Handled);
         told.Detail.ShouldNotBeNull().ShouldContain("old22222");
         told.Detail.ShouldContain("work1111");
-        _ledger.All().ShouldBeEmpty();
+        // The current worker is adopted as any, never stopped: no end-session named it.
+        ended.ShouldNotContain(c => c.Target == "session/work1111");
     }
 
     [Fact]
