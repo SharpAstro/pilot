@@ -207,6 +207,98 @@ public sealed class ChoicePreconditionTests
         node.Workers.Started.ShouldBeEmpty();
         node.State.Cards().Single(c => c.Id == card.Id).State.ShouldBe(CardState.Open);
     }
+
+    // ---- every refusal of every covered verb: the card's mark and the command carry the same words ----
+
+    // review: none, reviewing, changes, passed. designCard: an open design-question card on the flight's PR.
+    [Theory]
+    [InlineData(Verbs.StartReview, "flight/TIA1", "landed", "none", "parser:done", false, "TIA1 has landed")]
+    [InlineData(Verbs.OpenPr, "flight/TIA1", "landed", "none", "parser:done", false, "TIA1 has landed")]
+    [InlineData(Verbs.GoAround, "flight/TIA1/parser", "held", "passed", "parser:flying", false, "TIA1 is held")]
+    [InlineData(Verbs.GoAround, "flight/TIA1/parser", "landed", "passed", "parser:flying", false, "TIA1 is landed")]
+    [InlineData(Verbs.StartLeg, "flight/TIA1/parser", "held", "none", "parser:planned", false, "TIA1 is held")]
+    [InlineData(Verbs.StartLeg, "flight/TIA1/parser", "landed", "none", "parser:planned", false, "TIA1 is landed")]
+    [InlineData(Verbs.StartLeg, "flight/TIA1/parser", "flying", "none", "parser:failed", false, "TIA1/parser is failed; a go-around starts it again")]
+    [InlineData(Verbs.StartLeg, "flight/TIA1/lexer", "flying", "none", "parser:failed,lexer:planned", false, "TIA1/parser comes first and is failed")]
+    [InlineData(Verbs.Merge, "flight/TIA1", "held", "passed", "parser:done", false, "TIA1 is held")]
+    [InlineData(Verbs.Merge, "flight/TIA1", "landed", "passed", "parser:done", false, "TIA1 is landed")]
+    [InlineData(Verbs.Merge, "flight/TIA1", "flying", "none", "parser:done", false, "TIA1 has not been reviewed; open its PR with the node (flight pr), which starts the review")]
+    [InlineData(Verbs.Merge, "flight/TIA1", "flying", "reviewing", "parser:done", false, "TIA1's review is reviewing, not passed")]
+    [InlineData(Verbs.Merge, "flight/TIA1", "flying", "changes", "parser:done", false, "TIA1's review is changes, not passed")]
+    [InlineData(Verbs.Merge, "flight/TIA1", "flying", "passed", "parser:done", true, "TIA1's PR {pr} has an open design question (card {design}): answer it or dismiss it first")]
+    [InlineData(Verbs.RerunChecks, "flight/TIA1", "held", "passed", "parser:done", false, "TIA1 is held")]
+    [InlineData(Verbs.RerunChecks, "flight/TIA1", "landed", "passed", "parser:done", false, "TIA1 is landed")]
+    [InlineData(Verbs.RerunChecks, "flight/TIA1", "flying", "none", "parser:done", false, "TIA1 has not been reviewed; open its PR with the node (flight pr), which starts the review")]
+    [InlineData(Verbs.RerunChecks, "flight/TIA1", "flying", "changes", "parser:done", false, "TIA1's review is changes, not passed")]
+    [InlineData(Verbs.RerunChecks, "flight/TIA1", "flying", "passed", "parser:done", true, "TIA1's PR {pr} has an open design question (card {design}): answer it or dismiss it first")]
+    [Trait("Category", "Slow")]
+    public async Task EachRefusalIsMarkedOnTheCardAndRefusedWithTheSameWordsByTheCommand(string verb, string target, string flightState, string review, string legs, bool designCard, string words)
+    {
+        await using var node = await NodeHarness.StartAsync(Ct);
+        const string PrUrl = "https://github.com/SharpAstro/tianwen/pull/7";
+        ReviewRow? row = review == "none" ? null : new ReviewRow { State = Enum.Parse<ReviewState>(review, ignoreCase: true), Reviewer = "du1-tia1-review", StartedAt = Start };
+        node.State.PutFlight(Flight() with { State = Enum.Parse<FlightState>(flightState, ignoreCase: true), Review = row, PullRequestUrl = PrUrl });
+        var order = 0;
+        foreach (var spec in legs.Split(','))
+        {
+            node.State.PutLeg(Leg(spec.Split(':')[0], ++order, Enum.Parse<LegState>(spec.Split(':')[1], ignoreCase: true)));
+        }
+        if (designCard)
+        {
+            var pr = PrRef.Parse(PrUrl)!;
+            var design = node.State.RaiseCard(CardBin.ForYou, PrReviews.DesignKind, Verbs.PrTarget(pr.Repo, pr.Number), "a design question", null,
+                [new CardChoice { Label = "Answer", Verb = Verbs.Land, Target = "flight/TIA1" }]);
+            words = words.Replace("{pr}", pr.ToString()).Replace("{design}", design.Id);
+        }
+        var args = verb is Verbs.GoAround ? new[] { "why" } : verb is Verbs.Merge or Verbs.RerunChecks ? new[] { "abc1234" } : [];
+        var card = node.State.RaiseOpen(CardBin.ForYou, "test-card", "flight/TIA1", "a card", null,
+            [new CardChoice { Label = "Press", Verb = verb, Target = target, Args = args }]);
+        var marked = node.State.Cards().Single(c => c.Id == card.Id).Choices.First();
+        marked.Status.ShouldBe(ChoiceStatus.Unavailable);
+        marked.Note.ShouldBe(words);
+
+        var commands = node.App.Services.GetRequiredService<NodeCommands>();
+        var direct = await commands.RunAsync(Run(verb, target, args), Ct);
+        var pressed = await commands.RunAsync(Run(Verbs.Answer, Verbs.CardTarget(card.Id), "Press"), Ct);
+
+        direct.Error.ShouldBe(words);
+        pressed.Error.ShouldBe($"Press was refused: {words}");
+        node.Workers.Started.ShouldBeEmpty();
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AGoAroundOnAFlightOnTheOwnersHoldIsMarkedOnTheCardAndRefusedByTheCommandWithTheSameWords()
+    {
+        await using var node = await NodeHarness.StartAsync(Ct);
+        node.State.PutFlight(Flight() with { OnHold = new FlightOnHold { By = "the owner", Reason = "wait", Since = Start } });
+        node.State.PutLeg(Leg("parser", 1, LegState.Flying));
+        var card = node.State.RaiseOpen(CardBin.ForYou, "test-card", "flight/TIA1", "a card", null,
+            [new CardChoice { Label = "Press", Verb = Verbs.GoAround, Target = "flight/TIA1/parser", Args = ["why"] }]);
+        var words = "TIA1 is on hold by the owner: wait; pilot flight unground TIA1 releases it";
+        node.State.Cards().Single(c => c.Id == card.Id).Choices.First().Note.ShouldBe(words);
+
+        var commands = node.App.Services.GetRequiredService<NodeCommands>();
+        (await commands.RunAsync(Run(Verbs.GoAround, "flight/TIA1/parser", "why"), Ct)).Error.ShouldBe(words);
+    }
+
+    // The owner's hold is the dispatch gate of LegCommander's verbs only: the FlightCommander verbs run on a held flight, so their choices are not marked.
+    [Theory]
+    [InlineData(Verbs.Land)]
+    [InlineData(Verbs.FlyAnyway)]
+    [InlineData(Verbs.Disconnect)]
+    [InlineData(Verbs.FlightPriority)]
+    [InlineData(Verbs.WithdrawFlight)]
+    [InlineData(Verbs.BranchRetry)]
+    public void AFlightCommanderVerbOnAFlightOnTheOwnersHoldIsNotMarked(string verb)
+    {
+        LegCommander.Handles(verb).ShouldBeFalse("the hold gate is LegCommander's dispatch, so the mark must not apply to this verb");
+        var state = NewState();
+        state.PutFlight(Flight() with { OnHold = new FlightOnHold { By = "the owner", Reason = "wait", Since = Start } });
+        state.RaiseCard(CardBin.ForYou, "late-package", "flight/TIA1", "a card", null, [new CardChoice { Label = "Go", Verb = verb, Target = "flight/TIA1" }]);
+
+        state.Cards().Single().Choices.Single().Status.ShouldBeNull();
+    }
 }
 
 file static class OpenCardRaising

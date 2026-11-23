@@ -31,8 +31,8 @@ public static class VerbPreconditions
     /// </summary>
     public static readonly IReadOnlyDictionary<string, string> NoPrecondition = new Dictionary<string, string>
     {
-        [Verbs.Land] = "landing is what a flight in any state may be asked for; the command's own checks read the plane and GitHub, not node state",
-        [Verbs.FlyAnyway] = "it releases a hold on a package wait, which is the state it is offered in",
+        [Verbs.Land] = "the card is closed when its cause goes; the command's checks read the plane and GitHub, and its one state-only refusal (a planned leg never started) is not marked here",
+        [Verbs.FlyAnyway] = "the card is closed when the package wait goes; the command refuses a landed flight or one waiting for no package, which the late-package card's own life already tracks",
         [Verbs.Disconnect] = "it ends a connection between flights, whatever state either is in",
         [Verbs.ExtendBudget] = "it raises a leg's budget, which any leg may have",
         [Verbs.RemoveLeg] = "the command's checks read the leg's own rows as it removes it, with nothing to mark beforehand",

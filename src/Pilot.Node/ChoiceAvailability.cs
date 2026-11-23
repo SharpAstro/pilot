@@ -7,8 +7,8 @@ namespace Pilot.Node;
 /// Which of a card's choices the node would refuse right now, and why (#792 point 4): one rule, read two ways. The node marks such a
 /// choice <see cref="ChoiceStatus.Unavailable"/> (its <see cref="CardChoice.Note"/> the reason) before anyone presses it, so every client
 /// draws it dead with the reason beside it; and an answer of it is refused with the same words at answer time, for a client that pressed
-/// before it saw the mark. Two things refuse today: a choice that needs its flight flying (a go-around, a merge, a re-run of its checks,
-/// a leg's start) while the flight is held, and a choice that names a session the node no longer has.
+/// before it saw the mark. What refuses: a flight or leg verb its command's precondition (<see cref="VerbPreconditions"/>) refuses, the owner's hold for
+/// the verbs <see cref="LegCommander"/> gates (<see cref="LegCommander.Handles"/>), and a choice that names a session the node no longer has.
 /// </summary>
 internal static class ChoiceAvailability
 {
@@ -35,7 +35,7 @@ internal static class ChoiceAvailability
                 {
                     return new VerbRefusal(HeldReason(flight));
                 }
-                if (!LegCommander.TakenOnHold(choice.Verb, choice.Args) && VerbPreconditions.OnHold(flight) is { } onHold)
+                if (LegCommander.Handles(choice.Verb) && !LegCommander.TakenOnHold(choice.Verb, choice.Args) && VerbPreconditions.OnHold(flight) is { } onHold)
                 {
                     return new VerbRefusal(onHold);
                 }
