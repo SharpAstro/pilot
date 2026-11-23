@@ -486,7 +486,7 @@ public sealed class CardKindTests
             """;
 
         var calls = CardSource.Calls("Sample.cs", source);
-        calls.Single(c => c.KindExpr.Contains("x-list")).ChoiceVerbs.ShouldContain("FixPr");
+        calls.Single(c => c.KindExpr.Contains("x-list")).ChoiceVerbs!.ShouldContain("FixPr");
         calls.Single(c => c.KindExpr.Contains("x-null")).ChoiceVerbs.ShouldBeEmpty();
         calls.Single(c => c.KindExpr.Contains("x-bool")).ChoiceVerbs.ShouldBeEmpty();
     }
