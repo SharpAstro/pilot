@@ -78,6 +78,8 @@ internal sealed partial class FlightsView<TSurface>
             DestinationStatus.Conflicts => "Conflicts with the base: it needs a fix (go around).",
             _ => null,
         };
-        return first + (why is null ? "" : "\n" + why) + "\n" + ChipBrief.Text(ChipBrief.Flight(line));
+        // A stale flight says so first, as its plane does: a flight with no Flying leg has no plane, so its destination is where the map says it.
+        var stale = line.StaleMark is { } mark ? mark + "\n" : "";
+        return stale + first + (why is null ? "" : "\n" + why) + "\n" + ChipBrief.Text(ChipBrief.Flight(line));
     }
 }

@@ -206,11 +206,11 @@ public sealed class StaleFlightTests : IAsyncDisposable
             view.Render(pages.Flights, new RectF32(0, 0, 1900, 900));
             var regions = new List<ClickableRegion>();
             view.CollectPaintedRegions(regions);
-            // Keyed by flight: a PR chip can be painted more than once on the page, so one hover is read per flight's code.
+            // Keyed by flight: a PR chip can be painted more than once on the page, so a flight's hovers are read together, one text per code.
             var byFlight = regions
                 .Where(r => r.Result is HitResult.ButtonHit { Action: var a } && IsDestination(a) && r.Tooltip is not null)
                 .GroupBy(r => ((HitResult.ButtonHit)r.Result!).Action.Split(':')[1])
-                .ToDictionary(g => g.Key, g => g.First(r => r.Tooltip!.Length > 0).Tooltip!);
+                .ToDictionary(g => g.Key, g => string.Join("\n", g.Select(r => r.Tooltip!)));
             byFlight.Keys.Order().ShouldBe(["ORB2", "ORB3", "TIA1"]);
             texts = [.. byFlight.Values];
         }
