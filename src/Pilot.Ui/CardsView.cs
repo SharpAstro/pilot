@@ -1005,7 +1005,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     /// <param name="cutShort">A toast's card whose parts the toast leaves out ends in a link to the Notifications page.</param>
     /// <param name="toPage">What that link, and the fold of the detail a toast never shows, open.</param>
     private Layout.Node Card(CardRow card, NodeMark? node, bool closed = false, bool merged = false, CardFit fit = CardFit.Panel,
-        string? nodeName = null, bool cutShort = false, Action? toPage = null)
+        string? nodeName = null, bool cutShort = false, Action? toPage = null, string? kindWord = null, string? when = null)
     {
         var toast = fit == CardFit.Toast;
         var full = fit == CardFit.Page;
@@ -1033,7 +1033,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
             return LegLink(card, about, shown[..at] + about + shown[(at + bare.Length)..] + " ", size).WAuto();
             };
         };
-        var head = Layout.Builder.Text($"{(merged ? "merged" : card.Bin == CardBin.Ring ? "RING" : "for you")}{(nodeLabel is null ? "" : $" · {nodeLabel}")}{(closed && !merged ? " · closed" : "")}", 10f, accent).Selectable();
+        var head = Layout.Builder.Text($"{(merged ? "merged" : kindWord ?? (card.Bin == CardBin.Ring ? "RING" : "for you"))}{(nodeLabel is null ? "" : $" · {nodeLabel}")}{(when is null ? "" : $" · {when}")}{(closed && !merged ? " · closed" : "")}", 10f, accent).Selectable();
         var lines = new List<Layout.Node>
         {
             // The stale age (#736) is a word of its own beside the head, so the head says the same whatever the clock reads.
@@ -1249,7 +1249,8 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         {
             Put(Button(ChatAboutLabel, $"card:{card.Id}:chat", () => about(card)));
         }
-        if (watched is null && !merged)
+        // A closed card (the history) has nothing left to dismiss: its choices stay as dead buttons, and the one Dismiss a card has is the open card's.
+        if (watched is null && !merged && !closed)
         {
             // Dismiss (a close x) stays a word for want of a glyph: SharpAstro/DIR.Lib#151.
             Put(NodeButton("Dismiss", DismissHit(card), () =>
@@ -1299,6 +1300,14 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     /// history), drawn as it was with its buttons dead.
     /// </summary>
     internal Layout.Node FullCard(CardRow card, NodeMark? node, bool closed) => Card(card, node, closed || _closed.Contains(card), fit: CardFit.Page);
+
+    /// <summary>
+    /// A feed notification with no card (a pilot event: a job ended, a flight landed) drawn by the same component, from its title, text, node and time,
+    /// closed and dimmed like any history card.
+    /// </summary>
+    internal Layout.Node EventCard(string title, string text, string? nodeName, DateTimeOffset at, string when) =>
+        Card(new CardRow { Id = "event" + at.UtcTicks, Bin = CardBin.ForYou, Kind = "event", Subject = "event", Title = title, Summary = text.Length > 0 ? text : null, At = at, State = CardState.Closed },
+            null, closed: true, fit: CardFit.Page, nodeName: nodeName, kindWord: "event", when: when);
 
     /// <summary>The panel's card (<see cref="CardFit.Panel"/>): the one place the panel builds it, and what the tests build.</summary>
     internal Layout.Node PanelCard(CardRow card, NodeMark? node, bool closed = false) => Card(card, node, closed, fit: CardFit.Panel);

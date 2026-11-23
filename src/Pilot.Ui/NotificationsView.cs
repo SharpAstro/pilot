@@ -46,8 +46,62 @@ internal sealed class NotificationsView<TSurface>(Renderer<TSurface> renderer) :
             CountsFit = true,
             Source = PageHeader.SourceLine(source, asOf),
         }, new TopBarParts(Nodes, null, About, Night));
-        var page = Layout.Builder.VStack(header, Host.ListFrame(width).Stretch()).Bg(Palette.Current.Ground).Stretch();
+        var page = Layout.Builder.VStack(header, List(width).Stretch()).Bg(Palette.Current.Ground).Stretch();
         return About?.Over(page) ?? page;
+    }
+
+    /// <summary>
+    /// The widest a card is drawn on the page, in design units: near the toast's width (<see cref="NotificationsHost.Style"/>'s ToastWidth) and no
+    /// wider than the panel's, so a card reads as it does in a toast and the lines stay short on a wide window.
+    /// </summary>
+    internal const float ColumnWidth = 440f;
+
+    private const float Gutter = 14f, CardGap = 10f;
+
+    /// <summary>
+    /// The list: Needs you, then History newest first, each notification the one card component (<c>CardsView.Card</c>) at page fit, in a
+    /// left-aligned column of <see cref="ColumnWidth"/> at most with one gap between cards. One declaration for the window and the terminal.
+    /// </summary>
+    private Layout.Node List(float width)
+    {
+        var column = MathF.Max(1f, MathF.Min(ColumnWidth, width - 2f * Gutter));
+        var blocks = new List<Layout.Node>();
+        var colors = NotificationsHost.Colors();
+        Layout.Node Section(string title, int count, Layout.Node? action = null)
+        {
+            var label = Layout.Builder.Text($"{title} · {count}", 13f, colors.Dim).Selectable().WStar();
+            return (action is null ? Layout.Builder.HStack(label) : Layout.Builder.HStack(label, action)).CrossCenter().RowH(30f);
+        }
+        Layout.Node Placed(Layout.Node card) => Layout.Builder.HStack(card.WFixed(column), Layout.Builder.Spacer().WStar()).HAuto();
+
+        var needs = Host.Feed.NeedsYou;
+        var history = Host.History;
+        if (needs.Count == 0 && history.Count == 0)
+        {
+            blocks.Add(Layout.Builder.Text("Nothing has happened yet", 13f, colors.Dim).Selectable().RowH(30f));
+        }
+        if (needs.Count > 0)
+        {
+            blocks.Add(Section("Needs you", needs.Count));
+            AddCards(blocks, needs, Placed);
+        }
+        if (history.Count > 0)
+        {
+            blocks.Add(Section("History", history.Count, CardsView<TSurface>.HeaderPill("Clear", "notifications:clear", Host.Clear)));
+            AddCards(blocks, history, Placed);
+        }
+        return Layout.Builder.VStack([.. blocks]).WithGap(CardGap).WithScroll(Host.PageScroll).Pad(Gutter, 10f).Stretch();
+    }
+
+    private void AddCards(List<Layout.Node> blocks, IReadOnlyList<DIR.Lib.Notifications.Notification> notifications, Func<Layout.Node, Layout.Node> place)
+    {
+        foreach (var n in notifications)
+        {
+            var card = n.Row is { } row
+                ? row()
+                : Host.EventCard?.Invoke(n.Title, n.Text, n.Source, n.Posted, n.Posted.ToLocalTime().ToString("HH:mm")) ?? Layout.Builder.Text(n.Title, 12f, Palette.Current.Bright).Selectable();
+            blocks.Add(place(card));
+        }
     }
 
     /// <summary>A keep time as a person reads it: <c>24 hours</c>, <c>3 days</c>.</summary>
