@@ -163,6 +163,51 @@ public sealed class FixerHoldTests : PrFixTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")] // The fix worktree is a real git worktree with a commit pushed from it.
+    public async Task APushGitHubDoesNotShowYetLeavesTheReviewCardNotASilentRow()
+    {
+        RealGit();
+        _github.Login = "ada";
+        await Review("acme/widget#7", "changes", "README.md:1 wrong");
+        var reviewed = Row.Head;
+        var tip = FixerCommitsInWorktree();
+        PassedWithNoFixerOnTheRow();
+        GreenAndQueueing(reviewed);
+        // No OnPullRequestRead hook: GitHub keeps answering the old head right after the node's push.
+
+        await _reviews.SweepAsync(Ct);
+        await _reviews.SweepAsync(Ct);
+
+        PrOrigins.Git(Origin, "rev-parse", "refs/heads/feature/seven").ShouldBe(tip, "the node's plain push");
+        _github.Merged.ShouldBeEmpty();
+        var card = _state.Cards(openOnly: true).Where(c => c.Kind == PrReviews.PushedUnreviewedKind).ShouldHaveSingleItem();
+        card.Bin.ShouldBe(CardBin.ForYou);
+        card.Choices.ShouldContain(c => c.Verb == Verbs.ReviewPr);
+        card.Detail.ShouldNotBeNull().ShouldContain(FixWorktree);
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")] // The fix worktree is a real git worktree with a commit in it.
+    public async Task AFixWorktreeHoldingACommitPastTheMovedHeadIsKeptWhenItsFixerEnds()
+    {
+        RealGit();
+        await Review("acme/widget#7", "changes", "README.md:1 wrong");
+        var worktree = Row.FixWorktree.ShouldNotBeNull();
+        _state.PutSession(FixerSession(SessionState.Working));
+        var pushed = FixerPushes("one");
+        var tip = FixerCommitsInWorktree();
+
+        await _reviews.SweepAsync(Ct);
+        _state.PutSession(FixerSession(SessionState.Ended));
+        await _reviews.SweepAsync(Ct);
+
+        Directory.Exists(worktree).ShouldBeTrue("a worktree holding a commit past the PR's head is never force-removed");
+        PrOrigins.Git(worktree, "rev-parse", "HEAD").ShouldBe(tip);
+        Row.Fixer.ShouldBeNull();
+        Row.Head.ShouldBe(pushed);
+    }
+
+    [Fact]
     [Trait("Category", "Slow")] // Files left uncommitted in a real worktree.
     public async Task FilesLeftUncommittedInTheFixWorktreeHoldThePrWithOneCard()
     {

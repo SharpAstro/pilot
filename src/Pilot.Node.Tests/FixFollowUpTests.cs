@@ -266,10 +266,19 @@ public sealed class FixFollowUpTests : PrFixTestsBase
         FixerGoneFromTheRow();
         CreatingMakesPr71(tip);
         Merge();
+        // A worktree that will not go, so the second sweep still finds it with its commit past the merged head: only the once-per-worktree
+        // guard keeps that sweep from making a second follow-up PR.
+        var git = new RemoveRefusingGit(_git);
+        var reviews = new PrReviews(_state, _workers, _github, git, new Planes(git), new RepoCatalog(_state, _options), _options, TimeProvider.System)
+        {
+            SelfFinishGrace = TimeSpan.FromMilliseconds(1),
+        };
 
-        await _reviews.SweepAsync(Ct);
-        await _reviews.SweepAsync(Ct);
+        await reviews.SweepAsync(Ct);
+        Directory.Exists(FixWorktree).ShouldBeTrue("the worktree is still there for the second sweep");
+        await reviews.SweepAsync(Ct);
 
+        Directory.Exists(FixWorktree).ShouldBeTrue();
         _github.Created.ShouldHaveSingleItem();
     }
 }

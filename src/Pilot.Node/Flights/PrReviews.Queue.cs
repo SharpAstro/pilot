@@ -18,9 +18,10 @@ public sealed partial class PrReviews
     /// are green (#279). Pending checks and a draft wait for the next sweep; anything else decides the review once and for all.
     /// A review with a design: finding holds the queue until its answer has been carried out: unanswered, or with its fixer on or
     /// waiting for a slot, it is left with no note for a later sweep; a fixer's push is reviewed afresh at its new head. A fixer that
-    /// ended without a push leaves the PR unqueued with the Merge card for the person.
+    /// ended without a push leaves the PR unqueued with the Merge card for the person. Returns why the PR is held for its fixer (a live fixer, or
+    /// fixer work the PR lacks, pilot #1291) so a recheck can say so; null otherwise.
     /// </summary>
-    internal async Task QueueWhenGreenAsync(PrReviewRow review, CancellationToken cancellationToken)
+    internal async Task<string?> QueueWhenGreenAsync(PrReviewRow review, CancellationToken cancellationToken)
     {
         var subject = Verbs.PrTarget(review.Repo, review.Number);
         PullRequest read;
@@ -30,17 +31,17 @@ public sealed partial class PrReviews
         }
         catch (FlightException)
         {
-            return;
+            return null;
         }
         var at = CommitRefs.Short(review.Head);
         if (!string.Equals(read.State, "OPEN", StringComparison.OrdinalIgnoreCase))
         {
             state.PutPrReview(review with { QueueNote = $"the PR is {read.State.ToLowerInvariant()}" });
-            return;
+            return null;
         }
         if (read.Draft)
         {
-            return;
+            return null;
         }
         // A question of design holds the queue until its answer has been carried out: a fixer's push moves the head, and the fresh
         // review of that head decides the queue as any review does. No note, so a later sweep looks again.
@@ -49,7 +50,7 @@ public sealed partial class PrReviews
             var target = Verbs.PrTarget(review.Repo, review.Number);
             if (review.DesignAnswer is null || review.Fixer is not null || _queued.ContainsKey(target))
             {
-                return;
+                return null;
             }
             if (string.Equals(read.Head, review.Head, StringComparison.OrdinalIgnoreCase))
             {
@@ -62,18 +63,18 @@ public sealed partial class PrReviews
                         [new CardChoice { Label = "Merge the PR", Verb = Verbs.Merge, Target = subject, Args = [review.Head] }], link: review.Url,
                         summary: $"Merge it at this head if you are content with it: {why}.");
                 }
-                return;
+                return null;
             }
         }
         if (!string.Equals(read.Head, review.Head, StringComparison.OrdinalIgnoreCase))
         {
             state.PutPrReview(review with { QueueNote = $"its head is newer than the review ({CommitRefs.Short(read.Head)} · reviewed {at})" });
-            return;
+            return null;
         }
         // No merge while the PR's fixer is live or its worktree holds work the PR lacks (pilot #1291): no note, a later sweep looks again.
-        if (!FlightOwns(review) && await FixerHoldAsync(review, read, cancellationToken) is not null)
+        if (!FlightOwns(review) && await FixerHoldAsync(review, read, cancellationToken) is { } held)
         {
-            return;
+            return held;
         }
         var checks = await github.ChecksSummaryAsync(review.ClonePath, review.Number, cancellationToken);
         if (checks?.Status == ChoiceStatus.Failing)
@@ -82,14 +83,14 @@ public sealed partial class PrReviews
             // A first one is run again once, and the PR is looked at again by a later sweep for the result: no note until then.
             if (!FlightOwns(review) && await LookAtFailedAsync(review, cancellationToken))
             {
-                return;
+                return null;
             }
             state.PutPrReview(review with { QueueNote = $"its checks fail{(checks.FailedName is { } name ? $" ({name})" : "")}" });
-            return;
+            return null;
         }
         if (checks?.Status != ChoiceStatus.Passing)
         {
-            return;
+            return null;
         }
         // A repo set to no-auto-merge is never merged by the node by itself: the person's card, as a flight's merge is.
         var folder = Path.GetFileName(review.ClonePath.TrimEnd('\\', '/'));
@@ -102,7 +103,7 @@ public sealed partial class PrReviews
                 $"Reviewed {review.Verdict} at {at}, checks green. The node does not merge this repo by itself: merge it when you are ready.",
                 [new CardChoice { Label = "Merge the PR", Verb = Verbs.Merge, Target = subject, Args = [review.Head] }], link: review.Url,
                 summary: $"Merge it when you are ready: {why}, so the node leaves it to you.");
-            return;
+            return null;
         }
         // Nothing lands open (pilot #1107): the points its reviews left are made by a fixer (or put on the PR as one comment when none can be) before the
         // queue or the node's own merge. A flight's PR has its own legs; a hold (a fixer working, or none able to start) leaves no note, so a later sweep goes on.
@@ -110,7 +111,7 @@ public sealed partial class PrReviews
         {
             if (await EnsureFollowUpAsync(review, cancellationToken) is not { } filed)
             {
-                return;
+                return null;
             }
             review = filed;
         }
@@ -119,20 +120,20 @@ public sealed partial class PrReviews
             // A base with no queue is merged by the repo's method, as a flight's PR is; a flight's own PR keeps the person's Merge card.
             if (await LandPassedHandPrAsync(review, read, cancellationToken))
             {
-                return;
+                return null;
             }
             state.PutPrReview(review with { QueueNote = $"{read.Base} has no merge queue" });
             state.RaiseCard(CardBin.ForYou, MergeKind, subject, $"{review.Repo}#{review.Number} is reviewed and green, ready to merge",
                 $"Reviewed {review.Verdict} at {at}, checks green. Merge it when you are ready.",
                 [new CardChoice { Label = "Merge the PR", Verb = Verbs.Merge, Target = subject, Args = [review.Head] }], link: review.Url,
                 summary: $"Merge it when you are ready: {read.Base} has no merge queue, so the node leaves it to you.");
-            return;
+            return null;
         }
         var outcome = await LegCommander.LandPrAsync(github, review.ClonePath, review.Number, review.Head, Models.MergeMethod, cancellationToken);
         if (outcome.Kind == LandKind.RetryLater)
         {
             // GitHub did not answer: no note and no card, so the next sweep asks again.
-            return;
+            return null;
         }
         if (outcome.Kind == LandKind.Refused)
         {
@@ -140,11 +141,12 @@ public sealed partial class PrReviews
             state.PutPrReview(review with { QueueNote = $"GitHub refused to queue it: {said}" });
             state.RaiseCard(CardBin.ForYou, QueueRefusedKind, subject, $"GitHub refused to queue {review.Repo}#{review.Number}: {LegCommander.OneLine(said)}", said,
                 [new CardChoice { Label = $"Try queueing {review.Repo}#{review.Number} again", Note = $"at {CommitRefs.Short(review.Head)}", Verb = Verbs.Merge, Target = subject, Args = [review.Head] }], link: review.Url);
-            return;
+            return null;
         }
         state.PutPrReview(review with { QueuedAt = time.GetUtcNow() });
         state.RaiseCard(CardBin.Handled, QueuedKind, subject, $"Queued {review.Repo}#{review.Number} in {read.Base}'s merge queue at {at}",
             $"Reviewed {review.Verdict}, checks green.", link: review.Url);
+        return null;
     }
 
     /// <summary>The Merge choice of a reviewed PR's card: the PR joins its base's merge queue, or merges, at the head the card named.</summary>

@@ -125,6 +125,15 @@ public sealed partial class PrReviews
                                 [new CardChoice { Label = "Review the fixer's push", Verb = Verbs.ReviewPr, Target = subject }], link: review.Url);
                         }
                     }
+                    else
+                    {
+                        // GitHub still read the old head right after the push: no review can start from that read, and the next sweep would note
+                        // the newer head and leave the row, so nothing would review the push. The person's card starts it.
+                        RaiseOnce(pr, review, CardBin.ForYou, PushedUnreviewedKind, subject, $"{pr}: the fixer's push has no review yet",
+                            $"The node pushed the fixer's work from {worktree} ({work.Line}), but GitHub still read the PR's head as {CommitRefs.Short(now.Head.Length > 0 ? now.Head : read.Head)}, so no review started on the push.",
+                            [new CardChoice { Label = "Review the fixer's push", Verb = Verbs.ReviewPr, Target = subject }],
+                            summary: $"Review {pr} again: the node pushed its fixer's work, and GitHub had not shown the new head yet.");
+                    }
                     return Held($"its fixer's work in {worktree} was pushed ({work.Line}); the moved head gets a fresh review");
                 }
                 return Ring($"git could not push it: {push.Why}");
