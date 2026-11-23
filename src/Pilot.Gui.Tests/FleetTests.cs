@@ -155,7 +155,8 @@ public sealed class FleetTests
         var leaves = arranged.Where(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text }).ToArray();
         string TextOf(dynamic a) => ((Layout.Content.Text)((Layout.Node.Leaf)a.Node).Content).Value;
         var previousBottom = leaves.Where(a => TextOf(a).StartsWith("10.0.0.9:47731", StringComparison.Ordinal)).ShouldHaveSingleItem() is var where ? where.Bounds.Y + where.Bounds.Height : 0f;
-        foreach (var part in new[] { .. line.TrafficLines, line.GhShort! })
+        string[] parts = [.. line.TrafficLines, line.GhShort!];
+        foreach (var part in parts)
         {
             var leaf = leaves.Where(a => TextOf(a) == part).ShouldHaveSingleItem();
             leaf.Bounds.Y.ShouldBeGreaterThanOrEqualTo(previousBottom - 0.5f, part);
