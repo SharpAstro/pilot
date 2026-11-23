@@ -68,6 +68,24 @@ public sealed record Standing(StandingKind Kind, string? Flight = null, string? 
     };
 
     /// <summary>
+    /// What the lookout also does while autopilot is on (PIL1285, the standing goal): an issue and a flight made on its own account, more CI
+    /// budget for a flight (bounded per day, see <see cref="NodeSettings.AutopilotCiGrantsKey"/>), a go-around and a rerun of checks. Each
+    /// runs as the person's assistant would, needs a <c>--why</c> naming evidence, and leaves a Handled line. With autopilot off the lookout is
+    /// refused them as ever; an override (PIL1229) and an ask card stay the person's either way.
+    /// </summary>
+    public static readonly IReadOnlySet<string> LookoutOnGoal = new HashSet<string>(StringComparer.Ordinal)
+    {
+        Verbs.CreateIssue, Verbs.CreateFlight, Verbs.CiBudget, Verbs.GoAround, Verbs.RerunChecks,
+    };
+
+    private static readonly System.Text.RegularExpressions.Regex EvidencePattern = new(
+        @"(?<![\w])[jcr]\d{2,}\b|#\d+|\bruns?[ /]+\d{4,}|(?<![\w])(?=[0-9a-f]*\d)(?=[0-9a-f]*[a-f])[0-9a-f]{7,40}\b",
+        System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+    /// <summary>Whether <paramref name="why"/> names evidence: a job id (j962), a card id (c2737), a commit, a run or a PR or issue number (#1285).</summary>
+    public static bool NamesEvidence(string? why) => why is { Length: > 0 } && EvidencePattern.IsMatch(why);
+
+    /// <summary>
     /// What the lookout may not do beyond <see cref="YourOnlyVerbs"/>: a review's verdict or its posting to GitHub in the
     /// person's name, syncing the repos, an issue made in their name, and the answer to an overlap (fold retires a flight the
     /// way a landing does, separate restarts a planner on the person's answer).

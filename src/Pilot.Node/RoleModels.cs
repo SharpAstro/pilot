@@ -657,6 +657,18 @@ public sealed partial class RoleModels
         }
     }
 
+    /// <summary>CI grants the watchtower may give one flight per local day on autopilot (<see cref="NodeSettings.AutopilotCiGrantsKey"/>); 1 by default.</summary>
+    public int AutopilotCiGrants
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _settings.AutopilotCiGrants ?? NodeSettings.DefaultAutopilotCiGrants;
+            }
+        }
+    }
+
     /// <summary>The share of the 7-day window, in percent, a leg's rounds may spend before the next one rings (<see cref="NodeSettings.SpendAlertKey"/>); 3 by default.</summary>
     public double SpendAlert
     {

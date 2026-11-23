@@ -1668,6 +1668,12 @@ before PIL1271 `autopilot` was a different switch; a settings file still holding
 wakes up with the standing goal on after an update. It is in `GET /api/v1/node` and the node row (`Autopilot`), `pilot status`
 prints an `autopilot` line, and a remote node's switch in the GUI shows the state and does not click (the setting is that machine's).
 
+`autopilot-ci-grants` (a number, 0 to 20; 1 unless set) bounds what the watchtower spends on its own while autopilot is on: it may
+grant one flight more CI budget (`pilot flight ci-budget <flight> continue --why <evidence>`) at most that many times per local day.
+A further grant that day is refused with a line saying it is the person's, and the watchtower rings them. With autopilot on the lookout
+also runs `create-issue`, `create-flight`, `go-around` and `rerun-checks` on a `--why` that names evidence (a job id, a card id, a commit,
+a run); each leaves a Handled line and a decision with that why. With it off they are refused as before.
+
 Two per-repo settings (#254) are lists, keyed by the repo's folder name and in force at once, like `priority-repos`:
 - `repo-trackers` takes `repo=tracker` entries (`pilot settings set repo-trackers bullclip-backend=shortcut`), `tracker`
   being `github` or `shortcut`. A bare number given to `create-flight` for that repo is a story of that tracker; a repo

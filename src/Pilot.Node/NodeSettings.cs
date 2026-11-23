@@ -81,6 +81,9 @@ public sealed record NodeSettings
     /// </summary>
     public const string FlightCiBudgetKey = "flight-ci-budget";
     public const int DefaultFlightCiBudget = 8;
+    /// <summary>The most CI grants the watchtower may give one flight per local day while autopilot is on; the person is not bound by it.</summary>
+    public const string AutopilotCiGrantsKey = "autopilot-ci-grants";
+    public const int DefaultAutopilotCiGrants = 1;
     /// <summary>Hours a flight's PR may stay red before the node stops pushing for it (PIL795).</summary>
     public const int FlightCiRedHours = 3;
 
@@ -223,7 +226,7 @@ public sealed record NodeSettings
 
     /// <summary>Every key, in the order the Settings page shows them: the node's own, then a range per role.</summary>
     public static IReadOnlyList<string> Keys { get; } =
-        [LanKey, MachineKey, RepoRootsKey, UpdateChannelKey, UpdatePolicyKey, MaxJobsKey, JobsPerRepoKey, GuiSlotsKey, JobMemoryKey, JobPriorityKey, JobPlaneOutputKey, JobBuildCacheKey, LanPortKey, StartLimitKey, PriorityReposKey, PriorityStartLimitKey, WeekLimitKey, WeekPaceKey, SpendAlertKey, WatchtowerCompactShareKey, WatchtowerChatMessagesKey, WatchtowerCompactIdleKey, WatchtowerCompactAboveKey, MergeMethodKey, MaintenanceKey, AcceptFleetFlightsKey, AutopilotKey, ReviewDeepFirstKey, UserSkillsKey, ShortcutTokenKey, RepoTrackersKey, NoAutoMergeReposKey, OpusCapKey, ReviewLimitKey, OneFlightPerRepoKey, SubTaskReposKey, MergeBatchKey, PrWatchIdleKey, AdoptAfterKey, ArchiveLandedAfterKey, MaintenanceEveryKey, MaintenanceIdleKey, PackageAgeDaysKey, GitPruneDaysKey, MaintenancePruneHoursKey, DeleteLandedBranchesKey, MaxGoAroundsKey, ScratchDaysKey, DesignerKeepKey, DiskAlertGbKey, FlightCiBudgetKey, StaleFlightHoursKey, StalePrHoursKey, StaleRecheckHoursKey, StaleCardHoursKey, StaleHoldsKey, StaleUnreachableHoursKey,
+        [LanKey, MachineKey, RepoRootsKey, UpdateChannelKey, UpdatePolicyKey, MaxJobsKey, JobsPerRepoKey, GuiSlotsKey, JobMemoryKey, JobPriorityKey, JobPlaneOutputKey, JobBuildCacheKey, LanPortKey, StartLimitKey, PriorityReposKey, PriorityStartLimitKey, WeekLimitKey, WeekPaceKey, SpendAlertKey, WatchtowerCompactShareKey, WatchtowerChatMessagesKey, WatchtowerCompactIdleKey, WatchtowerCompactAboveKey, MergeMethodKey, MaintenanceKey, AcceptFleetFlightsKey, AutopilotKey, ReviewDeepFirstKey, UserSkillsKey, ShortcutTokenKey, RepoTrackersKey, NoAutoMergeReposKey, OpusCapKey, ReviewLimitKey, OneFlightPerRepoKey, SubTaskReposKey, MergeBatchKey, PrWatchIdleKey, AdoptAfterKey, ArchiveLandedAfterKey, MaintenanceEveryKey, MaintenanceIdleKey, PackageAgeDaysKey, GitPruneDaysKey, MaintenancePruneHoursKey, DeleteLandedBranchesKey, MaxGoAroundsKey, ScratchDaysKey, DesignerKeepKey, DiskAlertGbKey, FlightCiBudgetKey, AutopilotCiGrantsKey, StaleFlightHoursKey, StalePrHoursKey, StaleRecheckHoursKey, StaleCardHoursKey, StaleHoldsKey, StaleUnreachableHoursKey,
          .. BenchKeys, .. RoleModels.Roles.Select(RoleModels.RangeKey), SummaryModelKey, WorkerLadderKey];
 
     /// <summary>Whether <paramref name="key"/> is a role's range (<see cref="RoleModels"/>).</summary>
@@ -356,6 +359,9 @@ public sealed record NodeSettings
 
     /// <summary>Runner-hours of CI a flight may spend (<see cref="FlightCiBudgetKey"/>); <see cref="DefaultFlightCiBudget"/> unless set.</summary>
     public int? FlightCiBudget { get; init; }
+
+    /// <summary>CI grants the watchtower may give one flight per local day on autopilot (<see cref="AutopilotCiGrantsKey"/>); <see cref="DefaultAutopilotCiGrants"/> unless set.</summary>
+    public int? AutopilotCiGrants { get; init; }
 
     /// <summary>The staleness bounds (<see cref="StaleKeys"/>); each its default unless set.</summary>
     public int? StaleFlightHours { get; init; }
@@ -576,6 +582,7 @@ public sealed record NodeSettings
                     MaintenancePruneHoursKey => JsonValue.Create(MaintenancePruneHours),
                     DiskAlertGbKey => JsonValue.Create(DiskAlertGb),
                     FlightCiBudgetKey => JsonValue.Create(FlightCiBudget),
+                    AutopilotCiGrantsKey => JsonValue.Create(AutopilotCiGrants),
                     StaleFlightHoursKey or StalePrHoursKey or StaleRecheckHoursKey or StaleCardHoursKey or StaleHoldsKey or StaleUnreachableHoursKey => JsonValue.Create(StaleValue(key)),
                     JobMemoryKey => JsonValue.Create(JobMemoryGigabytes),
                     BenchSpotPriceKey => JsonValue.Create(BenchSpotPrice),
@@ -650,6 +657,7 @@ public sealed record NodeSettings
         MaintenancePruneHoursKey => MaintenancePruneHours is { } pruneHours ? [pruneHours] : null,
         DiskAlertGbKey => DiskAlertGb is { } alertGb ? [alertGb.ToString(CultureInfo.InvariantCulture)] : null,
         FlightCiBudgetKey => FlightCiBudget is { } ciBudget ? [ciBudget.ToString(CultureInfo.InvariantCulture)] : null,
+        AutopilotCiGrantsKey => AutopilotCiGrants is { } ciGrants ? [ciGrants.ToString(CultureInfo.InvariantCulture)] : null,
         StaleFlightHoursKey or StalePrHoursKey or StaleRecheckHoursKey or StaleCardHoursKey or StaleHoldsKey or StaleUnreachableHoursKey => StaleValue(key) is { } stale ? [stale.ToString(CultureInfo.InvariantCulture)] : null,
         JobPriorityKey => JobPriority is { } priority ? [Pilot.Node.Flights.JobPriorities.Name(priority)] : null,
         JobMemoryKey => JobMemoryGigabytes is { } memory ? [memory.ToString(CultureInfo.InvariantCulture)] : null,
@@ -1033,6 +1041,14 @@ public sealed record NodeSettings
                 return int.TryParse(One(), NumberStyles.None, CultureInfo.InvariantCulture, out var ciBudget) && ciBudget is >= 1 and <= 1000
                     ? (settings with { FlightCiBudget = ciBudget }, null)
                     : (null, "flight-ci-budget takes a number of runner-hours, 1 to 1000");
+            case AutopilotCiGrantsKey:
+                if (clear)
+                {
+                    return (settings with { AutopilotCiGrants = null }, null);
+                }
+                return int.TryParse(One(), NumberStyles.None, CultureInfo.InvariantCulture, out var ciGrants) && ciGrants is >= 0 and <= 20
+                    ? (settings with { AutopilotCiGrants = ciGrants }, null)
+                    : (null, "autopilot-ci-grants takes a number, 0 to 20");
             case JobPriorityKey:
                 if (clear)
                 {

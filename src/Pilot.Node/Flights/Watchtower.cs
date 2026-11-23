@@ -1108,7 +1108,7 @@ public sealed partial class Watchtower(
             }
             // The fixed rules are a file the brief points to, written fresh on every start so the file is the text the fingerprint covers (PIL855).
             Directory.CreateDirectory(options.WatchtowerFolder);
-            File.WriteAllText(RulesFile, Briefs.WatchtowerRules(Name, Pilot, options.Machine, stream: Streams is not null));
+            File.WriteAllText(RulesFile, Briefs.WatchtowerRules(Name, Pilot, options.Machine, stream: Streams is not null, autopilot: Models.Autopilot));
             var brief = Briefs.Watchtower(Name, state.Flights(), state.Legs(), state.Cards(openOnly: true), Pilot, Models.Model(RoleModels.Watchtower), options.Machine, alreadyTold, StaleSection.Read(state, time.GetUtcNow(), Models.Stale), state.StandingOrders(), Path.GetFullPath(RulesFile));
             fingerprint = BriefFingerprint();
             var start = new WorkerStart(Name, folder, null, brief, Model: Models.Model(RoleModels.Watchtower), Effort: Models.Effort(RoleModels.Watchtower),
@@ -1375,7 +1375,7 @@ public sealed partial class Watchtower(
 
     // A stream watchtower's model is not part of it: a changed model restarts the process on --resume at its next idle (RelaunchOnSettingAsync),
     // in the same conversation, instead of ending it for a fresh generation on a new brief.
-    private string BriefFingerprint() => Briefs.WatchtowerFingerprint(Name, Pilot, Streams is null ? Models.Model(RoleModels.Watchtower) : null, options.Machine, stream: Streams is not null);
+    private string BriefFingerprint() => Briefs.WatchtowerFingerprint(Name, Pilot, Streams is null ? Models.Model(RoleModels.Watchtower) : null, options.Machine, stream: Streams is not null, autopilot: Models.Autopilot);
 
     /// <summary>The fingerprint of the brief the running watchtower was started with, or null when the node has no record of it.</summary>
     private string? Briefed()
