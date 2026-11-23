@@ -758,6 +758,10 @@ public sealed class FakeRepoGitTests : IDisposable
         Ask("origin", "rev-list", "--count", "refs/heads/main..refs/heads/feature/seven"),
         Ask("origin", "rev-parse", "--verify", "--quiet", "refs/pull/7/head"),
         Ask("fix", "rev-parse", "refs/remotes/origin/feature/seven"),
+        // The follow-up of a merged PR judges the fixer's commit by content (pilot #1327): cherry with a limit, and a path-limited quiet diff.
+        Ask("fix", "cherry", "origin/main", "HEAD", "{head}"),
+        Ask("fix", "diff", "--name-only", "{head}", "HEAD"),
+        Ask("fix", "diff", "--quiet", "origin/main", "HEAD", "--", "fix.txt"),
         Save("fix", "commit", "-q", "--amend", "-m", "rewritten"),
         Ask("fix", "push", "-q", "origin", "HEAD:refs/heads/feature/seven"),
         Write("work", "again.txt", "again\n"),

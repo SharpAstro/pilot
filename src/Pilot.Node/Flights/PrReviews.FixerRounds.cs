@@ -357,6 +357,18 @@ public sealed partial class PrReviews
                 summary: $"Look in {review.ClonePath} for commits the fixer made after {pr} merged: they could not be read ({LegCommander.OneLine(ex.Message)}).");
             return;
         }
+        // Judged by content, not by commit id: a commit whose changes reached the base under another SHA (a squash, a cherry-pick) needs no PR.
+        try
+        {
+            if (await ChangesOnBaseAsync(worktree, $"origin/{baseBranch}", merged, baseBranch, cancellationToken))
+            {
+                return;
+            }
+        }
+        catch (Exception ex) when (ex is FlightException or System.ComponentModel.Win32Exception or IOException or InvalidOperationException)
+        {
+            // Not known: the commits are followed up as ever.
+        }
         var branch = $"{(read.HeadRef.Length > 0 ? read.HeadRef : "fix")}-followup-{review.Number}";
         void Failed(string why) => state.RaiseCard(CardBin.ForYou, FixFollowUpFailedKind, subject,
             $"{pr} merged while its fixer worked: its commit has no PR",
@@ -367,7 +379,19 @@ public sealed partial class PrReviews
             var push = await git.RunAsync(["push", "origin", $"HEAD:refs/heads/{branch}"], worktree, cancellationToken);
             if (!push.Ok)
             {
-                Failed($"git could not push {branch}: {push.Why}");
+                // The branch may exist on origin already (an earlier follow-up): read it. Holding the changes means the work is there; never a force push.
+                var fetched = await git.RunAsync(["fetch", "--quiet", "origin", $"+refs/heads/{branch}:refs/remotes/origin/{branch}"], worktree, cancellationToken);
+                if (!fetched.Ok)
+                {
+                    Failed($"git could not push {branch}: {push.Why}");
+                    return;
+                }
+                if (await ChangesOnBaseAsync(worktree, $"origin/{branch}", merged, null, cancellationToken))
+                {
+                    return;
+                }
+                var open = await github.PullRequestAsync(review.ClonePath, branch, cancellationToken);
+                Failed($"The branch {branch} already exists on origin with other work{(open is { State: "OPEN" } ? $" (its open PR is #{open.Number})" : "")}, so the commit could not be pushed to it ({LegCommander.OneLine(push.Why)})");
                 return;
             }
             var answer = review.DesignAnswer is { Length: > 0 } given ? $"\n\nThe design answer it carried out: {given}" : "";
@@ -390,6 +414,31 @@ public sealed partial class PrReviews
         {
             Failed(ex.Message);
         }
+    }
+
+    /// <summary>
+    /// True when every change of the commits past <paramref name="merged"/> is already on <paramref name="target"/> (a base or a branch on origin),
+    /// whatever their SHAs: <c>git cherry</c> says no commit is missing, or, where a squash hides that, the files they touch do not differ.
+    /// <paramref name="fetchBase"/> is fetched first when given.
+    /// </summary>
+    private async Task<bool> ChangesOnBaseAsync(string worktree, string target, string merged, string? fetchBase, CancellationToken cancellationToken)
+    {
+        if (fetchBase is not null && !(await git.RunAsync(["fetch", "--quiet", "origin", fetchBase], worktree, cancellationToken)).Ok)
+        {
+            return false;
+        }
+        var cherry = await git.RunAsync(["cherry", target, "HEAD", merged], worktree, cancellationToken);
+        if (cherry.Ok && cherry.Output.Trim().Length > 0 && !cherry.Output.Split('\n').Any(l => l.StartsWith('+')))
+        {
+            return true;
+        }
+        var names = await git.RunAsync(["diff", "--name-only", merged, "HEAD"], worktree, cancellationToken);
+        if (!names.Ok)
+        {
+            return false;
+        }
+        var files = names.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        return files.Length > 0 && (await git.RunAsync(["diff", "--quiet", target, "HEAD", "--", .. files], worktree, cancellationToken)).Ok;
     }
 
     // Fixers whose merged PR was already followed up (or failed to be), keyed by PR and worktree, so a worktree that will not go is retried alone.

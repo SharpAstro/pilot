@@ -1648,7 +1648,8 @@ internal sealed class FakeRepoGit : IGit
 
     private GitRun Cherry(List<string> a, Worktree? wt)
     {
-        if (a.Count != 2)
+        // git cherry <upstream> <head> [<limit>]: with a limit, only the commits of head past it are listed.
+        if (a.Count is not (2 or 3) || a.Any(x => x.StartsWith('-')))
         {
             throw new NotSupportedException("cherry form");
         }
@@ -1663,6 +1664,11 @@ internal sealed class FakeRepoGit : IGit
             }
             var theirs = Select([$"{head}..{upstream}"], wt, false).Commits.Select(Signature).ToHashSet();
             var mine = Select([$"{upstream}..{head}"], wt, false).Commits;
+            if (a.Count == 3)
+            {
+                var past = Select([$"{ResolveOrThrow(a[2], wt)}..{head}"], wt, false).Commits.Select(c => c.Id).ToHashSet();
+                mine = [.. mine.Where(c => past.Contains(c.Id))];
+            }
             mine.Reverse();
             return Ok(string.Concat(mine.Select(c => $"{(theirs.Contains(Signature(c)) ? '-' : '+')} {c.Id}\n")));
         }

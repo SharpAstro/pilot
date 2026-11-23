@@ -134,6 +134,88 @@ public sealed class FixFollowUpTests : PrFixTestsBase
         Row.Fixer.ShouldBeNull();
     }
 
+    /// <summary>Commits <paramref name="file"/> in the work repo (the other clone of origin) and pushes it to <paramref name="target"/>; returns the commit.</summary>
+    private string WorkPushes(string file, string text, string target)
+    {
+        var work = Path.Combine(_root, "work-widget");
+        File.WriteAllText(Path.Combine(work, file), text);
+        PrOrigins.Git(work, "add", ".");
+        PrOrigins.Git(work, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "landed as another commit");
+        PrOrigins.Git(work, "push", "-q", "origin", $"HEAD:refs/heads/{target}");
+        return PrOrigins.Git(work, "rev-parse", "HEAD");
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AFixerCommitWhosePatchIsOnMainUnderAnotherShaLeavesNoCardAndNoPr()
+    {
+        await Review("acme/widget#7", "changes", "README.md:1 wrong");
+        FixerCommits();
+        WorkPushes("fixed.txt", "fixed\n", "main");
+        Merge();
+
+        await _reviews.SweepAsync(Ct);
+
+        _github.Created.ShouldBeEmpty();
+        _state.Cards().ShouldNotContain(c => c.Kind == PrReviews.FixFollowUpKind || c.Kind == PrReviews.FixFollowUpFailedKind);
+        PrOrigins.Git(Origin, "rev-parse", "--verify", "--quiet", "refs/heads/feature/seven-followup-7").ShouldBeEmpty();
+        Row.Fixer.ShouldBeNull();
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AFixerCommitOnlyPartlyOnMainStillOpensTheFollowUpPr()
+    {
+        await Review("acme/widget#7", "changes", "README.md:1 wrong");
+        File.WriteAllText(Path.Combine(FixWorktree, "fixed.txt"), "fixed\n");
+        File.WriteAllText(Path.Combine(FixWorktree, "second.txt"), "second\n");
+        PrOrigins.Git(FixWorktree, "add", ".");
+        PrOrigins.Git(FixWorktree, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "the fix");
+        var tip = PrOrigins.Git(FixWorktree, "rev-parse", "HEAD");
+        WorkPushes("fixed.txt", "fixed\n", "main");
+        CreatingMakesPr71(tip);
+        Merge();
+
+        await _reviews.SweepAsync(Ct);
+
+        _github.Created.ShouldHaveSingleItem();
+        PrOrigins.Git(Origin, "rev-parse", "refs/heads/feature/seven-followup-7").ShouldBe(tip);
+        _state.Cards().ShouldNotContain(c => c.Kind == PrReviews.FixFollowUpFailedKind);
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AFollowUpBranchOnOriginThatHoldsTheCommitsChangesRaisesNoFailureCard()
+    {
+        await Review("acme/widget#7", "changes", "README.md:1 wrong");
+        FixerCommits();
+        // The follow-up branch is there with the same change under another commit, off main, so the push is refused and the work is already on origin.
+        WorkPushes("fixed.txt", "fixed\n", "feature/seven-followup-7");
+        Merge();
+
+        await _reviews.SweepAsync(Ct);
+
+        _github.Created.ShouldBeEmpty();
+        _state.Cards().ShouldNotContain(c => c.Kind == PrReviews.FixFollowUpFailedKind);
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AFollowUpBranchOnOriginWithOtherWorkSaysTheBranchExists()
+    {
+        await Review("acme/widget#7", "changes", "README.md:1 wrong");
+        FixerCommits();
+        WorkPushes("other.txt", "other\n", "feature/seven-followup-7");
+        Merge();
+
+        await _reviews.SweepAsync(Ct);
+
+        _github.Created.ShouldBeEmpty();
+        var card = _state.Cards(openOnly: true).Single(c => c.Kind == PrReviews.FixFollowUpFailedKind);
+        card.Detail.ShouldNotBeNull().ShouldContain("already exists on origin");
+        card.Detail.ShouldNotContain("could not push");
+    }
+
     [Fact]
     [Trait("Category", "Slow")]
     public async Task ACreateGitHubRefusesLeavesAForYouCardNamingTheCommitAndTheLocalBranch()
