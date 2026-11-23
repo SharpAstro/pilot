@@ -120,7 +120,7 @@ public sealed class RebaseBlockedTests : ReviewTestsBase
         F(flight.Code).RebaseOnly.ShouldBeNull();
         _state.Cards().ShouldNotContain(c => c.Kind == LegCommander.RebaseOnlyKind || c.Kind == LegCommander.ShapedKind || c.Kind == LegCommander.LaidKind);
         F(flight.Code).Review!.LabelOverride.ShouldBe(PilotMarks.Conflicts);
-        _github.Labels[_github.Pr!.Number].ShouldContain(PilotMarks.Conflicts);
+        _github.Labels[_github.Pr!.Number].Keys.ShouldContain(PilotMarks.Conflicts);
     }
 
     [Fact]
