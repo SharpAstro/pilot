@@ -100,8 +100,12 @@ public sealed class RetryAndHoldTests : IDisposable
         FailedRun(pr, queue: false, run, log);
     }
 
-    private void FailedRun(int pr, bool queue, long id, string? log = null) =>
+    private void FailedRun(int pr, bool queue, long id, string? log = null)
+    {
         _github.FailedRuns[(pr, queue)] = new FailedRun(id, $"https://github.com/x/tianwen/actions/runs/{id}", ["build"], log ?? Log());
+        // The base's latest run failed the same test: the evidence that it is not the PR's own.
+        _github.BaseAnswer = new BaseRun(1, false, log ?? Log());
+    }
 
     private void QueueRemoval(string head, string reason = "FAILED_CHECKS") =>
         _github.Queue = GhAnswers.MergeQueue("dropped", head, removedAt: _time.GetUtcNow().AddSeconds(-5), removedReason: reason);
@@ -446,6 +450,7 @@ public sealed class RetryAndHoldHandPrTests : PrReviewTestsBase
         _reviews.Alerts = alerts;
         _github.PrFiles[7] = ["README.md"];
         _github.FailedRuns[(7, false)] = new FailedRun(6001, "https://github.com/acme/widget/actions/runs/6001", ["build"], Log());
+        _github.BaseAnswer = new BaseRun(1, false, Log());
         return alerts;
     }
 

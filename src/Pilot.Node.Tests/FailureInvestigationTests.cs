@@ -61,8 +61,12 @@ public sealed class FailureInvestigationTests
 
     private static string Head(char c) => new(c, 40);
 
-    private void FailedRun(int pr, bool queue, long id, string? log = null) =>
+    // The base's latest run failed the same test, the evidence that it is not the PR's own, unless the test says otherwise.
+    private void FailedRun(int pr, bool queue, long id, string? log = null)
+    {
         _github.FailedRuns[(pr, queue)] = new FailedRun(id, $"https://github.com/x/tianwen/actions/runs/{id}", ["build"], log ?? Log());
+        _github.BaseAnswer = new BaseRun(9000, false, log ?? Log());
+    }
 
     private void QueueRemoval(string head, string reason = "FAILED_CHECKS") =>
         _github.Queue = GhAnswers.MergeQueue("dropped", head, removedAt: DateTimeOffset.UtcNow.AddSeconds(-5), removedReason: reason);
@@ -196,6 +200,7 @@ public sealed class FailureInvestigationTests
         Flight("TIA71", 71);
         _github.PrFiles[71] = ["a.cs"];
         _github.FailedRuns[(71, true)] = new FailedRun(5001, "https://github.com/x/tianwen/actions/runs/5001", ["test (ubuntu-latest)", "test (windows-latest)", "gate"], TwoJobs());
+        _github.BaseAnswer = new BaseRun(9000, false, TwoJobs());
         QueueRemoval(Head('a'));
 
         await Checks().LookAsync(Ct);
@@ -216,9 +221,108 @@ public sealed class FailureInvestigationTests
         _github.PrFiles[74] = ["b.cs"];
         _github.FailedRuns[(74, false)] = new FailedRun(5003, "https://github.com/x/tianwen/actions/runs/5003", ["test (ubuntu-latest)", "gate"],
             Log().Replace("[xUnit.net 00:00:41.52]     ", "test (ubuntu-latest)\tTest\t2026-11-09T09:00:00.0000000Z [xUnit.net 00:00:41.52]     "));
+        _github.BaseAnswer = new BaseRun(9001, false, Log());
         await Checks().LookAsync(Ct);
 
         _github.IssueComments.ShouldContain(c => c.Body.Contains("run 5003") && c.Body.Contains("in test (ubuntu-latest)") && !c.Body.Contains("gate") && !c.Body.Contains("windows"));
+    }
+
+    // PIL1325's PR #1328: five tests of one fixture class failed, all of code the PR changed, with main green (#1335).
+    private static string MergeFixtureLog()
+    {
+        var lines = new List<string>();
+        foreach (var n in Enumerable.Range(1, 5))
+        {
+            var t = $"Pilot.Node.Tests.MergeFixtureCardTests.ACardsMergeChoiceIsPending{n}";
+            lines.Add($"  Failed {t} [10 ms]");
+            lines.Add("  Error Message:");
+            lines.Add($"   Shouldly.ShouldAssertException : card.Merge.Status should be pending but was unavailable ({n})");
+            lines.Add("  Stack Trace:");
+            lines.Add($"     at {t}() in /_/src/Pilot.Node.Tests/MergeFixtureCardTests.cs:line {10 * n}");
+        }
+        return string.Join('\n', lines);
+    }
+
+    private static FailureSite PilSite(int pr) => new("tianwen", "/r/tianwen", pr, $"TIA{pr}", Head('k'), FailureWhere.Ci);
+
+    private void PilShape(int pr)
+    {
+        Flight($"TIA{pr}", pr);
+        _github.PrFiles[pr] = ["src/Pilot.Node/Flights/LegCommander.Merge.cs", "src/Pilot.Node/ChoiceAvailability.cs"];
+        _github.FailedRuns[(pr, false)] = new FailedRun(7001, "https://github.com/x/tianwen/actions/runs/7001", ["build"], MergeFixtureLog());
+    }
+
+    [Fact]
+    public async Task FiveTestsOfAFixtureThePrChangedWhileTheBaseIsGreenAreThePrsOwnAndFileNothing()
+    {
+        PilShape(81);
+        _github.BaseAnswer = new BaseRun(9000, true, "");
+
+        var look = await _failures.LookAtRunAsync(PilSite(81), mergeGroup: false, Ct);
+
+        look.Read.ShouldBeTrue();
+        look.Untouched.ShouldBeEmpty();
+        _github.BaseAsked.ShouldBe("main");
+        _github.IssuesCreated.ShouldBeEmpty();
+        _flights.ShouldBeEmpty();
+        _failures.Ledger.All().ShouldBeEmpty();
+        _state.Cards().ShouldNotContain(c => c.Kind == FailureInvestigations.CardKind);
+    }
+
+    [Fact]
+    public async Task TheSameFiveFailingOnTheBaseToo()
+    {
+        PilShape(82);
+        _github.BaseAnswer = new BaseRun(9000, false, MergeFixtureLog());
+
+        var look = await _failures.LookAtRunAsync(PilSite(82), mergeGroup: false, Ct);
+
+        look.Read.ShouldBeTrue();
+        look.Untouched.Count.ShouldBe(5);
+        _github.IssuesCreated.Count.ShouldBe(5);
+    }
+
+    [Fact]
+    public async Task AFailureTheBasesRedRunDoesNotNameIsThePrsOwn()
+    {
+        PilShape(83);
+        _github.BaseAnswer = new BaseRun(9000, false, Log());
+
+        (await _failures.LookAtRunAsync(PilSite(83), mergeGroup: false, Ct)).Untouched.ShouldBeEmpty();
+
+        _github.IssuesCreated.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task ABaseThatCannotBeReadFilesNothingAndSaysSo()
+    {
+        PilShape(84);
+        _github.BaseAnswer = null;
+        var error = new StringWriter();
+        _failures.Error = error;
+
+        var look = await _failures.LookAtRunAsync(PilSite(84), mergeGroup: false, Ct);
+
+        look.ShouldBe(FailureLook.Nothing);
+        _github.IssuesCreated.ShouldBeEmpty();
+        _flights.ShouldBeEmpty();
+        error.ToString().ShouldContain("base branch's run could not be read");
+    }
+
+    [Fact]
+    public async Task AFailureTheLedgerHoldsFromAnotherPrNeedsNoBaseRun()
+    {
+        PilShape(85);
+        _github.BaseAnswer = new BaseRun(9000, false, MergeFixtureLog());
+        await _failures.LookAtRunAsync(PilSite(85), mergeGroup: false, Ct);
+        _github.IssuesCreated.Count.ShouldBe(5);
+
+        PilShape(86);
+        _github.BaseAnswer = null;
+        var look = await _failures.LookAtRunAsync(PilSite(86), mergeGroup: false, Ct);
+
+        look.Untouched.Count.ShouldBe(5);
+        _github.IssuesCreated.Count.ShouldBe(5);
     }
 
     [Fact]

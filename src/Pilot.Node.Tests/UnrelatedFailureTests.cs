@@ -125,6 +125,7 @@ public sealed class UnrelatedFailureTests : LegCommanderTestsBase
 
         // The same failure later in another PR's CI joins that investigation: a comment, no second issue or flight.
         _github.FailedRuns[(77, false)] = new FailedRun(555, "https://github.com/x/tianwen/actions/runs/555", ["build"], Failing("Pilot.Tests.BarTests.Breaks"));
+        _github.BaseAnswer = new BaseRun(1, false, Failing("Pilot.Tests.BarTests.Breaks"));
         var look = await investigations.LookAtRunAsync(new FailureSite(flight.Repo, flight.RepoPath, 77, "TIA77", new string('c', 40), FailureWhere.Ci), mergeGroup: false, Ct);
 
         look.Untouched.ShouldHaveSingleItem().Issue.ShouldBe(4);
@@ -141,6 +142,7 @@ public sealed class UnrelatedFailureTests : LegCommanderTestsBase
         var (investigations, made) = Investigating();
         _github.Issues[6] = UnrelatedFailures.IssueTitle("Pilot.Tests.BarTests.Breaks", "TIA0");
         _github.FailedRuns[(77, false)] = new FailedRun(555, "https://github.com/x/tianwen/actions/runs/555", ["build"], Failing("Pilot.Tests.BarTests.Breaks"));
+        _github.BaseAnswer = new BaseRun(1, false, Failing("Pilot.Tests.BarTests.Breaks"));
 
         var look = await investigations.LookAtRunAsync(new FailureSite(flight.Repo, flight.RepoPath, 77, "TIA77", new string('c', 40), FailureWhere.Ci), mergeGroup: false, Ct);
 
@@ -203,6 +205,7 @@ public sealed class UnrelatedFailureTests : LegCommanderTestsBase
         foreach (var (pr, code) in new[] { (2, "TIA2"), (3, "TIA3") })
         {
             _github.FailedRuns[(pr, false)] = new FailedRun(600 + pr, $"https://github.com/x/tianwen/actions/runs/{600 + pr}", ["build"], Failing("Pilot.Tests.BarTests.Breaks"));
+            _github.BaseAnswer = new BaseRun(1, false, Failing("Pilot.Tests.BarTests.Breaks"));
             await alerts.LookAtRunAsync(new FailureSite(flight.Repo, flight.RepoPath, pr, code, new string((char)('a' + pr), 40), FailureWhere.Ci), mergeGroup: false, Ct);
         }
 
@@ -264,6 +267,7 @@ public sealed class UnrelatedFailureTests : LegCommanderTestsBase
         // A flight flies #6 already: it is the investigation, and create-flight (which would make a second beside it) is not asked.
         _state.PutFlight(flight with { Code = "TIA6", Issue = 6, Branch = "flight/tia6", PullRequest = null, PullRequestUrl = null });
         _github.FailedRuns[(77, false)] = new FailedRun(555, "https://github.com/x/tianwen/actions/runs/555", ["build"], Failing("Pilot.Tests.BarTests.Breaks"));
+        _github.BaseAnswer = new BaseRun(1, false, Failing("Pilot.Tests.BarTests.Breaks"));
 
         var look = await investigations.LookAtRunAsync(new FailureSite(flight.Repo, flight.RepoPath, 77, "TIA77", new string('c', 40), FailureWhere.Ci), mergeGroup: false, Ct);
 

@@ -568,14 +568,76 @@ public sealed partial class GhCli
     private async Task<FailedRun?> ReadFailedRunAsync(string repoPath, long id, CancellationToken cancellationToken)
     {
         var run = id.ToString(System.Globalization.CultureInfo.InvariantCulture);
-        var (jobsExit, jobsOutput, _) = await RunAsync(["run", "view", run, "--json", "url,jobs"], repoPath, cancellationToken);
+        var (jobsExit, jobsOutput, _) = await RunAsync(["run", "view", run, "--json", "url,jobs,workflowName"], repoPath, cancellationToken);
         var (logExit, log, _) = await RunAsync(["run", "view", run, "--log-failed"], repoPath, cancellationToken);
         if (logExit != 0 || log.Trim().Length == 0)
         {
             return null;
         }
         var (url, jobs) = jobsExit == 0 ? ParseRunJobs(jobsOutput) : ("", []);
-        return new FailedRun(id, url, jobs, log.Length > FailedLogLimit ? log[^FailedLogLimit..] : log);
+        string? workflow = null;
+        if (jobsExit == 0)
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(jobsOutput);
+                workflow = TextOf(doc.RootElement, "workflowName");
+            }
+            catch (JsonException)
+            {
+            }
+        }
+        return new FailedRun(id, url, jobs, log.Length > FailedLogLimit ? log[^FailedLogLimit..] : log, workflow);
+    }
+
+    public async Task<BaseRun?> BaseRunAsync(string repoPath, string baseBranch, string? workflow, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var (exit, output, _) = await RunAsync(["run", "list", "--branch", baseBranch, "--event", "push", "--status", "completed", "--limit", "30",
+                "--json", "databaseId,workflowName,conclusion"], repoPath, cancellationToken);
+            if (exit != 0 || ParseBaseRun(output, workflow) is not { } run)
+            {
+                return null;
+            }
+            if (run.Passed)
+            {
+                return new BaseRun(run.Id, true, "");
+            }
+            return await RunFailedLogAsync(repoPath, run.Id, cancellationToken) is { } log ? new BaseRun(run.Id, false, log) : null;
+        }
+        catch (Exception ex) when (ex is FlightException or JsonException or InvalidOperationException or System.ComponentModel.Win32Exception or IOException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// The newest run in <c>gh run list --json databaseId,workflowName,conclusion</c>'s answer (newest first) that ended in success or
+    /// failure (a cancelled or skipped one says nothing) and, when <paramref name="workflow"/> is given, belongs to that workflow; null with none.
+    /// </summary>
+    internal static (long Id, bool Passed)? ParseBaseRun(string json, string? workflow)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            foreach (var r in doc.RootElement.EnumerateArray())
+            {
+                var conclusion = TextOf(r, "conclusion");
+                if (conclusion is not ("success" or "failure" or "timed_out")
+                    || (workflow is { Length: > 0 } && !string.Equals(TextOf(r, "workflowName"), workflow, StringComparison.Ordinal))
+                    || !r.TryGetProperty("databaseId", out var id) || !id.TryGetInt64(out var value) || value <= 0)
+                {
+                    continue;
+                }
+                return (value, conclusion == "success");
+            }
+            return null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
     }
 
     /// <summary>The page and the failed jobs of <c>gh run view --json url,jobs</c>'s answer; empty when it is no JSON.</summary>

@@ -76,7 +76,7 @@ public sealed class FailureInvestigations(NodeState state, IGitHub github, Failu
             {
                 return FailureLook.Nothing;
             }
-            return await LookAsync(site, run.Id, run.Url, run.FailedJobs, run.Log, () => github.PullRequestFilesAsync(site.RepoPath, number, cancellationToken), cancellationToken);
+            return await LookAsync(site, run.Id, run.Url, run.FailedJobs, run.Log, run.Workflow, () => github.PullRequestFilesAsync(site.RepoPath, number, cancellationToken), cancellationToken);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -90,7 +90,7 @@ public sealed class FailureInvestigations(NodeState state, IGitHub github, Failu
     {
         try
         {
-            return await LookAsync(site, 0, null, [], output, changedFiles, cancellationToken);
+            return await LookAsync(site, 0, null, [], output, null, changedFiles, cancellationToken);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -144,7 +144,7 @@ public sealed class FailureInvestigations(NodeState state, IGitHub github, Failu
     /// <summary>One failure found in a log, ready to be filed.</summary>
     private sealed record Found(string Test, string Message, string Signature, string[] Jobs);
 
-    private async Task<FailureLook> LookAsync(FailureSite site, long runId, string? runUrl, string[] jobs, string log, Func<Task<string[]>> changedFiles, CancellationToken cancellationToken)
+    private async Task<FailureLook> LookAsync(FailureSite site, long runId, string? runUrl, string[] jobs, string log, string? workflow, Func<Task<string[]>> changedFiles, CancellationToken cancellationToken)
     {
         var tests = FailureSignature.Tests(log);
         var found = new List<Found>();
@@ -174,7 +174,25 @@ public sealed class FailureInvestigations(NodeState state, IGitHub github, Failu
             return FailureLook.Nothing;
         }
         var untouched = found.Where(f => f.Test.Length == 0 || !FailureSignature.Touches(f.Test, files))
-            .GroupBy(f => f.Signature, StringComparer.Ordinal).Select(g => g.First()).Take(MostPerRun).ToList();
+            .GroupBy(f => f.Signature, StringComparer.Ordinal).Select(g => g.First()).ToList();
+        if (site.Pr is not null && site.Where is FailureWhere.Ci or FailureWhere.Queue && untouched.Count > 0)
+        {
+            // A PR's failure is filed as another's only with evidence: the ledger holds it from elsewhere, or the base's latest run failed it too.
+            var unproven = untouched.Where(f => ledger.InvestigationOf(site.Name, f.Signature) is null && !ledger.OnAnother(site.Name, f.Signature, site.Flight, site.Pr)).ToList();
+            if (unproven.Count > 0)
+            {
+                var baseRun = await github.BaseRunAsync(site.RepoPath, await BaseBranchAsync(site, cancellationToken), workflow, cancellationToken);
+                if (baseRun is null)
+                {
+                    await Error.WriteLineAsync($"failures: {site.Name} #{site.Pr}: the base branch's run could not be read, so nothing was filed as not the PR's");
+                    return FailureLook.Nothing;
+                }
+                var onBase = baseRun.Passed ? [] : FailureSignature.Tests(baseRun.Log).Select(t => FailureSignature.NameOf(t.Test)).ToHashSet(StringComparer.Ordinal);
+                var baseError = baseRun.Passed ? null : FailureSignature.ForError(baseRun.Log);
+                untouched.RemoveAll(f => unproven.Contains(f) && !(f.Test.Length > 0 ? onBase.Contains(FailureSignature.NameOf(f.Test)) : f.Signature == baseError));
+            }
+        }
+        untouched = untouched.Take(MostPerRun).ToList();
         var findings = new List<FailureFinding>();
         foreach (var failure in untouched)
         {
@@ -194,6 +212,23 @@ public sealed class FailureInvestigations(NodeState state, IGitHub github, Failu
             }
         }
         return new FailureLook(true, findings);
+    }
+
+    // The branch the PR merges into: its PR's base when the flight's PR can be read, else main.
+    private async Task<string> BaseBranchAsync(FailureSite site, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var flight = site.Flight is { Length: > 0 } code ? state.Flights().FirstOrDefault(f => string.Equals(f.Code, code, StringComparison.OrdinalIgnoreCase)) : null;
+            if (flight is not null && await github.PullRequestAsync(site.RepoPath, flight.Branch, cancellationToken) is { Base: { Length: > 0 } baseName })
+            {
+                return baseName;
+            }
+        }
+        catch (FlightException)
+        {
+        }
+        return "main";
     }
 
     private async Task<(string Code, int Issue)?> FileAsync(FailureSite site, long runId, string? runUrl, Found failure, CancellationToken cancellationToken, IssueInfo? open = null)
