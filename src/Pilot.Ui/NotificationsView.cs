@@ -99,7 +99,7 @@ internal sealed class NotificationsView<TSurface>(Renderer<TSurface> renderer) :
         {
             var card = n.Row is { } row
                 ? row()
-                : Host.EventCard?.Invoke(n.Title, n.Text, n.Source, n.Posted, n.Posted.ToLocalTime().ToString("HH:mm"), n.Id, n.Severity) ?? Layout.Builder.Text(n.Title, 12f, Palette.Current.Bright).Selectable();
+                : Host.EventCard?.Invoke(n.Title, n.Text, n.Source, n.Posted, n.Posted.ToLocalTime().ToString("HH:mm"), n.Id.ToString(), n.Severity) ?? Layout.Builder.Text(n.Title, 12f, Palette.Current.Bright).Selectable();
             blocks.Add(place(card));
         }
     }
