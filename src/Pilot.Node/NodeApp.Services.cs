@@ -616,8 +616,7 @@ public static partial class NodeApp
                 var watchtower = services.GetRequiredService<Watchtower>();
                 return new NodeRowPublisher(state, () => new NodeRow
                 {
-                    Maintenance = models.Maintenance,
-                    Autopilot = models.Autopilot,
+                    Maintenance = models.Maintenance, Autopilot = models.Autopilot,
                     AcceptsFleetFlights = models.AcceptsFleetFlights,
                     Account = state.Usage()?.Account,
                     CanRunGui = services.GetRequiredService<JobRunner>().GuiWhy() is null,

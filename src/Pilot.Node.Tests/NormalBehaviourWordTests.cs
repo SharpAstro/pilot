@@ -19,6 +19,18 @@ public sealed partial class NormalBehaviourWordTests
     /// </summary>
     private static readonly string[] Allowed =
     [
+        // PIL1285: the word is a real feature again, the switch whose meaning is "the watchtower runs with a standing goal". These
+        // are the switch's own names and sentences; they come first, so a longer phrase is taken out before a shorter one inside it.
+        "autopilot  on: the watchtower runs with a standing goal", // the status line
+        "autopilot  off (only the person",                         // the status line
+        "**autopilot** on: the watchtower",                        // the status line, as markdown
+        "**autopilot** off (only the person",                      // the status line, as markdown
+        "autopilot takes on or off",                               // the settings value's refusal
+        "autopilot is the person's to change",                     // the person-only refusal
+        "autopilotGoal",                                           // the file member (an old "autopilot" member is ignored)
+        "Autopilot switch",                                        // README: the top bar's switch
+        "AutopilotKey",                                            // identifier of the setting's key
+        "AutopilotFileMember",                                     // identifier of the file member
         "\"autopilot\"",                     // MergeBy / DecisionByKinds value and the refused settings key, stored by older releases
         "autopilot-ran",                     // card kind of the Handled line, stored in old journals
         "autopilot-merge-refused",           // card kind of the merge refusal, stored in old journals
@@ -55,6 +67,8 @@ public sealed partial class NormalBehaviourWordTests
         {
             var name = Path.GetFileName(file);
             var text = File.ReadAllText(file);
+            if (name is "AutopilotSwitch.cs" or "FleetView.cs" or "PilotChrome.cs")
+                continue; // the switch's own view: its words are the v2 feature's (PIL1285)
             if (name == "CardKindCatalog.cs")
                 Scan(root, file, Without(text, AllowedInCatalog), hits);
             else if (name.StartsWith("Briefs", StringComparison.Ordinal) || name is "CardSummaries.cs")
