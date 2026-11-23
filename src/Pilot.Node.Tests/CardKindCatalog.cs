@@ -9,9 +9,10 @@ namespace Pilot.Node.Tests;
 /// <c>CardKindTests.SourcePinned</c>. A kind raised into the Ring bin also names the <c>Fact</c> it is checked against before it rings (what the
 /// node read, from GitHub, a row, the session or the plane, that says the person must act) and the <c>Choices</c>: the <c>Verbs</c> its card offers,
 /// each one the node accepts in the state the card is raised in (#799 rule 5: a ring is for what only the person can settle, with something to press).
+/// <c>NodePressed</c> marks a kind the watchtower may press on the node's rules alone: <c>NodePress</c> presses it itself, so no press of it is a CLI command a classifier can refuse.
 /// A kind whose choices are handed to the raiser by its callers (a start that failed offers the start again) lists those files as <c>ChoiceFiles</c>.
 /// </summary>
-internal sealed record CardKindEntry(string Kind, string Bins, string[] Files, string Pin, string? Fact = null, string[]? Choices = null, string[]? ChoiceFiles = null);
+internal sealed record CardKindEntry(string Kind, string Bins, string[] Files, string Pin, string? Fact = null, string[]? Choices = null, string[]? ChoiceFiles = null, bool NodePressed = false);
 
 /// <summary>
 /// Every kind of card the node raises (PIL474). <c>CardKindTests</c> reads the <c>RaiseCard</c> calls under Pilot.Node and fails when one
@@ -109,7 +110,7 @@ internal static class CardKindCatalog
         new("reboot-ready", "ForYou", ["RebootPrep.cs"], "RebootPrepTests.AFileArrivingEndsItsSessionAndTheReadyCardComesOnlyWhenAllAreIn"),
         new("planner-started", "Handled", [LegPlanners], "LockFreeStartTests.APlanFlightAnswersStartedAtOnceAndItsCardComesWhenThePlannerIsUp"),
         new("planned", "ForYou|Handled", [LegPlanners, "NodeState.Flights.cs"], "LegTests.APlannerIsStartedInThePlaneAndItsPlannedOffersTheFirstLeg"),
-        new("overlap", "Ring", ["Flights/LegCommander.Overlap.cs", "Flights/LegCommander.LegEnd.cs"], "OverlapTests.TheRecordedAnswerSurvivesAReplayOfTheJournal", "the flight's files overlap another flight's and the controller has not answered", [nameof(Verbs.Fold), nameof(Verbs.ConnectOverlap), nameof(Verbs.Separate)]),
+        new("overlap", "Ring", ["Flights/LegCommander.Overlap.cs", "Flights/LegCommander.LegEnd.cs"], "OverlapTests.TheRecordedAnswerSurvivesAReplayOfTheJournal", "the flight's files overlap another flight's and the controller has not answered", [nameof(Verbs.Fold), nameof(Verbs.ConnectOverlap), nameof(Verbs.Separate)], NodePressed: true),
         new("overlap-parallel", "Handled", ["Flights/LegCommander.LegEnd.cs"], "LegEndOverlapTests.AnUnforeseenOverlapWithAFlightlessOpenPrIsAnsweredParallelByTheNodeWithAHandledNoteAndNoRing"),
         new("overlap-connected", "Handled", ["Flights/LegCommander.LegEnd.cs"], "LegEndOverlapTests.AnUnforeseenOverlapWithALocalFlightIsConnectedByTheNodeWithAHandledNoteNoRingAndTheNextLegHeld"),
         new("overlap-landed", "Handled", ["Flights/LegCommander.LegEnd.cs"], "LegEndOverlapTests.APendingRowWhoseLocalOtherHasLandedIsClosedByTheSweepWithAHandledLineAndTheNextLegStarts"),
@@ -182,7 +183,7 @@ internal static class CardKindCatalog
         new("worktree-removed", "Handled", ["Flights/DiskSweep.cs"], "DiskSweepTests.AHandMadeWorktreeWhosePrMergedAndIsCleanIsRemovedWithAHandledLine"),
         new("worktree-dirty", "Handled", ["Flights/DiskSweep.cs"], "DiskSweepTests.ADirtyHandMadeWorktreeIsKeptWithOneHandledLineAndNoSecondOnTheNextSweep"),
         new("disk-low", "ForYou", ["Flights/DiskSweep.cs"], "DiskSweepTests.FreeSpaceBelowTheThresholdRaisesOneRingNamingTheLargestItemsAndClosesWhenSpaceIsBack"),
-        new("stray-process", "ForYou", ["Flights/StraySweep.cs"], "StraySweepTests.OneCardPerStrayNamesTheProcessItsOwnerAndTheKillCommand"),
+        new("stray-process", "ForYou", ["Flights/StraySweep.cs"], "StraySweepTests.OneCardPerStrayNamesTheProcessItsOwnerAndTheKillCommand", NodePressed: true),
         new("poller-caller", "Ring", ["Flights/PollerSweep.cs"], "PollerSweepTests.AFakeCallerAt300AnHourFor3HoursRingsExactlyOneCardNamingIt", "the node's own per-caller request tally shows a process that is none of a job's, a session's or pilot's own over 200 requests an hour for 2 full hours", [nameof(Verbs.EndPoller)]),
         new("poller-ended", "Handled", ["Flights/PollerSweep.cs"], "PollerSweepTests.PressingEndKillsOnlyWhileTheStartStillMatches"),
         new("stray-killed", "Handled", ["Flights/StraySweep.cs"], "StraySweepTests.AProcessOfAnEndedJobTheNodeLaunchedIsKilledThroughTheTableAndNothingElseIs"),
@@ -206,7 +207,7 @@ internal static class CardKindCatalog
         // PRs of the person's own, reviewed and rechecked.
         new("pr-review-ready", "ForYou", [PrReviewsVerdicts], "PrReviewTests.OnlyTheReviewersVerdictRaisesTheCardAndTheWorktreeGoesWhenTheCardCloses"),
         new("pr-review-waiting", "Handled|ForYou", [Reviews, PrReviewsSweep], "AdmissionReviewTests.APrReviewAtTheOpusCapAnswersQueuedLeavesOneHandledCardAndStartsOnTheSweepAndSaysItOnce"),
-        new("pr-fix-pushed-unreviewed", "ForYou", [PrReviewsFixerRounds, PrReviewsFixerHold], "PrRecheckTests.TheFixersPushWhoseReviewCouldNotStartStaysAnOpenCardAfterTheSweep"),
+        new("pr-fix-pushed-unreviewed", "ForYou", [PrReviewsFixerRounds, PrReviewsFixerHold], "PrRecheckTests.TheFixersPushWhoseReviewCouldNotStartStaysAnOpenCardAfterTheSweep", NodePressed: true),
         new("pr-fixer-work-held", "ForYou", [PrReviewsFixerHold], "FixerHoldTests.FilesLeftUncommittedInTheFixWorktreeHoldThePrWithOneCard"),
         new("pr-review-started", "Handled", [PrReviewsStart], "PrReviewTests.APrInARepoWithACloneIsReviewedInThatClonePinnedAtItsHead"),
         new("pr-review-left", "Handled", [PrReviewsSweep], "RemovalQueueTests.AReviewWhoseWorktreeIsHeldClosesAtOnceWithOneHandledLineAndAQueueEntry"),
@@ -223,7 +224,7 @@ internal static class CardKindCatalog
         new("pr-fix-offer", "ForYou", [PrReviewsFixer], "PrFixTests.APrByAnotherLoginRaisesAForYouCardWhoseFixItStartsTheSameFixer"),
         new("pr-fix-failed", "ForYou", [PrReviewsFixer, PrReviewsFixerRounds, "Flights/PrReviews.FollowUp.cs"], SourcePinned),
         new("pr-fix-capped", "Ring", [PrReviewsFixer], "RingCountTests.ThePrRingTitlesTheRoundsInAllAndListsThePointsInThreeGroups", "the PR's fix rounds have reached the cap with changes still asked", [nameof(Verbs.AllowRound)]),
-        new("pr-fix-ended", "ForYou", [PrReviewsFixerRounds], "PrFixTests.AFixerThatEndsWithoutPushingLeavesACardWithFixItAndNoReview"),
+        new("pr-fix-ended", "ForYou", [PrReviewsFixerRounds], "PrFixTests.AFixerThatEndsWithoutPushingLeavesACardWithFixItAndNoReview", NodePressed: true),
         new("pr-fix-left", "Handled", [PrReviewsFixerRounds], SourcePinned),
         new("pr-fix-follow-up", "Handled", [PrReviewsFixerRounds], "FixFollowUpTests.AMergedPrsFixerCommitGoesToANewBranchAndAFollowUpPrThatIsReviewed"),
         new("pr-fix-follow-up-failed", "ForYou", [PrReviewsFixerRounds], "FixFollowUpTests.APushGitHubRefusesLeavesAForYouCardNamingTheCommitAndTheLocalBranch"),
@@ -321,6 +322,26 @@ internal static class CardKindCatalog
         ["Flights/PrChecks.cs|LegCommander.ChecksFailedTitle(flight.Code, number, checks?.FailedName, why)"] = "ChecksFailedTitle names the check and why the leg was not sent back",
         ["Flights/PrChecks.cs|LegCommander.ChecksFailedTitle(flight.Code, number, null, why)"] = "ChecksFailedTitle names the check and why the leg was not sent back",
         ["Flights/PrRecheck.cs|LegCommander.ChecksFailedTitle(code, entry.Number, null, why)"] = "ChecksFailedTitle names the check and why the leg was not sent back",
+    };
+
+    /// <summary>
+    /// The kinds whose cards offer one of <c>NodePress</c>'s verbs and still stay the person's, each with the reason from the source
+    /// (#1311). <c>CardKindTests</c> fails on a kind that offers such a verb and is neither <c>NodePressed</c> nor named here.
+    /// </summary>
+    public static readonly Dictionary<string, string> PersonsOwn = new()
+    {
+        ["pr-fix-offer"] = "another author's PR: the person gives Fix it, the node's fixer rule covers only an ended fixer",
+        ["pr-review-design"] = "a design question: the person answers it, and the fixer starts on that answer",
+        ["pr-review-no-fixer"] = "no fixer may start (round cap, author or design question): nothing the node's rule lets through",
+        ["pr-fix-failed"] = "the fixer could not start: the same start again is not a rule, the person looks at why",
+        ["pr-review-lost"] = "a review lost in a restart that cannot start again: the person decides on the retry",
+        ["pr-recheck-failed"] = "a review that cannot start: the node's own recheck already tried it",
+        ["pr-checks-failed"] = "failed checks: Fix it there is the person's or the flight's word, not a node rule",
+        ["pr-fix-capped"] = "the round cap: only the person allows another round",
+        ["pr-fix-follow-up-failed"] = "a push GitHub refused: the person looks at it before any new review",
+        ["pr-fixer-work-held"] = "work left in the fixer's worktree: only a person says whether to push it or let it go",
+        ["pr-recheck-conflicts"] = "a PR that conflicts: the person settles it",
+        ["pr-review-waiting"] = "a review waiting on a cap: the node starts it itself on its sweep",
     };
 
     /// <summary>

@@ -854,3 +854,72 @@ public sealed class PrFixTests3 : PrFixTestsBase
         lines[1].ShouldContain("fixing it already");
     }
 }
+
+/// <summary>
+/// The rule behind the node's press of "Review the fixer's push" (<see cref="PrReviews.WhyNoReviewAsync"/>, pilot #1311), run against the fake GitHub
+/// rather than a canned answer: it presses only on an open PR whose head, as GitHub reads it now, has no review standing or running.
+/// </summary>
+public sealed class PrReviewRuleTests : PrFixTestsBase
+{
+    private const string Repo = "acme/widget";
+
+    private void Put(PrReviewState state, string head) => _state.PutPrReview(new PrReviewRow
+    {
+        Repo = Repo, Number = 7, Url = "https://github.com/acme/widget/pull/7", Base = "main", Head = head, ClonePath = WidgetClone,
+        Worktree = WidgetClone, Reviewer = "du1-review-widget-7", Author = "ada", State = state, StartedAt = DateTimeOffset.UtcNow,
+    });
+
+    private string Head => _github.Prs["acme/widget#7"].Head;
+
+    private void SetPr(Func<PullRequest, PullRequest> change) => _github.Prs["acme/widget#7"] = change(_github.Prs["acme/widget#7"]);
+
+    [Fact]
+    public async Task AMergedOrClosedPrHasNoReviewStarted()
+    {
+        SetPr(p => p with { State = "MERGED" });
+        (await _reviews.WhyNoReviewAsync(Seven, Ct)).ShouldNotBeNull().ShouldContain("merged");
+        SetPr(p => p with { State = "CLOSED" });
+        (await _reviews.WhyNoReviewAsync(Seven, Ct)).ShouldNotBeNull().ShouldContain("closed");
+    }
+
+    [Fact]
+    public async Task AnEmptyHeadHasNoReviewStarted()
+    {
+        SetPr(p => p with { Head = "" });
+        (await _reviews.WhyNoReviewAsync(Seven, Ct)).ShouldNotBeNull().ShouldContain("head");
+    }
+
+    [Fact]
+    public async Task AReviewRunningAtTheCurrentHeadBlocksAnother()
+    {
+        Put(PrReviewState.Reviewing, Head);
+        (await _reviews.WhyNoReviewAsync(Seven, Ct)).ShouldNotBeNull().ShouldContain("runs");
+    }
+
+    [Fact]
+    public async Task AReviewStandingAtTheCurrentHeadBlocksAnother()
+    {
+        Put(PrReviewState.Reviewed, Head);
+        (await _reviews.WhyNoReviewAsync(Seven, Ct)).ShouldNotBeNull().ShouldContain("stands");
+    }
+
+    [Fact]
+    public async Task AReviewOfAnOlderHeadLeavesTheNewOneToReview()
+    {
+        Put(PrReviewState.Reviewed, "0000000000000000000000000000000000000001");
+        (await _reviews.WhyNoReviewAsync(Seven, Ct)).ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task NoReviewRowLeavesTheOpenPrToReview()
+    {
+        (await _reviews.WhyNoReviewAsync(Seven, Ct)).ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task AClosedReviewRowAtTheSameHeadLeavesItToReview()
+    {
+        Put(PrReviewState.Closed, Head);
+        (await _reviews.WhyNoReviewAsync(Seven, Ct)).ShouldBeNull();
+    }
+}

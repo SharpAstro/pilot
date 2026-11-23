@@ -8,7 +8,7 @@ using Xunit;
 namespace Pilot.Node.Tests;
 
 /// <summary>
-/// The node's own press (pilot #1269) over an in-memory state and a fake command path: each of the three card kinds is pressed by
+/// The node's own press (pilot #1269) over an in-memory state and a fake command path: each of the four card kinds is pressed by
 /// the node, and each refusal case is left to the person. No process, no wall-clock wait.
 /// </summary>
 public sealed class AutopilotNodePressTests
@@ -22,6 +22,8 @@ public sealed class AutopilotNodePressTests
     private bool _mayEndStray = true;
     private string? _whyNoFixer;
     private bool _refuse;
+    private string? _whyNoReview;
+    private string? _readFails;
 
     public AutopilotNodePressTests() => _state = new NodeState(new InMemoryJournal(), new ManualTime(Began));
 
@@ -33,7 +35,70 @@ public sealed class AutopilotNodePressTests
     {
         MayEndStray = _ => _mayEndStray,
         WhyNoFixer = (_, _) => Task.FromResult(_whyNoFixer),
+        WhyNoReview = (pr, _) => _readFails is { } fails && fails == pr.ToString() ? throw new FlightException($"gh could not read {pr}") : Task.FromResult(_whyNoReview),
     };
+
+    private const string ReviewLabel = "Review the fixer's push";
+
+    private CardRow PushedCard() => _state.RaiseCard(CardBin.ForYou, PrReviews.PushedUnreviewedKind, PrSubject, "pilot#77: the fixer's push has no review yet", null,
+        [new CardChoice { Label = ReviewLabel, Verb = Verbs.ReviewPr, Target = PrSubject }]);
+
+    [Fact]
+    public async Task ReviewTheFixersPushIsPressedWhereTheHeadHasNoReview()
+    {
+        var card = PushedCard();
+        (await PressedAsync()).ShouldBe(1);
+        ShouldHavePressed(card, ReviewLabel);
+    }
+
+    [Fact]
+    public async Task ReviewTheFixersPushWaitsWhileGitHubStillShowsTheOldHeadAndIsPressedOnALaterLook()
+    {
+        _whyNoReview = "a review already stands at abc1234, the head GitHub reads now";
+        var card = PushedCard();
+        var press = Press();
+        (await press.PressAsync(CancellationToken.None)).ShouldBe(0);
+        _ran.ShouldBeEmpty();
+        _state.Cards(openOnly: true).ShouldContain(c => c.Id == card.Id);
+        _whyNoReview = null;
+        (await press.PressAsync(CancellationToken.None)).ShouldBe(1);
+        ShouldHavePressed(card, ReviewLabel);
+    }
+
+    [Fact]
+    public async Task AReviewRuleThatCannotReadItsPrLeavesThatCardAndStillPressesTheOthers()
+    {
+        StrayCard();
+        var card = PushedCard();
+        _readFails = "SharpAstro/pilot#77";
+        var press = Press();
+        (await press.PressAsync(CancellationToken.None)).ShouldBe(1);
+        _ran.ShouldHaveSingleItem().Args.ShouldBe(["End process 4242"]);
+        _state.Cards(openOnly: true).ShouldContain(c => c.Id == card.Id);
+        _readFails = null;
+        (await press.PressAsync(CancellationToken.None)).ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task AReviewPressTheCardRefusedIsNotRepeated()
+    {
+        _refuse = true;
+        PushedCard();
+        var press = Press();
+        (await press.PressAsync(CancellationToken.None)).ShouldBe(0);
+        (await press.PressAsync(CancellationToken.None)).ShouldBe(0);
+        _ran.Count.ShouldBe(1);
+        _state.Cards().ShouldNotContain(c => c.Kind == CardKinds.NodeRan);
+    }
+
+    [Fact]
+    public void TheNodeOwnsTheFixersPushReviewCard()
+    {
+        NodePress.Owns(PrReviews.PushedUnreviewedKind).ShouldBeTrue();
+        var card = PushedCard();
+        Press().WouldPress(card.Kind, card.Subject, card.Detail, card.Choices).ShouldBeTrue();
+        Press().WouldPress(card.Kind, card.Subject, card.Detail, []).ShouldBeFalse();
+    }
 
     private CardRow StrayCard() => _state.RaiseCard(CardBin.ForYou, StraySweep.Kind, StrayKey, "Stray dotnet 4242 is still running", null,
         [new CardChoice { Label = "End process 4242", Verb = Verbs.EndStray, Target = StrayKey }]);
