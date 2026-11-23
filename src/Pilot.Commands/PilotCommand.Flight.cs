@@ -83,7 +83,7 @@ public static partial class PilotCommand
             var land = Action(new Command("land", "The flight's work is in: its plane goes, its branch and code stay") { Arguments = { code }, Options = { actingOn } },
                 (p, client, ct) => Send(client, Verbs.Land, Verbs.FlightTarget(p.GetValue(code)!), [], who, ct, p.GetValue(actingOn)));
 
-            var withdrawWhy = Words("why", "Why the flight is a mistake (required: it goes on the Handled card)");
+            var withdrawWhy = Words("reason", "Why the flight is a mistake (required: it goes on the Handled card)");
             var withdraw = Action(new Command("withdraw", "End a mistaken flight that never did any work: its sessions, plane and branch go and its code is free; refused with a PR or commits past its base") { Arguments = { code, withdrawWhy }, Options = { actingOn } },
                 (p, client, ct) => Send(client, Verbs.WithdrawFlight, Verbs.FlightTarget(p.GetValue(code)!), p.GetValue(withdrawWhy) ?? [], who, ct, p.GetValue(actingOn)));
 
@@ -100,8 +100,8 @@ public static partial class PilotCommand
 
             var ciAnswer = new Argument<string>("answer") { Description = "continue (raise the cap by one budget), land-green (land what is green) or split (split the flight)" };
             ciAnswer.AcceptOnlyFromAmong(Verbs.CiContinue, Verbs.CiLandGreen, Verbs.CiSplit);
-            var ciBudget = Action(new Command("ci-budget", "Answer a flight whose CI spend passed flight-ci-budget: continue, land what is green, or split") { Arguments = { code, ciAnswer } },
-                (p, client, ct) => Send(client, Verbs.CiBudget, Verbs.FlightTarget(p.GetValue(code)!), [p.GetValue(ciAnswer)!], who, ct));
+            var ciBudget = Action(new Command("ci-budget", "Answer a flight whose CI spend passed flight-ci-budget: continue, land what is green, or split") { Arguments = { code, ciAnswer }, Options = { actingOn } },
+                (p, client, ct) => Send(client, Verbs.CiBudget, Verbs.FlightTarget(p.GetValue(code)!), [p.GetValue(ciAnswer)!], who, ct, p.GetValue(actingOn)));
 
             var clearWhy = Words("why", "Why the flight is cleared to land", required: false);
             var clear = Action(new Command("clear", "Clear a flight held in a holding pattern (its review passed with notes) to land: its merge is no longer held") { Arguments = { code, clearWhy } },

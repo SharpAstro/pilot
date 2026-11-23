@@ -275,6 +275,13 @@ public enum SessionRole
     /// <summary>The session the node starts for a design (PIL1151): <c>&lt;machine&gt;-dsn&lt;n&gt;-designer</c>.</summary>
     [JsonStringEnumMemberName("designer")]
     Designer,
+
+    /// <summary>
+    /// Autopilot's thinking tier (PIL1285): a short session the node starts to find a cause and end with one decision,
+    /// <c>&lt;machine&gt;-investigate-&lt;subject&gt;</c>.
+    /// </summary>
+    [JsonStringEnumMemberName("investigator")]
+    Investigator,
 }
 
 /// <summary>A subagent a session started (Claude Code's <c>Agent</c> tool): its own transcript beside the session's.</summary>

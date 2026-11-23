@@ -54,6 +54,8 @@ public sealed class NightInputsTests
     {
         var renderer = new RgbaImageRenderer(1280, 800);
         var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
+        chrome.Autopilot.OnToggle = _ => Task.FromResult<string?>(null);
+        chrome.Autopilot.On = true;
         return (renderer, chrome);
     }
 

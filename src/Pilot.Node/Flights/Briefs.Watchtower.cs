@@ -177,8 +177,8 @@ public static partial class Briefs
     /// keeps its brief, and only a fresh start carries a changed one, so a watchtower whose recorded fingerprint differs
     /// from this one is replaced (#22).
     /// </summary>
-    public static string WatchtowerFingerprint(string name, string pilot, string? model = null, string? machine = null, bool stream = false) =>
-        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(WatchtowerHead(name, pilot, model, "") + "\n\u0001\n" + WatchtowerRules(name, pilot, machine, stream))))[..16];
+    public static string WatchtowerFingerprint(string name, string pilot, string? model = null, string? machine = null, bool stream = false, bool autopilot = false) =>
+        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(WatchtowerHead(name, pilot, model, "") + "\n\u0001\n" + WatchtowerRules(name, pilot, machine, stream, autopilot))))[..16];
 
     /// <summary>
     /// The part of the brief that does not change with the node's state, and the only fixed text the first prompt carries: who the
@@ -211,7 +211,7 @@ public static partial class Briefs
     /// The watchtower's fixed rules. The node writes them to a file when it starts a watchtower and the brief points to it (PIL855): the
     /// brief is the first prompt of a session and stays in its context for good, and 20,000 characters of rules in it made every turn slow.
     /// </summary>
-    public static string WatchtowerRules(string name, string pilot, string? machine = null, bool stream = false)
+    public static string WatchtowerRules(string name, string pilot, string? machine = null, bool stream = false, bool autopilot = false)
     {
         var text = new StringBuilder();
         text.AppendLine($"# The rules of {name}, the watchtower");
@@ -414,6 +414,10 @@ public static partial class Briefs
         text.AppendLine($"- `{pilot} leg extend <tokens> --leg <code>/<leg>`: a leg's budget, raised once by the controller's rule (a Handled line says so).");
         text.AppendLine($"- `{pilot} --help` lists the rest.");
         text.AppendLine();
+        if (autopilot)
+        {
+            text.Append(AutopilotGoalSection(pilot));
+        }
         return text.ToString();
     }
 
@@ -435,4 +439,26 @@ public static partial class Briefs
 
     /// <summary>One card as the watchtower reads it: id, bin, title, detail and its numbered choices.</summary>
     public static string CardLine(CardRow card) => CardNotice.Line(card);
+
+    /// <summary>The heading of the standing-goal section of the watchtower's rules, which is there only while the autopilot switch is on (PIL1285).</summary>
+    public const string AutopilotGoalHeading = "## Your standing goal (autopilot)";
+
+    /// <summary>The four parts of the standing goal of #1285, said as work. Only while the person has autopilot on; it is part of the fingerprint, so a toggle starts a fresh watchtower.</summary>
+    public static string AutopilotGoalSection(string pilot)
+    {
+        var text = new StringBuilder();
+        text.AppendLine();
+        text.AppendLine(AutopilotGoalHeading);
+        text.AppendLine("The person has autopilot on. You run with a standing goal, and the node lets you do what it needs without refusing you:");
+        text.AppendLine($"`{pilot} create-issue`, `create-flight`, `flight ci-budget` and `go-around` (and `rerun-checks`, which needs no `--why`). Each of the first four needs `--why` naming the evidence");
+        text.AppendLine("(a job id, a card id, a commit, a run); one that names none is refused. Each run is a Handled line with its why.");
+        text.AppendLine("1. Flights keep flying. A flight that is stalled, held or out of budget gets moved along: a go-around, a split, a move, or a rerun");
+        text.AppendLine("   once the cause of what stopped it is gone. Do not press the same thing twice for the same cause.");
+        text.AppendLine("2. Pilot's own faults are found and fixed. When a failure repeats, stop pressing: find the cause (measure it) and file or fix it that hour.");
+        text.AppendLine("3. Every card the evidence settles is settled by you, and the Handled line names the evidence. Leave a card open only where it needs the person.");
+        text.AppendLine($"4. The person is the last resort. Notify them (`{pilot} ring`) only for: spending past the bound (you grant a flight more CI budget at most");
+        text.AppendLine("   `autopilot-ci-grants` times per local day, 1 by default; a further grant is theirs), a product or design choice the acceptance criteria do not");
+        text.AppendLine("   settle, or a machine someone must wake. Say what you tried. Overrides of a gate, and an answer to an ask card, stay theirs always.");
+        return text.ToString();
+    }
 }

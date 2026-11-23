@@ -39,6 +39,9 @@ public sealed partial class FlightCommander
     /// <summary>The last copy of each granted peer's flights and legs, fed by every read that answers (#894); null for a node built without one.</summary>
     public FleetCopy? Copy { get; set; }
 
+    /// <summary>What wakes the watchtower on autopilot: told which peer answers and which does not (PIL1285); null for a node built without.</summary>
+    public AutopilotWakes? Wakes { get; set; }
+
     /// <summary>
     /// Reads every granted peer once under <see cref="PeerBudget"/>, which keeps <see cref="Copy"/> fresh (<see cref="FleetCopyWatch"/>).
     /// A peer that does not answer changes nothing. Returns how many answered.
@@ -143,6 +146,7 @@ public sealed partial class FlightCommander
             }
             var info = await peer.NodeAsync(budget);
             var node = Learn(peer, info);
+            Wakes?.NotePeer(node, true);
             // A peer that does not hold the repo flies nothing of it: the wait is then for the flight to show.
             var checkout = gitHub is null ? null : repos.FirstOrDefault(r => string.Equals(r.GitHub, gitHub, StringComparison.OrdinalIgnoreCase))?.Path;
             if (checkout is null)
@@ -155,6 +159,7 @@ public sealed partial class FlightCommander
         }
         catch (Exception ex) when (ex is HttpRequestException or IOException or TimeoutException or OperationCanceledException or WebSocketException && !caller.IsCancellationRequested)
         {
+            Wakes?.NotePeer(NameOf(peer) ?? peer.Name, false);
             return new PeerRead(NameOf(peer), null, $"{peer.Name}: it did not answer ({FirstLineOf(ex.Message)})", Unanswered: true);
         }
     }
@@ -285,12 +290,14 @@ public sealed partial class FlightCommander
         {
             var info = await peer.NodeAsync(budget);
             var node = Learn(peer, info);
+            Wakes?.NotePeer(node, true);
             var load = await peer.LoadAsync(budget);
             Copy?.Record(node, load);
             return new PeerRead(node, load.Flights, null);
         }
         catch (Exception ex) when (ex is HttpRequestException or IOException or TimeoutException or WebSocketException or OperationCanceledException && !caller.IsCancellationRequested)
         {
+            Wakes?.NotePeer(NameOf(peer) ?? peer.Name, false);
             return new PeerRead(NameOf(peer), null, $"{peer.Name}: it did not answer ({FirstLineOf(ex.Message)})", Unanswered: true);
         }
     }

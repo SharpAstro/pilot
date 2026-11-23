@@ -234,6 +234,37 @@ public sealed partial class NodeCommands(IServiceProvider services, NodeState st
         // The watchtower sees a flight's work in as the person's assistant would, whoever woke it: the person on
         // Remote Control talks to it past the node, so its turn never read as theirs and it was refused the merge they asked for
         // (#344, DE1, 2026-10-28). Its own merge and landing are then run and recorded; an ask's Allow stays the person's.
+        // PIL1285: with autopilot on, the watchtower runs the verbs of its standing goal too, on a --why that names evidence; each is a Handled line.
+        var goalVerb = false;
+        if (standing.Kind == StandingKind.Lookout && Standing.LookoutOnGoal.Contains(command.Verb) && watchtower.Models.Autopilot
+            && !DecisionSources.IsOverride(command, ReviewerOfTarget(command)))
+        {
+            if (!Standing.NamesEvidence(command.Why))
+            {
+                return state.Complete(command, $"{command.Verb} on autopilot needs --why naming the evidence (a job id such as j962, a card id, a commit, a run): the Handled line keeps it");
+            }
+            standing = new Standing(StandingKind.Assistant);
+            command = command with { Autopilot = true };
+            goalVerb = true;
+        }
+        // PIL1285: an investigator runs the same goal verbs on evidence, and never an override, whatever --why it gives.
+        if (standing.Kind == StandingKind.Investigator)
+        {
+            if (DecisionSources.IsOverride(command, ReviewerOfTarget(command)))
+            {
+                return state.Complete(command, DecisionSources.OverrideIsThePersons(command));
+            }
+            if (Standing.InvestigatorActs.Contains(command.Verb) && watchtower.Models.Autopilot)
+            {
+                if (!Standing.NamesEvidence(command.Why))
+                {
+                    return state.Complete(command, $"{command.Verb} from an investigator needs --why naming the evidence (a job id such as j962, a card id, a commit, a run): the Handled line keeps it");
+                }
+                standing = new Standing(StandingKind.Assistant);
+                command = command with { Autopilot = true };
+                goalVerb = true;
+            }
+        }
         if (standing.Kind == StandingKind.Lookout && Standing.LookoutOnAutopilot.Contains(command.Verb))
         {
             standing = new Standing(StandingKind.Assistant);
@@ -276,7 +307,7 @@ public sealed partial class NodeCommands(IServiceProvider services, NodeState st
         }
         // An assistant's your-only command runs at once, recorded with its session and message, and a Handled card says so. A merge
         // in a no-auto-merge repo is the exception: it waits on the person's card (Allow runs it as them, Deny closes it).
-        var assistantsYourOnly = standing.Kind == StandingKind.Assistant && Standing.YourOnly(command, state);
+        var assistantsYourOnly = goalVerb || standing.Kind == StandingKind.Assistant && Standing.YourOnly(command, state);
         if (assistantsYourOnly)
         {
             // A repo set to no-auto-merge never has its flight merged at an assistant's word: the merge waits on the person's card.
@@ -457,6 +488,15 @@ public sealed partial class NodeCommands(IServiceProvider services, NodeState st
         if (command.Verb == Verbs.Raise)
         {
             return Raise(command);
+        }
+        if (command.Verb == Verbs.Investigated)
+        {
+            var args = command.Args ?? [];
+            if (args.Length == 0)
+            {
+                return state.Complete(command, $"{Verbs.Investigated} takes the subject, then {string.Join(", ", Investigator.Outcomes)}, then why");
+            }
+            return state.Complete(command, Get<Investigator>().Outcome(command.Who, command.Target, args[0].Trim(), string.Join(' ', args.Skip(1))));
         }
         if (command.Verb == Verbs.AnswerGrant)
         {

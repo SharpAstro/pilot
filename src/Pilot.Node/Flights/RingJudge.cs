@@ -48,7 +48,7 @@ public sealed class RingJudge(NodeState state, Func<IBrain?> brain)
     /// </summary>
     public static bool Wants(string kind) =>
         kind is not (Watchtower.AskKind or Watchtower.Down or Watchtower.Stopped or Watchtower.Waits or Watchtower.RefusedKind or CardKinds.AssistantAsk
-            or LegCommander.PrReady or LegCommander.MergeFailed);
+            or LegCommander.PrReady or LegCommander.MergeFailed or Investigator.RingKind or Investigator.BoundKind);
 
     /// <summary>
     /// Whether a card of <paramref name="kind"/> offering <paramref name="choices"/> goes to the brain before it rings. Not one whose choice

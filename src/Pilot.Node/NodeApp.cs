@@ -52,6 +52,8 @@ public static partial class NodeApp
         AddRepos(builder, options, logWriter);
         AddIdeas(builder, logWriter);
         AddNodePress(builder, logWriter);
+        AddWakes(builder);
+        AddInvestigator(builder, options, logWriter);
         AddWorkers(builder, options, logWriter);
         AddAdmission(builder, options);
         AddFailureInvestigations(builder, logWriter, options);
@@ -191,6 +193,7 @@ public static partial class NodeApp
                 Stream = state.Stream,
                 Maintenance = models.Maintenance,
                 Reboot = reboot.Headline,
+                Autopilot = models.Autopilot,
                 AcceptsFleetFlights = models.AcceptsFleetFlights,
                 Account = state.Usage()?.Account,
                 CanRunGui = jobRunner.GuiWhy() is null,

@@ -15,9 +15,11 @@ public sealed partial class RoleModels
     public const string Planner = "planner";
     public const string Reviewer = "reviewer";
     public const string Designer = "designer";
+    /// <summary>The thinking tier of autopilot (PIL1285): a short session that finds a cause and ends with one decision.</summary>
+    public const string Investigator = "investigator";
     public const string NoneValue = "none";
 
-    public static IReadOnlyList<string> Roles { get; } = [Watchtower, Worker, Planner, Reviewer, Designer];
+    public static IReadOnlyList<string> Roles { get; } = [Watchtower, Worker, Planner, Reviewer, Designer, Investigator];
 
     public static IReadOnlyList<string> Efforts { get; } = ["low", "medium", "high", "xhigh", "max"];
 
@@ -52,6 +54,7 @@ public sealed partial class RoleModels
         Watchtower => "sonnet by default as it is the longest-lived session and the costliest per turn; it has no ladder",
         Planner => "opus by default as it decides everything after it; effort is left to Claude Code",
         Designer => "opus by default as a design is judgement made in conversation, one short turn per brief piece; effort is left to Claude Code",
+        Investigator => "opus by default as it decides whether the person is rung and what is filed, in one short run; the watchtower's routine presses stay on sonnet",
         _ => "opus by default as review is judgement; a deep review runs on the max, opus at high",
     };
 
@@ -494,6 +497,18 @@ public sealed partial class RoleModels
         }
     }
 
+    /// <summary>Whether the autopilot switch is on (<see cref="NodeSettings.AutopilotKey"/>): the watchtower runs with a standing goal. In force at once; off unless the person set it on.</summary>
+    public bool Autopilot
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _settings.Autopilot ?? false;
+            }
+        }
+    }
+
     /// <summary>Whether the node is willing to take a flight another node routes to it (<see cref="NodeSettings.AcceptFleetFlightsKey"/>); off unless set.</summary>
     public bool AcceptsFleetFlights
     {
@@ -641,6 +656,42 @@ public sealed partial class RoleModels
             lock (_lock)
             {
                 return _settings.FlightCiBudget ?? NodeSettings.DefaultFlightCiBudget;
+            }
+        }
+    }
+
+    /// <summary>CI grants the watchtower may give one flight per local day on autopilot (<see cref="NodeSettings.AutopilotCiGrantsKey"/>); 1 by default.</summary>
+    public int AutopilotCiGrants
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _settings.AutopilotCiGrants ?? NodeSettings.DefaultAutopilotCiGrants;
+            }
+        }
+    }
+
+    /// <summary>Minutes a flight in the air may show no progress before the watchtower is woken for it on autopilot (<see cref="NodeSettings.AutopilotStallMinutesKey"/>); 60 by default.</summary>
+    public int AutopilotStallMinutes
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _settings.AutopilotStallMinutes ?? NodeSettings.DefaultAutopilotStallMinutes;
+            }
+        }
+    }
+
+    /// <summary>Investigator runs the node may start per local day on autopilot (<see cref="NodeSettings.AutopilotInvestigationsKey"/>); 8 by default.</summary>
+    public int AutopilotInvestigations
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _settings.AutopilotInvestigations ?? NodeSettings.DefaultAutopilotInvestigations;
             }
         }
     }

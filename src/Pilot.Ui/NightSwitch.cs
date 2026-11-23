@@ -4,7 +4,7 @@ namespace Pilot.Ui;
 
 /// <summary>
 /// The header's <b>Night</b> switch (#406): red on black for the whole window, not a view of the Flights page. One state, owned by
-/// the chrome and read by every page; lit while on. It is the person's own setting, so a click flips it at once,
+/// the chrome and read by every page; lit while on. It is the person's own setting, so unlike Autopilot a click flips it at once,
 /// and <see cref="Changed"/> lets <see cref="GuiSettingsFile"/> keep it across a restart.
 /// </summary>
 internal sealed class NightSwitch
@@ -51,8 +51,8 @@ internal sealed class NightSwitch
             .Pad(AboutCard.HeaderButtonPad, 0f)
             .WAuto()
             .HFixed(AboutCard.HeaderButton)
-            .Bg(night?.Button ?? Palette.Current.Action)
-            .BgHover(night?.ButtonHover ?? Palette.Current.ActionHover)
+            .Bg(night?.Button ?? AutopilotSwitch.PlainBg)
+            .BgHover(night?.ButtonHover ?? AutopilotSwitch.PlainHover)
             .WithTooltip(Tooltip);
         return button.Follows(new HitResult.ButtonHit(Action), _ => On = !On);
     }

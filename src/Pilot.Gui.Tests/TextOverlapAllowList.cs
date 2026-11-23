@@ -38,10 +38,6 @@ internal static class TextOverlapAllowList
             "At 500 wide the LAYERS menu (a fixed 124 units, a dozen rows) is taller than the map body, so its lower rows ('PR states') lie over the "
             + "flight detail's text below the map ('artifacts'); the painter clips the menu at the map body, so the capture shows no overlap, but the arranged "
             + "rows do. The menu should scroll or fold its lower rows when the map is short", PilotFlightPilIssue),
-        new("flights canvas | * | 700 wide | DPI 1.5 | 500 high", "overlap: 'PR states' * is drawn over 'artifacts' *",
-            "The same fault as the 500 wide entry, in the one 700 wide short window it now reaches: the header lost its Autopilot switch (PIL1271), the map "
-            + "body is a little shorter in this window, and the LAYERS menu's lower row ('PR states') lies over the detail's 'artifacts'. The painter "
-            + "clips the menu, so the capture shows nothing; the entry goes with the 500 wide one when the menu scrolls or folds", PilotFlightPilIssue),
     ];
 
     public static bool Covers(string key, string line) => Entries.Any(e => e.Covers(key, line));

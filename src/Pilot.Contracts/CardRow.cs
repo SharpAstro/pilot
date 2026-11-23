@@ -239,6 +239,9 @@ public static class CardKinds
 
     /// <summary>A card the watchtower answered or dismissed at the person's word in its chat, as a Handled line: what it did and the words it acted on.</summary>
     public const string PersonsWord = "persons-word";
+
+    /// <summary>A card kind or a failure cause that came a second time on the same subject, as a Handled task: find the cause, do not press again.</summary>
+    public const string RepeatTask = "autopilot-repeat";
 }
 
 /// <summary>How long a thing has gone on, as a card or a banner says it: <c>under 1 m</c>, <c>37 m</c>, <c>9 h 37 m</c>, <c>2 d 3 h</c>.</summary>

@@ -455,6 +455,14 @@ public sealed record FlightCi
     /// <summary>When it was capped.</summary>
     public DateTimeOffset? CappedAt { get; init; }
 
+    /// <summary>The local day (<c>yyyy-MM-dd</c>) of the watchtower's last CI grant on autopilot (PIL1285); null before any.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? AutoGrantDay { get; init; }
+
+    /// <summary>How many CI grants the watchtower gave on <see cref="AutoGrantDay"/>; null before any.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? AutoGrants { get; init; }
+
     /// <summary>The owner's answer to the cap that was not <c>continue</c>: <c>land-green</c> or <c>split</c>, kept for the controller; null otherwise.</summary>
     public string? Answer { get; init; }
 

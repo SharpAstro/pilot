@@ -1091,6 +1091,12 @@ public static class Verbs
     /// </summary>
     public const string Raise = "raise";
 
+    /// <summary>
+    /// <c>investigated &lt;subject&gt; issue|action|ring &lt;why…&gt;</c>: an investigator's one outcome (PIL1285). The node records it as a
+    /// Handled line and a decision with the why, rings the person once for <c>ring</c> (with what was tried and what is needed), and ends the run.
+    /// </summary>
+    public const string Investigated = "investigated";
+
     /// <summary>The node itself, as a target.</summary>
     public const string NodeTarget = "node";
 

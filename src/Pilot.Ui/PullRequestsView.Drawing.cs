@@ -74,7 +74,7 @@ internal sealed partial class PullRequestsView<TSurface>
             SourceColor = screen.Stale ? P.Held : null,
             Buttons = buttons,
             Lines = lines,
-        }, new TopBarParts(Nodes, null, About, Night));
+        }, new TopBarParts(Nodes, null, Autopilot, About, Night));
     }
 
     // The pills' tints, as the node pills have them: the lit one, and the rest (the day's own button colour, or night's).
