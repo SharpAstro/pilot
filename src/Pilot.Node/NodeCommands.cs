@@ -981,8 +981,8 @@ public sealed class NodeCommands(IServiceProvider services, NodeState state)
         string? aboutCard = null;
         if (bin.Value != CardBin.Handled)
         {
-            var named = System.Text.RegularExpressions.Regex.Matches($"{title} {detail}", @"\bc\d+\b").Select(m => m.Value).Distinct().Where(state.IsCardOpen).ToList();
-            aboutCard = named.Count == 1 ? named[0] : null;
+            var namedCards = System.Text.RegularExpressions.Regex.Matches($"{title} {detail}", @"\bc\d+\b").Select(m => m.Value).Distinct().Where(state.IsCardOpen).ToList();
+            aboutCard = namedCards.Count == 1 ? namedCards[0] : null;
         }
         state.RaiseCard(bin.Value, Watchtower.RaisedKind, command.Target, title, (detail.Length > 0 ? detail : null) is { } d ? d + from : from.Length > 0 ? from.Trim() : null,
             attachment: attachment, attachmentExt: attachmentExt, aboutCard: aboutCard);
