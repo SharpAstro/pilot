@@ -163,7 +163,6 @@ public sealed class CardWholeInNotificationsTests
         }
         row.ShouldContain("▸Detail", Case.Sensitive, "the detail is folded on the page too, as on the panel");
         row.ShouldNotContain("Nofixerstarted", Case.Sensitive);
-        row.ShouldNotContain("Detail", Case.Sensitive, "no fold to open on the page");
         row.ShouldNotContain("closed", Case.Sensitive, "an open card is drawn open, though the collapsed bar never drew it");
         var regions = new List<ClickableRegion>();
         w.Chrome.PageWidget.CollectPaintedRegions(regions);
