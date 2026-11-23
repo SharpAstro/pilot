@@ -238,7 +238,7 @@ public sealed class PeerProbe(PresenceFleet fleet, TimeProvider time) : Backgrou
         foreach (var peer in fleet.Inner.Peers().Where(p => away.Contains(p.Name)))
         {
             using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            budget.CancelAfter(HeldTokenFleet.ReadBudget, time);
+            budget.CancelAfter(HeldTokenFleet.ReadBudget);
             try
             {
                 await peer.NodeAsync(budget.Token).ConfigureAwait(false);
