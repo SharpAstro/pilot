@@ -59,7 +59,7 @@ public sealed class CardChoiceTargetTests
         TypedForm.Matches("""var d = new() { Id = 1 };""").Count.ShouldBe(0, "an initializer with no Label is not a choice");
     }
 
-    private static readonly Regex NamedForm = new(@"new CardChoice");
+    private static readonly Regex NamedForm = new(@"new CardChoice\b");
     private static readonly Regex TypedForm = new(@"\bnew\(\)(?=\s*\{[^;]*?\bLabel\s*=)");
 
     private static readonly Regex EmptyTarget = new(@"\bTarget\s*=\s*(""""|string\.Empty\b)");
