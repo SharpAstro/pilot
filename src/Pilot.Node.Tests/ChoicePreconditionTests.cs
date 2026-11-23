@@ -118,7 +118,7 @@ public sealed class ChoicePreconditionTests
     public void AMergeOrACheckRerunWithALegNotDoneIsMarkedUnavailableAndTheMarkClearsOnceTheLegLands(string verb)
     {
         var state = NewState();
-        state.PutFlight(Flight() with { Review = new ReviewRow { State = ReviewState.Passed, Reviewer = "du1-tia1-review" } });
+        state.PutFlight(Flight() with { Review = new ReviewRow { State = ReviewState.Passed, Reviewer = "du1-tia1-review", StartedAt = Start } });
         state.PutLeg(Leg("parser", 1, LegState.Flying));
         state.RaiseCard(CardBin.Ring, LegCommander.PrReady, "flight/TIA1", "TIA1's PR is ready", null,
             [new CardChoice { Label = "Go", Verb = verb, Target = "flight/TIA1", Args = ["abc1234"] }]);
@@ -181,7 +181,7 @@ public sealed class ChoicePreconditionTests
     public async Task TheCardMarksTheChoiceAndTheCommandRefusesItWithTheSameWordsAndRunsNothing(string verb, string target, string legs, string words)
     {
         await using var node = await NodeHarness.StartAsync(Ct);
-        node.State.PutFlight(Flight() with { Review = new ReviewRow { State = ReviewState.Passed, Reviewer = "du1-tia1-review" } });
+        node.State.PutFlight(Flight() with { Review = new ReviewRow { State = ReviewState.Passed, Reviewer = "du1-tia1-review", StartedAt = Start } });
         var order = 0;
         foreach (var spec in legs.Split(','))
         {
