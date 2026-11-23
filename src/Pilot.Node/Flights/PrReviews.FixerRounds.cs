@@ -74,10 +74,38 @@ public sealed partial class PrReviews
         {
             // A fixer started on a passing review has had its go at the points its brief listed (ReviewFollowUp.ToMake, the same list): they are
             // acted on, so a point it answered deferred does not start another fixer. A changes-verdict fixer's brief lists none, so none is recorded.
-            // The fixer's session still live: it may push more, so it is left running and no review starts yet; a later sweep looks again once it ends.
-            if (LiveFixerOf(review) is not null)
+            // The fixer's session working, waiting on a person or on a job of its own: it may push more, so it is left running and no review starts yet; a
+            // later sweep looks again once it has finished. An idle one has finished (its turn is over and an idle session never ends by itself), so it is ended
+            // below and the review of its push starts (pilot #1327).
+            var live = LiveFixerOf(review);
+            if (live is not null && !FixerFinished(live))
             {
                 return;
+            }
+            // An idle fixer that left work past the PR's head is nudged once; a second look ends it with its worktree kept, and the hold pushes or rings for it.
+            if (live is { State: SessionState.Idle } && review.FixerJob is { } idleJob && string.Equals(live.Id, idleJob, StringComparison.Ordinal)
+                && review.FixWorktree is { } idleTree && review.FixWorktreeBorrowed != true
+                && !string.Equals(review.FixerResumedJob, idleJob, StringComparison.Ordinal) && ResumeFixer is { } nudge
+                && await WorkPastAsync(idleTree, read.Head, cancellationToken) is { } idleWork)
+            {
+                if (Of(pr) is { } latest)
+                {
+                    state.PutPrReview(latest with { FixerResumedJob = idleJob });
+                }
+                string? refused;
+                try
+                {
+                    refused = await nudge(idleJob, ResumeText(review, idleWork.Line), cancellationToken);
+                }
+                catch (FlightException ex)
+                {
+                    refused = ex.Message;
+                }
+                if (refused is null)
+                {
+                    return;
+                }
+                Error.WriteLine($"pr reviews: {pr}'s idle fixer could not be nudged: {refused}");
             }
             var tried = string.Equals(review.Verdict, "changes", StringComparison.OrdinalIgnoreCase) ? []
                 : ReviewFollowUp.ToMake(review).Select(i => i.Key).ToArray();
@@ -104,7 +132,7 @@ public sealed partial class PrReviews
         // fixer started a moment ago (its row not listed yet) read as ended, and another was started on it (tianwen#2435 had three; pilot #1247). A row
         // stored before FixerJob was kept falls back to the name.
         var sessions = state.Sessions().Where(s => review.FixerJob is { } job ? string.Equals(s.Id, job, StringComparison.Ordinal) : string.Equals(s.Name, review.Fixer, StringComparison.Ordinal)).ToList();
-        if (sessions.Count > 0 && sessions.All(s => s.State == SessionState.Ended))
+        if (sessions.Count > 0 && sessions.All(s => s.State is SessionState.Ended or SessionState.Idle))
         {
             // Ended with a pilot run job of its own queued or running is waiting, not finished: the job's end wakes it (pilot #1309: tianwen #2474 and
             // #2476 ended their turn on 'pilot run', were read as finished and stopped, #2474 was queued and its push refused).
@@ -116,6 +144,13 @@ public sealed partial class PrReviews
             // force-removed with the work in it (pilot #1247: tianwen#2435's fix sat in a commit nothing pointed to). Its worktree is kept then, and the card
             // says where the work is and what it is.
             var left = await LeftWorkAsync(review, cancellationToken);
+            // An idle fixer of an approved review with nothing left has done its part (its push was reviewed and passed): ended quietly, no card, since it did
+            // not end 'without a push'. Idle with the head unmoved on a changes verdict, or with work left, takes the path of an ended one (pilot #1327).
+            if (left is null && string.Equals(review.Verdict, "approve", StringComparison.OrdinalIgnoreCase) && sessions.All(s => s.State == SessionState.Idle))
+            {
+                await EndFixerAsync(review, cancellationToken);
+                return;
+            }
             // Ended on its own with the head unmoved: resumed once per fixer job before any card (pilot #1309). Only a second end, or a resume
             // that could not be delivered, falls through to the card.
             // A fixer a person or the watchtower stopped reads Ended too: waking it would undo the stop, so it goes straight to the card.

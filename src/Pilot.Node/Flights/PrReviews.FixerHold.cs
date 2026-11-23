@@ -20,7 +20,9 @@ public sealed partial class PrReviews
     /// </summary>
     private bool FixerWaitsOnJob(SessionRow s)
     {
-        if (s.State != SessionState.Ended)
+        // Idle reads as waiting too: a fixer that ended its turn on 'pilot run' stays running and idle until the job's end wakes it, so an idle one with an
+        // open own job is left alone, and only one with none is finished (pilot #1327).
+        if (s.State is not (SessionState.Ended or SessionState.Idle))
         {
             return false;
         }
@@ -28,6 +30,12 @@ public sealed partial class PrReviews
         return wait.Open
             || wait.Spoken is { } spoken && (s.LastResponseAt ?? s.StartedAt) < spoken && time.GetUtcNow() - spoken < FixerToldGrace;
     }
+
+    /// <summary>
+    /// A fixer session that has finished: Ended, or Idle (its turn over, still running) and not waiting on a job of its own. An idle Claude session never
+    /// ends by itself, so waiting for it to end holds its round open until the PR merges (pilot #1327); the sweep ends it instead.
+    /// </summary>
+    private bool FixerFinished(SessionRow s) => s.State is SessionState.Ended or SessionState.Idle && !FixerWaitsOnJob(s);
 
     /// <summary>
     /// The fixer's own session of this PR that is still running, or null: the row's job (or its name, for a row stored before FixerJob), and any other
