@@ -336,29 +336,27 @@ public sealed partial class LegCommander
         {
             if (state.Legs(flight.Code).FirstOrDefault(l => l.Name == leg.Name) is { } now && now.Queued != why)
             {
-                state.PutLeg(now with { Queued = why });
+                // Stamped before Queued is cleared: a CI look between the two writes then still sees the wait open, never a cleared wait with no end.
                 if (why is null && now.Queued is not null)
                 {
                     StampAdmitted(flight.Code);
                 }
+                state.PutLeg(now with { Queued = why });
             }
         }
         else
         {
-            var ended = false;
+            // One write sets Queued and, when the wait ends, AdmittedAt, so a CI look never sees one without the other.
+            var at = time.GetUtcNow();
             state.UpdateFlight(flight.Code, f =>
             {
                 if (f.Queued == why)
                 {
                     return f;
                 }
-                ended = why is null && f.Queued is not null;
-                return f with { Queued = why };
+                var ended = why is null && f.Queued is not null;
+                return f with { Queued = why, AdmittedAt = ended ? at : f.AdmittedAt };
             });
-            if (ended)
-            {
-                StampAdmitted(flight.Code);
-            }
         }
         return why is not null;
     }

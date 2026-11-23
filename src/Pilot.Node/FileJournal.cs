@@ -88,6 +88,8 @@ public sealed class FileJournal : INodeJournal, IDisposable
     /// and would then push the refused delete again at each sweep.
     /// 12: <c>aboutCard</c> on a card (PIL1290). An older node would drop it when it compacts the snapshot, and the card would no longer close with the card it is about.
     /// 13: a session row with the role <c>investigator</c> (PIL1285). An older node cannot read the role, and would fail on the snapshot.
+    /// Not bumped for <c>admittedAt</c> on a flight (PIL1321): it is nullable, and an older node that drops it when it compacts the snapshot only loses the
+    /// stop of the CI red clock after a queue wait, so the clock counts as it did before; nothing breaks, so there is no reason to refuse the store.
     /// </remarks>
     public const int StoreContract = 13;
 

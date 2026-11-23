@@ -378,7 +378,7 @@ public sealed class CiBudgetTests : ReviewTestsBase
     [Fact]
     public void TheRedClockStopsWhileTheFlightIsQueuedAndCountsAgainFromItsAdmission()
     {
-        // Red at T = Now-7h10m... the issue's scenario: red at T, queued T+10min to T+4h, admitted at T+4h.
+        // The issue's scenario: red at T, queued for the repo until T+4h, admitted at T+4h; the clock then counts again from the admission.
         var t = Now;
         var red = CiBudgets.Count([CiOf(1, 10, "failure", completed: t)], null, t);
         var queuedWhy = "waiting for the repo: held by PIL1";
