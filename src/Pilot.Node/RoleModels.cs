@@ -669,6 +669,18 @@ public sealed partial class RoleModels
         }
     }
 
+    /// <summary>Minutes a flight in the air may show no progress before the watchtower is woken for it on autopilot (<see cref="NodeSettings.AutopilotStallMinutesKey"/>); 60 by default.</summary>
+    public int AutopilotStallMinutes
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _settings.AutopilotStallMinutes ?? NodeSettings.DefaultAutopilotStallMinutes;
+            }
+        }
+    }
+
     /// <summary>The share of the 7-day window, in percent, a leg's rounds may spend before the next one rings (<see cref="NodeSettings.SpendAlertKey"/>); 3 by default.</summary>
     public double SpendAlert
     {

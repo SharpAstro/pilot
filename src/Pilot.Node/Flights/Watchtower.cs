@@ -56,6 +56,9 @@ public sealed partial class Watchtower(
     /// <summary>The model and effort the watchtower starts on; a test's watchtower passes none.</summary>
     public RoleModels Models { get; set; } = RoleModels.Unset;
 
+    /// <summary>What wakes it on autopilot besides a new card (PIL1285): a stalled flight, a peer going or coming, a repeat; null for one built without.</summary>
+    public AutopilotWakes? Wakes { get; set; }
+
     /// <summary>What holds a start while the 5-hour window is spent: the node's one gate, shared with the leg sweep and the compactor.</summary>
     public StartGate Gate { get; set; } = new(state, time);
 
@@ -802,7 +805,7 @@ public sealed partial class Watchtower(
                         // Resumed in place a moment ago: the listing may still show it ended, which is no reason to start a second.
                         return;
                     }
-                    var untold = Untold().Count > 0;
+                    var untold = Untold().Count > 0 || Wakes?.Pending.Count > 0;
                     if (untold && Warm(row, now))
                     {
                         _job = row.Id;
@@ -1460,12 +1463,13 @@ public sealed partial class Watchtower(
     /// </summary>
     internal List<CardRow> Untold()
     {
+        Wakes?.Look();
         var now = time.GetUtcNow();
         lock (_tellsLock)
         {
             var tells = Tells();
             return state.Cards(openOnly: true)
-                .Where(c => c.Bin != CardBin.Handled && c.Kind != RaisedKind && c.Subject != Verbs.WatchtowerTarget
+                .Where(c => c.Bin != CardBin.Handled && c.Kind != RaisedKind && c.Subject != Verbs.WatchtowerTarget && Wakes?.Repeats.IsSecond(c.Id) != true
                     && (!tells.TryGetValue(c.Id, out var told) || c.Bin == CardBin.Ring && now - told.At >= RetellAfter && !told.Retold))
                 .OrderBy(c => c.At)
                 .ToList();
@@ -1483,7 +1487,8 @@ public sealed partial class Watchtower(
     private async Task<bool?> TellNewCardsAsync(SessionRow row, CancellationToken cancellationToken)
     {
         var fresh = Untold();
-        if (fresh.Count == 0)
+        var wakes = Wakes?.Pending ?? [];
+        if (fresh.Count == 0 && wakes.Count == 0)
         {
             return null;
         }
@@ -1493,7 +1498,14 @@ public sealed partial class Watchtower(
             return false;
         }
 
-        var text = CardNotice.Compose(fresh);
+        var text = fresh.Count == 0 ? string.Join("
+
+", wakes.Select(w => w.Text))
+            : wakes.Count == 0 ? CardNotice.Compose(fresh) : string.Join("
+
+", wakes.Select(w => w.Text)) + "
+
+" + CardNotice.Compose(fresh);
         int retells;
         lock (_tellsLock)
         {
@@ -1503,13 +1515,14 @@ public sealed partial class Watchtower(
         _sayRuns++;
         var result = await run(new CommandRequest { Verb = Verbs.Say, Target = Verbs.SessionTarget(row.Id), Args = [text], Who = LegWatch.Who,
             // The same cards said to the same row twice (a slow resume, then a retry by relay) reach it once (PIL595).
-            RequestId = $"cards:{row.Id}:{string.Join(',', fresh.Select(c => c.Id))}:{retells}" }, cancellationToken);
+            RequestId = $"cards:{row.Id}:{string.Join(',', fresh.Select(c => c.Id))}:{retells}{string.Concat(wakes.Select(w => '|' + w.Key))}" }, cancellationToken);
         _lastSayTransient = !result.Ok && result.Error is { } refused && Sessions.ClaudeCliDelivery.IsTransientConfigRead(refused);
         if (result.Ok)
         {
             _unreachableId = null;
             _transientId = null;
             _transientCount = 0;
+            Wakes?.Sent(wakes);
             var now = time.GetUtcNow();
             lock (_tellsLock)
             {
