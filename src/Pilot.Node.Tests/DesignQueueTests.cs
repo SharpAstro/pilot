@@ -128,7 +128,7 @@ public sealed class DesignQueueTests : PrFixTestsBase
         var card = _state.Cards(openOnly: true).Single(c => c.Kind == PrReviews.FixEndedKind);
         card.Bin.ShouldBe(CardBin.ForYou);
         card.Title.ShouldContain("the fix its design answer called for is missing");
-        card.Detail.ShouldContain("Keep it a library");
+        card.Detail.ShouldNotBeNull().ShouldContain("Keep it a library");
         card.Choices.ShouldHaveSingleItem().Verb.ShouldBe(Verbs.FixPr);
     }
 
