@@ -47,8 +47,7 @@ public sealed class PrPollBudgetTests
                 GitHub.SummaryOf[number] = GhAnswers.ChecksOf(ChoiceStatus.Pending, 1, 3);
                 if (batch)
                 {
-                    GitHub.OpenBranches.TryAdd(repo, []);
-                    GitHub.OpenBranches[repo].Add(branch);
+                    GitHub.OpenBranches.GetOrAdd(repo, _ => new()).Enqueue(branch);
                 }
             }
         }

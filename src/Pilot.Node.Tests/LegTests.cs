@@ -984,7 +984,7 @@ internal sealed class FakeGitHub : IGitHub
     }
 
     /// <summary>The branches whose open PRs <see cref="OpenPullRequestsByHeadAsync"/> lists, by repo path; a repo not named has no batch answer (null), as a gh that could not say.</summary>
-    public Dictionary<string, List<string>> OpenBranches { get; } = new(StringComparer.OrdinalIgnoreCase);
+    public ConcurrentDictionary<string, ConcurrentQueue<string>> OpenBranches { get; } = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>The batch read, over what the single reads answer (so the two cannot disagree), counted as one read.</summary>
     public async Task<OpenPullRequest[]?> OpenPullRequestsByHeadAsync(string repoPath, CancellationToken cancellationToken)
