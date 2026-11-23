@@ -52,7 +52,7 @@ public static class CiBudgets
     /// When the CI went red, if it is red: some workflow's latest finished run (cancelled ones aside) failed, and it has not been green
     /// since; the time its first failure of that unbroken streak finished, the earliest of the red workflows. Null when none is red.
     /// </summary>
-    public static DateTimeOffset? RedSince(IReadOnlyList<CiRun> runs)
+    public static DateTimeOffset? RedSince(IReadOnlyList<CiRun> runs, IReadOnlySet<long>? noModel = null)
     {
         DateTimeOffset? since = null;
         foreach (var workflow in runs.Where(r => r.CompletedAt is not null && r.Conclusion is not (null or "cancelled" or "skipped") && noModel?.Contains(r.Id) != true).GroupBy(r => r.Name))
