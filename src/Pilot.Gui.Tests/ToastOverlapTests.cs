@@ -70,7 +70,8 @@ public sealed class ToastOverlapTests
         var cutTop = cutShort.Where(a => SizeOf(a) == 11f).Min(a => a.Bounds.Y);
         var summaryWords = texts.Where(a => SizeOf(a) == 12f && a.Bounds.Y >= titleBottom - 0.5f && a.Bounds.Y + a.Bounds.Height <= cutTop + 0.5f).ToArray();
         var squeezedSummary = string.Concat(Stuck().Summary!.Where(ch => !char.IsWhiteSpace(ch)));
-        summaryWords.ShouldNotBeEmpty("the summary is drawn");
+        summaryWords.ShouldNotBeEmpty($"the summary is drawn between the title (bottom {titleBottom}) and the cut-short line (top {cutTop}); the text leaves: "
+            + string.Join(" | ", texts.Select(a => $"{SizeOf(a)}@{a.Bounds.Y:0.#}:{((Layout.Content.Text)((Layout.Node.Leaf)a.Node).Content).Value.Trim()}")));
         summaryWords.ShouldAllBe(a => squeezedSummary.Contains(string.Concat(((Layout.Content.Text)((Layout.Node.Leaf)a.Node).Content).Value.Where(ch => !char.IsWhiteSpace(ch) && ch != '…'))),
             "every 12-unit leaf there is a word of the summary");
         var rows = summaryWords.Select(a => MathF.Round(a.Bounds.Y)).Distinct().Count();
