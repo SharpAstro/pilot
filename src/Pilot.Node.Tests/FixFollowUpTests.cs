@@ -196,4 +196,80 @@ public sealed class FixFollowUpTests : PrFixTestsBase
         _state.Cards().ShouldNotContain(c => c.Kind == PrReviews.FixFollowUpFailedKind);
         _state.Cards().Count(c => c.Kind == PrReviews.FixFollowUpKind).ShouldBe(1);
     }
+
+    /// <summary>The row of a fixer that has gone from it (tianwen#2470): no Fixer, the fix worktree left on disk at the derived path.</summary>
+    private void FixerGoneFromTheRow() =>
+        _state.PutPrReview(Row with { Fixer = null, FixerJob = null, FixWorktree = null, FixWorktreeBorrowed = null, FixDetached = null });
+
+    private SessionRow LiveFixer() =>
+        Session("du1-fix-widget-7", SessionState.Working, "feed1234") with { Role = SessionRole.Fixer, Pr = 7, Repo = "widget", Cwd = FixWorktree };
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AMergedPrWithNoFixerOnItsRowAndACommitInTheDerivedWorktreeGetsAFollowUpWithNoForYouCard()
+    {
+        await Review("acme/widget#7", "changes", "README.md:1 wrong");
+        var tip = FixerCommits();
+        FixerGoneFromTheRow();
+        CreatingMakesPr71(tip);
+        Merge();
+
+        await _reviews.SweepAsync(Ct);
+
+        PrOrigins.Git(Origin, "rev-parse", "refs/heads/feature/seven-followup-7").ShouldBe(tip);
+        _github.Created.ShouldHaveSingleItem().Base.ShouldBe("main");
+        _reviews.Of(new PrRef("acme", "widget", 71)).ShouldNotBeNull();
+        _state.Cards(openOnly: true).ShouldNotContain(c => c.Bin == CardBin.ForYou);
+        _state.Cards().Count(c => c.Kind == PrReviews.FixFollowUpKind).ShouldBe(1);
+        Directory.Exists(FixWorktree).ShouldBeFalse();
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task ALiveFixerSessionOfAMergedPrIsStoppedByTheNodeThenItsCommitIsFollowedUp()
+    {
+        await Review("acme/widget#7", "changes", "README.md:1 wrong");
+        var tip = FixerCommits();
+        FixerGoneFromTheRow();
+        _state.PutSession(LiveFixer());
+        CreatingMakesPr71(tip);
+        Merge();
+
+        await _reviews.SweepAsync(Ct);
+
+        _workers.StopReasons.ShouldContain(r => r.Job == "du1-fix-widget-7");
+        _github.Created.ShouldHaveSingleItem();
+        _state.Cards(openOnly: true).ShouldNotContain(c => c.Bin == CardBin.ForYou);
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AFixWorktreeWithNothingPastTheMergedHeadMakesNothingAndIsRemoved()
+    {
+        await Review("acme/widget#7", "changes", "README.md:1 wrong");
+        FixerGoneFromTheRow();
+        Merge();
+
+        await _reviews.SweepAsync(Ct);
+
+        _github.Created.ShouldBeEmpty();
+        _state.Cards().ShouldNotContain(c => c.Kind == PrReviews.FixFollowUpKind || c.Kind == PrReviews.FixFollowUpFailedKind);
+        Directory.Exists(FixWorktree).ShouldBeFalse();
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task TheFollowUpOfAMergedPrWithNoFixerHappensOncePerWorktree()
+    {
+        await Review("acme/widget#7", "changes", "README.md:1 wrong");
+        var tip = FixerCommits();
+        FixerGoneFromTheRow();
+        CreatingMakesPr71(tip);
+        Merge();
+
+        await _reviews.SweepAsync(Ct);
+        await _reviews.SweepAsync(Ct);
+
+        _github.Created.ShouldHaveSingleItem();
+    }
 }

@@ -118,6 +118,10 @@ public sealed partial class PrReviews
             {
                 await TendFixerAsync(fixing, cancellationToken);
             }
+            foreach (var merged in state.PrReviews().Where(r => r.Fixer is null).ToArray())
+            {
+                await FollowUpMergedWithoutFixerAsync(merged, cancellationToken);
+            }
             await SettleDesignCardsAsync(cancellationToken);
             await CloseCardsOfOvertakenReviewsAsync(cancellationToken);
             var closed = state.Cards().Where(c => c.State == CardState.Closed).Select(c => c.Id).ToHashSet(StringComparer.Ordinal);

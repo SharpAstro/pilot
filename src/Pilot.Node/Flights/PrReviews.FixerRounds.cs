@@ -187,13 +187,18 @@ public sealed partial class PrReviews
     /// opened as a follow-up PR against the same base, which is reviewed as any PR. Nothing past the head, nothing to do. A push or a
     /// create that fails is a For-you card naming the commit and the local branch that keeps it. Never a force push.
     /// </summary>
-    private async Task FollowUpAsync(PrRef pr, PrReviewRow review, PullRequest read, CancellationToken cancellationToken)
+    private async Task FollowUpAsync(PrRef pr, PrReviewRow review, PullRequest read, CancellationToken cancellationToken, string? followWorktree = null)
     {
-        var worktree = review.FixWorktree!;
+        var worktree = followWorktree ?? review.FixWorktree!;
         var subject = Verbs.PrTarget(review.Repo, review.Number);
         if (review.FixerJob is { } job)
         {
             await StopQuietly(job, cancellationToken);
+        }
+        // A live fixer of the PR the row does not name (pilot #1291, tianwen#2470) is stopped the same way before its commits are read.
+        if (LiveFixerOf(review) is { } live && !string.Equals(live.Id, review.FixerJob, StringComparison.Ordinal))
+        {
+            await StopQuietly(live.Id, cancellationToken);
         }
         var merged = read.Head.Length > 0 ? read.Head : review.Head;
         var baseBranch = read.Base.Length > 0 ? read.Base : "main";

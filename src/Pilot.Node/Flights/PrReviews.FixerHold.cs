@@ -26,6 +26,63 @@ public sealed partial class PrReviews
     }
 
     /// <summary>
+    /// The fix worktree of a PR the row does not name a fixer for: the row's FixWorktree, else the derived fix-slug-number path, else a live fixer
+    /// session's Cwd when it is a worktree under the clone; null when none of them is a folder on disk.
+    /// </summary>
+    private string? FixWorktreeOf(PrReviewRow review, SessionRow? live)
+    {
+        if (review.FixWorktree is { } named && Directory.Exists(named))
+        {
+            return named;
+        }
+        var derived = Path.Combine(review.ClonePath, ".claude", "worktrees", $"fix-{Slug(review.Repo[(review.Repo.IndexOf('/') + 1)..])}-{review.Number}");
+        if (Directory.Exists(derived))
+        {
+            return derived;
+        }
+        var under = Path.Combine(review.ClonePath, ".claude", "worktrees") + Path.DirectorySeparatorChar;
+        return live is { Cwd.Length: > 0 } && live.Cwd.Replace('/', Path.DirectorySeparatorChar).StartsWith(under, StringComparison.OrdinalIgnoreCase) && Directory.Exists(live.Cwd) ? live.Cwd : null;
+    }
+
+    /// <summary>
+    /// A PR that merged with no Fixer on its row, while a fixer of it is live or a fix worktree is on disk (tianwen#2470): the commits past the merged
+    /// head carry on as a follow-up PR (<see cref="FollowUpAsync"/>), once per PR and worktree, and what is left is ended. GitHub is asked only for
+    /// rows that have such a worktree or session.
+    /// </summary>
+    private async Task FollowUpMergedWithoutFixerAsync(PrReviewRow review, CancellationToken cancellationToken)
+    {
+        var live = LiveFixerOf(review);
+        var worktree = FixWorktreeOf(review, live);
+        if (worktree is null && live is null)
+        {
+            return;
+        }
+        PullRequest read;
+        try
+        {
+            read = await github.PullRequestOfAsync(review.Repo, review.Number, cancellationToken);
+        }
+        catch (FlightException)
+        {
+            return;
+        }
+        if (!string.Equals(read.State, "MERGED", StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+        var pr = new PrRef(review.Repo[..review.Repo.IndexOf('/')], review.Repo[(review.Repo.IndexOf('/') + 1)..], review.Number);
+        if (worktree is not null && _followedUp.TryAdd($"{review.Repo}#{review.Number}:{worktree}", 0))
+        {
+            await FollowUpAsync(pr, review, read, cancellationToken, worktree);
+        }
+        else if (live is not null)
+        {
+            await StopQuietly(live.Id, cancellationToken);
+        }
+        await EndFixerAsync(review with { FixWorktree = worktree, FixWorktreeBorrowed = null }, cancellationToken);
+    }
+
+    /// <summary>
     /// Why the node must not queue, merge or arm this PR now, or null (pilot #1291): its fixer is live, or its fix worktree holds work the PR's head
     /// does not have. Judged from the facts (the session store and the worktree on disk), not only from the row's Fixer. Commits past the PR's head
     /// with no live fixer are pushed to the PR's branch from that worktree (a plain push, never forced), and the moved head gets a fresh review; a
