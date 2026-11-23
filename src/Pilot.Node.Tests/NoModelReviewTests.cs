@@ -181,12 +181,14 @@ public sealed class NoModelReviewTests : ReviewTestsBase
         }
         var checks = new PrChecks(_state, _github, _clock, _flights, _legs) { CiInterval = TimeSpan.Zero };
 
+        // A person-wait card holds the red clock (PIL1023); this test is about the red clock, so none is open.
+        _state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), "closed by the test", [.. _state.Cards().Where(c => c.Kind != CiBudgets.CapKind).Select(c => c.Kind).Distinct()]);
         _clock.Advance(CiBudgets.RedBound + TimeSpan.FromHours(2));
         await checks.LookAtCiAsync(Ct);
 
         var ci = F(flight.Code).Ci.ShouldNotBeNull();
         ci.Failed.ShouldBe(12);
-        if (ci.RedSince is null) { throw new InvalidOperationException("DIAG " + ci + " :: " + string.Join(" | ", _github.CiRuns[flight.Branch].Take(4).Select(r => $"{r.Id} {r.Name} {r.Status} {r.Conclusion} {r.CompletedAt:O}"))); }
+        ci.RedSince.ShouldNotBeNull();
         ci.CappedWhy.ShouldNotBeNull().ShouldContain("red for");
         _state.Cards().ShouldContain(c => c.Kind == CiBudgets.CapKind);
     }
