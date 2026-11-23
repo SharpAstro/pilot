@@ -243,19 +243,17 @@ public sealed class ToastPressTests
     }
 
     [Fact]
-    public void ALongLabelEndsInAnEllipsisInsideTheToastAndNothingOverlaps()
+    public void ALongLabelIsShownWholeInsideTheToastAndNothingOverlaps()
     {
         var width = RowWidth;
         using var rig = new Rig(Card(LongLabel));
         var row = rig.Row(width);
 
-        // The library's button is one line and does not clamp to the toast: a long label ends in an ellipsis and carries the whole label
-        // as its tooltip, so nothing is cut silently.
-        ArrangedText.Concat(row).ShouldContain("…");
-        ArrangedText.Concat(row).ShouldNotContain("before going on to land it");
-        row.Select(a => a.Node.Tooltip?.ToString()).ShouldContain(t => t != null && t.Contains(LongLabel));
-        Actions(row).ShouldContain("toast:c1:1", "the tooltip on the cut button does not swallow its press");
-        rig.ButtonRow(width).Skip(1).Where(a => a.Bounds.X + a.Bounds.Width > width - DismissWidth() - RowGap + 0.5f).Select(a => $"{a.Node.GetType().Name}@{a.Bounds.X:0},{a.Bounds.Y:0},{a.Bounds.Width:0}x{a.Bounds.Height:0} hit={a.Node.Hit}")
+        // The library's button row wraps (DIR.Lib 11.94): the label is the choice's whole one, with no ellipsis and no cut.
+        ArrangedText.Concat(row).ShouldNotContain("…");
+        ArrangedText.Concat(row).Replace(" ", "").ShouldContain(LongLabel.Replace(" ", ""));
+        Actions(row).ShouldContain("toast:c1:1");
+        rig.ButtonRow(width).Skip(1).Where(a => a.Bounds.X + a.Bounds.Width > width + 0.5f).Select(a => $"{a.Node.GetType().Name}@{a.Bounds.X:0},{a.Bounds.Y:0},{a.Bounds.Width:0}x{a.Bounds.Height:0} hit={a.Node.Hit}")
             .ShouldBeEmpty($"nothing runs past the toast at {width}");
         TextOverlap.Faults(row).Select(f => f.Line).ShouldBeEmpty();
     }
@@ -265,7 +263,6 @@ public sealed class ToastPressTests
     {
         // The node's own Merge label (LegCommander.MergeLabel) is 12 characters: the cut must not turn it into "Merge the…".
         const string merge = "Merge the PR";
-        PilotChrome<RgbaImage>.CutToastLabel(merge).ShouldBe(merge);
         // The toast's body row is as wide as the style makes it (RowWidth), not a round number: a looser bound would let a row overflow the real toast.
         // The card is built as the node builds it (LegCommander.Review.cs, LegCommander.Lay.cs): one "Merge the PR" choice.
         // Dismiss is drawn by the library as a plain button after the choices in the same row: its real width is measured, not a guessed room.
@@ -277,16 +274,6 @@ public sealed class ToastPressTests
         pressed.Chrome.Cards.NoteWorking("c1", "card:c1:1");
         var twin = pressed.ButtonRow().Skip(1).Max(a => a.Bounds.X + a.Bounds.Width);
         (twin + RowGap + dismiss).ShouldBeLessThanOrEqualTo(RowWidth, "the pressed twin, with its dots, is wider than the live button and still fits");
-    }
-
-    [Fact]
-    public void ALongLabelIsCutByCharactersAndAShortOneIsWhole()
-    {
-        var cut = PilotChrome<RgbaImage>.CutToastLabel(new string('W', 60));
-
-        cut.ShouldEndWith("…");
-        cut.Length.ShouldBeLessThanOrEqualTo(PilotChrome<RgbaImage>.ToastLabelChars);
-        PilotChrome<RgbaImage>.CutToastLabel("Go around").ShouldBe("Go around");
     }
 
     [Fact]

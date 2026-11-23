@@ -579,13 +579,6 @@ internal sealed class PilotChrome<TSurface>
         _ => () => Show(PilotPage.Jobs),
     };
 
-    /// <summary>The most characters of a choice's label a toast button shows; a longer label is cut there and ends in an ellipsis, the whole label on hover. A character cut, not a measured one: nothing here measures text.</summary>
-    internal const int ToastLabelChars = 12;
-
-    /// <summary>The label as a toast button shows it: whole when short, else cut at <see cref="ToastLabelChars"/> ending in an ellipsis.</summary>
-    internal static string CutToastLabel(string label) =>
-        label.Length <= ToastLabelChars ? label : label[..(ToastLabelChars - 1)].TrimEnd() + "…";
-
     // The cards as the last frame was given them, whether or not the bar drew them: the Notifications page's rows are drawn from it.
     private CardsScreen _cardsNow = CardsScreen.Empty;
 
@@ -656,7 +649,7 @@ internal sealed class PilotChrome<TSurface>
     // The same choices as the toast's library buttons, in Dismiss's row (DIR.Lib 11.91, Notification.Buttons). They go through the card's Presses
     // under its press key, as the panel's do: while the node works they are dead and the one pressed reads "<label> …"; the refusal is the body's.
     // The toast's hit ids stay distinct from the panel's (toast:), while the pending hit Program notes is the panel's (card:<id>:<n>), so the
-    // pressed choice is told by its number. A long label is cut by characters and shows whole on hover; its dead twin is the same one line.
+    // pressed choice is told by its number. The label is the choice's whole one: the library's button row wraps when the buttons do not fit (DIR.Lib 11.94).
     private Func<IReadOnlyList<Layout.Node>>? ToastButtons(CardRow card, string? node)
     {
         var plain = card.Choices.Select((choice, i) => (choice, number: i + 1))
@@ -675,7 +668,7 @@ internal sealed class PilotChrome<TSurface>
             foreach (var (choice, number) in plain)
             {
                 var hit = $"toast:{card.Id}:{number}";
-                var shown = CutToastLabel(choice.Label);
+                var shown = choice.Label;
                 var first = number == plain[0].number;
                 buttons.Add(Cards.Presses.Button(pressKey, hit, () =>
                 {
@@ -683,14 +676,14 @@ internal sealed class PilotChrome<TSurface>
                     var button = first
                         ? NotificationsLayout.PrimaryButton(shown, severity, colors, NotificationsHost.Style, new HitResult.ButtonHit(hit), press)
                         : NotificationsLayout.PlainButton(shown, colors, NotificationsHost.Style, new HitResult.ButtonHit(hit), press);
-                    return shown == choice.Label ? button : button.WithTooltip(choice.Label);
+                    return button;
                 }, _ =>
                 {
                     var text = pending == $"card:{card.Id}:{number}" ? $"{shown} …" : shown;
                     var dead = first
                         ? NotificationsLayout.PrimaryButton(text, severity, colors, NotificationsHost.Style, null!, () => { })
                         : NotificationsLayout.PlainButton(text, colors, NotificationsHost.Style, null!, () => { });
-                    return shown == choice.Label ? dead : dead.WithTooltip(choice.Label);
+                    return dead;
                 }));
             }
             return buttons;

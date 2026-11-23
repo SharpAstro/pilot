@@ -54,5 +54,22 @@ public sealed class ToastOverlapTests
 
         ArrangedText.Concat(seen).ShouldContain("PIL1293 is stuck");
         TextOverlap.Faults(seen).Select(f => f.Line).ShouldBeEmpty();
+
+        // The card's title is longer than a toast line, its summary is past ToastSummaryFits (cut to 3 lines) and the cut-short line is drawn,
+        // and that line's rect overlaps no other text line.
+        Stuck().Title.Length.ShouldBeGreaterThan(40);
+        Stuck().Summary!.Length.ShouldBeGreaterThan(PilotChrome<RgbaImage>.ToastSummaryFits);
+        var cutShort = seen.Where(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text { Value: var v } } && PilotChrome<RgbaImage>.ToastCutLabel.Contains(v.Trim()) && v.Trim().Length > 0).ToArray();
+        cutShort.ShouldNotBeEmpty("the cut-short line is drawn");
+        ArrangedText.Concat(seen).Replace(" ", "").ShouldContain(PilotChrome<RgbaImage>.ToastCutLabel.Replace(" ", ""));
+        var others = seen.Where(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text } && !cutShort.Contains(a)).ToArray();
+        foreach (var c in cutShort)
+        {
+            others.Where(o => o.Bounds.X < c.Bounds.X + c.Bounds.Width && c.Bounds.X < o.Bounds.X + o.Bounds.Width
+                    && o.Bounds.Y < c.Bounds.Y + c.Bounds.Height - 0.5f && c.Bounds.Y < o.Bounds.Y + o.Bounds.Height - 0.5f
+                    && !ReferenceEquals(o.Node, c.Node)
+                    && !(o.Bounds.Y == c.Bounds.Y && o.Bounds.X >= c.Bounds.X + c.Bounds.Width))
+                .Select(o => ((Layout.Content.Text)((Layout.Node.Leaf)o.Node).Content).Value).ShouldBeEmpty();
+        }
     }
 }

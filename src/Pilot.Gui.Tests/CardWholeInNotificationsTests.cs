@@ -124,11 +124,11 @@ public sealed class CardWholeInNotificationsTests
         var toast = w.Bar.Toasts.Toasts.ShouldHaveSingleItem().Notification;
         var body = Joined(toast.Row.ShouldNotBeNull().Invoke());
         // The plain choices sit in Dismiss's row as the library's buttons (Notification.Buttons), not in the body.
-        // A button label is cut at ToastLabelChars (the whole on hover), so both options read as their cut label.
+        // A button label is the choice's whole one.
         var buttons = toast.Buttons.ShouldNotBeNull().Invoke();
         buttons.Count.ShouldBe(2, "a toast carries two plain choices");
         var choices = Squeezed(string.Concat(buttons.SelectMany(Texts)));
-        choices.ShouldContain(Squeezed(PilotChrome<RgbaImage>.CutToastLabel("Pick option A")));
+        choices.ShouldContain(Squeezed("Pick option A"));
         choices.ShouldNotContain(Squeezed("Pick option C"), Case.Sensitive);
         body.ShouldContain(Squeezed(PilotChrome<RgbaImage>.ToastCutLabel), Case.Sensitive);
         w.Save("card-whole-toast-1920x1080");
