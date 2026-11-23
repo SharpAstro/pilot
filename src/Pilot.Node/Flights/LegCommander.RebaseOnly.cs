@@ -41,11 +41,20 @@ public sealed partial class LegCommander
             {
                 return;
             }
-            var shaped = await ShapeForMergeAsync(flight, head, Models.MergeMethod, cancellationToken);
-            if (flight.RebaseOnly is not null || !string.Equals(shaped, head, StringComparison.OrdinalIgnoreCase))
+            var reshaped = false;
+            try
             {
-                Record(code, f => f with { RebaseOnly = null });
-                state.CloseCardsAbout(Verbs.FlightTarget(code), $"{code} was reshaped for {flight.Base}", RebaseOnlyKind);
+                var shaped = await ShapeForMergeAsync(flight, head, Models.MergeMethod, cancellationToken);
+                reshaped = !string.Equals(shaped, head, StringComparison.OrdinalIgnoreCase);
+            }
+            finally
+            {
+                // A shape that threw has rung for itself (LayFailedKind, or a review not carried); "known, lands squashed" is no longer what the flight says.
+                if (flight.RebaseOnly is not null || reshaped)
+                {
+                    Record(code, f => f with { RebaseOnly = null });
+                    state.CloseCardsAbout(Verbs.FlightTarget(code), $"{code} was looked at again for {flight.Base}", RebaseOnlyKind);
+                }
             }
         }
         finally
