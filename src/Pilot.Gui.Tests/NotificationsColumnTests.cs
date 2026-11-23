@@ -171,7 +171,7 @@ public sealed class NotificationsColumnTests
     }
 
     [Fact]
-    public void InNightAHistoryCardsInkDiffersFromAnOpenOnes()
+    public void InNightAHistoryCardIsNotBrighterThanAnOpenOneAndStillDiffers()
     {
         using var w = new PageWindow(1280, 800, 1f);
         w.Chrome.Night.On = true;
@@ -179,8 +179,11 @@ public sealed class NotificationsColumnTests
 
         RGBAColor32 InkOf(string word) => ((Layout.Content.Text)((Layout.Node.Leaf)w.Arranged.First(a => TextOf(a).StartsWith(word, StringComparison.Ordinal)).Node).Content).Color;
         // Night's red on black has no ink that reaches AA on the toned fill, so a closed card keeps Dim rather than Bright.
-        InkOf("Job").ShouldNotBe(InkOf("TIA1818's"), "a history card's title still differs from an open card's (Night keeps Dim, not Bright)");
-        InkOf("437").ShouldNotBe(InkOf("short"), "a history card's summary still differs from an open card's (Night keeps Dim, not Bright)");
+        foreach (var (closed, open, what) in new[] { ("Job", "TIA1818's", "title"), ("437", "short", "summary") })
+        {
+            Contrast.Luminance(InkOf(closed)).ShouldBeLessThanOrEqualTo(Contrast.Luminance(InkOf(open)), $"a history card's {what} is not brighter than an open card's in Night");
+            InkOf(closed).ShouldNotBe(InkOf(open), $"a history card's {what} is still marked apart from an open card's (Night keeps Dim, not Bright)");
+        }
     }
 
     [Fact]
