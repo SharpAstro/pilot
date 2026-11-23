@@ -29,12 +29,35 @@ internal sealed class FakeSessionDelivery(FakeClaudeAgents agents) : ISessionDel
         }
     }
 
-    public List<ResumeRequest> Resumes { get; } = [];
+    private readonly List<ResumeRequest> _resumes = [];
+    private readonly List<RelayRequest> _relays = [];
+
+    /// <summary>Every resume asked for, as a snapshot taken under the lock the writes hold (a list read while another thread adds throws).</summary>
+    public IReadOnlyList<ResumeRequest> Resumes
+    {
+        get
+        {
+            lock (_calls)
+            {
+                return [.. _resumes];
+            }
+        }
+    }
 
     /// <summary>The session id a resume continues under: <see cref="Copy"/>, or the resumed one's own for a resume in place.</summary>
     public string? ResumesAs { get; set; }
 
-    public List<RelayRequest> Relays { get; } = [];
+    /// <summary>Every relay asked for, as a snapshot under the same lock as the writes.</summary>
+    public IReadOnlyList<RelayRequest> Relays
+    {
+        get
+        {
+            lock (_calls)
+            {
+                return [.. _relays];
+            }
+        }
+    }
 
     /// <summary>The listing once the stopped session's process has gone.</summary>
     public string? ListingAfterStop { get; set; }
@@ -73,7 +96,7 @@ internal sealed class FakeSessionDelivery(FakeClaudeAgents agents) : ISessionDel
         Record($"resume {request.SessionId}");
         lock (_calls)
         {
-            Resumes.Add(request);
+            _resumes.Add(request);
         }
         if (ListingAfterResume is { } listing)
         {
@@ -94,7 +117,7 @@ internal sealed class FakeSessionDelivery(FakeClaudeAgents agents) : ISessionDel
         Record($"relay {request.Name}");
         lock (_calls)
         {
-            Relays.Add(request);
+            _relays.Add(request);
         }
         if (DuringRelay is { } during)
         {
