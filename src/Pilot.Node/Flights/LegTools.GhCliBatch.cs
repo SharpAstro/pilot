@@ -33,13 +33,13 @@ public sealed partial class GhCli
         {
             return null;
         }
-        var (read, cost) = ParseOpenPullRequests(output);
+        var (read, cost) = ParseOpenByHead(output);
         NodeTraffic.Shared.GhCalls.RecordCost("api graphql", "GhCli.OpenPullRequestsByHeadAsync", cost);
         return read;
     }
 
     /// <summary><see cref="OpenPullRequestsByHeadQuery"/>'s answer as <see cref="OpenPullRequest"/>s and what it cost; null when the answer holds no repository.</summary>
-    internal static (OpenPullRequest[]? PullRequests, int Cost) ParseOpenPullRequests(string json)
+    internal static (OpenPullRequest[]? PullRequests, int Cost) ParseOpenByHead(string json)
     {
         try
         {
