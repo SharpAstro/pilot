@@ -107,6 +107,32 @@ public sealed class IdleFixerTests : PrFixTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")] // The fixer commits in its worktree and the leftover is read with real git (RealGit()), a real process.
+    public async Task AnIdleFixerWithACommitNotPushedIsNudgedOnceNamingTheCommit()
+    {
+        RealGit();
+        var said = new List<(string Id, string Text)>();
+        _reviews.ResumeFixer = (id, text, _) => { said.Add((id, text)); return Task.FromResult<string?>(null); };
+        await Review("acme/widget#7", "changes", "README.md:1 wrong");
+        var job = Row.FixerJob.ShouldNotBeNull();
+        var worktree = Row.FixWorktree.ShouldNotBeNull();
+        var git = new GitCli();
+        File.WriteAllText(Path.Combine(worktree, "fixed.txt"), "the fix\n");
+        (await git.RunAsync(["add", "fixed.txt"], worktree, Ct)).Ok.ShouldBeTrue();
+        (await git.RunAsync(["-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "make the README right"], worktree, Ct)).Ok.ShouldBeTrue();
+        _state.PutSession(IdleSession());
+
+        await _reviews.SweepAsync(Ct);
+
+        var one = said.ShouldHaveSingleItem();
+        one.Id.ShouldBe(job);
+        one.Text.ShouldContain("1 commit not pushed");
+        one.Text.ShouldNotContain("not committed");
+        Row.FixerResumedJob.ShouldBe(job);
+        Directory.Exists(worktree).ShouldBeTrue("the work is kept");
+    }
+
+    [Fact]
     public async Task AnIdleFixerOnAChangesVerdictWithTheHeadUnmovedTakesTheEndedPathAndRaisesTheCard()
     {
         await Review("acme/widget#7", "changes", "README.md:1 wrong");
@@ -119,7 +145,7 @@ public sealed class IdleFixerTests : PrFixTestsBase
     }
 
     [Fact]
-    public async Task AnIdleFixerAfterAPushedAndApprovedRoundIsEndedAndRaisesNoCard()
+    public async Task AnIdleFixerAfterAPushedAndApprovedRoundIsEndedWithOnlyAHandledLineAndNoCardToAnswer()
     {
         await Review("acme/widget#7", "changes", "README.md:1 wrong");
         var worktree = Row.FixWorktree.ShouldNotBeNull();

@@ -146,7 +146,7 @@ public sealed class FixFollowUpTests : PrFixTestsBase
     }
 
     [Fact]
-    public async Task AFixerCommitWhosePatchIsOnMainUnderAnotherShaLeavesNoCardAndNoPr()
+    public async Task AFixerCommitWhosePatchIsOnMainUnderAnotherShaOpensNoPrAndLeavesOnlyAHandledLine()
     {
         await Review("acme/widget#7", "changes", "README.md:1 wrong");
         FixerCommits();
@@ -165,8 +165,10 @@ public sealed class FixFollowUpTests : PrFixTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")] // The quoting of a non-ASCII name is git's own: the in-memory model never quotes, so only real git can fail on the old code.
     public async Task AFixerCommitOfAFileWithANonAsciiNameStillOpensTheFollowUpPr()
     {
+        RealGit();
         await Review("acme/widget#7", "changes", "README.md:1 wrong");
         File.WriteAllText(Path.Combine(FixWorktree, "café.txt"), "fixed\n");
         PrOrigins.Git(FixWorktree, "add", ".");
@@ -323,6 +325,44 @@ public sealed class FixFollowUpTests : PrFixTestsBase
         _state.Cards(openOnly: true).ShouldNotContain(c => c.Bin == CardBin.ForYou);
         _state.Cards().Count(c => c.Kind == PrReviews.FixFollowUpKind).ShouldBe(1);
         Directory.Exists(FixWorktree).ShouldBeFalse();
+    }
+
+    private static SessionRow SecondLiveFixer() =>
+        Session("du1-fix-widget-7b", SessionState.Working, "job00099") with { Role = SessionRole.Fixer, Pr = 7, Repo = "widget", Cwd = Path.Combine("x", "elsewhere") };
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AWorkingSecondFixerBesideTheRowsOwnIsStoppedByTheFollowUpOfAMergedPr()
+    {
+        await Review("acme/widget#7", "changes", "README.md:1 wrong");
+        var job = Row.FixerJob.ShouldNotBeNull();
+        var tip = FixerCommits();
+        _state.PutSession(SecondLiveFixer());
+        CreatingMakesPr71(tip);
+        Merge();
+
+        await _reviews.SweepAsync(Ct);
+
+        _workers.Stopped.ShouldContain(job);
+        _workers.Stopped.ShouldContain("job00099");
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task TwoWorkingFixersTheRowDoesNotNameAreBothStoppedWhenTheMergedPrIsFollowedUp()
+    {
+        await Review("acme/widget#7", "changes", "README.md:1 wrong");
+        var tip = FixerCommits();
+        FixerGoneFromTheRow();
+        _state.PutSession(LiveFixer());
+        _state.PutSession(SecondLiveFixer());
+        CreatingMakesPr71(tip);
+        Merge();
+
+        await _reviews.SweepAsync(Ct);
+
+        _workers.Stopped.ShouldContain(LiveFixer().Id);
+        _workers.Stopped.ShouldContain("job00099");
     }
 
     [Fact]

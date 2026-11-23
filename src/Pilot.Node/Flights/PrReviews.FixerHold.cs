@@ -119,9 +119,13 @@ public sealed partial class PrReviews
         {
             await FollowUpAsync(pr, review, read, cancellationToken, worktree);
         }
-        else if (live is not null)
+        else
         {
-            await StopQuietly(live.Id, cancellationToken);
+            // Every live fixer, not only the first: the second one of the PR is stopped while it works too.
+            foreach (var other in LiveFixersOf(review))
+            {
+                await StopQuietly(other.Id, cancellationToken);
+            }
         }
         await EndFixerAsync(review with { FixWorktree = worktree, FixWorktreeBorrowed = null }, cancellationToken);
     }

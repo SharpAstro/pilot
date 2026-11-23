@@ -332,10 +332,11 @@ public sealed partial class PrReviews
         {
             await StopQuietly(job, cancellationToken);
         }
-        // A live fixer of the PR the row does not name (pilot #1291, tianwen#2470) is stopped the same way before its commits are read.
-        if (LiveFixerOf(review) is { } live && !string.Equals(live.Id, review.FixerJob, StringComparison.Ordinal))
+        // Every live fixer of the PR the row does not name (pilot #1291, tianwen#2470), a second one beside the row's own included, is stopped the
+        // same way before its commits are read, working or not: the first of them being the row's own job must not hide the rest.
+        foreach (var other in LiveFixersOf(review).Where(l => !string.Equals(l.Id, review.FixerJob, StringComparison.Ordinal)))
         {
-            await StopQuietly(live.Id, cancellationToken);
+            await StopQuietly(other.Id, cancellationToken);
         }
         var merged = read.Head.Length > 0 ? read.Head : review.Head;
         var baseBranch = read.Base.Length > 0 ? read.Base : "main";
