@@ -988,6 +988,9 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     /// <summary>The card's title as shown: a landed flight's starts with 🛬. The node's title is left as it raised it.</summary>
     internal static string Titled(CardRow card) => card.Kind == "landed" ? Palette.Glyph("🛬", "✈") + " " + card.Title : card.Title;
 
+    /// <summary>How far a closed card's fill, edge and an event's head are toned toward the plain raised ground and the dim ink: History reads as past, its hue kept.</summary>
+    internal const double ClosedTone = 0.5;
+
     /// <summary>The most waiting cards drawn as dots; the rest are one "+N" with their titles on hover.</summary>
     internal const int WaitingDots = 3;
 
@@ -1010,7 +1013,15 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         var toast = fit == CardFit.Toast;
         var full = fit == CardFit.Page;
         var nodeLabel = node?.Name ?? nodeName;
-        var accent = merged ? Live : closed ? Dim : severityOf is { } sev ? SeverityInk(sev) : card.Bin == CardBin.Ring ? Ring : ForYou;
+        // The frame's tokens: the toast's fill and edge for the card's severity, toned toward the plain raised ground on a closed card (the
+        // history), so it reads as past while an event keeps its severity's hue.
+        var tokens = NotificationsHost.Colors();
+        var severity = severityOf ?? (card.Bin == CardBin.Ring ? NotificationSeverity.Warn : NotificationSeverity.Info);
+        var fill = closed ? Contrast.Mix(tokens.TintedFill(severity), tokens.Raised, ClosedTone) : tokens.TintedFill(severity);
+        // A closed card's head, title and summary are dim; an event's head keeps its severity's hue, toned toward the dim ink but still read at AA on its fill.
+        var accent = merged ? Live
+            : closed ? severityOf is { } closedSev ? Contrast.Readable(Contrast.Mix(SeverityInk(closedSev), Dim, ClosedTone), fill, Dim) : Dim
+            : severityOf is { } sev ? SeverityInk(sev) : card.Bin == CardBin.Ring ? Ring : ForYou;
         var leg = CardLeg.Of(card);
         // The first place the leg's name is in the title or the summary is the link; a later one is plain, so one card has one link to its leg.
         var linked = false;
@@ -1043,7 +1054,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
             // A card about a page (its PR) has its title as the link to it, as a hyperlink reads: where the eye goes first.
             // Marked as a link to elsewhere, so it reads as "open the page", never as an action of its own. A waiting
             // session's link is its button, Answer in the browser, so its title is no second one.
-            Title(card, linker),
+            Title(card, linker, closed && !merged ? Dim : Bright),
         };
         // A title of several lines is set off from the detail under it.
         lines.Add(Layout.Builder.Spacer().RowH(4f));
@@ -1055,7 +1066,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
             // rings read as a list, never run together and never cut with the rest only on hover (the owner, 2026-11-22).
             lines.Add(toast
                 ? WrappedProse.Of(summary, 12f, Dim, ToastSummaryLines, selectable: false)
-                : Whole(WrappedProse.Lines(CardSummaryLines.Of(WrappedProse.Bound(summary, SummaryChars)), 12f, Body, linker(12f)), summary, summary.Length > SummaryChars));
+                : Whole(WrappedProse.Lines(CardSummaryLines.Of(WrappedProse.Bound(summary, SummaryChars)), 12f, closed && !merged ? Dim : Body, linker(12f)), summary, summary.Length > SummaryChars));
         }
         // The leg's name was not in the words above: a small link row of its own, so the leg is one click away all the same.
         if (leg is { } ofLeg && !linked)
@@ -1275,8 +1286,6 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         // value changes in one place. A grid, not a stack with the content padded: a stack measures each child against its whole width, taking off
         // neither a sibling's width nor a padding, so a card whose last button wrapped came out a line short, the button poking out of its
         // bottom edge (DIR.Lib: Engine.MeasureStack). A grid measures its cells at the width their column is given.
-        var tokens = NotificationsHost.Colors();
-        var severity = severityOf ?? (card.Bin == CardBin.Ring ? NotificationSeverity.Warn : NotificationSeverity.Info);
         var pad = NotificationsHost.Style.Padding;
         return Layout.Builder.Grid(3,
                 Layout.Builder.Spacer(),
@@ -1286,8 +1295,8 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
             // width it had unframed and a row of buttons that fit before still fits (Chat about this beside Dismiss at MinWidth).
             .WithColumns(Layout.Sizing.Fixed(pad - EdgeWidth), Layout.Sizing.Star(), Layout.Sizing.Fixed(pad - EdgeWidth))
             .WithAutoRows()
-            .Bg(!closed && Focused(card) ? FocusBg : tokens.TintedFill(severity))
-            .Border(tokens.TintedEdge(severity), EdgeWidth, tokens.CornerRadius)
+            .Bg(!closed && Focused(card) ? FocusBg : fill)
+            .Border(closed ? Contrast.Mix(tokens.TintedEdge(severity), tokens.Raised, ClosedTone) : tokens.TintedEdge(severity), EdgeWidth, tokens.CornerRadius)
             .WStar()
             .HAuto();
     }
@@ -1322,7 +1331,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     internal Layout.Node PanelCard(CardRow card, NodeMark? node, bool closed = false) => Card(card, node, closed, fit: CardFit.Panel);
 
     /// <summary>The card's title, wrapped to <see cref="TitleLines"/> lines, with the whole text on hover where the cap could cut it.</summary>
-    private Layout.Node Title(CardRow card, Func<float, Func<string, Layout.Node?>> linker)
+    private Layout.Node Title(CardRow card, Func<float, Func<string, Layout.Node?>> linker, RGBAColor32 ink)
     {
         // The whole title is on hover where the cap (three lines) could cut it.
         var cut = card.Title.Length > TitleFits;
@@ -1342,7 +1351,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
                     .Follows(new HitResult.ButtonHit($"card:{card.Id}:title"), _ => (inApp ? OnGoTo : OnOpen)?.Invoke(titleLink)), titleLink),
                 inApp ? "" : Followable.Away, LineChars, IsHovered(new HitResult.ButtonHit($"card:{card.Id}:title")) ? CardHover : null), card.Title, cut);
         }
-        return Whole(WrappedProse.Of(Titled(card), 14f, Bright, TitleLines, linker(14f), lineChars: LineChars), card.Title, cut);
+        return Whole(WrappedProse.Of(Titled(card), 14f, ink, TitleLines, linker(14f), lineChars: LineChars), card.Title, cut);
     }
 
     /// <summary>

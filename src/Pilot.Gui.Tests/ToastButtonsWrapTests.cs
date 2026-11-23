@@ -64,19 +64,24 @@ public sealed class ToastButtonsWrapTests
 
         var buttons = seen.Where(a => a.Node.Hit is HitResult.ButtonHit { Action: var act } && act.StartsWith("toast:c28040:") && !act.EndsWith(":whole")).ToArray();
         buttons.Length.ShouldBeGreaterThanOrEqualTo(2);
+        // The toast's Dismiss is the library's (no ButtonHit of the card's): its text leaf, held to the frame as the choices are.
+        var dismiss = seen.Where(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text { Value: var d } } && d.Trim() == "Dismiss").ToArray();
+        dismiss.Length.ShouldBe(1, "the toast's one Dismiss");
+        var held = buttons.Concat(dismiss).ToArray();
         var title = seen.First(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text { Value: var v } } && v.Contains("PIL1293")).Bounds;
         var toast = seen.Where(a => a.Bounds.X <= title.X && a.Bounds.Y <= title.Y && a.Bounds.X + a.Bounds.Width >= title.X + title.Width
-                && buttons.All(b => b.Bounds.X >= a.Bounds.X - 0.5f && b.Bounds.Y >= a.Bounds.Y - 0.5f
+                && held.All(b => b.Bounds.X >= a.Bounds.X - 0.5f && b.Bounds.Y >= a.Bounds.Y - 0.5f
                     && b.Bounds.X + b.Bounds.Width <= a.Bounds.X + a.Bounds.Width + 0.5f && b.Bounds.Y + b.Bounds.Height <= a.Bounds.Y + a.Bounds.Height + 0.5f))
             .OrderBy(a => a.Bounds.Width * a.Bounds.Height).First().Bounds;
-        // The smallest node holding the title and every button in full is the toast's own frame; the layer's root (the whole window) would pass any
+        // The smallest node holding the title, both choices and Dismiss in full is the toast's own frame; the layer's root (the whole window) would pass any
         // check, so the frame must be no wider than a toast (its width plus the frame's own margin).
         toast.Width.ShouldBeLessThanOrEqualTo((NotificationsHost.Style.ToastWidth + 2f * NotificationsHost.Style.Padding) * dpi + 1f,
             "the frame holding the buttons is the toast, not the layer over the window");
-        foreach (var b in buttons)
+        foreach (var b in held)
         {
-            (b.Bounds.X + b.Bounds.Width).ShouldBeLessThanOrEqualTo(toast.X + toast.Width + 0.5f, $"{b.Node.Hit} inside the toast on the right");
-            (b.Bounds.Y + b.Bounds.Height).ShouldBeLessThanOrEqualTo(toast.Y + toast.Height + 0.5f, $"{b.Node.Hit} inside the toast at the bottom");
+            var name = b.Node.Hit?.ToString() ?? "Dismiss";
+            (b.Bounds.X + b.Bounds.Width).ShouldBeLessThanOrEqualTo(toast.X + toast.Width + 0.5f, $"{name} inside the toast on the right");
+            (b.Bounds.Y + b.Bounds.Height).ShouldBeLessThanOrEqualTo(toast.Y + toast.Height + 0.5f, $"{name} inside the toast at the bottom");
         }
         buttons.Select(b => MathF.Round(b.Bounds.Y)).Distinct().Count().ShouldBeGreaterThan(1, "the buttons wrap onto more than one row");
         TextOverlap.Faults(seen).Select(f => f.Line).ShouldBeEmpty();

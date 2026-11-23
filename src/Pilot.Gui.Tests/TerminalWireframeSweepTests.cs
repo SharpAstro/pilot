@@ -297,9 +297,10 @@ public static class TerminalWireframeSweepTests
 
     /// <summary>
     /// The findings on main when the sweep was written, grouped by cause: the case, the rule, and a part of the finding's message.
-    /// Later legs empty this list; nothing is added to it. Console.Lib 5.22's EmptyRows and SolidStrip raised the entries below (PIL1075),
-    /// each tagged with the issue that owns it: Console.Lib #77 (SolidStrip on an empty TextInput), #78 (EmptyRows on a scroll viewport),
-    /// pilot #1077 (rows two cells tall).
+    /// Later legs empty this list, and add to it only a finding their change moves or raises that is the rule's fault rather than the page's,
+    /// with a comment saying why (PIL1191's moved design-page entry, PIL1292's clipped notification card). Console.Lib 5.22's EmptyRows and
+    /// SolidStrip raised the entries below (PIL1075), each tagged with the issue that owns it: Console.Lib #77 (SolidStrip on an empty TextInput),
+    /// #78 (EmptyRows on a scroll viewport), #108 (SolidStrip on a scrolled column's last card clipped to one row), pilot #1077 (rows two cells tall).
     /// </summary>
     internal static readonly (string Case, string Rule, string What)[] Baseline =
     [
@@ -308,7 +309,7 @@ public static class TerminalWireframeSweepTests
         ("pull requests | long | 100x30", "EmptyRows", "a filled container is arranged 2 rows tall but its content sits on row 11 only; 1 row(s) are empty inside its fill (own vertical padding 0 row(s), visible border 0 row(s))"), // pilot #1077
         ("pull requests | long | 100x30", "EmptyRows", "a filled container is arranged 2 rows tall but its content sits on row 13 only; 1 row(s) are empty inside its fill (own vertical padding 0 row(s), visible border 0 row(s))"), // pilot #1077
         ("pull requests | long | 100x30", "EmptyRows", "a filled container is arranged 2 rows tall but its content sits on row 21 only; 1 row(s) are empty inside its fill (own vertical padding 0 row(s), visible border 0 row(s))"), // pilot #1077
-        // PIL1292: the Notifications page's cards are the one card component in a scrolled column; at 80x24 the viewport's clip leaves the last card's frame one row tall (the same clip the design page entry above names). The one entry added to this list by a later leg: it is a false positive of the rule, filed as Console.Lib #108.
+        // PIL1292: the Notifications page's cards are the one card component in a scrolled column; at 80x24 the viewport's clip leaves the last card's frame one row tall (the same clip the design page entry above names). Added because it is a false positive of the rule (a frame cut by the clip, not a bar), filed as Console.Lib #108.
         ("notifications | many | 80x24", "SolidStrip", "a filled node one row tall and 55 cells wide holds nothing and is painted solid; a rule should be a thin line, not a bar"), // Console.Lib #108
         ("settings | many | 80x24", "SolidStrip", "a filled node one row tall and 43 cells wide holds nothing and is painted solid; a rule should be a thin line, not a bar"), // Console.Lib #77
         ("pull requests | many | 80x24", "EmptyRows", "a filled container is arranged 2 rows tall but its content sits on row 12 only; 1 row(s) are empty inside its fill (own vertical padding 0 row(s), visible border 0 row(s))"), // pilot #1077

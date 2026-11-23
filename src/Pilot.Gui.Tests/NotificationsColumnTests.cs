@@ -165,4 +165,30 @@ public sealed class NotificationsColumnTests
                     && a.Bounds.Y >= e.Frame.Y && a.Bounds.Y <= e.Frame.Y + e.Frame.Height).ShouldBeEmpty("an event is not a card");
         }
     }
+
+    [Fact]
+    public void AHistoryCardIsDimmedAndAnEventKeepsItsSeverity()
+    {
+        using var w = new PageWindow(1280, 800, 1f);
+        w.Fill();
+
+        RGBAColor32 InkOf(string word) => ((Layout.Content.Text)((Layout.Node.Leaf)w.Arranged.First(a => TextOf(a).StartsWith(word, StringComparison.Ordinal)).Node).Content).Color;
+        // The frame of the card holding this word: the smallest node with a border around it.
+        Layout.Node FrameOf(string word)
+        {
+            var leaf = w.Arranged.First(a => TextOf(a).StartsWith(word, StringComparison.Ordinal)).Bounds;
+            return w.Arranged.Where(a => a.Node.BorderStyle is not null && a.Bounds.X <= leaf.X && a.Bounds.Y <= leaf.Y
+                    && a.Bounds.X + a.Bounds.Width >= leaf.X + leaf.Width && a.Bounds.Y + a.Bounds.Height >= leaf.Y + leaf.Height)
+                .OrderBy(a => a.Bounds.Width * a.Bounds.Height).First().Node;
+        }
+
+        // An open card's title ("TIA1818's PR ...") against a history card's ("Job two failed"), and the summaries likewise.
+        InkOf("Job").ShouldNotBe(InkOf("TIA1818's"), "a history card's title is dimmed");
+        InkOf("437").ShouldNotBe(InkOf("short"), "a history card's summary is dimmed");
+        FrameOf("Job").BorderStyle.ShouldNotBe(FrameOf("TIA1818's").BorderStyle, "a history card's edge is toned");
+        // Two events of different severity (a success and an error) keep their hues, toned down.
+        var (ok, failed) = (FrameOf("took"), FrameOf("437"));
+        ok.Background.ShouldNotBe(failed.Background, "an event's fill keeps its severity");
+        ok.BorderStyle.ShouldNotBe(failed.BorderStyle, "and so does its edge");
+    }
 }

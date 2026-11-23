@@ -61,6 +61,20 @@ public sealed class ToastOverlapTests
         Stuck().Summary!.Length.ShouldBeGreaterThan(PilotChrome<RgbaImage>.ToastSummaryFits);
         var cutShort = seen.Where(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text { Value: var v } } && PilotChrome<RgbaImage>.ToastCutLabel.Contains(v.Trim()) && v.Trim().Length > 0).ToArray();
         cutShort.ShouldNotBeEmpty("the cut-short line is drawn");
+
+        // The summary as drawn: its words (12-unit leaves) between the title (14) and the cut-short line, counted by the rows they sit on.
+        var texts = seen.Where(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text { Value.Length: > 0 } }).ToArray();
+        static float SizeOf(Layout.ArrangedNode<float> a) => ((Layout.Content.Text)((Layout.Node.Leaf)a.Node).Content).FontSize;
+        var titleBottom = texts.Where(a => SizeOf(a) == 14f).Max(a => a.Bounds.Y + a.Bounds.Height);
+        var cutTop = cutShort.Min(a => a.Bounds.Y);
+        var summaryWords = texts.Where(a => SizeOf(a) == 12f && a.Bounds.Y >= titleBottom - 0.5f && a.Bounds.Y + a.Bounds.Height <= cutTop + 0.5f).ToArray();
+        var squeezedSummary = string.Concat(Stuck().Summary!.Where(ch => !char.IsWhiteSpace(ch)));
+        summaryWords.ShouldNotBeEmpty("the summary is drawn");
+        summaryWords.ShouldAllBe(a => squeezedSummary.Contains(string.Concat(((Layout.Content.Text)((Layout.Node.Leaf)a.Node).Content).Value.Where(ch => !char.IsWhiteSpace(ch) && ch != '…'))),
+            "every 12-unit leaf there is a word of the summary");
+        var rows = summaryWords.Select(a => MathF.Round(a.Bounds.Y)).Distinct().Count();
+        rows.ShouldBeLessThanOrEqualTo(CardsView<RgbaImage>.ToastSummaryLines, "the toast cuts the summary to three lines");
+        rows.ShouldBeGreaterThan(1, "a summary past the toast's three lines fills more than one");
         ArrangedText.Concat(seen).Replace(" ", "").ShouldContain(PilotChrome<RgbaImage>.ToastCutLabel.Replace(" ", ""));
         var others = seen.Where(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text } && !cutShort.Contains(a)).ToArray();
         foreach (var c in cutShort)
