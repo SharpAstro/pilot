@@ -1674,6 +1674,18 @@ A further grant that day is refused with a line saying it is the person's, and t
 also runs `create-issue`, `create-flight`, `go-around` and `rerun-checks` on a `--why` that names evidence (a job id, a card id, a commit,
 a run); each leaves a Handled line and a decision with that why. With it off they are refused as before.
 
+Autopilot v2 has two tiers (PIL1285). **Sonnet keeps watch**: the watchtower, woken by a new card, a flight with no progress for
+`autopilot-stall-minutes` (60 unless set), a peer node going offline or coming back, and a repeated failure; the repeat detector turns
+the second card of one kind or the second failure cause on a flight into one "find the cause" task instead of a third press. **Opus
+thinks**: the `investigator` role (`investigator-range`, `opus..opus-high` unless set, separate from the watchtower's range) is a short
+session the node starts with the evidence in its brief, on a find-the-cause task, a flight past its stale bound, a card about to ring the
+person, and the digest. A run ends with exactly one outcome: an issue plus a flight (`pilot investigated <subject> issue`), an action
+recorded with its reason (`action`), or one notification to the person that says what was tried (`ring`). With autopilot on nothing rings
+the person unless a run decided it. `autopilot-investigations` (8 unless set) bounds the runs per local day; past it one card says so.
+There is one autopilot per node: each node's own setting and its own watchtower, with no fleet-wide switch.
+The digest has an Autopilot part while the switch is on: what the watchtower and investigators did, filed and escalated, line by line with
+each why, and the investigator role's tokens for the period from the spend ledger (the ledger prices no cost, so only tokens are said).
+
 Two per-repo settings (#254) are lists, keyed by the repo's folder name and in force at once, like `priority-repos`:
 - `repo-trackers` takes `repo=tracker` entries (`pilot settings set repo-trackers bullclip-backend=shortcut`), `tracker`
   being `github` or `shortcut`. A bare number given to `create-flight` for that repo is a story of that tracker; a repo

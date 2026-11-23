@@ -753,6 +753,8 @@ public static partial class NodeApp
         builder.Services.AddSingleton(services => new Digest(services.GetRequiredService<NodeState>(), services.GetRequiredService<TimeProvider>())
         {
             Bounds = () => services.GetRequiredService<RoleModels>().Stale,
+            Autopilot = () => services.GetRequiredService<RoleModels>().Autopilot,
+            Ledger = services.GetRequiredService<SpendLedger>(),
         });
         builder.Services.AddHostedService(services => services.GetRequiredService<Digest>());
         // The follow-up backlog's counts per repo, and the ring for an issue with no flight after a day (pilot #1226).

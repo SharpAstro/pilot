@@ -22,6 +22,12 @@ public sealed class Digest(NodeState state, TimeProvider time) : BackgroundServi
     /// <summary>The bounds past which work is stale (#736); the defaults unless the node wires its settings.</summary>
     public Func<StaleBounds> Bounds { get; set; } = () => new StaleBounds();
 
+    /// <summary>Whether the autopilot switch is on (PIL1285); the Autopilot part is only written then. Off unless the node wires its settings.</summary>
+    public Func<bool> Autopilot { get; set; } = () => false;
+
+    /// <summary>The token ledger the investigator's spend is read from; null leaves the spend line out.</summary>
+    public Sessions.SpendLedger? Ledger { get; set; }
+
     private DateTimeOffset? _last;
 
     protected override async Task ExecuteAsync(CancellationToken stopping)
@@ -117,6 +123,10 @@ public sealed class Digest(NodeState state, TimeProvider time) : BackgroundServi
         {
             text.AppendLine($"- and {handled.Count - MaxLines} more (pilot cards --all)");
         }
+        foreach (var line in AutopilotLines(since, now, cards))
+        {
+            text.AppendLine(line);
+        }
         var followUps = state.FollowUps()?.Lines().ToList() ?? [];
         if (onHold.Count + held.Count + failed.Count + open.Count + followUps.Count > 0)
         {
@@ -143,6 +153,49 @@ public sealed class Digest(NodeState state, TimeProvider time) : BackgroundServi
             }
         }
         return (title, text.ToString().TrimEnd());
+    }
+
+    /// <summary>
+    /// With autopilot on: what the watchtower and the investigators did, what they filed and what they escalated, line by line with each why,
+    /// capped like the handled list, and the investigator's spend in the period in one line. Nothing with it off.
+    /// </summary>
+    private List<string> AutopilotLines(DateTimeOffset since, DateTimeOffset now, IReadOnlyList<CardRow> cards)
+    {
+        var lines = new List<string>();
+        if (!Autopilot())
+        {
+            return lines;
+        }
+        var decisions = state.Decisions(since: since).Where(d => d.At <= now).ToList();
+        var by = decisions.Where(d => d.ByKind is DecisionByKinds.Watchtower or Investigator.By).ToList();
+        var filed = by.Where(d => d.ByKind == Investigator.By && d.Choice == Investigator.IssueOutcome).ToList();
+        var escalated = by.Where(d => d.ByKind == Investigator.By && d.Choice == Investigator.RingOutcome).ToList();
+        var did = by.Except(filed).Except(escalated)
+            .Select(d => $"{d.Subject}: {d.Choice} ({d.By}), {d.Reason}")
+            .Concat(cards.Where(c => c.Kind == CardKinds.RepeatTask && c.At > since && c.At <= now).Select(c => $"{c.Subject}: {c.Title}"))
+            .ToList();
+        lines.Add("Autopilot:");
+        AddList(lines, "Did", did);
+        AddList(lines, "Filed", filed.Select(d => $"{d.Subject}: {d.Reason}").ToList());
+        AddList(lines, "Escalated", escalated.Select(d => $"{d.Subject}: {d.Reason}").ToList());
+        if (Ledger is { } ledger)
+        {
+            var spent = ledger.Entries().Where(e => e.Role == "investigator" && e.At > since && e.At <= now).ToList();
+            lines.Add(spent.Count == 0
+                ? "  Investigator spend: none."
+                : $"  Investigator spend: {spent.Sum(e => e.Tokens):N0} tokens in {spent.Select(e => e.Session).Distinct().Count()} runs (the ledger prices no cost).");
+        }
+        return lines;
+    }
+
+    private void AddList(List<string> lines, string name, List<string> items)
+    {
+        lines.Add(items.Count == 0 ? $"  {name}: nothing." : $"  {name}:");
+        lines.AddRange(items.Take(MaxLines).Select(i => $"  - {i}"));
+        if (items.Count > MaxLines)
+        {
+            lines.Add($"  - and {items.Count - MaxLines} more (pilot decisions)");
+        }
     }
 
     private static string Count(int n, string one, string many) => $"{n} {(n == 1 ? one : many)}";
