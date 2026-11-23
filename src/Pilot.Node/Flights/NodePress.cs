@@ -36,8 +36,28 @@ public sealed class NodePress(NodeState state, Func<CommandRequest, Cancellation
 
     private readonly HashSet<string> _tried = new(StringComparer.Ordinal);
 
+    /// <summary>A kind the node presses, the <c>Verbs</c> constant of the choice it presses, and the words the watchtower's brief uses for it.</summary>
+    public sealed record Pressed(string Kind, string Verb, string What);
+
+    /// <summary>
+    /// The one list of what the node presses (#1311): each kind of card with the verb of the choice it presses. <see cref="Owns"/>, <see cref="WouldPress"/>,
+    /// the rules and the watchtower's brief all read it, and <c>CardKindTests</c> holds it against the catalog, so a fifth kind is added here and nowhere else.
+    /// </summary>
+    public static readonly IReadOnlyList<Pressed> Kinds =
+    [
+        new(CardKinds.Overlap, Verbs.Fold, "a fold the planner asked for (both flights on this node)"),
+        new(PrReviews.FixEndedKind, Verbs.FixPr, "Fix it on a fixer that ended without pushing (`pr-fix-ended`, inside the round cap)"),
+        new(StraySweep.Kind, Verbs.EndStray, "End process on a stray the node launched whose owner has ended"),
+        new(PrReviews.PushedUnreviewedKind, Verbs.ReviewPr, "Review the fixer's push (`pr-fix-pushed-unreviewed`) on an open PR whose head has no review yet"),
+    ];
+
+    /// <summary>The verb the node presses on a card of this kind; null when the node presses none.</summary>
+    public static string? VerbOf(string kind) => Kinds.FirstOrDefault(k => k.Kind == kind)?.Verb;
+
+    private static CardChoice? ChoiceOf(string kind, IReadOnlyList<CardChoice> choices) => choices.FirstOrDefault(c => c.Verb == VerbOf(kind));
+
     /// <summary>Whether a card of this kind may be pressed by the node, so the ring judge and the watchtower leave it to the node.</summary>
-    public static bool Owns(string kind) => kind is StraySweep.Kind or CardKinds.Overlap or PrReviews.FixEndedKind or PrReviews.PushedUnreviewedKind;
+    public static bool Owns(string kind) => VerbOf(kind) is not null;
 
     /// <summary>
     /// Whether the node would press a card raised now with this kind, subject, detail and choices, so the ring judge leaves it to the node
@@ -153,17 +173,17 @@ public sealed class NodePress(NodeState state, Func<CommandRequest, Cancellation
         }
     }
 
-    private static CardChoice? ReviewChoice(IReadOnlyList<CardChoice> choices) => choices.FirstOrDefault(c => c.Verb == Verbs.ReviewPr);
+    private static CardChoice? ReviewChoice(IReadOnlyList<CardChoice> choices) => ChoiceOf(PrReviews.PushedUnreviewedKind, choices);
 
     private Rule? StrayRule(string subject, IReadOnlyList<CardChoice> choices) =>
-        choices.FirstOrDefault(c => c.Verb == Verbs.EndStray) is { } end && MayEndStray(subject)
+        ChoiceOf(StraySweep.Kind, choices) is { } end && MayEndStray(subject)
             ? new Rule(end, "the node launched the process's owner, the owner has ended, and the process descends from it (it is not tied to it by folder only)")
             : null;
 
     // Fix it on an ended fixer, unless the fixer left work in its kept worktree (R1.4): a fresh fixer would start beside that work, and only a
     // person can say whether to push it from there or let it go.
     private static CardChoice? FixChoice(string? detail, IReadOnlyList<CardChoice> choices) =>
-        detail?.Contains(PrReviews.FixLeftWorkMark, StringComparison.Ordinal) == true ? null : choices.FirstOrDefault(c => c.Verb == Verbs.FixPr);
+        detail?.Contains(PrReviews.FixLeftWorkMark, StringComparison.Ordinal) == true ? null : ChoiceOf(PrReviews.FixEndedKind, choices);
 
     // A fold the planner asked for (its overlap row's pick is fold) of a flight into another flight of this node.
     private Rule? FoldRule(string subject, IReadOnlyList<CardChoice> choices)
@@ -171,7 +191,7 @@ public sealed class NodePress(NodeState state, Func<CommandRequest, Cancellation
         var code = Verbs.FlightCodeOf(subject);
         var flights = state.Flights();
         var flight = flights.FirstOrDefault(f => string.Equals(f.Code, code, StringComparison.OrdinalIgnoreCase));
-        if (flight is null || choices.FirstOrDefault(c => c.Verb == Verbs.Fold) is not { Args: [{ } other, ..] } fold)
+        if (flight is null || ChoiceOf(CardKinds.Overlap, choices) is not { Args: [{ } other, ..] } fold)
         {
             return null;
         }

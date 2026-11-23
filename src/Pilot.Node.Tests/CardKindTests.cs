@@ -226,6 +226,66 @@ public sealed class CardKindTests
         CardKindCatalog.All.Where(e => !rings.Contains(e) && (e.Fact is not null || e.Choices is not null)).Select(e => e.Kind).ShouldBeEmpty();
     }
 
+    /// <summary>
+    /// What only the node's rules decide is a NodePress, so the watchtower never presses it through a CLI command Claude Code's classifier can
+    /// refuse (#1311: <c>review pr</c> on pr-fix-pushed-unreviewed). Each marked kind is one NodePress owns, and offers the verb NodePress presses on it;
+    /// each NodePress kind is marked; and a kind whose raising calls offer one of NodePress's verbs is marked or named as the person's, with its reason.
+    /// </summary>
+    [Fact]
+    public void EveryKindTheNodeAloneDecidesIsANodePressAndNoKindOffersItsVerbsUnmarked()
+    {
+        var problems = new List<string>();
+        var pressVerbs = NodePress.Kinds.Select(k => k.Verb).ToHashSet(StringComparer.Ordinal);
+        string NameOf(string verb) => typeof(Verbs).GetFields(BindingFlags.Public | BindingFlags.Static)
+            .First(f => f.IsLiteral && Equals(f.GetRawConstantValue(), verb)).Name;
+        var offered = Calls.Value
+            .Select(c => (Kind: Resolve(c.File, c.KindExpr)?.Value, Verbs: c.ChoiceVerbs ?? []))
+            .Where(c => c.Kind is not null)
+            .GroupBy(c => c.Kind!)
+            .ToDictionary(g => g.Key, g => g.SelectMany(c => c.Verbs).ToHashSet(StringComparer.Ordinal));
+        var asNames = pressVerbs.ToDictionary(NameOf, v => v);
+
+        foreach (var entry in CardKindCatalog.All.Where(e => e.NodePressed))
+        {
+            if (!NodePress.Owns(entry.Kind))
+            {
+                problems.Add($"{entry.Kind}: marked NodePressed and NodePress.Owns is false for it; add it to NodePress.Kinds with the verb it presses");
+            }
+            else if (NodePress.VerbOf(entry.Kind) is { } verb && !(offered.GetValueOrDefault(entry.Kind) ?? []).Contains(NameOf(verb))
+                && !entry.Files.Any(f => Sources.Value.First(s => s.File == f).Source.Contains($"Verbs.{NameOf(verb)}", StringComparison.Ordinal)))
+            {
+                // A card whose choices are built in a list before the call is read from its raising files, as the Ring guard reads them.
+                problems.Add($"{entry.Kind}: NodePress presses {NameOf(verb)} on it and its raising calls do not offer that verb");
+            }
+        }
+        foreach (var press in NodePress.Kinds)
+        {
+            var entry = CardKindCatalog.All.FirstOrDefault(e => e.Kind == press.Kind);
+            if (entry is not { NodePressed: true })
+            {
+                problems.Add($"{press.Kind}: NodePress presses {NameOf(press.Verb)} on it and the catalog does not mark it NodePressed");
+            }
+        }
+        foreach (var entry in CardKindCatalog.All.Where(e => !e.NodePressed))
+        {
+            var verbs = (offered.GetValueOrDefault(entry.Kind) ?? []).Where(asNames.ContainsKey).Order().ToList();
+            var named = CardKindCatalog.PersonsOwn.TryGetValue(entry.Kind, out var reason);
+            if (verbs.Count > 0 && !named)
+            {
+                problems.Add($"{entry.Kind}: offers {string.Join(", ", verbs)}, which NodePress presses on other kinds, and is neither NodePressed nor in CardKindCatalog.PersonsOwn with a reason");
+            }
+            if (named && (verbs.Count == 0 || string.IsNullOrWhiteSpace(reason)))
+            {
+                problems.Add($"{entry.Kind}: named in CardKindCatalog.PersonsOwn but {(verbs.Count == 0 ? "offers none of NodePress's verbs" : "gives no reason")}");
+            }
+        }
+        foreach (var kind in CardKindCatalog.PersonsOwn.Keys.Where(k => CardKindCatalog.All.All(e => e.Kind != k || e.NodePressed)))
+        {
+            problems.Add($"{kind}: named in CardKindCatalog.PersonsOwn and is no unmarked catalog kind");
+        }
+        problems.ShouldBeEmpty(string.Join('\n', problems));
+    }
+
     [Fact]
     public void SourcePinned()
     {

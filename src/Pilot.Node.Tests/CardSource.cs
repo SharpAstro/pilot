@@ -10,7 +10,7 @@ internal sealed record SourceLiteral(string Template, string After);
 /// One call that puts a card up: where, which kind and bins its text names, the literal parts of its title, and whether any argument after
 /// the title offers something to do: a choice, or a link to the page where the person does what the card says (a step outside pilot).
 /// </summary>
-internal sealed record CardCall(string File, int Line, string Form, string KindExpr, string[] Bins, string TitleExpr, IReadOnlyList<SourceLiteral> Title, bool HasChoices = false);
+internal sealed record CardCall(string File, int Line, string Form, string KindExpr, string[] Bins, string TitleExpr, IReadOnlyList<SourceLiteral> Title, bool HasChoices = false, string[]? ChoiceVerbs = null);
 
 /// <summary>A button's label as the source writes it, with the literal parts of the expression.</summary>
 internal sealed record LabelUse(string File, int Line, string Expr, IReadOnlyList<SourceLiteral> Literals);
@@ -72,7 +72,8 @@ internal static class CardSource
                     literals = Declared(text, m.Index, titleExpr);
                 }
                 var after = string.Join(" ", args.Skip(titleAt + 1).Select(a => Slice(text, a)));
-                calls.Add(new CardCall(file, LineOf(text, m.Index), form, kind, bins, titleExpr, literals, Regex.IsMatch(after, @"CardChoice|[Cc]hoices|Verbs\.|Offer|\blink\s*:")));
+                calls.Add(new CardCall(file, LineOf(text, m.Index), form, kind, bins, titleExpr, literals, Regex.IsMatch(after, @"CardChoice|[Cc]hoices|Verbs\.|Offer|\blink\s*:"),
+                    [.. Regex.Matches(after, @"\bVerbs\.(\w+)").Select(v => v.Groups[1].Value).Distinct()]));
             }
         }
         return calls;
