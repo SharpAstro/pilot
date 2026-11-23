@@ -40,6 +40,20 @@ public sealed partial class NodeState
     /// <param name="askedBy">The assistant's session an ask card is about (<see cref="CardKinds.AssistantAsk"/>), and <paramref name="why"/> the message it acted on.</param>
     public CardRow RaiseCard(CardBin bin, string kind, string subject, string title, string? detail = null, IReadOnlyList<CardChoice>? choices = null, string? link = null, string? askedBy = null, string? why = null, string? summary = null, string? attachment = null, string? attachmentExt = null, string? cause = null, string? aboutCard = null)
     {
+        // PIL1325: a card for a person whose every choice waits on something that clears by itself (a review that starts once the legs
+        // land) is a Handled line saying so, not a card to press a refused button on.
+        if (bin is CardBin.ForYou or CardBin.Ring && choices is { Count: > 0 })
+        {
+            string? selfClearing;
+            lock (_gate)
+            {
+                selfClearing = SelfClearingReason(choices, kind);
+            }
+            if (selfClearing is not null)
+            {
+                return RaiseCardCore(CardBin.Handled, kind, subject, title, $"{detail}{(detail is { Length: > 0 } ? " " : "")}Nothing to press: {selfClearing}.", choices, link, askedBy, why, summary, attachment, attachmentExt, cause, aboutCard, out _);
+            }
+        }
         // With the brain to ask (PIL855), a card that would ring is first filed in For you, silent, and rings only on the brain's verdict
         // (RingJudge): the old path, a ring at once, is what runs with no judge, and what the judge itself falls back to.
         // With the switch on (PIL1285), a card bound for the ring waits in For you, quietly, until an investigator decides it; nothing else

@@ -14,6 +14,33 @@ public sealed partial class NodeState
         ChoiceAvailability.Apply(choices, _flights.Values, [.. _legs.Values], [.. _cards.Values], _sessions.Values, cardKind);
 
     /// <summary>
+    /// PIL1325: why a card with these choices needs nothing from a person: every choice is refused by its command for a reason that clears
+    /// by itself (<see cref="VerbRefusal.ClearsByItself"/>). Null for a card with no choices, one with a choice that is available or a chip,
+    /// or one refused for a reason that needs a person (the owner's hold, a gone session). Under the lock.
+    /// </summary>
+    private string? SelfClearingReason(IReadOnlyList<CardChoice> choices, string? cardKind)
+    {
+        if (choices.Count == 0)
+        {
+            return null;
+        }
+        var reasons = new List<string>();
+        foreach (var choice in choices)
+        {
+            if (ChoiceStatus.IsChip(choice.Status)
+                || ChoiceAvailability.Refusal(choice, _flights.Values, [.. _legs.Values], [.. _cards.Values], _sessions.Values, cardKind) is not { ClearsByItself: true } refusal)
+            {
+                return null;
+            }
+            if (!reasons.Contains(refusal.Why))
+            {
+                reasons.Add(refusal.Why);
+            }
+        }
+        return string.Join("; ", reasons);
+    }
+
+    /// <summary>
     /// Brings every open card's choices in line with what the node would refuse now (#792 point 4): a choice whose flight turned held or whose
     /// session is gone is marked <see cref="ChoiceStatus.Unavailable"/> with the reason, one whose flight flies again or whose session is back
     /// is cleared. One <see cref="CardChangedEvent"/> per card changed, none for a card already right. Called where those facts change (a
@@ -24,6 +51,14 @@ public sealed partial class NodeState
         foreach (var card in _cards.Values.Where(c => c.State == CardState.Open && c.Choices.Length > 0).ToList())
         {
             var next = Available(card.Choices, card.Kind);
+            // PIL1325: a For you or Ring card whose every choice now waits on something that clears by itself needs no person: it closes
+            // with the reason, and is not reopened when the reason clears (the node's own step takes over then).
+            if (card.Bin is CardBin.ForYou or CardBin.Ring && SelfClearingReason(next, card.Kind) is { } reason)
+            {
+                var now = _time.GetUtcNow();
+                Publish(new CardChangedEvent { Seq = _seq + 1, At = now, Card = card with { Choices = next, State = CardState.Closed, Outcome = reason, ClosedBy = "node", ClosedAt = now, Answering = null } });
+                continue;
+            }
             if (!next.SequenceEqual(card.Choices))
             {
                 Publish(new CardChangedEvent { Seq = _seq + 1, At = _time.GetUtcNow(), Card = card with { Choices = next } });
