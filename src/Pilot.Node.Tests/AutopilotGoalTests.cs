@@ -324,6 +324,66 @@ public sealed class AutopilotGoalTestsVerbs : IAsyncLifetime
     }
 
     [Fact]
+    public async Task CiBudgetFromTheWatchtowerOnACappedFlightGivesOneMoreBudgetLeavingALineAndADecision()
+    {
+        var target = Verbs.FlightTarget("TIA7");
+        _node.State.PutFlight(_node.State.Flights().Single(f => f.Code == "TIA7") with
+        {
+            Ci = new FlightCi { CappedWhy = "5 runner-hours, past the budget of 4", CappedAt = DateTimeOffset.UtcNow, CountedAt = DateTimeOffset.UtcNow },
+        });
+
+        (await Send(Lookout, Verbs.CiBudget, target, [Verbs.CiContinue], "it is fine")).Error.ShouldNotBeNull().ShouldContain("evidence");
+        _node.State.Flights().Single(f => f.Code == "TIA7").Ci!.Extra.ShouldBe(0);
+
+        var why = "job j962 is green and run 25123456789 shows the cap was one slow leg";
+        var granted = await Send(Lookout, Verbs.CiBudget, target, [Verbs.CiContinue], why);
+
+        granted.Ok.ShouldBeTrue(granted.Error);
+        var ci = _node.State.Flights().Single(f => f.Code == "TIA7").Ci.ShouldNotBeNull();
+        ci.Extra.ShouldBe(1);
+        ci.CappedWhy.ShouldBeNull();
+        ci.AutoGrants.ShouldBe(1, "the grant counts against the watchtower's bound for the day");
+        LeftALineAndADecision(Lookout, why);
+    }
+
+    private const string PrHead = "cafe0000aaaabbbbccccdddd";
+
+    private const string PrUrl = "https://github.com/x/tianwen/pull/63";
+
+    /// <summary>TIA1 ready to merge but for its checks, as <c>MergeArmTests</c> has it: its one leg done, its review passed, PR #63 open at <see cref="PrHead"/>.</summary>
+    private void ReadyButForItsChecks()
+    {
+        _node.State.PutFlight(new FlightRow
+        {
+            Code = "TIA1", Repo = "tianwen", RepoPath = _node.Folder, Issue = 1, Branch = "flight/tia1", Worktree = Path.Combine(_node.Folder, "plane-TIA1"),
+            Base = "main", State = FlightState.Flying, CreatedAt = DateTimeOffset.UtcNow, PullRequest = 63, PullRequestUrl = PrUrl,
+            Review = new ReviewRow { State = ReviewState.Passed, Reviewer = "du1-tia1-review", StartedAt = DateTimeOffset.UtcNow },
+        });
+        _node.State.PutLeg(new LegRow { Flight = "TIA1", Name = "parser", Order = 1, Goal = "g", DoneWhen = "d", State = LegState.Done });
+        _node.GitHub.Pr = GhAnswers.PullRequestByBranch(number: 63, head: PrHead, url: PrUrl);
+        _node.GitHub.Summary = GhAnswers.ChecksOf(ChoiceStatus.Pending, 0, 3);
+    }
+
+    [Fact]
+    public async Task RerunChecksFromAnInvestigatorIsRefusedWithoutEvidenceAndRunsWithItLeavingALineAndADecision()
+    {
+        ReadyButForItsChecks();
+        var target = Verbs.FlightTarget("TIA1");
+
+        var bare = await Send(Investigator, Verbs.RerunChecks, target, [PrHead], "the checks look unlucky");
+        bare.Ok.ShouldBeFalse();
+        bare.Error.ShouldNotBeNull().ShouldContain("evidence");
+        _node.GitHub.Reruns.ShouldBeEmpty();
+
+        var why = "run 25123456789 failed on a runner that lost its network; job j970 passed the same tests";
+        var ran = await Send(Investigator, Verbs.RerunChecks, target, [PrHead], why);
+
+        ran.Ok.ShouldBeTrue(ran.Error);
+        _node.GitHub.Reruns.ShouldBe([63]);
+        LeftALineAndADecision(Investigator, why);
+    }
+
+    [Fact]
     public async Task AnInvestigatorsCiBudgetIsRefusedAsNotItsOwn()
     {
         var refused = await Send(Investigator, Verbs.CiBudget, Verbs.FlightTarget("TIA7"), [Verbs.CiContinue], "job j962 is green");
@@ -347,13 +407,10 @@ public sealed class AutopilotGoalTestsVerbs : IAsyncLifetime
     [Fact]
     public async Task AnOverrideStaysThePersonsForAnInvestigatorWhateverItsWhy()
     {
-        foreach (var who in new[] { Investigator })
-        {
-            var refused = await Send(who, Verbs.CreateFlight, Verbs.RepoTarget(Repo), ["22", "Again", Verbs.AnywayFlag], "issue #22 and job j970 say so");
+        var refused = await Send(Investigator, Verbs.CreateFlight, Verbs.RepoTarget(Repo), ["22", "Again", Verbs.AnywayFlag], "issue #22 and job j970 say so");
 
-            refused.Error.ShouldNotBeNull().ShouldContain("person");
-            _node.State.Flights().ShouldNotContain(f => f.Code == "TIA22");
-        }
+        refused.Error.ShouldNotBeNull().ShouldContain("person");
+        _node.State.Flights().ShouldNotContain(f => f.Code == "TIA22");
     }
 
     [Fact]

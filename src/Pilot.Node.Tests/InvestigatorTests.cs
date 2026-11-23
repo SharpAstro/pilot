@@ -363,6 +363,36 @@ public sealed class InvestigatorTests
     }
 
     [Fact]
+    public async Task ARunReleasedWhileItsSessionStartsHasThatSessionStoppedOnceItIsUp()
+    {
+        // The launcher holds the start, as a slow claude start: the run is live, its session not up yet, so it has no job to stop.
+        var up = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _workers.Hold = up.Task;
+        var card = RingBound();
+        _workers.Holding.ShouldBeTrue();
+        _workers.Started.ShouldBeEmpty();
+        Run().Job.ShouldBeNull();
+
+        Setting(NodeSettings.AutopilotKey, "off");
+        _investigator.Look();
+
+        Card(card.Id).Bin.ShouldBe(CardBin.Ring);
+        _investigator.Runs.ShouldBeEmpty();
+        _workers.Stopped.ShouldBeEmpty("nothing is up to stop yet");
+
+        up.SetResult();
+        await _investigator.SettledAsync().WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+
+        _workers.Started.ShouldHaveSingleItem().Name.ShouldBe("de1-investigate-pil1");
+        var job = _workers.Stopped.ShouldHaveSingleItem();
+        var stop = _workers.StopReasons.ShouldHaveSingleItem();
+        stop.Job.ShouldBe(job);
+        stop.Reason.ShouldStartWith(SessionEndReasons.Person);
+        stop.Reason.ShouldContain("ended while its session started");
+        _investigator.Runs.ShouldBeEmpty();
+    }
+
+    [Fact]
     public void TheInvestigatorsOwnRingsAndAsksOfThePersonAreNotHeldOrJudged()
     {
         _investigator.Holds(Investigator.RingKind, null).ShouldBeFalse();
