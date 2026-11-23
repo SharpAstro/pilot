@@ -312,6 +312,6 @@ public sealed class CardAvailabilityTests
 
         // Past the availability rule, the merge runs on its own rules (here it finds no PR to merge): what it says is not that the flight is held.
         result.Error.ShouldNotBeNull().ShouldNotContain("is held");
-        result.Error.ShouldNotContain("was refused");
+        result.Error.ShouldContain("has no PR");
     }
 }
