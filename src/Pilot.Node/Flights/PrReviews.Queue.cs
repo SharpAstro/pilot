@@ -58,10 +58,17 @@ public sealed partial class PrReviews
                 {
                     var why = "the answer to its design question was given and its fixer ended without a push";
                     state.PutPrReview(review with { QueueNote = why });
-                    state.RaiseCard(CardBin.ForYou, MergeKind, subject, $"{review.Repo}#{review.Number} was not queued",
-                        $"Reviewed {review.Verdict} at {at}, but the fix its design answer called for was never pushed. Merge it at this head if you are content with it as it is.",
-                        [new CardChoice { Label = "Merge the PR", Verb = Verbs.Merge, Target = subject, Args = [review.Head] }], link: review.Url,
-                        summary: $"Merge it at this head if you are content with it: {why}.");
+                    var pr = $"{review.Repo}#{review.Number}";
+                    var answer = review.DesignAnswer.Trim();
+                    // An answer that asks for no code (close it, supersede it) is the owner's to carry out on GitHub: no fixer closes a PR. No Merge choice either way.
+                    var noCode = AsksForNoCode(answer);
+                    state.RaiseCard(CardBin.ForYou, FixEndedKind, subject,
+                        noCode ? $"{pr}: its design answer is to close it, which is yours to do" : $"{pr}: the fix its design answer called for is missing",
+                        noCode
+                            ? $"The answer to its design question was \"{answer}\": the PR is to be closed as answered. No fixer closes a PR, so close it on GitHub yourself. Nothing was pushed (head {at})."
+                            : $"The answer to its design question was \"{answer}\", but its fixer ended without pushing the fix (head {at}). Fix it starts another fixer with the answer.",
+                        noCode ? [] : [new CardChoice { Label = FixLabel, Verb = Verbs.FixPr, Target = subject }], link: review.Url,
+                        summary: noCode ? $"Close the PR as the answer says: {why}." : $"The fix is missing: {why}.");
                 }
                 return null;
             }
@@ -235,4 +242,8 @@ public sealed partial class PrReviews
         alerts.SayRetried(site, finding, $"{runs} failed {(runs == 1 ? "run" : "runs")} running again");
         return true;
     }
+
+    /// <summary>True when a design answer asks for no change to the code: close, supersede, drop or abandon the PR.</summary>
+    internal static bool AsksForNoCode(string answer) =>
+        System.Text.RegularExpressions.Regex.IsMatch(answer, @"\b(close[ds]?|supersede[ds]?|drop|abandon(ed)?|withdraw)\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
 }

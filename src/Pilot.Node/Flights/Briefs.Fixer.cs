@@ -70,6 +70,8 @@ public static partial class Briefs
             text.AppendLine();
             text.AppendLine("### Answer");
             text.AppendLine(answer);
+            text.AppendLine();
+            text.AppendLine("If the answer asks for no change to the code (close the PR, keep main as it is), push nothing and say \"no change: the answer is <answer>\" in your PR comment; the node raises the card for the owner, since a fixer may not close a PR.");
         }
         text.AppendLine();
         text.AppendLine("Make each change asked for, in the tree as it stands: check a finding against the code before you act on it, and if");
