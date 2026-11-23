@@ -146,7 +146,6 @@ public sealed class FixFollowUpTests : PrFixTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AFixerCommitWhosePatchIsOnMainUnderAnotherShaLeavesNoCardAndNoPr()
     {
         await Review("acme/widget#7", "changes", "README.md:1 wrong");
@@ -161,10 +160,30 @@ public sealed class FixFollowUpTests : PrFixTestsBase
         // The helper throws on git's non-zero exit, which for rev-parse --verify --quiet is the ref's absence.
         Should.Throw<InvalidOperationException>(() => PrOrigins.Git(Origin, "rev-parse", "--verify", "--quiet", "refs/heads/feature/seven-followup-7"));
         Row.Fixer.ShouldBeNull();
+        // Not silent: a line to read says why no PR came.
+        _state.Cards().ShouldContain(c => c.Kind == PrReviews.FixFollowUpSettledKind && c.Bin == CardBin.Handled && c.Title.Contains("already on main"));
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
+    public async Task AFixerCommitOfAFileWithANonAsciiNameStillOpensTheFollowUpPr()
+    {
+        await Review("acme/widget#7", "changes", "README.md:1 wrong");
+        File.WriteAllText(Path.Combine(FixWorktree, "café.txt"), "fixed\n");
+        PrOrigins.Git(FixWorktree, "add", ".");
+        PrOrigins.Git(FixWorktree, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "the fix");
+        var tip = PrOrigins.Git(FixWorktree, "rev-parse", "HEAD");
+        // Main changed something else: git quotes the fixer's name in plain output, and a quoted name as a pathspec matches nothing, which once read as 'already on main'.
+        WorkPushes("other.txt", "other\n", "main");
+        CreatingMakesPr71(tip);
+        Merge();
+
+        await _reviews.SweepAsync(Ct);
+
+        _github.Created.ShouldHaveSingleItem();
+        _state.Cards().ShouldNotContain(c => c.Kind == PrReviews.FixFollowUpSettledKind);
+    }
+
+    [Fact]
     public async Task AFixerCommitOnlyPartlyOnMainStillOpensTheFollowUpPr()
     {
         await Review("acme/widget#7", "changes", "README.md:1 wrong");
@@ -185,7 +204,6 @@ public sealed class FixFollowUpTests : PrFixTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AFollowUpBranchOnOriginThatHoldsTheCommitsChangesRaisesNoFailureCard()
     {
         await Review("acme/widget#7", "changes", "README.md:1 wrong");
@@ -198,10 +216,10 @@ public sealed class FixFollowUpTests : PrFixTestsBase
 
         _github.Created.ShouldBeEmpty();
         _state.Cards().ShouldNotContain(c => c.Kind == PrReviews.FixFollowUpFailedKind);
+        _state.Cards().ShouldContain(c => c.Kind == PrReviews.FixFollowUpSettledKind && c.Bin == CardBin.Handled);
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
     public async Task AFollowUpBranchOnOriginWithOtherWorkSaysTheBranchExists()
     {
         await Review("acme/widget#7", "changes", "README.md:1 wrong");

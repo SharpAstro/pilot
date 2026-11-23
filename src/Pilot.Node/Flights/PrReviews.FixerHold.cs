@@ -33,27 +33,40 @@ public sealed partial class PrReviews
 
     /// <summary>
     /// A fixer session that has finished: Ended, or Idle (its turn over, still running) and not waiting on a job of its own. An idle Claude session never
-    /// ends by itself, so waiting for it to end holds its round open until the PR merges (pilot #1327); the sweep ends it instead.
+    /// ends by itself, so waiting for it to end holds its round open until the PR merges (pilot #1327); the sweep ends it instead. An idle one that has
+    /// not answered once yet has not begun (a session reads Idle between its start and its first turn), and one whose last turn the API stopped (a usage
+    /// limit, an error: <see cref="SessionRow.ApiError"/>) is paused with its work half done and resumes when the limit lifts: neither has finished.
     /// </summary>
-    private bool FixerFinished(SessionRow s) => s.State is SessionState.Ended or SessionState.Idle && !FixerWaitsOnJob(s);
+    private bool FixerFinished(SessionRow s) => s.State switch
+    {
+        SessionState.Ended => !FixerWaitsOnJob(s),
+        SessionState.Idle => !IdleNotDone(s) && !FixerWaitsOnJob(s),
+        _ => false,
+    };
+
+    /// <summary>An idle fixer that is not done: it has taken no first turn, or its last turn died on an API error or a usage-limit pause (pilot #1327).</summary>
+    private static bool IdleNotDone(SessionRow s) => s.State == SessionState.Idle && (s.LastResponseAt is null || s.ApiError is { Length: > 0 });
 
     /// <summary>
     /// The fixer's own session of this PR that is still running, or null: the row's job (or its name, for a row stored before FixerJob), and any other
     /// fixer session (as <see cref="AdmissionGate.IsFixer"/> reads it) for the PR's number in its repo. Read from the session store, not only from the row,
     /// since a row can read no fixer while one works (tianwen#2470, pilot #1291).
     /// </summary>
-    private SessionRow? LiveFixerOf(PrReviewRow review)
+    private SessionRow? LiveFixerOf(PrReviewRow review) => LiveFixersOf(review).FirstOrDefault();
+
+    /// <summary>Every live fixer session of the PR (see <see cref="LiveFixerOf"/>): a second one beside the row's own is read, and stopped, with it.</summary>
+    private List<SessionRow> LiveFixersOf(PrReviewRow review)
     {
         var clone = review.ClonePath.TrimEnd('\\', '/');
         var folder = Path.GetFileName(clone);
         var name = review.Repo[(review.Repo.IndexOf('/') + 1)..];
         // A fixer whose turn ended on a pilot run job of its own reads Ended but is waiting: the job's end wakes it (pilot #1309, tianwen #2474/#2476).
-        return state.Sessions().FirstOrDefault(s => !s.Archived && !s.Gone && (s.State is not (SessionState.Ended or SessionState.Failed) || FixerWaitsOnJob(s))
+        return state.Sessions().Where(s => !s.Archived && !s.Gone && (s.State is not (SessionState.Ended or SessionState.Failed) || FixerWaitsOnJob(s))
             && (review.FixerJob is { } job && string.Equals(s.Id, job, StringComparison.Ordinal)
                 || AdmissionGate.IsFixer(s) && s.Pr == review.Number
                    && (string.Equals(s.Repo, folder, StringComparison.OrdinalIgnoreCase) || string.Equals(s.Repo, name, StringComparison.OrdinalIgnoreCase)
                        || s.Cwd.StartsWith(clone + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)
-                       || s.Cwd.StartsWith(clone + '/', StringComparison.OrdinalIgnoreCase))));
+                       || s.Cwd.StartsWith(clone + '/', StringComparison.OrdinalIgnoreCase)))).ToList();
     }
 
     /// <summary>

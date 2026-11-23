@@ -1723,6 +1723,8 @@ internal sealed class FakeRepoGit : IGit
         var numstat = a.Remove("--numstat");
         var stat = a.Remove("--stat");
         var quiet = a.Remove("--quiet");
+        // -z with --name-only: NUL-terminated names, never quoted.
+        var nul = a.Remove("-z");
         var unmerged = a.Remove("--diff-filter=U");
         // -b and --ignore-blank-lines: a change of whitespace or blank lines is no change.
         var ignoreSpace = a.Remove("-b") | a.Remove("--ignore-blank-lines");
@@ -1781,7 +1783,7 @@ internal sealed class FakeRepoGit : IGit
             }
             if (nameOnly)
             {
-                return Ok(string.Concat(changes.Select(c => c.Path + "\n")));
+                return Ok(string.Concat(changes.Select(c => c.Path + (nul ? "\0" : "\n"))));
             }
             if (numstat)
             {
