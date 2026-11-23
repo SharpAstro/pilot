@@ -64,7 +64,7 @@ public sealed partial class PrReviews
                         }
                         catch (FlightException ex)
                         {
-                            state.RaiseCard(CardBin.ForYou, PushedUnreviewedKind, subject, $"{pr}: the fixer's work was pushed, but its review could not start: {LegCommander.OneLine(ex.Message)}", ex.Message,
+                            state.RaiseCard(CardBin.ForYou, PushedUnreviewedKind, subject, $"{pr}: the fixer's push has no review yet", ex.Message,
                                 [new CardChoice { Label = "Review the fixer's push", Verb = Verbs.ReviewPr, Target = subject }], link: review.Url);
                         }
                     }
@@ -94,7 +94,7 @@ public sealed partial class PrReviews
         string Ring(string cause)
         {
             var why = $"the fix worktree {worktree} holds work the PR does not have: {work.Line}";
-            RaiseOnce(pr, review, CardBin.ForYou, FixerWorkHeldKind, subject, $"{pr} is held: its fixer left work in {Path.GetFileName(worktree)}",
+            RaiseOnce(pr, review, CardBin.ForYou, FixerWorkHeldKind, subject, $"{pr} is held: its fixer left work not pushed",
                 $"{why}. {cause}.\nThe PR is not queued or merged until that work is pushed or removed.", summary: $"Push or remove the work in {worktree}: {LegCommander.OneLine(cause)}.");
             return Held(why);
         }

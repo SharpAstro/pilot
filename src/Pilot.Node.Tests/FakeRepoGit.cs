@@ -1454,7 +1454,7 @@ internal sealed class FakeRepoGit : IGit
         {
             throw new NotSupportedException("log form");
         }
-        if (!oneline && !nameOnly && format is not ("--format=%h %s" or "--format=%P\t%s" or "--format=%s") || a.Any(x => x.StartsWith('-') && x != "--not"))
+        if (!oneline && !nameOnly && format is not ("--format=%h %s" or "--format=%P\t%s" or "--format=%s") || a.Any(x => x.StartsWith('-') && x is not ("--not" or "--remotes")))
         {
             throw new NotSupportedException("log form");
         }
