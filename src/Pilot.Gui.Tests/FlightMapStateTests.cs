@@ -214,9 +214,11 @@ public sealed class FlightMapStateTests
         }
         faults.ShouldBeEmpty();
 
-        // The queue reason and the between-legs note are drawn in the palette's Dim: readable on both lands.
+        // The queue reason and the between-legs note are drawn in the palette's MapNote: 4.5:1 on both lands in Standard. Night is red
+        // only and its strongest ramp step that is not the accent is 3.3:1, so there the floor is 3:1 (large text and icons).
         var p = night ? Palette.Night : Palette.Standard;
-        Contrast.Ratio(p.Dim, p.LandHere).ShouldBeGreaterThanOrEqualTo(4.5);
-        Contrast.Ratio(p.Dim, p.Land).ShouldBeGreaterThanOrEqualTo(4.5);
+        var floor = night ? 3.0 : 4.5;
+        Contrast.Ratio(p.MapNote, p.LandHere).ShouldBeGreaterThanOrEqualTo(floor);
+        Contrast.Ratio(p.MapNote, p.Land).ShouldBeGreaterThanOrEqualTo(floor);
     }
 }

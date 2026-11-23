@@ -706,13 +706,15 @@ internal sealed partial class FlightsView<TSurface>
             }
             var state = detail == MapDetail.Whole && a.StepsTotal > 0 ? $"{StateWord(a.State)} {a.StepsDone}/{a.StepsTotal}" : StateWord(a.State);
             var stateSize = LabelSize;
+            var stateColor = a.State == AirportState.Failed ? Failed : a.State == AirportState.Flying ? Flying : Dim;
             // The first stop not yet flown says why nothing flies (pilot #1298): a queued flight its queue reason, a flight between legs
             // that the node picks the next one. Cut to the slot with an ellipsis; the whole text is on the stop's hover (StopNote).
             if (StopNote(route, a) is { } note)
             {
                 (state, stateSize) = StopWord(note.Word, detail);
+                stateColor = P.MapNote;
             }
-            Label(state, X(a.X - FlightMap.Slot / 2f), Y(a.Y + FlightMap.LabelLineTwo), FlightMap.Slot * s, s, stateSize, a.State == AirportState.Failed ? Failed : a.State == AirportState.Flying ? Flying : Dim, line: StopLine);
+            Label(state, X(a.X - FlightMap.Slot / 2f), Y(a.Y + FlightMap.LabelLineTwo), FlightMap.Slot * s, s, stateSize, stateColor, line: StopLine);
         }
 
         // The destination is a square sign, its PR and its status in words under it.
