@@ -70,6 +70,11 @@ public sealed partial class PrReviews
             state.PutPrReview(review with { QueueNote = $"its head is newer than the review ({CommitRefs.Short(read.Head)} · reviewed {at})" });
             return;
         }
+        // No merge while the PR's fixer is live or its worktree holds work the PR lacks (pilot #1291): no note, a later sweep looks again.
+        if (!FlightOwns(review) && await FixerHoldAsync(review, read, cancellationToken) is not null)
+        {
+            return;
+        }
         var checks = await github.ChecksSummaryAsync(review.ClonePath, review.Number, cancellationToken);
         if (checks?.Status == ChoiceStatus.Failing)
         {
@@ -162,6 +167,10 @@ public sealed partial class PrReviews
         if (!read.Head.StartsWith(head, StringComparison.OrdinalIgnoreCase))
         {
             throw new FlightException($"{pr}'s head is newer than the review ({CommitRefs.Short(read.Head)} · reviewed {CommitRefs.Short(head)}): review it again");
+        }
+        if (!FlightOwns(review) && await FixerHoldAsync(review, read, cancellationToken) is { } held)
+        {
+            throw new FlightException($"{pr} is not merged yet: {held}");
         }
         // The card's Merge is a merge too: the points left are made first (pilot #1107). It keeps the hold the sweep keeps: a fixer is started on them
         // (or is on them) and the PR merges once its push is reviewed; the owner's decision, 2026-11-22.

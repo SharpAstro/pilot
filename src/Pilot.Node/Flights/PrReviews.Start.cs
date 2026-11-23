@@ -60,6 +60,8 @@ public sealed partial class PrReviews
         plane = Path.GetFileName(worktree);
 
         var reviewer = $"{options.Machine.ToLowerInvariant()}-review-{name}-{pr.Number}";
+        // The fixer fields are read as the row is put, not before the fetches above: a fixer started meanwhile (tianwen#2470) is not dropped from the row.
+        var fixNow = Of(pr) ?? fixOn;
         var row = new PrReviewRow
         {
             Repo = pr.Repo,
@@ -73,18 +75,18 @@ public sealed partial class PrReviews
             Worktree = worktree,
             Reviewer = reviewer,
             State = PrReviewState.Reviewing,
-            Fixer = fixOn?.Fixer,
-            FixerJob = fixOn?.FixerJob,
-            FixWorktree = fixOn?.FixWorktree,
-            FixRound = fixOn?.FixRound,
-            FixRoundsAllowed = fixOn?.FixRoundsAllowed,
-            FixWorktreeBorrowed = fixOn?.FixWorktreeBorrowed,
-            FixDetached = fixOn?.FixDetached,
+            Fixer = fixNow?.Fixer,
+            FixerJob = fixNow?.FixerJob,
+            FixWorktree = fixNow?.FixWorktree,
+            FixRound = fixNow?.FixRound,
+            FixRoundsAllowed = fixNow?.FixRoundsAllowed,
+            FixWorktreeBorrowed = fixNow?.FixWorktreeBorrowed,
+            FixDetached = fixNow?.FixDetached,
             // The earlier rounds and the follow-up issue go on past a fresh review (pilot #1107): the re-review answers their points.
-            Rounds = fixOn?.Rounds,
-            FollowUpIssue = fixOn?.FollowUpIssue,
-            FollowUpPoints = fixOn?.FollowUpPoints,
-            PointsOnPr = fixOn?.PointsOnPr,
+            Rounds = fixNow?.Rounds,
+            FollowUpIssue = fixNow?.FollowUpIssue,
+            FollowUpPoints = fixNow?.FollowUpPoints,
+            PointsOnPr = fixNow?.PointsOnPr,
             StartedAt = time.GetUtcNow(),
         };
         var commits = await git.RunAsync(["log", "--oneline", $"origin/{read.Base}..HEAD"], worktree, cancellationToken);
