@@ -158,7 +158,7 @@ public sealed class FixFollowUpTests : PrFixTestsBase
 
         _github.Created.ShouldBeEmpty();
         _state.Cards().ShouldNotContain(c => c.Kind == PrReviews.FixFollowUpKind || c.Kind == PrReviews.FixFollowUpFailedKind);
-        PrOrigins.Git(Origin, "rev-parse", "--verify", "--quiet", "refs/heads/feature/seven-followup-7").ShouldBeEmpty();
+        PrOrigins.Git(Origin, "for-each-ref", "refs/heads/feature/seven-followup-7").ShouldBeEmpty();
         Row.Fixer.ShouldBeNull();
     }
 
