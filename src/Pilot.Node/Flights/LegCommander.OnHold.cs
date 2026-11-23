@@ -5,7 +5,7 @@ namespace Pilot.Node.Flights;
 /// <summary>
 /// The owner's hold on a flight (#771): <c>hold</c> records <see cref="FlightRow.OnHold"/>, and while it stands the node starts nothing
 /// for the flight and takes no outward step (no leg, worker, planner, validator, reviewer, fixer, go-around, base merge, push, PR open
-/// or merge), whoever asks: the autopilot, the sweeps, the watchtower or a card's button. <c>unground</c> releases it and the flight takes
+/// or merge), whoever asks: the node's own rules, the sweeps, the watchtower or a card's button. <c>unground</c> releases it and the flight takes
 /// its next due step. Apart from <see cref="FlightRow.Holding"/> (the review-notes holding pattern, which holds the merge only) and
 /// <see cref="LegRow.Hold"/> (a leg's wait for a package). A session already running is not stopped. A worker finishes its turn and
 /// reports (finish-leg, wait-leg, check and add-artifact are let through), and nothing follows it. A reviewer or planner already running
@@ -150,7 +150,7 @@ public sealed partial class LegCommander
             flight = cleared;
         }
         // The cards that offer the merge or a step close: the hold refuses each button, and a release brings the due ones back.
-        state.CloseCardsAbout(target, $"{flight.Code} is on hold by {by}", PrReady, MergeFailed, PrChecks.AutopilotMergeRefused, NextStepKind);
+        state.CloseCardsAbout(target, $"{flight.Code} is on hold by {by}", PrReady, MergeFailed, PrChecks.NodeMergeRefused, NextStepKind);
         state.CloseCardsAbout(target, repeat ? "the hold's reason was updated" : "on hold", OnHoldKind);
         // A held flight loads the machine no more (the held PIL895 ran the whole Pilot.Node.Tests suite for an hour after "hold all
         // flights", SE1, 2026-11-09): its running jobs end, but for its leg's check, which a cancel would count as a failure; its queued

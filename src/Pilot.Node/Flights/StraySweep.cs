@@ -299,7 +299,7 @@ public sealed class StraySweep(NodeState state, IProcessTable table, TimeProvide
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, Stray> _named = new(StringComparer.Ordinal);
 
     /// <summary>
-    /// Whether the node may press End on this stray's card itself on autopilot (#1269): it launched the owner, the owner has ended, and the
+    /// Whether the node may press End on this stray's card itself (#1269): it launched the owner, the owner has ended, and the
     /// process is not tied to it by folder only (never kill what pilot did not launch).
     /// </summary>
     public bool NodeMayEnd(string key) =>

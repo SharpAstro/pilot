@@ -8,37 +8,37 @@ using Xunit;
 
 namespace Pilot.Node.Tests;
 
-/// <summary>The autopilot's own merge of a passed flight is a decision in the black box, with the rule that fired as the reason (PIL583).</summary>
+/// <summary>The node's own merge of a passed flight is a decision in the black box, with the rule that fired as the reason (PIL583).</summary>
 public sealed class DecisionAutopilotMergeTests : ReviewTestsBase
 {
     [Fact]
     [Trait("Category", "Slow")]
-    public async Task DecisionRecordedWhenTheAutopilotMergesAPassedFlightFromItsPrReadyCard()
+    public async Task DecisionRecordedWhenTheNodeMergesAPassedFlightFromItsPrReadyCard()
     {
         var (flight, _) = await Passed("30");
         _github.Checks = ChoiceStatus.Passing;
-        var on = NodeSettings.With(new NodeSettings(), NodeSettings.AutopilotKey, ["on"]).Settings!;
+        var on = new NodeSettings();
         _legs.Models = new RoleModels(on);
 
         await new PrChecks(_state, _github, TimeProvider.System, _flights, _legs).LookAsync(Ct);
 
-        var merges = _state.Decisions(flight.Code, DecisionKinds.Merge).Where(d => d.ByKind == DecisionByKinds.Autopilot).ToArray();
+        var merges = _state.Decisions(flight.Code, DecisionKinds.Merge).Where(d => d.ByKind == DecisionByKinds.NodeRules).ToArray();
         var decision = merges.First(d => d.Choice == "Merge");
         decision.Subject.ShouldBe($"flight/{flight.Code}");
         decision.Options.ShouldContain("Merge");
         decision.Options.ShouldContain("Wait");
         decision.By.ShouldBe("node");
-        decision.Reason.ShouldContain("autopilot on, review passed, checks");
+        decision.Reason.ShouldContain("review passed, checks");
         merges.Length.ShouldBe(1);
     }
 
     [Fact]
     [Trait("Category", "Slow")]
-    public async Task OneDecisionNamingTheArmWhenTheAutopilotsMergeWaitsOnPendingChecks()
+    public async Task OneDecisionNamingTheArmWhenTheNodesMergeWaitsOnPendingChecks()
     {
         var (flight, _) = await Passed("32");
         _github.Checks = ChoiceStatus.Pending;
-        var on = NodeSettings.With(new NodeSettings(), NodeSettings.AutopilotKey, ["on"]).Settings!;
+        var on = new NodeSettings();
         _legs.Models = new RoleModels(on);
 
         await new PrChecks(_state, _github, TimeProvider.System, _flights, _legs).LookAsync(Ct);
@@ -52,12 +52,12 @@ public sealed class DecisionAutopilotMergeTests : ReviewTestsBase
 
     [Fact]
     [Trait("Category", "Slow")]
-    public async Task OneDecisionBringingTheBranchUpToDateWhenTheAutopilotsMergeFindsItBehindItsBase()
+    public async Task OneDecisionBringingTheBranchUpToDateWhenTheNodesMergeFindsItBehindItsBase()
     {
         _github.Checks = ChoiceStatus.Passing;
         var (flight, _) = await Passed("33");
         MainMoves();
-        var on = NodeSettings.With(new NodeSettings(), NodeSettings.AutopilotKey, ["on"]).Settings!;
+        var on = new NodeSettings();
         _legs.Models = new RoleModels(on);
 
         await new PrChecks(_state, _github, TimeProvider.System, _flights, _legs).LookAsync(Ct);
@@ -66,7 +66,7 @@ public sealed class DecisionAutopilotMergeTests : ReviewTestsBase
         var decision = _state.Decisions(flight.Code).ShouldHaveSingleItem();
         decision.Kind.ShouldBe(DecisionKinds.Merge);
         decision.Choice.ShouldBe("Bring the branch up to date");
-        (decision.By, decision.ByKind).ShouldBe(("node", DecisionByKinds.Autopilot));
+        (decision.By, decision.ByKind).ShouldBe(("node", DecisionByKinds.NodeRules));
         decision.Reason.ShouldContain("behind its base");
     }
 }
@@ -127,7 +127,7 @@ public sealed class DecisionGoAroundTests : IDisposable
     }
 
     [Fact]
-    public async Task DecisionLabelledNodeForTheNodesOwnMergeWithAutopilotOff()
+    public async Task DecisionLabelledAsTheNodesRulesForTheNodesOwnMerge()
     {
         await using var node = await NodeHarness.StartAsync(Ct, git: _repos.Git);
         node.State.PutFlight(new FlightRow
@@ -143,11 +143,14 @@ public sealed class DecisionGoAroundTests : IDisposable
         result.Error.ShouldBeNull();
         var decision = node.State.Decisions().ShouldHaveSingleItem();
         decision.Kind.ShouldBe(DecisionKinds.Merge);
-        (decision.By, decision.ByKind).ShouldBe(("node", DecisionByKinds.Node));
+        // The node's own merge is decided by its rules (pilot #1271: there is no switch-off case any more), stored under the old word
+        // and shown as the node's.
+        (decision.By, decision.ByKind).ShouldBe(("node", DecisionByKinds.NodeRules));
+        DecisionByKinds.Shown(decision.ByKind).ShouldBe("node");
     }
 }
 
-/// <summary>An assistant on autopilot answering a ring card is one decision, the card's own, read as the autopilot's (no second row from its Handled line).</summary>
+/// <summary>An assistant answering a ring card is one decision, the card's own, read as the node's (no second row from its Handled line).</summary>
 public sealed class DecisionAssistantAnswerTests
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
@@ -155,7 +158,7 @@ public sealed class DecisionAssistantAnswerTests
     private const string Assistant = "pilot-33";
 
     [Fact]
-    public async Task DecisionRecordedOnceWhenAnAssistantOnAutopilotAnswersARingCard()
+    public async Task DecisionRecordedOnceWhenAnAssistantAnswersARingCard()
     {
         await using var node = await NodeHarness.StartAsync(Ct);
         node.Agents.Json = AgentRows.List(AgentRows.Interactive(AgentRows.SessionA, 4242, Assistant));
@@ -163,8 +166,6 @@ public sealed class DecisionAssistantAnswerTests
         {
             await Task.Delay(50, Ct);
         }
-        (await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Set, Target = Verbs.NodeTarget, Args = ["autopilot", "on"], Who = "gui" }, Ct))
-            .Response.ShouldNotBeNull().Error.ShouldBeNull();
         var ring = node.State.RaiseCard(CardBin.Ring, "pr-ready", "flight/TIA1", "TIA1 stalled", null,
             [new CardChoice { Label = "Retry", Verb = Verbs.Raise, Target = "flight/TIA1", Args = ["for-you", "retried"] }]);
 
@@ -177,7 +178,7 @@ public sealed class DecisionAssistantAnswerTests
         node.State.Cards().Single(c => c.Id == ring.Id).State.ShouldBe(CardState.Closed);
         var decision = node.State.Decisions().ShouldHaveSingleItem();
         decision.Choice.ShouldBe("Retry");
-        (decision.By, decision.ByKind).ShouldBe((Assistant, DecisionByKinds.Autopilot));
+        (decision.By, decision.ByKind).ShouldBe((Assistant, DecisionByKinds.NodeRules));
     }
 }
 

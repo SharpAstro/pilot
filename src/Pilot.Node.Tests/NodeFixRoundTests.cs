@@ -6,15 +6,12 @@ using Xunit;
 namespace Pilot.Node.Tests;
 
 /// <summary>
-/// PIL1229, Decision 2: with the autopilot on, a review that asks for changes under the loop limit and the go-around cap is sent round
+/// PIL1229, Decision 2: a review that asks for changes under the loop limit and the go-around cap is sent round
 /// by the node itself (the press the watchtower made 205 times); in every other case the card is raised as before.
 /// </summary>
 public sealed class NodeFixRoundTests : ReviewTestsBase
 {
     private const string Findings = "## Blocking\n- the parser drops a token";
-
-    private void Autopilot(bool on) =>
-        _legs.Models = new RoleModels(NodeSettings.With(new NodeSettings(), NodeSettings.AutopilotKey, [on ? "on" : "off"]).Settings!);
 
     private CardRow[] FixCards() => [.. Open().Where(c => c.Kind == LegCommander.ReviewChanges)];
 
@@ -33,9 +30,9 @@ public sealed class NodeFixRoundTests : ReviewTestsBase
         Run(Verbs.Review, Verbs.FlightTarget(code), Reviewer(code), "changes", report);
 
     [Fact]
-    public async Task OnAutopilotAChangesVerdictSendsTheLastLegRoundAsTheNodeWithTheFindingsAsItsBrief()
+    public async Task AChangesVerdictSendsTheLastLegRoundAsTheNodeWithTheFindingsAsItsBrief()
     {
-        Autopilot(true);
+        NodeAdvances();
         var flight = await Reviewing("1");
 
         (await Verdict(flight.Code)).Error.ShouldBeNull();
@@ -59,7 +56,7 @@ public sealed class NodeFixRoundTests : ReviewTestsBase
     [Fact]
     public async Task TheReviewerIsStillDoneWithAndTheRoundsResultIsReviewedAsAfterAPressedGoAround()
     {
-        Autopilot(true);
+        NodeAdvances();
         var flight = await Reviewing("2");
         var reviewer = F(flight.Code).Review.ShouldNotBeNull().ReviewerJob.ShouldNotBeNull();
 
@@ -85,25 +82,9 @@ public sealed class NodeFixRoundTests : ReviewTestsBase
     }
 
     [Fact]
-    public async Task WithTheAutopilotOffTheRingCardIsRaisedAsBefore()
-    {
-        Autopilot(false);
-        var flight = await Reviewing("3");
-
-        (await Verdict(flight.Code)).Error.ShouldBeNull();
-
-        var card = FixCards().ShouldHaveSingleItem();
-        card.Bin.ShouldBe(CardBin.Ring);
-        card.Title.ShouldBe($"{flight.Code}'s review found things to fix");
-        _state.Cards().ShouldNotContain(c => c.Kind == LegCommander.NodeFixRoundKind);
-        Parser(flight.Code).State.ShouldBe(LegState.Done);
-        Parser(flight.Code).GoArounds.ShouldBe(0);
-    }
-
-    [Fact]
     public async Task AtTheGoAroundCapTheCardIsRaisedAndNoRoundIsSent()
     {
-        Autopilot(true);
+        NodeAdvances();
         var flight = await Reviewing("4");
         _state.PutLeg(Parser(flight.Code) with { ReviewGoArounds = LegCommander.MaxReviewGoArounds });
 
@@ -121,27 +102,32 @@ public sealed class NodeFixRoundTests : ReviewTestsBase
         var flight = await Reviewing("5");
         for (var round = 1; round <= 3; round++)
         {
-            Autopilot(round == 3);
-            if (round > 1)
-            {
-                File.WriteAllText(Path.Combine(flight.Worktree, $"fix{round}.txt"), "more\n");
-                Git(flight.Worktree, "add", ".");
-                Git(flight.Worktree, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", $"fix{round}");
-                (await Run(Verbs.StartReview, Verbs.FlightTarget(flight.Code), "controller")).Error.ShouldBeNull();
-                await Started(_legs, flight.Code);
-            }
             (await Verdict(flight.Code, Answered(flight.Code) + $"## Blocking\n- finding of round {round}")).Error.ShouldBeNull();
+            if (round == 3)
+            {
+                break;
+            }
+            // The node sent the round: its worker fixes, finishes, and the finish starts the next review.
+            await Started(_legs, flight.Code);
+            var worker = Parser(flight.Code).Worker.ShouldNotBeNull();
+            File.WriteAllText(Path.Combine(flight.Worktree, $"fix{round}.txt"), "more\n");
+            Git(flight.Worktree, "add", ".");
+            Git(flight.Worktree, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", $"fix{round}");
+            (await Run(Verbs.Check, Verbs.LegTarget(flight.Code, "parser"), worker, "1")).Ok.ShouldBeTrue();
+            (await Run(Verbs.FinishLeg, Verbs.LegTarget(flight.Code, "parser"), worker, "done", "fixed it")).Error.ShouldBeNull();
+            await Started(_legs, flight.Code);
         }
 
         Open().ShouldContain(c => c.Kind == LegCommander.ReviewLoopKind && c.Bin == CardBin.Ring);
-        _state.Cards().ShouldNotContain(c => c.Kind == LegCommander.NodeFixRoundKind);
-        Parser(flight.Code).GoArounds.ShouldBe(0);
+        // Only the two rounds the node did send have their Handled card: the third was not sent.
+        _state.Cards().Count(c => c.Kind == LegCommander.NodeFixRoundKind).ShouldBe(2);
+        Parser(flight.Code).GoArounds.ShouldBe(2);
     }
 
     [Fact]
-    public async Task AReviewThatDidNotStartStillRaisesItsCardOnAutopilot()
+    public async Task AReviewThatDidNotStartStillRaisesItsCard()
     {
-        Autopilot(true);
+        NodeAdvances();
         var flight = await NewFlight("6", "parser");
         await Fly(flight, "parser");
         _workers.Fail = new FlightException("claude --bg did not start: folder not trusted");
@@ -154,10 +140,10 @@ public sealed class NodeFixRoundTests : ReviewTestsBase
     }
 
     [Fact]
-    public async Task APrThatFailsItsChecksStillRaisesItsCardOnAutopilot()
+    public async Task APrThatFailsItsChecksStillRaisesItsCard()
     {
         var (flight, _) = await Passed("7");
-        Autopilot(true);
+        NodeAdvances();
         _github.Checks = ChoiceStatus.Failing;
 
         await new PrChecks(_state, _github, TimeProvider.System, _flights, _legs).LookAsync(Ct);
@@ -171,7 +157,7 @@ public sealed class NodeFixRoundTests : ReviewTestsBase
     [Fact]
     public async Task AVerdictOnAFlightOnHoldIsRefusedNamingTheHoldAndSendsNoRound()
     {
-        Autopilot(true);
+        NodeAdvances();
         var flight = await Reviewing("8");
         (await Run(Verbs.Ground, Verbs.FlightTarget(flight.Code), "me", "the", "owner", "holds", "it")).Error.ShouldBeNull();
 

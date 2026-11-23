@@ -201,7 +201,7 @@ public static class CardKinds
     public const string WatchtowerChurning = "watchtower-churning";
 
     /// <summary>
-    /// An assistant's your-only command (a merge, a landing, a setting) waiting on the person with the autopilot off (#208): a
+    /// An assistant's your-only command (a merge, a landing, a setting) waiting on the person (#208): a
     /// For-you card whose <c>Allow</c> runs the command as the person and whose <c>Deny</c> closes it, the asking session
     /// told either way (<see cref="CardRow.AskedBy"/>). Answering it is the person's alone.
     /// </summary>
@@ -226,8 +226,8 @@ public static class CardKinds
     /// </summary>
     public const string IdeaRepo = "idea-repo";
 
-    /// <summary>What an assistant did on the autopilot, as a Handled line: the session, what it did, and the message it acted on.</summary>
-    public const string AutopilotRan = "autopilot-ran";
+    /// <summary>What the node did for an assistant, as a Handled line: the session, what it did, and the message it acted on.</summary>
+    public const string NodeRan = "autopilot-ran";
 
     /// <summary>A card the watchtower answered or dismissed at the person's word in its chat, as a Handled line: what it did and the words it acted on.</summary>
     public const string PersonsWord = "persons-word";

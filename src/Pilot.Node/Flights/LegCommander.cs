@@ -304,8 +304,7 @@ public sealed partial class LegCommander(
                     ClearHolding(command);
                     break;
                 case Verbs.Hold:
-                    TakeHolding(command);
-                    break;
+                    throw new FlightException($"the node plans a review-notes leg itself for a review that passed with notes, so there is no hold to take on {FlightOf(command.Target).Code}: make the fixes in a leg, or give the owner's word with flight clear");
                 case Verbs.Review:
                     await ReviewAsync(command, cancellationToken);
                     break;
@@ -466,7 +465,7 @@ public sealed partial class LegCommander(
                 }
                 if (command.Who == "node" && command.Verb == Verbs.Merge)
                 {
-                    // The node's own merge (autopilot, an armed merge at green, a recheck) is not refused for it: the update is what it did,
+                    // The node's own merge (by its rules, an armed merge at green, a recheck) is not refused for it: the update is what it did,
                     // a conflict GitHub saw that the base merged in cleanly as much as a branch behind its base.
                     made = updated;
                     error = null;
@@ -652,7 +651,7 @@ public sealed partial class LegCommander(
                 // new head (its status and label are set again there), and its PR-ready card offers the merge at that head.
                 flight = Record(code, f => f with { Review = f.Review is { } held ? held with { ReviewedHead = kept, StatusState = null } : null })!;
                 await OffLockAsync(null, () => _marks.ApplyAsync(code, cancellationToken));
-                state.CloseCardsAbout(Verbs.FlightTarget(code), $"{code} brought up to date with {flight.Base}; its review carries to {CommitRefs.Short(kept)}", PrReady, MergeFailed, PrChecks.AutopilotMergeRefused);
+                state.CloseCardsAbout(Verbs.FlightTarget(code), $"{code} brought up to date with {flight.Base}; its review carries to {CommitRefs.Short(kept)}", PrReady, MergeFailed, PrChecks.NodeMergeRefused);
                 if (flight.PullRequest is not null)
                 {
                     await RaisePrReadyAsync(flight, "passed, and carried over the clean merge of its base", "Review", cancellationToken);
@@ -661,7 +660,7 @@ public sealed partial class LegCommander(
                 await CheckAfterPushAsync(flight, cancellationToken);
                 return (null, kept);
             }
-            state.CloseCardsAbout(Verbs.FlightTarget(code), $"{code} brought up to date with {flight.Base}; reviewed afresh", PrReady, MergeFailed, PrChecks.AutopilotMergeRefused);
+            state.CloseCardsAbout(Verbs.FlightTarget(code), $"{code} brought up to date with {flight.Base}; reviewed afresh", PrReady, MergeFailed, PrChecks.NodeMergeRefused);
             await StartReviewAsync(flight, cancellationToken, quiet: true);
             await CheckAfterPushAsync(flight, cancellationToken);
             return (null, null);

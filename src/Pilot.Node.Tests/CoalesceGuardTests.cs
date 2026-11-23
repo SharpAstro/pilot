@@ -73,11 +73,11 @@ public sealed class CoalesceGuardTests : ReviewTestsBase
     }
 
     [Fact]
-    public async Task TheAutopilotLookingWhileTheFlightsMergeRunsNeitherClosesTheCardNorSaysMergedNorRings()
+    public async Task TheNodesLookWhileTheFlightsMergeRunsNeitherClosesTheCardNorSaysMergedNorRings()
     {
         var (flight, _) = await Passed("1");
         _github.Checks = ChoiceStatus.Passing;
-        _legs.Models = new RoleModels(NodeSettings.With(new NodeSettings(), NodeSettings.AutopilotKey, ["on"]).Settings!);
+        _legs.Models = new RoleModels(new NodeSettings());
         var ready = _state.Cards(openOnly: true).Single(c => c.Kind == LegCommander.PrReady);
         var (open, reached) = HoldGitHub(nameof(IGitHub.MergeAsync));
         var merge = Ask(_legs, Verbs.Merge, flight.Code, _github.Pr!.Head);
@@ -86,8 +86,8 @@ public sealed class CoalesceGuardTests : ReviewTestsBase
         await new PrChecks(_state, _github, TimeProvider.System, _flights, _legs).LookAsync(Ct);
 
         _state.Cards(openOnly: true).ShouldContain(c => c.Id == ready.Id);
-        _state.Cards().ShouldNotContain(c => c.Kind == CardKinds.AutopilotRan && c.Title.Contains("on autopilot"));
-        _state.Cards(openOnly: true).ShouldNotContain(c => c.Kind == PrChecks.AutopilotMergeRefused || c.Kind == PrChecks.MergeDropped);
+        _state.Cards().ShouldNotContain(c => c.Kind == CardKinds.NodeRan && c.Title.StartsWith("The node did for"));
+        _state.Cards(openOnly: true).ShouldNotContain(c => c.Kind == PrChecks.NodeMergeRefused || c.Kind == PrChecks.MergeDropped);
         open.SetResult();
         (await merge).Ok.ShouldBeTrue();
         _github.Merged.ShouldHaveSingleItem();
@@ -107,7 +107,7 @@ public sealed class CoalesceGuardTests : ReviewTestsBase
 
         again.Ok.ShouldBeFalse();
         again.Error.ShouldNotBeNull().ShouldContain("is being merged already");
-        // A node wait, not a person's: the autopilot asks again and rings nobody.
+        // A node wait, not a person's: the node asks again and rings nobody.
         again.Refusal.ShouldBe(MergeRefusals.NodeWait);
         open.SetResult();
         await merge;

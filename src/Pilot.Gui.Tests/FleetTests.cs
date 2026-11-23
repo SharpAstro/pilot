@@ -28,7 +28,7 @@ public sealed class FleetTests
     {
         var line = FleetLine.From("10.0.0.9:47731", here: false, canCommand: false, "SE2 DESKTOP-7", Summary("s2", "bo@example.org (Other, max)", flying: 2, rings: 1, waiting: 1));
 
-        line.ToDumpLine().ShouldBe("SE2 · DESKTOP-7 | 10.0.0.9:47731 | live | bo@example.org (Other, max) | - | 3 live · 1 waiting on you | 2 flying | none | 1 ringing | watch only | autopilot off");
+        line.ToDumpLine().ShouldBe("SE2 · DESKTOP-7 | 10.0.0.9:47731 | live | bo@example.org (Other, max) | - | 3 live · 1 waiting on you | 2 flying | none | 1 ringing | watch only");
         FleetLine.From("10.0.0.9:47731", false, true, "SE2 DESKTOP-7", Summary("s2", connected: false) with { Node = null }).Machine.ShouldBe("SE2 DESKTOP-7");
     }
 
@@ -483,7 +483,7 @@ public sealed class FleetTests
 
     /// <summary>
     /// Frames of the whole fleet story (PILOT_TEST_CAPTURE_DIR names the folder; without it nothing is written): a live node, a live
-    /// node in maintenance with autopilot and usage, the same node unreachable, and a node never heard; at 900 and 1800 wide.
+    /// node in maintenance with usage, the same node unreachable, and a node never heard; at 900 and 1800 wide.
     /// The Fleet page has the one palette; the node pills are also framed on Flights, in its day and its night palette.
     /// </summary>
     [Theory]
@@ -497,9 +497,9 @@ public sealed class FleetTests
         var gone = new NodeMark("10.0.0.9:47731", "10.0.0.9:47731", "DE2", Here: false);
         var quiet = new NodeMark("10.0.0.5:47731", "10.0.0.5:47731", "LE1", Here: false);
         var inMaintenance = InMaintenance("de1", connected: true) with { Usage = "5 h 42% · 7 d 18%", Flying = 1, Rings = 1 };
-        inMaintenance = inMaintenance with { Node = inMaintenance.Node! with { Autopilot = true, MachinePrefix = "DE1", MachineName = "NAS-1" } };
+        inMaintenance = inMaintenance with { Node = inMaintenance.Node! with { MachinePrefix = "DE1", MachineName = "NAS-1" } };
         var down = InMaintenance("de2", connected: false) with { DownSince = heard, RetryEvery = TimeSpan.FromSeconds(2), Usage = "5 h 42% · 7 d 18%", Flying = 1, Rings = 1 };
-        down = down with { Node = down.Node! with { Autopilot = true, MachinePrefix = "DE2", MachineName = "LAPTOP-3" } };
+        down = down with { Node = down.Node! with { MachinePrefix = "DE2", MachineName = "LAPTOP-3" } };
         var never = Summary("le1", connected: false) with { Node = null, Status = "no node on 10.0.0.5:47731: refused; retrying every 2s" };
         var screen = new FleetScreen(
         [
@@ -695,7 +695,7 @@ public sealed class FleetTests
         }
     }
 
-    /// <summary>The marks under a row's account (maintenance, churning watchtower, autopilot, usage) each end a gap before the next starts, live and last known, narrow and wide.</summary>
+    /// <summary>The marks under a row's account (maintenance, churning watchtower, usage) each end a gap before the next starts, live and last known, narrow and wide.</summary>
     [Theory]
     [InlineData(false, 1280)]
     [InlineData(false, 700)]
@@ -708,7 +708,7 @@ public sealed class FleetTests
         {
             Usage = "5h 41% · 7d 12%",
             DownSince = lastKnown ? new DateTimeOffset(2026, 10, 28, 12, 5, 0, TimeSpan.Zero) : null,
-            Node = Summary("s2").Node! with { Maintenance = true, Autopilot = true, Watchtower = churning },
+            Node = Summary("s2").Node! with { Maintenance = true, Watchtower = churning },
         };
         var line = FleetLine.From("10.0.0.9:47731", here: false, canCommand: true, null, summary, Live.At);
         using var renderer = new RgbaImageRenderer((uint)width, 400);
@@ -721,7 +721,7 @@ public sealed class FleetTests
         var icon = leaves.Where(a => TextOf(a) == FleetLine.MaintenanceIcon).ShouldHaveSingleItem();
         var word = leaves.Where(a => TextOf(a).StartsWith(FleetLine.MaintenanceWord, StringComparison.Ordinal)).ShouldHaveSingleItem();
         var marks = new List<(string Name, float Left, float Right)> { ("maintenance", icon.Bounds.X, word.Bounds.X + word.Bounds.Width) };
-        foreach (var (name, text) in new[] { ("watchtower", line.WatchtowerMark), ("autopilot", line.AutopilotWord), ("usage", line.Usage) })
+        foreach (var (name, text) in new[] { ("watchtower", line.WatchtowerMark), ("usage", line.Usage) })
         {
             if (!string.IsNullOrEmpty(text))
             {
@@ -739,7 +739,7 @@ public sealed class FleetTests
             }
         }
 
-        marks.Count.ShouldBeGreaterThanOrEqualTo(lastKnown ? 2 : 3);
+        marks.Count.ShouldBeGreaterThanOrEqualTo(lastKnown ? 1 : 3);
         if (!lastKnown)
         {
             marks.ShouldContain(m => m.Name == "usage");

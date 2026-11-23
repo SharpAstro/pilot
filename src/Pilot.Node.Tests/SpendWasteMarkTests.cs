@@ -225,6 +225,8 @@ public sealed class SpendWasteReviewMarkTests : ReviewTestsBase
     public async Task AFreshReviewOfAHeadOnlyABaseMergeChangedIsMarkedAndOneWithACommitOfItsOwnIsNot()
     {
         var flight = await Opened();
+        // The leg's rounds are spent, so the node sends no fix round itself (pilot #1271) and the person starts each fresh review by hand.
+        _state.PutLeg(_state.Legs(flight.Code).Single() with { ReviewGoArounds = LegCommander.MaxReviewGoArounds });
         (await Run(Verbs.Review, Verbs.FlightTarget(flight.Code), Reviewer(flight.Code), "changes", "- the null check is gone")).Error.ShouldBeNull();
 
         BaseMerged(flight, "base-1.txt");

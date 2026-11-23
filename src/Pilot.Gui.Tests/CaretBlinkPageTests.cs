@@ -74,7 +74,6 @@ public sealed class CaretBlinkPageTests
     private static PilotChrome<RgbaImage> Chrome(RgbaImageRenderer renderer, PilotPage page)
     {
         var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
-        chrome.Autopilot.OnToggle = _ => Task.FromResult<string?>(null);
         chrome.PullRequests.OnRefresh = _ => Task.CompletedTask;
         chrome.Show(page);
         return chrome;

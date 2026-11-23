@@ -111,7 +111,7 @@ internal static class LabelHold
         state.RemoveMerge(code);
         held = state.UpdateFlight(code, f => f.MergeWhenGreen is null ? f : f with { MergeWhenGreen = null }) ?? held;
         var target = Verbs.FlightTarget(code);
-        state.CloseCardsAbout(target, $"{code} is on hold by {by}", LegCommander.PrReady, LegCommander.MergeFailed, PrChecks.AutopilotMergeRefused, LegCommander.NextStepKind);
+        state.CloseCardsAbout(target, $"{code} is on hold by {by}", LegCommander.PrReady, LegCommander.MergeFailed, PrChecks.NodeMergeRefused, LegCommander.NextStepKind);
         state.CloseCardsAbout(target, "on hold", LegCommander.OnHoldKind);
         state.RaiseCard(CardBin.Handled, LegCommander.OnHoldKind, target, $"{code} is on hold by {by}: {why}",
             $"{PilotMarks.Hold} was put on {held.Item.Noun} on GitHub. The node starts nothing for {code} and takes no outward step until the label is taken off (or `pilot flight unground {code}`). "

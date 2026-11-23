@@ -57,7 +57,9 @@ public sealed class LabelsFollowStateTests : PrMarksTestsBase
         GitHubHasTheHeadThePlaneHas();
         (await Verdict(flight.Code, "changes", "## Blocking\n- the null check in Parse is gone")).Error.ShouldBeNull();
         Pilot(_github.Labels[71]).ShouldBe(["pilot: changes"]);
-        (await Run(Verbs.StartReview, Verbs.FlightTarget(flight.Code), "controller")).Error.ShouldBeNull();
+        // The node sends the fix round itself; the worker's finish starts the second review.
+        await FixRound(flight.Code);
+        GitHubHasTheHeadThePlaneHas();
 
         (await Verdict(flight.Code, "pass", Notes)).Error.ShouldBeNull();
 
@@ -106,6 +108,8 @@ public sealed class LabelsFollowStateTests : PrMarksTestsBase
     [Trait("Category", "Slow")]
     public async Task ALabelTakenOffOnGitHubIsSetAgainAndALabelGitHubRefusesIsACardNotALogLine()
     {
+        // A no-auto-merge repo: the node merges a passed flight at its look otherwise, and the labels of a flight still open are what is looked at.
+        _legs.Models = new RoleModels(new NodeSettings { NoAutoMergeRepos = ["tianwen"] });
         var flight = await Opened();
         (await Verdict(flight.Code, "pass", "every Done-when holds")).Error.ShouldBeNull();
         _github.Labels[71].Clear();

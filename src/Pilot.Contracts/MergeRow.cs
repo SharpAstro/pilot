@@ -4,7 +4,7 @@ namespace Pilot.Contracts;
 
 /// <summary>
 /// One flight's place in its repo's merge queue: the node owns the queue, as it owns jobs. A merge asked for (by hand, armed at
-/// green, or by autopilot) adds an entry, and the node takes each repo's entries in order, one at a time: it brings the head up
+/// green, or by the node itself) adds an entry, and the node takes each repo's entries in order, one at a time: it brings the head up
 /// to date by plain git (the base merged in, a plain push), waits for a passed review at that head and green checks, then merges
 /// it. Keyed by flight: a flight has one entry, and a new head replaces its entry's head.
 /// </summary>
@@ -33,7 +33,7 @@ public sealed record MergeRow
     /// <summary>Its place among its repo's entries still in the queue, 1 for the head; null once it has left.</summary>
     public int? Place { get; init; }
 
-    /// <summary>Who asked: <c>hand</c>, <c>armed</c> (a merge pressed while checks ran, taken at green) or <c>autopilot</c>.</summary>
+    /// <summary>Who asked: <c>hand</c>, <c>armed</c> (a merge pressed while checks ran, taken at green) or <c>autopilot</c> (the stored word for the node itself).</summary>
     public string By { get; init; } = MergeBy.Hand;
 
     /// <summary>True while an entry in <see cref="MergeEntryState.Checks"/> waits for a passed review at its head (a fresh one was started) rather than for green checks.</summary>
@@ -55,7 +55,7 @@ public static class MergeBy
 {
     public const string Hand = "hand";
     public const string Armed = "armed";
-    public const string Autopilot = "autopilot";
+    public const string Node = "autopilot";
 }
 
 /// <summary>Where a merge entry stands.</summary>

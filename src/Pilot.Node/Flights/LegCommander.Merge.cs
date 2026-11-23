@@ -11,8 +11,8 @@ namespace Pilot.Node.Flights;
 /// </summary>
 public sealed partial class LegCommander
 {
-    /// <summary>The last item of <see cref="FlightRow.MergeWhenGreen"/> when the node armed the merge itself, on autopilot.</summary>
-    public const string ArmedByAutopilot = "autopilot";
+    /// <summary>The last item of <see cref="FlightRow.MergeWhenGreen"/> when the node armed the merge itself by its own rules (stored as "autopilot" for old stores).</summary>
+    public const string ArmedByRules = "autopilot";
 
     /// <summary>The button that merges a flight's PR: two words at least, as every button says what it does (#797).</summary>
     public const string MergeLabel = "Merge the PR";
@@ -27,8 +27,8 @@ public sealed partial class LegCommander
         // The merge is an entry in its repo's queue (MergeRow), never done on the spot: the node takes the repo's entries in order, one
         // at a time, and the entry says where it stands. Only a flight that may merge at all (every leg done, review passed) gets one.
         var (asked, askedHead, askedMethod) = Mergeable(command);
-        var by = command.Who != "node" ? MergeBy.Hand : asked.MergeWhenGreen is null ? MergeBy.Autopilot
-            : asked.MergeWhenGreen[^1] == ArmedByAutopilot ? MergeBy.Autopilot : MergeBy.Armed;
+        var by = command.Who != "node" ? MergeBy.Hand : asked.MergeWhenGreen is null ? MergeBy.Node
+            : asked.MergeWhenGreen[^1] == ArmedByRules ? MergeBy.Node : MergeBy.Armed;
         // A flight's entry is its one merge command's: a second ask while one is under way is refused and leaves the entry as it is.
         bool underWay;
         lock (_turns)
@@ -56,7 +56,7 @@ public sealed partial class LegCommander
         try
         {
             // Nothing lands open (pilot #1107): the points its reviews left are filed as the flight's one follow-up issue before any merge, a hand's,
-            // the autopilot's, an armed one's or the queue's. Done once the flight is under way (Enqueue put it in _active), so two asks for one
+            // the node's, an armed one's or the queue's. Done once the flight is under way (Enqueue put it in _active), so two asks for one
             // flight cannot both see no issue and file two: the second is refused above until this one ends.
             await EnsureFollowUpAsync(Mergeable(command).Item1, null, cancellationToken, lastRoundNotes: true, ownersWord: command.PersonsWord is not null || (command.Args is { Length: > 2 } mergeArgs && mergeArgs[2] == MergeAsIs && IsPerson(asked, command.Who))); // #1148, #1226: a passing-round note with no end refuses the merge unless the owner says so (the person's as-is merge)
             await OffLockAsync(null, () => WaitTurnAsync(asked.Code, asked.Repo, cancellationToken));
@@ -133,7 +133,7 @@ public sealed partial class LegCommander
         }
         catch (AlreadyMergedException)
         {
-            // GitHub merged it before this merge asked (the queue, a person, the autopilot's earlier look): the state wanted. The
+            // GitHub merged it before this merge asked (the queue, a person, the node's earlier look): the state wanted. The
             // command's end lands the flight as any merge does, and nothing is refused or rung (#799 rule 6, row c17100).
             return (true, null, null);
         }
@@ -243,13 +243,13 @@ public sealed partial class LegCommander
     private async Task<(bool Merged, string? Made, string? Way)> ArmAsync(FlightRow flight, PullRequest pr, string method, ChecksSummary? checks, string? progress, bool byAutopilot, CancellationToken cancellationToken)
     {
         var how = await OffLockAsync(flight, () => ArmHowAsync(flight, pr, method, cancellationToken));
-        // A merge the node asked for on autopilot is marked (last), so a failure of its checks sends the leg round as it would without
+        // A merge the node asked for is marked (last), so a failure of its checks sends the leg round as it would without
         // one. The mark follows who waits (an empty third element when none does).
         Record(flight.Code, f => f with { MergeWhenGreen = (how, byAutopilot) switch
         {
             (null, false) => [pr.Head, method],
             (_, false) => [pr.Head, method, how!],
-            _ => [pr.Head, method, how ?? "", ArmedByAutopilot],
+            _ => [pr.Head, method, how ?? "", ArmedByRules],
         } });
         return (false, ArmedLine(checks, how, progress), MergeWays.Armed);
     }
@@ -336,7 +336,7 @@ public sealed partial class LegCommander
         }
         if (flight.Holding is { } holding)
         {
-            throw new MergeBlockedException(MergeRefusals.NodeWait, $"{flight.Code} is in a holding pattern since {holding.Since.ToLocalTime():HH:mm}: {holding.Reason}; the watchtower clears it (`flight clear {flight.Code}`) or pushes its fixes (`flight pr {flight.Code}`); a hold the watchtower does not take (`flight hold {flight.Code}`, or a commit in the plane) is never merged with its notes: the node plans the review-notes leg or rings the owner, and only the owner's word clears it");
+            throw new MergeBlockedException(MergeRefusals.NodeWait, $"{flight.Code} is in a holding pattern since {holding.Since.ToLocalTime():HH:mm}: {holding.Reason}; the watchtower clears it (`flight clear {flight.Code}`) or pushes its fixes (`flight pr {flight.Code}`); the review-notes leg makes the notes, or the owner's word clears the hold");
         }
         // A question of design the review asked of this PR and nobody has answered holds the merge: answer it or dismiss it first.
         if (PrRef.Parse(flight.PullRequestUrl) is { } own
@@ -474,7 +474,7 @@ public sealed partial class LegCommander
             {
                 Record(flight.Code, f => f with { Review = f.Review is { } held ? held with { ReviewedHead = pr.Head, StatusState = null } : null });
                 await _marks.ApplyAsync(flight.Code, cancellationToken);
-                state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), $"{flight.Code}'s head moved by {flight.Base} or by whitespace or documentation only; its review carries to {CommitRefs.Short(pr.Head)}", PrReady, MergeFailed, PrChecks.AutopilotMergeRefused);
+                state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), $"{flight.Code}'s head moved by {flight.Base} or by whitespace or documentation only; its review carries to {CommitRefs.Short(pr.Head)}", PrReady, MergeFailed, PrChecks.NodeMergeRefused);
                 return pr;
             }
             // The node starts a review of the new head (HeadMovedAsync): it waits on that.
@@ -508,17 +508,18 @@ public sealed partial class LegCommander
                 line, [merge with { Label = MergeLabel, Status = way == MergeWays.Queued ? ChoiceStatus.Queued : ChoiceStatus.Armed, Note = note }], card.Link ?? flight?.PullRequestUrl, PrReady,
                 way == MergeWays.Queued ? $"The merge of {code} is in GitHub's merge queue. GitHub merges it by itself, with the node up or not."
                     : byGitHub ? $"The merge of {code} is armed. GitHub merges it by itself once its checks pass, with the node up or not."
-                    : Models.Autopilot ? $"On autopilot: the node waits for the checks of {code}'s PR, then queues or merges it. Nothing for you to do unless they fail."
-                    : $"Nothing is armed on GitHub: the node waits for the checks of {code}'s PR, then queues or merges it, while it is up.",
-                bin: MergeCardBin());
+                    : $"The node waits for the checks of {code}'s PR, then queues or merges it. Nothing for you to do unless they fail.",
+                bin: MergeCardBin(flight?.Repo));
         }
     }
 
     /// <summary>
-    /// The bin of a merge card: with the autopilot on the node does the merge itself, so the card is a quiet For-you card until
-    /// <paramref name="ownerMustAct"/> (checks failed, queue dropped, GitHub blocks it, the node gave up); with it off, Ring as ever.
+    /// The bin of a merge card: the node does the merge itself, so the card is a quiet For-you card until
+    /// <paramref name="ownerMustAct"/> (checks failed, queue dropped, GitHub blocks it, the node gave up). A flight of a repo set to
+    /// no-auto-merge (<paramref name="repo"/>) is never merged by the node, so its card rings: the merge is the person's to press.
     /// </summary>
-    public CardBin MergeCardBin(bool ownerMustAct = false) => Models.Autopilot && !ownerMustAct ? CardBin.ForYou : CardBin.Ring;
+    public CardBin MergeCardBin(string? repo, bool ownerMustAct = false) =>
+        !ownerMustAct && (repo is null || !Models.NoAutoMerge(repo)) ? CardBin.ForYou : CardBin.Ring;
 
     /// <summary>
     /// While the flight's merge command is under way, its open pr-ready or merge-failed cards show the Merge choice as
@@ -613,7 +614,7 @@ public sealed partial class LegCommander
             : [new CardChoice { Label = MergeLabel, Verb = Verbs.Merge, Target = card.Subject, Args = [head, .. card.Choices.FirstOrDefault(c => c.Verb == Verbs.Merge)?.Args.Skip(1) ?? []], Status = status, Note = note }];
         // The failed check's page is the link only where a failed check is what blocks it: the others keep the PR's.
         state.UpdateCard(card.Id, title, detail, choices, merge is { Kind: MergeKinds.Blocked, FailedName: not null } ? merge.FailedLink ?? link : link, PrReady, MergeSummary(code, merge),
-            MergeCardBin(merge.Kind is MergeKinds.Blocked or MergeKinds.ChangesRequested || !own && merge.DroppedFromQueue is not null));
+            MergeCardBin(flight?.Repo, merge.Kind is MergeKinds.Blocked or MergeKinds.ChangesRequested || !own && merge.DroppedFromQueue is not null));
     }
 
     /// <summary>
@@ -621,7 +622,7 @@ public sealed partial class LegCommander
     /// raised): a Merge now is refused ("has legs not done"), so the card's Merge is a mark (<see cref="ChoiceStatus.WaitsForLegs"/>,
     /// naming the legs) and the card says what the merge waits for, here and on the PR page that takes its button from it (#918;
     /// PIL853's #920 said "ready" with a Merge that answered "legs not done: review-notes-2", twice in one evening). The choice keeps
-    /// the reviewed head the autopilot and the holding bound read. True when the card shows the wait (nothing else is to be said of
+    /// the reviewed head the node and the holding bound read. True when the card shows the wait (nothing else is to be said of
     /// it now); false when every leg is done, and the card says what GitHub has. Called whether or not GitHub gave a merge state.
     /// </summary>
     public bool ShowLegWait(CardRow card)
@@ -635,9 +636,7 @@ public sealed partial class LegCommander
         var legs = state.Legs(code);
         var legsLeft = LegWaitWords(legs);
         var waitTitle = $"{code}'s PR #{flight.PullRequest} merges once {string.Join(", ", open)} {(open.Count == 1 ? "is" : "are")} done (legs {legs.Length - open.Count}/{legs.Length} done)";
-        var waitWhy = Models.Autopilot
-            ? $"The {string.Join(", ", open)} {(open.Count == 1 ? "leg makes" : "legs make")} the review's fixes; the node merges the PR once {(open.Count == 1 ? "it lands" : "they land")}."
-            : $"The {string.Join(", ", open)} {(open.Count == 1 ? "leg makes" : "legs make")} the review's fixes; Merge is offered once {(open.Count == 1 ? "it lands" : "they land")}.";
+        var waitWhy = $"The {string.Join(", ", open)} {(open.Count == 1 ? "leg makes" : "legs make")} the review's fixes; the node merges the PR once {(open.Count == 1 ? "it lands" : "they land")}.";
         if (card.Title != waitTitle || card.Choices.Any(c => c.Verb == Verbs.Merge && (c.Status != ChoiceStatus.WaitsForLegs || c.Note != legsLeft)))
         {
             state.UpdateCard(card.Id, waitTitle, waitWhy,
@@ -841,7 +840,7 @@ public sealed partial class LegCommander
             await TurnToChangesAsync(flight, why, cancellationToken);
             flight = FlightOf(target);
         }
-        state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), $"{flight.Code}'s merge was taken back: {why}", PrReady, MergeFailed, PrChecks.AutopilotMergeRefused);
+        state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), $"{flight.Code}'s merge was taken back: {why}", PrReady, MergeFailed, PrChecks.NodeMergeRefused);
         state.RaiseCard(CardBin.Handled, MergeTakenBackKind, Verbs.FlightTarget(flight.Code),
             $"{flight.Code}'s merge of PR #{number} was taken back",
             $"{(took.Count > 0 ? $"{string.Join(", ", took)}. " : "")}{why}. The merge is offered again once the new leg is done and a fresh review passes.",

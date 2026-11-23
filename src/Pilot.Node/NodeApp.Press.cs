@@ -5,13 +5,12 @@ namespace Pilot.Node;
 
 public static partial class NodeApp
 {
-    /// <summary>The node's own autopilot press of the cards its rules decide (<see cref="NodePress"/>, pilot #1269).</summary>
+    /// <summary>The node's own press of the cards its rules decide (<see cref="NodePress"/>, pilot #1269).</summary>
     private static void AddNodePress(WebApplicationBuilder builder, LogWriter logWriter)
     {
         builder.Services.AddSingleton(services =>
         {
-            var models = services.GetRequiredService<RoleModels>();
-            var press = new NodePress(services.GetRequiredService<NodeState>(), () => models.Autopilot,
+            var press = new NodePress(services.GetRequiredService<NodeState>(),
                 (command, cancellationToken) => services.GetRequiredService<NodeCommands>().RunAsync(command, cancellationToken), services.GetRequiredService<TimeProvider>())
             {
                 MayEndStray = key => services.GetService<StraySweep>()?.NodeMayEnd(key) == true,
@@ -32,8 +31,8 @@ public static partial class NodeApp
                 },
                 Error = logWriter,
             };
-            // A card the node presses itself, with the autopilot on, is never sent to the ring judge.
-            services.GetRequiredService<NodeState>().NodePresses = (kind, subject, detail, choices) => models.Autopilot && press.WouldPress(kind, subject, detail, choices);
+            // A card the node presses itself, is never sent to the ring judge.
+            services.GetRequiredService<NodeState>().NodePresses = (kind, subject, detail, choices) => press.WouldPress(kind, subject, detail, choices);
             return press;
         });
         builder.Services.AddHostedService(services => services.GetRequiredService<NodePress>());

@@ -38,7 +38,7 @@ internal sealed partial class FlightsView<TSurface>
             Buttons = buttons,
             Source = PageHeader.SourceLine(screen.Source, screen.AsOf, screen.Outside),
             Lines = lines,
-        }, new TopBarParts(Nodes, Play, Autopilot, About, Night));
+        }, new TopBarParts(Nodes, Play, About, Night));
     }
 
     // The flights' body, and under it the rounds the node runs outside any flight; with no flight, the rounds alone are the page.

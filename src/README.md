@@ -175,7 +175,7 @@ It looks a minute after it starts and every 6 hours (15 minutes on beta), throug
 `pilot node restart [why…]` restarts the node without an install, as a setting does: it starts the same binary as its
 successor (`--after <its pid>`) and stops, with the restart's caller and the jobs left (`1 job carries on under the next
 node`) on a Handled card and in the answer. It is your-only like an update (a flight's session is refused, an assistant is
-sorted by the autopilot rule), and refused, with nothing stopped, when the node's binary is not `pilot-node` or the
+sorted by the node's rules), and refused, with nothing stopped, when the node's binary is not `pilot-node` or the
 successor does not start.
 `pilot update` installs the latest now, whatever the policy; `pilot update --check` only says. An install downloads the
 runtime's zip into `update/` beside the binaries, checks it against the SHA-256 GitHub lists, runs the staged
@@ -229,7 +229,7 @@ prefix, `--machine` or `PILOT_MACHINE`, else from its name).
 | `connect flight/<code> <other>` | The flight holds until the other has landed (a cycle is refused). The other is a flight of this node, or else one a reachable peer flies (found by its code on the repo's GitHub remote): the flight is then held on a `PeerConnection` (the code and the node, kept over a restart), which the flight page, `status` and the digest name (`waiting for PIL294 on DE1`). The node asks each peer on a cycle (every 60 s, `PeerConnectionWatch`) what it flies: the wait ends, and the flight flies if nothing else holds it, when that node says the flight landed or its PR merged (as GitHub says); a flight folded into another there is waited for as that one. A node that cannot be asked, or lists no such flight, keeps the flight held and the reason is on the wait (`PIL294 on DE1 (DE1 could not be asked: …)`). A flight that has landed already is nothing to wait for; a peer's flight that waits for this one is refused as a cycle; no node listing the flight refuses the connect (naming any node that could not be asked), except when an overlap answer named the node, where the connect holds with the reason shown. |
 | `sync-repos node` | `git fetch -p --all` in each tracked repo, then a fast-forward-only merge of `origin/<default>` into its main checkout. Never a merge commit or a pull, and a checkout that is dirty, on another branch, diverged from origin or without an origin default is left alone and the outcome says why; a failed fetch or fast-forward is that repo's `failed`. Each git call is cut off after 2 minutes. The result's `made` is one `name<TAB>updated\|current\|skipped\|failed<TAB>detail` line per repo, and the repo status is read afresh after it. The controller's: refused from the watchtower, and from the LAN without a grant. |
 | `create-issue repo/<path> <title> [body…]` | A new issue through `gh issue create`; the result's `made` is its number. The controller's, as `sync-repos` is. |
-| `ground flight/<code> <why…>` | The owner's hold (#771; `pilot flight ground`, not `flight hold`, which takes a review's holding pattern): records who, why and when on the flight (`FlightRow.OnHold`), puts the label `pilot: hold` on its issue so every node sees it from GitHub, and lets go of a merge the flight armed. While it stands the node starts nothing for the flight and takes no outward step (no leg, worker, planner, validator, reviewer, fixer, go-around, base merge, push, PR open or merge), from the autopilot, the sweeps, the watchtower or a card's button alike; a running worker finishes its turn (its finish is let through) and nothing follows it (the leg is recorded done, the base is not merged into the plane, nothing is pushed and GitHub's auto-merge is not touched; the release's next sweep brings the base in, pushes and starts the review), but a reviewer or planner already running is refused its report, so its review or plan is run again after the release (its tokens are spent twice). A hold read from the label on GitHub (put from another node, by hand, or while this node was down) means the same: the repo sweep, the start of a leg, plan, validation or review, and a PR open or merge read it, and the merge the flight armed is let go of just as `ground` does. The leg watch leaves it alone too (no restart of a session that took no first turn, no nudge of an idle worker, no resume after a usage limit, no wake when a wait ends), and takes each stall up afresh once it is released. With two live flights on one issue the hold is the flight's own: grounding one leaves its sibling flying (only the `pilot: hold` label holds both). Needs a why; a repeat updates it. Shown as `on hold by <who>: <why>` (`the owner` when it was held from the CLI or the GUI); a hold from the label read from GitHub as `on hold by the label pilot: hold on #<n> (<who>: <why>)`, with who and why from pilot's newest hold comment since the last release, or no parenthesis with no such comment (a hold comment older than a `pilot: off hold` one is spent) ahead of every other stage in `status`, the summary, the digest, the watchtower's brief (which leaves a held flight alone) and the GUI, where the flight's state reads `on hold` (in the held colour, not `flying`) and the row and page offer **Release** (the page says the hold and offers no Plan it, even with no legs); a held flight is counted as on hold and not as flying, once, by one helper (`FlightCounts`) that the Flights header (`3 flights · 1 flying · 2 on hold`), Home, the Fleet line and the digest all read; a flight not held offers **Hold**, asking why. A card about a held flight says so and keeps its choices, which the hold refuses with its words; the release takes the note off the card. |
+| `ground flight/<code> <why…>` | The owner's hold (#771; `pilot flight ground`, not `flight hold`, which once took a review's holding pattern and is refused since #1271): records who, why and when on the flight (`FlightRow.OnHold`), puts the label `pilot: hold` on its issue so every node sees it from GitHub, and lets go of a merge the flight armed. While it stands the node starts nothing for the flight and takes no outward step (no leg, worker, planner, validator, reviewer, fixer, go-around, base merge, push, PR open or merge), from the node's own press, the sweeps, the watchtower or a card's button alike; a running worker finishes its turn (its finish is let through) and nothing follows it (the leg is recorded done, the base is not merged into the plane, nothing is pushed and GitHub's auto-merge is not touched; the release's next sweep brings the base in, pushes and starts the review), but a reviewer or planner already running is refused its report, so its review or plan is run again after the release (its tokens are spent twice). A hold read from the label on GitHub (put from another node, by hand, or while this node was down) means the same: the repo sweep, the start of a leg, plan, validation or review, and a PR open or merge read it, and the merge the flight armed is let go of just as `ground` does. The leg watch leaves it alone too (no restart of a session that took no first turn, no nudge of an idle worker, no resume after a usage limit, no wake when a wait ends), and takes each stall up afresh once it is released. With two live flights on one issue the hold is the flight's own: grounding one leaves its sibling flying (only the `pilot: hold` label holds both). Needs a why; a repeat updates it. Shown as `on hold by <who>: <why>` (`the owner` when it was held from the CLI or the GUI); a hold from the label read from GitHub as `on hold by the label pilot: hold on #<n> (<who>: <why>)`, with who and why from pilot's newest hold comment since the last release, or no parenthesis with no such comment (a hold comment older than a `pilot: off hold` one is spent) ahead of every other stage in `status`, the summary, the digest, the watchtower's brief (which leaves a held flight alone) and the GUI, where the flight's state reads `on hold` (in the held colour, not `flying`) and the row and page offer **Release** (the page says the hold and offers no Plan it, even with no legs); a held flight is counted as on hold and not as flying, once, by one helper (`FlightCounts`) that the Flights header (`3 flights · 1 flying · 2 on hold`), Home, the Fleet line and the digest all read; a flight not held offers **Hold**, asking why. A card about a held flight says so and keeps its choices, which the hold refuses with its words; the release takes the note off the card. |
 | `unground flight/<code> [why…]` | Releases the hold, removes the label (unless a sibling flight on the issue is still held by its own row), leaves a sibling flight as it was, and the flight takes its next due step. |
 | `withdraw-flight flight/<code> <why…>` | (`pilot flight withdraw`) Ends a mistaken flight that never did any work: its sessions end, its jobs are cancelled, its plane and branch (local, and origin's when it exists) go, and its row and legs leave the live state through the `flightWithdrawn` event, so the code is free again and the flight is neither landed nor archived. Refused, naming what it found, when the flight has landed, has a PR or a merged PR, has commits past its base (in its plane or on origin) or its plane holds changes not committed. The why is required and goes on a Handled card. Two live flights on one issue (a `create --anyway`) raise a For-you card with a `Withdraw <newer>` button; the node and the watchtower never withdraw on their own. |
 | `land flight/<code>` | Its work is in: the worktree goes when clean (never with changes not committed, nor with a commit on no remote and not in its base), the branch and code stay, and flights waiting for it are cleared. |
@@ -436,20 +436,20 @@ carries them (`Reviewed lightly, usage at 88%: <the reviewer's words>`).
   pushes plain. So PR open, a go-around's finish and the node's own update never push a
   branch behind its base. A go-around's last leg is brought up to date before its check runs: a conflict leaves the leg flying for its
   worker, whose brief says to merge the base in, rerun the check and push plain before it says done.
-- **A merge never goes to the queue behind its base.** `MergeableAsync` (the Merge verb, the autopilot's merge, arming and re-running
+- **A merge never goes to the queue behind its base.** `MergeableAsync` (the Merge verb, the node's merge, arming and re-running
   checks) fetches and tests `git merge-base --is-ancestor <base> <PR head>` itself, not only GitHub's BEHIND (which needs a "require up
   to date" rule), and GitHub's Behind state is refused the same way. A PR behind is brought up to date by `BringUpToDateAsync` (pushed,
   reviewed afresh), `MergeAsync` is never called, and the command says it is *behind its base* and the merge is offered again once the
   review passes; a conflict goes to the watchtower as in the update above. The checks guards (pending arms, failing refuses) then apply to the new head.
-  The node's own merge (autopilot, the merge armed at green, a recheck) is not refused for it: `RunAsync` answers Ok with way `updated`
-  (`MergeWays.Updated`), the update closed the old head's cards, and the callers leave no Ring `AutopilotMergeRefused`, no `MergeDropped`
+  The node's own merge (the merge armed at green, a recheck) is not refused for it: `RunAsync` answers Ok with way `updated`
+  (`MergeWays.Updated`), the update closed the old head's cards, and the callers leave no Ring `NodeMergeRefused`, no `MergeDropped`
   and no failed recheck: a Handled line at most. Only a person's Merge gets the *behind its base* error.
   A repeat of a merge while the flight's first one is still running answers Ok with way `in-progress` (`MergeWays.InProgress`):
-  nothing is merged yet, so its card stays open, the autopilot and the armed-at-green merge neither report "merged" nor ring, and a
+  nothing is merged yet, so its card stays open, the node and the armed-at-green merge neither report "merged" nor ring, and a
   recheck ends with the label off and a Handled line saying a merge is already running. The first merge's own result updates the card.
 - **The node's merge queue (#395).** The node owns a queue per repo, as first-class rows like jobs (`MergeRow` in `Pilot.Contracts`,
   kept in `NodeState`, journaled as `mergeAdded`/`mergeChanged`/`mergeRemoved` and carried in `NodeMirror.Merges`; `pilot merges` prints
-  a row per entry: flight, PR, repo, place, head, state, why). A Merge (by hand, armed at green, or autopilot) adds one entry per
+  a row per entry: flight, PR, repo, place, head, state, why). A Merge (by hand, armed at green, or by the node) adds one entry per
   flight, or gives the one it has the new head and keeps its place; it is no merge on the spot. The node takes a repo's entries in
   order (`MergeAsync`, `WaitTurnAsync`), one at a time per repo (another repo's queue is its own): `waiting` behind others,
   `updating` (fetch, the base merged in, a plain push: never a rebase, never a force push), `checks` (waiting for green checks, or for a
@@ -469,7 +469,7 @@ carries them (`Reviewed lightly, usage at 88%: <the reviewer's words>`).
   the PR go unmerged: `PrChecks` sees it taken out of the queue (a failed check, a conflict) or the PR closed, and `EndLeftQueue`
   drops the entry, so the repo's later entries move up. So `pilot merges` lists nothing in flight
   that nobody works on, and no place is counted for it. **The node's look never waits for a repo's turn:** the armed merge at green
-  (`MergeWhenGreenAsync`), the autopilot's merge and `LookAtMergesAsync` skip a flight whose repo has a merge command under way
+  (`MergeWhenGreenAsync`), the node's merge and `LookAtMergesAsync` skip a flight whose repo has a merge command under way
   (`TurnHeld`) and ask at a later look, so a batch holding the turn through its CI stalls no other PR's look.
 - **Merge batches (`merge-batch`, off by default).** With `pilot settings set merge-batch on` (in force at once), the entry that
   takes its repo's turn looks for fellows (`BatchAsync`): the repo's other waiting entries into the same base branch with a passed
@@ -481,7 +481,7 @@ carries them (`Reviewed lightly, usage at 88%: <the reviewer's words>`).
   protected). A plain-git push to a protected base is never attempted, and on a queue repo (tianwen, pilot) batching is GitHub's own,
   the ruleset's group size: the setting forms no batch there and each entry goes to the queue as with it off.
   **A batch forms only from merge commands that overlap:** one holds the repo's turn while at least two more wait behind it,
-  as Merges pressed while another merge of the repo is under way do. The node's own asks (armed at green, autopilot) come one at a
+  as Merges pressed while another merge of the repo is under way do. The node's own asks (armed at green, by the node) come one at a
   time and are skipped while the turn is held, so they never batch. With two or more ready, `MergeBatcher` builds
   `pilot/batch/<repo>-<machine>-<start>-<n>` from `origin/<base>` (the flight's `Base` is `origin/main`; the batcher is given the
   branch, `main`, as a PR is) in a throwaway worktree; the machine code and a part random to the node's start keep two nodes of a
@@ -790,8 +790,7 @@ A node's first sweep waits for a look (#1114). While `maintenance-every` has nev
 nothing: once idle, the node runs a dry run and raises one For-you card (`maintenance-first-run`) with its totals and the five
 largest items per step. **Run on schedule** saves `maintenance-every` as `1d`, so the schedule applies from then on; **Keep off**
 saves it as `off`. The card is looked up by kind among the open cards, so a later tick or a restart raises no second, and the
-node's own sweep never presses either choice, and an assistant's press is asked on a card for the person unless the autopilot
-is on. A node where a person has set `maintenance-every` (either value) never gets the card.
+node's own sweep never presses either choice, and an assistant's press runs directly. A node where a person has set `maintenance-every` (either value) never gets the card.
 
 The steps:
 
@@ -1301,15 +1300,8 @@ one after another, each to the node it was sent for, whichever page is shown. A 
 back into the quote when none is up); it is on its node's page until then. A refused choice or restart is said in red until
 the next send goes through. A snapshot or capture has no node to tell, so the
 page shows no box and no buttons there.
-
-**The Autopilot switch** (#208) stands at the top right of every page's header, beside the **?** (on Home, on the title
-row): a button that says *Autopilot*, plain while the node in view has its autopilot off and lit (the accent blue) while it
-is on (`AutopilotSwitch`, shared by every page through `PilotChrome.Autopilot`). It follows the node's own answer
-(`NodeInfo.Autopilot`, read with the other node facts every few seconds), never the click. A click sends `set node autopilot
-on|off` to this window's node as `gui`, which is the person (the node takes the setting from the person only), and the status
-line says what became of it, a refusal included. Over a remote node (`--node`) it shows that node's state and does not click: the node keeps the setting for its own machine, as the Settings page is gated. Its tooltip says what the state means. The **Fleet** page says it per node:
-`autopilot on` or `autopilot off` on each row that answers (nothing for a node not reached, whose last word would read as
-now), beside the maintenance mark, and the row's dump line ends in it.
+The **Fleet** page shows the maintenance mark on each row that answers (nothing for a node not reached, whose last word would read as now), and the row's dump line ends in it.
+The **Fleet** page shows the maintenance mark on each row that answers (nothing for a node not reached, whose last word would read as
 
 The **Background tasks** page (Ctrl+6) is the node's jobs: running first, then those waiting in the order they will
 start, then the ended, last ended first. Each row has the job's command, whom it wakes (the flight and leg, a session,
@@ -1668,18 +1660,16 @@ take a flight another node of the fleet routes to it. Both are in `GET /api/v1/n
 `AcceptsFleetFlights`), and `pilot status` prints a `maintenance` line while it is on. `set node maintenance on|off` is
 the one setting a LAN grant may change (the Fleet row menu's way); every other `set` and `setup` stays this machine's.
 
-`autopilot` (#208, `on` or `off`, on unless saved off) is in force at once too, in `GET /api/v1/node` as `Autopilot`, and
-`pilot status` prints an `autopilot` line, on or off. Only the person changes it (see **Who may do what**): a `set` of it
-from an assistant, the lookout, a flight's session or a grant is refused, taking it out (`set autopilot` with no value)
-included.
+The `autopilot` setting is gone (PIL1271): a stored settings file that still has the key loads, the key is ignored, and `pilot settings set autopilot`
+says it is gone. What it turned on (fix rounds, review-notes legs, merges, fixers, the watchtower's presses) is what pilot always does.
 
 Two per-repo settings (#254) are lists, keyed by the repo's folder name and in force at once, like `priority-repos`:
 - `repo-trackers` takes `repo=tracker` entries (`pilot settings set repo-trackers bullclip-backend=shortcut`), `tracker`
   being `github` or `shortcut`. A bare number given to `create-flight` for that repo is a story of that tracker; a repo
   left out means GitHub. A later entry for a repo replaces the earlier one.
-- `no-auto-merge-repos` names repos whose PRs the node never merges by itself, autopilot on or not (`pilot settings set
-  no-auto-merge-repos bullclip-backend`). An assistant's `merge` of such a flight is not run on autopilot: it raises the
-  For-you confirm card as it does with autopilot off, and the asking session is told the answer. A passed flight's
+- `no-auto-merge-repos` names repos whose PRs the node never merges by itself, always (`pilot settings set
+  no-auto-merge-repos bullclip-backend`). An assistant's `merge` of such a flight is not run directly: it raises the
+  For-you confirm card, and the asking session is told the answer. A passed flight's
   PR-ready card there rings the controller as for any repo. The person's own merge (the card's **Allow**, the **Merge**
   button, `pilot flight merge` by hand) is not held.
 - `merge-batch` (`on` or `off`, off by default) merges a repo's ready merge queue entries as one batch: a branch of the base
@@ -1878,7 +1868,7 @@ session); the GUI and the TUI never set it. One place, `Standing.Of` on the node
 | **Grant** | the LAN token's grant (never read from the wire) | as before: never the settings, setup or grants of this machine (but `maintenance`) |
 | **Lookout** | `Who` is the watchtower's session name, whatever the flag, unless it is acting on the person's message (an assistant, below) | watch, ring, nudge, answer (a ring card too, with a button whose command it may send itself: a stall's Resume, Nudge or Redo leg); nothing your-only (so no dismissing a ring card) but at the person's word in its chat (below), and not a review's verdict or posting, `sync-repos`, `create-issue`, `fold`, `separate` or `connect-overlap` |
 | **Flight's session** | `Who` is a leg's worker or validator, a flight's reviewer or a PR review's reviewer, or a planner, worker or reviewer session row that names its flight | its own flight's legs, checks, artifacts and reviews, and a PR review its own PR; a `flight/` or `pr/` target that is another's is refused, as is `stop` or `compact` of a session and `cancel-job` of a job that is not its flight's (or its own); nothing your-only, nor `post-review`, `fold`, `separate`, `connect-overlap`, `create-issue`, `create-flight` or `sync-repos` |
-| **Assistant** | the `Agent` flag, from no session above; and the watchtower while it acts on a message the person sent it (the node's `tell`, the GUI or TUI chat, a human's `pilot say`) | everything asked in words; its your-only commands follow the autopilot rule, below |
+| **Assistant** | the `Agent` flag, from no session above; and the watchtower while it acts on a message the person sent it (the node's `tell`, the GUI or TUI chat, a human's `pilot say`) | everything asked in words; its your-only commands are run by the node, as described below |
 | **Person** | the rest: a GUI click, a human-run CLI (no `CLAUDECODE`), the node's own steps (`Who` is `node`) | everything |
 
 The **your-only** commands are `merge`, `land`, `set`, `setup`, `answer-grant`, `revoke-grant`, `update`,
@@ -1890,7 +1880,7 @@ command by hand, and an answer keeps the answerer's standing. A refused command 
 The watchtower is told apart by what began its turn: the node notes who sent the latest message to its session (the person's
 chat, a `tell`, or the node's own card and nudge, which are not theirs), and while that was the person's and the session has
 not gone idle since, `Standing.Of` takes the watchtower for an assistant, so "merge TIA1" said in the chat gets the Allow card
-(autopilot off) or runs at once with a Handled card (on). Any other turn it is the lookout.
+runs at once with a Handled card. Any other turn it is the lookout.
 
 A third route is the person's word in its chat (#473), which on Remote Control reaches the session past the node. The
 watchtower's `answer` or `dismiss` of an open card whose `--why` quotes the person's latest message (equal, or one holding
@@ -1907,25 +1897,18 @@ hand-back or a compaction leaves the watchtower fenced. The match binds the pres
 turn lifts every fence for whichever card's choice the watchtower answers (`update`, `answer-grant` and `post-review`
 included), so the brief tells it to press only the choice the person asked for and to say which.
 
-### An assistant's your-only request: the autopilot rule
+### An assistant's your-only request
 
-What an assistant (a Claude session the person talks to) sends of the your-only list is neither refused nor run blindly, but
-sorted by the `autopilot` setting (`Autopilot` on the node):
+What an assistant (a Claude session the person talks to) sends of the your-only list is run directly by the node, with a record:
 
-- **Off (the default).** The command is not run. The node raises a For-you card (kind `assistant-ask`, about the flight or
-  target), `<session> asks to merge #63 (TIA1)`, with the message the assistant acted on as its detail and two choices:
-  **Allow**, which is the original command, run as whoever presses it (the person), and **Deny**, which closes the ask. The
-  command's own result is a refusal saying it waits on that card, so the assistant knows to wait; the same command asked
-  again is the same card (a second session asking it is added to the card's `AlsoAskedBy`), and another your-only command about the same flight replaces it. When the card is answered,
-  the node says the outcome to each asking session through `say` (found by `Who` in the session rows: an MCP client with no
-  row of its name cannot be told, and the card says so) and closes the card with who answered. `dismiss` on the card is a
-  Deny. An Allow the command refuses (a merge past the head, say) leaves the ask open and tells no one.
-- **On.** The command runs at once. The command's result and its black-box line carry `Autopilot` and the message (`Why`)
-  beside `Who`, which is the session; and a Handled card (`autopilot-ran`) says `<session> merged #63 (TIA1) on autopilot`
+- The command runs at once. The command's result and its black-box line carry the message (`Why`) beside `Who`, which is the
+  session; and a Handled card (`autopilot-ran`, the stored kind kept for old stores) says `The node did for <session>: merged #63 (TIA1)`
   with that message, or `No message given`. A command the flight then refuses leaves no Handled card, only the black box.
-- **Either way**, answering or dismissing an `assistant-ask` card is itself your-only, and refused to an assistant or the
-  lookout whatever the autopilot says; a flight's session is refused every your-only command, autopilot on or off; and the
-  person, a human-run CLI and a grant are not in the rule at all.
+- A step that truly needs the person (a merge on a no-auto-merge repo) keeps its For-you card (kind `assistant-ask`, about the flight or
+  target), `<session> asks to merge #63 (TIA1)`, with two choices: **Allow**, run as whoever presses it, and **Deny**, which closes
+  the ask. The asking session is told the outcome through `say` and the card closes with who answered.
+- Answering or dismissing an `assistant-ask` card is itself your-only, refused to an assistant or the lookout; a flight's session is
+  refused every your-only command; and the person, a human-run CLI and a grant are not in the rule at all.
 
 The message is the optional `Why` of a command (`CommandRequest.Why`), filled by `--why "<message>"` on `pilot flight merge`,
 `pilot flight land`, `pilot settings set`, `pilot settings setup`, `pilot update` and `pilot node restart` (and the matching MCP tool inputs); it is

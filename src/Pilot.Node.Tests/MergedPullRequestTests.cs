@@ -7,7 +7,7 @@ namespace Pilot.Node.Tests;
 
 /// <summary>
 /// A PR the node itself saw merge leaves the Pull requests row at once and no put row brings it back inside the window (pilot #1002):
-/// the flight that landed after its merge, a PR review merged on autopilot, and the window's ends.
+/// the flight that landed after its merge, a PR review the node merged, and the window's ends.
 /// </summary>
 public sealed class MergedPullRequestTests : LegCommanderTestsBase
 {
@@ -80,13 +80,13 @@ public sealed class MergedPullRequestTests : LegCommanderTestsBase
     }
 }
 
-/// <summary>A PR review merged on autopilot drops its row from the Pull requests page at once.</summary>
+/// <summary>A PR review the node merged drops its row from the Pull requests page at once.</summary>
 public sealed class AutopilotMergedPullRequestTests : PrReviewTestsBase
 {
     [Fact]
-    public async Task APrReviewMergedOnAutopilotDropsItsRow()
+    public async Task APrReviewTheNodeMergedDropsItsRow()
     {
-        _reviews.Models = new RoleModels(new NodeSettings { Autopilot = true, MergeMethod = "squash" });
+        _reviews.Models = new RoleModels(new NodeSettings { MergeMethod = "squash" });
         _state.PutPullRequests(new PullRequestsRow
         {
             ReadAt = DateTimeOffset.UtcNow,

@@ -6,18 +6,16 @@ using Xunit;
 namespace Pilot.Node.Tests;
 
 /// <summary>
-/// PIL864: the autopilot's merge acts on the refusal's class. A node wait is no card and is asked again once it ends; a refusal that
+/// PIL864: the node's own merge acts on the refusal's class. A node wait is no card and is asked again once it ends; a refusal that
 /// passes by itself is asked again on a backoff and rings on the third failure only; a person's rings at once, naming what failed, what was
 /// tried and the one action, and never offers a merge again while the cause holds.
 /// </summary>
 public sealed class AutopilotMergeRefusalTests : ReviewTestsBase
 {
-    private void AutopilotOn() =>
-        _legs.Models = new RoleModels(NodeSettings.With(new NodeSettings(), NodeSettings.AutopilotKey, ["on"]).Settings!);
 
     private PrChecks Checks(TimeProvider? clock = null) => new(_state, _github, clock ?? TimeProvider.System, _flights, _legs);
 
-    private CardRow[] Refused() => [.. _state.Cards().Where(c => c.Kind == PrChecks.AutopilotMergeRefused)];
+    private CardRow[] Refused() => [.. _state.Cards().Where(c => c.Kind == PrChecks.NodeMergeRefused)];
 
     private void NoRefusalRaised()
     {
@@ -46,7 +44,7 @@ public sealed class AutopilotMergeRefusalTests : ReviewTestsBase
     [Trait("Category", "Slow")]
     public async Task LegsNotDoneGivesNoCardAndTheMergeGoesThroughOnceTheLegIsDone_PDF446()
     {
-        AutopilotOn();
+        NodeAdvances();
         _github.Checks = ChoiceStatus.Passing;
         var (flight, _) = await Passed("44");
         var notes = _state.Legs(flight.Code).Single() with { Name = "review-notes", State = LegState.Flying };
@@ -70,10 +68,10 @@ public sealed class AutopilotMergeRefusalTests : ReviewTestsBase
     [Trait("Category", "Slow")]
     public async Task AHoldingFlightGivesNoCardAndIsAskedOnceCleared()
     {
-        AutopilotOn();
+        NodeAdvances();
         _github.Checks = ChoiceStatus.Passing;
         var (flight, _) = await Passed("45");
-        _state.PutFlight(F(flight.Code) with { Holding = new FlightHolding { Reason = "waiting for a sibling", Since = DateTimeOffset.UtcNow } });
+        _state.PutFlight(F(flight.Code) with { Holding = new FlightHolding { Reason = "waiting for a sibling", Since = DateTimeOffset.UtcNow, By = "watchtower" } });
         var checks = Checks();
 
         await checks.LookAsync(Ct);
@@ -91,7 +89,7 @@ public sealed class AutopilotMergeRefusalTests : ReviewTestsBase
     [Trait("Category", "Slow")]
     public async Task AHeadThatMovedIsTheNodesWaitNoCardAndIsAskedAgainOnceItIsBack()
     {
-        AutopilotOn();
+        NodeAdvances();
         _github.Checks = ChoiceStatus.Passing;
         var (_, _) = await Passed("46");
         var reviewed = _github.Pr!;
@@ -116,7 +114,7 @@ public sealed class AutopilotMergeRefusalTests : ReviewTestsBase
     [Trait("Category", "Slow")]
     public async Task AGitHubFailureThatPassesIsAskedAgainOnABackoffAndRingsOnTheThirdFailure()
     {
-        AutopilotOn();
+        NodeAdvances();
         _github.Checks = ChoiceStatus.Passing;
         var (_, _) = await Passed("47");
         var thrown = PassingFailures(int.MaxValue);
@@ -158,7 +156,7 @@ public sealed class AutopilotMergeRefusalTests : ReviewTestsBase
     [Trait("Category", "Slow")]
     public async Task AGitHubFailureThatPassesOnTheSecondTryRingsNothingAndMerges()
     {
-        AutopilotOn();
+        NodeAdvances();
         _github.Checks = ChoiceStatus.Passing;
         var (_, _) = await Passed("48");
         var thrown = PassingFailures(1);
@@ -181,7 +179,7 @@ public sealed class AutopilotMergeRefusalTests : ReviewTestsBase
     [Trait("Category", "Slow")]
     public async Task ABaseBranchModifiedAnswerRetriesByBringingTheBranchUpToDateAndRingsNothing()
     {
-        AutopilotOn();
+        NodeAdvances();
         _github.Checks = ChoiceStatus.Passing;
         var (_, _) = await Passed("49");
         _github.MergeScript.Enqueue("GraphQL: Base branch was modified. Review and try the merge again.");
@@ -197,7 +195,7 @@ public sealed class AutopilotMergeRefusalTests : ReviewTestsBase
     [Trait("Category", "Slow")]
     public async Task AnApprovalNeededRingsWithApproveOnGitHubAndNoMergeAgain()
     {
-        AutopilotOn();
+        NodeAdvances();
         _github.Checks = ChoiceStatus.Passing;
         var (flight, _) = await Passed("50");
         _github.Merge = GhAnswers.MergeState(MergeKinds.Blocked, review: true);
@@ -219,7 +217,7 @@ public sealed class AutopilotMergeRefusalTests : ReviewTestsBase
     [Trait("Category", "Slow")]
     public async Task AFailedRequiredCheckRingsWithReRunTheFailedCheckAndNoMergeAgain()
     {
-        AutopilotOn();
+        NodeAdvances();
         // The look read the checks as passing; the merge's own read of them says one failed.
         _github.Checks = ChoiceStatus.Passing;
         var (flight, _) = await Passed("51");
@@ -235,7 +233,7 @@ public sealed class AutopilotMergeRefusalTests : ReviewTestsBase
 
         await Checks().LookAsync(Ct);
 
-        var card = _state.Cards().Where(c => c.Kind == PrChecks.AutopilotMergeRefused).ShouldHaveSingleItem();
+        var card = _state.Cards().Where(c => c.Kind == PrChecks.NodeMergeRefused).ShouldHaveSingleItem();
         card.Bin.ShouldBe(CardBin.Ring);
         card.Detail.ShouldNotBeNull().ShouldContain("checks fail");
         card.Detail.ShouldContain("Run the failed check again");
@@ -249,7 +247,7 @@ public sealed class AutopilotMergeRefusalTests : ReviewTestsBase
     [Trait("Category", "Slow")]
     public async Task AClosedPrIsAForYouCardWithNoChoice()
     {
-        AutopilotOn();
+        NodeAdvances();
         _github.Checks = ChoiceStatus.Passing;
         var (flight, _) = await Passed("52");
         _github.OnCall = call =>
@@ -270,10 +268,10 @@ public sealed class AutopilotMergeRefusalTests : ReviewTestsBase
         card.Detail.ShouldNotBeNull().ShouldContain("What to do:");
     }
 
-    // A person's refusal on the autopilot path: it rings once with the one action, and a merge is never what the button offers.
+    // A person's refusal on the node's own merge path: it rings once with the one action, and a merge is never what the button offers.
     private async Task<CardRow> RingsFor(string issue, Action<FlightRow> arrange, string label)
     {
-        AutopilotOn();
+        NodeAdvances();
         _github.Checks = ChoiceStatus.Passing;
         var (flight, _) = await Passed(issue);
         arrange(F(flight.Code));
@@ -345,7 +343,7 @@ public sealed class AutopilotMergeRefusalTests : ReviewTestsBase
     [Trait("Category", "Slow")]
     public async Task ARefusalNothingClassifiedRingsWithNoChoiceNotQuietlyForYou()
     {
-        AutopilotOn();
+        NodeAdvances();
         _github.Checks = ChoiceStatus.Passing;
         var (_, _) = await Passed("57");
         _github.MergeAnswers = "gh: Required status check build is expected";
@@ -362,7 +360,7 @@ public sealed class AutopilotMergeRefusalTests : ReviewTestsBase
     [Trait("Category", "Slow")]
     public async Task AConflictThatStaysRingsSayingItIsAConflictAndOffersNoMergeAgain()
     {
-        AutopilotOn();
+        NodeAdvances();
         _github.Checks = ChoiceStatus.Passing;
         var (_, _) = await Passed("58");
         var thrown = PassingFailures(int.MaxValue, MergeRefusals.Conflicting, "#63 conflicts with its base, so GitHub cannot merge it");
@@ -389,7 +387,7 @@ public sealed class AutopilotMergeRefusalTests : ReviewTestsBase
     [Trait("Category", "Slow")]
     public async Task OnceTheApprovalCardIsClosedTheHeadIsAskedAgainAndMerges()
     {
-        AutopilotOn();
+        NodeAdvances();
         _github.Checks = ChoiceStatus.Passing;
         var (_, _) = await Passed("59");
         _github.Merge = GhAnswers.MergeState(MergeKinds.Blocked, review: true);
@@ -416,7 +414,7 @@ public sealed class AutopilotMergeRefusalTests : ReviewTestsBase
     [Trait("Category", "Slow")]
     public async Task AnArmedMergeGitHubFailsOnIsAskedAgainOnTheSameBackoffAndRingsOnTheThirdFailure()
     {
-        AutopilotOn();
+        NodeAdvances();
         _github.Checks = ChoiceStatus.Pending;
         var (flight, _) = await Passed("60");
         var clock = new ShiftedClock();

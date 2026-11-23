@@ -191,11 +191,11 @@ public sealed class StaleRefusedCardTests
     }
 
     [Fact]
-    public async Task TheNodePressLookClosesThemWithTheAutopilotOff()
+    public async Task TheNodePressLookClosesThem()
     {
         _prState = "MERGED";
         var card = Refused(PrReviews.FixEndedKind, PrSubject);
-        var press = new NodePress(_state, () => false, (_, _) => throw new InvalidOperationException("nothing is pressed"), new ManualTime(Began)) { Stale = Stale() };
+        var press = new NodePress(_state, (_, _) => throw new InvalidOperationException("nothing is pressed"), new ManualTime(Began)) { Stale = Stale() };
         (await press.PressAsync(CancellationToken.None)).ShouldBe(0);
         StateOf(card).ShouldBe(CardState.Closed);
     }

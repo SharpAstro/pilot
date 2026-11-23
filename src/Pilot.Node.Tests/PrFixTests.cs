@@ -255,16 +255,16 @@ public sealed class PrFixTests1 : PrFixTestsBase
 
     [Fact]
     [Trait("Category", "Slow")]
-    public async Task TheWatchtowersFixerOnAutopilotKeepsTheGuardsTheNodesOwnFixerKeeps()
+    public async Task TheWatchtowersFixerKeepsTheGuardsTheNodesOwnFixerKeeps()
     {
-        // The review of #470: review fix from the watchtower on autopilot must not start what the node's own fixer would not.
-        Task<CommandResult> OnAutopilot(string pr) =>
+        // The review of #470: review fix from the watchtower must not start what the node's own fixer would not.
+        Task<CommandResult> WatchtowersFix(string pr) =>
             _reviews.RunAsync(new CommandRequest { Verb = Verbs.FixPr, Target = $"pr/{pr}", Args = [], Who = "du1-watchtower", Autopilot = true }, Ct);
 
         // Another author's PR, Fix it not chosen: refused, and the person's card stays.
         _github.Login = "controller";
         await Review("acme/widget#7", "changes", "README.md:1 wrong");
-        (await OnAutopilot("acme/widget#7")).Error.ShouldNotBeNull().ShouldContain("Fix it has not been chosen");
+        (await WatchtowersFix("acme/widget#7")).Error.ShouldNotBeNull().ShouldContain("Fix it has not been chosen");
         Fixers.ShouldBeEmpty();
         _state.Cards(openOnly: true).ShouldContain(c => c.Kind == PrReviews.FixOfferKind);
     }
@@ -504,7 +504,7 @@ public sealed class PrFixTests3 : PrFixTestsBase
         ring.Title.ShouldContain("4 rounds");
         ring.Detail.ShouldNotBeNull().ShouldContain("never right");
         ring.Link.ShouldNotBeNull().ShouldContain("/pull/7");
-        // Nor does the watchtower on autopilot start a fourth (the review of #470): that is the person's.
+        // Nor does the watchtower start a fourth (the review of #470): that is the person's.
         (await _reviews.RunAsync(new CommandRequest { Verb = Verbs.FixPr, Target = "pr/acme/widget#7", Args = [], Who = "du1-watchtower", Autopilot = true }, Ct))
             .Error.ShouldNotBeNull().ShouldContain("rounds of fixes");
         Fixers.Length.ShouldBe(3);

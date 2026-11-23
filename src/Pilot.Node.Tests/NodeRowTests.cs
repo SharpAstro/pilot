@@ -8,8 +8,8 @@ namespace Pilot.Node.Tests;
 /// <summary>What the node says it is, as a row on the event stream (pilot #496): published on a meaningful change only, in the snapshot.</summary>
 public sealed class NodeRowTests
 {
-    private static NodeRow Row(bool maintenance = false, bool autopilot = false, WatchtowerHealth? watchtower = null) =>
-        new() { Maintenance = maintenance, Autopilot = autopilot, Watchtower = watchtower };
+    private static NodeRow Row(bool maintenance = false, WatchtowerHealth? watchtower = null) =>
+        new() { Maintenance = maintenance, Watchtower = watchtower };
 
     private sealed class Collect : INodeEventSink
     {
@@ -37,7 +37,7 @@ public sealed class NodeRowTests
     }
 
     [Fact]
-    public void AMaintenanceOrAutopilotChangeReachesASubscriber()
+    public void AMaintenanceChangeReachesASubscriber()
     {
         var (state, seen) = Open();
         var model = Row();
@@ -46,14 +46,11 @@ public sealed class NodeRowTests
         publisher.Tick().ShouldBeTrue();
         model = Row(maintenance: true);
         publisher.Tick();
-        model = Row(maintenance: true, autopilot: true);
-        publisher.Tick();
 
         var rows = seen.OfType<NodeChangedEvent>().Select(e => e.Row).ToArray();
-        rows.Length.ShouldBe(3);
+        rows.Length.ShouldBe(2);
         rows[1].Maintenance.ShouldBeTrue();
-        rows[2].Autopilot.ShouldBeTrue();
-        state.Snapshot().Node.ShouldBe(rows[2]);
+        state.Snapshot().Node.ShouldBe(rows[1]);
     }
 
     [Fact]

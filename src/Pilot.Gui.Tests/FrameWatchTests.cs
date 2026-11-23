@@ -193,17 +193,16 @@ public partial class FrameWatchTests
     public void The_header_switches_and_node_pills_move_the_fingerprint()
     {
         var nodes = new NodeFilter();
-        var off = FrameWatch.Header(false, false, null, nodes);
+        var off = FrameWatch.Header(false, null, nodes);
 
-        FrameWatch.Header(false, false, null, nodes).ShouldBe(off);
-        FrameWatch.Header(false, true, null, nodes).ShouldNotBe(off, "the autopilot switched on");
-        FrameWatch.Header(true, false, null, nodes).ShouldNotBe(off, "the node went into maintenance");
-        FrameWatch.Header(false, false, "2.4.1", nodes).ShouldNotBe(off, "the update light came on");
+        FrameWatch.Header(false, null, nodes).ShouldBe(off);
+        FrameWatch.Header(true, null, nodes).ShouldNotBe(off, "the node went into maintenance");
+        FrameWatch.Header(false, "2.4.1", nodes).ShouldNotBe(off, "the update light came on");
         nodes.Choices = [new NodeMark("here", "here", "DE1", true), new NodeMark("se1:7313", "se1:7313", "SE1", false)];
-        var two = FrameWatch.Header(false, false, null, nodes);
+        var two = FrameWatch.Header(false, null, nodes);
         two.ShouldNotBe(off, "a second node's pill");
         nodes.Down = new Dictionary<string, DateTimeOffset?> { ["se1:7313"] = T0 };
-        FrameWatch.Header(false, false, null, nodes).ShouldNotBe(two, "SE1 went down: its pill says when it was last heard");
+        FrameWatch.Header(false, null, nodes).ShouldNotBe(two, "SE1 went down: its pill says when it was last heard");
     }
 
     [Fact]
@@ -215,7 +214,7 @@ public partial class FrameWatchTests
         long At(long clock, string? shown)
         {
             ms = clock;
-            return FrameWatch.Header(false, false, "2.4.1", nodes, FrameWatch.Light(about, shown));
+            return FrameWatch.Header(false, "2.4.1", nodes, FrameWatch.Light(about, shown));
         }
 
         At(0, "2.4.1").ShouldNotBe(At(1000, "2.4.1"), "lit, then unlit a second later");
@@ -353,7 +352,7 @@ public partial class FrameWatchTests
         chrome.Render(data.Sessions, data.Flights, data.Cards, data.Jobs, data.Fleet, data.Repos, data.PullRequests, new DIR.Lib.RectF32(0, 0, 1600, 900), data.Machines, ideas);
 
         var text = AsOf().Replace(string.Join("\n", renderer.Texts), "as of");
-        var header = FrameWatch.Header(false, false, null, chrome.Nodes);
+        var header = FrameWatch.Header(false, null, chrome.Nodes);
         return (text, FrameWatch.Fingerprint(pages, data.Fleet, at, shown, version: 1, header, FrameWatch.LanLine(chrome.Flights.Lan, at)));
     }
 

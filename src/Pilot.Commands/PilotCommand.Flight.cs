@@ -107,8 +107,8 @@ public static partial class PilotCommand
             var clear = Action(new Command("clear", "Clear a flight held in a holding pattern (its review passed with notes) to land: its merge is no longer held") { Arguments = { code, clearWhy } },
                 (p, client, ct) => Send(client, Verbs.Clear, Verbs.FlightTarget(p.GetValue(code)!), p.GetValue(clearWhy) ?? [], who, ct));
 
-            var holdWhy = Words("why", "What is being fixed in the plane", required: false);
-            var hold = Action(new Command("hold", "Take a flight held in a holding pattern (its review passed with notes): the watchtower is working on its notes in the plane, so the merge stays held; a hold nobody takes is released and merges with the notes") { Arguments = { code, holdWhy } },
+            var holdWhy = Words("why", "Not read: the node refuses the command", required: false);
+            var hold = Action(new Command("hold", "Refused by the node (pilot #1271): a review that passed with notes has its review-notes leg planned by the node, so there is no holding pattern to take. The leg makes the notes; the owner's word clears a hold with flight clear") { Arguments = { code, holdWhy } },
                 (p, client, ct) => Send(client, Verbs.Hold, Verbs.FlightTarget(p.GetValue(code)!), p.GetValue(holdWhy) ?? [], who, ct));
 
             var groundWhy = Words("why", "Why the flight is grounded");

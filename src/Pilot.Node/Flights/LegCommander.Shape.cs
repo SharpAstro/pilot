@@ -109,7 +109,7 @@ public sealed partial class LegCommander
             }
             throw new FlightException($"{flight.Code} was {how} as {CommitRefs.Short(shaped)}, but its files differ from the head reviewed{reviewed}: its review did not carry, look again before it lands");
         }
-        state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), $"{flight.Code} shaped for {flight.Base}; its review carries to {CommitRefs.Short(shaped)}", PrReady, MergeFailed, PrChecks.AutopilotMergeRefused);
+        state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), $"{flight.Code} shaped for {flight.Base}; its review carries to {CommitRefs.Short(shaped)}", PrReady, MergeFailed, PrChecks.NodeMergeRefused);
         if (laidFiles is null)
         {
             state.RaiseCard(CardBin.Handled, ShapedKind, Verbs.FlightTarget(flight.Code),

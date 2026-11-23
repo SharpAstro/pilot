@@ -243,14 +243,15 @@ public sealed class CliTests : IAsyncLifetime
         await Ok(plane, "review", "pass", "the capture shows the planets; dotnet test passes");
         _node.State.Flights().Single().Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Passed);
 
-        // The PR rang: a card with the merge on the head it was opened at; answering it merges and lands the flight.
-        // Repo setup at the create raised its Handled cards first, so the ring is found by kind, not by a fixed number.
+        // The PR is ready: a quiet For-you card with the merge on the head it was opened at (the node merges it at its next look);
+        // answering it first merges and lands the flight.
+        // Repo setup at the create raised its Handled cards first, so the card is found by kind, not by a fixed number.
         var ring = _node.State.Cards().Single(c => c.Kind == "pr-ready").Id;
         var (_, cards, _) = await Pilot(_root, "cards");
-        cards.ShouldContain($"{ring}  RING  TIA1611's PR #71 is ready to merge");
+        cards.ShouldContain($"{ring}  for you  TIA1611's PR #71 is ready to merge");
         cards.ShouldContain($"1. Merge the PR: pilot answer {ring} 1");
         var (_, cardsMarkdown, _) = await Pilot(_root, "cards", "--output-format", "markdown");
-        cardsMarkdown.ShouldContain($"## {ring} · RING · TIA1611's PR #71 is ready to merge");
+        cardsMarkdown.ShouldContain($"## {ring} · for you · TIA1611's PR #71 is ready to merge");
         cardsMarkdown.ShouldContain($"`pilot answer {ring} 1`");
         (await Pilot(_root, "cards", "--output-format", "rich")).Output.ShouldBe(cardsMarkdown);
         (await Pilot(_root, "cards", "--output-format", "auto")).Output.ShouldBe(cards);

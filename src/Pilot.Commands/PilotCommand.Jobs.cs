@@ -353,7 +353,7 @@ public static partial class PilotCommand
                 {
                     var options = d.Options.Length > 0 ? $" of [{string.Join(", ", d.Options)}]" : "";
                     var reason = d.Reason.Length > 0 ? $": {d.Reason}" : "";
-                    await output.WriteLineAsync($"{d.At.ToLocalTime().ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture)}  {d.Subject}  {d.Kind}  {d.Choice}{options}  by {d.By} ({d.ByKind}){reason}");
+                    await output.WriteLineAsync($"{d.At.ToLocalTime().ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture)}  {d.Subject}  {d.Kind}  {d.Choice}{options}  by {DecisionByKinds.Shown(d.By)} ({DecisionByKinds.Shown(d.ByKind)}){reason}");
                 }
                 return 0;
             });

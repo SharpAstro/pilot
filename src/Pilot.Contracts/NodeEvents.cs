@@ -206,7 +206,7 @@ public sealed record SnapshotEvent : NodeEvent
     /// <summary>Where every repo the node knows stands, as last read (or marked not read yet); null from an older node.</summary>
     public ReposRow? Repos { get; init; }
 
-    /// <summary>What the node says it is (maintenance, autopilot, account, watchtower); null before it has said, and from an older node.</summary>
+    /// <summary>What the node says it is (maintenance, account, watchtower); null before it has said, and from an older node.</summary>
     public NodeRow? Node { get; init; }
 }
 

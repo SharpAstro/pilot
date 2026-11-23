@@ -20,7 +20,7 @@ public sealed class LandingPathTests : ReviewTestsBase
     {
         /// <summary>The merge verb pressed by a person (the card's Merge, pilot flight merge).</summary>
         Hand,
-        /// <summary>The node's own merge on autopilot (PrChecks.MergeOnAutopilotAsync).</summary>
+        /// <summary>The node's own merge of a passed flight (PrChecks.MergePassedFlightAsync).</summary>
         Autopilot,
         /// <summary>The routine itself (LegCommander.LandPrAsync), as every caller reaches it.</summary>
         Routine,
@@ -104,7 +104,7 @@ public sealed class LandingPathTests : ReviewTestsBase
                 break;
             case Path.Autopilot:
                 _github.Checks = ChoiceStatus.Passing;
-                _legs.Models = new RoleModels(NodeSettings.With(new NodeSettings(), NodeSettings.AutopilotKey, ["on"]).Settings!);
+                _legs.Models = new RoleModels(new NodeSettings());
                 await new PrChecks(_state, _github, TimeProvider.System, _flights, _legs).LookAsync(Ct);
                 break;
             case Path.Routine:
@@ -144,7 +144,11 @@ public sealed class LandingPathTests : ReviewTestsBase
                 }
                 break;
             case LandingAnswers.Shape.Refused:
-                _github.Merged.ShouldBeEmpty();
+                // The armed merge's refusal ends it; the same look's ready-card pass (the node always merges) then lands the brought-up head.
+                if (path != Path.ArmedAtGreen || !(LandingAnswers.UpdatesTheBranch(answer) || LandingAnswers.HeadMoved(answer)))
+                {
+                    _github.Merged.ShouldBeEmpty();
+                }
                 switch (path)
                 {
                     case Path.Hand:
@@ -180,7 +184,7 @@ public sealed class LandingPathTests : ReviewTestsBase
         var (flight, _) = await Passed("1");
         var head = _github.Pr!.Head;
         _github.Checks = ChoiceStatus.Passing;
-        _legs.Models = new RoleModels(NodeSettings.With(new NodeSettings(), NodeSettings.AutopilotKey, ["on"]).Settings!);
+        _legs.Models = new RoleModels(new NodeSettings());
         _github.MergeScript.Enqueue("GraphQL: Repository rule violations found");
         await new PrChecks(_state, _github, TimeProvider.System, _flights, _legs).LookAsync(Ct);
         _github.MergeScript.Enqueue("GraphQL: Pull request has a merge conflict");
@@ -195,13 +199,13 @@ public sealed class LandingPathTests : ReviewTestsBase
     {
         var (_, _) = await Passed("1");
         _github.Checks = ChoiceStatus.Passing;
-        _legs.Models = new RoleModels(NodeSettings.With(new NodeSettings(), NodeSettings.AutopilotKey, ["on"]).Settings!);
+        _legs.Models = new RoleModels(new NodeSettings());
         var said = $"GraphQL: Repository rule violations found {Marker} and then a very long first line that goes on and on past what a card title should ever hold\nsecond line\nthird line";
         _github.MergeScript.Enqueue(said);
 
         await new PrChecks(_state, _github, TimeProvider.System, _flights, _legs).LookAsync(Ct);
 
-        var card = Open().Single(c => c.Kind == PrChecks.AutopilotMergeRefused);
+        var card = Open().Single(c => c.Kind == PrChecks.NodeMergeRefused);
         card.Detail.ShouldNotBeNull().ShouldContain("second line");
         card.Detail.ShouldContain("third line");
         card.Detail.ShouldContain("goes on and on past what a card title should ever hold");

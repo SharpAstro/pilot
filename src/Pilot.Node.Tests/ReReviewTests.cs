@@ -40,7 +40,8 @@ public sealed class ReReviewTests : ReviewTestsBase
             r => r.Round.ShouldBe(1), r => r.Head.ShouldBe(first), r => r.Verdict.ShouldBe(ReviewState.Changes), r => r.Findings.ShouldContain("null check"));
 
         Commit(flight.Worktree, "fix.txt", "restore the null check");
-        (await Run(Verbs.StartReview, Verbs.FlightTarget(code), "controller")).Error.ShouldBeNull();
+        // The node sent the fix round itself; the worker's finish pushes and starts the re-review.
+        (await Run(Verbs.FinishLeg, Verbs.LegTarget(code, "parser"), _state.Legs(code).Single().Worker!, "done", "fixed")).Error.ShouldBeNull();
         await Started(_legs, code);
 
         var brief = _workers.Started.Last().Brief;

@@ -12,7 +12,7 @@ public enum StandingKind
 
     /// <summary>
     /// An assistant: a Claude session the person talks to (a terminal session, the GUI chat), known by its command being agent-run
-    /// and from no session the node keeps for a flight. May do everything asked in words; your-only things by the autopilot rule.
+    /// and from no session the node keeps for a flight. May do everything asked in words; your-only things run at once with a Handled line (see Autopilot).
     /// </summary>
     Assistant,
 
@@ -52,7 +52,7 @@ public sealed record Standing(StandingKind Kind, string? Flight = null, string? 
     };
 
     /// <summary>
-    /// What the lookout does as the person's assistant when the autopilot is on (see NodeCommands.RunAsync): a flight's merge,
+    /// What the lookout does as the person's assistant (see NodeCommands.RunAsync): a flight's merge,
     /// its landing, a rerun of its checks, a card's answer or dismissal, and a fixer on a PR whose review asked for changes, within
     /// the guards the node's own fixer keeps (PrReviews.FixAsync): no fourth round, no design question, and no first fixer on another
     /// author's PR, whose Fix it stays the person's. The node's settings, setup, grants and updates stay the person's.
@@ -89,7 +89,7 @@ public sealed record Standing(StandingKind Kind, string? Flight = null, string? 
     /// <summary>
     /// Sorts <paramref name="command"/>'s sender; <paramref name="lookout"/> is the watchtower's session name. The watchtower
     /// is the lookout on its own and an assistant while it acts on a message the person sent it (<paramref name="lookoutForPerson"/>,
-    /// from <see cref="Flights.Watchtower.ActingForPerson"/>): their words in its chat are theirs to have done, by the autopilot rule.
+    /// from <see cref="Flights.Watchtower.ActingForPerson"/>): their words in its chat are theirs to have done, as an assistant's are.
     /// </summary>
     public static Standing Of(CommandRequest command, NodeState state, string lookout, bool lookoutForPerson = false)
     {
@@ -120,7 +120,7 @@ public sealed record Standing(StandingKind Kind, string? Flight = null, string? 
             return new Standing(StandingKind.FlightSession, session.Flight);
         }
         // A session of a new flight is not polled yet, so no row: its name still says whose it is (<machine>-<flight>-plan, -review or -<leg>),
-        // and one that names a flight is that flight's, not an assistant's, whatever autopilot says.
+        // and one that names a flight is that flight's, not an assistant's.
         // A session the node has a row for is who its row says, not who its name reads as (pilot #517): a renamed watchtower is no flight's.
         var hasRow = state.Sessions().Any(s => string.Equals(s.Name, who, StringComparison.Ordinal));
         if (command.Agent && !hasRow && SessionRoles.Resolve(who, background: false) is { Role: SessionRole.Planner or SessionRole.Worker or SessionRole.Reviewer, Flight: { } named })
@@ -150,7 +150,7 @@ public sealed record Standing(StandingKind Kind, string? Flight = null, string? 
 
     /// <summary>
     /// Whether <paramref name="command"/> answers (<c>answer</c>, either choice) or dismisses an assistant's open ask
-    /// (<see cref="CardKinds.AssistantAsk"/>): the person's alone, whatever the autopilot says, as an assistant that could press
+    /// (<see cref="CardKinds.AssistantAsk"/>): the person's alone, as an assistant that could press
     /// its own Allow would have no ask at all.
     /// </summary>
     public static bool IsAsk(CommandRequest command, NodeState state) =>
@@ -176,11 +176,6 @@ public sealed record Standing(StandingKind Kind, string? Flight = null, string? 
     public string? Refusal(CommandRequest command, NodeState state)
     {
         var yourOnly = YourOnly(command, state);
-        // Autopilot is what lets an assistant do your-only things: only the person may change it, whoever asks and however.
-        if (command.Verb == Verbs.Set && Kind != StandingKind.Person && command.Args is [{ } key, ..] && string.Equals(key.Trim(), NodeSettings.AutopilotKey, StringComparison.OrdinalIgnoreCase))
-        {
-            return "autopilot is the person's to change: set it from the GUI, or from a terminal you run yourself";
-        }
         switch (Kind)
         {
             // What the watchtower asks leave for is the person's to give: a session that could answer its own prompt would have none.
@@ -213,8 +208,8 @@ public sealed record Standing(StandingKind Kind, string? Flight = null, string? 
             case StandingKind.Assistant when IsAsk(command, state):
                 return "answering an assistant's ask is the person's: Allow and Deny are theirs to press, on the card";
             default:
-                // An assistant's other your-only commands are not refused here but sorted by the autopilot rule in
-                // NodeCommands.RunAsync: a confirm card with it off, a direct run recorded as such with it on (see Autopilot).
+                // An assistant's other your-only commands are not refused here but run by
+                // NodeCommands.RunAsync, recorded as a direct run with a Handled line (see Autopilot); a no-auto-merge repo's merge gets a confirm card.
                 return null;
         }
     }

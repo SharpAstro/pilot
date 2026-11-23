@@ -4,7 +4,7 @@ namespace Pilot.Node.Flights;
 
 /// <summary>
 /// The node's merge queue (<see cref="MergeRow"/>): one entry per flight, in order per repo. A merge asked for (by hand, armed at
-/// green, autopilot) adds or refreshes the flight's entry; the entry is taken when no other entry of its repo is being updated
+/// green, or by the node's own rules) adds or refreshes the flight's entry; the entry is taken when no other entry of its repo is being updated
 /// or merged and none that joined before it still waits (one at a time, in order). It is then brought up to date by plain git,
 /// and merges only with a passed review at its head and green checks (<see cref="MergeAsync"/>); an entry whose checks run, or
 /// whose review is fresh, waits in <see cref="MergeEntryState.Checks"/> for the node's look (<see cref="LookAtMergesAsync"/>).
@@ -76,7 +76,7 @@ public sealed partial class LegCommander
 
     /// <summary>
     /// Adds the flight's entry to its repo's queue, or gives the one it has the new head and method (it keeps its place, and who
-    /// asked for it, while it stands in the queue: the node asking a person's merge again does not make it the autopilot's; a left
+    /// asked for it, while it stands in the queue: the node asking a person's merge again does not make it the node's own; a left
     /// one starts again at the back). The flight holds its repo's turn from here, until its command ends.
     /// </summary>
     private MergeRow Enqueue(FlightRow flight, string head, string method, string by)

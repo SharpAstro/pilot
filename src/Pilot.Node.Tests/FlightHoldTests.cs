@@ -16,11 +16,6 @@ public sealed class FlightHoldTests : ReviewTestsBase
 {
     private const string Why = "waiting for the release";
 
-    private void SweepsAdvance(bool autopilot = false) =>
-        _legs.Models = new RoleModels(autopilot
-            ? NodeSettings.With(new NodeSettings(), NodeSettings.AutopilotKey, ["on"]).Settings!
-            : new NodeSettings { Autopilot = false });
-
     private PrChecks Checks() => new(_state, _github, TimeProvider.System, _flights, _legs);
 
     private async Task<FlightRow> Reviewed(string issue, string report = "Checked.")
@@ -70,7 +65,7 @@ public sealed class FlightHoldTests : ReviewTestsBase
     [Trait("Category", "Slow")]
     public async Task AHeldFlightRefusesEveryStepWithWordsNamingTheHoldAndTheSweepTakesNone()
     {
-        SweepsAdvance();
+        NodeAdvances();
         var flight = await NewFlight("2", "parser");
         var target = Verbs.FlightTarget(flight.Code);
         var leg = Verbs.LegTarget(flight.Code, "parser");
@@ -102,7 +97,7 @@ public sealed class FlightHoldTests : ReviewTestsBase
     {
         var flight = await NewFlight("3", "parser");
         await Fly(flight, "parser");
-        SweepsAdvance();
+        NodeAdvances();
         (await Hold(flight)).Error.ShouldBeNull();
 
         // Its legs are done and no PR is open: that is the next step, and a hold takes none.
@@ -125,7 +120,7 @@ public sealed class FlightHoldTests : ReviewTestsBase
     [Trait("Category", "Slow")]
     public async Task HoldTakesAPassedFlightOutOfTheNodesMergeAndUnholdMergesItAgain()
     {
-        SweepsAdvance(autopilot: true);
+        NodeAdvances();
         _github.Checks = ChoiceStatus.Passing;
         var flight = await Reviewed("4");
         // The fake PR's head is a fixed one: it stands for the head the review read, as GitHub shows it.
@@ -173,7 +168,7 @@ public sealed class FlightHoldTests : ReviewTestsBase
     public async Task TheReviewHoldSweepWritesNothingOnAHeldFlightsPrAndKeepsItsReviewHoldOnceUnheldWhileTheNoteIsUnmade()
     {
         _github.Checks = ChoiceStatus.Passing;
-        // Autopilot off: no review-notes leg is planned, the review hold is the node's, and with no watchtower the sweep looks at it
+        // A commander that does not advance: no review-notes leg is planned, the review hold is the node's, and with no watchtower the sweep looks at it
         // (before pilot #1226 it released the hold and merged with the notes; now an unmade note keeps it and rings the owner).
         var flight = await Reviewed("10", "Checked.\n\n## Not blocking\n- rename `x` to `count`");
         var since = F(flight.Code).Holding.ShouldNotBeNull().Since;
@@ -181,12 +176,9 @@ public sealed class FlightHoldTests : ReviewTestsBase
         var clock = new ManualTime(since);
         var checks = new PrChecks(_state, _github, clock, _flights, _legs) { WatchtowerLive = () => false };
 
-        clock.Advance(checks.HoldingTakeBound + TimeSpan.FromMinutes(1));
+        clock.Advance(TimeSpan.FromMinutes(6));
         await checks.LookAsync(Ct);
         await checks.LookAsync(Ct);
-        // A direct caller is refused as well: the owner's hold is asked in the handling itself, not only in the sweep's filter.
-        (await _legs.HandleHoldWithoutWatchtowerAsync(flight.Code, Ct)).ShouldBe(LegCommander.HoldHandling.None);
-        (await _legs.ReleaseUntakenHoldAsync(flight.Code, Ct)).ShouldBeFalse();
 
         // Hold and unhold comment on the flight's issue (pilot: ...); the review hold's release writes "Review of ..." on the PR.
         bool ReviewNotes((int Number, string Body) c) => c.Body.StartsWith("Review of ", StringComparison.Ordinal);
@@ -198,7 +190,7 @@ public sealed class FlightHoldTests : ReviewTestsBase
         await checks.LookAsync(Ct);
 
         // pilot #1226: a hold nobody takes never merges the flight with notes that have no end. The review hold stays (unholding the
-        // flight does not end the note), the node (autopilot off here, so no review-notes leg) raises one Ring card to the owner naming
+        // flight does not end the note), the node (not advancing here, so no review-notes leg) raises one Ring card to the owner naming
         // the note, and nothing is written on the PR.
         F(flight.Code).Holding.ShouldNotBeNull();
         _github.IssueComments.Where(ReviewNotes).ShouldBeEmpty();
@@ -209,7 +201,7 @@ public sealed class FlightHoldTests : ReviewTestsBase
     [Trait("Category", "Slow")]
     public async Task ARunningSessionStillReportsOnAHeldFlightAndNothingFollowsItsFinish()
     {
-        SweepsAdvance();
+        NodeAdvances();
         var flight = await NewFlight("6", "parser");
         (await Run(Verbs.StartLeg, Verbs.LegTarget(flight.Code, "parser"), "controller")).Error.ShouldBeNull();
         var worker = _state.Legs(flight.Code).Single().Worker!;
@@ -230,15 +222,15 @@ public sealed class FlightHoldTests : ReviewTestsBase
     [Trait("Category", "Slow")]
     public async Task AGoAroundsFinishOnAHeldFlightMergesNoBaseAndTouchesNothingOnGitHubAndTheReleaseBringsTheBaseInAndPushes()
     {
-        SweepsAdvance();
+        NodeAdvances();
         _github.AutoMergeAllowed = true;
         var flight = await NewFlight("12", "parser");
         var code = flight.Code;
         await Fly(flight, "parser");
         (await Run(Verbs.OpenPr, Verbs.FlightTarget(code), "controller")).Error.ShouldBeNull();
         (await Run(Verbs.Review, Verbs.FlightTarget(code), Reviewer(code), "changes", "naming")).Ok.ShouldBeTrue();
-        var card = Open().Single(c => c.Kind == LegCommander.ReviewChanges).Choices[0];
-        (await Run(card.Verb, card.Target, "controller", card.Args)).Error.ShouldBeNull();
+        // The node sends the fix round itself: the go-around's worker is started with the findings.
+        await Started(_legs, code);
         var worker = _state.Legs(code).Single().Worker!;
         var pr = F(code).PullRequest!.Value;
         var pushedBefore = Git(Repo, "ls-remote", "origin", flight.Branch);

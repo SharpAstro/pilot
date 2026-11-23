@@ -217,10 +217,8 @@ public sealed class PersonsWordTests
         {
             Verb = Verbs.FinishLeg, Target = Verbs.LegTarget("TIA1", "parser"), Args = ["accepted"], Who = Lookout(node), Agent = true, Why = Quote,
         });
-        var set = await Send(node, new CommandRequest { Verb = Verbs.Set, Target = Verbs.NodeTarget, Args = ["autopilot", "on"], Who = Lookout(node), Agent = true, Why = Quote });
 
         finished.Error.ShouldNotBeNull();
-        set.Error.ShouldNotBeNull();
         node.State.Legs("TIA1").Single().State.ShouldBe(LegState.Failed);
     }
 
