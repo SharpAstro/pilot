@@ -38,15 +38,15 @@ public sealed partial class NodeState
     /// carries a part that changes for one cause (an age, a count), and put in it what makes a new cause (a PR's head, a go-around's count).
     /// </param>
     /// <param name="askedBy">The assistant's session an ask card is about (<see cref="CardKinds.AssistantAsk"/>), and <paramref name="why"/> the message it acted on.</param>
-    public CardRow RaiseCard(CardBin bin, string kind, string subject, string title, string? detail = null, IReadOnlyList<CardChoice>? choices = null, string? link = null, string? askedBy = null, string? why = null, string? summary = null, string? attachment = null, string? attachmentExt = null, string? cause = null)
+    public CardRow RaiseCard(CardBin bin, string kind, string subject, string title, string? detail = null, IReadOnlyList<CardChoice>? choices = null, string? link = null, string? askedBy = null, string? why = null, string? summary = null, string? attachment = null, string? attachmentExt = null, string? cause = null, string? aboutCard = null)
     {
         // With the brain to ask (PIL855), a card that would ring is first filed in For you, silent, and rings only on the brain's verdict
         // (RingJudge): the old path, a ring at once, is what runs with no judge, and what the judge itself falls back to.
         if (bin != CardBin.Ring || RingJudge is not { CanJudge: true } judge || !RingJudge.Wants(kind, choices) || NodePresses?.Invoke(kind, subject, detail, choices) == true)
         {
-            return RaiseCardCore(bin, kind, subject, title, detail, choices, link, askedBy, why, summary, attachment, attachmentExt, cause, out _);
+            return RaiseCardCore(bin, kind, subject, title, detail, choices, link, askedBy, why, summary, attachment, attachmentExt, cause, aboutCard, out _);
         }
-        var card = RaiseCardCore(CardBin.ForYou, kind, subject, title, detail, choices, link, askedBy, why, summary, attachment, attachmentExt, cause, out var created);
+        var card = RaiseCardCore(CardBin.ForYou, kind, subject, title, detail, choices, link, askedBy, why, summary, attachment, attachmentExt, cause, aboutCard, out var created);
         // Only a card this call made: an open one of the same kind and subject is returned as it is, and is not judged again.
         if (created)
         {
@@ -70,7 +70,7 @@ public sealed partial class NodeState
     /// </summary>
     public Func<string, string, string?, IReadOnlyList<CardChoice>?, bool>? NodePresses { get; set; }
 
-    private CardRow RaiseCardCore(CardBin bin, string kind, string subject, string title, string? detail, IReadOnlyList<CardChoice>? choices, string? link, string? askedBy, string? why, string? summary, string? attachment, string? attachmentExt, string? cause, out bool created)
+    private CardRow RaiseCardCore(CardBin bin, string kind, string subject, string title, string? detail, IReadOnlyList<CardChoice>? choices, string? link, string? askedBy, string? why, string? summary, string? attachment, string? attachmentExt, string? cause, string? aboutCard, out bool created)
     {
         created = false;
         lock (_gate)
@@ -139,6 +139,7 @@ public sealed partial class NodeState
                 // The key a dismissal is remembered by, fixed when the card is raised: a later rewording of its title (the brain's, PIL855)
                 // cannot move it, so a dismissed card raised again for the same cause stays dismissed (#853).
                 Cause = key,
+                AboutCard = aboutCard,
                 Attachment = attachment,
                 AttachmentExt = attachment is null ? null : attachmentExt,
                 At = now,
@@ -151,6 +152,36 @@ public sealed partial class NodeState
             Publish(new CardAddedEvent { Seq = _seq + 1, At = now, Card = card });
             created = true;
             return card;
+        }
+    }
+
+    /// <summary>True when the card with <paramref name="id"/> is open (PIL1290: what a raise that names a card links to).</summary>
+    public bool IsCardOpen(string id)
+    {
+        lock (_gate)
+        {
+            return _cards.TryGetValue(id, out var card) && card.State == CardState.Open;
+        }
+    }
+
+    /// <summary>
+    /// PIL1290: a card closed just now closes the open cards about it (their <see cref="CardRow.AboutCard"/>), each with an outcome naming it
+    /// and what became of it, and a Handled line says so. Called from <see cref="Publish"/>, never from a journal replay. Each close is
+    /// itself a published close, so a chain of cards unwinds and a cycle ends: a card closes once.
+    /// </summary>
+    private void CloseCardsAboutClosed(CardRow closed)
+    {
+        foreach (var about in _cards.Values.Where(c => c.State == CardState.Open && c.AboutCard == closed.Id && c.Id != closed.Id).ToList())
+        {
+            if (_cards[about.Id].State != CardState.Open)
+            {
+                continue;
+            }
+            var now = _time.GetUtcNow();
+            var outcome = $"{closed.Id} closed: {closed.Outcome ?? "closed"}";
+            Publish(new CardChangedEvent { Seq = _seq + 1, At = now, Card = about with { State = CardState.Closed, Outcome = outcome, ClosedBy = "node", ClosedAt = now, Answering = null } });
+            RaiseCardCore(CardBin.Handled, CardKinds.NodeRan, Verbs.CardTarget(about.Id), $"{about.Id} closed with {closed.Id}: {closed.Outcome ?? "closed"}",
+                $"{about.Id} ({about.Title}) asked about {closed.Id} ({closed.Title}), which was closed: {closed.Outcome ?? "closed"}.", null, null, null, null, null, null, null, null, null, out _);
         }
     }
 

@@ -105,6 +105,14 @@ public sealed record CardRow
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Cause { get; init; }
 
+    /// <summary>
+    /// The id of the other card this one asks the person to press (a ring that says "press c27881"), set by the node when a raised card
+    /// names exactly one open card (PIL1290). This card closes when that one closes, answered or dismissed. Null when it is about no card;
+    /// an older client ignores it, and a card an older node wrote has none.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? AboutCard { get; init; }
+
     /// <summary>How many characters of a sha the node and its clients show: the node's CommitRefs and the pages cut to this.</summary>
     public const int ShortShaLength = 9;
 }

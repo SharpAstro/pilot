@@ -86,8 +86,9 @@ public sealed class FileJournal : INodeJournal, IDisposable
     /// Rounds also store the new answer words <c>deferred</c>, <c>not work</c> and <c>node's own</c>, which an older node reads as unknown.
     /// 11: <c>branchDeleteFailed</c> and <c>branchDeleteFailedAt</c> on a flight (PIL1265). An older node would lose them when it compacts the snapshot,
     /// and would then push the refused delete again at each sweep.
+    /// 12: <c>aboutCard</c> on a card (PIL1290). An older node would drop it when it compacts the snapshot, and the card would no longer close with the card it is about.
     /// </remarks>
-    public const int StoreContract = 11;
+    public const int StoreContract = 12;
 
     private static readonly byte[] NewLine = "\n"u8.ToArray();
 
