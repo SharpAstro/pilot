@@ -142,7 +142,7 @@ public sealed partial class PrReviews
             }
             if (left is null && review.DesignAnswer is { Length: > 0 })
             {
-                RaiseDesignFixMissingCard(review, subject, pr);
+                RaiseDesignFixMissingCard(review, subject, $"{pr}");
                 return;
             }
             state.RaiseCard(CardBin.ForYou, FixEndedKind, subject, $"{pr}: {review.Fixer} ended without a push",
