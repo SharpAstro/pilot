@@ -878,7 +878,7 @@ internal sealed class FakeGitHub : IGitHub
     public bool FailedRunFails { get; set; }
 
     /// <summary>What <c>gh run view --log-failed</c> prints per run id; a run not listed, or listed null, is one gh could not read.</summary>
-    public Dictionary<long, string?> RunLogs { get; } = [];
+    public System.Collections.Concurrent.ConcurrentDictionary<long, string?> RunLogs { get; } = new();
 
     /// <summary>When set, reading a run's log fails as a gh that could not reach GitHub.</summary>
     public bool RunLogFails { get; set; }
