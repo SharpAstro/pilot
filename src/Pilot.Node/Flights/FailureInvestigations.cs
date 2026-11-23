@@ -120,7 +120,7 @@ public sealed class FailureInvestigations(NodeState state, IGitHub github, Failu
                 return ledger.InvestigationOf(site.Name, failure.Signature) is { } known
                     ? new FailureFinding(failure.Test, failure.Message, failure.Signature, known.Investigation, known.Issue, 0, others) : null;
             }
-            return await FileAsync(site, 0, null, failure, cancellationToken, open) is { } filed
+            return await FileAsync(site, 0, null, [failure], cancellationToken, open) is { } filed
                 ? new FailureFinding(failure.Test, failure.Message, failure.Signature, filed.Code, filed.Issue, 0, others) : null;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -192,23 +192,29 @@ public sealed class FailureInvestigations(NodeState state, IGitHub github, Failu
                 untouched.RemoveAll(f => unproven.Contains(f) && !(f.Test.Length > 0 ? onBase.Contains(FailureSignature.NameOf(f.Test)) : f.Signature == baseError));
             }
         }
-        untouched = untouched.Take(MostPerRun).ToList();
+        // One investigation per test class: the failures of one class in a run share a cause until shown otherwise. An error line with no
+        // test stays one each. MostPerRun counts these groups, not tests.
+        var groups = untouched.GroupBy(f => f.Test.Length > 0 && FailureSignature.ClassOf(f.Test) is { Length: > 0 } cls ? "class:" + cls : "sig:" + f.Signature, StringComparer.Ordinal)
+            .Take(MostPerRun).Select(g => g.ToList()).ToList();
         var findings = new List<FailureFinding>();
-        foreach (var failure in untouched)
+        foreach (var group in groups)
         {
-            var others = ledger.OnAnother(site.Name, failure.Signature, site.Flight, site.Pr);
-            if (ledger.Has(site.Name, site.Pr, site.Flight, site.Head, site.Where, failure.Signature))
+            var first = group[0];
+            var others = group.Any(f => ledger.OnAnother(site.Name, f.Signature, site.Flight, site.Pr));
+            // The tests of the group not yet on record at this place.
+            var fresh = group.Where(f => !ledger.Has(site.Name, site.Pr, site.Flight, site.Head, site.Where, f.Signature)).ToList();
+            if (fresh.Count == 0)
             {
                 // Seen at this place already: nothing more to file, but the look still says what it found.
-                if (ledger.InvestigationOf(site.Name, failure.Signature) is { } known)
+                if (group.Select(f => ledger.InvestigationOf(site.Name, f.Signature)).FirstOrDefault(r => r is not null) is { } known)
                 {
-                    findings.Add(new FailureFinding(failure.Test, failure.Message, failure.Signature, known.Investigation, known.Issue, runId, others));
+                    findings.Add(new FailureFinding(first.Test, first.Message, first.Signature, known.Investigation, known.Issue, runId, others));
                 }
                 continue;
             }
-            if (await FileAsync(site, runId, runUrl, failure, cancellationToken) is { } filed)
+            if (await FileAsync(site, runId, runUrl, fresh, cancellationToken) is { } filed)
             {
-                findings.Add(new FailureFinding(failure.Test, failure.Message, failure.Signature, filed.Code, filed.Issue, runId, others));
+                findings.Add(new FailureFinding(first.Test, first.Message, first.Signature, filed.Code, filed.Issue, runId, others));
             }
         }
         return new FailureLook(true, findings);
@@ -231,9 +237,13 @@ public sealed class FailureInvestigations(NodeState state, IGitHub github, Failu
         return "main";
     }
 
-    private async Task<(string Code, int Issue)?> FileAsync(FailureSite site, long runId, string? runUrl, Found failure, CancellationToken cancellationToken, IssueInfo? open = null)
+    private async Task<(string Code, int Issue)?> FileAsync(FailureSite site, long runId, string? runUrl, IReadOnlyList<Found> group, CancellationToken cancellationToken, IssueInfo? open = null)
     {
-        var existing = ledger.InvestigationOf(site.Name, failure.Signature);
+        var failure = group[0];
+        var cls = group.Count > 1 ? FailureSignature.ClassOf(failure.Test) : "";
+        // A class that has an investigation under any of its signatures joins it.
+        var existing = group.Select(f => ledger.InvestigationOf(site.Name, f.Signature)).FirstOrDefault(r => r is not null)
+            ?? (cls.Length > 0 ? ledger.All().FirstOrDefault(r => r.Issue > 0 && r.Test.Length > 0 && string.Equals(r.Repo, site.Name, StringComparison.OrdinalIgnoreCase) && FailureSignature.ClassOf(r.Test) == cls) : null);
         var run = runId > 0 ? $"run {runId}{(runUrl is { Length: > 0 } ? $" ({runUrl})" : "")}" : "its leg check";
         if (existing is not null)
         {
@@ -247,10 +257,15 @@ public sealed class FailureInvestigations(NodeState state, IGitHub github, Failu
                 await Error.WriteLineAsync($"failures: could not comment on {site.Name}#{existing.Issue}: {ex.Message}");
                 return null;
             }
-            Keep(site, runId, failure, existing.Investigation, existing.Issue);
+            foreach (var f in group)
+            {
+                Keep(site, runId, f, existing.Investigation, existing.Issue);
+            }
             return (existing.Investigation, existing.Issue);
         }
-        var title = failure.Test.Length > 0
+        var title = group.Count > 1
+            ? $"{cls}: {group.Count} tests failed {WhereWords(site.Where)}, cause unknown"
+            : failure.Test.Length > 0
             ? $"{FailureSignature.ShortOf(FailureSignature.NameOf(failure.Test))} failed {WhereWords(site.Where)}, cause unknown"
             : $"{LegCommander.OneLine(failure.Message)}: failed {WhereWords(site.Where)}, cause unknown";
         if (open is null && failure.Test.Length > 0)
@@ -271,11 +286,11 @@ public sealed class FailureInvestigations(NodeState state, IGitHub github, Failu
             if (open is { } adopted)
             {
                 issue = adopted;
-                await github.CommentIssueAsync(site.RepoPath, issue.Number, $"{Body(site, run, failure)}\n\nThis issue is now the investigation of this failure, with priority high.", cancellationToken);
+                await github.CommentIssueAsync(site.RepoPath, issue.Number, $"{Body(site, run, group)}\n\nThis issue is now the investigation of this failure, with priority high.", cancellationToken);
             }
             else
             {
-                issue = await github.CreateIssueAsync(site.RepoPath, title, Body(site, run, failure), cancellationToken);
+                issue = await github.CreateIssueAsync(site.RepoPath, title, Body(site, run, group), cancellationToken);
             }
         }
         catch (FlightException ex)
@@ -325,29 +340,42 @@ public sealed class FailureInvestigations(NodeState state, IGitHub github, Failu
                 notes.Add($"its flight was refused: {ex.Message}");
             }
         }
-        Keep(site, runId, failure, code, issue.Number);
-        var test = failure.Test.Length > 0 ? FailureSignature.ShortOf(FailureSignature.NameOf(failure.Test)) : LegCommander.OneLine(failure.Message);
+        foreach (var f in group)
+        {
+            Keep(site, runId, f, code, issue.Number);
+        }
+        var test = group.Count > 1 ? $"{cls}: {group.Count} of its tests" : failure.Test.Length > 0 ? FailureSignature.ShortOf(FailureSignature.NameOf(failure.Test)) : LegCommander.OneLine(failure.Message);
         var subject = code.Length > 0 ? Verbs.FlightTarget(code) : $"{Verbs.RepoTargetPrefix}{site.RepoPath}";
         state.RaiseCard(CardBin.ForYou, CardKind, subject,
-            $"{site.Name}#{issue.Number}: {test} failed in a PR that does not touch it, {(code.Length > 0 ? $"{code} investigates" : "no flight could be made for it")}",
+            $"{site.Name}#{issue.Number}: {test} failed in a PR that does not touch {(group.Count > 1 ? "them" : "it")}, {(code.Length > 0 ? $"{code} investigates" : "no flight could be made for it")}",
             $"{Place(site)}: {run}, {WhereWords(site.Where)}.\n\nTest: {(failure.Test.Length > 0 ? failure.Test : "none, an error line")}\nAssertion message: {failure.Message}\n\nIt is a bug with a cause to find, filed as {site.Name}#{issue.Number} with priority high."
             + (notes.Count > 0 ? $"\n\nNot done: {string.Join("; ", notes)}." : ""),
             link: IssueLink(site, issue.Number));
         return (code, issue.Number);
     }
 
-    private static string Body(FailureSite site, string run, Found failure) =>
-        $"""
+    private static string TestLines(IReadOnlyList<Found> group) => string.Join("
+", group.Select(f => $"- {f.Test}: {f.Message}"));
+
+    private static string Body(FailureSite site, string run, IReadOnlyList<Found> group)
+    {
+        var failure = group[0];
+        var what = group.Count > 1
+            ? $"- Tests: {group.Count} of {FailureSignature.ClassOf(failure.Test)}, each with its message
+{TestLines(group)}"
+            : $"- Test: {(failure.Test.Length > 0 ? failure.Test : "none, an error line")}
+- Assertion message: {failure.Message}";
+        return $"""
         A test the PR does not touch failed. This is a bug with a cause to find.
 
         - Run: {run}
         - Seen: {WhereWords(site.Where)}{InJobs(failure.Jobs)}
-        - Test: {(failure.Test.Length > 0 ? failure.Test : "none, an error line")}
-        - Assertion message: {failure.Message}
+        {what}
         - PRs hit: {Place(site)}
 
         Later occurrences of this failure are added to this issue as comments.
         """;
+    }
 
     // ", in a, b" for the jobs a failure was seen in; nothing when none are known.
     private static string InJobs(string[] jobs) => jobs.Length > 0 ? $", in {string.Join(", ", jobs)}" : "";

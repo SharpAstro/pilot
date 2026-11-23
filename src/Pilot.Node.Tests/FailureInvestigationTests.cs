@@ -228,12 +228,12 @@ public sealed class FailureInvestigationTests
     }
 
     // PIL1325's PR #1328: five tests of one fixture class failed, all of code the PR changed, with main green (#1335).
-    private static string MergeFixtureLog()
+    private static string MergeFixtureLog(int only = 0, string cls = "MergeFixtureCardTests")
     {
         var lines = new List<string>();
-        foreach (var n in Enumerable.Range(1, 5))
+        foreach (var n in Enumerable.Range(1, 5).Where(n => only == 0 || n == only))
         {
-            var t = $"Pilot.Node.Tests.MergeFixtureCardTests.ACardsMergeChoiceIsPending{n}";
+            var t = $"Pilot.Node.Tests.{cls}.ACardsMergeChoiceIsPending{n}";
             lines.Add($"  Failed {t} [10 ms]");
             lines.Add("  Error Message:");
             lines.Add($"   Shouldly.ShouldAssertException : card.Merge.Status should be pending but was unavailable ({n})");
@@ -278,8 +278,68 @@ public sealed class FailureInvestigationTests
         var look = await _failures.LookAtRunAsync(PilSite(82), mergeGroup: false, Ct);
 
         look.Read.ShouldBeTrue();
-        look.Untouched.Count.ShouldBe(5);
-        _github.IssuesCreated.Count.ShouldBe(5);
+        // One cause for the class: one finding, one issue, one flight, one card; every test's signature kept under it.
+        look.Untouched.ShouldHaveSingleItem();
+        var (_, title, body) = OneIssue();
+        title.ShouldBe("MergeFixtureCardTests: 5 tests failed in the PR's checks, cause unknown");
+        foreach (var n in Enumerable.Range(1, 5))
+        {
+            body.ShouldNotBeNull().ShouldContain($"MergeFixtureCardTests.ACardsMergeChoiceIsPending{n}: ");
+            _failures.Ledger.InvestigationOf("tianwen", $"test:Pilot.Node.Tests.MergeFixtureCardTests.ACardsMergeChoiceIsPending{n}").ShouldNotBeNull().Issue.ShouldBe(1);
+        }
+        _flights.ShouldHaveSingleItem();
+        var card = _state.Cards().Where(c => c.Kind == FailureInvestigations.CardKind).ShouldHaveSingleItem();
+        card.Title.ShouldContain("MergeFixtureCardTests");
+        card.Title.ShouldContain("5");
+        _failures.Ledger.All().Length.ShouldBe(5);
+    }
+
+    [Fact]
+    public async Task ALaterRunInAnotherPrFailingADifferentTestOfTheClassCommentsOnTheSameIssue()
+    {
+        PilShape(87);
+        _github.BaseAnswer = new BaseRun(9000, false, MergeFixtureLog());
+        await _failures.LookAtRunAsync(PilSite(87), mergeGroup: false, Ct);
+
+        PilShape(88);
+        _github.FailedRuns[(88, false)] = new FailedRun(7002, "https://github.com/x/tianwen/actions/runs/7002", ["build"], MergeFixtureLog(3));
+        _github.BaseAnswer = null;
+        var look = await _failures.LookAtRunAsync(PilSite(88), mergeGroup: false, Ct);
+
+        look.Untouched.ShouldHaveSingleItem().Issue.ShouldBe(1);
+        _github.IssuesCreated.ShouldHaveSingleItem();
+        _flights.ShouldHaveSingleItem();
+    }
+
+    [Fact]
+    public async Task ATestOfAKnownClassThatWasNotSeenBeforeJoinsTheClassInvestigation()
+    {
+        PilShape(89);
+        _github.FailedRuns[(89, false)] = new FailedRun(7003, "https://github.com/x/tianwen/actions/runs/7003", ["build"], MergeFixtureLog(1));
+        _github.BaseAnswer = new BaseRun(9000, false, MergeFixtureLog());
+        await _failures.LookAtRunAsync(PilSite(89), mergeGroup: false, Ct);
+
+        PilShape(90);
+        _github.FailedRuns[(90, false)] = new FailedRun(7004, "https://github.com/x/tianwen/actions/runs/7004", ["build"], MergeFixtureLog(5));
+        await _failures.LookAtRunAsync(PilSite(90), mergeGroup: false, Ct);
+
+        _github.IssuesCreated.ShouldHaveSingleItem();
+        _failures.Ledger.InvestigationOf("tianwen", "test:Pilot.Node.Tests.MergeFixtureCardTests.ACardsMergeChoiceIsPending5").ShouldNotBeNull().Issue.ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task TwoFailingClassesInOneRunFileTwoInvestigations()
+    {
+        PilShape(91);
+        var log = MergeFixtureLog() + "\n" + MergeFixtureLog(2, "OtherFixtureTests");
+        _github.FailedRuns[(91, false)] = new FailedRun(7005, "https://github.com/x/tianwen/actions/runs/7005", ["build"], log);
+        _github.BaseAnswer = new BaseRun(9000, false, log);
+
+        var look = await _failures.LookAtRunAsync(PilSite(91), mergeGroup: false, Ct);
+
+        look.Untouched.Count.ShouldBe(2);
+        _github.IssuesCreated.Count.ShouldBe(2);
+        _flights.Count.ShouldBe(2);
     }
 
     [Fact]
@@ -315,14 +375,14 @@ public sealed class FailureInvestigationTests
         PilShape(85);
         _github.BaseAnswer = new BaseRun(9000, false, MergeFixtureLog());
         await _failures.LookAtRunAsync(PilSite(85), mergeGroup: false, Ct);
-        _github.IssuesCreated.Count.ShouldBe(5);
+        _github.IssuesCreated.Count.ShouldBe(1);
 
         PilShape(86);
         _github.BaseAnswer = null;
         var look = await _failures.LookAtRunAsync(PilSite(86), mergeGroup: false, Ct);
 
-        look.Untouched.Count.ShouldBe(5);
-        _github.IssuesCreated.Count.ShouldBe(5);
+        look.Untouched.ShouldHaveSingleItem();
+        _github.IssuesCreated.Count.ShouldBe(1);
     }
 
     [Fact]
