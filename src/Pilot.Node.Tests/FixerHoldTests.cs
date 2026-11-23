@@ -45,6 +45,32 @@ public sealed class FixerHoldTests : PrFixTestsBase
         });
     }
 
+    /// <summary>A fixer that reads Ended but owns an open job is waiting for it (pilot #1309): the PR is held until the job has ended.</summary>
+    [Fact]
+    public async Task APassedGreenPrIsHeldWhileItsEndedFixersJobIsOpen()
+    {
+        _github.Login = "ada";
+        GreenAndQueueing(_github.Prs["acme/widget#7"].Head);
+        _state.PutSession(LiveFixer(SessionState.Ended));
+        var job = new JobRow
+        {
+            Id = "j4032", Command = "dotnet build", Cwd = _root, State = JobState.Running, Owner = "feed1234", LogPath = Path.Combine(_root, "j4032.log"),
+            Timeout = TimeSpan.FromMinutes(30),
+        };
+        _state.PutJob(job);
+
+        await Review("acme/widget#7", "approve");
+        await _reviews.SweepAsync(Ct);
+
+        _github.Merged.ShouldBeEmpty();
+        (Row.QueueNote, Row.QueuedAt).ShouldBe((null, null));
+
+        _state.PutJob(job with { State = JobState.Ended });
+        await _reviews.SweepAsync(Ct);
+
+        _github.Merged.ShouldHaveSingleItem().Number.ShouldBe(7);
+    }
+
     [Fact]
     public async Task APassedGreenPrWithALiveFixerSessionTheRowDoesNotNameIsNotQueuedUntilItEnds()
     {

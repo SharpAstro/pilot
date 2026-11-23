@@ -540,6 +540,41 @@ public sealed class PrFixTests3 : PrFixTestsBase
         Row.Fixer.ShouldBeNull("the fixer is done with; its worktree stays for the person");
     }
 
+    /// <summary>
+    /// A fixer whose turn ended on a pilot run job of its own is waiting, not finished (pilot #1309: tianwen #2474 and #2476): no card, no stop, the row
+    /// keeps its Fixer; once the job has ended the usual no-push end runs.
+    /// </summary>
+    [Theory]
+    [InlineData(JobState.Running, true)]
+    [InlineData(JobState.Queued, true)]
+    [InlineData(JobState.Running, false)]
+    [InlineData(JobState.Queued, false)]
+    [Trait("Category", "Slow")]
+    public async Task AFixerThatEndedItsTurnOnAnOpenJobOfItsOwnIsWaitingNotEnded(JobState open, bool byId)
+    {
+        await Review("acme/widget#7", "changes", "README.md:1 wrong");
+        var fixer = Row.Fixer.ShouldNotBeNull();
+        _state.PutSession(FixerSession(SessionState.Ended));
+        var job = new JobRow
+        {
+            Id = "j4009", Command = "dotnet build", Cwd = _root, State = open, LogPath = Path.Combine(_root, "j4009.log"), Timeout = TimeSpan.FromMinutes(30),
+            Owner = byId ? Row.FixerJob : "an-earlier-id", OwnerName = byId ? null : fixer,
+        };
+        _state.PutJob(job);
+
+        await _reviews.SweepAsync(Ct);
+
+        _state.Cards().ShouldNotContain(c => c.Kind == PrReviews.FixEndedKind);
+        Row.Fixer.ShouldBe(fixer);
+        Row.FixerJob.ShouldNotBeNull();
+
+        _state.PutJob(job with { State = JobState.Ended });
+        await _reviews.SweepAsync(Ct);
+
+        _state.Cards(openOnly: true).Where(c => c.Kind == PrReviews.FixEndedKind).ShouldHaveSingleItem();
+        Row.Fixer.ShouldBeNull();
+    }
+
     [Fact]
     [Trait("Category", "Slow")]
     public async Task AFixerThatEndsWithoutPushingLeavesACardWithFixItAndNoReview()
