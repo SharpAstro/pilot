@@ -54,4 +54,36 @@ public sealed class NotificationsLongWordTests
         pieces.ShouldBeGreaterThan(2, "the filter is drawn as pieces");
         TextOverlap.Faults(arranged).ShouldBeEmpty("no text of the card is drawn over other text or past the page");
     }
+
+    [Fact]
+    public void AHistoryLineHoldingA300CharacterFilterStaysInsideThePage()
+    {
+        const int width = 2880, height = 1814;
+        PageTime.Zone = TimeZoneInfo.Utc;
+        using var renderer = new RgbaImageRenderer((uint)width, (uint)height);
+        var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath, DpiScale = 1.5f };
+        chrome.Notifications.Open = true;
+        var command = "dotnet test Pilot.Gui.Tests -c Release --filter '" + WrappedProseBreakTests.Filter() + "'";
+        chrome.Notifications.PostEvent(new PilotEvent(PilotEventKind.JobEnded, "j1286", "Job j1286 finished", command, DIR.Lib.Notifications.NotificationSeverity.Success, "DE1"), null, T0.AddSeconds(-60));
+        chrome.Notifications.Open = false;
+        chrome.Show(PilotPage.Jobs);
+        var arranged = ImmutableArray<Layout.ArrangedNode<float>>.Empty;
+        chrome.NotificationsPage.Arranged = nodes => arranged = nodes;
+        var data = PageData.For("sample");
+        void Frame(DateTimeOffset at) =>
+            chrome.Render(data.Sessions with { AsOf = at }, data.Flights, CardsScreen.From([]), data.Jobs, data.Fleet, data.Repos, new RectF32(0, 0, width, height), data.Machines);
+        Frame(T0);
+        chrome.Show(PilotPage.Notifications);
+        Frame(T0.AddSeconds(1));
+        Frame(T0.AddSeconds(2));
+
+        var dir = Environment.GetEnvironmentVariable("PILOT_JOB_ARTIFACTS") is { Length: > 0 } given ? given : Path.Combine(AppContext.BaseDirectory, "captures");
+        Directory.CreateDirectory(dir);
+        File.WriteAllBytes(Path.Combine(dir, "notifications-history-long-filter-2880x1814.png"), PngWriter.Encode(renderer.Surface.Pixels, width, height));
+
+        arranged.IsDefaultOrEmpty.ShouldBeFalse("the page was arranged");
+        var pieces = arranged.Count(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text text } && text.Value.Contains("FullyQualifiedName~"));
+        pieces.ShouldBeGreaterThan(2, "the filter is drawn as pieces");
+        TextOverlap.Faults(arranged).ShouldBeEmpty("no text of the history line is drawn over other text or past the page");
+    }
 }

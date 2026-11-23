@@ -128,9 +128,6 @@ public static class WireframeSweepTests
 
     private static readonly Lock DumpLock = new();
 
-    /// <summary>DIR.Lib#275: the notifications list cuts a word wider than its line with no ellipsis (and has no list frame without the strip).</summary>
-    internal const int NotificationsWordIssue = 275;
-
     /// <summary>
     /// Findings known and not fixed here, each with its reason and the issue that fixes it (a DIR.Lib issue where the fix is DIR.Lib's): the
     /// case key and the finding's message as patterns, <c>*</c> for any text, as <see cref="TextOverlapAllowList"/> has them.

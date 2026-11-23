@@ -9,6 +9,9 @@ internal sealed partial class PageData
 
     private static readonly NotificationSeverity[] Severities = [NotificationSeverity.Info, NotificationSeverity.Success, NotificationSeverity.Warn, NotificationSeverity.Error];
 
+    /// <summary>A job's command whose one filter token is 300 characters with no space (pilot #1286, DIR.Lib #275).</summary>
+    internal static readonly string LongFilterCommand = "dotnet test Pilot.Gui.Tests -c Release --filter '" + WrappedProseBreakTests.Filter() + "'";
+
     /// <summary>
     /// What the Notifications page's history holds in a state (#1184), as the window derives the events: a few of each kind in <b>sample</b>,
     /// titles, texts and a node name far past a row in <b>long</b>, sixty in <b>many</b> (enough to scroll), none in <b>empty</b>. The page's
@@ -27,6 +30,7 @@ internal sealed partial class PageData
         [
             .. Enumerable.Range(0, 6).Select(i => new PilotEvent(EventKinds[i % EventKinds.Length], $"{LongWord}{i}", $"{LongTitle} {i}",
                 i % 2 == 0 ? LongReport : LongPath, Severities[i % Severities.Length], LongWord)),
+            new PilotEvent(PilotEventKind.JobEnded, "j1286", "Job j1286 finished", LongFilterCommand, NotificationSeverity.Success, "DE1"),
         ],
         "many" =>
         [
