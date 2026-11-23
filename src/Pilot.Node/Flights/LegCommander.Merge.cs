@@ -502,7 +502,7 @@ public sealed partial class LegCommander
             && state.Flights().FirstOrDefault(f => f.Code == (Verbs.FlightCodeOf(target) ?? target)) is { } queuedFlight)
         {
             var (queuedCode, queuedNumber) = (queuedFlight.Code, queuedFlight.PullRequest);
-            state.RaiseCard(MergeCardBin(queuedFlight.Repo), PrReady, target, $"{queuedCode}'s PR #{queuedNumber} is in the merge queue", line, quiet.Choices, link: quiet.Link ?? queuedFlight.PullRequestUrl);
+            state.RaiseCard(MergeCardBin(queuedFlight.Repo), PrReady, target, $"{queuedCode}: PR #{queuedNumber} is queued", line, quiet.Choices, link: quiet.Link ?? queuedFlight.PullRequestUrl);
         }
         foreach (var card in state.Cards(openOnly: true).Where(c => c.Kind is PrReady or MergeFailed && c.Subject == target && c.Choices.Any(ch => ch.Verb == Verbs.Merge)))
         {

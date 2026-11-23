@@ -89,7 +89,7 @@ public sealed class MergeFixtureCardTests
     {
         // PIL853, PIL1294: a review-notes leg was planned after the card was raised; its Merge is refused ("has legs not done"), so the
         // card is no For you card: it closes and a Handled line says what the merge waits for.
-        await using var node = await NodeHarness.StartAsync(Ct);
+        await using var node = await NodeHarness.StartOnModelAsync(Ct);
         var ready = Ready(node);
         node.State.PutLeg(new LegRow { Flight = "TIA1", Name = "review-notes", Order = 2, Goal = "g", DoneWhen = "d", State = LegState.Flying });
 
