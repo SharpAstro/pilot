@@ -32,7 +32,9 @@ public sealed class ChoicePreconditionTests
 
     private static NodeState NewState() => new(new InMemoryJournal(), TimeProvider.System);
 
-    private static CardChoice Only(NodeState state) => state.Cards().Single().Choices.Single();
+    // PIL1325: a card whose every choice waits on something that clears by itself closes, so each card here also offers Land, which no
+    // precondition refuses; the choice under test is always the first.
+    private static CardChoice Only(NodeState state) => state.Cards().Single().Choices.First();
 
     private static CommandRequest Run(string verb, string target, params string[] args) =>
         new() { Verb = verb, Target = target, Args = args, Who = "cli" };
@@ -45,7 +47,7 @@ public sealed class ChoicePreconditionTests
         var state = NewState();
         state.PutFlight(Flight());
         state.PutLeg(Leg("review-notes-3", 1, LegState.Flying));
-        state.RaiseCard(CardBin.ForYou, "review-failed", "flight/TIA1", "TIA1's review did not start", null,
+        state.RaiseOpen(CardBin.ForYou, "review-failed", "flight/TIA1", "TIA1's review did not start", null,
             [new CardChoice { Label = "Start the review again", Verb = Verbs.StartReview, Target = "flight/TIA1" }]);
 
         Only(state).ShouldSatisfyAllConditions(
@@ -63,7 +65,7 @@ public sealed class ChoicePreconditionTests
         var state = NewState();
         state.PutFlight(Flight());
         state.PutLeg(Leg("review-notes", 1, LegState.Planned));
-        state.RaiseCard(CardBin.ForYou, "pr-checks-failing", "flight/TIA1", "TIA1's PR fails its checks", null,
+        state.RaiseOpen(CardBin.ForYou, "pr-checks-failing", "flight/TIA1", "TIA1's PR fails its checks", null,
             [new CardChoice { Label = "Fix the failing checks", Verb = Verbs.GoAround, Target = "flight/TIA1/review-notes", Args = ["checks fail"] }]);
 
         Only(state).ShouldSatisfyAllConditions(
@@ -83,13 +85,13 @@ public sealed class ChoicePreconditionTests
         state.PutLeg(Leg("parser", 1, LegState.Done));
         var go = new CardChoice { Label = "Redo leg parser", Verb = Verbs.GoAround, Target = "flight/TIA1/parser", Args = ["redo"] };
 
-        state.RaiseCard(CardBin.Ring, LegCommander.PrReady, "flight/TIA1", "TIA1's PR is ready", null, [go]);
+        state.RaiseOpen(CardBin.Ring, LegCommander.PrReady, "flight/TIA1", "TIA1's PR is ready", null, [go]);
         Only(state).Status.ShouldBeNull("the card being judged is the card that offers it");
 
         var other = NewState();
         other.PutFlight(Flight());
         other.PutLeg(Leg("parser", 1, LegState.Done));
-        other.RaiseCard(CardBin.Ring, "leg-stalled", "flight/TIA1", "TIA1/parser stopped", null, [go]);
+        other.RaiseOpen(CardBin.Ring, "leg-stalled", "flight/TIA1", "TIA1/parser stopped", null, [go]);
         Only(other).Status.ShouldBe(ChoiceStatus.Unavailable);
     }
 
@@ -100,7 +102,7 @@ public sealed class ChoicePreconditionTests
         state.PutFlight(Flight());
         state.PutLeg(Leg("parser", 1, LegState.Flying));
         state.PutLeg(Leg("lexer", 2, LegState.Planned));
-        state.RaiseCard(CardBin.ForYou, LegCommander.PlannedKind, "flight/TIA1", "TIA1 is planned", null,
+        state.RaiseOpen(CardBin.ForYou, LegCommander.PlannedKind, "flight/TIA1", "TIA1 is planned", null,
             [new CardChoice { Label = "Start lexer", Verb = Verbs.StartLeg, Target = "flight/TIA1/lexer" }]);
 
         Only(state).ShouldSatisfyAllConditions(
@@ -120,7 +122,7 @@ public sealed class ChoicePreconditionTests
         var state = NewState();
         state.PutFlight(Flight() with { Review = new ReviewRow { State = ReviewState.Passed, Reviewer = "du1-tia1-review", StartedAt = Start } });
         state.PutLeg(Leg("parser", 1, LegState.Flying));
-        state.RaiseCard(CardBin.Ring, LegCommander.PrReady, "flight/TIA1", "TIA1's PR is ready", null,
+        state.RaiseOpen(CardBin.Ring, LegCommander.PrReady, "flight/TIA1", "TIA1's PR is ready", null,
             [new CardChoice { Label = "Go", Verb = verb, Target = "flight/TIA1", Args = ["abc1234"] }]);
 
         Only(state).ShouldSatisfyAllConditions(
@@ -138,7 +140,7 @@ public sealed class ChoicePreconditionTests
         var state = NewState();
         state.PutFlight(Flight());
         state.PutLeg(Leg("parser", 1, LegState.Flying));
-        state.RaiseCard(CardBin.ForYou, "pr-not-opened", "flight/TIA1", "TIA1's PR was not opened", null,
+        state.RaiseOpen(CardBin.ForYou, "pr-not-opened", "flight/TIA1", "TIA1's PR was not opened", null,
             [new CardChoice { Label = "Open the PR", Verb = Verbs.OpenPr, Target = "flight/TIA1" }]);
 
         Only(state).ShouldSatisfyAllConditions(
@@ -157,7 +159,7 @@ public sealed class ChoicePreconditionTests
         var state = NewState();
         state.PutFlight(held);
         state.PutLeg(Leg("parser", 1, LegState.Flying));
-        state.RaiseCard(CardBin.ForYou, "leg-stalled", "flight/TIA1", "TIA1/parser stopped", null,
+        state.RaiseOpen(CardBin.ForYou, "leg-stalled", "flight/TIA1", "TIA1/parser stopped", null,
         [
             new CardChoice { Label = "Redo", Verb = Verbs.GoAround, Target = "flight/TIA1/parser", Args = ["x"] },
             new CardChoice { Label = "Release", Verb = Verbs.Unground, Target = "flight/TIA1" },
@@ -189,9 +191,9 @@ public sealed class ChoicePreconditionTests
             node.State.PutLeg(Leg(name, ++order, state));
         }
         var args = verb is Verbs.GoAround ? new[] { "why" } : verb is Verbs.Merge or Verbs.RerunChecks ? new[] { "abc1234" } : [];
-        var card = node.State.RaiseCard(CardBin.ForYou, "test-card", "flight/TIA1", "a card", null,
+        var card = node.State.RaiseOpen(CardBin.ForYou, "test-card", "flight/TIA1", "a card", null,
             [new CardChoice { Label = "Press", Verb = verb, Target = target, Args = args }]);
-        var marked = node.State.Cards().Single(c => c.Id == card.Id).Choices.Single();
+        var marked = node.State.Cards().Single(c => c.Id == card.Id).Choices.First();
         marked.Status.ShouldBe(ChoiceStatus.Unavailable);
         marked.Note.ShouldBe(words);
 
@@ -205,4 +207,10 @@ public sealed class ChoicePreconditionTests
         node.Workers.Started.ShouldBeEmpty();
         node.State.Cards().Single(c => c.Id == card.Id).State.ShouldBe(CardState.Open);
     }
+}
+
+file static class OpenCardRaising
+{
+    internal static CardRow RaiseOpen(this NodeState state, CardBin bin, string kind, string subject, string title, string? detail, CardChoice[] choices) =>
+        state.RaiseCard(bin, kind, subject, title, detail, [.. choices, new CardChoice { Label = "Land it", Verb = Verbs.Land, Target = subject }]);
 }
