@@ -110,7 +110,7 @@ public sealed class FlightMapStateTests
     [InlineData("CNF", false)]
     [InlineData("CHG", true)]
     [InlineData("BTW", false)]
-    public void ThePlaneIsDrawnOnlyOnAFlyingFlightMapWorld.Leg(string code, bool plane)
+    public void ThePlaneIsDrawnOnlyOnAFlyingLeg(string code, bool plane)
     {
         var (flights, legs) = FlightMapWorld.World();
         var (renderer, view) = Show(FlightMapWorld.Lines(flights, legs), 1800, 1000, night: false);
