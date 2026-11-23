@@ -495,6 +495,14 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
                 case SayWays.Resumed:
                     var resumeClock = Stopwatch.StartNew();
                     var resumedAs = await ResumeAsync(row, text, cancellationToken);
+                    if (resumedAs is null)
+                    {
+                        // The old process outlived its stop (#1206): a resume would run a second copy beside it, so the words go to the one running.
+                        var liveRoute = await delivery.RelayAsync(new RelayRequest(row.Name, row.Kind, text, ClaudeCliDelivery.RelayFrom(command.Who), ReplyTo(rows, row, command.Who), row.SessionId, DirectOnly: true), cancellationToken);
+                        parts.Deliver = step.Elapsed;
+                        Remember(deliveredKey, SayWays.Relayed, null, liveRoute, command, text, began);
+                        return (SayWays.Relayed, null, liveRoute, false);
+                    }
                     Timings?.Record(SendTimings.Resume, resumeClock.Elapsed, $"target={command.Target}");
                     parts.Deliver = step.Elapsed;
                     ledger?.Resumed([row.SessionId, row.Id, .. row.EarlierSessionIds ?? []], compact ? SessionStartReasons.Compaction : "say");
@@ -627,7 +635,45 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
 
     private static bool HasLiveNamesakes(SessionRow row, SessionRow[] rows) => LiveNamesakes(row, rows).Count > 0;
 
-    private async Task<string> ResumeAsync(SessionRow row, string text, CancellationToken cancellationToken)
+    /// <summary>How long a stopped session's process is given to end before a resume is refused (#1206); a test shortens it.</summary>
+    public TimeSpan GoneWait { get; init; } = TimeSpan.FromSeconds(10);
+
+    /// <summary>
+    /// Waits for process <c>pid</c> to end, at most the given time (an await on its exit, never a spin); true when it is gone. A test replaces
+    /// it with a fake. Null (a test's messenger) checks nothing; the node sets <see cref="WaitProcessGoneAsync"/>.
+    /// </summary>
+    public Func<int, TimeSpan, CancellationToken, Task<bool>>? WaitGone { get; init; }
+
+    /// <summary>The real check: awaits the process's exit for at most <paramref name="wait"/>.</summary>
+    internal static async Task<bool> WaitProcessGoneAsync(int pid, TimeSpan wait, CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var process = Process.GetProcessById(pid);
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeout.CancelAfter(wait);
+            await process.WaitForExitAsync(timeout.Token);
+            return true;
+        }
+        catch (ArgumentException)
+        {
+            return true; // no such process
+        }
+        catch (InvalidOperationException)
+        {
+            return true;
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Resumes <paramref name="row"/>'s session. Null when its old process is still running after the stop:
+    /// a resume then would start a second session beside it (#1206), so the caller relays to the live one instead.
+    /// </summary>
+    private async Task<string?> ResumeAsync(SessionRow row, string text, CancellationToken cancellationToken)
     {
         if (!Directory.Exists(row.Cwd))
         {
@@ -642,6 +688,16 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
                 await delivery.StopAsync(row.SessionId, cancellationToken);
                 await EndWatchersAsync(row, captured);
             }
+            if (WaitGone is { } waitGone && tracker.PidOf(row.Id) is { } oldPid && !await waitGone(oldPid, GoneWait, cancellationToken))
+            {
+                await log.WriteLineAsync($"{row.Name} ({row.Id}): process {oldPid} still runs after its stop; not resumed, the words go to it");
+                await log.FlushAsync(CancellationToken.None);
+                if (row.Kind != SessionKind.Background)
+                {
+                    throw new SessionDeliveryException($"{row.Name} ({row.Id}) still runs as process {oldPid}; resuming it would start a second copy beside it");
+                }
+                return null;
+            }
             var listedName = tracker.ListedName(row);
             // The options the node started the session with: by its ids (a compaction's continuation keeps the row's id and
             // earlier ids) and else by its name, which a compaction keeps too.
@@ -652,6 +708,11 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
                 && (recorded is null || tracker.Profile.RespawnFlagsCover(row.SessionId, recorded.Arguments));
             var resumed = await delivery.ResumeAsync(new ResumeRequest(row.SessionId, listedName, row.Cwd, text, RemoteControl: row.RemoteControlUrl is not null,
                 StartOptions: recorded?.Arguments, OptionsOnFile: onFile), cancellationToken);
+            if (tracker.IsMismatched(row.Id))
+            {
+                await log.WriteLineAsync($"{row.Name} ({row.Id}): resumed as a copy on its recorded options under the name {listedName}, after the old process was seen gone");
+                await log.FlushAsync(CancellationToken.None);
+            }
             tracker.CompleteResume(row.Id, resumed);
             return resumed;
         }

@@ -294,7 +294,7 @@ public partial class ClaudeCliDelivery(IClaudeAgents agents, string relayFolder,
     public static IReadOnlyList<string> ResumeArguments(ResumeRequest request) =>
         request.OptionsOnFile || request.StartOptions is not { Count: > 0 } options
             ? ["--bg", "--resume", request.SessionId]
-            : ["--bg", "--resume", request.SessionId, .. options];
+            : ["--bg", "--resume", request.SessionId, .. options, .. (options.Contains("--name") || options.Contains("-n") || request.Name is not { Length: > 0 } ? [] : (string[])["--name", request.Name])];
 
     /// <summary>v1's relay arguments, with ListAgents added for a name that is not enough.</summary>
     public static IReadOnlyList<string> RelayArguments(string from) =>
