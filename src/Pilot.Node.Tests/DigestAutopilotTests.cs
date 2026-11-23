@@ -84,4 +84,30 @@ public sealed class DigestAutopilotTests
 
         Detail().ShouldNotContain("Autopilot");
     }
+
+    [Fact]
+    public void AGoalVerbTheWatchtowerRanIsListedByWhoRanItAndAPersonsIsNot()
+    {
+        // As Autopilot.Handled writes it: the session's name, the node's rules as the kind, the verb in the question.
+        _state.PutSession(new SessionRow
+        {
+            Id = "wt000000", SessionId = "wt000000-0000-4000-8000-000000000000", Name = "de1-watchtower", Kind = SessionKind.Interactive, Cwd = "C:/x", Role = SessionRole.Watchtower,
+            ContextTokens = 1, ContextWindow = 200_000, State = SessionState.Working, SpendWeighted = 0, StartedAt = Start,
+        });
+        _state.RecordDecision("repo/tianwen/create-issue", DecisionKinds.Card, "Run create-issue repo/tianwen for de1-watchtower?", ["Run it"], "Run it", "de1-watchtower", DecisionByKinds.NodeRules, "card c2737 repeats and no issue covers it");
+        _state.RecordDecision("flight/PIL4", DecisionKinds.Card, "Run create-flight repo/tianwen for de1-watchtower?", ["Run it"], "Run it", "de1-watchtower", DecisionByKinds.NodeRules, "issue #1301 carries the cause (job j970)");
+        _state.RecordDecision("flight/PIL5", DecisionKinds.GoAround, "Run go-around flight/PIL5/leg for de1-watchtower?", ["Run it"], "Run it", "de1-watchtower", DecisionByKinds.NodeRules, "job j962 hung");
+        _state.RecordDecision("flight/PIL6", DecisionKinds.Card, "Run merge flight/PIL6 for gui?", ["Run it"], "Run it", "gui", DecisionByKinds.NodeRules, "the person's own");
+
+        var detail = Detail();
+
+        detail.ShouldContain("- repo/tianwen/create-issue: card c2737 repeats and no issue covers it");
+        detail.ShouldContain("- flight/PIL4: issue #1301 carries the cause (job j970)");
+        detail.ShouldContain("- flight/PIL5: go-around (de1-watchtower), job j962 hung");
+        detail.ShouldNotContain("the person's own");
+        var filed = detail[detail.IndexOf("  Filed:", StringComparison.Ordinal)..detail.IndexOf("  Escalated:", StringComparison.Ordinal)];
+        filed.ShouldContain("create-issue");
+        filed.ShouldContain("flight/PIL4");
+        filed.ShouldNotContain("PIL5");
+    }
 }

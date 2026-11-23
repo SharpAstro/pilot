@@ -111,4 +111,36 @@ public sealed class RepeatDetectorTests
 
         _detector.Look().ShouldBeEmpty();
     }
+
+    [Fact]
+    public void AThirdCardOfTheKindPairsWithTheSecondAndHasATaskOfItsOwn()
+    {
+        var first = _state.RaiseCard(CardBin.Ring, "pr-red", "flight/PIL1", "red", "run 1");
+        _state.CloseCard(first.Id, "pressed", "owner");
+        _time.Advance(TimeSpan.FromMinutes(10));
+        var second = _state.RaiseCard(CardBin.Ring, "pr-red", "flight/PIL1", "red", "run 2");
+        _detector.Look().ShouldHaveSingleItem().Second.ShouldBe(second.Id);
+        _state.CloseCard(second.Id, "pressed", "owner");
+        _time.Advance(TimeSpan.FromMinutes(10));
+        var third = _state.RaiseCard(CardBin.Ring, "pr-red", "flight/PIL1", "red", "run 3");
+
+        var found = _detector.Look().ShouldHaveSingleItem();
+
+        found.Second.ShouldBe(third.Id);
+        found.Task.Detail.ShouldNotBeNull().ShouldContain($"[pair: {second.Id} + {third.Id}]");
+        _state.Cards().Count(c => c.Kind == CardKinds.RepeatTask).ShouldBe(2);
+    }
+
+    [Fact]
+    public void TheInvestigatorsOwnRingsAreNoOccurrenceOfAnything()
+    {
+        _state.RaiseCard(CardBin.Ring, Investigator.RingKind, "flight/PIL1", "PIL1 needs you", "tried a rerun");
+        _time.Advance(TimeSpan.FromHours(1));
+        _state.CloseCard(_state.Cards().Single(c => c.Kind == Investigator.RingKind).Id, "seen", "owner");
+        _state.RaiseCard(CardBin.Ring, Investigator.RingKind, "flight/PIL1", "PIL1 needs you", "tried again");
+        _state.RaiseCard(CardBin.Ring, Investigator.BoundKind, "flight/PIL1", "bound", "x");
+
+        _detector.Look().ShouldBeEmpty();
+        _state.Cards().ShouldNotContain(c => c.Kind == CardKinds.RepeatTask);
+    }
 }

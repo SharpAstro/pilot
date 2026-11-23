@@ -227,7 +227,7 @@ public static partial class NodeApp
     {
         builder.Services.AddSingleton(services =>
         {
-            var flights = ActivatorUtilities.CreateInstance<FlightCommander>(services); flights.Wakes = services.GetRequiredService<AutopilotWakes>();
+            var flights = WithWakes(ActivatorUtilities.CreateInstance<FlightCommander>(services), services);
             flights.Models = services.GetRequiredService<RoleModels>();
             flights.Machine = options.Machine;
             flights.Attachments = services.GetRequiredService<Attachments>();
@@ -365,7 +365,7 @@ public static partial class NodeApp
     /// </summary>
     private static void AddFailureInvestigations(WebApplicationBuilder builder, LogWriter logWriter, NodeOptions options)
     {
-        builder.Services.AddSingleton(_ => new FailureLedger(FailureLedger.FileIn(options.DataFolder)) { Error = logWriter }); builder.Services.AddSingleton(AutopilotWakes.For);
+        builder.Services.AddSingleton(_ => new FailureLedger(FailureLedger.FileIn(options.DataFolder)) { Error = logWriter });
         builder.Services.AddSingleton(services => new FailureInvestigations(services.GetRequiredService<NodeState>(), services.GetRequiredService<IGitHub>(),
             services.GetRequiredService<FailureLedger>(), services.GetRequiredService<TimeProvider>())
         {

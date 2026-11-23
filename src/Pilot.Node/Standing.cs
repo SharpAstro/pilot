@@ -75,7 +75,7 @@ public sealed record Standing(StandingKind Kind, string? Flight = null, string? 
 
     /// <summary>
     /// What the lookout also does while autopilot is on (PIL1285, the standing goal): an issue and a flight made on its own account, more CI
-    /// budget for a flight (bounded per day, see <see cref="NodeSettings.AutopilotCiGrantsKey"/>) and a go-around (its rerun of checks is in <see cref="LookoutOnAutopilot"/>, as ever). Each
+    /// budget for a flight (bounded per day, see <see cref="NodeSettings.AutopilotCiGrantsKey"/>) and a go-around (its rerun of checks is in the list above, as ever). Each
     /// runs as the person's assistant would, needs a <c>--why</c> naming evidence, and leaves a Handled line. With autopilot off the lookout is
     /// refused them as ever; an override (PIL1229) and an ask card stay the person's either way.
     /// </summary>

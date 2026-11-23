@@ -13,7 +13,7 @@ public sealed record Repeat(string Key, CardRow Task, string Told, string? Secon
 /// Handled card (<see cref="CardKinds.RepeatTask"/>), so it does not push the person; it names both occurrences with their ids, times
 /// and evidence. The same pair never opens a second task, open or closed: the pair is written into the task's detail and read back.
 /// A third occurrence pairs with the second, so it has a task of its own (the first task's cause was not found). The investigator's own
-/// rings are no occurrence of anything. The second occurrence's card is told to the watchtower with the task, once (<see cref="AutopilotWakes"/>).
+/// rings are no occurrence of anything. The second occurrence's card is told to the watchtower with the task, once (the node's wakes).
 /// </summary>
 public sealed class RepeatDetector(NodeState state, FailureLedger failures, TimeProvider time)
 {

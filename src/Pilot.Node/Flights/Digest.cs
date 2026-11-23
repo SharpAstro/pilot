@@ -178,7 +178,7 @@ public sealed class Digest(NodeState state, TimeProvider time) : BackgroundServi
         var filed = by.Where(Files).ToList();
         var escalated = by.Where(d => d.ByKind == Investigator.By && d.Choice == Investigator.RingOutcome).ToList();
         var did = by.Except(filed).Except(escalated)
-            .Select(d => $"{d.Subject}: {d.Choice} ({d.By}), {d.Reason}")
+            .Select(d => $"{d.Subject}: {DoneOf(d)} ({d.By}), {d.Reason}")
             .Concat(cards.Where(c => c.Kind == CardKinds.RepeatTask && c.At > since && c.At <= now).Select(c => $"{c.Subject}: {c.Title}"))
             .ToList();
         lines.Add("Autopilot:");
@@ -194,6 +194,10 @@ public sealed class Digest(NodeState state, TimeProvider time) : BackgroundServi
         }
         return lines;
     }
+
+    // A goal verb the node ran for a session reads as the verb ("Run go-around flight/PIL5/leg for x?" is go-around), not as "Run it".
+    private static string DoneOf(DecisionRow d) =>
+        d.ByKind == DecisionByKinds.NodeRules && d.Question.StartsWith("Run ", StringComparison.Ordinal) ? d.Question["Run ".Length..].Split(' ')[0] : d.Choice;
 
     private void AddList(List<string> lines, string name, List<string> items)
     {

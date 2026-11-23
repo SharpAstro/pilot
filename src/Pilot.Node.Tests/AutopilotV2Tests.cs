@@ -1,6 +1,6 @@
+using Microsoft.Extensions.DependencyInjection;
 using Pilot.Contracts;
 using Pilot.Node.Flights;
-using Pilot.Node.Sessions;
 using Pilot.Node.Tests.Sessions;
 using Shouldly;
 using Xunit;
@@ -8,99 +8,124 @@ using Xunit;
 namespace Pilot.Node.Tests;
 
 /// <summary>
-/// PIL1285's last acceptance criterion, end to end on the in-memory node (fake launcher, fake clock, no real process): with autopilot on, a
-/// stalled flight is moved, a repeated failure is filed as an issue plus a flight, and only a decision that is truly the person's rings,
-/// once, saying what was tried; the digest lists the three. With it off (the default) none of it happens.
+/// PIL1285's last acceptance criterion, end to end on the in-memory node (git is the in-memory model, GitHub is the fake, the workers are
+/// the fake launcher, the wakes and the repeat detector read a fake clock): with autopilot on, a stalled flight is woken and an investigator
+/// sends it round again, a repeated failure is found by the detector and an investigator files an issue plus a flight for it, and only a
+/// decision that is truly the person's rings, once, saying what was tried. The first two ring nobody. With autopilot off, which is the
+/// default, none of it happens. Every command goes through the node's own socket as the session that would send it.
 /// </summary>
-public sealed class AutopilotV2Tests
+[Trait("Category", "Slow")] // a real node on a socket of its own: the commands go through the wire as the sessions would send them
+public sealed class AutopilotV2Tests : IAsyncLifetime
 {
-    private static readonly DateTimeOffset Start = new(2026, 11, 24, 9, 0, 0, TimeSpan.Zero);
+    private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-    private readonly ManualTime _time = new(Start);
-    private readonly NodeState _state;
-    private readonly FakeWorkers _workers = new();
-    private readonly RoleModels _models;
-    private readonly Investigator _investigator;
+    private NodeHarness _node = null!;
 
-    public AutopilotV2Tests() : this(on: true)
+    private string Repo => Path.Combine(_node.Folder, "tianwen");
+
+    private string InvestigatorName => $"{_node.Options.Machine.ToLowerInvariant()}-investigate-tia7";
+
+    public async ValueTask InitializeAsync()
     {
+        _node = await NodeHarness.StartOnModelAsync(Ct);
+        SeedRepo.MakeOn(_node.Repos!, _node.Folder);
     }
 
-    private AutopilotV2Tests(bool on)
-    {
-        _state = new NodeState(new InMemoryJournal(), _time);
-        var settings = new NodeSettings();
-        if (on)
-        {
-            settings = NodeSettings.With(settings, NodeSettings.AutopilotKey, ["on"]).Settings.ShouldNotBeNull();
-        }
-        _models = new RoleModels(settings);
-        _investigator = new Investigator(_state, _workers, _models, new StartGate(_state, _time), new FailureLedger(), _time)
-        {
-            Machine = "DE1", DefaultFolder = "C:/watchtower", Pilot = "pilot", RepoOf = _ => "C:/r/pilot",
-        };
-        _state.Investigations = _investigator;
-    }
+    public async ValueTask DisposeAsync() => await _node.DisposeAsync();
 
-    private static FlightRow Flight(string code, TimeSpan age) => new()
-    {
-        Code = code, Repo = "pilot", RepoPath = "C:/r/pilot", Issue = 1, Branch = $"flight/{code.ToLowerInvariant()}", Worktree = $"C:/r/pilot/.claude/worktrees/{code}",
-        Base = "origin/main", State = FlightState.Flying, CreatedAt = Start - age,
-    };
+    private async Task<CommandResult> Send(string who, string verb, string target, string[] args, string? why = null, bool agent = true) =>
+        (await _node.Client.SendAsync(new CommandRequest { Verb = verb, Target = target, Args = args, Who = who, Agent = agent, Why = why }, Ct)).Response.ShouldNotBeNull();
 
-    private int Rings() => _state.Cards().Count(c => c.Bin == CardBin.Ring);
+    private async Task AutopilotOn() =>
+        (await Send("gui", Verbs.Set, Verbs.NodeTarget, ["autopilot", "on"], agent: false)).Error.ShouldBeNull();
+
+    private int Rings() => _node.State.Cards().Count(c => c.Bin == CardBin.Ring);
+
+    private FlightRow Flight(string code) => _node.State.Flights().Single(f => f.Code == code);
 
     [Fact]
     public async Task AStalledFlightIsMovedARepeatIsFiledAndOnlyThePersonsDecisionRingsOnce()
     {
-        // 1. A stalled flight: an investigator starts on it and moves it (a go-around), recorded with its why. No ring.
-        _state.PutFlight(Flight("PIL1", TimeSpan.FromDays(4)));
-        _investigator.Look();
-        await _investigator.SettledAsync();
-        _workers.Started.Single(s => s.Name == "de1-investigate-pil1").Model.ShouldBe("opus");
-        _investigator.Outcome("de1-investigate-pil1", "PIL1", Investigator.ActionOutcome, "sent a go-around: job j962 shows the worker hung on a prompt").ShouldBeNull();
-        Rings().ShouldBe(0);
+        await AutopilotOn();
+        var rungBefore = Rings();
 
-        // 2. A failure that came twice: a find-the-cause task starts an investigator that files an issue plus a flight. No ring.
-        _state.RaiseCard(CardBin.Handled, CardKinds.RepeatTask, "flight/PIL2", "Find the cause: pr-red on flight/PIL2 happened twice", "[pair: c1 + c2]");
-        _investigator.Look();
-        await _investigator.SettledAsync();
-        _investigator.Outcome("de1-investigate-pil2", "PIL2", Investigator.IssueOutcome, "filed #1300 and flight PIL1300: the leg check filters a removed class (j970)").ShouldBeNull();
-        Rings().ShouldBe(0);
+        // 1. A stalled flight: the wake names it; the investigator sends its leg round again on the evidence, a Handled line with the why.
+        (await Send("gui", Verbs.CreateFlight, Verbs.RepoTarget(Repo), ["7", "Parser"], agent: false)).Ok.ShouldBeTrue();
+        await _node.PlannedAsync();
+        _node.State.PutLeg(new LegRow { Flight = "TIA7", Name = "parser", Order = 1, Goal = "g", DoneWhen = "d", State = LegState.Flying, Worker = "du1-tia7-parser" });
+        var later = new ManualTime(DateTimeOffset.UtcNow.AddHours(3));
+        var failures = _node.App.Services.GetRequiredService<FailureLedger>();
+        var wakes = new AutopilotWakes(_node.State, new RepeatDetector(_node.State, failures, later), later) { On = () => true, Stall = () => TimeSpan.FromMinutes(60) };
+        wakes.Look();
+        wakes.Pending.Select(w => w.Text).ShouldContain(t => t.Contains("Flight TIA7 has shown no progress"));
+        var rounds = _node.State.Legs().Single(l => l.Flight == "TIA7").GoArounds;
 
-        // 3. A decision truly the person's: a card bound for the ring is held, and the run's ring outcome lets it through, once, with what was tried.
-        var card = _state.RaiseCard(CardBin.Ring, "worker-idle", "flight/PIL3/node", "PIL3 needs a token", "the GitHub token expired (job j971)",
+        var around = await Send(InvestigatorName, Verbs.GoAround, Verbs.LegTarget("TIA7", "parser"), ["the worker hung on a prompt"], why: "job j962 shows the worker idle for 70 minutes on a permission prompt");
+
+        around.Ok.ShouldBeTrue(around.Error);
+        _node.State.Legs().Single(l => l.Flight == "TIA7").GoArounds.ShouldBe(rounds + 1);
+        _node.State.Cards().ShouldContain(c => c.Kind == CardKinds.NodeRan && c.Detail!.Contains("job j962"));
+        _node.State.Decisions().ShouldContain(d => d.By == InvestigatorName && d.Reason.Contains("job j962"));
+        Rings().ShouldBe(rungBefore);
+
+        // 2. A failure that came twice on the flight: the detector finds the pair and makes one task; the investigator files the issue and a flight.
+        var at = later.GetUtcNow();
+        failures.Add(new FailureRecord("tianwen", 11, "TIA7", "aaa1111", FailureWhere.Ci, 1001, "Tests.Parser.Reads", "expected 1 but was 2", "sig-parser", "", 0, at.AddMinutes(-30)));
+        failures.Add(new FailureRecord("tianwen", 11, "TIA7", "bbb2222", FailureWhere.Ci, 1002, "Tests.Parser.Reads", "expected 1 but was 2", "sig-parser", "", 0, at.AddMinutes(-5)));
+        var repeat = new RepeatDetector(_node.State, failures, later).Look().ShouldHaveSingleItem();
+        repeat.Task.Kind.ShouldBe(CardKinds.RepeatTask);
+        Rings().ShouldBe(rungBefore);
+
+        var issue = await Send(InvestigatorName, Verbs.CreateIssue, Verbs.RepoTarget(Repo), ["Parser test fails twice", "the failure of j1001 and j1002"], why: "task " + repeat.Task.Id + ": runs 1001 and 1002 fail the same test");
+        issue.Ok.ShouldBeTrue(issue.Error);
+        var number = issue.Made.ShouldNotBeNull();
+        _node.GitHub.IssuesCreated.ShouldContain(i => i.Title == "Parser test fails twice");
+        var flight = await Send(InvestigatorName, Verbs.CreateFlight, Verbs.RepoTarget(Repo), [number, "Parser test fails twice"], why: $"issue #{number} files the cause found in task {repeat.Task.Id}");
+        flight.Ok.ShouldBeTrue(flight.Error);
+        Flight($"TIA{number}").Issue.ShouldBe(int.Parse(number));
+        Rings().ShouldBe(rungBefore);
+
+        // 3. A decision truly the person's: a card bound for the ring is held; the run's ring outcome lets it through once, with what was tried.
+        var card = _node.State.RaiseCard(CardBin.Ring, "worker-idle", "flight/TIA7/node", "TIA7 needs a token", "the GitHub token expired (job j971)",
             [new CardChoice { Label = "Renew", Verb = Verbs.Say, Target = "session/abc" }]);
-        _state.Cards().Single(c => c.Id == card.Id).Bin.ShouldBe(CardBin.ForYou);
-        Rings().ShouldBe(0);
-        await _investigator.SettledAsync();
-        _investigator.Outcome("de1-investigate-pil3", "PIL3", Investigator.RingOutcome, "Tried: a rerun of checks (j971). Needed: only you can renew the GitHub token.").ShouldBeNull();
+        _node.State.Cards().Single(c => c.Id == card.Id).Bin.ShouldBe(CardBin.ForYou);
+        Rings().ShouldBe(rungBefore);
+        var run = _node.App.Services.GetRequiredService<Flights.Investigator>().Runs.Single(r => r.Key == "TIA7");
 
-        Rings().ShouldBe(1);
-        _state.Cards().Single(c => c.Bin == CardBin.Ring).Detail.ShouldNotBeNull().ShouldContain("Tried: a rerun of checks");
+        var ring = await Send(run.Name, Verbs.Investigated, "TIA7", [Flights.Investigator.RingOutcome, "Tried: a rerun of checks (j971). Needed: only you can renew the GitHub token."]);
+
+        ring.Ok.ShouldBeTrue(ring.Error);
+        Rings().ShouldBe(rungBefore + 1);
+        _node.State.Cards().Single(c => c.Id == card.Id).Detail.ShouldNotBeNull().ShouldContain("Tried: a rerun of checks");
 
         // The digest says what was done, filed and escalated.
-        var detail = new Digest(_state, _time) { Autopilot = () => _models.Autopilot }.Compose(Start.AddHours(-1), Start.AddHours(1)).Detail;
-        detail.ShouldContain("flight/PIL1: action");
-        detail.ShouldContain("flight/PIL2: filed #1300");
-        detail.ShouldContain("flight/PIL3: Tried: a rerun of checks");
+        var detail = new Digest(_node.State, later) { Autopilot = () => true }.Compose(later.GetUtcNow().AddHours(-6), later.GetUtcNow().AddHours(1)).Detail;
+        detail.ShouldContain("Autopilot:");
+        detail.ShouldContain("job j962");
+        detail.ShouldContain("Tried: a rerun of checks");
     }
 
     [Fact]
-    public async Task WithAutopilotOffByDefaultNothingStartsNothingIsHeldAndTheDigestHasNoPart()
+    public async Task WithAutopilotOffByDefaultNothingIsWokenStartedHeldOrLetThrough()
     {
-        var off = new AutopilotV2Tests(on: false);
-        off._models.Autopilot.ShouldBeFalse();
-        off._state.PutFlight(Flight("PIL1", TimeSpan.FromDays(4)));
-        off._state.RaiseCard(CardBin.Handled, CardKinds.RepeatTask, "flight/PIL2", "Find the cause: pr-red happened twice", "[pair: c1 + c2]");
-        var card = off._state.RaiseCard(CardBin.Ring, "worker-idle", "flight/PIL3/node", "PIL3 needs a token", "expired",
+        (await Send("gui", Verbs.CreateFlight, Verbs.RepoTarget(Repo), ["7", "Parser"], agent: false)).Ok.ShouldBeTrue();
+        await _node.PlannedAsync();
+        _node.State.PutLeg(new LegRow { Flight = "TIA7", Name = "parser", Order = 1, Goal = "g", DoneWhen = "d", State = LegState.Flying, Worker = "du1-tia7-parser" });
+        var later = new ManualTime(DateTimeOffset.UtcNow.AddHours(3));
+        var wakes = new AutopilotWakes(_node.State, new RepeatDetector(_node.State, new FailureLedger(), later), later) { On = () => false };
+        wakes.Look();
+        wakes.Pending.ShouldBeEmpty();
+
+        // An investigator's goal verbs are refused, whatever its why.
+        var refused = await Send(InvestigatorName, Verbs.GoAround, Verbs.LegTarget("TIA7", "parser"), ["hung"], why: "job j962 shows the worker idle");
+        refused.Ok.ShouldBeFalse();
+        _node.State.Legs().Single(l => l.Flight == "TIA7").GoArounds.ShouldBe(0);
+
+        // A ring is as before: it rings at once, held by no one.
+        var card = _node.State.RaiseCard(CardBin.Ring, "worker-idle", "flight/TIA7/node", "TIA7 needs a token", "expired",
             [new CardChoice { Label = "Renew", Verb = Verbs.Say, Target = "session/abc" }]);
-
-        off._investigator.Look();
-        await off._investigator.SettledAsync();
-
-        off._workers.Started.ShouldBeEmpty();
-        off._state.Cards().Single(c => c.Id == card.Id).Bin.ShouldBe(CardBin.Ring);
-        new Digest(off._state, off._time) { Autopilot = () => off._models.Autopilot }.Compose(Start.AddHours(-1), Start.AddHours(1)).Detail.ShouldNotContain("Autopilot:");
+        _node.State.Cards().Single(c => c.Id == card.Id).Bin.ShouldBe(CardBin.Ring);
+        _node.Workers.Started.ShouldNotContain(s => s.Name.Contains("-investigate-"));
+        new Digest(_node.State, later).Compose(later.GetUtcNow().AddHours(-6), later.GetUtcNow().AddHours(1)).Detail.ShouldNotContain("Autopilot:");
     }
 }

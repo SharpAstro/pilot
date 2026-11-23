@@ -201,7 +201,7 @@ internal sealed record FlightDetail
     {
         var options = d.Options.Length > 1 ? $" (of {string.Join(" / ", d.Options)})" : "";
         var reason = d.Reason.Length > 0 ? $": {d.Reason}" : "";
-        return $"{d.At.ToUniversalTime().ToString("yyyy-MM-dd HH:mm", System.Globalization.CultureInfo.InvariantCulture)} {d.Kind}: {d.Choice}{options}, by {d.By} ({d.ByKind}){reason}";
+        return $"{d.At.ToUniversalTime().ToString("yyyy-MM-dd HH:mm", System.Globalization.CultureInfo.InvariantCulture)} {d.Kind}: {d.Choice}{options}, by {DecisionByKinds.Shown(d.By)} ({DecisionByKinds.Shown(d.ByKind)}){reason}";
     }
 
     /// <summary>The flight's own planner and reviewer sessions: live first, then ended, newest first.</summary>

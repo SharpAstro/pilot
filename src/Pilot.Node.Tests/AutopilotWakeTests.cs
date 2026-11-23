@@ -175,6 +175,78 @@ public sealed class AutopilotWakeTests : IDisposable
     }
 
     [Fact]
+    public async Task AJobStillRunningPastTheBoundIsWorkGoingOnNotAStall()
+    {
+        await RunningTowerAsync();
+        _state.PutJob(new JobRow
+        {
+            Id = "j2", Command = "dotnet test", Cwd = "/r/w", Flight = "TIA9", Leg = "parser", State = JobState.Running, LogPath = "l", Timeout = TimeSpan.FromHours(3),
+            StartedAt = _time.GetUtcNow(),
+        });
+        _time.Advance(TimeSpan.FromMinutes(90));
+        Row();
+
+        await _tower.LookAsync(Ct);
+
+        Says().ShouldBeEmpty();
+    }
+
+    private Watchtower RestartedTower(AutopilotWakes wakes) =>
+        new(_state, _workers, Run, _options, _time) { Pilot = "pilot", Wakes = wakes, Version = "2.0.1" };
+
+    [Fact]
+    public async Task ATaskNotYetToldIsToldAfterARestartAndOnceToldNotAgainAfterAnother()
+    {
+        var first = _state.RaiseCard(CardBin.Ring, "pr-red", "flight/TIA9", "TIA9's PR is red", "run 1");
+        _state.CloseCard(first.Id, "pressed", "owner");
+        _time.Advance(TimeSpan.FromMinutes(5));
+        var second = _state.RaiseCard(CardBin.Ring, "pr-red", "flight/TIA9", "TIA9's PR is red", "run 2");
+        // The node found the pair and made the task, then went down before it said anything: its memory of the wake went with it.
+        _wakes.Look();
+        var task = _state.Cards().Single(c => c.Kind == CardKinds.RepeatTask);
+        _wakes.Covered.ShouldContain(second.Id);
+
+        var wakes = new AutopilotWakes(_state, new RepeatDetector(_state, _failures, _time), _time) { On = () => _on, Stall = () => TimeSpan.FromMinutes(60) };
+        var tower = RestartedTower(wakes);
+        await tower.LookAsync(Ct);
+        Row();
+        await tower.LookAsync(Ct);
+
+        var said = Says().ShouldHaveSingleItem();
+        said.ShouldContain("Find the cause, do not press again");
+        said.ShouldContain(task.Id);
+        _said.Clear();
+
+        // The next node's wake is not made again: the task was told, and that is kept with the tells.
+        var third = new AutopilotWakes(_state, new RepeatDetector(_state, _failures, _time), _time) { On = () => _on, Stall = () => TimeSpan.FromMinutes(60) };
+        var after = RestartedTower(third);
+        await after.LookAsync(Ct);
+        Row();
+        await after.LookAsync(Ct);
+        third.Pending.ShouldBeEmpty();
+        Says().ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task ASecondCardWhoseWakeWasNeverSaidIsToldAsAnyCardOnceTheSwitchIsOff()
+    {
+        var first = _state.RaiseCard(CardBin.Ring, "pr-red", "flight/TIA9", "TIA9's PR is red", "run 1");
+        _state.CloseCard(first.Id, "pressed", "owner");
+        _time.Advance(TimeSpan.FromMinutes(5));
+        var second = _state.RaiseCard(CardBin.Ring, "pr-red", "flight/TIA9", "TIA9's PR is red", "run 2");
+        _wakes.Look();
+        _wakes.Covered.ShouldContain(second.Id);
+        _on = false;
+        await RunningTowerAsync();
+        Row();
+
+        await _tower.LookAsync(Ct);
+
+        _wakes.Covered.ShouldBeEmpty();
+        _tower.Untold().ShouldContain(c => c.Id == second.Id);
+    }
+
+    [Fact]
     public async Task WithAutopilotOffNothingIsWokenNothingIsRaisedAndTheSecondCardIsToldAsAnyCard()
     {
         _on = false;

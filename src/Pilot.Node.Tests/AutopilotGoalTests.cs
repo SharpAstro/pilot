@@ -1,3 +1,4 @@
+using Pilot.Commands;
 using Pilot.Contracts;
 using Pilot.Node.Flights;
 using Shouldly;
@@ -175,5 +176,180 @@ public sealed class AutopilotGoalTestsCiGrant : ReviewTestsBase
         _legs.Models = new RoleModels(NodeSettings.With(new NodeSettings(), NodeSettings.AutopilotCiGrantsKey, ["0"]).Settings!);
 
         (await Grant(flight, Watchtower, autopilot: true)).Error.ShouldNotBeNull().ShouldContain("the person's");
+    }
+}
+
+/// <summary>
+/// PIL1285, the standing goal through the node's socket (in-memory git, fake GitHub): each goal verb is refused with no evidence in its
+/// --why, runs with it as the watchtower or as an investigator, and leaves a Handled line and a decision whose reason is the why; the
+/// person's overrides and an assistant's ask stay the person's; rerun-checks needs no why from the watchtower, autopilot on or off.
+/// </summary>
+[Trait("Category", "Slow")] // a real node on a socket of its own
+public sealed class AutopilotGoalVerbsTests : IAsyncLifetime
+{
+    private static CancellationToken Ct => TestContext.Current.CancellationToken;
+
+    private NodeHarness _node = null!;
+
+    private string Repo => Path.Combine(_node.Folder, "tianwen");
+
+    private string Lookout => $"{_node.Options.Machine.ToLowerInvariant()}-watchtower";
+
+    private string Investigator => $"{_node.Options.Machine.ToLowerInvariant()}-investigate-tia7";
+
+    public async ValueTask InitializeAsync()
+    {
+        _node = await NodeHarness.StartOnModelAsync(Ct);
+        SeedRepo.MakeOn(_node.Repos!, _node.Folder);
+        (await Send("gui", Verbs.Set, Verbs.NodeTarget, ["autopilot", "on"], null, agent: false)).Error.ShouldBeNull();
+        (await Send("gui", Verbs.CreateFlight, Verbs.RepoTarget(Repo), ["7", "Parser"], null, agent: false)).Ok.ShouldBeTrue();
+        await _node.PlannedAsync();
+        _node.State.PutLeg(new LegRow { Flight = "TIA7", Name = "parser", Order = 1, Goal = "g", DoneWhen = "d", State = LegState.Flying, Worker = "du1-tia7-parser" });
+    }
+
+    public async ValueTask DisposeAsync() => await _node.DisposeAsync();
+
+    private async Task<CommandResult> Send(string who, string verb, string target, string[] args, string? why, bool agent = true) =>
+        (await _node.Client.SendAsync(new CommandRequest { Verb = verb, Target = target, Args = args, Who = who, Agent = agent, Why = why }, Ct)).Response.ShouldNotBeNull();
+
+    private void LeftALineAndADecision(string who, string why)
+    {
+        _node.State.Cards().ShouldContain(c => c.Kind == CardKinds.NodeRan && c.AskedBy == who && c.Detail!.Contains(why));
+        _node.State.Decisions().ShouldContain(d => d.By == who && d.Reason == why);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task CreateIssueIsRefusedWithoutEvidenceAndRunsWithItLeavingALineAndADecision(bool investigator)
+    {
+        var who = investigator ? Investigator : Lookout;
+
+        var bare = await Send(who, Verbs.CreateIssue, Verbs.RepoTarget(Repo), ["Fix it"], "it seems wise");
+        bare.Ok.ShouldBeFalse();
+        bare.Error.ShouldNotBeNull().ShouldContain("evidence");
+        _node.GitHub.IssuesCreated.ShouldBeEmpty();
+
+        var why = "card c2737 repeats and no issue covers it";
+        var made = await Send(who, Verbs.CreateIssue, Verbs.RepoTarget(Repo), ["Fix it"], why);
+
+        made.Ok.ShouldBeTrue(made.Error);
+        _node.GitHub.IssuesCreated.ShouldHaveSingleItem().Title.ShouldBe("Fix it");
+        LeftALineAndADecision(who, why);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task CreateFlightIsRefusedWithoutEvidenceAndRunsWithItLeavingALineAndADecision(bool investigator)
+    {
+        var who = investigator ? Investigator : Lookout;
+
+        (await Send(who, Verbs.CreateFlight, Verbs.RepoTarget(Repo), ["21", "Cause"], "just because")).Error.ShouldNotBeNull().ShouldContain("evidence");
+        _node.State.Flights().ShouldNotContain(f => f.Code == "TIA21");
+
+        var why = "issue #21 carries the cause found in job j970";
+        var made = await Send(who, Verbs.CreateFlight, Verbs.RepoTarget(Repo), ["21", "Cause"], why);
+
+        made.Ok.ShouldBeTrue(made.Error);
+        _node.State.Flights().ShouldContain(f => f.Code == "TIA21");
+        LeftALineAndADecision(who, why);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task GoAroundIsRefusedWithoutEvidenceAndRunsWithItLeavingALineAndADecision(bool investigator)
+    {
+        var who = investigator ? Investigator : Lookout;
+        var target = Verbs.LegTarget("TIA7", "parser");
+
+        (await Send(who, Verbs.GoAround, target, ["hung"], "it looks stuck")).Error.ShouldNotBeNull().ShouldContain("evidence");
+        _node.State.Legs().Single(l => l.Flight == "TIA7").GoArounds.ShouldBe(0);
+
+        var why = "job j962 shows the worker idle on a prompt";
+        var made = await Send(who, Verbs.GoAround, target, ["hung on a prompt"], why);
+
+        made.Ok.ShouldBeTrue(made.Error);
+        _node.State.Legs().Single(l => l.Flight == "TIA7").GoArounds.ShouldBe(1);
+        LeftALineAndADecision(who, why);
+    }
+
+    [Fact]
+    public async Task CiBudgetFromTheWatchtowerNeedsEvidenceAndIsThenNotRefusedForWhoItIsFrom()
+    {
+        var target = Verbs.FlightTarget("TIA7");
+
+        (await Send(Lookout, Verbs.CiBudget, target, [Verbs.CiContinue], "it is fine")).Error.ShouldNotBeNull().ShouldContain("evidence");
+
+        // The flight has no spend to answer: the refusal is the budget's own, not the standing's.
+        var named = await Send(Lookout, Verbs.CiBudget, target, [Verbs.CiContinue], "job j962 is green");
+        named.Error.ShouldNotBeNull().ShouldNotContain("controller's");
+        named.Error.ShouldNotContain("evidence");
+    }
+
+    [Fact]
+    public async Task AnInvestigatorsCiBudgetIsRefusedAsNotItsOwn()
+    {
+        var refused = await Send(Investigator, Verbs.CiBudget, Verbs.FlightTarget("TIA7"), [Verbs.CiContinue], "job j962 is green");
+
+        refused.Error.ShouldNotBeNull().ShouldContain("not an investigator's");
+    }
+
+    [Fact]
+    public async Task RerunChecksNeedsNoWhyFromTheWatchtowerWhateverTheSwitchSays()
+    {
+        var on = await Send(Lookout, Verbs.RerunChecks, Verbs.FlightTarget("TIA7"), [], null);
+        on.Error.ShouldNotBeNull().ShouldNotContain("evidence");
+        on.Error.ShouldNotContain("controller's");
+
+        (await Send("gui", Verbs.Set, Verbs.NodeTarget, ["autopilot", "off"], null, agent: false)).Error.ShouldBeNull();
+        var off = await Send(Lookout, Verbs.RerunChecks, Verbs.FlightTarget("TIA7"), [], null);
+        off.Error.ShouldNotBeNull().ShouldNotContain("evidence");
+        off.Error.ShouldNotContain("controller's");
+    }
+
+    [Fact]
+    public async Task AnOverrideStaysThePersonsForTheWatchtowerAndForAnInvestigator()
+    {
+        foreach (var who in new[] { Lookout, Investigator })
+        {
+            var refused = await Send(who, Verbs.CreateFlight, Verbs.RepoTarget(Repo), ["22", "Again", Verbs.AnywayFlag], "issue #22 and job j970 say so");
+
+            refused.Error.ShouldNotBeNull().ShouldContain("person");
+            _node.State.Flights().ShouldNotContain(f => f.Code == "TIA22");
+        }
+    }
+
+    [Fact]
+    public async Task TheCliTakesWhyOnGoAroundAndCiBudgetAndTheRequestCarriesIt()
+    {
+        var output = new StringWriter();
+        var error = new StringWriter();
+        var round = await PilotCommand.RunAsync(["--node-socket", _node.SocketPath, "leg", "go-around", "--leg", "TIA7/parser", "--why", "job j962 shows the worker idle", "hung", "on", "a", "prompt"], _node.Folder, output, error, Ct);
+
+        round.ShouldBe(0, output + error.ToString());
+        _node.State.Legs().Single(l => l.Flight == "TIA7").GoArounds.ShouldBe(1);
+        _node.State.Decisions().ShouldContain(d => d.Reason.Contains("job j962"));
+
+        // The budget has nothing to answer on this flight, but the option parses and reaches the node: no parse error, and the refusal is the budget's.
+        var budgetError = new StringWriter();
+        await PilotCommand.RunAsync(["--node-socket", _node.SocketPath, "flight", "ci-budget", "TIA7", "continue", "--why", "job j962 is green"], _node.Folder, new StringWriter(), budgetError, Ct);
+        budgetError.ToString().ShouldNotContain("Unrecognized");
+        budgetError.ToString().ShouldNotContain("--why");
+    }
+
+    [Fact]
+    public async Task AnAssistantsAskIsNotTheWatchtowersOrAnInvestigatorsToAnswer()
+    {
+        var ask = _node.State.RaiseCard(CardBin.ForYou, CardKinds.AssistantAsk, "flight/TIA7", "an assistant asks to merge", null,
+            [new CardChoice { Label = "Allow", Verb = Verbs.Merge, Target = "flight/TIA7" }], askedBy: "de1-term");
+
+        foreach (var who in new[] { Lookout, Investigator })
+        {
+            var refused = await Send(who, Verbs.Answer, Verbs.CardTarget(ask.Id), ["Allow"], "job j962 says it is fine");
+            refused.Ok.ShouldBeFalse();
+        }
+        _node.State.Cards().Single(c => c.Id == ask.Id).State.ShouldBe(CardState.Open);
     }
 }

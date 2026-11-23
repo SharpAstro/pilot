@@ -1137,4 +1137,20 @@ public sealed class SettingsTests : IDisposable
         var row = (await node.Client.GetSettingsAsync(Ct)).Response!.Settings.Single(s => s.Key == "priority-repos");
         (row.Value, row.Source, row.Pending).ShouldBe(("tianwen", SettingSources.File, false));
     }
+
+    [Theory]
+    [InlineData(NodeSettings.AutopilotCiGrantsKey, "2")]
+    [InlineData(NodeSettings.AutopilotStallMinutesKey, "30")]
+    [InlineData(NodeSettings.AutopilotInvestigationsKey, "4")]
+    [Trait("Category", "Slow")]
+    public async Task AnAutopilotBoundIsInForceAtOnceWithNoRestart(string key, string value)
+    {
+        await using var node = await NodeHarness.StartAsync(Ct);
+
+        var result = (await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Set, Target = Verbs.NodeTarget, Args = [key, value], Who = "tests" }, Ct)).Response.ShouldNotBeNull();
+
+        result.Error.ShouldBeNull();
+        result.Way.ShouldBe($"{key} saved as {value}, and in force now");
+        (await node.Client.GetSettingsAsync(Ct)).Response!.Restart.ShouldBeNull();
+    }
 }

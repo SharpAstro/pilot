@@ -60,7 +60,7 @@ is neither built nor tested by CI.
   started to save itself: stop where it is, **commit and push** what it can, and write the file it was named
   (`<data>/reboot/flight-<code>-reboot-<stamp>.md`, `watchtower-reboot-…`, or its name's) with four parts: where it stopped; what is
   pushed and what is not; what it waits on; the exact next step. Then end the turn; the node ends the session once the file is in
-  (one silent for 5 minutes gets a file the node writes). `pilot node reboot status` says how far it is, `done` or `cancel` leaves
+  (one silent for 5 minutes gets a file the node writes). `pilot node reboot status` says how far it is, a "Ready to reboot" card says when all are in, `done` or `cancel` leaves
   maintenance mode. The node never reboots the machine.
 - With `pilot settings set autopilot on` (the person's, per node, off by default) the watchtower (Sonnet) runs with the standing goal of
   #1285 and an `investigator` session (Opus, `investigator-range`) decides what would ring the person; `src/README.md` has the rest.

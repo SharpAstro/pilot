@@ -408,4 +408,78 @@ public sealed class InvestigatorTests
 
         Standing.Of(From(Verbs.Raise, "node", ["handled", "x"]), _state, "de1-watchtower").Kind.ShouldBe(StandingKind.Assistant);
     }
+
+    // A node that restarted: a new Investigator over the same state and settings, as the next process builds one.
+    private (Investigator Next, FakeWorkers Workers) Restarted()
+    {
+        var workers = new FakeWorkers();
+        var next = new Investigator(_state, workers, _models, new StartGate(_state, _time), _failures, _time)
+        {
+            Machine = "DE1", DefaultFolder = "C:/watchtower", Pilot = "pilot", RepoOf = code => code == "PIL1" ? "C:/r/pilot" : null,
+        };
+        _state.Investigations = next;
+        return (next, workers);
+    }
+
+    [Fact]
+    public async Task AStartedRunLeavesAHandledLineThatASecondNodeReadsBack()
+    {
+        var task = _state.RaiseCard(CardBin.Handled, CardKinds.RepeatTask, "flight/PIL1", "Find the cause: pr-red happened twice", "[pair: c1 + c2]");
+        _investigator.Look();
+        await _investigator.SettledAsync();
+        _state.Cards().Count(c => c.Kind == Investigator.StartKind).ShouldBe(1);
+
+        var (next, workers) = Restarted();
+        next.StartedToday.ShouldBe(1);
+        next.Look();
+        await next.SettledAsync();
+
+        // The task was taken before the restart: it is not investigated a second time.
+        workers.Started.ShouldBeEmpty();
+        _state.Cards().Count(c => c.Kind == Investigator.StartKind).ShouldBe(1);
+        task.Kind.ShouldBe(CardKinds.RepeatTask);
+    }
+
+    [Fact]
+    public async Task TheDaysBoundSurvivesARestart()
+    {
+        Setting(NodeSettings.AutopilotInvestigationsKey, "1");
+        RingBound("flight/PIL1/node");
+        await _investigator.SettledAsync();
+
+        var (next, workers) = Restarted();
+        var held = _state.RaiseCard(CardBin.Ring, "worker-idle", "flight/PIL2/node", "PIL2's worker is idle", "idle (job j963)");
+
+        await next.SettledAsync();
+        workers.Started.ShouldBeEmpty();
+        Card(held.Id).Bin.ShouldBe(CardBin.Ring);
+    }
+
+    [Fact]
+    public async Task ACardHeldWhenTheNodeRestartedRingsAtTheNextNodesFirstLookSayingSo()
+    {
+        var card = RingBound();
+        await _investigator.SettledAsync();
+        Card(card.Id).Bin.ShouldBe(CardBin.ForYou);
+        Card(card.Id).Detail.ShouldNotBeNull().ShouldStartWith(Investigator.HeldLead);
+
+        var (next, _) = Restarted();
+        next.Look();
+
+        var rung = Card(card.Id);
+        rung.Bin.ShouldBe(CardBin.Ring);
+        rung.Detail.ShouldNotBeNull().ShouldContain("the node restarted before an investigator decided it");
+        rung.Detail.ShouldNotContain(Investigator.HeldLead);
+    }
+
+    [Fact]
+    public async Task AHeldCardWithALiveRunIsNotRungByTheNextLook()
+    {
+        var card = RingBound();
+        await _investigator.SettledAsync();
+
+        _investigator.Look();
+
+        Card(card.Id).Bin.ShouldBe(CardBin.ForYou);
+    }
 }
