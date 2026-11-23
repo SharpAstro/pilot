@@ -1894,7 +1894,8 @@ internal sealed class FakeRepoGit : IGit
 
     private GitRun Status(List<string> a, Worktree? wt)
     {
-        if (wt is null || a.FirstOrDefault() != "--porcelain")
+        // -uall lists each untracked file, as this model always does; real git without it folds a folder into one line.
+        if (wt is null || a.FirstOrDefault() != "--porcelain" || a.Skip(1).Any(x => x != "-uall"))
         {
             throw new NotSupportedException("status form");
         }

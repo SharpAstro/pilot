@@ -111,7 +111,7 @@ public sealed class StopGateTests : IDisposable
         ring.Bin.ShouldBe(CardBin.Ring);
         ring.Subject.ShouldBe(Verbs.LegTarget("TIA7", "parser"));
         ring.Title.ShouldContain("stray.txt");
-        ring.Detail.ShouldNotBeNull().ShouldStartWith("it was told once to commit them");
+        ring.Detail.ShouldNotBeNull().ShouldStartWith("it was told once to commit or delete them");
         var again = ring.Choices[0];
         again.Verb.ShouldBe(Verbs.Say);
         again.Target.ShouldBe(Verbs.SessionTarget(AgentRows.SessionA));
@@ -153,10 +153,38 @@ public sealed class StopGateTests : IDisposable
         del.Verb.ShouldBe(Verbs.Say);
         del.Target.ShouldBe(Verbs.SessionTarget(AgentRows.SessionA));
         var text = del.Args.ShouldHaveSingleItem();
-        text.ShouldContain("ScratchLookTests.cs");
+        // The path from the plane's root, so the session deletes exactly that file.
+        text.ShouldContain("src/X.Tests/ScratchLookTests.cs");
         text.ShouldContain("Delete");
         text.ShouldContain("git status is clean");
         text.ShouldContain("report");
+    }
+
+    [Theory]
+    [InlineData("ScratchLookTests.cs", true)]
+    [InlineData("mySCRATCH.cs", true)]
+    [InlineData("ZzProbe.cs", true)]
+    [InlineData("zzprobe.cs", true)]
+    [InlineData("TmpCapture.png", true)]
+    [InlineData("tmp.txt", true)]
+    [InlineData("ParserTests.cs", false)]
+    [InlineData("AtmpTests.cs", false)]
+    [InlineData("Fizz.cs", false)]
+    public void IsLikelyScratchNamesEachPrefixAndTheWordInAnyCase(string name, bool scratch) =>
+        StopGate.IsLikelyScratch(name).ShouldBe(scratch);
+
+    [Fact]
+    public async Task AZzOrTmpFileIsNamedAsLikelyScratchToo()
+    {
+        File.WriteAllText(Path.Combine(Plane, "ZzLook.cs"), "//\n");
+        File.WriteAllText(Path.Combine(Plane, "tmpshot.png"), "x\n");
+        File.WriteAllText(Path.Combine(Plane, "real.cs"), "//\n");
+
+        var reason = JsonDocument.Parse((await Decide(Plane)).ShouldNotBeNull()).RootElement.GetProperty("reason").GetString().ShouldNotBeNull();
+        reason.ShouldContain("ZzLook.cs");
+        reason.ShouldContain("tmpshot.png");
+        reason.ShouldContain("looks like scratch");
+        reason.ShouldNotContain("real.cs looks");
     }
 
     [Fact]

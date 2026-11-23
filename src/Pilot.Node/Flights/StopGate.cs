@@ -37,7 +37,8 @@ public sealed class StopGate(NodeState state, Planes planes)
             return null;
         }
 
-        var uncommitted = await planes.UncommittedAsync(flight.Worktree, cancellationToken);
+        var files = await planes.UncommittedFilesAsync(flight.Worktree, cancellationToken);
+        var uncommitted = Planes.Describe(files);
         var subject = Subject(flight);
         if (uncommitted is null)
         {
@@ -47,7 +48,6 @@ public sealed class StopGate(NodeState state, Planes planes)
 
         // Real work is committed. A file the session made only to look (a scratch test or capture) is deleted by the session
         // itself, on this nudge or a button a person pressed, and named in its report: the node never removes a file.
-        var files = await planes.UncommittedFilesAsync(flight.Worktree, cancellationToken);
         var scratch = files.Where(l => l.StartsWith("??", StringComparison.Ordinal)).Select(Name).Where(IsLikelyScratch).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         var likely = scratch.Count > 0 ? $" {string.Join(", ", scratch)} looks like scratch." : "";
         var reason = $"{uncommitted} in {flight.Worktree}: commit them, or delete them if they are scratch you made (a look-only test or capture), checking git status is clean after.{likely} Real work is committed; a file that is not work but must stay goes in .gitignore. Nothing is left behind in a plane.";
@@ -57,11 +57,12 @@ public sealed class StopGate(NodeState state, Planes planes)
             var choices = new List<CardChoice> { new() { Label = "Tell it to commit", Verb = Verbs.Say, Target = Verbs.SessionTarget(sessionId), Args = [reason] } };
             if (files.Count > 0 && files.All(l => l.StartsWith("??", StringComparison.Ordinal)))
             {
-                var named = string.Join(", ", files.Select(Name).Distinct(StringComparer.Ordinal));
+                // Paths from the plane's root, so a name that exists in two folders is not ambiguous.
+                var named = string.Join(", ", files.Select(RelativePath).Distinct(StringComparer.Ordinal));
                 choices.Add(new CardChoice { Label = "Tell it to delete them", Verb = Verbs.Say, Target = Verbs.SessionTarget(sessionId),
                     Args = [$"Delete these untracked files from {flight.Worktree}: {named}. Then check git status is clean, and say so in your report."] });
             }
-            state.RaiseCard(CardBin.Ring, Kind, subject, $"{flight.Code}: a session stopped with {uncommitted}", $"it was told once to commit them and stopped again, so the node will not tell it a third time by itself",
+            state.RaiseCard(CardBin.Ring, Kind, subject, $"{flight.Code}: a session stopped with {uncommitted}", $"it was told once to commit or delete them and stopped again, so the node will not tell it a third time by itself",
                 choices,
                 summary: Summary(flight.Code, files));
             return null;
@@ -86,15 +87,17 @@ public sealed class StopGate(NodeState state, Planes planes)
         var which = count == 1 && names.Count == 1
             ? $"{names[0]}"
             : $"{count} files, {string.Join(", ", names.Take(3))}{(count > 3 ? " and more" : "")}";
-        return $"The worker of {code} was told once to commit {which} and stopped again with {(count == 1 ? "it" : "them")} still there. It can be told once more; the files stay in the plane until they are committed.";
+        return $"The worker of {code} was told once to commit or delete {which} and stopped again with {(count == 1 ? "it" : "them")} still there. It can be told once more; the files stay in the plane until they are committed or deleted.";
     }
 
-    private static string Name(string porcelain)
+    private static string RelativePath(string porcelain)
     {
         var p = porcelain.Length > 3 ? porcelain[3..] : porcelain;
         if (p.Contains(" -> ", StringComparison.Ordinal)) p = p[(p.LastIndexOf(" -> ", StringComparison.Ordinal) + 4)..];
-        return Path.GetFileName(p.Trim().Trim('"').TrimEnd('/', '\\'));
+        return p.Trim().Trim('"').TrimEnd('/', '\\');
     }
+
+    private static string Name(string porcelain) => Path.GetFileName(RelativePath(porcelain));
 
     /// <summary>Whether a file name (not its path) looks like scratch: *Scratch*, Zz* or Tmp*, any case.</summary>
     internal static bool IsLikelyScratch(string name) =>
