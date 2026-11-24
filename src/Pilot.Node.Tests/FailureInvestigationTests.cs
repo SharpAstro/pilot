@@ -296,6 +296,23 @@ public sealed class FailureInvestigationTests
     }
 
     [Fact]
+    public async Task ALongClassNameAndBigNumbersKeepTheGroupCardTitleUnder70Characters()
+    {
+        var cls = "AVeryLongFixtureClassNameForTheMergeChoiceAvailabilityCardTests";
+        Flight("TIA12345", 12345);
+        _github.PrFiles[12345] = ["src/Pilot.Node/Flights/LegCommander.Merge.cs"];
+        _github.FailedRuns[(12345, false)] = new FailedRun(7101, "https://github.com/x/tianwen/actions/runs/7101", ["build"], MergeFixtureLog(0, cls, 12));
+        _github.BaseAnswer = new BaseRun(9000, false, MergeFixtureLog(0, cls, 12));
+
+        await _failures.LookAtRunAsync(PilSite(12345), mergeGroup: false, Ct);
+
+        var card = _state.Cards().Where(c => c.Kind == FailureInvestigations.CardKind).ShouldHaveSingleItem();
+        card.Title.Length.ShouldBeLessThanOrEqualTo(70);
+        card.Title.ShouldContain("12 tests");
+        card.Title.ShouldContain("investigates");
+    }
+
+    [Fact]
     public async Task ALaterRunInAnotherPrFailingADifferentTestOfTheClassCommentsOnTheSameIssue()
     {
         PilShape(87);

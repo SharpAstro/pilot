@@ -346,8 +346,17 @@ public sealed class FailureInvestigations(NodeState state, IGitHub github, Failu
         }
         var test = group.Count > 1 ? $"{cls}: {group.Count} tests" : failure.Test.Length > 0 ? FailureSignature.ShortOf(FailureSignature.NameOf(failure.Test)) : LegCommander.OneLine(failure.Message);
         var subject = code.Length > 0 ? Verbs.FlightTarget(code) : $"{Verbs.RepoTargetPrefix}{site.RepoPath}";
+        var head = $"{site.Name}#{issue.Number}: ";
+        var tail = $" failed{(group.Count > 1 ? "" : " in a PR that does not touch it")}, {(code.Length > 0 ? $"{code} investigates" : "no flight could be made for it")}";
+        if (group.Count > 1)
+        {
+            // A class group's title stays under the card's 70 characters whatever the repo, class and counts are: the class name gives way.
+            var count = $": {group.Count} tests";
+            var room = LegFailure.ClipAt - head.Length - count.Length - tail.Length;
+            test = (cls.Length <= room ? cls : room > 3 ? cls[..(room - 3)] + "..." : "") + count;
+        }
         state.RaiseCard(CardBin.ForYou, CardKind, subject,
-            $"{site.Name}#{issue.Number}: {test} failed{(group.Count > 1 ? "" : " in a PR that does not touch it")}, {(code.Length > 0 ? $"{code} investigates" : "no flight could be made for it")}",
+            head + test + tail,
             $"{Place(site)}: {run}, {WhereWords(site.Where)}.\n\n{(group.Count > 1 ? $"{group.Count} tests of {FailureSignature.ClassOf(failure.Test)} failed:\n{TestLines(group)}" : $"Test: {(failure.Test.Length > 0 ? failure.Test : "none, an error line")}\nAssertion message: {failure.Message}")}\n\nIt is a bug with a cause to find, filed as {site.Name}#{issue.Number} with priority high."
             + (notes.Count > 0 ? $"\n\nNot done: {string.Join("; ", notes)}." : ""),
             link: IssueLink(site, issue.Number));

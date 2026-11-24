@@ -150,6 +150,35 @@ public sealed class RetryAndHoldTests : IDisposable
         _github.Merged.Count.ShouldBe(1);
     }
 
+    // PIL1325's PR #1328: five tests of one class, all of code the PR changed, with main's latest run green (#1335).
+    [Fact]
+    public async Task FiveTestsOfAClassThePrChangedWhileTheBaseIsGreenAreAnsweredTouchedWithNoRetryHoldOrCard()
+    {
+        Flight("TIA81", 81);
+        _github.PrFiles[81] = ["src/Pilot.Node/Flights/LegCommander.Merge.cs", "src/Pilot.Node/ChoiceAvailability.cs"];
+        var lines = new List<string>();
+        foreach (var n in Enumerable.Range(1, 5))
+        {
+            var t = $"Pilot.Node.Tests.MergeFixtureCardTests.ACardsMergeChoiceIsPending{n}";
+            lines.Add($"  Failed {t} [10 ms]");
+            lines.Add("  Error Message:");
+            lines.Add($"   Shouldly.ShouldAssertException : card.Merge.Status should be pending but was unavailable ({n})");
+            lines.Add("  Stack Trace:");
+            lines.Add($"     at {t}() in /_/src/Pilot.Node.Tests/MergeFixtureCardTests.cs:line {10 * n}");
+        }
+        _github.FailedRuns[(81, false)] = new FailedRun(7001, "https://github.com/x/tianwen/actions/runs/7001", ["build"], string.Join('\n', lines));
+        _github.BaseAnswer = new BaseRun(9000, true, "");
+
+        var decision = await _alerts.LookAtRunAsync(new FailureSite("tianwen", "/r/tianwen", 81, "TIA81", Head('k'), FailureWhere.Ci), mergeGroup: false, Ct);
+
+        decision.Answer.ShouldBe(FailureAnswer.Touched);
+        _github.IssuesCreated.ShouldBeEmpty();
+        _flights.ShouldBeEmpty();
+        _github.Reruns.ShouldBeEmpty();
+        _alerts.HoldOf("TIA81").ShouldBeNull();
+        _state.Cards().ShouldNotContain(c => c.Kind == FailureAlerts.AlertKind || c.Kind == FailureAlerts.RetriedKind || c.Kind == FailureInvestigations.CardKind);
+    }
+
     [Fact]
     public async Task AFirstUntouchedCiFailureRunsTheFailedJobOnceWithALineNamingTheInvestigation()
     {
