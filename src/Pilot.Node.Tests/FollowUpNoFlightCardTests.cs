@@ -62,7 +62,7 @@ public sealed class FollowUpNoFlightCardTests : ReviewTestsBase
         card.Subject.ShouldBe(Verbs.FlightTarget("PIL9"));
         card.Title.ShouldContain("PIL9");
         card.Title.ShouldContain("SharpAstro/sdlapp#5");
-        card.Text.ShouldContain("SharpAstro/sdlapp#5");
+        card.Detail.ShouldNotBeNull().ShouldContain("SharpAstro/sdlapp#5");
         var choice = card.Choices.ShouldHaveSingleItem();
         (choice.Verb, choice.Target).ShouldBe((Verbs.EnsureFollowUps, Verbs.FlightTarget("PIL9")));
         // It is offered only while it can run: the flight has landed and a follow-up has no flight.
