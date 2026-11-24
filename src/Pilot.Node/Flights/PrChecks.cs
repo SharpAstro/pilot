@@ -1027,7 +1027,7 @@ public sealed class PrChecks(NodeState state, IGitHub gitHub, TimeProvider time,
         {
             _restoreFailing.Remove(code);
         }
-        foreach (var card in state.Cards(openOnly: true).Where(c => c.Kind == RestoreFailedKind && !_restoreFailing.ContainsKey(Verbs.FlightCodeOf(c.Subject))))
+        foreach (var card in state.Cards(openOnly: true).Where(c => c.Kind == RestoreFailedKind && !(Verbs.FlightCodeOf(c.Subject) is { } failing && _restoreFailing.ContainsKey(failing))))
         {
             state.CloseCard(card.Id, "the PR-ready card was restored, or the flight left that state", "node");
         }
