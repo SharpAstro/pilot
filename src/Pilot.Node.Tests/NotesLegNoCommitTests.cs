@@ -46,8 +46,11 @@ public sealed class NotesLegNoCommitTests : ReviewTestsBase
         var (flight, worker) = await HoldingWithLeg("1", "retake-captures");
         var reviewed = F(flight.Code).Review!.ReviewedHead!;
 
-        // No commit is made, so the PR's head is still the reviewed one (the fake's head follows the plane's, whose commits are not the fake review's).
-        _github.Pr = _github.Pr! with { Head = reviewed };
+        // No commit is made, so the PR's head is still the reviewed one. The plane's own head stands for both, so the merge's head check agrees.
+        var head = Git(flight.Worktree, "rev-parse", "HEAD").Trim();
+        _state.PutFlight(F(flight.Code) with { Review = F(flight.Code).Review! with { ReviewedHead = head } });
+        reviewed = head;
+        _github.Pr = _github.Pr! with { Head = head };
         (await Run(Verbs.FinishLeg, Verbs.LegTarget(flight.Code, "retake-captures"), worker, "done", Made)).Error.ShouldBeNull();
 
         var now = F(flight.Code);
