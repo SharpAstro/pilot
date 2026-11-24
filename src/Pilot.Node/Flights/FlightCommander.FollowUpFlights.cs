@@ -152,13 +152,15 @@ public sealed partial class FlightCommander
             return;
         }
         // The lock is let go while peers answer, so two runs for one flight could overlap and comment and ground twice: one run per flight.
-        if (!_ensuringPeers.TryAdd(code, true))
+        // The run it skips must not drop its released packages: they join the running one's, which reads them when it names a package.
+        if (!_ensuringPeers.TryAdd(code, released))
         {
+            _ensuringPeers.AddOrUpdate(code, released, (_, current) => [.. current, .. released.Where(r => !current.Any(c => c.Id == r.Id && c.Producer == r.Producer))]);
             return;
         }
         try
         {
-            await EnsurePeerFollowUpFlightsCoreAsync(code, landing, released, cancellationToken);
+            await EnsurePeerFollowUpFlightsCoreAsync(code, landing, cancellationToken);
         }
         finally
         {
@@ -166,7 +168,7 @@ public sealed partial class FlightCommander
         }
     }
 
-    private async Task EnsurePeerFollowUpFlightsCoreAsync(string code, FlightRow landing, PackageWait[] released, CancellationToken cancellationToken)
+    private async Task EnsurePeerFollowUpFlightsCoreAsync(string code, FlightRow landing, CancellationToken cancellationToken)
     {
         foreach (var followUp in landing.RepoFollowUps.Where(f => f.Flight is null).ToList())
         {
@@ -178,6 +180,7 @@ public sealed partial class FlightCommander
                 await CommentFollowUpAsync(path, followUp, landing, made, node);
                 if (followUp.Package)
                 {
+                    var released = _ensuringPeers.GetValueOrDefault(code) ?? [];
                     var held = await HoldPeerFlightAsync(node, made, landing, released, cancellationToken);
                     RaiseFollowUpPackageCard(landing, followUp, made, node, released, held);
                 }

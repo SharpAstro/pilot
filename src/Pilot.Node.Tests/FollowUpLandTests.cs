@@ -168,6 +168,27 @@ public sealed class FollowUpLandTests : PackageWaitTestsBase
         Flight(node, existing.Code).Connections.ShouldBeEmpty();
     }
 
+    [Fact]
+    public async Task ASecondEnsureWhileAPeerCreateIsStillAnsweringStartsNoSecondRunAndMakesOneFlight()
+    {
+        var peer = Peer("DE1", "SharpAstro/ghostapp", "D:/src/ghostapp");
+        peer.Gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var node = await ProducerWithFollowUp(Record("SharpAstro/ghostapp", 9));
+        node.Flights.Fleet = new FakeFleet(peer);
+        _github.UnclonedRepos.Add("ghostapp");
+        // Landing with the peer's answer held back: the run for the flight is in flight, off the lock.
+        var landing = LandProducer(node);
+        await peer.Reached.Task.WaitAsync(TimeSpan.FromSeconds(5), Ct);
+
+        await node.Flights.EnsureFollowUpFlightsAsync("TIA1", Ct);
+
+        peer.Sent.Count(c => c.Verb == Verbs.CreateFlight).ShouldBe(1);
+        peer.Gate.SetResult();
+        await landing;
+        peer.Sent.Count(c => c.Verb == Verbs.CreateFlight).ShouldBe(1);
+        Flight(node, "TIA1").RepoFollowUps.ShouldHaveSingleItem().Flight.ShouldBe("PIL180");
+    }
+
     private sealed class FakeFleet(params IFleetPeer[] peers) : IFleet
     {
         IReadOnlyList<IFleetPeer> IFleet.Peers() => peers;
@@ -187,6 +208,11 @@ public sealed class FollowUpLandTests : PackageWaitTestsBase
 
         public List<CommandRequest> Sent { get; } = [];
 
+        /// <summary>When set, a create-flight waits on it (an event, no spin) after raising <see cref="Reached"/>.</summary>
+        public TaskCompletionSource? Gate { get; set; }
+
+        public TaskCompletionSource Reached { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
         public Task<NodeInfo> NodeAsync(CancellationToken cancellationToken) => Task.FromResult(new NodeInfo
         {
             WireVersion = NodeWire.Version, Version = "0", MachineName = name, MachinePrefix = name, ProcessId = 1, StartedAt = Start,
@@ -197,10 +223,15 @@ public sealed class FollowUpLandTests : PackageWaitTestsBase
 
         public Task<FleetLoad> LoadAsync(CancellationToken cancellationToken) => Task.FromResult(new FleetLoad(null, [], []));
 
-        public Task<CommandResult> SendAsync(CommandRequest command, CancellationToken cancellationToken)
+        public async Task<CommandResult> SendAsync(CommandRequest command, CancellationToken cancellationToken)
         {
             Sent.Add(command);
-            return Task.FromResult(new CommandResult { Verb = command.Verb, Target = command.Target, Who = command.Who, Ok = true, Made = "PIL180", Seq = 1 });
+            if (Gate is { } gate && command.Verb == Verbs.CreateFlight)
+            {
+                Reached.TrySetResult();
+                await gate.Task.WaitAsync(TimeSpan.FromSeconds(10), cancellationToken);
+            }
+            return await Task.FromResult(new CommandResult { Verb = command.Verb, Target = command.Target, Who = command.Who, Ok = true, Made = "PIL180", Seq = 1 });
         }
     }
 }

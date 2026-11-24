@@ -23,8 +23,11 @@ public sealed partial class FlightCommander(NodeState state, Planes planes, Time
     // Two creates must not claim one code, but a create's git work (the checkout, the worktree) holds no other verb: it has its own lock.
     private readonly SemaphoreSlim _creating = new(1, 1);
 
+    // The landed flights whose follow-ups are being made on a peer with the lock let go, with the packages their landing released: a second run
+    // for one is not started but adds its packages here, and the running one reads them as it goes.
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, PackageWait[]> _ensuringPeers = new(StringComparer.Ordinal);
+
     // The flights being landed, whose plane and sessions are being taken down with the lock let go: a second land of one is refused.
-    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, bool> _ensuringPeers = new(StringComparer.Ordinal);
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, bool> _landing = new(StringComparer.Ordinal);
 
     /// <summary>Says text to a session row (a node say), true when it was delivered; null where there is none (a test that tells no one).</summary>
