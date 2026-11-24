@@ -708,6 +708,11 @@ or another name) that leaves the reviewed head, with a report that leaves no not
 loses its held tail and the node merges. A leg that moved the head ends the hold through a push and a review runs on the new head.
 A hold with no leg on the way always has an open card: the cap's card, else a notes-unmade Ring card.
 
+The restore sweep (#1338): a flight with every leg done, a passed review at its PR head and no merge card gets its PR-ready card at every
+look. A restore that fails (gh could not reach api.github.com, any exception) is logged, marks the PR due so the next look reads it
+afresh, and is tried again at the next look. Past `PrChecks.HoldingBound` of failing, one Ring card (`pr-ready-restore-failed`) names the
+error; it closes when the restore works or the flight leaves that state.
+
 ## Designs
 
 A design (`DSN-<n>`) is a prototype of DIR.Lib screens the owner briefs, kept in versions under `<data>/designs/DSN-<n>/`:

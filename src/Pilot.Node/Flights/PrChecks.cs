@@ -987,6 +987,7 @@ public sealed class PrChecks(NodeState state, IGitHub gitHub, TimeProvider time,
             return;
         }
         var carded = state.Cards(openOnly: true).Where(c => c.Kind is LegCommander.PrReady or LegCommander.MergeFailed).Select(c => c.Subject).ToHashSet(StringComparer.Ordinal);
+        var waiting = new HashSet<string>(StringComparer.Ordinal);
         foreach (var flight in state.Flights().Where(f => f is { State: FlightState.Flying, PullRequest: not null, MergeWhenGreen: null, OnHold: null, Review: { State: ReviewState.Passed, ReviewedHead: not null } }
             && !carded.Contains(Verbs.FlightTarget(f.Code))))
         {
@@ -995,6 +996,7 @@ public sealed class PrChecks(NodeState state, IGitHub gitHub, TimeProvider time,
             {
                 continue;
             }
+            waiting.Add(flight.Code);
             try
             {
                 var pr = await github.PullRequestAsync(flight.RepoPath, flight.Branch, cancellationToken);
@@ -1009,12 +1011,50 @@ public sealed class PrChecks(NodeState state, IGitHub gitHub, TimeProvider time,
                     }
                     await legs.RestorePrReadyAsync(flight.Code, pr.Head, cancellationToken);
                 }
+                _restoreFailing.Remove(flight.Code);
             }
-            catch (FlightException ex)
+            catch (Exception ex) when (ex is not OperationCanceledException)
             {
+                // Any failure is retried at the next look (the flight stays in this sweep), logged each time, and past the bound it rings (#1338).
                 await Error.WriteLineAsync($"pr checks: {flight.Code}'s PR-ready card could not be restored: {ex.Message}");
+                // The next look reads the PR itself, not the last batch.
+                state.PrPolls.MarkDue(flight.RepoPath, flight.Branch);
+                RingRestoreFailing(flight, ex.Message);
             }
         }
+        // A flight that restored, or left the state (a card, a merge, a new head), has its failure forgotten and its card closed.
+        foreach (var code in _restoreFailing.Keys.Where(c => !waiting.Contains(c)).ToList())
+        {
+            _restoreFailing.Remove(code);
+        }
+        foreach (var card in state.Cards(openOnly: true).Where(c => c.Kind == RestoreFailedKind && !_restoreFailing.ContainsKey(Verbs.FlightCodeOf(c.Subject))))
+        {
+            state.CloseCard(card.Id, "the PR-ready card was restored, or the flight left that state", "node");
+        }
+    }
+
+    /// <summary>The Ring card kind for a passed flight whose PR-ready card has failed to restore for longer than <see cref="HoldingBound"/> (#1338).</summary>
+    public const string RestoreFailedKind = "pr-ready-restore-failed";
+
+    // When each flight's restore first failed (and was not since seen to work): the bound counts from it.
+    private readonly Dictionary<string, DateTimeOffset> _restoreFailing = new(StringComparer.Ordinal);
+
+    private void RingRestoreFailing(FlightRow flight, string why)
+    {
+        var now = time.GetUtcNow();
+        if (!_restoreFailing.TryGetValue(flight.Code, out var since))
+        {
+            _restoreFailing[flight.Code] = since = now;
+        }
+        var subject = Verbs.FlightTarget(flight.Code);
+        if (now - since < HoldingBound || state.Cards(openOnly: true).Any(c => c.Kind == RestoreFailedKind && c.Subject == subject))
+        {
+            return;
+        }
+        state.RaiseCard(CardBin.Ring, RestoreFailedKind, subject, $"{flight.Code}'s PR-ready card could not be restored",
+            $"{flight.Code}'s review passed and every leg is done, but the node could not raise its PR-ready card for {(int)HoldingBound.TotalMinutes} minutes: {why}. It tries again at every look and closes this card once it works.",
+            link: flight.PullRequestUrl,
+            summary: $"{flight.Code} passed its review but its PR-ready card could not be restored for {(int)HoldingBound.TotalMinutes} minutes ({why}); the node keeps trying.");
     }
 
     /// <summary>
