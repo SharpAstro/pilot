@@ -130,7 +130,7 @@ public sealed class NotificationsViewModeTests
         {
             var inside = Inside(w, card).ToList();
             var texts = inside.Select(TextOf).Select(t => t.Trim()).ToList();
-            texts.ShouldContain("Detail".Trim(), "an open toast has its Detail link", Case.Insensitive);
+            texts.ShouldContain("detail", StringComparer.OrdinalIgnoreCase, "an open toast has its Detail link");
             inside.Any(a => TextOf(a).Contains("Start", StringComparison.Ordinal) || TextOf(a).Contains("Chat", StringComparison.Ordinal)).ShouldBeTrue("actions");
             inside.Count(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Icon }).ShouldBeGreaterThanOrEqualTo(2, "the severity icon and Close");
             texts.ShouldContain("for", "the meta line names the card's bin");
@@ -197,8 +197,8 @@ public sealed class NotificationsViewModeTests
         filled.Count.ShouldBeGreaterThanOrEqualTo(1, "the Grid segment is lit");
         var list = Regions(w).First(r => r.Result is HitResult.ButtonHit { Action: "notifications:view:list" });
         var grid = Regions(w).First(r => r.Result is HitResult.ButtonHit { Action: "notifications:view:grid" });
-        filled.ShouldContain(f => MathF.Abs(f.Bounds.X - grid.Bounds.X) < 6f, "lit under the Grid region");
-        filled.ShouldNotContain(f => MathF.Abs(f.Bounds.X - list.Bounds.X) < 6f, "and not under List");
+        filled.ShouldContain(f => MathF.Abs(f.Bounds.X - grid.X) < 6f, "lit under the Grid region");
+        filled.ShouldNotContain(f => MathF.Abs(f.Bounds.X - list.X) < 6f, "and not under List");
         group.ShouldNotBeNull();
     }
 
