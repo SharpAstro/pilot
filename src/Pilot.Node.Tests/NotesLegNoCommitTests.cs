@@ -64,7 +64,9 @@ public sealed class NotesLegNoCommitTests : ReviewTestsBase
         await Checks().LookAsync(Ct);
         // The node asks for the merge itself at the reviewed head (the plane's own, which the fake PR carries) and nothing refuses it: no hold,
         // note or leg stands in its way, and no merge-refused card is raised (the fake lands a merge as an entry, as AutopilotMergeCardTests reads it).
-        _state.Merges().Single(m => m.Flight == flight.Code).By.ShouldBe(MergeBy.Node);
+        var entry = _state.Merges().Single(m => m.Flight == flight.Code);
+        entry.By.ShouldBe(MergeBy.Node);
+        $"{entry.State} {entry.Why} head={entry.Head} pr={_github.Pr!.Head} card={string.Join(',', ready.Choices.Select(c => string.Join('|', c.Args ?? [])))} merged={_github.Merged.Count}".ShouldBe("");
         _state.Cards(openOnly: false).ShouldNotContain(c => c.Kind == PrChecks.NodeMergeRefused);
     }
 
