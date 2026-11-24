@@ -78,6 +78,25 @@ public sealed class PrFixWorktreeTests : PrFixTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")] // real git: the authoring session's worktree is a checkout of the branch
+    public async Task ACommentThatAnswersADesignQuestionOnABranchTheAuthoringSessionHoldsRaisesOnlyTheAuthorHoldsCard()
+    {
+        CheckOutBranchElsewhere();
+        _state.PutSession(Session("someone", SessionState.Working) with { Cwd = Other });
+        await Review("acme/widget#7", "comment", Question);
+
+        // The comment-answer path (ActOnCommentAnswerAsync): the answer starts the fixer, the start is refused, and the
+        // refusal's own card is the only one: a second FixFailed card would ring twice.
+        _github.PrConversation.Enqueue((7, new PrComment("ada", "Keep it a library, no service.", DateTimeOffset.UtcNow + TimeSpan.FromMinutes(1))));
+        await _reviews.SweepAsync(Ct);
+
+        Fixers.ShouldBeEmpty();
+        var cards = _state.Cards().Where(c => c.Subject == Verbs.PrTarget("acme/widget", 7)
+            && c.Kind is PrReviews.FixAuthorHoldsKind or PrReviews.FixFailedKind or PrReviews.FixOfferKind).ToArray();
+        cards.Select(c => c.Kind).ShouldBe([PrReviews.FixAuthorHoldsKind]);
+    }
+
+    [Fact]
     [Trait("Category", "Slow")]
     public async Task EndingTheFixerLeavesABorrowedFolderInPlace()
     {
