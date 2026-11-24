@@ -13,8 +13,8 @@ namespace Pilot.Gui.Tests;
 /// and what drops on a narrow window says so with <c>CollapseBelow</c>.
 /// </summary>
 /// <remarks>
-/// A RATCHET, as tianwen's ChromeMeasuresThroughTheEngineTests: each file may keep what it had when this was written, never
-/// more, and a new file none. Lower a number in the same commit as the work that earns it; an allowance no longer used
+/// A RATCHET, as tianwen's ChromeMeasuresThroughTheEngineTests: each file may keep what it had when this was written, a new file none, and a raise is a reviewed exception with the condition that lowers it beside it (see Allowed).
+/// Lower a number in the same commit as the work that earns it; an allowance no longer used
 /// fails too, so a paid debt cannot be spent again. It reads the source by pattern, so a sum carried through a local gets
 /// past it: what a pattern cannot see is for review.
 /// </remarks>
