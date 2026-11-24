@@ -46,13 +46,54 @@ public sealed class PrFixWorktreeTests : PrFixTestsBase
 
     [Fact]
     [Trait("Category", "Slow")]
-    public async Task AWorktreeHeldByALiveSessionGetsADetachedFixPlane()
+    public async Task AWorktreeHeldByALiveNonFixerSessionStartsNoFixerAndRaisesOneCardNamingIt()
     {
         CheckOutBranchElsewhere();
         _state.PutSession(Session("someone", SessionState.Working) with { Cwd = Other });
-        var row = await Review("acme/widget#7", "changes", "README.md:1 wrong");
+        await Review("acme/widget#7", "comment", Question);
 
-        await AssertDetachedAsync(row);
+        var refused = await Run(Verbs.FixPr, "acme/widget#7", "controller", "Keep", "it", "a", "library");
+
+        refused.Error.ShouldNotBeNull().ShouldContain("someone");
+        Fixers.ShouldBeEmpty();
+        _state.Cards().Where(c => c.Kind == PrReviews.FixAuthorHoldsKind).ShouldHaveSingleItem().Detail!.ShouldContain("someone");
+        // The same reason answers a recheck, so it starts none either.
+        (await _reviews.WhyNoFixerAsync(Seven, _reviews.Of(Seven).ShouldNotBeNull(), Ct)).ShouldNotBeNull().ShouldContain("someone");
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")] // real git: the authoring session's worktree is a checkout of the branch
+    public async Task APostedReviewOnABranchTheAuthoringSessionHoldsRaisesOnlyTheAuthorHoldsCard()
+    {
+        CheckOutBranchElsewhere();
+        _state.PutSession(Session("someone", SessionState.Working) with { Cwd = Other });
+
+        // The post path: the review asks for changes, the fixer is refused, and the refusal's own card is the only one.
+        await Review("acme/widget#7", "changes", "README.md:1 wrong");
+
+        Fixers.ShouldBeEmpty();
+        var cards = _state.Cards().Where(c => c.Subject == Verbs.PrTarget("acme/widget", 7)
+            && c.Kind is PrReviews.FixAuthorHoldsKind or PrReviews.FixFailedKind or PrReviews.FixOfferKind).ToArray();
+        cards.Select(c => c.Kind).ShouldBe([PrReviews.FixAuthorHoldsKind]);
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")] // real git: the authoring session's worktree is a checkout of the branch
+    public async Task ACommentThatAnswersADesignQuestionOnABranchTheAuthoringSessionHoldsRaisesOnlyTheAuthorHoldsCard()
+    {
+        CheckOutBranchElsewhere();
+        _state.PutSession(Session("someone", SessionState.Working) with { Cwd = Other });
+        await Review("acme/widget#7", "comment", Question);
+
+        // The comment-answer path (ActOnCommentAnswerAsync): the answer starts the fixer, the start is refused, and the
+        // refusal's own card is the only one: a second FixFailed card would ring twice.
+        _github.PrConversation.Enqueue((7, new PrComment("ada", "Keep it a library, no service.", DateTimeOffset.UtcNow + TimeSpan.FromMinutes(1))));
+        await _reviews.SweepAsync(Ct);
+
+        Fixers.ShouldBeEmpty();
+        var cards = _state.Cards().Where(c => c.Subject == Verbs.PrTarget("acme/widget", 7)
+            && c.Kind is PrReviews.FixAuthorHoldsKind or PrReviews.FixFailedKind or PrReviews.FixOfferKind).ToArray();
+        cards.Select(c => c.Kind).ShouldBe([PrReviews.FixAuthorHoldsKind]);
     }
 
     [Fact]

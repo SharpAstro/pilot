@@ -161,7 +161,7 @@ public sealed partial class PrReviews(
     /// </summary>
     public string DraftOf(PrRef pr) => Path.Combine(Path.GetFullPath(options.DataFolder), "reviews", pr.Owner, $"{pr.Name}-{pr.Number}.json");
 
-    public static bool Handles(string verb) => verb is Verbs.ReviewPr or Verbs.PrVerdict or Verbs.PostReview or Verbs.FixPr;
+    public static bool Handles(string verb) => verb is Verbs.ReviewPr or Verbs.PrVerdict or Verbs.PostReview or Verbs.FixPr or Verbs.ClosePr or Verbs.KeepPr;
 
     /// <summary>A PR's own handling of <paramref name="verb"/>: the verbs above, and allow-round on a PR target (a flight's allow-round is the LegCommander's).</summary>
     public static bool Handles(string verb, string target) =>
@@ -199,6 +199,12 @@ public sealed partial class PrReviews(
                 case Verbs.AllowRound:
                     made = await AllowFixRoundAsync(pr, cancellationToken);
                     break;
+                case Verbs.ClosePr:
+                    made = await ClosePrAsync(pr, cancellationToken);
+                    break;
+                case Verbs.KeepPr:
+                    made = await KeepPrAsync(pr, cancellationToken);
+                    break;
                 case Verbs.Merge:
                     await MergeAsync(pr, command, cancellationToken);
                     break;
@@ -224,7 +230,7 @@ public sealed partial class PrReviews(
         {
             // One line per review-pr and fix-pr, written whatever came of it, so a start that left no trace is not a mystery
             // (SE1's review of tianwen#1930, 2026-10-30, left nothing in node.log to say it had been asked for).
-            if (command.Verb is Verbs.ReviewPr or Verbs.FixPr or Verbs.AllowRound)
+            if (command.Verb is Verbs.ReviewPr or Verbs.FixPr or Verbs.AllowRound or Verbs.ClosePr or Verbs.KeepPr)
             {
                 try
                 {

@@ -504,6 +504,19 @@ public sealed class PrRecheckTests1 : PrRecheckTestsBase
 /// <summary>Part 2 of PrRecheckTests: the class is split so its tests run side by side, not one after another.</summary>
 public sealed class PrRecheckTests2 :PrRecheckTestsBase
 {
+    /// <summary>The fixer pushes a commit: the PR's head moves and the fixer's worktree, which pushed it, holds it (a head it lacks is the moved-head stop, pilot #1341).</summary>
+    private string FixerPushes()
+    {
+        var moved = PrOrigins.Push(Path.Combine(_root, "work-widget"), 7, "the fixer's push");
+        var tree = Path.Combine(WidgetClone, ".claude", "worktrees", "fix-widget-7");
+        if (Directory.Exists(tree))
+        {
+            PrOrigins.Git(tree, "fetch", "-q", "origin", "refs/pull/7/head");
+            PrOrigins.Git(tree, "merge", "-q", "--ff-only", moved);
+        }
+        return moved;
+    }
+
     [Fact]
     public async Task AReviewedPrWhoseHeadIsTheOneReviewedAndPassedAndGreenIsQueued()
     {
@@ -673,7 +686,7 @@ public sealed class PrRecheckTests2 :PrRecheckTestsBase
         Review()!.Fixer.ShouldNotBeNull();
 
         // The fixer pushed, and the review of the pushed head cannot start.
-        var moved = PrOrigins.Push(Path.Combine(_root, "work-widget"), 7, "the fixer's push");
+        var moved = FixerPushes();
         _github.Prs["acme/widget#7"] = Pr("OPEN") with { Head = moved, HeadRef = "feature/seven" };
         _workers.Fail = new FlightException("claude would not start");
 
@@ -693,7 +706,7 @@ public sealed class PrRecheckTests2 :PrRecheckTestsBase
         PrOrigins.Git(Path.Combine(_root, "work-widget"), "push", "-q", "origin", "HEAD:refs/heads/feature/seven");
         _github.Prs["acme/widget#7"] = Pr("OPEN") with { HeadRef = "feature/seven" };
         (await _reviews.RunAsync(new CommandRequest { Verb = Verbs.FixPr, Target = "pr/acme/widget#7", Who = "controller" }, Ct)).Error.ShouldBeNull();
-        var moved = PrOrigins.Push(Path.Combine(_root, "work-widget"), 7, "the fixer's push");
+        var moved = FixerPushes();
         _github.Prs["acme/widget#7"] = Pr("OPEN") with { Head = moved, HeadRef = "feature/seven" };
         _workers.Fail = new FlightException("claude would not start");
         await _reviews.SweepAsync(Ct);

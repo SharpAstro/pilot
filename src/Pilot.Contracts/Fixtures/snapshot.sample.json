@@ -446,6 +446,7 @@
       "rounds": null,
       "followUpIssue": null,
       "followUpPoints": null,
+      "keptClosedIssues": null,
       "pointsOnPr": null,
       "deferredFilings": null,
       "startedAt": "2026-10-18T09:02:10+00:00",

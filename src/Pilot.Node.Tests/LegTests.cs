@@ -710,6 +710,29 @@ internal sealed class FakeGitHub : IGitHub
         return Task.FromResult(MergedPrs.TryGetValue(repoPath, out var listed) ? listed : []);
     }
 
+    /// <summary>The issues each PR (by <c>owner/repo#n</c>) closes on GitHub; a PR with no entry answers null, as a gh that could not say. Its state is <see cref="Prs"/>' entry's, else OPEN.</summary>
+    public ConcurrentDictionary<string, int[]> ClosingIssues { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>PRs (by <c>owner/repo#n</c>) that also close an issue of another repo: their read names it, as GhCli does.</summary>
+    public ConcurrentBag<string> ClosesForeignIssue { get; } = [];
+
+    /// <summary>How many times each PR's closing issues were read, by <c>owner/repo#n</c>.</summary>
+    public ConcurrentDictionary<string, int> ClosingIssueReads { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+    public Task<PrClosingIssues?> ClosingIssuesAsync(string repoPath, int number, CancellationToken cancellationToken)
+    {
+        var key = ClosingIssues.Keys.Concat(ClosesForeignIssue).FirstOrDefault(k => k.EndsWith("#" + number, StringComparison.Ordinal));
+        if (key is null)
+        {
+            return Task.FromResult<PrClosingIssues?>(null);
+        }
+        ClosingIssueReads.AddOrUpdate(key, 1, (_, n) => n + 1);
+        var state = Prs.TryGetValue(key, out var pr) ? pr.State : "OPEN";
+        var issues = ClosingIssues.TryGetValue(key, out var closes) ? closes : [];
+        var foreign = ClosesForeignIssue.Contains(key, StringComparer.OrdinalIgnoreCase) ? "other/repo#5" : null;
+        return Task.FromResult<PrClosingIssues?>(new PrClosingIssues(issues, state, foreign));
+    }
+
     public Task<bool?> IssueClosedAsync(string repoPath, int number, CancellationToken cancellationToken) => Task.FromResult<bool?>(IssuesClosedOnGitHub.Contains(number));
 
     /// <summary>When set, reading the PR of a branch fails with it, as a gh that could not reach GitHub.</summary>
@@ -1181,9 +1204,13 @@ internal sealed class FakeGitHub : IGitHub
     /// <summary>Every PR closed unmerged, by number.</summary>
     public ConcurrentQueue<int> ClosedPrs { get; } = [];
 
+    /// <summary>The comment each PR was closed with, by number.</summary>
+    public ConcurrentDictionary<int, string> CloseComments { get; } = new();
+
     public Task ClosePullRequestAsync(string repoPath, int number, string comment, CancellationToken cancellationToken)
     {
         ClosedPrs.Enqueue(number);
+        CloseComments[number] = comment;
         return Task.CompletedTask;
     }
 

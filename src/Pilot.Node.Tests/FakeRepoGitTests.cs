@@ -616,6 +616,9 @@ public sealed class FakeRepoGitTests : IDisposable
         Ask("plane", "merge-base", "--is-ancestor", "origin/main", "HEAD"),
         Ask("plane", "rev-list", "--left-right", "--count", "origin/main...HEAD"),
         Ask("plane", "merge-tree", "--write-tree", "--name-only", "--no-messages", "HEAD", "origin/main"),
+        // The follow-up's test merge: only the commits past a fork point, made from that commit (here HEAD itself, so main's tree comes back whole).
+        Ask("plane", "merge-tree", "--write-tree", "--name-only", "--no-messages", "--merge-base", "HEAD", "origin/main", "HEAD"),
+        Ask("plane", "merge-tree", "--write-tree", "--name-only", "--no-messages", "--merge-base", "origin/main", "origin/main", "HEAD"),
         Ask("plane", "log", "--oneline", "--max-count=8", "HEAD..origin/main", "--", "later.txt"),
         Ask("plane", "log", "--oneline", "--max-count=8", "HEAD..origin/main", "--", "a.txt"),
         Save("plane", "merge", "--no-edit", "origin/main"),

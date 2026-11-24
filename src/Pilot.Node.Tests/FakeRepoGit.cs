@@ -2334,6 +2334,13 @@ internal sealed class FakeRepoGit : IGit
         }
         var nameOnly = a.Remove("--name-only");
         a.Remove("--no-messages");
+        // --merge-base <commit>: the merge is made from that commit instead of the two sides' own merge base (the form that tests a few commits alone).
+        string? explicitBase = null;
+        if (a.IndexOf("--merge-base") is var at and >= 0 && at + 1 < a.Count)
+        {
+            explicitBase = a[at + 1];
+            a.RemoveRange(at, 2);
+        }
         if (a.Count != 2 || a.Any(x => x.StartsWith('-')) || wt is null)
         {
             throw new NotSupportedException("merge-tree form");
@@ -2344,7 +2351,16 @@ internal sealed class FakeRepoGit : IGit
         {
             return Fail($"fatal: not something we can merge: {(mine is null ? a[0] : a[1])}", 128);
         }
-        if (MergeBase(mine, theirs) is not { } baseId)
+        string? baseId;
+        if (explicitBase is not null)
+        {
+            baseId = Resolve(explicitBase, wt);
+            if (baseId is null)
+            {
+                return Fail($"fatal: could not resolve {explicitBase}", 128);
+            }
+        }
+        else if ((baseId = MergeBase(mine, theirs)) is null)
         {
             return Fail("fatal: refusing to merge unrelated histories", 128);
         }

@@ -146,6 +146,19 @@ public abstract class PrFixTestsBase : IDisposable
     /// <summary>The fixer pushes a commit to the PR: its head on GitHub moves; returns the new head.</summary>
     private protected string FixerPushes(string what)
     {
+        var head = SomeoneElsePushes(what);
+        // The fixer pushed from its own worktree, so its HEAD is the new head (a head it lacks is the moved-head stop, pilot #1341).
+        if (Directory.Exists(FixWorktree))
+        {
+            PrOrigins.Git(FixWorktree, "fetch", "-q", "origin", "refs/pull/7/head");
+            PrOrigins.Git(FixWorktree, "merge", "-q", "--ff-only", head);
+        }
+        return head;
+    }
+
+    /// <summary>Someone other than the fixer pushes to the PR: its head on GitHub moves, and the fixer's worktree does not have it.</summary>
+    private protected string SomeoneElsePushes(string what)
+    {
         var head = PrOrigins.Push(Path.Combine(_root, "work-widget"), 7, what);
         _github.Prs["acme/widget#7"] = _github.Prs["acme/widget#7"] with { Head = head };
         return head;
@@ -921,5 +934,31 @@ public sealed class PrReviewRuleTests : PrFixTestsBase
     {
         Put(PrReviewState.Closed, Head);
         (await _reviews.WhyNoReviewAsync(Seven, Ct)).ShouldBeNull();
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AFixerIsNotStartedWhileGitHubsHeadIsNotTheOneTheReviewRead()
+    {
+        await Review("acme/widget#7", "comment", "README.md:1 design: should this be a service at all?");
+        FixerPushes("someone rebuilt the branch");
+
+        var refused = await Run(Verbs.FixPr, "acme/widget#7", "controller", "Keep", "it", "a", "library");
+
+        refused.Error.ShouldNotBeNull().ShouldContain("a review of the new head comes first");
+        Fixers.ShouldBeEmpty();
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AFixerIsNotStartedWhileAFixerSessionOfThePrLivesEvenIfTheRowNamesNone()
+    {
+        await Review("acme/widget#7", "comment", "README.md:1 design: should this be a service at all?");
+        _state.PutSession(Session("du1-fix-widget-7x", SessionState.Working, "job00077") with { Role = SessionRole.Fixer, Pr = 7, Repo = "widget" });
+
+        var refused = await Run(Verbs.FixPr, "acme/widget#7", "controller", "Keep", "it", "a", "library");
+
+        refused.Error.ShouldNotBeNull().ShouldContain("fixing it already");
+        Fixers.ShouldBeEmpty();
     }
 }
