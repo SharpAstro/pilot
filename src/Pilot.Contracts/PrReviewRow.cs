@@ -131,6 +131,9 @@ public sealed record PrReviewRow
     /// <summary>The keys of the points already acted on (a fixer started on them, or they went on the PR as a comment), so a later round acts only on new ones; null while none was.</summary>
     public string[]? FollowUpPoints { get; init; }
 
+    /// <summary>The numbers of the closed issues the person chose to keep this PR open for (PIL1341), so the node flags it again only for an issue not in it; null while none was kept.</summary>
+    public int[]? KeptClosedIssues { get; init; }
+
     /// <summary>The keys of the points the node put on the PR as a comment (a fixer deferred them as larger than the PR, or the PR was past its fix rounds), so each is said there once; null while none was.</summary>
     public string[]? PointsOnPr { get; init; }
 

@@ -710,6 +710,12 @@ internal sealed class FakeGitHub : IGitHub
         return Task.FromResult(MergedPrs.TryGetValue(repoPath, out var listed) ? listed : []);
     }
 
+    /// <summary>The issues each PR (by <c>owner/repo#n</c>) closes on GitHub; a PR with no entry answers null, as a gh that could not say.</summary>
+    public ConcurrentDictionary<string, int[]> ClosingIssues { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+    public Task<int[]?> ClosingIssuesAsync(string repoPath, int number, CancellationToken cancellationToken) =>
+        Task.FromResult<int[]?>(ClosingIssues.FirstOrDefault(c => c.Key.EndsWith("#" + number, StringComparison.Ordinal)).Value);
+
     public Task<bool?> IssueClosedAsync(string repoPath, int number, CancellationToken cancellationToken) => Task.FromResult<bool?>(IssuesClosedOnGitHub.Contains(number));
 
     /// <summary>When set, reading the PR of a branch fails with it, as a gh that could not reach GitHub.</summary>

@@ -122,6 +122,7 @@ public sealed partial class PrReviews
             {
                 await FollowUpMergedWithoutFixerAsync(merged, cancellationToken);
             }
+            await FlagClosedIssuePullRequestsAsync(cancellationToken);
             await SettleDesignCardsAsync(cancellationToken);
             await CloseCardsOfOvertakenReviewsAsync(cancellationToken);
             var closed = state.Cards().Where(c => c.State == CardState.Closed).Select(c => c.Id).ToHashSet(StringComparer.Ordinal);

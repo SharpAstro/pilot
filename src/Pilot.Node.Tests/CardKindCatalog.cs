@@ -231,6 +231,7 @@ internal static class CardKindCatalog
         new("pr-fix-follow-up-conflict", "ForYou", [PrReviewsFixerRounds], "FixFollowUpTests.FixerCommitsThatConflictWithMainRaiseAForYouCardAndPushNothing"),
         new("pr-fix-follow-up-settled", "Handled", [PrReviewsFixerRounds], "FixFollowUpTests.AFixerCommitWhosePatchIsOnMainUnderAnotherShaOpensNoPrAndLeavesOnlyAHandledLine"),
         new("pr-fix-head-moved", "ForYou", [PrReviewsFixerRounds], "IdleFixerTests.AHeadSomeoneElseMovedUnderTheFixerStopsItRaisesACardAndStartsNoReview"),
+        new("pr-closed-issue", "ForYou", ["Flights/PrReviews.ClosedIssue.cs"], "PrClosedIssueTests.AllIssuesClosedFlagsOnceAndNamesThePrAndTheIssue", "an open PR the node holds a review of closes only issues that are closed", [nameof(Verbs.ClosePr), nameof(Verbs.KeepPr)]),
         new("pr-fix-author-holds", "Handled", [PrReviewsFixer], "PrFixWorktreeTests.AWorktreeHeldByALiveNonFixerSessionStartsNoFixerAndRaisesOneCardNamingIt"),
         new("pr-fixer-finished","Handled", [PrReviewsFixerRounds], "IdleFixerTests.AnIdleFixerAfterAPushedAndApprovedRoundIsEndedWithOnlyAHandledLineAndNoCardToAnswer"),
         new("pr-recheck", "Handled", [Recheck], SourcePinned),

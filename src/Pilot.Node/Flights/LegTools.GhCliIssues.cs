@@ -99,6 +99,19 @@ public sealed partial class GhCli
         return doc.RootElement.TryGetProperty("title", out var title) ? title.GetString() : null;
     }
 
+    public async Task<int[]?> ClosingIssuesAsync(string repoPath, int number, CancellationToken cancellationToken)
+    {
+        var (exit, output, _) = await RunAsync(["pr", "view", number.ToString(System.Globalization.CultureInfo.InvariantCulture), "--json", "closingIssuesReferences"], repoPath, cancellationToken);
+        if (exit != 0)
+        {
+            return null;
+        }
+        using var doc = JsonDocument.Parse(output);
+        return doc.RootElement.TryGetProperty("closingIssuesReferences", out var refs) && refs.ValueKind == JsonValueKind.Array
+            ? [.. refs.EnumerateArray().Where(r => r.TryGetProperty("number", out var n) && n.ValueKind == JsonValueKind.Number).Select(r => r.GetProperty("number").GetInt32())]
+            : null;
+    }
+
     public async Task<bool?> IssueClosedAsync(string repoPath, int number, CancellationToken cancellationToken)
     {
         var (exit, output, _) = await RunAsync(["issue", "view", number.ToString(System.Globalization.CultureInfo.InvariantCulture), "--json", "state"], repoPath, cancellationToken);

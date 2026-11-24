@@ -247,6 +247,10 @@ public sealed partial class PrReviews
         {
             return "a flight owns it, so its own legs fix it";
         }
+        if (review.KeptClosedIssues is null && await AllClosedIssuesAsync(review, cancellationToken) is { } closed)
+        {
+            return $"every issue it closes ({IssueList(closed)}) is closed already, so the PR is for closing, not fixing";
+        }
         if (review.DesignAnswer is null && review.Findings.Any(IsDesign))
         {
             return "its review asks a question of design, which is the author's to decide";
