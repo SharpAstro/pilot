@@ -1302,7 +1302,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         }
         if (full)
         {
-            return OpenRow(severity, fill, tokens, lines, buttons, closeCross, meta, Focused(card));
+            return OpenRow(severity, fill, tokens, lines, buttons, closeCross, meta, Focused(card), PageNarrow?.Invoke() ?? false);
         }
         lines.Add(Layout.Builder.Spacer().RowH(6f));
         // Wrapping: a waiting session's card has up to four buttons, more than one line of the panel holds.
@@ -1329,7 +1329,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
 
     /// <summary>The Notifications page's open row: the toast's frame (<see cref="NotificationToast"/>) round the severity icon, the card's parts, and at the right the meta, the Close cross and the buttons, which wrap within their column.</summary>
     private static Layout.Node OpenRow(NotificationSeverity severity, RGBAColor32 fill, NotificationsColors tokens, List<Layout.Node> lines,
-        List<(Layout.Node Node, bool Full)> buttons, Layout.Node? closeCross, string meta, bool focused)
+        List<(Layout.Node Node, bool Full)> buttons, Layout.Node? closeCross, string meta, bool focused, bool narrow)
     {
         var metaInk = Contrast.Readable(Dim, fill, Bright);
         var topRight = new List<Layout.Node> { WrappedProse.Of(meta, NotificationToast.MetaSize, metaInk).WStar() };
@@ -1341,6 +1341,13 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
                 Layout.Builder.HStack([.. topRight]).WithGap(8f).CrossCenter().WStar(),
                 ButtonRows(buttons))
             .WithGap(NotificationsHost.Style.Gap).WStar();
+        if (narrow)
+        {
+            // A narrow page has no room for a column of actions: they stack under the body, inside the same frame.
+            return NotificationToast.Frame(focused ? FocusBg : fill, tokens.TintedEdge(severity), shadow: true,
+                [Layout.Sizing.Fixed(NotificationsLayout.ToastIconSize), Layout.Sizing.Star()],
+                NotificationToast.Icon(severity, tokens.Of(severity)), Layout.Builder.VStack([.. lines, actions]).WithGap(NotificationsHost.Style.Gap).WStar());
+        }
         return NotificationToast.Frame(focused ? FocusBg : fill, tokens.TintedEdge(severity), shadow: true,
             [Layout.Sizing.Fixed(NotificationsLayout.ToastIconSize), Layout.Sizing.Star(2f), Layout.Sizing.Star(1f, 0f, NotificationToast.ActionsWidth)],
             NotificationToast.Icon(severity, tokens.Of(severity)), Layout.Builder.VStack([.. lines]).WStar(), actions);
@@ -1360,6 +1367,14 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
                 Gallery.Single($"card:{card.Id}", new AttachmentRef(image, ImageTitle, imageExt, node), words => WrappedProse.Of(words, 11f, Dim, DetailLines, lineChars: LineChars / 2).WStar())).WStar();
         }
         var edge = Contrast.Mix(tokens.TintedEdge(severity), tokens.Raised, ClosedTone);
+        var iconInk = Contrast.Readable(Contrast.Mix(SeverityInk(severity), Dim, ClosedTone), fill, ink);
+        if (PageNarrow?.Invoke() ?? false)
+        {
+            // A narrow page stacks the line's parts: title, summary, then the node and time.
+            return NotificationToast.Frame(fill, edge, shadow: false,
+                [Layout.Sizing.Fixed(NotificationsLayout.ToastIconSize), Layout.Sizing.Star()],
+                NotificationToast.Icon(severity, iconInk), Layout.Builder.VStack(title, summary, WrappedProse.Of(meta, NotificationToast.MetaSize, ink)).WStar());
+        }
         return NotificationToast.Frame(fill, edge, shadow: false,
             [Layout.Sizing.Fixed(NotificationsLayout.ToastIconSize), Layout.Sizing.Star(1.2f), Layout.Sizing.Star(1.6f), Layout.Sizing.Star(0.7f, 0f, 260f)],
             NotificationToast.Icon(severity, Contrast.Readable(Contrast.Mix(SeverityInk(severity), Dim, ClosedTone), fill, ink)), title, summary,
@@ -1368,6 +1383,9 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
 
     /// <summary>How many notifications the row being built stands for (one, or the N of a fold marked ×N); set by the page while it builds its rows.</summary>
     internal Func<int>? PageRepeats { get; set; }
+
+    /// <summary>Whether the page being built is narrower than <see cref="NotificationToast.NarrowPage"/>: its rows then stack their parts.</summary>
+    internal Func<bool>? PageNarrow { get; set; }
 
     /// <summary>A toast's card body (<see cref="CardFit.Toast"/>): the same parts as the panel's and the page's, without buttons, which the library's row carries.</summary>
     internal Layout.Node ToastCard(CardRow card, string? nodeName, bool cutShort, Action toPage) =>

@@ -26,6 +26,9 @@ internal static class NotificationToast
     /// <summary>The widest the right-hand cluster (meta, buttons, Close) of an open row is given; the buttons wrap within it.</summary>
     internal const float ActionsWidth = 460f;
 
+    /// <summary>Below this page width, in design units, a row stacks its actions under its body (and a closed row its summary and meta under its title) instead of in columns.</summary>
+    internal const float NarrowPage = 900f;
+
     /// <summary>The severity's icon, as DIR.Lib's toast draws it.</summary>
     internal static Layout.IconKind IconOf(NotificationSeverity severity) => severity switch
     {

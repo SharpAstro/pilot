@@ -70,7 +70,14 @@ public sealed class OneCardComponentTests
         tops.ShouldAllBe(t => !float.IsNaN(t), $"{fit}: every part is drawn");
         tops.ShouldBe([.. tops.Order()], $"{fit}: kind and node line (not on the page), title, summary, Detail fold, in that order");
         ArrangedText.Concat(arranged).ShouldNotContain("no turn for 11 min", Case.Sensitive);
-        if (fit != Fit.Toast)
+        if (fit == Fit.Page)
+        {
+            // DSN-5 v1: the page's buttons are at the row's right, beside the title, not under the fold.
+            Buttons.Select(b => TopOf(arranged, b)).ShouldAllBe(t => !float.IsNaN(t), "Page: the card's own buttons are drawn");
+            var titleLeft = arranged.First(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text { Value: var v } } && v.Trim() == "PIL1293").Bounds.X;
+            arranged.Where(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text { Value: var v } } && v.Trim() == "Nudge").ShouldAllBe(a => a.Bounds.X > titleLeft);
+        }
+        else if (fit != Fit.Toast)
         {
             var fold = tops[^1];
             Buttons.Select(b => TopOf(arranged, b)).All(t => t > fold).ShouldBeTrue($"{fit}: the card's own buttons follow the fold");

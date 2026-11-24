@@ -62,6 +62,7 @@ internal sealed class NotificationsView<TSurface>(Renderer<TSurface> renderer) :
     /// </summary>
     private Layout.Node List(float width)
     {
+        Host.PageWidth = width;
         var column = MathF.Max(1f, width - 2f * Gutter);
         var blocks = new List<Layout.Node>();
         var colors = NotificationsHost.Colors();
