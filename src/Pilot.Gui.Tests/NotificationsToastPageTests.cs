@@ -106,7 +106,7 @@ public sealed class NotificationsToastPageTests
 
     private static string ArtifactDir()
     {
-        var dir = Environment.GetEnvironmentVariable("PILOT_TEST_CAPTURE") is { Length: > 0 } && Environment.GetEnvironmentVariable("PILOT_JOB_ARTIFACTS") is { Length: > 0 } given
+        var dir = Environment.GetEnvironmentVariable("PILOT_JOB_ARTIFACTS") is { Length: > 0 } given
             ? given : Path.Combine(AppContext.BaseDirectory, "captures");
         Directory.CreateDirectory(dir);
         return dir;
@@ -289,7 +289,7 @@ public sealed class NotificationsToastPageTests
     {
         using var w = new Window(width);
         w.Fill();
-        if (Environment.GetEnvironmentVariable("PILOT_TEST_CAPTURE") is { Length: > 0 })
+        if (Environment.GetEnvironmentVariable("PILOT_JOB_ARTIFACTS") is { Length: > 0 } || Environment.GetEnvironmentVariable("PILOT_TEST_CAPTURE") is { Length: > 0 })
         {
             w.Save($"notifications-toast-list-{width}");
         }
