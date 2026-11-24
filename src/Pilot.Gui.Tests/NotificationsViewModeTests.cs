@@ -192,7 +192,6 @@ public sealed class NotificationsViewModeTests
     public void TheCurrentSegmentIsTheSelectedOneInTheSharedSwitch()
     {
         using var w = Filled(1600);
-        var group = w.Arranged.Where(a => a.Node is Layout.Node.Stack).Select(a => a).ToList();
         // The selected segment is filled with the switch's selection colour; the other is not.
         var p = Palette.Current;
         var filled = w.Arranged.Where(a => a.Node.Background == p.RowFocusBg && a.Bounds.Height <= AboutCard.HeaderButton + 1f && a.Bounds.Width <= ViewSwitch.Segment + 1f).ToList();
@@ -201,7 +200,6 @@ public sealed class NotificationsViewModeTests
         var grid = Regions(w).First(r => r.Result is HitResult.ButtonHit { Action: "notifications:view:grid" });
         filled.ShouldContain(f => MathF.Abs(f.Bounds.X - grid.X) < 6f, "lit under the Grid region");
         filled.ShouldNotContain(f => MathF.Abs(f.Bounds.X - list.X) < 6f, "and not under List");
-        group.ShouldNotBeNull();
     }
 
     [Fact]
@@ -227,7 +225,7 @@ public sealed class NotificationsViewModeTests
         w.Chrome.NotificationsPage.GridShown.ShouldBeFalse("Grid falls back to List");
         Actions(Regions(w)).ShouldNotContain(a => a.StartsWith("notifications:view:", StringComparison.Ordinal), "no switch");
         Rows(w).Count.ShouldBe(6, "full-width rows");
-        w.Arranged.Select(TextOf).ShouldNotContain(t => t.Trim() == "Need", "the List's heading, not the Grid's");
+        w.Arranged.Select(TextOf).ShouldContain(t => t.StartsWith("Need you", StringComparison.Ordinal), "one heading in both modes");
     }
 
     [Theory]

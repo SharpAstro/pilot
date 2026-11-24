@@ -1680,4 +1680,11 @@ internal sealed class PilotChrome<TSurface>
         More.Anchor = new RectF32(area.X + area.Width, area.Y + (cells.Count - 1) * area.Width, 0f, area.Width);
         Rail.Render(area, cells, active);
     }
+
+    /// <summary>What a terminal cannot draw is turned off: the Flights arrow canvas and the Notifications columns of cards, so both keep their lists. One place for pilot-tui and the terminal sweep.</summary>
+    internal void ForTerminal()
+    {
+        Flights.CanvasAvailable = false;
+        NotificationsPage.GridAvailable = false;
+    }
 }

@@ -1084,7 +1084,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         // The page draws no detail line the summary already says (the stray card's Reason line repeated its summary): a detail of nothing else has no fold.
         Layout.Node? detailLink = null;
         var shownDetail = card.Detail is { Length: > 0 } rawDetail && full && summary is not null
-            ? string.Join('\n', rawDetail.Split('\n').Where(l => !string.IsNullOrWhiteSpace(l) && !summary.Contains(l.Trim(), StringComparison.Ordinal)))
+            ? string.Join('\n', rawDetail.Split('\n').Where(l => !string.IsNullOrWhiteSpace(l) && !summary.Split('\n').Any(x => x.Trim() == l.Trim())))
             : card.Detail;
         if (shownDetail is { Length: > 0 } detail && detail != summary)
         {
@@ -1413,7 +1413,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         }
         return NotificationToast.Frame(fill, edge, shadow: false,
             [Layout.Sizing.Fixed(NotificationsLayout.ToastIconSize + NotificationsHost.Style.Gap), Layout.Sizing.Star(1.2f), Layout.Sizing.Star(1.6f), Layout.Sizing.Star(0.7f, 0f, 260f)],
-            NotificationToast.Icon(severity, Contrast.Readable(Contrast.Mix(SeverityInk(severity), Dim, ClosedTone), fill, ink)), title, summary,
+            NotificationToast.Icon(severity, iconInk), title, summary,
             WrappedProse.Of(meta, NotificationToast.MetaSize, ink));
     }
 

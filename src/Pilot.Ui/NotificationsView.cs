@@ -98,7 +98,7 @@ internal sealed class NotificationsView<TSurface>(Renderer<TSurface> renderer) :
         var colors = NotificationsHost.Colors();
         Layout.Node Section(string title, int count, Layout.Node? action = null)
         {
-            var label = Layout.Builder.Text($"{title} · {count}", GridShown ? 18f : 13f, GridShown ? Palette.Current.Bright : colors.Dim).Selectable().WStar();
+            var label = Layout.Builder.Text($"{title} · {count}", 18f, Palette.Current.Bright).Selectable().WStar();
             return (action is null ? Layout.Builder.HStack(label) : Layout.Builder.HStack(label, action)).CrossCenter().RowH(30f).WFixed(column);
         }
         var columns = GridShown ? GridColumns(width) : 0;
@@ -112,7 +112,7 @@ internal sealed class NotificationsView<TSurface>(Renderer<TSurface> renderer) :
         }
         if (needs.Count > 0)
         {
-            blocks.Add(Section(GridShown ? "Need you" : "Needs you", needs.Count));
+            blocks.Add(Section("Need you", needs.Count));
             AddCards(blocks, needs, Placed, columns);
         }
         if (history.Count > 0)
@@ -182,9 +182,4 @@ internal sealed class NotificationsView<TSurface>(Renderer<TSurface> renderer) :
         }
         return rows;
     }
-
-    /// <summary>A keep time as a person reads it: <c>24 hours</c>, <c>3 days</c>.</summary>
-    internal static string KeepText(TimeSpan keep) =>
-        NotificationsHost.KeepChoices.FirstOrDefault(c => c.Keep == keep).Label
-        ?? (keep.TotalHours < 48 ? $"{(int)keep.TotalHours} hours" : $"{(int)keep.TotalDays} days");
 }

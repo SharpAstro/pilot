@@ -61,6 +61,7 @@ public static class TerminalWireframeSweepTests
         chrome.Chat.Cells = true;
         chrome.WithoutScrollBars();
         chrome.Flights.CanCommand = true;
+        chrome.ForTerminal(); // as pilot-tui does: the sweep draws the lists the terminal shows
         chrome.Jobs.CanCommand = true;
         chrome.Cards.CanTell = true;
         chrome.Nodes.Choices = data.Nodes;
