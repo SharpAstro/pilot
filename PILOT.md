@@ -9,6 +9,9 @@ is neither built nor tested by CI.
 - A plane is a git worktree at `<repo>/.claude/worktrees/<code>` on `flight/<code>`. Work and commit only there. Do not
   push, open a PR or merge; the controller lands the flight. Leave nothing uncommitted in the plane, and put scratch
   output outside it.
+- Work that belongs to another repo is recorded with `pilot follow-up <owner/name> --title ... --body ... [--package]`, never plain
+  `gh issue create`: the node makes a flight for it when this flight lands, and a card rings if one is left without. A finding
+  in this flight's own repo is fixed in the flight.
 - Sibling clones are not yours. **A plane builds against the published packages, as CI does**: the projects' 6-level
   `SharpAstroRoot` probe is opt-in (`UseLocalSiblings=true`), so nothing in a plane compiles `DIR.Lib`, `SdlVulkan.Renderer`,
   `AppShell` or another sibling's source, and its jobs never wait on another repo's build. Only the main clone compiles
