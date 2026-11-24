@@ -87,6 +87,15 @@ public sealed partial class LegCommander
         return true;
     }
 
+    /// <summary>The leg the hold waits on ended without moving the reviewed head: it ends the hold when its report leaves no note unmade (#1338), else the hold is the watchtower's own.</summary>
+    private void SettleHoldOfFinishedLeg(string code, string leg)
+    {
+        if (!EndHoldOfFinishedLeg(code, leg))
+        {
+            HoldForWatchtower(code, leg);
+        }
+    }
+
     /// <summary>Releases a hold whose notes all have an end: Holding null, a Handled line, and the PR-ready card says ready, not holding.</summary>
     private void ReleaseNotesMade(FlightRow flight, string detail)
     {

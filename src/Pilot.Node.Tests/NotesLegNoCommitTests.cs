@@ -57,7 +57,7 @@ public sealed class NotesLegNoCommitTests : ReviewTestsBase
         ready.Title.ShouldNotContain("holding");
         (ready.Detail ?? "").ShouldNotContain("merge is held");
         await Checks().LookAsync(Ct);
-        _github.Merged.ShouldHaveSingleItem();
+        _github.Merged.ShouldHaveSingleItem($"open legs {_state.OpenLegs(flight.Code).Count}, review {F(flight.Code).Review?.State}, card {string.Join('|', Open().Select(c => c.Kind + ":" + string.Join(',', c.Choices.Select(x => x.Verb))))}");
     }
 
     [Fact]
