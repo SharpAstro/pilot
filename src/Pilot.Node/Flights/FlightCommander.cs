@@ -24,6 +24,7 @@ public sealed partial class FlightCommander(NodeState state, Planes planes, Time
     private readonly SemaphoreSlim _creating = new(1, 1);
 
     // The flights being landed, whose plane and sessions are being taken down with the lock let go: a second land of one is refused.
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, bool> _ensuringPeers = new(StringComparer.Ordinal);
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, bool> _landing = new(StringComparer.Ordinal);
 
     /// <summary>Says text to a session row (a node say), true when it was delivered; null where there is none (a test that tells no one).</summary>

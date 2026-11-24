@@ -151,6 +151,23 @@ public sealed partial class FlightCommander
         {
             return;
         }
+        // The lock is let go while peers answer, so two runs for one flight could overlap and comment and ground twice: one run per flight.
+        if (!_ensuringPeers.TryAdd(code, true))
+        {
+            return;
+        }
+        try
+        {
+            await EnsurePeerFollowUpFlightsCoreAsync(code, landing, released, cancellationToken);
+        }
+        finally
+        {
+            _ensuringPeers.TryRemove(code, out _);
+        }
+    }
+
+    private async Task EnsurePeerFollowUpFlightsCoreAsync(string code, FlightRow landing, PackageWait[] released, CancellationToken cancellationToken)
+    {
         foreach (var followUp in landing.RepoFollowUps.Where(f => f.Flight is null).ToList())
         {
             try

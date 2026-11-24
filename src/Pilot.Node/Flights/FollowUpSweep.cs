@@ -171,7 +171,9 @@ public sealed class FollowUpSweep(NodeState state, IGitHub? github, TimeProvider
                 continue;
             }
             // One the person dismissed stays dismissed: a follow-up no node can place is released that way, not rung again every sweep.
-            if (state.CardsOf(LandedKind, subject).Any(c => c.State == CardState.Open || c.ClosedBy != "node"))
+            // Only a dismissal counts: pressing "Create the flights" also closes the card by a person, with the choice's label as the outcome.
+            if (state.CardsOf(LandedKind, subject).Any(c => c.State == CardState.Open
+                || (c.Outcome is { } outcome && outcome.StartsWith("dismissed", StringComparison.Ordinal) && c.ClosedBy != "node")))
             {
                 continue;
             }

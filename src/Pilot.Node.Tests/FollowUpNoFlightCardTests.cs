@@ -90,6 +90,19 @@ public sealed class FollowUpNoFlightCardTests : ReviewTestsBase
     }
 
     [Fact]
+    public async Task APressOfCreateTheFlightsThatLeavesAFollowUpWithoutAFlightIsRungAgainWithAFreshCard()
+    {
+        PutLanded(Record());
+        var sweep = new FollowUpSweep(_state, _github, _time) { EnsureFlights = (_, _) => Task.CompletedTask };
+        await sweep.SweepAsync(Ct);
+        _state.CloseCard(Cards().ShouldHaveSingleItem().Id, "Create the flights", "person").ShouldBeTrue();
+
+        await sweep.SweepAsync(Ct);
+
+        Cards().ShouldHaveSingleItem();
+    }
+
+    [Fact]
     public async Task TheSweepsEnsureStepThatPlacesTheFollowUpRaisesNoCard()
     {
         PutLanded(Record());
