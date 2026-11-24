@@ -85,7 +85,7 @@ public sealed partial class LegCommander
         }
         // The leg's report is the notes' end: it is written into the review's last round, so the merge's own guard (which reads rounds and
         // review-notes legs only) and every later look agree with the release.
-        if (flight.ReviewRounds is { Count: > 0 } rounds && ReviewFollowUp.UnmadeNotes(rounds) is { Count: > 0 } open)
+        if (flight.ReviewRounds is { Length: > 0 } rounds && ReviewFollowUp.UnmadeNotes(rounds) is { Count: > 0 } open)
         {
             var last = rounds.OrderBy(r => r.Round).Last();
             var ends = open.Select(p => new ReviewPointAnswer(p.Id, "addressed", $"the {leg} leg's report")).ToArray();
