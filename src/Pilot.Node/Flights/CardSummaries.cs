@@ -234,6 +234,8 @@ public static partial class CardSummaries
             LegWatch.DuplicateWorkerEnded => "The node ended a second worker session of a leg that was redone; the leg's current worker was not touched. Nothing to do.",
             PrReviews.FixEndedKind => "A fixer ended without pushing. Fix it starts another fixer on the same findings.",
             PrReviews.FixFollowUpKind => "A PR merged while its fixer worked, so the fixer's commits went to a new branch and a follow-up PR, which is reviewed as any PR. Nothing to do.",
+            PrReviews.FixFollowUpSettledKind => "A PR merged while its fixer worked, and the changes of the fixer's commits are already on the base or on the follow-up branch, so no follow-up PR was opened. Nothing to do.",
+            PrReviews.FixerFinishedKind => "An idle fixer of an approved PR left nothing uncommitted or unpushed, so the node ended it. Nothing to do.",
             PrReviews.FixFollowUpFailedKind => "A PR merged while its fixer worked and the fixer's commits could not be pushed or opened as a follow-up PR. The detail names the commit and the local branch that holds it; push it by hand.",
             PrReviews.FixLeftKind =>"A fixer's worktree is still held by a process. The node tries again.",
             Compactor.Kind => "The node compacted a session's context, or could not and tries again. Nothing to do.",

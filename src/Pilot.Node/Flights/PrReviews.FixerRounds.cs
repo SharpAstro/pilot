@@ -38,6 +38,12 @@ public sealed partial class PrReviews
     /// <summary>The For-you card said when a fixer's worktree could not be removed; the node tries again.</summary>
     public const string FixLeftKind = "pr-fix-left";
 
+    /// <summary>The Handled notice of an idle fixer of an approved PR that finished with nothing left and was ended (pilot #1327).</summary>
+    public const string FixerFinishedKind = "pr-fixer-finished";
+
+    /// <summary>The Handled notice of a merged PR's fixer commits that are already on the base, or on the follow-up branch, so no PR was opened (pilot #1327).</summary>
+    public const string FixFollowUpSettledKind = "pr-fix-follow-up-settled";
+
     /// <summary>How many rounds of fixes a PR gets before the person is rung, the same cap as a flight's review go-arounds (#249).</summary>
     public const int MaxFixRounds = LegCommander.MaxReviewGoArounds;
 
@@ -74,10 +80,39 @@ public sealed partial class PrReviews
         {
             // A fixer started on a passing review has had its go at the points its brief listed (ReviewFollowUp.ToMake, the same list): they are
             // acted on, so a point it answered deferred does not start another fixer. A changes-verdict fixer's brief lists none, so none is recorded.
-            // The fixer's session still live: it may push more, so it is left running and no review starts yet; a later sweep looks again once it ends.
-            if (LiveFixerOf(review) is not null)
+            // The fixer's session working, waiting on a person or on a job of its own: it may push more, so it is left running and no review starts yet; a
+            // later sweep looks again once it has finished. An idle one has finished (its turn is over and an idle session never ends by itself), so it is ended
+            // below and the review of its push starts (pilot #1327).
+            var lives = LiveFixersOf(review);
+            if (lives.Any(l => !FixerFinished(l)))
             {
                 return;
+            }
+            var live = lives.FirstOrDefault();
+            // An idle fixer that left work past the PR's head is nudged once; a second look ends it with its worktree kept, and the hold pushes or rings for it.
+            if (live is { State: SessionState.Idle } && review.FixerJob is { } idleJob && string.Equals(live.Id, idleJob, StringComparison.Ordinal)
+                && review.FixWorktree is { } idleTree && review.FixWorktreeBorrowed != true
+                && !string.Equals(review.FixerResumedJob, idleJob, StringComparison.Ordinal) && ResumeFixer is { } nudge
+                && await WorkPastAsync(idleTree, read.Head, cancellationToken) is { } idleWork)
+            {
+                if (Of(pr) is { } latest)
+                {
+                    state.PutPrReview(latest with { FixerResumedJob = idleJob });
+                }
+                string? refused;
+                try
+                {
+                    refused = await nudge(idleJob, ResumeText(review, idleWork.Line), cancellationToken);
+                }
+                catch (FlightException ex)
+                {
+                    refused = ex.Message;
+                }
+                if (refused is null)
+                {
+                    return;
+                }
+                Error.WriteLine($"pr reviews: {pr}'s idle fixer could not be nudged: {refused}");
             }
             var tried = string.Equals(review.Verdict, "changes", StringComparison.OrdinalIgnoreCase) ? []
                 : ReviewFollowUp.ToMake(review).Select(i => i.Key).ToArray();
@@ -104,7 +139,7 @@ public sealed partial class PrReviews
         // fixer started a moment ago (its row not listed yet) read as ended, and another was started on it (tianwen#2435 had three; pilot #1247). A row
         // stored before FixerJob was kept falls back to the name.
         var sessions = state.Sessions().Where(s => review.FixerJob is { } job ? string.Equals(s.Id, job, StringComparison.Ordinal) : string.Equals(s.Name, review.Fixer, StringComparison.Ordinal)).ToList();
-        if (sessions.Count > 0 && sessions.All(s => s.State == SessionState.Ended))
+        if (sessions.Count > 0 && sessions.All(s => s.State is SessionState.Ended or SessionState.Idle))
         {
             // Ended with a pilot run job of its own queued or running is waiting, not finished: the job's end wakes it (pilot #1309: tianwen #2474 and
             // #2476 ended their turn on 'pilot run', were read as finished and stopped, #2474 was queued and its push refused).
@@ -112,10 +147,33 @@ public sealed partial class PrReviews
             {
                 return;
             }
+            // An idle one that has taken no turn yet, or whose last turn the API stopped, has not finished: left alone, looked at again next sweep.
+            if (sessions.Any(IdleNotDone))
+            {
+                return;
+            }
+            // A second live fixer of the PR (one the row does not name) that is still working keeps the round open: EndFixerAsync stops every live fixer,
+            // which mid-turn would cut it off. Looked at again next sweep, as the moved-head path does.
+            if (LiveFixersOf(review).Any(l => !FixerFinished(l)))
+            {
+                return;
+            }
             // What it left: a fixer that ended with its fix uncommitted, or committed and not pushed (a detached HEAD, a push that failed), had its worktree
             // force-removed with the work in it (pilot #1247: tianwen#2435's fix sat in a commit nothing pointed to). Its worktree is kept then, and the card
             // says where the work is and what it is.
             var left = await LeftWorkAsync(review, cancellationToken);
+            // An idle fixer of an approved review with nothing left has done its part (its push was reviewed and passed): ended quietly, no card, since it did
+            // not end 'without a push'. Idle with the head unmoved on a changes verdict, or with work left, takes the path of an ended one (pilot #1327).
+            if (left is null && string.Equals(review.Verdict, "approve", StringComparison.OrdinalIgnoreCase) && sessions.All(s => s.State == SessionState.Idle))
+            {
+                if (await EndFixerAsync(review, cancellationToken))
+                {
+                    // A line to read, not a card to answer: the fixer's end is on record, and why no review followed.
+                    state.RaiseCard(CardBin.Handled, FixerFinishedKind, subject, $"{pr}: {review.Fixer} finished and was ended",
+                        $"Its push was reviewed and approved (head {CommitRefs.Short(review.Head)}), and it left nothing uncommitted or unpushed, so it was ended with its worktree removed.");
+                }
+                return;
+            }
             // Ended on its own with the head unmoved: resumed once per fixer job before any card (pilot #1309). Only a second end, or a resume
             // that could not be delivered, falls through to the card.
             // A fixer a person or the watchtower stopped reads Ended too: waking it would undo the stop, so it goes straight to the card.
@@ -280,10 +338,11 @@ public sealed partial class PrReviews
         {
             await StopQuietly(job, cancellationToken);
         }
-        // A live fixer of the PR the row does not name (pilot #1291, tianwen#2470) is stopped the same way before its commits are read.
-        if (LiveFixerOf(review) is { } live && !string.Equals(live.Id, review.FixerJob, StringComparison.Ordinal))
+        // Every live fixer of the PR the row does not name (pilot #1291, tianwen#2470), a second one beside the row's own included, is stopped the
+        // same way before its commits are read, working or not: the first of them being the row's own job must not hide the rest.
+        foreach (var other in LiveFixersOf(review).Where(l => !string.Equals(l.Id, review.FixerJob, StringComparison.Ordinal)))
         {
-            await StopQuietly(live.Id, cancellationToken);
+            await StopQuietly(other.Id, cancellationToken);
         }
         var merged = read.Head.Length > 0 ? read.Head : review.Head;
         var baseBranch = read.Base.Length > 0 ? read.Base : "main";
@@ -322,6 +381,19 @@ public sealed partial class PrReviews
                 summary: $"Look in {review.ClonePath} for commits the fixer made after {pr} merged: they could not be read ({LegCommander.OneLine(ex.Message)}).");
             return;
         }
+        // Judged by content, not by commit id: a commit whose changes reached the base under another SHA (a squash, a cherry-pick) needs no PR.
+        try
+        {
+            if (await ChangesOnBaseAsync(worktree, $"origin/{baseBranch}", merged, baseBranch, cancellationToken))
+            {
+                NoteAlreadyThere(pr, review, $"on {baseBranch}");
+                return;
+            }
+        }
+        catch (Exception ex) when (ex is FlightException or System.ComponentModel.Win32Exception or IOException or InvalidOperationException)
+        {
+            // Not known: the commits are followed up as ever.
+        }
         var branch = $"{(read.HeadRef.Length > 0 ? read.HeadRef : "fix")}-followup-{review.Number}";
         void Failed(string why) => state.RaiseCard(CardBin.ForYou, FixFollowUpFailedKind, subject,
             $"{pr} merged while its fixer worked: its commit has no PR",
@@ -332,7 +404,20 @@ public sealed partial class PrReviews
             var push = await git.RunAsync(["push", "origin", $"HEAD:refs/heads/{branch}"], worktree, cancellationToken);
             if (!push.Ok)
             {
-                Failed($"git could not push {branch}: {push.Why}");
+                // The branch may exist on origin already (an earlier follow-up): read it. Holding the changes means the work is there; never a force push.
+                var fetched = await git.RunAsync(["fetch", "--quiet", "origin", $"+refs/heads/{branch}:refs/remotes/origin/{branch}"], worktree, cancellationToken);
+                if (!fetched.Ok)
+                {
+                    Failed($"git could not push {branch}: {push.Why}");
+                    return;
+                }
+                if (await ChangesOnBaseAsync(worktree, $"origin/{branch}", merged, null, cancellationToken))
+                {
+                    NoteAlreadyThere(pr, review, $"on origin's {branch}");
+                    return;
+                }
+                var open = await github.PullRequestAsync(review.ClonePath, branch, cancellationToken);
+                Failed($"The branch {branch} already exists on origin with other work{(open is { State: "OPEN" } ? $" (its open PR is #{open.Number})" : "")}, so the commit could not be pushed to it ({LegCommander.OneLine(push.Why)})");
                 return;
             }
             var answer = review.DesignAnswer is { Length: > 0 } given ? $"\n\nThe design answer it carried out: {given}" : "";
@@ -357,6 +442,40 @@ public sealed partial class PrReviews
         }
     }
 
+    /// <summary>
+    /// True when every change of the commits past <paramref name="merged"/> is already on <paramref name="target"/> (a base or a branch on origin),
+    /// whatever their SHAs: <c>git cherry</c> says no commit is missing, or, where a squash hides that, the files they touch do not differ.
+    /// <paramref name="fetchBase"/> is fetched first when given.
+    /// </summary>
+    private async Task<bool> ChangesOnBaseAsync(string worktree, string target, string merged, string? fetchBase, CancellationToken cancellationToken)
+    {
+        if (fetchBase is not null && !(await git.RunAsync(["fetch", "--quiet", "origin", fetchBase], worktree, cancellationToken)).Ok)
+        {
+            return false;
+        }
+        var cherry = await git.RunAsync(["cherry", target, "HEAD", merged], worktree, cancellationToken);
+        if (cherry.Ok && cherry.Output.Trim().Length > 0 && !cherry.Output.Split('\n').Any(l => l.StartsWith('+')))
+        {
+            return true;
+        }
+        // NUL-separated, and compared as names rather than handed back to git as pathspecs: git quotes a name with a space edge, a non-ASCII letter or a
+        // control character in its line output, and a quoted name as a pathspec matches nothing, which read as 'no difference' (already on base).
+        var names = await git.RunAsync(["diff", "--name-only", "-z", merged, "HEAD"], worktree, cancellationToken);
+        var differing = await git.RunAsync(["diff", "--name-only", "-z", target, "HEAD"], worktree, cancellationToken);
+        if (!names.Ok || !differing.Ok)
+        {
+            return false;
+        }
+        var files = names.Output.Split('\0', StringSplitOptions.RemoveEmptyEntries);
+        var apart = differing.Output.Split('\0', StringSplitOptions.RemoveEmptyEntries).ToHashSet(StringComparer.Ordinal);
+        return files.Length > 0 && !files.Any(apart.Contains);
+    }
+
+    /// <summary>A line to read (Handled) saying the fixer's commits need no follow-up PR because their changes are already there.</summary>
+    private void NoteAlreadyThere(PrRef pr, PrReviewRow review, string where) =>
+        state.RaiseCard(CardBin.Handled, FixFollowUpSettledKind, Verbs.PrTarget(review.Repo, review.Number), $"{pr} merged while its fixer worked: its commits are already {where}",
+            $"The changes of the commits its fixer made after the merge are already {where} (under other commit ids), so no follow-up PR was opened and nothing was pushed.");
+
     // Fixers whose merged PR was already followed up (or failed to be), keyed by PR and worktree, so a worktree that will not go is retried alone.
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> _followedUp = new(StringComparer.Ordinal);
 
@@ -366,6 +485,12 @@ public sealed partial class PrReviews
         if (review.FixerJob is { } job)
         {
             await StopQuietly(job, cancellationToken);
+        }
+        // A second live fixer session of the PR (one the row does not name) is stopped with it, as the follow-up does: left running it would push
+        // to a PR whose round has been closed.
+        foreach (var other in LiveFixersOf(review).Where(l => !string.Equals(l.Id, review.FixerJob, StringComparison.Ordinal)))
+        {
+            await StopQuietly(other.Id, cancellationToken);
         }
         // With the PR's current head given (an open PR), a worktree holding commits past it or uncommitted files is kept, never force-removed: the
         // hold (FixerHoldAsync) pushes the commits or rings for it (pilot #1291).

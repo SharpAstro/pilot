@@ -102,6 +102,16 @@ public sealed class FlightsPrRoundTests
         text.ShouldContain("No flights yet");
     }
 
+    /// <summary>The band follows the fixer's session: an approved, closed review ends its round once the node ends the idle fixer (pilot #1327).</summary>
+    [Fact]
+    public void AnApprovedClosedReviewLeavesTheBandWhenItsFixerEndsButNotWhileItIsIdle()
+    {
+        var approved = Review(PrReviewState.Closed, closed: Live.At) with { Verdict = "approve" };
+
+        Screen([approved], Live.Row("s1", Fixer, SessionState.Ended)).Rounds.ShouldBeEmpty();
+        Screen([approved], Live.Row("s1", Fixer, SessionState.Idle)).Rounds.Single().State.ShouldBe("fixing · idle");
+    }
+
     [Fact]
     public void AReviewUnderwayIsAReviewingRowNamingItsReviewer()
     {
