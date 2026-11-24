@@ -237,6 +237,7 @@ public static partial class CardSummaries
             PrReviews.FixFollowUpSettledKind => "A PR merged while its fixer worked, and the changes of the fixer's commits are already on the base or on the follow-up branch, so no follow-up PR was opened. Nothing to do.",
             PrReviews.FixerFinishedKind => "An idle fixer of an approved PR left nothing uncommitted or unpushed, so the node ended it. Nothing to do.",
             PrReviews.FixFollowUpFailedKind => "A PR merged while its fixer worked and the fixer's commits could not be pushed or opened as a follow-up PR. The detail names the commit and the local branch that holds it; push it by hand.",
+            PrReviews.FixFollowUpConflictKind => "A PR merged while its fixer worked, and a test merge of the fixer's commits onto the base conflicts, so nothing was pushed and no follow-up PR was opened. The detail names the commits and the local branch that holds them; take what is still needed by hand.",
             PrReviews.FixLeftKind =>"A fixer's worktree is still held by a process. The node tries again.",
             Compactor.Kind => "The node compacted a session's context, or could not and tries again. Nothing to do.",
             Compactor.StuckKind => "The watchtower still reads past its share of its window after a compaction and an attempt at a fresh one, so the node leaves it alone until it reads under it. Restart starts a fresh one by hand.",

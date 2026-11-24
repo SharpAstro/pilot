@@ -381,10 +381,36 @@ public sealed partial class PrReviews
                 summary: $"Look in {review.ClonePath} for commits the fixer made after {pr} merged: they could not be read ({LegCommander.OneLine(ex.Message)}).");
             return;
         }
+        var testMergeSaysChanges = false;
+        // A test merge of only the fixer's own commits (past their fork point from the PR's history) onto the base decides first (pilot #1341):
+        // the same tree means the base has it all, a conflict means the commits are stale against the base, a change means a follow-up PR.
+        try
+        {
+            switch (await TestMergeOnBaseAsync(worktree, baseBranch, merged, review.Head, cancellationToken))
+            {
+                case { Outcome: TestMergeOutcome.Same }:
+                    NoteAlreadyThere(pr, review, $"on {baseBranch}");
+                    return;
+                case { Outcome: TestMergeOutcome.Conflict } conflicted:
+                    state.RaiseCard(CardBin.ForYou, FixFollowUpConflictKind, subject,
+                        $"{pr} merged while its fixer worked: its commits conflict with {baseBranch}, so no follow-up PR was opened",
+                        $"A test merge of the fixer's commits ({conflicted.Commits}) onto origin/{baseBranch} conflicts in {conflicted.Files}. Nothing was pushed.
+The commits stay on the local branch {localBranch} in {review.ClonePath}; take what is still needed by hand.", link: review.Url,
+                        summary: $"Look at the fixer's commits ({conflicted.Commits}) on {localBranch} in {review.ClonePath}: they conflict with {baseBranch} in {conflicted.Files}, so no PR was opened or pushed.");
+                    return;
+                case { Outcome: TestMergeOutcome.Changes }:
+                    testMergeSaysChanges = true;
+                    break;
+            }
+        }
+        catch (Exception ex) when (ex is FlightException or System.ComponentModel.Win32Exception or IOException or InvalidOperationException)
+        {
+            // Not known: the cherry and file check below, then the commits as ever.
+        }
         // Judged by content, not by commit id: a commit whose changes reached the base under another SHA (a squash, a cherry-pick) needs no PR.
         try
         {
-            if (await ChangesOnBaseAsync(worktree, $"origin/{baseBranch}", merged, baseBranch, cancellationToken))
+            if (!testMergeSaysChanges && await ChangesOnBaseAsync(worktree, $"origin/{baseBranch}", merged, baseBranch, cancellationToken))
             {
                 NoteAlreadyThere(pr, review, $"on {baseBranch}");
                 return;
@@ -440,6 +466,74 @@ public sealed partial class PrReviews
         {
             Failed(ex.Message);
         }
+    }
+
+    /// <summary>The For-you card of a merged PR's fixer commits whose test merge onto the base conflicts; the local branch holds them.</summary>
+    public const string FixFollowUpConflictKind = "pr-fix-follow-up-conflict";
+
+    private enum TestMergeOutcome { Unknown, Same, Conflict, Changes }
+
+    private sealed record TestMerge(TestMergeOutcome Outcome, string Commits = "", string Files = "");
+
+    /// <summary>
+    /// A test merge of only the fixer's commits onto origin/<paramref name="baseBranch"/>: <c>git merge-tree --write-tree --merge-base &lt;fork&gt;</c>, where the
+    /// fork is where the fixer's HEAD leaves the PR's history (the merged head or the reviewed head when an ancestor of HEAD, else their merge-base with HEAD),
+    /// so commits of the PR from before it was rebuilt are not applied again. Unknown when git cannot say.
+    /// </summary>
+    private async Task<TestMerge> TestMergeOnBaseAsync(string worktree, string baseBranch, string merged, string? reviewed, CancellationToken cancellationToken)
+    {
+        if (!(await git.RunAsync(["fetch", "--quiet", "origin", baseBranch], worktree, cancellationToken)).Ok)
+        {
+            return new TestMerge(TestMergeOutcome.Unknown);
+        }
+        string? fork = null;
+        foreach (var candidate in new[] { merged, reviewed }.Where(c => !string.IsNullOrEmpty(c)))
+        {
+            if ((await git.RunAsync(["merge-base", "--is-ancestor", candidate!, "HEAD"], worktree, cancellationToken)).Ok)
+            {
+                fork = candidate;
+                break;
+            }
+        }
+        if (fork is null)
+        {
+            foreach (var candidate in new[] { reviewed, merged }.Where(c => !string.IsNullOrEmpty(c)))
+            {
+                var found = await git.RunAsync(["merge-base", "HEAD", candidate!], worktree, cancellationToken);
+                if (found.Ok && found.Output.Trim() is { Length: > 0 } id)
+                {
+                    fork = id;
+                    break;
+                }
+            }
+        }
+        if (fork is null)
+        {
+            return new TestMerge(TestMergeOutcome.Unknown);
+        }
+        var target = $"origin/{baseBranch}";
+        var tree = await git.RunAsync(["merge-tree", "--write-tree", "--name-only", "--no-messages", "--merge-base", fork, target, "HEAD"], worktree, cancellationToken);
+        var lines = tree.Output.Split('
+', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (lines.Length == 0 || (!tree.Ok && tree.ExitCode != 1))
+        {
+            return new TestMerge(TestMergeOutcome.Unknown);
+        }
+        var log = await git.RunAsync(["log", "--format=%h %s", $"{fork}..HEAD"], worktree, cancellationToken);
+        var commits = log.Ok ? log.Output.Split('
+', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) : [];
+        var named = commits.Length == 0 ? "none read" : string.Join("; ", commits.Take(3)) + (commits.Length > 3 ? "; ..." : "");
+        if (!tree.Ok)
+        {
+            var files = lines.Length > 1 ? string.Join(", ", lines.Skip(1).Take(5)) + (lines.Length > 6 ? ", ..." : "") : "some files";
+            return new TestMerge(TestMergeOutcome.Conflict, named, files);
+        }
+        var baseTree = await git.RunAsync(["rev-parse", $"{target}^{{tree}}"], worktree, cancellationToken);
+        if (!baseTree.Ok)
+        {
+            return new TestMerge(TestMergeOutcome.Unknown);
+        }
+        return new TestMerge(string.Equals(lines[0], baseTree.Output.Trim(), StringComparison.Ordinal) ? TestMergeOutcome.Same : TestMergeOutcome.Changes, named);
     }
 
     /// <summary>
