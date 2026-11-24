@@ -104,6 +104,7 @@ internal static class CardKindCatalog
         new("leg-holding", "Handled", ["Flights/LegCommander.Hold.cs"], "LegHoldTests.AWorkerFailingOnAPackageASiblingIsPublishingHoldsItsLegWithNoRingAndItsWorkerStopped"),
         new("start-failed", "Ring|Handled", ["Flights/LegCommander.Launch.cs"], "LockFreeStartTests.AStartThatFailsAfterTheAnswerClearsItsReservationAndSaysSoOnACard", "the start the node tried was refused or never answered, and nothing retries it by itself", [nameof(Verbs.StartLeg), nameof(Verbs.GoAround), nameof(Verbs.PlanFlight)], ChoiceFiles: [LegStart, "Flights/LegCommander.GoAround.cs", LegPlanners, LegReview]),
         new("next-step", "Ring|Handled", [LegAdvance, LegStart, LegPlanners, LegReview, FlightCommanderCreate], "FlightMoveTests.AnAdvanceThatThrowsAfterTheReceiveIsACardNotAFailedReceive", "the node's own next step after a receive was refused, on a flight that has not landed", [nameof(Verbs.GoAround)]),
+        new("follow-up-package", "ForYou", ["Flights/FlightCommander.FollowUpFlights.cs"], "FollowUpLandTests.APeerFollowUpNeededAsAPackageRaisesACardNamingThePackageInsteadOfDroppingTheWait"),
         new("sibling-behind", "ForYou", [LegStart], "LegTests.ALegStartedWithASiblingBehindItsOriginRaisesOneCardNamingItAndThePullAndStillStarts"),
         new("sibling-pulled", "Handled", [LegStart], "LegTests.AStaleSiblingWhoseOriginWentUnreachableAfterTheCountIsStillPulled"),
         new("reboot", "Handled", ["RebootPrep.cs"], "RebootPrepTests.ARequestTurnsMaintenanceOnAndTellsEachLiveNodeSessionOnce"),
