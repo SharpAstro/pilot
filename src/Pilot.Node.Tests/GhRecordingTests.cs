@@ -27,6 +27,23 @@ public sealed class GhRecordingTests
     }
 
     [Fact]
+    public void TheBasesLatestRunIsTheNewestOneThatEndedInSuccessOrFailureOfTheWorkflow()
+    {
+        const string list = """
+            [{"databaseId":5,"workflowName":"dotnet","conclusion":"cancelled"},
+             {"databaseId":4,"workflowName":"release","conclusion":"failure"},
+             {"databaseId":3,"workflowName":"dotnet","conclusion":"failure"},
+             {"databaseId":2,"workflowName":"dotnet","conclusion":"success"}]
+            """;
+        GhCli.ParseBaseRun(list, "dotnet").ShouldBe((3L, false));
+        GhCli.ParseBaseRun(list, null).ShouldBe((4L, false));
+        GhCli.ParseBaseRun(list, "other").ShouldBeNull();
+        GhCli.ParseBaseRun("""[{"databaseId":7,"workflowName":"dotnet","conclusion":"success"}]""", "dotnet").ShouldBe((7L, true));
+        GhCli.ParseBaseRun("not json", null).ShouldBeNull();
+        GhCli.ParseBaseRun("[]", null).ShouldBeNull();
+    }
+
+    [Fact]
     public void AClosedPullRequestByBranchWasNeverMergedAndConflicts()
     {
         var pr = GhCli.ParsePullRequestByBranch(Recording("pull-request-by-branch", "closed"));

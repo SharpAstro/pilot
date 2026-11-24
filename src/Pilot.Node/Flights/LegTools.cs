@@ -86,7 +86,21 @@ public sealed record ChecksSummary(string Status, int Done, int Total, string? F
 /// A failed GitHub Actions run, read for what it said: its id and page, the jobs that failed, and the log of those jobs
 /// (<c>gh run view --log-failed</c>, its tail when long), which <see cref="FailureSignature"/> reads the failed tests from.
 /// </summary>
-public sealed record FailedRun(long Id, string Url, string[] FailedJobs, string Log);
+/// <param name="Id">The run.</param>
+/// <param name="Url">Its page.</param>
+/// <param name="FailedJobs">The jobs that failed.</param>
+/// <param name="Log">The failed jobs' log.</param>
+/// <param name="Workflow">The workflow it belongs to, to find the base's run of the same one; null when not read.</param>
+public sealed record FailedRun(long Id, string Url, string[] FailedJobs, string Log, string? Workflow = null);
+
+/// <summary>
+/// The base branch's latest completed push run of a workflow: whether it passed, and when it did not the log of its failed jobs
+/// (<see cref="FailureSignature"/> reads the failed tests from it). The evidence that a failure seen in a PR is not the PR's own.
+/// </summary>
+/// <param name="Id">The run.</param>
+/// <param name="Passed">True when it concluded success.</param>
+/// <param name="Log">The failed jobs' log; empty when it passed.</param>
+public sealed record BaseRun(long Id, bool Passed, string Log);
 
 /// <summary>The one word for where a PR's merge stands on GitHub, as <see cref="MergeState.Kind"/>.</summary>
 public static class MergeKinds
@@ -344,6 +358,12 @@ public interface IGitHub
     /// read that fails is no failure to look at, and never an exception that stops a look.
     /// </summary>
     Task<FailedRun?> FailedRunAsync(string repoPath, int number, bool mergeGroup, CancellationToken cancellationToken) => Task.FromResult<FailedRun?>(null);
+
+    /// <summary>
+    /// The latest completed push run of <paramref name="workflow"/> (any workflow when null) on <paramref name="baseBranch"/>, with its failed
+    /// log when it failed. Null when none could be read: unknown, never "passed".
+    /// </summary>
+    Task<BaseRun?> BaseRunAsync(string repoPath, string baseBranch, string? workflow, CancellationToken cancellationToken) => Task.FromResult<BaseRun?>(null);
 
     /// <summary>Every failed check of PR <paramref name="number"/> with its page and run; empty when there is none or GitHub would not say.</summary>
     Task<FailedCheck[]> FailedChecksAsync(string repoPath, int number, CancellationToken cancellationToken) => Task.FromResult<FailedCheck[]>([]);
