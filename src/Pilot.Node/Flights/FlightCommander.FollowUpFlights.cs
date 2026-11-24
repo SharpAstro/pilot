@@ -202,7 +202,8 @@ public sealed partial class FlightCommander
                 if (followUp.Package)
                 {
                     var held = await HoldPeerFlightAsync(node, made, landing, run.Snapshot(), cancellationToken);
-                    // Read again: a run that joined while the peer was asked to ground is named on the card only (the ground text is sent); one joining after this read is named nowhere.
+                    // Read again: a run that joined while the peer was asked to ground is named on the card only (the ground text is sent);
+                    // one joining after this read is named nowhere.
                     RaiseFollowUpPackageCard(landing, followUp, made, node, run.Snapshot(), held);
                 }
             }
