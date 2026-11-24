@@ -46,6 +46,8 @@ public sealed class NotesLegNoCommitTests : ReviewTestsBase
         var (flight, worker) = await HoldingWithLeg("1", "retake-captures");
         var reviewed = F(flight.Code).Review!.ReviewedHead!;
 
+        // No commit is made, so the PR's head is still the reviewed one (the fake's head follows the plane's, whose commits are not the fake review's).
+        _github.Pr = _github.Pr! with { Head = reviewed };
         (await Run(Verbs.FinishLeg, Verbs.LegTarget(flight.Code, "retake-captures"), worker, "done", Made)).Error.ShouldBeNull();
 
         var now = F(flight.Code);
@@ -56,8 +58,6 @@ public sealed class NotesLegNoCommitTests : ReviewTestsBase
         var ready = Open().Single(c => c.Kind == LegCommander.PrReady);
         ready.Title.ShouldNotContain("holding");
         (ready.Detail ?? "").ShouldNotContain("merge is held");
-        // No commit was made, so the PR's head is still the reviewed one (the fake's head follows the plane's, whose commits are not the fake review's).
-        _github.Pr = _github.Pr! with { Head = reviewed };
         await Checks().LookAsync(Ct);
         _github.Merged.ShouldHaveSingleItem($"open legs {_state.OpenLegs(flight.Code).Count}, review {F(flight.Code).Review?.State}, armed {F(flight.Code).MergeWhenGreen is not null}, merging {_legs.IsMerging(flight.Code)}, entries {string.Join('|', _state.Merges().Select(m => m.Flight + "/" + m.State + "/" + m.By + "/" + m.Why))}, pr {_github.Pr?.State}/{_github.Pr?.Head}, cards {string.Join('|', _state.Cards(openOnly: false).Select(c => c.Kind + "/" + c.Bin + ":" + string.Join(',', c.Choices.Select(x => x.Verb + "=" + x.Status))))}");
     }
