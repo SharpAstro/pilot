@@ -270,7 +270,7 @@ public sealed class AutopilotNodePressTests
             [new CardChoice { Label = PrReviews.PushFixLabel, Verb = Verbs.PushFix, Target = PrSubject },
              new CardChoice { Label = PrReviews.FixLabel, Verb = Verbs.FixPr, Target = PrSubject }]);
         (await PressedAsync()).ShouldBe(1);
-        _ran.Select(c => c.Verb).ShouldBe([Verbs.FixPr]);
+        _ran.ShouldHaveSingleItem().Args.ShouldBe([PrReviews.FixLabel]);
     }
 
     [Fact]
