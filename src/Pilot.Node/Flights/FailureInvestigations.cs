@@ -241,9 +241,9 @@ public sealed class FailureInvestigations(NodeState state, IGitHub github, Failu
     {
         var failure = group[0];
         var cls = failure.Test.Length > 0 ? FailureSignature.ClassOf(failure.Test) : "";
-        // A class that has an investigation under any of its signatures joins it.
-        var existing = group.Select(f => ledger.InvestigationOf(site.Name, f.Signature)).FirstOrDefault(r => r is not null)
-            ?? (cls.Length > 0 ? ledger.All().FirstOrDefault(r => r.Issue > 0 && r.Test.Length > 0 && string.Equals(r.Repo, site.Name, StringComparison.OrdinalIgnoreCase) && FailureSignature.ClassOf(r.Test) == cls) : null);
+        // A group joins an investigation any of its signatures already has. A class-name match alone does not
+        // join (the ledger holds no open state, and a short class name can be a long-fixed one).
+        var existing = group.Select(f => ledger.InvestigationOf(site.Name, f.Signature)).FirstOrDefault(r => r is not null);
         var run = runId > 0 ? $"run {runId}{(runUrl is { Length: > 0 } ? $" ({runUrl})" : "")}" : "its leg check";
         if (existing is not null)
         {
