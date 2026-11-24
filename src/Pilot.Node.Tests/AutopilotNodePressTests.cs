@@ -241,7 +241,7 @@ public sealed class AutopilotNodePressTests
     [Fact]
     public void OnlyACardARuleTakesSkipsTheRingJudgeNotEveryCardOfTheKind()
     {
-        // R1.7: an overlap card the planner did not ask to fold, a stray the node may not end and a stray the node may not end go to the judge.
+        // R1.7: an overlap card the planner did not ask to fold, a stray the node may not end and a Push its commits choice go to the judge.
         var press = Press();
         var fold = FoldCard();
         press.WouldPress(fold.Kind, fold.Subject, fold.Detail, fold.Choices).ShouldBeTrue();

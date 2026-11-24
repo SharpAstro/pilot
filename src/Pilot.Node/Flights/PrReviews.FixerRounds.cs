@@ -32,7 +32,7 @@ public sealed partial class PrReviews
     /// <summary>The For-you card of a fixer whose session ended with the PR's head where it was, with Fix it to try again.</summary>
     public const string FixEndedKind = "pr-fix-ended";
 
-    /// <summary>The words of a <see cref="FixEndedKind"/> card whose fixer left work in its kept worktree; the node does not press Fix it on one (#1269).</summary>
+    /// <summary>The words of a <see cref="FixEndedKind"/> card whose fixer left work in its kept worktree; the node presses Fix it on one (it resumes in that worktree) and never Push its commits, which is the person's (#1347).</summary>
     public const string FixLeftWorkMark = "but the fixer left work in";
 
     /// <summary>The For-you card said when a fixer's worktree could not be removed; the node tries again.</summary>
@@ -232,7 +232,7 @@ public sealed partial class PrReviews
             }
             // Push its commits only when the work has commits and the PR's branch is the node's to push to (not a fork): uncommitted files cannot be pushed.
             var pushable = left is not null && review.FixWorktree is { } leftTree && await WorkPastAsync(leftTree, review.Head, cancellationToken) is { Commits: > 0 }
-                && !(await github.PullRequestOfAsync(review.Repo, review.Number, cancellationToken)).Fork;
+                && !read.Fork;
             var endedChoices = new List<CardChoice> { new() { Label = FixLabel, Verb = Verbs.FixPr, Target = subject } };
             if (pushable)
             {

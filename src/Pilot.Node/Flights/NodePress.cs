@@ -62,7 +62,7 @@ public sealed class NodePress(NodeState state, Func<CommandRequest, Cancellation
     /// <summary>
     /// Whether the node would press a card raised now with this kind, subject, detail and choices, so the ring judge leaves it to the node
     /// (<see cref="NodeState.NodePresses"/>): only a card one of its rules takes, not every card of its four kinds. An overlap card the
-    /// planner did not ask to fold, a stray the node may not end, or a Fix it whose fixer left work still goes to the judge (R1.7). The
+    /// planner did not ask to fold, a stray the node may not end, or a Push its commits (the person's, never the node's) still goes to the judge (R1.7). The
     /// Fix it rule's last part (the round cap and the PR's author, asked of GitHub) is not read here, so a card that part refuses skips the
     /// judge and is left to the person as a plain For you card. The Review rule's read of GitHub's head is not made here either, so it answers from the choices alone.
     /// </summary>
