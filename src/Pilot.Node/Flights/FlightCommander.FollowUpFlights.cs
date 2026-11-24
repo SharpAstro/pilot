@@ -178,7 +178,8 @@ public sealed partial class FlightCommander
             ? string.Join(", ", released.Select(w => $"{w.Id} {w.Line}{(w.Above is { } above ? $" above {above}" : "")}"))
             : $"whatever package {landing.Code} released (its version line is in its Directory.Build.props)";
         state.RaiseCard(CardBin.ForYou, FollowUpPackageKind, Verbs.FlightTarget(made), $"{made} on {node} needs {named} from {landing.Code}",
-            $"{made} was made on {node} for {followUp.Repo}#{followUp.Issue.ToString(CultureInfo.InvariantCulture)}, which {landing.Code} recorded as needing a published package. Its wait cannot be set from here: hold {made} on {node} until {named} is on nuget.org.");
+            $"{made} was made on {node} for {followUp.Repo}#{followUp.Issue.ToString(CultureInfo.InvariantCulture)}, which {landing.Code} recorded as needing a published package. Its wait cannot be set from here: hold {made} on {node} until {named} is on nuget.org.",
+            [new CardChoice { Label = "I have held it", Verb = Verbs.Dismiss, Target = "" }]);
     }
 
     /// <summary>
