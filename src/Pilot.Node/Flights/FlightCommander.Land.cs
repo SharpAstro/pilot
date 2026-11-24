@@ -460,7 +460,11 @@ public sealed partial class FlightCommander
         {
             try
             {
-                await OffLockAsync(() => EnsurePeerFollowUpFlightsAsync(flight.Code, released, cancellationToken));
+                await OffLockAsync(async () =>
+                {
+                    await EnsurePeerFollowUpFlightsAsync(flight.Code, released, cancellationToken);
+                    return true;
+                });
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {

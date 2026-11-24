@@ -215,6 +215,7 @@ public sealed partial class FlightCommander
         {
             await EnsureLocalFollowUpFlightsAsync(landing, cancellationToken);
             await EnsurePeerFollowUpFlightsAsync(landing.Code, [], cancellationToken);
+            return true;
         });
     }
 
