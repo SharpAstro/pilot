@@ -394,8 +394,7 @@ public sealed partial class PrReviews
                 case { Outcome: TestMergeOutcome.Conflict } conflicted:
                     state.RaiseCard(CardBin.ForYou, FixFollowUpConflictKind, subject,
                         $"{pr} merged while its fixer worked: its commits conflict with {baseBranch}, so no follow-up PR was opened",
-                        $"A test merge of the fixer's commits ({conflicted.Commits}) onto origin/{baseBranch} conflicts in {conflicted.Files}. Nothing was pushed.
-The commits stay on the local branch {localBranch} in {review.ClonePath}; take what is still needed by hand.", link: review.Url,
+                        $"A test merge of the fixer's commits ({conflicted.Commits}) onto origin/{baseBranch} conflicts in {conflicted.Files}. Nothing was pushed.\nThe commits stay on the local branch {localBranch} in {review.ClonePath}; take what is still needed by hand.", link: review.Url,
                         summary: $"Look at the fixer's commits ({conflicted.Commits}) on {localBranch} in {review.ClonePath}: they conflict with {baseBranch} in {conflicted.Files}, so no PR was opened or pushed.");
                     return;
                 case { Outcome: TestMergeOutcome.Changes }:
@@ -513,15 +512,13 @@ The commits stay on the local branch {localBranch} in {review.ClonePath}; take w
         }
         var target = $"origin/{baseBranch}";
         var tree = await git.RunAsync(["merge-tree", "--write-tree", "--name-only", "--no-messages", "--merge-base", fork, target, "HEAD"], worktree, cancellationToken);
-        var lines = tree.Output.Split('
-', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var lines = tree.Output.Split('\n',StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         if (lines.Length == 0 || (!tree.Ok && tree.ExitCode != 1))
         {
             return new TestMerge(TestMergeOutcome.Unknown);
         }
         var log = await git.RunAsync(["log", "--format=%h %s", $"{fork}..HEAD"], worktree, cancellationToken);
-        var commits = log.Ok ? log.Output.Split('
-', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) : [];
+        var commits = log.Ok ? log.Output.Split('\n',StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) : [];
         var named = commits.Length == 0 ? "none read" : string.Join("; ", commits.Take(3)) + (commits.Length > 3 ? "; ..." : "");
         if (!tree.Ok)
         {
