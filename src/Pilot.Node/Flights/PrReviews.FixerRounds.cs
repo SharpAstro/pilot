@@ -770,10 +770,15 @@ public sealed partial class PrReviews
         {
             await ActOnAnswerAsync(pr, review, comment, CommentWho, null, false, null, cancellationToken);
         }
-        catch (FlightException ex) when (flight is null)
+        catch (FlightException ex) when (flight is null && ex is not AnnouncedFlightException)
         {
             RaiseOnce(pr, review, CardBin.ForYou, FixFailedKind, target, $"{pr}: the fixer could not start: {LegCommander.OneLine(ex.Message)}", ex.Message,
                 [new CardChoice { Label = "Start the fixer again", Verb = Verbs.FixPr, Target = target }]);
+            return;
+        }
+        catch (AnnouncedFlightException) when (flight is null)
+        {
+            // The refusal raised its own card (an author-held branch, say): a second FixFailed card would ring twice.
             return;
         }
         // Say only what is true: a fixer running, one queued for a slot, or the flight's leg sent round.
