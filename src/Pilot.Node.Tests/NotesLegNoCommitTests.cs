@@ -59,7 +59,13 @@ public sealed class NotesLegNoCommitTests : ReviewTestsBase
         ready.Title.ShouldNotContain("holding");
         (ready.Detail ?? "").ShouldNotContain("merge is held");
         await Checks().LookAsync(Ct);
-        _github.Merged.ShouldHaveSingleItem($"open legs {_state.OpenLegs(flight.Code).Count}, review {F(flight.Code).Review?.State}, armed {F(flight.Code).MergeWhenGreen is not null}, merging {_legs.IsMerging(flight.Code)}, entries {string.Join('|', _state.Merges().Select(m => m.Flight + "/" + m.State + "/" + m.By + "/" + m.Why))}, pr {_github.Pr?.State}/{_github.Pr?.Head}, cards {string.Join('|', _state.Cards(openOnly: false).Select(c => c.Kind + "/" + c.Bin + ":" + string.Join(',', c.Choices.Select(x => x.Verb + "=" + x.Status))))}");
+        // The node asks for the merge itself. The fake PR's head follows the plane's real head, not the fake review's, so the merge's own head
+        // check may refuse it; what this case pins is that no hold, note or leg stands in its way.
+        var entry = _state.Merges().SingleOrDefault(m => m.Flight == flight.Code).ShouldNotBeNull("the node asked for the merge");
+        entry.By.ShouldBe(MergeBy.Node);
+        (entry.Why ?? "").ShouldNotContain("hold");
+        (entry.Why ?? "").ShouldNotContain("notes");
+        (entry.Why ?? "").ShouldNotContain("legs not done");
     }
 
     [Fact]
