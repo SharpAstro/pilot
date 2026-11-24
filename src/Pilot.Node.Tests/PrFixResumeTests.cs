@@ -48,6 +48,39 @@ public sealed class PrFixResumeTests : PrFixTestsBase
         start.Brief.ShouldContain("earlier fixer's work that is not on the PR yet");
         start.Brief.ShouldContain("push plainly");
         start.Brief.ShouldContain("Never discard");
+        // The resumed-work block sits between the report and the findings, so neither is split.
+        var report = start.Brief.IndexOf("Two things are wrong.", StringComparison.Ordinal);
+        var resumed = start.Brief.IndexOf("earlier fixer's work that is not on the PR yet", StringComparison.Ordinal);
+        var findings = start.Brief.IndexOf("Its findings", StringComparison.Ordinal);
+        report.ShouldBeGreaterThanOrEqualTo(0);
+        resumed.ShouldBeGreaterThan(report);
+        findings.ShouldBeGreaterThan(resumed);
+    }
+
+    [Fact]
+    public async Task AKeptWorktreeGitCannotReadStartsNoFixerAndIsNotRemoved()
+    {
+        // The model: a failed read is the node's decision, not git's. The first fixer's folder is kept, its row cleared.
+        await Review("acme/widget#7", "changes", "README.md:1 wrong");
+        Fixers.ShouldHaveSingleItem();
+        _state.PutPrReview(Row with { Fixer = null, FixerJob = null, FixWorktree = null, FixWorktreeBorrowed = null, FixDetached = null, FixResumedWork = null });
+        Directory.Exists(FixWorktree).ShouldBeTrue();
+        var ran = new List<string>();
+        _testGit.Intercept = (args, cwd) =>
+        {
+            ran.Add(string.Join(' ', args));
+            return args is ["status", ..] && string.Equals(Path.GetFullPath(cwd).TrimEnd('\\', '/'), Path.GetFullPath(FixWorktree), StringComparison.OrdinalIgnoreCase)
+                ? new GitRun(128, "", "fatal: unable to read index")
+                : null;
+        };
+
+        var refused = await Run(Verbs.FixPr, "acme/widget#7", "controller");
+
+        refused.Error.ShouldNotBeNull().ShouldContain("could not be read");
+        refused.Error.ShouldContain(FixWorktree);
+        Fixers.ShouldHaveSingleItem();
+        Directory.Exists(FixWorktree).ShouldBeTrue();
+        ran.ShouldNotContain(r => r.StartsWith("worktree remove", StringComparison.Ordinal) || r.StartsWith("worktree add", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -67,7 +100,7 @@ public sealed class PrFixResumeTests : PrFixTestsBase
 
         refused.Error.ShouldNotBeNull().ShouldContain("does not have it");
         Fixers.Length.ShouldBe(startsBefore);
-        _state.Cards(openOnly: true).ShouldContain(c => c.Kind == PrReviews.FixHeadMovedKind && c.Detail!.Contains("stays there"));
+        _state.Cards(openOnly: true).ShouldContain(c => c.Kind == PrReviews.FixHeadMovedKind && c.Detail!.Contains("stays there") && c.Detail.Contains("git merge origin/feature/seven"));
         Directory.Exists(FixWorktree).ShouldBeTrue();
         PrOrigins.Git(FixWorktree, "rev-parse", "HEAD").ShouldBe(before);
     }
@@ -89,6 +122,26 @@ public sealed class PrFixResumeTests : PrFixTestsBase
         PrOrigins.Git(FixWorktree, "rev-parse", "HEAD").ShouldBe(commit);
         Directory.Exists(Other).ShouldBeTrue();
         Fixers.Last().Brief.ShouldContain("git push origin HEAD:refs/heads/feature/seven");
+        Fixers.Last().Brief.ShouldContain("is not on that branch");
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")] // real git: a local branch that went its own way cannot be fast-forwarded
+    public async Task AKeptWorktreeStaysOffALocalBranchWithCommitsOfItsOwnAndTheBriefSaysSo()
+    {
+        RealGit();
+        var commit = await KeptWorktreeWithAnUnpushedCommitAsync();
+        var tree = PrOrigins.Git(WidgetClone, "rev-parse", "refs/heads/feature/seven^{tree}");
+        var local = PrOrigins.Git(WidgetClone, "-c", "user.name=someone", "-c", "user.email=someone@example.com", "commit-tree", tree, "-p", "refs/heads/feature/seven", "-m", "local only");
+        PrOrigins.Git(WidgetClone, "update-ref", "refs/heads/feature/seven", local);
+
+        (await Run(Verbs.FixPr, "acme/widget#7", "controller")).Error.ShouldBeNull();
+
+        Row.FixDetached.ShouldBe(true);
+        PrOrigins.Git(FixWorktree, "rev-parse", "HEAD").ShouldBe(commit);
+        PrOrigins.Git(WidgetClone, "rev-parse", "refs/heads/feature/seven").ShouldBe(local);
+        Fixers.Last().Brief.ShouldContain("the local branch has commits of its own");
+        Fixers.Last().Brief.ShouldNotContain("a worktree detached at the head of the PR's branch");
     }
 
     [Fact]

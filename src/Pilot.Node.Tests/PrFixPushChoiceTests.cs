@@ -69,8 +69,14 @@ public sealed class PrFixPushChoiceTests : PrFixTestsBase
         await EndedCardAsync(() => CommitInWorktree("the fix"));
         var commit = PrOrigins.Git(FixWorktree, "rev-parse", "HEAD");
         var oldHead = _github.Prs["acme/widget#7"].Head;
-        // GitHub's read right after a push is the old head; the row's head is behind it here, so the moved head reads as new and a review starts.
-        _state.PutPrReview(Row with { Head = "0000000000000000000000000000000000000000" });
+        // GitHub reads the branch's head as the origin has it, so the read right after the push is the pushed commit.
+        _github.OnPullRequestRead = key =>
+        {
+            if (key == "acme/widget#7")
+            {
+                _github.Prs[key] = _github.Prs[key] with { Head = PrOrigins.Git(Origin, "rev-parse", "refs/heads/feature/seven") };
+            }
+        };
         var reviewsBefore = _workers.Started.Count(s => s.Name.Contains("-review-"));
 
         (await Run(Verbs.PushFix, "acme/widget#7", "person")).Error.ShouldBeNull();
@@ -78,7 +84,71 @@ public sealed class PrFixPushChoiceTests : PrFixTestsBase
         PrOrigins.Git(Origin, "rev-parse", "refs/heads/feature/seven").ShouldBe(commit);
         PrOrigins.Git(Origin, "merge-base", "--is-ancestor", oldHead, commit);
         _workers.Started.Count(s => s.Name.Contains("-review-")).ShouldBe(reviewsBefore + 1);
+        Row.Head.ShouldBe(commit);
+        _state.Cards(openOnly: true).ShouldNotContain(c => c.Kind == PrReviews.PushedUnreviewedKind);
         Directory.Exists(FixWorktree).ShouldBeTrue();
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")] // real git: a push to a bare remote
+    public async Task WhenGitHubStillReadsTheOldHeadAfterThePushThePushedUnreviewedCardOffersTheReview()
+    {
+        await EndedCardAsync(() => CommitInWorktree("the fix"));
+        var commit = PrOrigins.Git(FixWorktree, "rev-parse", "HEAD");
+        var reviewsBefore = _workers.Started.Count(s => s.Name.Contains("-review-"));
+
+        // The fake still serves the head the review read: GitHub has not shown the push yet.
+        (await Run(Verbs.PushFix, "acme/widget#7", "person")).Error.ShouldBeNull();
+
+        PrOrigins.Git(Origin, "rev-parse", "refs/heads/feature/seven").ShouldBe(commit);
+        _workers.Started.Count(s => s.Name.Contains("-review-")).ShouldBe(reviewsBefore);
+        var card = _state.Cards(openOnly: true).Where(c => c.Kind == PrReviews.PushedUnreviewedKind).ShouldHaveSingleItem();
+        card.Choices.ShouldHaveSingleItem().Verb.ShouldBe(Verbs.ReviewPr);
+        card.Detail.ShouldNotBeNull().ShouldContain("GitHub still read");
+    }
+
+    /// <summary>A refused push-fix leaves the PR's branch on the origin and the worktree's HEAD as they were.</summary>
+    private async Task RefusedAndUntouchedAsync(string expected)
+    {
+        var head = PrOrigins.Git(FixWorktree, "rev-parse", "HEAD");
+        var branch = PrOrigins.Git(Origin, "rev-parse", "refs/heads/feature/seven");
+
+        var refused = await Run(Verbs.PushFix, "acme/widget#7", "person");
+
+        refused.Error.ShouldNotBeNull().ShouldContain(expected);
+        PrOrigins.Git(Origin, "rev-parse", "refs/heads/feature/seven").ShouldBe(branch);
+        PrOrigins.Git(FixWorktree, "rev-parse", "HEAD").ShouldBe(head);
+        Directory.Exists(FixWorktree).ShouldBeTrue();
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")] // real git: the origin's branch is read to show nothing was pushed
+    public async Task PushingIsRefusedForAPrFromAFork()
+    {
+        await EndedCardAsync(() => CommitInWorktree("the fix"));
+        _github.Prs["acme/widget#7"] = _github.Prs["acme/widget#7"] with { Fork = true };
+
+        await RefusedAndUntouchedAsync("fork");
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")] // real git: the origin's branch is read to show nothing was pushed
+    public async Task PushingIsRefusedForAPrThatIsNotOpen()
+    {
+        await EndedCardAsync(() => CommitInWorktree("the fix"));
+        _github.Prs["acme/widget#7"] = _github.Prs["acme/widget#7"] with { State = "CLOSED" };
+
+        await RefusedAndUntouchedAsync("not open");
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")] // real git: the origin's branch is read to show nothing was pushed
+    public async Task PushingIsRefusedWhileAFixerIsLive()
+    {
+        await EndedCardAsync(() => CommitInWorktree("the fix"));
+        _state.PutSession(Session("du1-fix-widget-7", SessionState.Working, "efgh5678") with { Role = SessionRole.Fixer, Pr = 7, Repo = "widget" });
+
+        await RefusedAndUntouchedAsync("still working");
     }
 
     [Fact]

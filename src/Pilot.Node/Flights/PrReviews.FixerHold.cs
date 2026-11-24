@@ -261,7 +261,7 @@ public sealed partial class PrReviews
         var ancestor = await git.RunAsync(["merge-base", "--is-ancestor", read.Head, "HEAD"], worktree, cancellationToken);
         if (!ancestor.Ok)
         {
-            throw new FlightException($"{pr}'s head {CommitRefs.Short(read.Head)} is not an ancestor of the HEAD in {worktree}: the head moved, so a plain push would be refused. The work stays in {worktree}; Fix it continues there");
+            throw new FlightException($"{pr}'s head {CommitRefs.Short(read.Head)} is not an ancestor of the HEAD in {worktree}: the head moved, so a plain push would be refused. The work stays in {worktree}: bring the PR head into it by hand (git merge origin/{read.HeadRef} there), then Fix it or Push its commits");
         }
         var cause = await PushWorktreeAndReviewAsync(pr, review, read, worktree, work, cancellationToken);
         return cause is null ? $"pushed {work.Line} from {worktree}; the moved head gets a review" : throw new FlightException(cause);

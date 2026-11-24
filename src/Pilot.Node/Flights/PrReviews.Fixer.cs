@@ -573,9 +573,17 @@ public sealed partial class PrReviews
         string? resumedWork = null;
         var holder = await HolderOfBranchAsync(clone, worktree, branch, cancellationToken);
         // A kept fix worktree an earlier fixer left work in (commits not on the PR, or files) is continued in, never removed or re-made.
-        if (read.Head.Length > 0 && await planes.WorktreesAsync(clone, cancellationToken) is { } listed
-            && listed.FirstOrDefault(w => !w.Prunable && SamePath(w.Path, worktree)) is { } kept
-            && await WorkPastAsync(worktree, read.Head, cancellationToken) is { } work)
+        var kept = read.Head.Length > 0 && await planes.WorktreesAsync(clone, cancellationToken) is { } listed
+            ? listed.FirstOrDefault(w => !w.Prunable && SamePath(w.Path, worktree))
+            : null;
+        var (keptWork, unread) = kept is null ? (null, null) : await ReadWorkPastAsync(worktree, read.Head, cancellationToken);
+        if (unread is not null)
+        {
+            // A kept worktree git could not read may hold work, and every path below re-makes or removes it, so none is taken. The
+            // pr-fix-failed card (or the command's error) names the folder; its retry is Fix it, once git can read the folder again.
+            throw new FlightException($"no fixer started: the kept fixer worktree {worktree} could not be read ({unread}), so it may hold work and is left as it is; Fix it again once git can read it");
+        }
+        if (kept is not null && keptWork is { } work)
         {
             if (!(await git.RunAsync(["merge-base", "--is-ancestor", read.Head, "HEAD"], worktree, cancellationToken)).Ok)
             {

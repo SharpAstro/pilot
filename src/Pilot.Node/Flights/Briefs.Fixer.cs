@@ -18,7 +18,14 @@ public static partial class Briefs
         text.AppendLine($"You fix PR {pr}{title} ({review.Url}).");
         text.AppendLine();
         var shortHead = CommitRefs.Short(review.Head);
-        if (review.FixDetached == true)
+        if (review.FixDetached == true && review.FixResumedWork is { Length: > 0 })
+        {
+            // A resumed worktree stays off the branch when another worktree holds it, or when the local branch has commits of its own and
+            // so cannot be fast-forwarded to the work (pilot #1347): either way the branch is left alone and the push names it.
+            text.AppendLine($"Work in this folder ({review.FixWorktree}), a worktree that holds an earlier fixer's work for the PR's branch `{branch}` but is not on that branch (another worktree holds it, or the local branch has commits of its own; leave the local branch alone).");
+            text.AppendLine($"Commit where you are and push with `git push origin HEAD:refs/heads/{branch}`, plainly and never with force: it is a fast-forward, refused if the branch moved. A reviewer read the PR at");
+        }
+        else if (review.FixDetached == true)
         {
             text.AppendLine($"Work in this folder ({review.FixWorktree}), a worktree detached at the head of the PR's branch `{branch}` (the branch is checked out in another worktree, so it cannot be checked out here).");
             text.AppendLine($"Commit on the detached HEAD and push with `git push origin HEAD:refs/heads/{branch}`, plainly and never with force: it is a fast-forward, refused if the branch moved. A reviewer read the PR at");

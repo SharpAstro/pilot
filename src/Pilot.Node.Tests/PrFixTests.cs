@@ -27,7 +27,7 @@ public abstract class PrFixTestsBase : IDisposable
     /// <summary>The git the node under test runs: the model, or <see cref="GitCli"/> on a real-git run.</summary>
     private protected readonly IGit _git;
 
-    private readonly TestGit _testGit;
+    private protected readonly TestGit _testGit;
 
     /// <summary>acme/widget has a clone under the repo roots and a branch on its origin; acme/gadget has no clone.</summary>
     // The two origins, widget's branch and its clone, built once a run and copied into each test's folder, as PrReviewTests'

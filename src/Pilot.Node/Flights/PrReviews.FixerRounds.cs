@@ -313,25 +313,41 @@ public sealed partial class PrReviews
 
     /// <summary>
     /// The work in <paramref name="worktree"/> past <paramref name="head"/> (the PR's head): commits not on it and uncommitted files; null when
-    /// nothing (or no folder, or git cannot read it).
+    /// nothing (or no folder, or git cannot read it). A caller about to remove or re-make the folder reads it with <see cref="ReadWorkPastAsync"/>,
+    /// which tells a folder git could not read from one that holds nothing.
     /// </summary>
-    private async Task<WorkPast?> WorkPastAsync(string worktree, string head, CancellationToken cancellationToken)
+    private async Task<WorkPast?> WorkPastAsync(string worktree, string head, CancellationToken cancellationToken) =>
+        (await ReadWorkPastAsync(worktree, head, cancellationToken)).Work;
+
+    /// <summary>
+    /// <see cref="WorkPastAsync"/> with why git could not read the folder: <c>Unread</c> is set (and <c>Work</c> null) when the folder exists but
+    /// <c>git status</c> failed, both reads of its commits failed, or git could not be run in it. Both are null for a folder that is gone or holds nothing.
+    /// </summary>
+    private async Task<(WorkPast? Work, string? Unread)> ReadWorkPastAsync(string worktree, string head, CancellationToken cancellationToken)
     {
         if (!Directory.Exists(worktree))
         {
-            return null;
+            return (null, null);
         }
         try
         {
             var status = await git.RunAsync(["status", "--porcelain"], worktree, cancellationToken);
+            if (!status.Ok)
+            {
+                return (null, $"git status failed in it: {status.Why}");
+            }
             var ahead = await git.RunAsync(["log", "--format=%h %s", $"{head}..HEAD"], worktree, cancellationToken);
             if (!ahead.Ok)
             {
                 // The PR's head is not in this clone (someone else pushed it): what HEAD has that no remote branch has is what is not pushed.
                 ahead = await git.RunAsync(["log", "--format=%h %s", "HEAD", "--not", "--remotes"], worktree, cancellationToken);
             }
-            var files = status.Ok ? status.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) : [];
-            var commits = ahead.Ok ? ahead.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) : [];
+            if (!ahead.Ok)
+            {
+                return (null, $"git log failed in it: {ahead.Why}");
+            }
+            var files = status.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            var commits = ahead.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
             var parts = new List<string>();
             if (commits.Length > 0)
             {
@@ -341,11 +357,11 @@ public sealed partial class PrReviews
             {
                 parts.Add($"{files.Length} file{(files.Length == 1 ? "" : "s")} not committed ({string.Join(", ", files.Take(5).Select(f => f.Length > 3 ? f[3..] : f))}{(files.Length > 5 ? ", ..." : "")})");
             }
-            return parts.Count > 0 ? new WorkPast(string.Join(", and ", parts), commits.Length, files.Length) : null;
+            return (parts.Count > 0 ? new WorkPast(string.Join(", and ", parts), commits.Length, files.Length) : null, null);
         }
         catch (Exception ex) when (ex is FlightException or System.ComponentModel.Win32Exception or IOException)
         {
-            return null;
+            return (null, $"git could not be run in it: {ex.Message}");
         }
     }
 

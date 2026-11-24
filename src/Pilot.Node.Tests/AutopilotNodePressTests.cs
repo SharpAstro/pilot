@@ -241,7 +241,8 @@ public sealed class AutopilotNodePressTests
     [Fact]
     public void OnlyACardARuleTakesSkipsTheRingJudgeNotEveryCardOfTheKind()
     {
-        // R1.7: an overlap card the planner did not ask to fold, a stray the node may not end and a Push its commits choice go to the judge.
+        // R1.7: an overlap card the planner did not ask to fold, a stray the node may not end, and an ended card with no Fix it (Push its
+        // commits alone, which the node never presses) go to the judge; with Fix it beside the push, the node presses Fix it only.
         var press = Press();
         var fold = FoldCard();
         press.WouldPress(fold.Kind, fold.Subject, fold.Detail, fold.Choices).ShouldBeTrue();
@@ -258,6 +259,8 @@ public sealed class AutopilotNodePressTests
         press.WouldPress(fix.Kind, fix.Subject, fix.Detail, fix.Choices).ShouldBeTrue();
         press.WouldPress(fix.Kind, fix.Subject, LeftWorkDetail, fix.Choices).ShouldBeTrue();
         press.WouldPress(PrReviews.FixOfferKind, PrSubject, null, fix.Choices).ShouldBeFalse();
+        CardChoice[] pushOnly = [new() { Label = PrReviews.PushFixLabel, Verb = Verbs.PushFix, Target = PrSubject }];
+        press.WouldPress(fix.Kind, fix.Subject, LeftWorkDetail, pushOnly).ShouldBeFalse();
     }
 
     private const string LeftWorkDetail = $"The PR's head is still abc1234, {PrReviews.FixLeftWorkMark} C:\\w\\fix, kept there: 2 files uncommitted.";
