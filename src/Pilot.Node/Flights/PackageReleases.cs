@@ -69,11 +69,12 @@ public sealed partial class PackageReleases(IGit git, INuGetFeed feed, TimeProvi
     /// latest there was <paramref name="mergedAt"/> (now, when not known). Throws <see cref="FlightException"/> when nuget.org
     /// cannot be read: the floor is not known, and a guess would let a consumer fly on the old package.
     /// </summary>
+    /// <param name="assumeConsumers">Codes of consumers that use every package it releases, whether or not their projects name it (a follow-up recorded as needed as a package).</param>
     /// <param name="mergeCommit">The commit its PR merged as, kept on each wait for the publish run to be found by.</param>
     /// <param name="mergedAt">When its PR merged: a version published after it is the flight's own release, or a later one, never the floor.</param>
-    public async Task<PackageWait[]> WaitsAsync(FlightRow producer, IReadOnlyList<FlightRow> consumers, string? head, string? mergeCommit, DateTimeOffset? mergedAt, CancellationToken cancellationToken)
+    public async Task<PackageWait[]> WaitsAsync(FlightRow producer, IReadOnlyList<FlightRow> consumers, string? head, string? mergeCommit, DateTimeOffset? mergedAt, CancellationToken cancellationToken, IReadOnlySet<string>? assumeConsumers = null)
     {
-        consumers = [.. consumers.Where(c => !SameRepo(c, producer))];
+        consumers =[.. consumers.Where(c => !SameRepo(c, producer))];
         if (consumers.Count == 0)
         {
             return [];
@@ -103,7 +104,7 @@ public sealed partial class PackageReleases(IGit git, INuGetFeed feed, TimeProvi
         {
             foreach (var consumer in consumers)
             {
-                if (await ConsumesAsync(consumer, producer, id, cancellationToken))
+                if (assumeConsumers?.Contains(consumer.Code) == true || await ConsumesAsync(consumer, producer, id, cancellationToken))
                 {
                     ids.Add(id);
                     break;

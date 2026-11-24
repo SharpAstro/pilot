@@ -274,6 +274,22 @@ public static class Verbs
     public const string BranchRetry = "branch-retry";
 
     /// <summary>
+    /// <c>flight-follow-up flight/&lt;code&gt; &lt;repo&gt; &lt;title&gt; &lt;body&gt; [--package]</c> (PIL1340): opens an issue in another repo (<c>owner/name</c>, cloned beside the flight's own) for a follow-up the
+    /// flight cannot do itself, and keeps it on the flight's row so status and the PR body list it. The flight's own repo and a landed flight are refused; the same repo
+    /// and title again answers with the issue already recorded and opens nothing.
+    /// </summary>
+    public const string FlightFollowUp = "flight-follow-up";
+
+    /// <summary>
+    /// <c>ensure-follow-ups flight/&lt;code&gt;</c> (PIL1340): makes the flight of each follow-up a landed flight recorded in another repo that still has none, here or on a fleet
+    /// node. It is what the For-you card of a landed flight with follow-ups left without a flight offers.
+    /// </summary>
+    public const string EnsureFollowUps = "ensure-follow-ups";
+
+    /// <summary>The fourth argument of <see cref="FlightFollowUp"/> when the flight needs the change as a published package, not only read at land.</summary>
+    public const string PackageFlag = "--package";
+
+    /// <summary>
     /// <c>flight-priority flight/&lt;code&gt; &lt;urgent|high|medium|low|none&gt;</c>: writes the Priority field of the flight's issue
     /// (<c>none</c> clears it) and puts the level on the flight's row. Refused, naming the <c>pilot: priority</c> label, where the repo has no field.
     /// </summary>

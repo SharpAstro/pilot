@@ -181,6 +181,10 @@ public static partial class PilotCommand
             var level = flight.HasPriorityField && flight.IssuePriority is { } set ? $", priority {IssuePriorities.Name(set).ToLowerInvariant()}" : "";
             text.AppendLine($"{flight.Code}  {flight.Title ?? flight.Item.Noun}  ({flight.Repo} {flight.Item.Display}, {state}{level})");
             text.AppendLine($"  plane {flight.Worktree} on {flight.Branch}{(flight.PullRequestUrl is { } url ? $", PR {url}" : "")}{(FlightWaiting.BranchText(flight) is { } branchText ? $"; {branchText}" : "")}");
+            foreach (var followUp in flight.RepoFollowUps)
+            {
+                text.AppendLine($"  follow-up {followUp.Line()}");
+            }
             foreach (var leg in snapshot.Legs.Where(l => l.Flight == flight.Code).OrderBy(l => l.Order))
             {
                 var steps = leg.Checklist.Length == 0 ? "" : $", {leg.Checklist.Count(i => i.Done)}/{leg.Checklist.Length} steps";

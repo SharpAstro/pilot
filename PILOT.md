@@ -12,7 +12,7 @@ is neither built nor tested by CI.
 - Sibling clones are not yours. **A plane builds against the published packages, as CI does**: the projects' 6-level
   `SharpAstroRoot` probe is opt-in (`UseLocalSiblings=true`), so nothing in a plane compiles `DIR.Lib`, `SdlVulkan.Renderer`,
   `AppShell` or another sibling's source, and its jobs never wait on another repo's build. Only the main clone compiles
-  sibling source. A change that spans repos is not a step of this plane; name it and leave it.
+  sibling source. Work for another repo is not a step of this plane: record it with `pilot follow-up <owner/name> --title ...`, never `gh issue create`.
 - Exceptions are named: a flight whose issue carries `pilot: sibling source` builds on the sibling clones (the node runs
   its jobs with `UseLocalSiblings=true` and holds the clones while they build). A feature that needs an unreleased sibling
   otherwise takes that sibling's preview (prerelease) package. A consumer connected to a producer flies once the

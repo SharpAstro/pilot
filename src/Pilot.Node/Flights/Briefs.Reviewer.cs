@@ -139,6 +139,7 @@ public static partial class Briefs
             text.AppendLine("controller. They never block: do not put them under `## Blocking`, and they do not change your verdict.");
         }
         text.AppendLine(AttachmentRule(run));
+        text.AppendLine(OtherRepoRule(run));
         text.AppendLine(ReportRule(run));
         text.AppendLine();
         text.AppendLine("## Your verdict");

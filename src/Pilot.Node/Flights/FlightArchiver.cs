@@ -115,6 +115,10 @@ public sealed class FlightArchiver(NodeState state, RemovalQueue? removals = nul
         {
             return ("an open card", $"{(open.Count == 1 ? "a card is" : $"{open.Count} cards are")} open about it ({string.Join(", ", open.Select(c => c.Id))})");
         }
+        if (flight.RepoFollowUps.Where(f => f.Flight is null).ToList() is { Count: > 0 } unplaced)
+        {
+            return ("a follow-up with no flight", $"{string.Join(", ", unplaced.Select(f => $"{f.Repo}#{f.Issue}"))} recorded as its follow-up still has no flight");
+        }
         if (state.Sessions().Where(s => string.Equals(s.Flight, flight.Code, StringComparison.OrdinalIgnoreCase) && s.State is not (SessionState.Ended or SessionState.Failed)).ToList() is { Count: > 0 } live)
         {
             return ("a live session", $"{(live.Count == 1 ? "a session is" : $"{live.Count} sessions are")} live ({string.Join(", ", live.Select(s => s.Name))})");

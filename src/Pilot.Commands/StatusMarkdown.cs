@@ -140,6 +140,16 @@ internal static class StatusMarkdown
             }
             text.AppendLine(string.Join(" · ", line)).AppendLine();
 
+            if (flight.RepoFollowUps.Length > 0)
+            {
+                text.AppendLine("Follow-ups in other repos:").AppendLine();
+                foreach (var followUp in flight.RepoFollowUps)
+                {
+                    text.AppendLine($"- {Text(followUp.Line())}");
+                }
+                text.AppendLine();
+            }
+
             var legs = snapshot.Legs.Where(l => l.Flight == flight.Code).OrderBy(l => l.Order).ToList();
             if (legs.Count > 0)
             {
