@@ -93,7 +93,7 @@ public sealed partial class PrReviews
             state.RaiseCard(CardBin.ForYou, ClosedIssueKind, subject, $"{review.Repo}#{review.Number}: every issue it closes ({named}) is closed already",
                 $"{review.Title ?? $"{review.Repo}#{review.Number}"} is open, and {named} {are} closed. Close the PR, or keep it open if it is still wanted.",
                 [new CardChoice { Label = "Close the PR", Verb = Verbs.ClosePr, Target = subject }, new CardChoice { Label = "Keep it open", Verb = Verbs.KeepPr, Target = subject }],
-                link: review.Url, summary: $"Close {review.Repo}#{review.Number} or keep it open: {named} {are} closed already, so nothing is left for the PR to close.");
+                link: review.Url, summary: $"{review.Repo}#{review.Number} is still open, though {named} {are} done already: nothing is left for it to fix.");
             state.PutPrReview(current with { Raised = [.. current.Raised, key] });
         }
     }
