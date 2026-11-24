@@ -162,14 +162,17 @@ public sealed class StreamSessionTests
     }
 
     [Fact]
-    public async Task TheInitLineGivesTheSessionId()
+    public async Task TheInitLineGivesTheSessionIdAndTheModelItRunsOn()
     {
         await using var rig = new Rig();
+        rig.Session.Model.ShouldBeNull();
 
-        rig.Process.Emit(Init("11111111-2222-3333-4444-555555555555"));
+        // Started as "sonnet", the watchtower's alias: the sessions view names the model Claude Code resolved it to.
+        rig.Process.Emit("""{"type":"system","subtype":"init","session_id":"11111111-2222-3333-4444-555555555555","model":"claude-sonnet-5-5"}""");
 
         await Until(() => rig.Kinds.Contains(StreamChangeKind.Init), "init");
         rig.Session.SessionId.ShouldBe("11111111-2222-3333-4444-555555555555");
+        rig.Session.Model.ShouldBe("claude-sonnet-5-5");
     }
 
     [Fact]

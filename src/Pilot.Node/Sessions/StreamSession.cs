@@ -207,6 +207,7 @@ public sealed class StreamSession : IAsyncDisposable
     private bool _stopping;
     private bool _starting;
     private string _sessionId;
+    private string? _model;
     private bool _working;
     private string _partialText = "";
     private string? _doing;
@@ -264,6 +265,12 @@ public sealed class StreamSession : IAsyncDisposable
 
     /// <summary>The session id: the one asked for until claude's init line says (a resume may continue under another).</summary>
     public string SessionId => Read(() => _sessionId);
+
+    /// <summary>
+    /// The model Claude Code says it runs on, from the start (<c>claude-sonnet-5-5</c>), so the sessions view names the model and not the alias it
+    /// was started with (<c>sonnet</c>); null before the start is read.
+    /// </summary>
+    public string? Model => Read(() => _model);
 
     /// <summary>True while a turn runs (from the message taken to its result).</summary>
     public bool Working => Read(() => _working);
@@ -636,6 +643,10 @@ public sealed class StreamSession : IAsyncDisposable
                 switch (type)
                 {
                     case "system" when Str(root, "subtype") == "init":
+                        if (Str(root, "model") is { Length: > 0 } model)
+                        {
+                            _model = model;
+                        }
                         if (Str(root, "session_id") is { Length: > 0 } id)
                         {
                             _sessionId = id;

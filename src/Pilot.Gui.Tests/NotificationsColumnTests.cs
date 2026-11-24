@@ -33,6 +33,7 @@ public sealed class NotificationsColumnTests
             Chrome = new PilotChrome<RgbaImage>(Renderer, new SessionsView<RgbaImage>(Renderer)) { FontPath = SessionsCapture.FontPath, DpiScale = dpi };
             Chrome.Notifications.Open = false;
             Chrome.Show(PilotPage.Jobs);
+            Chrome.NotificationsPage.Mode = NotificationsViewMode.List; // these tests are the List view; Grid is NotificationsViewModeTests
             var seen = Chrome.NotificationsPage.Arranged;
             Chrome.NotificationsPage.Arranged = nodes =>
             {
@@ -93,25 +94,12 @@ public sealed class NotificationsColumnTests
 
     private static string TextOf(Layout.ArrangedNode<float> a) => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text { Value: var v } } ? v : "";
 
-    /// <summary>The card content, top to bottom: the smallest node taller than twice the kind line holding it (a card's padded stack inside its frame; the left edge and the gap are the frame's, offset by one constant).</summary>
+    /// <summary>The page's rows, top to bottom: the toast-framed nodes (the library's corner radius) as wide as most of the page (DSN-5 v1: the frame is the row).</summary>
     private static List<(Rect<float> Frame, string Head, Rect<float> Border)> Frames(PageWindow w)
     {
-        var heads = w.Arranged.Where(a => TextOf(a) is var t && (t.StartsWith("RING", StringComparison.Ordinal) || t.StartsWith("for you", StringComparison.Ordinal) || t.StartsWith("event", StringComparison.Ordinal)))
-            .OrderBy(a => a.Bounds.Y).ToList();
-        var frames = new List<(Rect<float>, string, Rect<float>)>();
-        foreach (var head in heads)
-        {
-            var frame = w.Arranged.Where(a => a.Bounds.X <= head.Bounds.X && a.Bounds.Y <= head.Bounds.Y
-                    && a.Bounds.X + a.Bounds.Width >= head.Bounds.X + head.Bounds.Width && a.Bounds.Y + a.Bounds.Height >= head.Bounds.Y + head.Bounds.Height
-                    && a.Bounds.Height > head.Bounds.Height * 2f && a.Bounds.Width < w.Width * 0.9f)
-                .OrderBy(a => a.Bounds.Width * a.Bounds.Height).First();
-            // The card's drawn frame, the smallest bordered node around the head: what the cap is held against (the content inside it is narrower by the padding).
-            var border = w.Arranged.Where(a => a.Node.BorderStyle is not null && a.Bounds.X <= head.Bounds.X && a.Bounds.Y <= head.Bounds.Y
-                    && a.Bounds.X + a.Bounds.Width >= head.Bounds.X + head.Bounds.Width && a.Bounds.Y + a.Bounds.Height >= head.Bounds.Y + head.Bounds.Height)
-                .OrderBy(a => a.Bounds.Width * a.Bounds.Height).First();
-            frames.Add((frame.Bounds, TextOf(head), border.Bounds));
-        }
-        return frames;
+        var radius = Pilot.Ui.NotificationsHost.Colors().CornerRadius;
+        return [.. w.Arranged.Where(a => a.Node.BorderStyle is { } border && border.Radius == radius && a.Bounds.Width > w.Width * 0.5f * w.Dpi / w.Dpi && a.Bounds.Height > 20f)
+            .OrderBy(a => a.Bounds.Y).Select(a => (a.Bounds, "", a.Bounds))];
     }
 
     [Theory]
@@ -124,10 +112,10 @@ public sealed class NotificationsColumnTests
 
         var frames = Frames(w);
         frames.Count.ShouldBe(5, "three open cards and two history entries, all drawn");
-        var cap = NotificationsView<RgbaImage>.ColumnWidth * dpi;
+        // DSN-5 v1 removed the 440 column cap: a row spans the page less its gutters (20 units each side).
         frames.Select(f => MathF.Round(f.Frame.X)).Distinct().Count().ShouldBe(1, "every card has the same left edge");
-        frames.ShouldAllBe(f => f.Border.Width <= cap + 0.5f, "no card, border included, is wider than the cap");
-        frames.ShouldAllBe(f => f.Frame.Width > 200f * dpi, "and none is squeezed");
+        frames.ShouldAllBe(f => f.Border.Width >= width - (52f + 2f * 20f) * dpi - 1f, "each row fills the page (less its rail and 20-unit gutters)");
+        frames.ShouldAllBe(f => f.Border.Width <= width, "and none runs past the page");
 
         var gaps = frames.Zip(frames.Skip(1), (a, b) => b.Frame.Y - (a.Frame.Y + a.Frame.Height)).ToList();
         // Between the three open cards and between the two history cards the gap is one value; a section's heading sits between the groups.
@@ -145,11 +133,13 @@ public sealed class NotificationsColumnTests
         using var w = new PageWindow(width, height, dpi);
         w.Fill();
 
-        w.Arranged.Count(a => TextOf(a).Trim() == "Dismiss").ShouldBe(3, "one Dismiss per open card, none from the library's row and none on a history card");
+        // DSN-5 v1: an open row is dismissed by the toast's Close cross (an icon, no Dismiss word); a closed row is one quiet line with neither.
+        w.Arranged.Count(a => TextOf(a).Trim() == "Dismiss").ShouldBe(0);
+        Func<Layout.ArrangedNode<float>, bool> IsClose = a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Icon { Kind: Layout.IconKind.Close } };
         var frames = Frames(w);
-        frames.Count(f => f.Head.Contains("closed", StringComparison.Ordinal)).ShouldBe(2, "the history cards say closed in their kind line");
-        frames.Take(3).ShouldAllBe(f => !f.Head.Contains("closed", StringComparison.Ordinal));
-        frames.Skip(3).ShouldAllBe(f => f.Head.StartsWith("event", StringComparison.Ordinal), "a pilot event is drawn by the same component");
+        frames.Count.ShouldBe(5);
+        w.Arranged.Count(IsClose).ShouldBe(3, "one Close cross per open card, none on a history row");
+        frames.Skip(3).ShouldAllBe(f => !w.Arranged.Any(a => IsClose(a) && a.Bounds.Y >= f.Frame.Y && a.Bounds.Y <= f.Frame.Y + f.Frame.Height));
         TextOverlap.Faults(w.Arranged).Select(f => f.Line).ShouldBeEmpty();
     }
 
@@ -161,7 +151,7 @@ public sealed class NotificationsColumnTests
         w.Chrome.Cards.OnChatAbout = _ => { };
         w.Frame(T0.AddMinutes(4), Cards());
 
-        var events = Frames(w).Where(f => f.Head.StartsWith("event", StringComparison.Ordinal)).ToList();
+        var events = Frames(w).Skip(3).ToList();
         events.Count.ShouldBe(2);
         foreach (var e in events)
         {
@@ -216,17 +206,5 @@ public sealed class NotificationsColumnTests
         {
             Contrast.Ratio(InkOf(word), frame.Background!.Value).ShouldBeGreaterThanOrEqualTo(Contrast.AA, $"'{word}' on its history card's fill");
         }
-        // An event's head ink is held too: its kind line reads at AA on its fill, and the two severities do not share one ink.
-        RGBAColor32 HeadIn(Layout.Node frame)
-        {
-            var fb = w.Arranged.First(a => ReferenceEquals(a.Node, frame)).Bounds;
-            var head = w.Arranged.First(a => TextOf(a).StartsWith("event", StringComparison.Ordinal)
-                && a.Bounds.X >= fb.X && a.Bounds.Y >= fb.Y && a.Bounds.X + a.Bounds.Width <= fb.X + fb.Width && a.Bounds.Y + a.Bounds.Height <= fb.Y + fb.Height);
-            return ((Layout.Content.Text)((Layout.Node.Leaf)head.Node).Content).Color;
-        }
-        var (successHead, errorHead) = (HeadIn(ok), HeadIn(failed));
-        Contrast.Ratio(successHead, ok.Background!.Value).ShouldBeGreaterThanOrEqualTo(Contrast.AA, "the success event's head on its own fill");
-        Contrast.Ratio(errorHead, failed.Background!.Value).ShouldBeGreaterThanOrEqualTo(Contrast.AA, "the error event's head on its own fill");
-        successHead.ShouldNotBe(errorHead, "the two severities do not share one ink");
     }
 }

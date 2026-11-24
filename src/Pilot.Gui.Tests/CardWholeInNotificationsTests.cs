@@ -157,7 +157,7 @@ public sealed class CardWholeInNotificationsTests
         w.Save("card-whole-notifications-page-1920x1080");
 
         var row = Joined(w.Bar.Feed.NeedsYou.ShouldHaveSingleItem().Row.ShouldNotBeNull().Invoke());
-        foreach (var choice in new[] { "Pick option A", "Pick option B", "Pick option C", "Answer in your own words", "Dismiss" })
+        foreach (var choice in new[] { "Pick option A", "Pick option B", "Pick option C", "Answer in your own words" })
         {
             row.ShouldContain(Squeezed(choice), Case.Sensitive, $"the page carries {choice}");
         }

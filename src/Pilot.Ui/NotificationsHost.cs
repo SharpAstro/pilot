@@ -22,6 +22,15 @@ internal sealed class NotificationsHost
     /// <summary>The ids' notifications, one per open card.</summary>
     public NotificationFeed Feed { get; } = new() { KeepFor = DefaultKeepFor };
 
+    /// <summary>How many notifications the page row being built stands for (the N of a fold marked ×N); the page sets it round each row it builds.</summary>
+    internal int PageRepeats { get; set; } = 1;
+
+    /// <summary>Whether the page being built draws its notifications as cards in columns (the Grid view); the page sets it while it builds.</summary>
+    internal bool PageGrid { get; set; }
+
+    /// <summary>The width, in design units, of the page being built; a row stacks its right-hand cluster under its body below <see cref="NotificationToast.NarrowPage"/>.</summary>
+    internal float PageWidth { get; set; } = float.MaxValue;
+
     // What stands over the page as a toast, apart from the list (Feed): a card toasts only when it rings and opened after this window's first
     // look, and every event toasts. A window that started with 37 open cards toasted every one of them, a For you card (a follow-up with no
     // flight, a digest) as loudly as a ring, three at a time, the next popping up as each was dismissed (the owner, 2026-11-21: "bombarded
