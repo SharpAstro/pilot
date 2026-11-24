@@ -62,6 +62,27 @@ public sealed class IdleFixerTests : PrFixTestsBase
     }
 
     [Fact]
+    public async Task AHeadSomeoneElseMovedUnderTheFixerStopsItRaisesACardAndStartsNoReview()
+    {
+        await Review("acme/widget#7", "changes", "README.md:1 wrong");
+        var reviewed = Row.Head;
+        var job = Row.FixerJob.ShouldNotBeNull();
+        _state.PutSession(FixerSession(SessionState.Working));
+        // Someone else pushes the branch: the fixer's worktree does not have the new head, and it is still working.
+        var moved = SomeoneElsePushes("the author rebuilt the branch");
+
+        await _reviews.SweepAsync(Ct);
+
+        _workers.Stopped.ShouldContain(job);
+        Row.Fixer.ShouldBeNull();
+        Row.Head.ShouldBe(reviewed);
+        var card = _state.Cards(openOnly: true).Where(c => c.Kind == PrReviews.FixHeadMovedKind).ShouldHaveSingleItem();
+        card.Title.ShouldContain(CommitRefs.Short(reviewed));
+        card.Title.ShouldContain(CommitRefs.Short(moved));
+        _workers.Started.ShouldNotContain(s => s.Name.Contains("-review"));
+    }
+
+    [Fact]
     public async Task AWorkingSecondFixerSessionKeepsTheMovedHeadFromEndingTheRound()
     {
         await Review("acme/widget#7", "changes", "README.md:1 wrong");

@@ -146,6 +146,19 @@ public abstract class PrFixTestsBase : IDisposable
     /// <summary>The fixer pushes a commit to the PR: its head on GitHub moves; returns the new head.</summary>
     private protected string FixerPushes(string what)
     {
+        var head = SomeoneElsePushes(what);
+        // The fixer pushed from its own worktree, so its HEAD is the new head (a head it lacks is the moved-head stop, pilot #1341).
+        if (Directory.Exists(FixWorktree))
+        {
+            PrOrigins.Git(FixWorktree, "fetch", "-q", "origin", "refs/pull/7/head");
+            PrOrigins.Git(FixWorktree, "merge", "-q", "--ff-only", head);
+        }
+        return head;
+    }
+
+    /// <summary>Someone other than the fixer pushes to the PR: its head on GitHub moves, and the fixer's worktree does not have it.</summary>
+    private protected string SomeoneElsePushes(string what)
+    {
         var head = PrOrigins.Push(Path.Combine(_root, "work-widget"), 7, what);
         _github.Prs["acme/widget#7"] = _github.Prs["acme/widget#7"] with { Head = head };
         return head;
