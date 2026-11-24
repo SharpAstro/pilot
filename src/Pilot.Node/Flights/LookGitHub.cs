@@ -268,6 +268,8 @@ internal sealed class LookGitHub(IGitHub inner, PrPollSchedule? schedule = null)
     public Task RerunRunAsync(string repoPath, long runId, CancellationToken cancellationToken) => inner.RerunRunAsync(repoPath, runId, cancellationToken);
     public Task<IssueInfo[]> IssuesAsync(string repoPath, CancellationToken cancellationToken) => inner.IssuesAsync(repoPath, cancellationToken);
     public Task<PullRequestStatus[]> OpenPullRequestsAsync(string repoPath, CancellationToken cancellationToken) => inner.OpenPullRequestsAsync(repoPath, cancellationToken);
+    public Task<BaseRun?> BaseRunAsync(string repoPath, string baseBranch, string? workflow, CancellationToken cancellationToken) => inner.BaseRunAsync(repoPath, baseBranch, workflow, cancellationToken);
+
     public Task<string[]> PullRequestFilesAsync(string repoPath, int number, CancellationToken cancellationToken) => inner.PullRequestFilesAsync(repoPath, number, cancellationToken);
     public Task<PullRequestSearch.Read> OpenPullRequestsInAsync(string[] repos, CancellationToken cancellationToken) => inner.OpenPullRequestsInAsync(repos, cancellationToken);
     public Task<IssueInfo> CreateIssueAsync(string repoPath, string title, string? body, CancellationToken cancellationToken) => inner.CreateIssueAsync(repoPath, title, body, cancellationToken);

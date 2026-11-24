@@ -961,6 +961,18 @@ internal sealed class FakeGitHub : IGitHub
     public Task<FailedRun?> FailedRunAsync(string repoPath, int number, bool mergeGroup, CancellationToken cancellationToken) =>
         Task.FromResult(!FailedRunFails && FailedRuns.TryGetValue((number, mergeGroup), out var run) ? run : null);
 
+    /// <summary>The base branch's latest completed run; null reads as unknown, as a gh that could not read it.</summary>
+    public BaseRun? BaseAnswer { get; set; }
+
+    /// <summary>The branch the base run was last asked for.</summary>
+    public string? BaseAsked { get; private set; }
+
+    public Task<BaseRun?> BaseRunAsync(string repoPath, string baseBranch, string? workflow, CancellationToken cancellationToken)
+    {
+        BaseAsked = baseBranch;
+        return Task.FromResult(BaseAnswer);
+    }
+
     /// <summary>The workflow runs each commit has, by commit; a commit with none listed has none.</summary>
     public Dictionary<string, WorkflowRun[]> Runs { get; } = new(StringComparer.OrdinalIgnoreCase);
 

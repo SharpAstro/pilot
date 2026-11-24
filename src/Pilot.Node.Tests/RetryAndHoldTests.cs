@@ -100,8 +100,12 @@ public sealed class RetryAndHoldTests : IDisposable
         FailedRun(pr, queue: false, run, log);
     }
 
-    private void FailedRun(int pr, bool queue, long id, string? log = null) =>
+    private void FailedRun(int pr, bool queue, long id, string? log = null)
+    {
         _github.FailedRuns[(pr, queue)] = new FailedRun(id, $"https://github.com/x/tianwen/actions/runs/{id}", ["build"], log ?? Log());
+        // The base's latest run failed the same test: the evidence that it is not the PR's own.
+        _github.BaseAnswer = new BaseRun(1, false, log ?? Log());
+    }
 
     private void QueueRemoval(string head, string reason = "FAILED_CHECKS") =>
         _github.Queue = GhAnswers.MergeQueue("dropped", head, removedAt: _time.GetUtcNow().AddSeconds(-5), removedReason: reason);
@@ -144,6 +148,35 @@ public sealed class RetryAndHoldTests : IDisposable
         // The same removal is not queued again at the next look.
         await _checks.LookAsync(Ct);
         _github.Merged.Count.ShouldBe(1);
+    }
+
+    // PIL1325's PR #1328: five tests of one class, all of code the PR changed, with main's latest run green (#1335).
+    [Fact]
+    public async Task FiveTestsOfAClassThePrChangedWhileTheBaseIsGreenAreAnsweredTouchedWithNoRetryHoldOrCard()
+    {
+        Flight("TIA81", 81);
+        _github.PrFiles[81] = ["src/Pilot.Node/Flights/LegCommander.Merge.cs", "src/Pilot.Node/ChoiceAvailability.cs"];
+        var lines = new List<string>();
+        foreach (var n in Enumerable.Range(1, 5))
+        {
+            var t = $"Pilot.Node.Tests.MergeFixtureCardTests.ACardsMergeChoiceIsPending{n}";
+            lines.Add($"  Failed {t} [10 ms]");
+            lines.Add("  Error Message:");
+            lines.Add($"   Shouldly.ShouldAssertException : card.Merge.Status should be pending but was unavailable ({n})");
+            lines.Add("  Stack Trace:");
+            lines.Add($"     at {t}() in /_/src/Pilot.Node.Tests/MergeFixtureCardTests.cs:line {10 * n}");
+        }
+        _github.FailedRuns[(81, false)] = new FailedRun(7001, "https://github.com/x/tianwen/actions/runs/7001", ["build"], string.Join('\n', lines));
+        _github.BaseAnswer = new BaseRun(9000, true, "");
+
+        var decision = await _alerts.LookAtRunAsync(new FailureSite("tianwen", "/r/tianwen", 81, "TIA81", Head('k'), FailureWhere.Ci), mergeGroup: false, Ct);
+
+        decision.Answer.ShouldBe(FailureAnswer.Touched);
+        _github.IssuesCreated.ShouldBeEmpty();
+        _flights.ShouldBeEmpty();
+        _github.Reruns.ShouldBeEmpty();
+        _alerts.HoldOf("TIA81").ShouldBeNull();
+        _state.Cards().ShouldNotContain(c => c.Kind == FailureAlerts.AlertKind || c.Kind == FailureAlerts.RetriedKind || c.Kind == FailureInvestigations.CardKind);
     }
 
     [Fact]
@@ -446,6 +479,7 @@ public sealed class RetryAndHoldHandPrTests : PrReviewTestsBase
         _reviews.Alerts = alerts;
         _github.PrFiles[7] = ["README.md"];
         _github.FailedRuns[(7, false)] = new FailedRun(6001, "https://github.com/acme/widget/actions/runs/6001", ["build"], Log());
+        _github.BaseAnswer = new BaseRun(1, false, Log());
         return alerts;
     }
 
