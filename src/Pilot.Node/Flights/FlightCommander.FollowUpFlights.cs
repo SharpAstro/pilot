@@ -153,7 +153,8 @@ public sealed partial class FlightCommander
         }
         // The lock is let go while peers answer, so two runs for one flight could overlap and comment and ground twice: one run per flight.
         // The run it skips must not drop its released packages: they are queued onto the running one, which reads its queue again whenever it
-        // names a package, so a join after an earlier read still reaches the card and the ground text.
+        // names a package. A join after the ground request's read is named on the card only; a join after the card's read is named nowhere
+        // (inherent to a lock-free join with no retry).
         var run = new PeerRun(released);
         var running = _ensuringPeers.GetOrAdd(code, run);
         if (!ReferenceEquals(running, run))
@@ -201,7 +202,7 @@ public sealed partial class FlightCommander
                 if (followUp.Package)
                 {
                     var held = await HoldPeerFlightAsync(node, made, landing, run.Snapshot(), cancellationToken);
-                    // Read again: a run that joined while the peer was asked to ground is named on the card too.
+                    // Read again: a run that joined while the peer was asked to ground is named on the card only (the ground text is sent); one joining after this read is named nowhere.
                     RaiseFollowUpPackageCard(landing, followUp, made, node, run.Snapshot(), held);
                 }
             }

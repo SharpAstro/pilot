@@ -24,7 +24,8 @@ public sealed partial class FlightCommander(NodeState state, Planes planes, Time
     private readonly SemaphoreSlim _creating = new(1, 1);
 
     // The landed flights whose follow-ups are being made on a peer with the lock let go, with the packages their landing released: a second run
-    // for one is not started but adds its packages here, and the running one reads them as it goes.
+    // for one is not started but adds its packages here, and the running one reads them as it goes. A late join is named on the card only,
+// and a join after the last read is named nowhere (inherent to a lock-free join with no retry).
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, PeerRun> _ensuringPeers = new(StringComparer.Ordinal);
 
     // The flights being landed, whose plane and sessions are being taken down with the lock let go: a second land of one is refused.

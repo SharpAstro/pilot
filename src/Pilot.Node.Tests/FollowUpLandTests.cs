@@ -208,6 +208,29 @@ public sealed class FollowUpLandTests : PackageWaitTestsBase
         var card = node.State.Cards().Where(c => c.Kind == FlightCommander.FollowUpPackageKind).ShouldHaveSingleItem();
         card.Title.ShouldContain("Other.Pkg 3.4 above 3.4.1");
         card.Detail.ShouldNotBeNull().ShouldContain("Other.Pkg 3.4 above 3.4.1");
+        // The join came while the create was held, so the ground read after it names the package too.
+        peer.Sent.Single(c => c.Verb == Verbs.Ground).Args.ShouldHaveSingleItem().ShouldContain("Other.Pkg 3.4");
+    }
+
+    [Fact]
+    public async Task APackageJoiningWhileTheGroundIsHeldIsNamedOnTheCard()
+    {
+        var peer = Peer("DE1", "SharpAstro/ghostapp", "D:/src/ghostapp");
+        peer.GroundGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var node = await ProducerWithFollowUp(Record("SharpAstro/ghostapp", 9, package: true));
+        node.Flights.Fleet = new FakeFleet(peer);
+        _github.UnclonedRepos.Add("ghostapp");
+        var landing = LandProducer(node);
+        await peer.GroundReached.Task.WaitAsync(TimeSpan.FromSeconds(5), Ct);
+
+        // The ground request has been sent with its own read of the queue; this join comes after it, so only the card's second read can name it.
+        await node.Flights.EnsurePeerFollowUpFlightsAsync("TIA1", [new PackageWait { Id = "Late.Pkg", Line = "5.6", Producer = "TIA1", Since = Start }], Ct);
+        peer.GroundGate.SetResult();
+        await landing;
+
+        peer.Sent.Single(c => c.Verb == Verbs.Ground).Args.ShouldHaveSingleItem().ShouldNotContain("Late.Pkg");
+        var card = node.State.Cards().Where(c => c.Kind == FlightCommander.FollowUpPackageKind).ShouldHaveSingleItem();
+        card.Title.ShouldContain("Late.Pkg 5.6");
     }
 
     [Fact]
@@ -257,6 +280,11 @@ public sealed class FollowUpLandTests : PackageWaitTestsBase
 
         public TaskCompletionSource Reached { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
+        /// <summary>When set, a ground waits on it (an event, no spin) after raising <see cref="GroundReached"/>.</summary>
+        public TaskCompletionSource? GroundGate { get; set; }
+
+        public TaskCompletionSource GroundReached { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
         public Task<NodeInfo> NodeAsync(CancellationToken cancellationToken) => Task.FromResult(new NodeInfo
         {
             WireVersion = NodeWire.Version, Version = "0", MachineName = name, MachinePrefix = name, ProcessId = 1, StartedAt = Start,
@@ -274,6 +302,11 @@ public sealed class FollowUpLandTests : PackageWaitTestsBase
             {
                 Reached.TrySetResult();
                 await gate.Task.WaitAsync(TimeSpan.FromSeconds(10), cancellationToken);
+            }
+            if (GroundGate is { } groundGate && command.Verb == Verbs.Ground)
+            {
+                GroundReached.TrySetResult();
+                await groundGate.Task.WaitAsync(TimeSpan.FromSeconds(10), cancellationToken);
             }
             return new CommandResult { Verb = command.Verb, Target = command.Target, Who = command.Who, Ok = true, Made = "PIL180", Seq = 1 };
         }
