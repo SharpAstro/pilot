@@ -107,7 +107,7 @@ public sealed record Standing(StandingKind Kind, string? Flight = null, string? 
     /// </summary>
     private static readonly IReadOnlySet<string> LookoutNever = new HashSet<string>(StringComparer.Ordinal)
     {
-        Verbs.Investigated, Verbs.Review, Verbs.PostReview, Verbs.FixPr, Verbs.Ground, Verbs.Unground, Verbs.SyncRepos, Verbs.CreateIssue, Verbs.Fold, Verbs.Separate, Verbs.ConnectOverlap, Verbs.DesignReplan, Verbs.PlanIdea, Verbs.DropIdea, Verbs.EditIdea, Verbs.TidyIdea, Verbs.BreakUpIssue, Verbs.AcceptBreakUp, Verbs.ProposeMilestone, Verbs.SaveTidyIdea, Verbs.FoldIdea, Verbs.SetMilestone, Verbs.PinIssue, Verbs.MarkDesign, Verbs.DesignFromIdea, Verbs.DesignLink, Verbs.DesignUnlink, Verbs.DesignBuild, Verbs.DesignIssue, Verbs.SetPriority, Verbs.CheckReady, Verbs.SuggestMilestones, Verbs.AcceptMilestones,
+        Verbs.Investigated, Verbs.Review, Verbs.PostReview, Verbs.FixPr, Verbs.ClosePr, Verbs.KeepPr, Verbs.Ground, Verbs.Unground, Verbs.SyncRepos, Verbs.CreateIssue, Verbs.Fold, Verbs.Separate, Verbs.ConnectOverlap, Verbs.DesignReplan, Verbs.PlanIdea, Verbs.DropIdea, Verbs.EditIdea, Verbs.TidyIdea, Verbs.BreakUpIssue, Verbs.AcceptBreakUp, Verbs.ProposeMilestone, Verbs.SaveTidyIdea, Verbs.FoldIdea, Verbs.SetMilestone, Verbs.PinIssue, Verbs.MarkDesign, Verbs.DesignFromIdea, Verbs.DesignLink, Verbs.DesignUnlink, Verbs.DesignBuild, Verbs.DesignIssue, Verbs.SetPriority, Verbs.CheckReady, Verbs.SuggestMilestones, Verbs.AcceptMilestones,
     };
 
     /// <summary>
@@ -116,7 +116,7 @@ public sealed record Standing(StandingKind Kind, string? Flight = null, string? 
     /// </summary>
     private static readonly IReadOnlySet<string> FlightSessionNever = new HashSet<string>(StringComparer.Ordinal)
     {
-        Verbs.Investigated, Verbs.Order, Verbs.OrderDone, Verbs.PostReview, Verbs.FixPr, Verbs.Fold, Verbs.Separate, Verbs.ConnectOverlap, Verbs.DesignReplan, Verbs.CreateIssue, Verbs.CreateFlight, Verbs.WithdrawFlight, Verbs.SyncRepos, Verbs.PlanIdea, Verbs.DropIdea, Verbs.EditIdea, Verbs.TidyIdea, Verbs.BreakUpIssue, Verbs.AcceptBreakUp, Verbs.ProposeMilestone, Verbs.SaveTidyIdea, Verbs.FoldIdea, Verbs.SetMilestone, Verbs.PinIssue, Verbs.MarkDesign, Verbs.DesignFromIdea, Verbs.DesignLink, Verbs.DesignUnlink, Verbs.DesignBuild, Verbs.DesignIssue, Verbs.SetPriority, Verbs.CheckReady, Verbs.SuggestMilestones, Verbs.AcceptMilestones,
+        Verbs.Investigated, Verbs.Order, Verbs.OrderDone, Verbs.PostReview, Verbs.FixPr, Verbs.ClosePr, Verbs.KeepPr, Verbs.Fold, Verbs.Separate, Verbs.ConnectOverlap, Verbs.DesignReplan, Verbs.CreateIssue, Verbs.CreateFlight, Verbs.WithdrawFlight, Verbs.SyncRepos, Verbs.PlanIdea, Verbs.DropIdea, Verbs.EditIdea, Verbs.TidyIdea, Verbs.BreakUpIssue, Verbs.AcceptBreakUp, Verbs.ProposeMilestone, Verbs.SaveTidyIdea, Verbs.FoldIdea, Verbs.SetMilestone, Verbs.PinIssue, Verbs.MarkDesign, Verbs.DesignFromIdea, Verbs.DesignLink, Verbs.DesignUnlink, Verbs.DesignBuild, Verbs.DesignIssue, Verbs.SetPriority, Verbs.CheckReady, Verbs.SuggestMilestones, Verbs.AcceptMilestones,
     };
 
     /// <summary>

@@ -107,6 +107,7 @@ public static partial class Briefs
             : $"- Push plainly (`git push origin HEAD:{branch}`), never with force: other people may have the branch.");
         text.AppendLine($"- Comment on the PR once (`gh pr comment {review.Number} -R {review.Repo}`) with each finding and what you did about it.");
         text.AppendLine("- Commit with messages that say what changed and why. Open no PR and merge nothing.");
+        text.AppendLine("- If a push is refused as non-fast-forward, the branch moved: someone else pushed or rebuilt it. Stop: commit what you have, name the new head in your PR comment, and end your turn. Never merge or rebase over it and never force; the node reviews the new head first.");
         text.AppendLine("- If GitHub refuses a push because the PR has merged (or is in a merge queue and is merging), the node follows up a merged PR's commits: commit, say so, and end your turn. Do not dequeue the PR or open a new one yourself.");
         text.AppendLine("- End your turn once the push and the comment are done. A turn never ends with work uncommitted or unpushed unless your PR comment says what stopped it.");
         text.AppendLine("- Ending a turn on a `pilot run` job is fine: the job's end wakes you.");

@@ -38,6 +38,12 @@ public sealed partial class PrReviews
     /// <summary>The For-you card said when a fixer's worktree could not be removed; the node tries again.</summary>
     public const string FixLeftKind = "pr-fix-left";
 
+    /// <summary>The For-you card of a fixer stopped because someone else moved the PR's head under it (pilot #1341).</summary>
+    public const string FixHeadMovedKind = "pr-fix-head-moved";
+
+    /// <summary>The Handled card of a fixer not started because the PR's authoring session holds its branch in a worktree (pilot #1341).</summary>
+    public const string FixAuthorHoldsKind = "pr-fix-author-holds";
+
     /// <summary>The Handled notice of an idle fixer of an approved PR that finished with nothing left and was ended (pilot #1327).</summary>
     public const string FixerFinishedKind = "pr-fixer-finished";
 
@@ -83,6 +89,22 @@ public sealed partial class PrReviews
             // The fixer's session working, waiting on a person or on a job of its own: it may push more, so it is left running and no review starts yet; a
             // later sweep looks again once it has finished. An idle one has finished (its turn is over and an idle session never ends by itself), so it is ended
             // below and the review of its push starts (pilot #1327).
+            // A head the fixer's worktree does not contain was pushed or rebuilt by someone else under it (tianwen#2480/#2483): its fixes are on a head the
+            // reviewed one no longer is. It is stopped, whatever it is doing, its work kept (the hold pushes it or rings), and no review starts on its behalf.
+            if (review.FixWorktree is { } movedTree && Directory.Exists(movedTree)
+                && !(await git.RunAsync(["merge-base", "--is-ancestor", read.Head, "HEAD"], movedTree, cancellationToken)).Ok)
+            {
+                foreach (var l in LiveFixersOf(review))
+                {
+                    await StopQuietly(l.Id, cancellationToken);
+                }
+                var kept = !await EndFixerAsync(review, cancellationToken, read.Head);
+                state.RaiseCard(CardBin.ForYou, FixHeadMovedKind, subject,
+                    $"{pr}: the head moved under {review.Fixer}, from {CommitRefs.Short(review.Head)} to {CommitRefs.Short(read.Head)}",
+                    $"Someone else pushed {pr}'s branch while {review.Fixer} worked on {CommitRefs.Short(review.Head)}, and its worktree does not have the new head {CommitRefs.Short(read.Head)}. It was stopped; whatever it committed or left uncommitted is kept{(kept ? "" : " in its worktree")} for the hold to push or ring about. A review of the new head comes first; Fix it then starts a fixer on that.",
+                    link: review.Url, summary: $"{pr}'s head moved from {CommitRefs.Short(review.Head)} to {CommitRefs.Short(read.Head)} under its fixer, which was stopped; review the new head first.");
+                return;
+            }
             var lives = LiveFixersOf(review);
             if (lives.Any(l => !FixerFinished(l)))
             {
@@ -355,7 +377,14 @@ public sealed partial class PrReviews
         string localBranch = read.HeadRef;
         try
         {
+            // The merged head may not be in this clone yet (the PR was rebuilt after the fixer fetched): the base carries it once squashed or fast-forwarded.
+            await git.RunAsync(["fetch", "--quiet", "origin", baseBranch], worktree, cancellationToken);
             var count = await git.RunAsync(["rev-list", "--count", $"{merged}..HEAD"], worktree, cancellationToken);
+            if (!count.Ok && !string.IsNullOrEmpty(review.Head) && review.Head != merged)
+            {
+                // Still unknown: what is past the head the fixer was reviewed at is counted instead, and the test merge below judges it.
+                count = await git.RunAsync(["rev-list", "--count", $"{review.Head}..HEAD"], worktree, cancellationToken);
+            }
             if (!count.Ok)
             {
                 state.RaiseCard(CardBin.ForYou, FixFollowUpFailedKind, subject,
@@ -381,10 +410,35 @@ public sealed partial class PrReviews
                 summary: $"Look in {review.ClonePath} for commits the fixer made after {pr} merged: they could not be read ({LegCommander.OneLine(ex.Message)}).");
             return;
         }
+        var testMergeSaysChanges = false;
+        // A test merge of only the fixer's own commits (past their fork point from the PR's history) onto the base decides first (pilot #1341):
+        // the same tree means the base has it all, a conflict means the commits are stale against the base, a change means a follow-up PR.
+        try
+        {
+            switch (await TestMergeOnBaseAsync(worktree, baseBranch, merged, review.Head, cancellationToken))
+            {
+                case { Outcome: TestMergeOutcome.Same }:
+                    NoteAlreadyThere(pr, review, $"on {baseBranch}");
+                    return;
+                case { Outcome: TestMergeOutcome.Conflict } conflicted:
+                    state.RaiseCard(CardBin.ForYou, FixFollowUpConflictKind, subject,
+                        $"{pr} merged mid-fix: its commits conflict with {baseBranch}",
+                        $"A test merge of the fixer's commits ({conflicted.Commits}) onto origin/{baseBranch} conflicts in {conflicted.Files}. Nothing was pushed.\nThe commits stay on the local branch {localBranch} in {review.ClonePath}; take what is still needed by hand.", link: review.Url,
+                        summary: $"Look at the fixer's commits ({conflicted.Commits}) on {localBranch} in {review.ClonePath}: they conflict with {baseBranch} in {conflicted.Files}, so no PR was opened or pushed.");
+                    return;
+                case { Outcome: TestMergeOutcome.Changes }:
+                    testMergeSaysChanges = true;
+                    break;
+            }
+        }
+        catch (Exception ex) when (ex is FlightException or System.ComponentModel.Win32Exception or IOException or InvalidOperationException)
+        {
+            // Not known: the cherry and file check below, then the commits as ever.
+        }
         // Judged by content, not by commit id: a commit whose changes reached the base under another SHA (a squash, a cherry-pick) needs no PR.
         try
         {
-            if (await ChangesOnBaseAsync(worktree, $"origin/{baseBranch}", merged, baseBranch, cancellationToken))
+            if (!testMergeSaysChanges && await ChangesOnBaseAsync(worktree, $"origin/{baseBranch}", merged, baseBranch, cancellationToken))
             {
                 NoteAlreadyThere(pr, review, $"on {baseBranch}");
                 return;
@@ -440,6 +494,72 @@ public sealed partial class PrReviews
         {
             Failed(ex.Message);
         }
+    }
+
+    /// <summary>The For-you card of a merged PR's fixer commits whose test merge onto the base conflicts; the local branch holds them.</summary>
+    public const string FixFollowUpConflictKind = "pr-fix-follow-up-conflict";
+
+    private enum TestMergeOutcome { Unknown, Same, Conflict, Changes }
+
+    private sealed record TestMerge(TestMergeOutcome Outcome, string Commits = "", string Files = "");
+
+    /// <summary>
+    /// A test merge of only the fixer's commits onto origin/<paramref name="baseBranch"/>: <c>git merge-tree --write-tree --merge-base &lt;fork&gt;</c>, where the
+    /// fork is where the fixer's HEAD leaves the PR's history (the merged head or the reviewed head when an ancestor of HEAD, else their merge-base with HEAD),
+    /// so commits of the PR from before it was rebuilt are not applied again. Unknown when git cannot say.
+    /// </summary>
+    private async Task<TestMerge> TestMergeOnBaseAsync(string worktree, string baseBranch, string merged, string? reviewed, CancellationToken cancellationToken)
+    {
+        if (!(await git.RunAsync(["fetch", "--quiet", "origin", baseBranch], worktree, cancellationToken)).Ok)
+        {
+            return new TestMerge(TestMergeOutcome.Unknown);
+        }
+        string? fork = null;
+        foreach (var candidate in new[] { merged, reviewed }.Where(c => !string.IsNullOrEmpty(c)))
+        {
+            if ((await git.RunAsync(["merge-base", "--is-ancestor", candidate!, "HEAD"], worktree, cancellationToken)).Ok)
+            {
+                fork = candidate;
+                break;
+            }
+        }
+        if (fork is null)
+        {
+            foreach (var candidate in new[] { reviewed, merged }.Where(c => !string.IsNullOrEmpty(c)))
+            {
+                var found = await git.RunAsync(["merge-base", "HEAD", candidate!], worktree, cancellationToken);
+                if (found.Ok && found.Output.Trim() is { Length: > 0 } id)
+                {
+                    fork = id;
+                    break;
+                }
+            }
+        }
+        if (fork is null)
+        {
+            return new TestMerge(TestMergeOutcome.Unknown);
+        }
+        var target = $"origin/{baseBranch}";
+        var tree = await git.RunAsync(["merge-tree", "--write-tree", "--name-only", "--no-messages", "--merge-base", fork, target, "HEAD"], worktree, cancellationToken);
+        var lines = tree.Output.Split('\n',StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (lines.Length == 0 || (!tree.Ok && tree.ExitCode != 1))
+        {
+            return new TestMerge(TestMergeOutcome.Unknown);
+        }
+        var log = await git.RunAsync(["log", "--format=%h %s", $"{fork}..HEAD"], worktree, cancellationToken);
+        var commits = log.Ok ? log.Output.Split('\n',StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) : [];
+        var named = commits.Length == 0 ? "none read" : string.Join("; ", commits.Take(3)) + (commits.Length > 3 ? "; ..." : "");
+        if (!tree.Ok)
+        {
+            var files = lines.Length > 1 ? string.Join(", ", lines.Skip(1).Take(5)) + (lines.Length > 6 ? ", ..." : "") : "some files";
+            return new TestMerge(TestMergeOutcome.Conflict, named, files);
+        }
+        var baseTree = await git.RunAsync(["rev-parse", $"{target}^{{tree}}"], worktree, cancellationToken);
+        if (!baseTree.Ok)
+        {
+            return new TestMerge(TestMergeOutcome.Unknown);
+        }
+        return new TestMerge(string.Equals(lines[0], baseTree.Output.Trim(), StringComparison.Ordinal) ? TestMergeOutcome.Same : TestMergeOutcome.Changes, named);
     }
 
     /// <summary>
@@ -650,10 +770,15 @@ public sealed partial class PrReviews
         {
             await ActOnAnswerAsync(pr, review, comment, CommentWho, null, false, null, cancellationToken);
         }
-        catch (FlightException ex) when (flight is null)
+        catch (FlightException ex) when (flight is null && ex is not AnnouncedFlightException)
         {
             RaiseOnce(pr, review, CardBin.ForYou, FixFailedKind, target, $"{pr}: the fixer could not start: {LegCommander.OneLine(ex.Message)}", ex.Message,
                 [new CardChoice { Label = "Start the fixer again", Verb = Verbs.FixPr, Target = target }]);
+            return;
+        }
+        catch (AnnouncedFlightException) when (flight is null)
+        {
+            // The refusal raised its own card (an author-held branch, say): a second FixFailed card would ring twice.
             return;
         }
         // Say only what is true: a fixer running, one queued for a slot, or the flight's leg sent round.

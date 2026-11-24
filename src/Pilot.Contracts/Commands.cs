@@ -515,6 +515,17 @@ public static class Verbs
     public const string AllowRound = "allow-round";
 
     /// <summary>
+    /// <c>close-pr pr/&lt;owner&gt;/&lt;repo&gt;#&lt;n&gt;</c>: closes a PR the node holds a review of whose linked issues are all closed (PIL1341), with a comment saying which.
+    /// The choice of the closed-issue card; the person's.
+    /// </summary>
+    public const string ClosePr = "close-pr";
+
+    /// <summary>
+    /// <c>keep-pr pr/&lt;owner&gt;/&lt;repo&gt;#&lt;n&gt;</c>: keeps a PR open though every issue it closes is closed (PIL1341); the node remembers the issues and does not flag the PR again for them.
+    /// </summary>
+    public const string KeepPr = "keep-pr";
+
+    /// <summary>
     /// <c>ci-budget flight/&lt;code&gt; continue|land-green|split</c>: the owner's answer to a flight whose CI spend passed
     /// <c>flight-ci-budget</c> (PIL795). <c>continue</c> raises the cap by one budget and lets pushes through again; the others are kept
     /// on the flight for the controller, and the stop stays.

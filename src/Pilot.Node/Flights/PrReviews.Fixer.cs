@@ -58,6 +58,13 @@ public sealed partial class PrReviews
                 + (decided is null ? "" : $". The only option of its design question that reaches the criteria is: {decided.Answer}"));
             return;
         }
+        // A PR whose every issue is closed is for closing, not fixing: the sweep's closed-issue card says so (PIL1341). Checked before a design
+        // question is decided, so the post path says what the recheck says.
+        // A flight's PR is left to the flight (its design question still rings below); the sweep raises no closed-issue card for one.
+        if (flight is null && await UnkeptClosedIssuesAsync(review, cancellationToken) is not null)
+        {
+            return;
+        }
         if (asksDesign)
         {
             if (decided is not null)
@@ -98,11 +105,15 @@ public sealed partial class PrReviews
         {
             await StartFixerAsync(pr, review, cancellationToken);
         }
-        catch (FlightException ex)
+        catch (FlightException ex) when (ex is not AnnouncedFlightException)
         {
             // Retry is the same Fix it: once what stopped it is cleared (a branch checked out elsewhere), it starts the fixer.
             RaiseOnce(pr, review, CardBin.ForYou, FixFailedKind, subject, $"{pr}: the fixer could not start: {LegCommander.OneLine(ex.Message)}", ex.Message,
                 [new CardChoice { Label = "Start the fixer again", Verb = Verbs.FixPr, Target = subject }]);
+        }
+        catch (AnnouncedFlightException)
+        {
+            // The refusal raised its own card: nothing more to say.
         }
     }
 
@@ -183,6 +194,11 @@ public sealed partial class PrReviews
         {
             await ActOnAnswerAsync(pr, review, decided.Answer, NodeDecides, null, false, null, cancellationToken, decision: decided);
         }
+        catch (AnnouncedFlightException)
+        {
+            // The refusal raised its own card (the authoring session holds the branch); the answer stays stored for the next start.
+            SettleDecided(pr, review, decided, "the start was refused, and the card for that says why");
+        }
         catch (FlightException ex)
         {
             // The answer stays stored (DesignAnswer): the choice starts the fixer or sends the leg round with it, without asking again.
@@ -247,6 +263,10 @@ public sealed partial class PrReviews
         {
             return "a flight owns it, so its own legs fix it";
         }
+        if (await UnkeptClosedIssuesAsync(review, cancellationToken) is { } closed)
+        {
+            return $"every issue it closes ({IssueList(closed)}) is closed already, so the PR is for closing, not fixing";
+        }
         if (review.DesignAnswer is null && review.Findings.Any(IsDesign))
         {
             return "its review asks a question of design, which is the author's to decide";
@@ -259,6 +279,22 @@ public sealed partial class PrReviews
         if (rounds == 0 && !Own(review, await github.LoginAsync(cancellationToken)))
         {
             return $"it is {review.Author ?? "someone else"}'s PR, and Fix it has not been chosen";
+        }
+        // Its authoring session holds the branch in a worktree: it answers the review itself (tianwen#2490).
+        try
+        {
+            var read = await github.PullRequestOfAsync(pr.Repo, pr.Number, cancellationToken);
+            var clone = TrackedClone(pr)!;
+            if (read.HeadRef.Length > 0
+                && await HolderOfBranchAsync(clone, Path.Combine(clone, ".claude", "worktrees", $"fix-{Slug(pr.Name)}-{pr.Number}"), read.HeadRef, cancellationToken) is { } holder
+                && AuthoringSessionIn(holder) is { } author)
+            {
+                return AuthorHoldsReason(author, holder, read.HeadRef);
+            }
+        }
+        catch (FlightException)
+        {
+            // GitHub not answering is not a reason of its own; the start asks again.
         }
         return null;
     }
@@ -395,7 +431,7 @@ public sealed partial class PrReviews
         {
             fixerStart = await StartFixerAsync(pr, review, cancellationToken, chose);
         }
-        catch (FlightException ex) when (command is not null)
+        catch (FlightException ex) when (command is not null && ex is not AnnouncedFlightException)
         {
             // The answer stays stored (DesignAnswer), and the card's choice starts the fixer with it, without asking again.
             var subject = Verbs.PrTarget(pr.Repo, pr.Number);
@@ -504,6 +540,16 @@ public sealed partial class PrReviews
             throw new FlightException($"{pr} is {read.State.ToLowerInvariant()}, not open");
         }
         var branch = read.HeadRef.Length > 0 ? read.HeadRef : throw new FlightException($"gh did not say {pr}'s branch");
+        // The review was of review.Head: a fixer on a head the review did not read answers findings that may no longer hold (tianwen#2480/#2483).
+        if (read.Head.Length > 0 && review.Head.Length > 0 && !string.Equals(read.Head, review.Head, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new FlightException($"{pr}'s head is {CommitRefs.Short(read.Head)} now, not {CommitRefs.Short(review.Head)} its review read: a review of the new head comes first");
+        }
+        // One fixer per PR, judged from the session store and not only from the row (tianwen#2490 had four).
+        if (LiveFixersOf(Of(pr) ?? review) is { Count: > 0 } liveFixers)
+        {
+            throw new FlightException($"{pr} has {liveFixers[0].Name} fixing it already");
+        }
 
         var fetch = await git.RunAsync(["fetch", "--quiet", "origin", $"+refs/heads/{branch}:refs/remotes/origin/{branch}"], clone, cancellationToken);
         if (!fetch.Ok)
@@ -526,6 +572,12 @@ public sealed partial class PrReviews
         var detached = false;
         if (await HolderOfBranchAsync(clone, worktree, branch, cancellationToken) is { } holder)
         {
+            if (AuthoringSessionIn(holder) is { } author)
+            {
+                var why = AuthorHoldsReason(author, holder, branch);
+                RaiseOnce(pr, review, CardBin.Handled, FixAuthorHoldsKind, Verbs.PrTarget(pr.Repo, pr.Number), $"{pr}: no fixer started, its authoring session holds the branch", $"No fixer started: {why}.");
+                throw new AnnouncedFlightException($"no fixer started: {why}");
+            }
             var notBorrowed = await WhyNotBorrowAsync(clone, holder, branch, cancellationToken);
             if (notBorrowed is null)
             {
@@ -596,6 +648,14 @@ public sealed partial class PrReviews
         }
         return listed.FirstOrDefault(w => !w.Prunable && w.Branch == branch && !SamePath(w.Path, fixPlane)) is { } w2 ? Path.GetFullPath(w2.Path) : null;
     }
+
+    // A live session that is not a fixer and works in the worktree: the PR's authoring session, which answers a review itself.
+    private SessionRow? AuthoringSessionIn(string holder) =>
+        state.Sessions().FirstOrDefault(s => s.State != SessionState.Ended && s.State != SessionState.Failed && !s.Archived && !s.Gone
+            && !AdmissionGate.IsFixer(s) && s.Cwd is { Length: > 0 } cwd && SamePath(cwd, holder));
+
+    private static string AuthorHoldsReason(SessionRow author, string holder, string branch) =>
+        $"the session {author.Name} works in {holder}, which holds {branch}, so it answers the review itself and a second fixer would push beside it";
 
     private static bool SamePath(string a, string b) =>
         string.Equals(Path.TrimEndingDirectorySeparator(Path.GetFullPath(a)), Path.TrimEndingDirectorySeparator(Path.GetFullPath(b)),

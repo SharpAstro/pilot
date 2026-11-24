@@ -74,6 +74,11 @@ public sealed partial class PrReviews
                     var started = await StartFixerAsync(PrRef.Parse(subject)!, review, cancellationToken);
                     await Error.WriteLineAsync($"pr reviews: {subject}'s review left {string.Join(", ", keys)}: {started}; it is queued once they are made and reviewed");
                 }
+                catch (AnnouncedFlightException ex)
+                {
+                    // The refusal raised its own card: logged, not rung twice.
+                    await Error.WriteLineAsync($"pr reviews: {subject}'s review left {string.Join(", ", keys)} and no fixer started ({ex.Message})");
+                }
                 catch (FlightException ex)
                 {
                     await Error.WriteLineAsync($"pr reviews: {subject}'s review left {string.Join(", ", keys)} and no fixer could start ({ex.Message}); a later sweep tries again");

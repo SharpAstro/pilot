@@ -185,6 +185,65 @@ public sealed class FixFollowUpTests : PrFixTestsBase
         _state.Cards().ShouldNotContain(c => c.Kind == PrReviews.FixFollowUpSettledKind);
     }
 
+    /// <summary>The PR was rebuilt and merged as <paramref name="mergedHead"/> (a commit on main); the fixer's worktree is still on the head it was reviewed at.</summary>
+    private void MergedAsRebuiltAt(string mergedHead) =>
+        _github.Prs["acme/widget#7"] = _github.Prs["acme/widget#7"] with { State = "MERGED", Head = mergedHead };
+
+    private void NoFollowUpPushed() =>
+        Should.Throw<InvalidOperationException>(() => PrOrigins.Git(Origin, "rev-parse", "--verify", "--quiet", "refs/heads/feature/seven-followup-7"));
+
+    [Fact]
+    public async Task FixerCommitsOnAHeadFromBeforeThePrWasRebuiltThatMainAlreadyHoldOpenNoPr()
+    {
+        await Review("acme/widget#7", "changes", "README.md:1 wrong");
+        FixerCommits();
+        var landed = WorkPushes("fixed.txt", "fixed\n", "main");
+        MergedAsRebuiltAt(landed);
+
+        await _reviews.SweepAsync(Ct);
+
+        _github.Created.ShouldBeEmpty();
+        NoFollowUpPushed();
+        _state.Cards().ShouldNotContain(c => c.Kind == PrReviews.FixFollowUpKind || c.Kind == PrReviews.FixFollowUpFailedKind || c.Kind == PrReviews.FixFollowUpConflictKind);
+        _state.Cards().ShouldContain(c => c.Kind == PrReviews.FixFollowUpSettledKind && c.Bin == CardBin.Handled);
+    }
+
+    [Fact]
+    public async Task FixerCommitsThatConflictWithMainRaiseAForYouCardAndPushNothing()
+    {
+        await Review("acme/widget#7", "changes", "README.md:1 wrong");
+        var tip = FixerCommits();
+        var landed = WorkPushes("fixed.txt", "main wrote this differently\n", "main");
+        MergedAsRebuiltAt(landed);
+
+        await _reviews.SweepAsync(Ct);
+
+        _github.Created.ShouldBeEmpty();
+        NoFollowUpPushed();
+        var card = _state.Cards(openOnly: true).Single(c => c.Kind == PrReviews.FixFollowUpConflictKind);
+        card.Bin.ShouldBe(CardBin.ForYou);
+        card.Detail.ShouldNotBeNull().ShouldContain("the fix");
+        card.Detail.ShouldContain("fixed.txt");
+        card.Detail.ShouldContain("feature/seven");
+        PrOrigins.Git(WidgetClone, "rev-parse", "refs/heads/feature/seven").ShouldBe(tip);
+    }
+
+    [Fact]
+    public async Task FixerCommitsThatReallyChangeMainOpenTheFollowUpPrEvenWhenBuiltOnAnOldHead()
+    {
+        await Review("acme/widget#7", "changes", "README.md:1 wrong");
+        var tip = FixerCommits();
+        var landed = WorkPushes("other.txt", "other\n", "main");
+        MergedAsRebuiltAt(landed);
+        CreatingMakesPr71(tip);
+
+        await _reviews.SweepAsync(Ct);
+
+        _github.Created.ShouldHaveSingleItem();
+        PrOrigins.Git(Origin, "rev-parse", "refs/heads/feature/seven-followup-7").ShouldBe(tip);
+        _state.Cards().ShouldNotContain(c => c.Kind == PrReviews.FixFollowUpConflictKind || c.Kind == PrReviews.FixFollowUpSettledKind);
+    }
+
     [Fact]
     public async Task AFixerCommitOnlyPartlyOnMainStillOpensTheFollowUpPr()
     {

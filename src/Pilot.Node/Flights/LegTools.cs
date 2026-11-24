@@ -10,6 +10,15 @@ namespace Pilot.Node.Flights;
 /// <summary>A merged PR as <c>gh pr list --state merged</c> names it: its number, its head branch and the commit that branch was at when it merged (PIL1101).</summary>
 public sealed record MergedPullRequest(int Number, string HeadRef, string HeadOid);
 
+/// <summary>What one read of a PR says about the issues it closes (PIL1341).</summary>
+/// <param name="Issues">The numbers of the issues of its own repo it closes when it merges (GitHub's closingIssuesReferences).</param>
+/// <param name="State">The PR's state from the same read: OPEN, CLOSED or MERGED.</param>
+/// <param name="Foreign">An issue of another repo it closes, as <c>owner/name#n</c>, which is not checked here; null when none.</param>
+public sealed record PrClosingIssues(int[] Issues, string State, string? Foreign = null)
+{
+    public bool Open => string.Equals(State, "OPEN", StringComparison.OrdinalIgnoreCase);
+}
+
 /// <summary>A flight's PR on GitHub: its number, state and head.</summary>
 /// <param name="Mergeable">GitHub's word on whether it merges into its base: MERGEABLE, CONFLICTING, or UNKNOWN while it works it out.</param>
 /// <param name="Rebaseable">GraphQL's <c>canBeRebased</c>: whether its commits replay onto the base. Read only for a MERGEABLE PR whose base merges by rebase (null otherwise: not asked, so no call is made on a squash repo).</param>
@@ -252,6 +261,9 @@ public interface IGitHub
     /// <summary>Closes PR <paramref name="number"/> unmerged, with <paramref name="comment"/>; one closed or merged already is left as it is.</summary>
     /// <exception cref="FlightException">gh could not close it.</exception>
     Task ClosePullRequestAsync(string repoPath, int number, string comment, CancellationToken cancellationToken);
+
+    /// <summary>The issues PR <paramref name="number"/> closes when it merges (GitHub's closingIssuesReferences) and its state, from one read; null when GitHub would not say (PIL1341).</summary>
+    Task<PrClosingIssues?> ClosingIssuesAsync(string repoPath, int number, CancellationToken cancellationToken) => Task.FromResult<PrClosingIssues?>(null);
 
     /// <summary>Whether issue <paramref name="number"/> is closed (true), open (false), or null when GitHub would not say (#753).</summary>
     Task<bool?> IssueClosedAsync(string repoPath, int number, CancellationToken cancellationToken) => Task.FromResult<bool?>(null);

@@ -43,6 +43,8 @@ public static class VerbPreconditions
         [Verbs.Separate] = "an overlap answer: the overlap card is the state it is offered in",
         [Verbs.FixPr] = "a PR verb: what refuses it is the PR's review state, read from GitHub",
         [Verbs.Review] = "a PR verb: what refuses it is the PR's review state, read from GitHub",
+        [Verbs.ClosePr] = "a PR verb: what refuses it is GitHub's answer for the PR and its issues",
+        [Verbs.KeepPr] = "a PR verb: it only records the person's choice on the review",
         [Verbs.AllowRound] = "a PR verb: the round cap it lifts is read from the review's rounds",
         [Verbs.Clear] = "it clears a flight's review notes, which any flight may do",
         [Verbs.FlightPriority] = "a priority may be set on a flight in any state",
