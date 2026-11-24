@@ -189,6 +189,36 @@ public sealed class FollowUpLandTests : PackageWaitTestsBase
         Flight(node, "TIA1").RepoFollowUps.ShouldHaveSingleItem().Flight.ShouldBe("PIL180");
     }
 
+    [Fact]
+    public async Task ASkippedRunsReleasedPackagesJoinTheRunningOnesCardAndGroundText()
+    {
+        var peer = Peer("DE1", "SharpAstro/ghostapp", "D:/src/ghostapp");
+        peer.Gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var node = await ProducerWithFollowUp(Record("SharpAstro/ghostapp", 9, package: true));
+        node.Flights.Fleet = new FakeFleet(peer);
+        _github.UnclonedRepos.Add("ghostapp");
+        var landing = LandProducer(node);
+        await peer.Reached.Task.WaitAsync(TimeSpan.FromSeconds(5), Ct);
+
+        // The landing's run is the one running; a second carrying a release must join it, not drop it.
+        await node.Flights.EnsurePeerFollowUpFlightsAsync("TIA1", [new PackageWait { Id = "Other.Pkg", Line = "3.4", Above = "3.4.1", Producer = "TIA1" }], Ct);
+        peer.Gate.SetResult();
+        await landing;
+
+        var card = node.State.Cards().Where(c => c.Kind == FlightCommander.FollowUpPackageKind).ShouldHaveSingleItem();
+        card.Title.ShouldContain("Other.Pkg 3.4 above 3.4.1");
+        card.Detail.ShouldNotBeNull().ShouldContain("Other.Pkg 3.4 above 3.4.1");
+    }
+
+    [Fact]
+    public void JoiningReleasesKeepsEachPackageOnce()
+    {
+        var a = new PackageWait { Id = "A", Line = "1.0", Producer = "TIA1" };
+        var b = new PackageWait { Id = "B", Line = "2.0", Producer = "TIA1" };
+
+        FlightCommander.MergeReleased([a], [a, b]).ShouldBe([a, b]);
+    }
+
     private sealed class FakeFleet(params IFleetPeer[] peers) : IFleet
     {
         IReadOnlyList<IFleetPeer> IFleet.Peers() => peers;
@@ -231,7 +261,7 @@ public sealed class FollowUpLandTests : PackageWaitTestsBase
                 Reached.TrySetResult();
                 await gate.Task.WaitAsync(TimeSpan.FromSeconds(10), cancellationToken);
             }
-            return await Task.FromResult(new CommandResult { Verb = command.Verb, Target = command.Target, Who = command.Who, Ok = true, Made = "PIL180", Seq = 1 });
+            return new CommandResult { Verb = command.Verb, Target = command.Target, Who = command.Who, Ok = true, Made = "PIL180", Seq = 1 };
         }
     }
 }

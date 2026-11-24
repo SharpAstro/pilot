@@ -144,7 +144,7 @@ public sealed partial class FlightCommander
     /// fleet node that holds the repo, through that node's own create-flight. A follow-up needed as a package gets a For-you card naming it, as the wait
     /// cannot be set on another node's flight from here. Every failure is said and left for the next try.
     /// </summary>
-    private async Task EnsurePeerFollowUpFlightsAsync(string code, PackageWait[] released, CancellationToken cancellationToken)
+    internal async Task EnsurePeerFollowUpFlightsAsync(string code, PackageWait[] released, CancellationToken cancellationToken)
     {
         var landing = state.Flights().FirstOrDefault(f => f.Code == code);
         if (landing is null)
@@ -153,10 +153,14 @@ public sealed partial class FlightCommander
         }
         // The lock is let go while peers answer, so two runs for one flight could overlap and comment and ground twice: one run per flight.
         // The run it skips must not drop its released packages: they join the running one's, which reads them when it names a package.
-        if (!_ensuringPeers.TryAdd(code, released))
+        // Only the map's own atomic steps: a miss means the entry vanished or changed, so the next pass either becomes the running run or joins
+        // the new one. Each pass makes progress and waits for nothing.
+        while (!_ensuringPeers.TryAdd(code, released))
         {
-            _ensuringPeers.AddOrUpdate(code, released, (_, current) => [.. current, .. released.Where(r => !current.Any(c => c.Id == r.Id && c.Producer == r.Producer))]);
-            return;
+            if (_ensuringPeers.TryGetValue(code, out var current) && _ensuringPeers.TryUpdate(code, MergeReleased(current, released), current))
+            {
+                return;
+            }
         }
         try
         {
@@ -167,6 +171,10 @@ public sealed partial class FlightCommander
             _ensuringPeers.TryRemove(code, out _);
         }
     }
+
+    /// <summary>The running run's packages plus those of a run it replaces, each package once.</summary>
+    internal static PackageWait[] MergeReleased(PackageWait[] current, PackageWait[] joining) =>
+        [.. current, .. joining.Where(r => !current.Any(c => c.Id == r.Id && c.Producer == r.Producer))];
 
     private async Task EnsurePeerFollowUpFlightsCoreAsync(string code, FlightRow landing, CancellationToken cancellationToken)
     {
