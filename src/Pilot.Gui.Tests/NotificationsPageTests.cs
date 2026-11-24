@@ -70,6 +70,7 @@ public sealed class NotificationsPageTests
             Chrome = new PilotChrome<RgbaImage>(Renderer, new SessionsView<RgbaImage>(Renderer)) { FontPath = SessionsCapture.FontPath, DpiScale = dpi };
             Chrome.Notifications.Open = false;
             Chrome.Show(PilotPage.Jobs);
+            Chrome.NotificationsPage.Mode = NotificationsViewMode.List; // these tests are the List view; Grid is NotificationsViewModeTests
             var seen = Chrome.NotificationsPage.Arranged;
             Chrome.NotificationsPage.Arranged = nodes =>
             {
@@ -299,6 +300,7 @@ public sealed class NotificationsPageTests
         const int columns = 160, rows = 44;
         using var vessel = new RgbaImageRenderer(1, 1);
         var chrome = new PilotChrome<RgbaImage>(vessel, new SessionsView<RgbaImage>(vessel));
+        chrome.NotificationsPage.GridAvailable = false; // as pilot-tui sets it
         chrome.Notifications.Open = true;
         chrome.Notifications.PostEvent(Event("Job one finished"), null, T0.AddMinutes(1));
         chrome.Notifications.PostEvent(Event("Job two failed", NotificationSeverity.Error), null, T0.AddMinutes(2));

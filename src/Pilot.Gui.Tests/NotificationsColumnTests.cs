@@ -33,6 +33,7 @@ public sealed class NotificationsColumnTests
             Chrome = new PilotChrome<RgbaImage>(Renderer, new SessionsView<RgbaImage>(Renderer)) { FontPath = SessionsCapture.FontPath, DpiScale = dpi };
             Chrome.Notifications.Open = false;
             Chrome.Show(PilotPage.Jobs);
+            Chrome.NotificationsPage.Mode = NotificationsViewMode.List; // these tests are the List view; Grid is NotificationsViewModeTests
             var seen = Chrome.NotificationsPage.Arranged;
             Chrome.NotificationsPage.Arranged = nodes =>
             {
