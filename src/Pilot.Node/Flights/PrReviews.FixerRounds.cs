@@ -400,7 +400,7 @@ public sealed partial class PrReviews
                     return;
                 case { Outcome: TestMergeOutcome.Conflict } conflicted:
                     state.RaiseCard(CardBin.ForYou, FixFollowUpConflictKind, subject,
-                        $"{pr} merged while its fixer worked: its commits conflict with {baseBranch}, so no follow-up PR was opened",
+                        $"{pr} merged mid-fix: its commits conflict with {baseBranch}",
                         $"A test merge of the fixer's commits ({conflicted.Commits}) onto origin/{baseBranch} conflicts in {conflicted.Files}. Nothing was pushed.\nThe commits stay on the local branch {localBranch} in {review.ClonePath}; take what is still needed by hand.", link: review.Url,
                         summary: $"Look at the fixer's commits ({conflicted.Commits}) on {localBranch} in {review.ClonePath}: they conflict with {baseBranch} in {conflicted.Files}, so no PR was opened or pushed.");
                     return;
