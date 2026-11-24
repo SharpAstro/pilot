@@ -1129,10 +1129,10 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         if (grid && !closed && !merged && detailLink is null)
         {
             // Every open grid card has its Detail link; one with nothing past its summary unfolds what the card is (its kind and id).
-            var open = Volatile.Read(ref _detailOpen).Contains(card.Id);
-            detailLink = Layout.Builder.Text($"{(open ? "▾" : "▸")} Detail", NotificationToast.MetaSize, Contrast.Readable(Link, fill, Bright)).BgHover(CardHover)
+            var detailShown = Volatile.Read(ref _detailOpen).Contains(card.Id);
+            detailLink = Layout.Builder.Text($"{(detailShown ? "▾" : "▸")} Detail", NotificationToast.MetaSize, Contrast.Readable(Link, fill, Bright)).BgHover(CardHover)
                 .Follows(new HitResult.ButtonHit($"card:{card.Id}:detail"), _ => ToggleDetail(card.Id)).RowH(20f);
-            if (open)
+            if (detailShown)
             {
                 lines.Add(WrappedProse.Of($"{card.Kind} · {card.Id}", NotificationToast.MetaSize, Dim));
             }
