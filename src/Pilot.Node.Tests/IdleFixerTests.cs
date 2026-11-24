@@ -70,6 +70,7 @@ public sealed class IdleFixerTests : PrFixTestsBase
         _state.PutSession(FixerSession(SessionState.Working));
         // Someone else pushes the branch: the fixer's worktree does not have the new head, and it is still working.
         var moved = SomeoneElsePushes("the author rebuilt the branch");
+        var startedBefore = _workers.Started.Count;
 
         await _reviews.SweepAsync(Ct);
 
@@ -79,7 +80,7 @@ public sealed class IdleFixerTests : PrFixTestsBase
         var card = _state.Cards(openOnly: true).Where(c => c.Kind == PrReviews.FixHeadMovedKind).ShouldHaveSingleItem();
         card.Title.ShouldContain(CommitRefs.Short(reviewed));
         card.Title.ShouldContain(CommitRefs.Short(moved));
-        _workers.Started.ShouldNotContain(s => s.Name.Contains("-review"));
+        _workers.Started.Skip(startedBefore).ShouldNotContain(s => s.Name.Contains("-review"));
     }
 
     [Fact]

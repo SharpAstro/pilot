@@ -56,7 +56,7 @@ public sealed class PrFixWorktreeTests : PrFixTestsBase
 
         refused.Error.ShouldNotBeNull().ShouldContain("someone");
         Fixers.ShouldBeEmpty();
-        _state.Cards(openOnly: true).Where(c => c.Kind == PrReviews.FixAuthorHoldsKind).ShouldHaveSingleItem().Detail!.ShouldContain("someone");
+        _state.Cards().Where(c => c.Kind == PrReviews.FixAuthorHoldsKind).ShouldHaveSingleItem().Detail!.ShouldContain("someone");
         // The same reason answers a recheck, so it starts none either.
         (await _reviews.WhyNoFixerAsync(Seven, _reviews.Of(Seven).ShouldNotBeNull(), Ct)).ShouldNotBeNull().ShouldContain("someone");
     }

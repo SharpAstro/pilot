@@ -555,7 +555,7 @@ public sealed partial class PrReviews
             if (AuthoringSessionIn(holder) is { } author)
             {
                 var why = AuthorHoldsReason(author, holder, branch);
-                RaiseOnce(pr, review, CardBin.Ring, FixAuthorHoldsKind, Verbs.PrTarget(pr.Repo, pr.Number), $"{pr}: no fixer started, its authoring session holds the branch", $"No fixer started: {why}.");
+                RaiseOnce(pr, review, CardBin.Handled, FixAuthorHoldsKind, Verbs.PrTarget(pr.Repo, pr.Number), $"{pr}: no fixer started, its authoring session holds the branch", $"No fixer started: {why}.");
                 throw new FlightException($"no fixer started: {why}");
             }
             var notBorrowed = await WhyNotBorrowAsync(clone, holder, branch, cancellationToken);

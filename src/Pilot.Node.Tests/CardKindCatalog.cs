@@ -231,7 +231,7 @@ internal static class CardKindCatalog
         new("pr-fix-follow-up-conflict", "ForYou", [PrReviewsFixerRounds], "FixFollowUpTests.FixerCommitsThatConflictWithMainRaiseAForYouCardAndPushNothing"),
         new("pr-fix-follow-up-settled", "Handled", [PrReviewsFixerRounds], "FixFollowUpTests.AFixerCommitWhosePatchIsOnMainUnderAnotherShaOpensNoPrAndLeavesOnlyAHandledLine"),
         new("pr-fix-head-moved", "ForYou", [PrReviewsFixerRounds], "IdleFixerTests.AHeadSomeoneElseMovedUnderTheFixerStopsItRaisesACardAndStartsNoReview"),
-        new("pr-fix-author-holds", "Ring", [PrReviewsFixer], "PrFixWorktreeTests.AWorktreeHeldByALiveNonFixerSessionStartsNoFixerAndRaisesOneCardNamingIt"),
+        new("pr-fix-author-holds", "Handled", [PrReviewsFixer], "PrFixWorktreeTests.AWorktreeHeldByALiveNonFixerSessionStartsNoFixerAndRaisesOneCardNamingIt"),
         new("pr-fixer-finished","Handled", [PrReviewsFixerRounds], "IdleFixerTests.AnIdleFixerAfterAPushedAndApprovedRoundIsEndedWithOnlyAHandledLineAndNoCardToAnswer"),
         new("pr-recheck", "Handled", [Recheck], SourcePinned),
         new("pr-recheck-failed", "ForYou", [Recheck], "PrRecheckTests.AReviewThatCannotStartKeepsTheLabelAndRaisesAForYouCard"),
