@@ -171,7 +171,18 @@ public sealed class PrChecks(NodeState state, IGitHub gitHub, TimeProvider time,
             {
                 continue;
             }
-            var pr = await github.PullRequestAsync(flight.RepoPath, flight.Branch, cancellationToken);
+            PullRequest? pr;
+            try
+            {
+                pr = await github.PullRequestAsync(flight.RepoPath, flight.Branch, cancellationToken);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                // A failed read (gh down, a network error) skips this flight for this look; it is read again at the next, and the rest of the look still runs (pilot #1338).
+                await Error.WriteLineAsync($"pr checks: {flight.Code}'s PR could not be read: {ex.Message}");
+                state.PrPolls.MarkDue(flight.RepoPath, flight.Branch);
+                continue;
+            }
             HandOver(flight, pr);
             if (pr is { State: "CLOSED" } && pr.Number == flight.PullRequest)
             {
