@@ -253,7 +253,7 @@ public interface IGitHub
     /// <exception cref="FlightException">gh could not close it.</exception>
     Task ClosePullRequestAsync(string repoPath, int number, string comment, CancellationToken cancellationToken);
 
-    /// <summary>The numbers of the issues PR <paramref name="number"/> closes when it merges (GitHub's closingIssuesReferences); null when GitHub would not say (PIL1341).</summary>
+    /// <summary>The numbers of the issues PR <paramref name="number"/> closes when it merges (GitHub's closingIssuesReferences); null when GitHub would not say. Throws a FlightException when it closes an issue of another repo, which is not checked here (PIL1341).</summary>
     Task<int[]?> ClosingIssuesAsync(string repoPath, int number, CancellationToken cancellationToken) => Task.FromResult<int[]?>(null);
 
     /// <summary>Whether issue <paramref name="number"/> is closed (true), open (false), or null when GitHub would not say (#753).</summary>

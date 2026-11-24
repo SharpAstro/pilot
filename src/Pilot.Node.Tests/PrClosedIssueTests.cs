@@ -94,6 +94,7 @@ public sealed class PrClosedIssueTests : PrFixTestsBase
         (await Run(Verbs.ClosePr, Target, "controller")).Error.ShouldBeNull();
 
         _github.ClosedPrs.ShouldBe([7]);
+        _github.CloseComments[7].ShouldContain("#31");
         Flags.ShouldHaveSingleItem().State.ShouldBe(CardState.Closed);
     }
 
@@ -117,17 +118,68 @@ public sealed class PrClosedIssueTests : PrFixTestsBase
         await _reviews.SweepAsync(Ct);
 
         (await Run(Verbs.KeepPr, Target, "controller")).Error.ShouldBeNull();
+        // The row's Raised memory is cleared, so only the kept issues stop the flag.
+        _state.PutPrReview(Row with { Raised = [] });
         await _reviews.SweepAsync(Ct);
 
         Row.KeptClosedIssues.ShouldBe([31]);
         _github.ClosedPrs.ShouldBeEmpty();
-        Flags.ShouldHaveSingleItem();
+        Flags.Count(c => c.State != CardState.Closed).ShouldBe(0);
 
         _github.ClosingIssues[Target] = [31, 40];
         _github.IssuesClosedOnGitHub.Add(40);
         await _reviews.SweepAsync(Ct);
 
-        Flags.Length.ShouldBe(2);
+        Flags.Count(c => c.State != CardState.Closed).ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task APrThatAlsoClosesAnotherReposIssueFlagsNothingAndCloseIsRefused()
+    {
+        Looking();
+        await ReviewedWith(31);
+        _github.ClosesForeignIssue.Add(Target);
+        _github.IssuesClosedOnGitHub.Add(31);
+
+        await _reviews.SweepAsync(Ct);
+
+        Flags.ShouldBeEmpty();
+        (await Run(Verbs.ClosePr, Target, "controller")).Error.ShouldNotBeNull();
+        _github.ClosedPrs.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void GhsClosingReferencesOfAnotherRepoAreRefusedAndOwnRepoOnesRead()
+    {
+        const string own = """{"url":"https://github.com/acme/widget/pull/7","closingIssuesReferences":[{"number":31,"repository":{"name":"widget","owner":{"login":"acme"}}}]}""";
+        const string foreign = """{"url":"https://github.com/acme/widget/pull/7","closingIssuesReferences":[{"number":31,"repository":{"name":"widget","owner":{"login":"acme"}}},{"number":5,"repository":{"name":"pilot","owner":{"login":"SharpAstro"}}}]}""";
+
+        GhCli.ClosingIssuesFrom(own).ShouldBe([31]);
+        Should.Throw<FlightException>(() => GhCli.ClosingIssuesFrom(foreign));
+    }
+
+    [Fact]
+    public async Task AnOpenPrWhoseReviewEndedLongAgoIsFlaggedAndAMergedOneIsReadOnce()
+    {
+        Looking();
+        var row = await ReviewedWith(31);
+        _github.IssuesClosedOnGitHub.Add(31);
+        _state.PutPrReview(row with { ClosedAt = DateTimeOffset.UtcNow - TimeSpan.FromDays(30) });
+
+        await _reviews.SweepAsync(Ct);
+
+        Flags.ShouldHaveSingleItem();
+
+        // A merged PR: one look finds it not open, and the sweeps after it read nothing.
+        var other = "acme/widget#8";
+        _github.ClosingIssues[other] = [31];
+        _github.Prs[other] = _github.Prs[Target] with { Number = 8, State = "MERGED" };
+        _state.PutPrReview(Row with { Number = 8, Raised = [], KeptClosedIssues = null });
+        await _reviews.SweepAsync(Ct);
+        await _reviews.SweepAsync(Ct);
+        await _reviews.SweepAsync(Ct);
+
+        _github.ClosingIssueReads[other].ShouldBe(1);
     }
 
     [Fact]

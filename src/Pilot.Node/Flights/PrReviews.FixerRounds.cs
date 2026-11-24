@@ -41,7 +41,7 @@ public sealed partial class PrReviews
     /// <summary>The For-you card of a fixer stopped because someone else moved the PR's head under it (pilot #1341).</summary>
     public const string FixHeadMovedKind = "pr-fix-head-moved";
 
-    /// <summary>The Ring card of a fixer not started because the PR's authoring session holds its branch in a worktree (pilot #1341).</summary>
+    /// <summary>The Handled card of a fixer not started because the PR's authoring session holds its branch in a worktree (pilot #1341).</summary>
     public const string FixAuthorHoldsKind = "pr-fix-author-holds";
 
     /// <summary>The Handled notice of an idle fixer of an approved PR that finished with nothing left and was ended (pilot #1327).</summary>

@@ -58,6 +58,12 @@ public sealed partial class PrReviews
                 + (decided is null ? "" : $". The only option of its design question that reaches the criteria is: {decided.Answer}"));
             return;
         }
+        // A PR whose every issue is closed is for closing, not fixing: the sweep's closed-issue card says so (PIL1341). Checked before a design
+        // question is decided, so the post path says what the recheck says.
+        if (await UnkeptClosedIssuesAsync(review, cancellationToken) is not null)
+        {
+            return;
+        }
         if (asksDesign)
         {
             if (decided is not null)
@@ -77,11 +83,6 @@ public sealed partial class PrReviews
             }
             RaiseOnce(pr, review, CardBin.Ring, DesignKind, subject, $"{pr}: the review asks a question of design", $"{design}{rings}\nNo fixer started: this is the author's to decide. An option or Answer in your own words posts the answer on the PR and starts the fixer.",
                 choices, DesignSummary(questions));
-            return;
-        }
-        // A PR whose every issue is closed is for closing, not fixing: the sweep's closed-issue card says so (PIL1341).
-        if (review.KeptClosedIssues is null && await AllClosedIssuesAsync(review, cancellationToken) is not null)
-        {
             return;
         }
         var rounds = review.FixRound ?? 0;
@@ -252,7 +253,7 @@ public sealed partial class PrReviews
         {
             return "a flight owns it, so its own legs fix it";
         }
-        if (review.KeptClosedIssues is null && await AllClosedIssuesAsync(review, cancellationToken) is { } closed)
+        if (await UnkeptClosedIssuesAsync(review, cancellationToken) is { } closed)
         {
             return $"every issue it closes ({IssueList(closed)}) is closed already, so the PR is for closing, not fixing";
         }

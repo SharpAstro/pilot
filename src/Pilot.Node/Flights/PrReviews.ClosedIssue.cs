@@ -11,8 +11,10 @@ public sealed partial class PrReviews
     /// <summary>How long a PR's linked issues are left unread after a look: a review row is held long after its PR, and each look is GitHub calls.</summary>
     internal TimeSpan ClosedIssueReadEvery { get; set; } = TimeSpan.FromMinutes(10);
 
-    /// <summary>A review row older than this since it closed is not looked at again for a closed issue.</summary>
-    private static readonly TimeSpan ClosedIssueHorizon = TimeSpan.FromDays(7);
+    /// <summary>How long a PR found not open (merged or closed) is left unlooked at: one look tells, and a reopened PR is rare.</summary>
+    private static readonly TimeSpan NotOpenRecheck = TimeSpan.FromDays(1);
+
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, DateTimeOffset> _notOpen = new(StringComparer.Ordinal);
 
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, DateTimeOffset> _closedIssueRead = new(StringComparer.Ordinal);
 
@@ -53,13 +55,26 @@ public sealed partial class PrReviews
                 }
             }
             // Last, and only for a PR whose issues are all closed: the PR read is the dearer call and most PRs never get here.
-            return string.Equals((await github.PullRequestOfAsync(review.Repo, review.Number, cancellationToken)).State, "OPEN", StringComparison.OrdinalIgnoreCase) ? issues : null;
+            var subject = Verbs.PrTarget(review.Repo, review.Number);
+            if (string.Equals((await github.PullRequestOfAsync(review.Repo, review.Number, cancellationToken)).State, "OPEN", StringComparison.OrdinalIgnoreCase))
+            {
+                _notOpen.TryRemove(subject, out _);
+                return issues;
+            }
+            _notOpen[subject] = time.GetUtcNow();
+            return null;
         }
         catch (FlightException)
         {
             return null;
         }
     }
+
+    /// <summary>The closed issues of an open PR whose closed issues are not all kept open already, else null: what no fixer starts on.</summary>
+    private async Task<int[]?> UnkeptClosedIssuesAsync(PrReviewRow review, CancellationToken cancellationToken) =>
+        await AllClosedIssuesAsync(review, cancellationToken) is { } issues && !AllKept(review, issues) ? issues : null;
+
+    private static bool AllKept(PrReviewRow review, int[] issues) => issues.All(i => review.KeptClosedIssues?.Contains(i) == true);
 
     private static string IssueList(int[] issues) => string.Join(", ", issues.Select(i => $"#{i}"));
 
@@ -70,10 +85,11 @@ public sealed partial class PrReviews
     private async Task FlagClosedIssuePullRequestsAsync(CancellationToken cancellationToken)
     {
         var now = time.GetUtcNow();
-        foreach (var review in state.PrReviews().Where(r => r.State != PrReviewState.Reviewing && (r.ClosedAt is null || now - r.ClosedAt < ClosedIssueHorizon)).ToArray())
+        foreach (var review in state.PrReviews().Where(r => r.State != PrReviewState.Reviewing).ToArray())
         {
             var subject = Verbs.PrTarget(review.Repo, review.Number);
-            if (FlightOwns(review) || _closedIssueRead.TryGetValue(subject, out var last) && now - last < ClosedIssueReadEvery)
+            if (FlightOwns(review) || _notOpen.TryGetValue(subject, out var gone) && now - gone < NotOpenRecheck
+                || _closedIssueRead.TryGetValue(subject, out var last) && now - last < ClosedIssueReadEvery)
             {
                 continue;
             }
@@ -84,7 +100,7 @@ public sealed partial class PrReviews
             }
             var current = Of(PrRef.Parse(subject)!) ?? review;
             var key = $"{ClosedIssueKind}:{IssueList(issues)}";
-            if (issues.All(i => current.KeptClosedIssues?.Contains(i) == true) || current.Raised.Contains(key))
+            if (AllKept(current, issues) || current.Raised.Contains(key))
             {
                 continue;
             }

@@ -101,15 +101,44 @@ public sealed partial class GhCli
 
     public async Task<int[]?> ClosingIssuesAsync(string repoPath, int number, CancellationToken cancellationToken)
     {
-        var (exit, output, _) = await RunAsync(["pr", "view", number.ToString(System.Globalization.CultureInfo.InvariantCulture), "--json", "closingIssuesReferences"], repoPath, cancellationToken);
-        if (exit != 0)
+        var (exit, output, _) = await RunAsync(["pr", "view", number.ToString(System.Globalization.CultureInfo.InvariantCulture), "--json", "closingIssuesReferences,url"], repoPath, cancellationToken);
+        return exit != 0 ? null : ClosingIssuesFrom(output);
+    }
+
+    /// <summary>
+    /// The issue numbers in a <c>gh pr view --json closingIssuesReferences,url</c> answer; null when it has no list. A reference to another repo's
+    /// issue throws: its number cannot be checked here, and an issue the node cannot check is never a reason to flag or close a PR.
+    /// </summary>
+    internal static int[]? ClosingIssuesFrom(string json)
+    {
+        using var doc = JsonDocument.Parse(json);
+        if (!doc.RootElement.TryGetProperty("closingIssuesReferences", out var refs) || refs.ValueKind != JsonValueKind.Array)
         {
             return null;
         }
-        using var doc = JsonDocument.Parse(output);
-        return doc.RootElement.TryGetProperty("closingIssuesReferences", out var refs) && refs.ValueKind == JsonValueKind.Array
-            ? [.. refs.EnumerateArray().Where(r => r.TryGetProperty("number", out var n) && n.ValueKind == JsonValueKind.Number).Select(r => r.GetProperty("number").GetInt32())]
+        // The PR's own repo, from its url: https://github.com/<owner>/<name>/pull/<n>.
+        var own = doc.RootElement.TryGetProperty("url", out var url) && url.GetString() is { } text && Uri.TryCreate(text, UriKind.Absolute, out var uri)
+            ? string.Join('/', uri.AbsolutePath.Split('/', StringSplitOptions.RemoveEmptyEntries).Take(2))
             : null;
+        var numbers = new List<int>();
+        foreach (var r in refs.EnumerateArray())
+        {
+            if (!r.TryGetProperty("number", out var n) || n.ValueKind != JsonValueKind.Number)
+            {
+                continue;
+            }
+            if (own is not null && r.TryGetProperty("repository", out var repo) && repo.ValueKind == JsonValueKind.Object)
+            {
+                var name = repo.TryGetProperty("name", out var rn) ? rn.GetString() : null;
+                var owner = repo.TryGetProperty("owner", out var ro) && ro.TryGetProperty("login", out var rl) ? rl.GetString() : null;
+                if (name is not null && owner is not null && !string.Equals($"{owner}/{name}", own, StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new FlightException($"the PR closes {owner}/{name}#{n.GetInt32()}, an issue in another repo, which is not checked here");
+                }
+            }
+            numbers.Add(n.GetInt32());
+        }
+        return [.. numbers];
     }
 
     public async Task<bool?> IssueClosedAsync(string repoPath, int number, CancellationToken cancellationToken)
