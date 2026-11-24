@@ -12,17 +12,6 @@ namespace Pilot.Node.Tests;
 /// </summary>
 public sealed class RestoreRetryTests : ReviewTestsBase
 {
-    private sealed class Clock : TimeProvider
-    {
-        private DateTimeOffset _now = new(2026, 11, 24, 9, 16, 0, TimeSpan.Zero);
-
-        public override DateTimeOffset GetUtcNow() => _now;
-
-        public void Advance(TimeSpan by) => _now += by;
-    }
-
-    private readonly Clock _clock = new();
-
     private PrChecks Checks() => new(_state, _github, _clock, _flights, _legs);
 
     private async Task<FlightRow> PassedWithNoCard(string issue)
