@@ -79,6 +79,11 @@ public sealed partial class PrReviews
                 choices, DesignSummary(questions));
             return;
         }
+        // A PR whose every issue is closed is for closing, not fixing: the sweep's closed-issue card says so (PIL1341).
+        if (review.KeptClosedIssues is null && await AllClosedIssuesAsync(review, cancellationToken) is not null)
+        {
+            return;
+        }
         var rounds = review.FixRound ?? 0;
         if (rounds >= FixCap(review))
         {
