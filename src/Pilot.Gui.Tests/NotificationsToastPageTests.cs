@@ -247,12 +247,12 @@ public sealed class NotificationsToastPageTests
         w.Chrome.Cards.ToggleDetail("c4");
         w.Frame(T0.AddMinutes(6), CardsScreen.From(
         [
-            Card("c4", CardBin.Ring, "Build failed", "dotnet build: exit 1", "exit 1\ndotnet build: exit 1\nSecond line."),
+            Card("c4", CardBin.Ring, "Publish failed", "dotnet publish: code 17", "code 17\ndotnet publish: code 17\nSecond line."),
         ]));
 
-        // "exit" is in the summary once, in the detail's tail line once; the line equal to the summary is not drawn again.
-        w.Arranged.Count(a => TextOf(a).Trim() == "exit").ShouldBe(2, "the tail line is kept, the repeated whole line is not");
-        w.Arranged.Count(a => TextOf(a).Trim() == "build:").ShouldBe(1, "the line equal to the summary is dropped");
+        // "code" is in the summary once and in the detail's tail line once; the line equal to the summary is not drawn again.
+        w.Arranged.Count(a => TextOf(a).Trim() == "code").ShouldBe(2, "the tail line is kept, the repeated whole line is not");
+        w.Arranged.Count(a => TextOf(a).Trim() == "publish:").ShouldBe(1, "the line equal to the summary is dropped");
         w.Arranged.Select(TextOf).ShouldContain(t => t.Trim() == "Second", "an unrelated line stays");
     }
 
