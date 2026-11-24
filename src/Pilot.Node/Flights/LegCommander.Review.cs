@@ -42,9 +42,10 @@ public sealed partial class LegCommander
     private async Task StartReviewAsync(FlightRow flight, CancellationToken cancellationToken, bool quiet = false, string? who = null)
     {
         string? reviewedHead = null;
-        if (flight.State == FlightState.Landed)
+        var legs = state.Legs(flight.Code);
+        if (VerbPreconditions.StartReview(flight, legs) is { } refused)
         {
-            throw new FlightException($"{flight.Code} has landed");
+            throw new FlightException(refused.Why);
         }
         // A review loop held at its round limit starts no reviewer for the node or the watchtower: that round is the watchtower's word or the person's.
         var loopHeld = ReviewLoopHeld(flight);
@@ -57,11 +58,6 @@ public sealed partial class LegCommander
             throw new FlightException(RoundRefusal(flight));
         }
         RefuseIfStarting(ReviewKey(flight.Code), $"{flight.Code}'s reviewer", coalesce: true);
-        var legs = state.Legs(flight.Code);
-        if (legs.Where(l => l.State != LegState.Done).Select(l => l.Name).ToList() is { Count: > 0 } open)
-        {
-            throw new FlightException($"{flight.Code} has legs not done: {string.Join(", ", open)}; its review starts by itself once they land");
-        }
         // The person's word at a held loop allows the round, recorded once the refusals above have passed.
         if (loopHeld)
         {

@@ -161,7 +161,8 @@ public sealed class SummaryTests
         records.ShouldContain("[ ] Add GuiderTests");
         records.ShouldContain("atlas: planned");
         records.ShouldContain("c1 (ring, pr-ready): TIA1611's PR #63 is ready to merge");
-        records.ShouldContain("Choices: Merge (passing)");
+        // The flight's guide leg is still flying, so its Merge is refused by the node and the card says so; the summary reads the card's status.
+        records.ShouldContain("Choices: Merge (unavailable)");
         records.ShouldContain("c2 (ring, leg-stalled): The guide worker went quiet");
         records.ShouldContain("c3 (ring, pr-ready): DIR7 is asking for a decision");
         records.ShouldContain("se1-tia1611-guide (worker, leg guide): waiting on Bash: dotnet test");

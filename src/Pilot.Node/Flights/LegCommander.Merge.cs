@@ -314,20 +314,9 @@ public sealed partial class LegCommander
         {
             throw new MergeBlockedException(MergeRefusals.Unclassified, $"merge takes squash, rebase or merge, not {method}");
         }
-        if (flight.State != FlightState.Flying)
+        if (VerbPreconditions.Merge(flight, state.Legs(flight.Code), state.Cards(openOnly: true)) is { } refused)
         {
-            throw new MergeBlockedException(MergeRefusals.Unclassified, $"{flight.Code} is {flight.State.ToString().ToLowerInvariant()}");
-        }
-        if (state.OpenLegs(flight.Code) is { Count: > 0 } open)
-        {
-            throw new MergeBlockedException(MergeRefusals.NodeWait, $"{flight.Code} has legs not done: {string.Join(", ", open)}");
-        }
-
-        if (flight.Review is not { State: ReviewState.Passed })
-        {
-            throw new MergeBlockedException(MergeRefusals.NodeWait, flight.Review is null
-                ? $"{flight.Code} has not been reviewed; open its PR with the node (flight pr), which starts the review"
-                : $"{flight.Code}'s review is {flight.Review.State.ToString().ToLowerInvariant()}, not passed");
+            throw new MergeBlockedException(refused.Class ?? MergeRefusals.Unclassified, refused.Why);
         }
         if (flight.Holding is not null && args.Length > 2 && args[2] == MergeAsIs && IsPerson(flight, command.Who))
         {
@@ -337,12 +326,6 @@ public sealed partial class LegCommander
         if (flight.Holding is { } holding)
         {
             throw new MergeBlockedException(MergeRefusals.NodeWait, $"{flight.Code} is in a holding pattern since {holding.Since.ToLocalTime():HH:mm}: {holding.Reason}; the watchtower clears it (`flight clear {flight.Code}`) or pushes its fixes (`flight pr {flight.Code}`); the review-notes leg makes the notes, or the owner's word clears the hold");
-        }
-        // A question of design the review asked of this PR and nobody has answered holds the merge: answer it or dismiss it first.
-        if (PrRef.Parse(flight.PullRequestUrl) is { } own
-            && state.Cards(openOnly: true).FirstOrDefault(c => c.Kind == PrReviews.DesignKind && c.Subject == Verbs.PrTarget(own.Repo, own.Number)) is { } design)
-        {
-            throw new MergeBlockedException(MergeRefusals.DesignQuestion, $"{flight.Code}'s PR {own} has an open design question (card {design.Id}): answer it or dismiss it first");
         }
         return (flight, head, method);
     }

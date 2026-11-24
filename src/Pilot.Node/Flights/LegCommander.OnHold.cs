@@ -36,9 +36,7 @@ public sealed partial class LegCommander
 
     /// <summary>The words that refuse a step on a flight on the owner's hold; null when it is not held. The one predicate every gate asks.</summary>
     private static string? OnHoldRefusal(FlightRow flight) =>
-        flight.OnHold is { } hold
-            ? $"{flight.Code} is on hold by {hold.By}: {hold.Reason}; pilot flight unground {flight.Code} releases it"
-            : null;
+        VerbPreconditions.OnHold(flight);
 
     /// <summary>Whether the flight is on the owner's hold now (by the row as it is kept, not a copy read earlier).</summary>
     public bool IsOnHold(string code) =>

@@ -434,8 +434,8 @@ public sealed class AutopilotGoalTestsVerbs : IAsyncLifetime
     [Fact]
     public async Task AnAssistantsAskIsNotTheWatchtowersOrAnInvestigatorsToAnswer()
     {
-        var ask = _node.State.RaiseCard(CardBin.ForYou, CardKinds.AssistantAsk, "flight/TIA7", "an assistant asks to merge", null,
-            [new CardChoice { Label = "Allow", Verb = Verbs.Merge, Target = "flight/TIA7" }], askedBy: "de1-term");
+        var ask = _node.State.RaiseCard(CardBin.ForYou, CardKinds.AssistantAsk, "flight/TIA7", "an assistant asks to clear the review notes", null,
+            [new CardChoice { Label = "Allow", Verb = Verbs.Clear, Target = "flight/TIA7" }], askedBy: "de1-term");
 
         foreach (var who in new[] { Lookout, Investigator })
         {

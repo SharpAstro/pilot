@@ -24,15 +24,20 @@ public sealed class MergeFixtureCardTests
     private static MergeState Read(string fixture, string? queue = null) =>
         GhCli.ParseMergeState(Fixture(fixture), queue is null ? null : GhCli.ParseMergeQueue(Fixture(queue))).ShouldNotBeNull();
 
-    // A PR-ready card of a flight whose review is not a passed one, so the node does not send it back by itself and the card is
-    // where the person acts.
-    private static CardRow Ready(NodeHarness node)
+    // A PR-ready card of a flight whose review passed, as a real one's is (a Merge on a review not passed is refused and marked so,
+    // pilot #1325). Its repo is set to no-auto-merge unless the test wants the node to merge it, so the card is where the person acts.
+    private static async Task<CardRow> Ready(NodeHarness node, bool noAutoMerge = true)
     {
+        if (noAutoMerge)
+        {
+            var set = await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Set, Target = Verbs.NodeTarget, Who = "gui", Args = ["no-auto-merge-repos", "tianwen"] }, Ct);
+            set.Response.ShouldNotBeNull().Error.ShouldBeNull();
+        }
         node.State.PutFlight(new FlightRow
         {
             Code = "TIA1", Repo = "tianwen", RepoPath = node.Folder, Issue = 1, Branch = "flight/tia1", Worktree = Path.Combine(node.Folder, "plane-TIA1"),
             Base = "main", State = FlightState.Flying, CreatedAt = DateTimeOffset.UtcNow, PullRequest = 63, PullRequestUrl = PrUrl,
-            Review = new ReviewRow { State = ReviewState.Changes, Reviewer = "du1-tia1-review", StartedAt = DateTimeOffset.UtcNow },
+            Review = new ReviewRow { State = ReviewState.Passed, Reviewer = "du1-tia1-review", StartedAt = DateTimeOffset.UtcNow, ReviewedHead = PrHead },
         });
         node.State.PutLeg(new LegRow { Flight = "TIA1", Name = "parser", Order = 1, Goal = "g", DoneWhen = "d", State = LegState.Done });
         node.GitHub.Pr = GhAnswers.PullRequestByBranch(number: 63, head: PrHead, url: PrUrl);
@@ -65,7 +70,7 @@ public sealed class MergeFixtureCardTests
     public async Task EachRecordedStateShowsOnTheCardAsGitHubHasIt(string fixture, string? queue, string status, string? note, string title, string link)
     {
         await using var node = await NodeHarness.StartAsync(Ct);
-        var ready = Ready(node);
+        var ready = await Ready(node);
 
         await Look(node, Read(fixture, queue));
 
@@ -90,7 +95,7 @@ public sealed class MergeFixtureCardTests
         // PIL853, PIL1294: a review-notes leg was planned after the card was raised; its Merge is refused ("has legs not done"), so the
         // card is no For you card: it closes and a Handled line says what the merge waits for.
         await using var node = await NodeHarness.StartOnModelAsync(Ct);
-        var ready = Ready(node);
+        var ready = await Ready(node, noAutoMerge: false);
         node.State.PutLeg(new LegRow { Flight = "TIA1", Name = "review-notes", Order = 2, Goal = "g", DoneWhen = "d", State = LegState.Flying });
 
         await Look(node, Read(fixture));
@@ -125,7 +130,7 @@ public sealed class MergeFixtureCardTests
     public async Task APrGitHubHoldsBackIsNotSummarisedAsReady(string fixture, string says)
     {
         await using var node = await NodeHarness.StartAsync(Ct);
-        var ready = Ready(node);
+        var ready = await Ready(node);
 
         await Look(node, Read(fixture));
 
@@ -144,7 +149,7 @@ public sealed class MergeFixtureCardTests
     public async Task ConflictsAndBehindRingNothingAndTheReadyCardClosesAsHandled(string fixture, string what)
     {
         await using var node = await NodeHarness.StartAsync(Ct);
-        var ready = Ready(node);
+        var ready = await Ready(node);
 
         await Look(node, Read(fixture));
 
@@ -169,7 +174,7 @@ public sealed class MergeFixtureCardTests
     public async Task ACardTurnedToFailedByASupersededRunTurnsBackToMergeOnceTheReRunIsGreen()
     {
         await using var node = await NodeHarness.StartAsync(Ct);
-        var ready = Ready(node);
+        var ready = await Ready(node);
         await Look(node, Read("rerun-failing"));
         Card(node, ready).Choices.Single(c => c.Verb == Verbs.Merge).Status.ShouldBe(ChoiceStatus.Blocked);
 
@@ -185,7 +190,7 @@ public sealed class MergeFixtureCardTests
     public async Task AnEntryTakenOutOfTheQueueSaysWhyOnTheCardThatShowedItQueued()
     {
         await using var node = await NodeHarness.StartAsync(Ct);
-        var ready = Ready(node);
+        var ready = await Ready(node);
         await Look(node, Read("ready", "queue-queued"));
 
         await Look(node, Read("ready", "queue-dropped"));
@@ -202,7 +207,7 @@ public sealed class MergeFixtureCardTests
     public async Task ChecksRunningAgainAfterAnArmedMergeSaysItIsNotArmedAnyMore()
     {
         await using var node = await NodeHarness.StartAsync(Ct);
-        var ready = Ready(node);
+        var ready = await Ready(node);
         await Look(node, Read("armed"));
         Card(node, ready).Choices.Single(c => c.Verb == Verbs.Merge).Status.ShouldBe(ChoiceStatus.Armed);
 

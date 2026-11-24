@@ -24,6 +24,8 @@ public sealed class CardAvailabilityTests
     {
         Code = code, Repo = "tianwen", RepoPath = "/r", Issue = int.Parse(code[3..]), Branch = $"flight/{code.ToLowerInvariant()}", Worktree = $"/r/{code}", Base = "main",
         State = state, Connections = connections, CreatedAt = Start,
+        // Reviewed and passed, as a flight with a Merge on its card is: a merge's own precondition (VerbPreconditions.Merge) refuses an unreviewed one.
+        Review = new ReviewRow { State = ReviewState.Passed, Reviewer = "du1-tia1-review", StartedAt = Start },
     };
 
     private static SessionRow Session(string id) => new()
@@ -308,9 +310,8 @@ public sealed class CardAvailabilityTests
         node.State.Cards().Single().Choices.Single().ShouldSatisfyAllConditions(c => c.Status.ShouldBeNull(), c => c.Note.ShouldBeNull());
         var result = await node.App.Services.GetRequiredService<NodeCommands>().RunAsync(Answer(card, "Merge"), Ct);
 
-        // Past the availability rule, the merge runs on its own rules: this flight was never reviewed, which is what it says now, not that it is held.
-        result.Ok.ShouldBeFalse();
-        result.Error.ShouldNotBeNull().ShouldContain("has not been reviewed");
-        result.Error.ShouldNotContain("is held");
+        // Past the availability rule, the merge runs on its own rules (here it finds no PR to merge): what it says is not that the flight is held.
+        result.Error.ShouldNotBeNull().ShouldNotContain("is held");
+        result.Error.ShouldContain("has no PR");
     }
 }

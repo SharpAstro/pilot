@@ -36,9 +36,13 @@ public sealed partial class LegCommander
     private async Task GoAroundAsync(CommandRequest command, CancellationToken cancellationToken, bool conflictRound = false, ConflictRung? rung = null)
     {
         var (flight, leg) = LegOf(command.Target);
-        if (OnHoldRefusal(flight) is { } onHold)
+        // A done leg goes around too for the node's own reasons it knows here: its flight's conflict with the base, or a PR review's design question answered.
+        var doneAllowed = conflictRound
+            || (_conflictRounds.TryGetValue(flight.Code, out var conflictAsked) && conflictAsked.Brief == string.Join(' ', command.Args ?? []).Trim())
+            || _answeredDesign.ContainsKey(flight.Code);
+        if (VerbPreconditions.GoAround(flight, leg, state.Cards(openOnly: true), doneAllowed) is { } refused)
         {
-            throw new FlightException(onHold);
+            throw new FlightException(refused.Why);
         }
         RefuseIfStarting(LegsKey(flight.Code), $"a session on {flight.Code}'s plane");
         var why = string.Join(' ', command.Args ?? []).Trim();
@@ -56,19 +60,6 @@ public sealed partial class LegCommander
             _conflictRounds.TryRemove(KeyValuePair.Create(flight.Code, asked));
         }
         var forConflict = leg.State == LegState.Done && conflictRound;
-        // A done leg goes around too when the review asked for changes: that is how they are made.
-        // Or when its armed merge failed (a PR-ready card turned to say which check): the same card offers it.
-        // Or when a PR review's design question on the flight's PR has its answer: the person's word, so the leg goes round with it.
-        if (leg.State is not (LegState.Flying or LegState.Failed) && !forConflict && !(leg.State == LegState.Done && flight.Review is { State: ReviewState.Changes })
-            && !(leg.State == LegState.Done && _answeredDesign.ContainsKey(flight.Code))
-            && !(leg.State == LegState.Done && state.Cards(openOnly: true).Any(c => c.Kind is MergeFailed or PrReady && c.Subject == Verbs.FlightTarget(flight.Code) && c.Choices.Any(ch => ch.Verb == Verbs.GoAround))))
-        {
-            throw new FlightException($"{flight.Code}/{leg.Name} is {leg.State.ToString().ToLowerInvariant()}; a go-around is for a leg flying or failed, or done when the review asked for changes");
-        }
-        if (flight.State != FlightState.Flying)
-        {
-            throw new FlightException($"{flight.Code} is {flight.State.ToString().ToLowerInvariant()}");
-        }
         // A flight held for an investigation (the same failure hit more than one PR) is sent round by nobody until it lands: the failure
         // is not its work's, and a round would only burn a go-around on a bug with a cause to find. The person's word passes.
         if (Alerts?.HoldOf(flight.Code) is { } failureHold && !IsPerson(flight, command.Who) && command.PersonsWord is null)

@@ -43,6 +43,8 @@ public sealed class PrPollBudgetTests
                 {
                     Code = code, Repo = repo[^1..], RepoPath = repo, Issue = number, Branch = branch, Worktree = $"{repo}/w/{code}", Base = "main", State = FlightState.Flying,
                     CreatedAt = time.GetUtcNow(), PullRequest = number,
+                    // A PR-ready card is raised on a passed review: a flight with none has its Merge refused, which a look would not mirror the checks over.
+                    Review = new ReviewRow { State = ReviewState.Passed, Reviewer = "r", StartedAt = time.GetUtcNow(), ReviewedHead = $"head{number}" },
                 });
                 // The card's Merge is what a look mirrors the PR's checks onto.
                 State.RaiseCard(CardBin.ForYou, LegCommander.PrReady, Verbs.FlightTarget(code), $"{code}'s PR #{number} is ready to merge",

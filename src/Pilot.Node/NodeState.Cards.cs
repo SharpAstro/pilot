@@ -40,6 +40,36 @@ public sealed partial class NodeState
     /// <param name="askedBy">The assistant's session an ask card is about (<see cref="CardKinds.AssistantAsk"/>), and <paramref name="why"/> the message it acted on.</param>
     public CardRow RaiseCard(CardBin bin, string kind, string subject, string title, string? detail = null, IReadOnlyList<CardChoice>? choices = null, string? link = null, string? askedBy = null, string? why = null, string? summary = null, string? attachment = null, string? attachmentExt = null, string? cause = null, string? aboutCard = null)
     {
+        // PIL1325: a card for a person whose every choice waits on something that clears by itself (a review that starts once the legs
+        // land) is a Handled line saying so, not a card to press a refused button on.
+        // A PR-ready card is the exception: while legs are open its wait is LegCommander.ShowLegWait's, which closes the card with the
+        // LegWaitOutcome the restore sweep reads. A Handled line here would read as a closed merge card and the card never came back.
+        if (bin is CardBin.ForYou or CardBin.Ring && kind != LegCommander.PrReady && choices is { Count: > 0 })
+        {
+            lock (_gate)
+            {
+                if (SelfClearingReason(choices, kind) is { } selfClearing)
+                {
+                    // Raised again while the cause stands, it is the same line, not one more (#1325's review, R1.3): an open card of this kind
+                    // and subject is that card, as for any raise, and so is the newest card of it when the node closed it for this very reason
+                    // (a Handled line this raise wrote before, or a card the sync closed with the reason as its outcome).
+                    if (_cards.Values.FirstOrDefault(c => c.State == CardState.Open && c.Kind == kind && c.Subject == subject) is { } open)
+                    {
+                        return open;
+                    }
+                    // The line is matched by the reason it ends with, never by the caller's detail, which may change per call (an age, a count).
+                    var reasonLine = $"Nothing to press: {selfClearing}.";
+                    var said = $"{detail}{(detail is { Length: > 0 } ? " " : "")}{reasonLine}";
+                    if (_cards.Values.Where(c => c.Kind == kind && c.Subject == subject).OrderByDescending(c => CardNumber(c.Id)).FirstOrDefault() is
+                        { State: CardState.Closed, ClosedBy: "node" } newest
+                        && (newest.Bin == CardBin.Handled && newest.Detail is { } line && line.EndsWith(reasonLine, StringComparison.Ordinal) || newest.Outcome == selfClearing))
+                    {
+                        return newest;
+                    }
+                    return RaiseCardCore(CardBin.Handled, kind, subject, title, said, choices, link, askedBy, why, summary, attachment, attachmentExt, cause, aboutCard, out _);
+                }
+            }
+        }
         // With the brain to ask (PIL855), a card that would ring is first filed in For you, silent, and rings only on the brain's verdict
         // (RingJudge): the old path, a ring at once, is what runs with no judge, and what the judge itself falls back to.
         // With the switch on (PIL1285), a card bound for the ring waits in For you, quietly, until an investigator decides it; nothing else
@@ -83,6 +113,9 @@ public sealed partial class NodeState
     /// (<see cref="Flights.NodePress.WouldPress"/>): such a card is never sent to the ring judge.
     /// </summary>
     public Func<string, string, string?, IReadOnlyList<CardChoice>?, bool>? NodePresses { get; set; }
+
+    // A card's number from its id (c12 is 12): the order the node raised them in.
+    private static int CardNumber(string id) => int.TryParse(id.AsSpan(1), out var n) ? n : 0;
 
     private CardRow RaiseCardCore(CardBin bin, string kind, string subject, string title, string? detail, IReadOnlyList<CardChoice>? choices, string? link, string? askedBy, string? why, string? summary, string? attachment, string? attachmentExt, string? cause, string? aboutCard, out bool created)
     {
@@ -157,7 +190,7 @@ public sealed partial class NodeState
                 Detail = detail,
                 Summary = CardSummaries.Resolve(summary, detail, kind, subject, title, choices ?? []),
                 // A choice the node would refuse already (its flight is held) is born marked, not offered until the next sweep (#792).
-                Choices = Available(choices ?? []),
+                Choices = Available(choices ?? [], kind),
                 Link = link,
                 AskedBy = askedBy,
                 Why = why,
@@ -384,7 +417,7 @@ public sealed partial class NodeState
             {
                 return false;
             }
-            var next = Available(choices);
+            var next = Available(choices, card.Kind);
             if (card.Choices.SequenceEqual(next) || ifStill is not null && !card.Choices.SequenceEqual(ifStill))
             {
                 return false;
@@ -429,7 +462,7 @@ public sealed partial class NodeState
             var nextBin = bin is { } b && b != CardBin.Handled && card.Bin != CardBin.Handled ? b : card.Bin;
             // PIL1290: the words a ring on card/<id> put on the card stay through a rewrite of its detail that does not carry them itself.
             detail = KeepRungWords(card.Detail, detail);
-            var next = card with { Title = title, Detail = detail, Choices = Available(choices), Link = link, Kind = kind ?? card.Kind, Bin = nextBin };
+            var next = card with { Title = title, Detail = detail, Choices = Available(choices, kind ?? card.Kind), Link = link, Kind = kind ?? card.Kind, Bin = nextBin };
             // A card that says something new says it in new words: the summary follows the title and kind, as the raiser wrote it or the table has it.
             next = next with { Summary = summary is null && next.Title == card.Title && next.Kind == card.Kind ? card.Summary : CardSummaries.Resolve(summary, detail, next.Kind, next.Subject, next.Title, next.Choices) };
             next = next with { Commits = CommitsOf(next, link) };
