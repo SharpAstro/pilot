@@ -27,7 +27,7 @@ public sealed class RestoreRetryTests : ReviewTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
+    [Trait("Category", "Slow")] // a real plane worktree and git commits: the flight is flown through the real leg commands
     public async Task AFailedRestoreRaisesNoCardAndTheNextLookRestoresItAndTheFlightMerges()
     {
         NodeAdvances();
@@ -48,7 +48,7 @@ public sealed class RestoreRetryTests : ReviewTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
+    [Trait("Category", "Slow")] // a real plane worktree and git commits: the flight is flown through the real leg commands
     public async Task AllLegsDonePassedAtHeadGreenAndGhFailingOnceNeverLeavesTheFlightWithoutACard()
     {
         _github.Checks = ChoiceStatus.Pending;
@@ -61,12 +61,16 @@ public sealed class RestoreRetryTests : ReviewTestsBase
 
         // The card was raised; with checks pending the node then arms the merge and closes it, so it is open or the merge is armed or done.
         _state.Cards(openOnly: false).Count(c => c.Kind == LegCommander.PrReady).ShouldBe(1);
+        // With checks pending the node arms the merge when green on the restored card (which then closes): the flight is never without
+        // a card or an armed merge, and no Ring card stands for a restore that worked.
         var now = F(flight.Code);
-        (Open().Any(c => c.Kind == LegCommander.PrReady) || now.MergeWhenGreen is not null || now.State == FlightState.Landed || _github.Merged.Count > 0).ShouldBeTrue();
+        now.MergeWhenGreen.ShouldNotBeNull("the restored card's merge is armed while checks are pending");
+        _state.Cards(openOnly: false).Single(c => c.Kind == LegCommander.PrReady).State.ShouldBe(CardState.Closed);
+        Open().ShouldNotContain(c => c.Kind == PrChecks.RestoreFailedKind);
     }
 
     [Fact]
-    [Trait("Category", "Slow")]
+    [Trait("Category", "Slow")] // a real plane worktree and git commits: the flight is flown through the real leg commands
     public async Task ARestoreFailingPastTheBoundRaisesOneRingCardNamingTheErrorAndClosesItOnSuccess()
     {
         _github.Checks = ChoiceStatus.Pending;

@@ -1018,6 +1018,8 @@ public sealed class PrChecks(NodeState state, IGitHub gitHub, TimeProvider time,
                     if (queue is { State: "OPEN" } && (queue.Queued
                         || (queue.RemovedAt is not null && !string.Equals(queue.RemovedReason, "merged", StringComparison.OrdinalIgnoreCase))))
                     {
+                        // The queue answered, so the restore is no longer failing: a Ring card for it must not linger while the PR is queued (#1338).
+                        _restoreFailing.Remove(flight.Code);
                         continue;
                     }
                     await legs.RestorePrReadyAsync(flight.Code, pr.Head, cancellationToken);
@@ -1067,11 +1069,11 @@ public sealed class PrChecks(NodeState state, IGitHub gitHub, TimeProvider time,
             link: flight.PullRequestUrl,
             summary: $"{flight.Code} passed its review but its PR-ready card could not be restored for {(int)HoldingBound.TotalMinutes} minutes ({why}); the node keeps trying.");
         // The person can land the PR at the head the passed review read without waiting for the card (as the holding timeout's card does).
-        state.UpdateChoices(card.Id,
-        [
-            new CardChoice { Label = "Land at the reviewed head", Verb = Verbs.Merge, Target = subject, Args = [flight.Review!.ReviewedHead!, legs?.Models.MergeMethod ?? "squash"] },
-            new CardChoice { Label = "Keep trying", Verb = Verbs.Dismiss, Target = Verbs.CardTarget(card.Id), Args = ["the node keeps trying to restore the card"] },
-        ]);
+        // A holding flight's merge is refused (the hold is the owner's to clear), so the button is not offered for it: only what can be used now.
+        var keep = new CardChoice { Label = "Keep trying", Verb = Verbs.Dismiss, Target = Verbs.CardTarget(card.Id), Args = ["the node keeps trying to restore the card"] };
+        state.UpdateChoices(card.Id, flight.Holding is not null
+            ? [keep]
+            : [new CardChoice { Label = "Land at the reviewed head", Verb = Verbs.Merge, Target = subject, Args = [flight.Review!.ReviewedHead!, legs?.Models.MergeMethod ?? "squash"] }, keep]);
     }
 
     /// <summary>
