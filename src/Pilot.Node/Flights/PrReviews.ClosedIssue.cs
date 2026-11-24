@@ -21,28 +21,47 @@ public sealed partial class PrReviews
     [GeneratedRegex(@"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s*:?\s+(?:(?<repo>[\w.-]+/[\w.-]+))?#(?<n>\d+)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex ClosingKeyword();
 
-    /// <summary>The issues <paramref name="review"/>'s PR closes: GitHub's closingIssuesReferences, else the closing keywords of its body (same repo only). Empty when none.</summary>
-    private async Task<int[]> ClosingIssuesOfAsync(PrReviewRow review, CancellationToken cancellationToken)
+    /// <summary>
+    /// The issues <paramref name="review"/>'s PR closes: GitHub's closingIssuesReferences with the PR's state from the same read, else the closing
+    /// keywords of its body (same repo only) with no state. Empty when none.
+    /// </summary>
+    private async Task<(int[] Issues, PrClosingIssues? Read)> ClosingIssuesOfAsync(PrReviewRow review, CancellationToken cancellationToken)
     {
         if (await github.ClosingIssuesAsync(review.ClonePath, review.Number, cancellationToken) is { } read)
         {
-            return read;
+            return (read.Issues, read);
         }
         var body = await github.PullRequestBodyAsync(review.ClonePath, review.Number, cancellationToken) ?? "";
-        return [.. ClosingKeyword().Matches(body)
+        return ([.. ClosingKeyword().Matches(body)
             .Where(m => !m.Groups["repo"].Success || string.Equals(m.Groups["repo"].Value, review.Repo, StringComparison.OrdinalIgnoreCase))
-            .Select(m => int.Parse(m.Groups["n"].Value, System.Globalization.CultureInfo.InvariantCulture)).Distinct().Order()];
+            .Select(m => int.Parse(m.Groups["n"].Value, System.Globalization.CultureInfo.InvariantCulture)).Distinct().Order()], null);
     }
 
     /// <summary>
     /// The issues PR <paramref name="review"/> closes when it is open and every one is closed already, else null (no linked issue, one still open
-    /// or unread, the PR not open, or GitHub not answering: none of those is a reason to act).
+    /// or unread, one in another repo, the PR not open, or GitHub not answering: none of those is a reason to act). A PR found not open is
+    /// remembered whatever its issues are, so the sweep does not read it again.
     /// </summary>
     private async Task<int[]?> AllClosedIssuesAsync(PrReviewRow review, CancellationToken cancellationToken)
     {
+        var subject = Verbs.PrTarget(review.Repo, review.Number);
         try
         {
-            var issues = await ClosingIssuesOfAsync(review, cancellationToken);
+            var (issues, read) = await ClosingIssuesOfAsync(review, cancellationToken);
+            if (read is not null)
+            {
+                // The state came with the issues: a merged or closed PR is done with here, before any issue is read.
+                if (!read.Open)
+                {
+                    _notOpen[subject] = time.GetUtcNow();
+                    return null;
+                }
+                _notOpen.TryRemove(subject, out _);
+                if (read.Foreign is not null)
+                {
+                    return null;
+                }
+            }
             if (issues.Length == 0)
             {
                 return null;
@@ -54,8 +73,11 @@ public sealed partial class PrReviews
                     return null;
                 }
             }
-            // Last, and only for a PR whose issues are all closed: the PR read is the dearer call and most PRs never get here.
-            var subject = Verbs.PrTarget(review.Repo, review.Number);
+            if (read is not null)
+            {
+                return issues;
+            }
+            // Read from the body, so the state is not known yet: the PR read is the dearer call, made only for a PR whose issues are all closed.
             if (string.Equals((await github.PullRequestOfAsync(review.Repo, review.Number, cancellationToken)).State, "OPEN", StringComparison.OrdinalIgnoreCase))
             {
                 _notOpen.TryRemove(subject, out _);

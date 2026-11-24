@@ -62,6 +62,22 @@ public sealed class PrFixWorktreeTests : PrFixTestsBase
     }
 
     [Fact]
+    [Trait("Category", "Slow")] // real git: the authoring session's worktree is a checkout of the branch
+    public async Task APostedReviewOnABranchTheAuthoringSessionHoldsRaisesOnlyTheAuthorHoldsCard()
+    {
+        CheckOutBranchElsewhere();
+        _state.PutSession(Session("someone", SessionState.Working) with { Cwd = Other });
+
+        // The post path: the review asks for changes, the fixer is refused, and the refusal's own card is the only one.
+        await Review("acme/widget#7", "changes", "README.md:1 wrong");
+
+        Fixers.ShouldBeEmpty();
+        var cards = _state.Cards().Where(c => c.Subject == Verbs.PrTarget("acme/widget", 7)
+            && c.Kind is PrReviews.FixAuthorHoldsKind or PrReviews.FixFailedKind or PrReviews.FixOfferKind).ToArray();
+        cards.Select(c => c.Kind).ShouldBe([PrReviews.FixAuthorHoldsKind]);
+    }
+
+    [Fact]
     [Trait("Category", "Slow")]
     public async Task EndingTheFixerLeavesABorrowedFolderInPlace()
     {

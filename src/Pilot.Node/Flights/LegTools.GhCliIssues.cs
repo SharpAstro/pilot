@@ -99,17 +99,18 @@ public sealed partial class GhCli
         return doc.RootElement.TryGetProperty("title", out var title) ? title.GetString() : null;
     }
 
-    public async Task<int[]?> ClosingIssuesAsync(string repoPath, int number, CancellationToken cancellationToken)
+    public async Task<PrClosingIssues?> ClosingIssuesAsync(string repoPath, int number, CancellationToken cancellationToken)
     {
-        var (exit, output, _) = await RunAsync(["pr", "view", number.ToString(System.Globalization.CultureInfo.InvariantCulture), "--json", "closingIssuesReferences,url"], repoPath, cancellationToken);
+        var (exit, output, _) = await RunAsync(["pr", "view", number.ToString(System.Globalization.CultureInfo.InvariantCulture), "--json", "closingIssuesReferences,url,state"], repoPath, cancellationToken);
         return exit != 0 ? null : ClosingIssuesFrom(output);
     }
 
     /// <summary>
-    /// The issue numbers in a <c>gh pr view --json closingIssuesReferences,url</c> answer; null when it has no list. A reference to another repo's
-    /// issue throws: its number cannot be checked here, and an issue the node cannot check is never a reason to flag or close a PR.
+    /// The issue numbers and state in a <c>gh pr view --json closingIssuesReferences,url,state</c> answer; null when it has no list. A reference to
+    /// another repo's issue is named in <see cref="PrClosingIssues.Foreign"/>: its number cannot be checked here, and an issue the node cannot check
+    /// is never a reason to flag or close a PR.
     /// </summary>
-    internal static int[]? ClosingIssuesFrom(string json)
+    internal static PrClosingIssues? ClosingIssuesFrom(string json)
     {
         using var doc = JsonDocument.Parse(json);
         if (!doc.RootElement.TryGetProperty("closingIssuesReferences", out var refs) || refs.ValueKind != JsonValueKind.Array)
@@ -120,7 +121,9 @@ public sealed partial class GhCli
         var own = doc.RootElement.TryGetProperty("url", out var url) && url.GetString() is { } text && Uri.TryCreate(text, UriKind.Absolute, out var uri)
             ? string.Join('/', uri.AbsolutePath.Split('/', StringSplitOptions.RemoveEmptyEntries).Take(2))
             : null;
+        var state = doc.RootElement.TryGetProperty("state", out var st) && st.GetString() is { } s ? s : "OPEN";
         var numbers = new List<int>();
+        string? foreign = null;
         foreach (var r in refs.EnumerateArray())
         {
             if (!r.TryGetProperty("number", out var n) || n.ValueKind != JsonValueKind.Number)
@@ -133,12 +136,13 @@ public sealed partial class GhCli
                 var owner = repo.TryGetProperty("owner", out var ro) && ro.TryGetProperty("login", out var rl) ? rl.GetString() : null;
                 if (name is not null && owner is not null && !string.Equals($"{owner}/{name}", own, StringComparison.OrdinalIgnoreCase))
                 {
-                    throw new FlightException($"the PR closes {owner}/{name}#{n.GetInt32()}, an issue in another repo, which is not checked here");
+                    foreign ??= $"{owner}/{name}#{n.GetInt32()}";
+                    continue;
                 }
             }
             numbers.Add(n.GetInt32());
         }
-        return [.. numbers];
+        return new PrClosingIssues([.. numbers], state, foreign);
     }
 
     public async Task<bool?> IssueClosedAsync(string repoPath, int number, CancellationToken cancellationToken)

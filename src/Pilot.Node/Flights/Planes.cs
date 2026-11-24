@@ -932,6 +932,12 @@ public sealed class Planes(IGit git, RemovalQueue? queue = null)
     }
 }
 
+/// <summary>
+/// A refusal whose card is raised already where it was made (the author-holds notice of PIL1341): a catch that would ring its own card for it
+/// raises none, so the person is told once.
+/// </summary>
+public sealed class AnnouncedFlightException(string message) : FlightException(message);
+
 /// <summary>A flight command that could not be done, with why: the command's error.</summary>
 public class FlightException(string message) : Exception(message)
 {

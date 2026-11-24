@@ -106,6 +106,11 @@ public sealed partial class PrReviews
                         await StartAsync(pr, cancellationToken);
                     }
                 }
+                catch (AnnouncedFlightException)
+                {
+                    // The refusal raised its own card: the wait ends with it.
+                    _queued.TryRemove(Verbs.PrTarget(pr.Repo, pr.Number), out _);
+                }
                 catch (FlightException ex)
                 {
                     _queued.TryRemove(Verbs.PrTarget(pr.Repo, pr.Number), out _);

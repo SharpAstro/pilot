@@ -60,7 +60,8 @@ public sealed partial class PrReviews
         }
         // A PR whose every issue is closed is for closing, not fixing: the sweep's closed-issue card says so (PIL1341). Checked before a design
         // question is decided, so the post path says what the recheck says.
-        if (await UnkeptClosedIssuesAsync(review, cancellationToken) is not null)
+        // A flight's PR is left to the flight (its design question still rings below); the sweep raises no closed-issue card for one.
+        if (flight is null && await UnkeptClosedIssuesAsync(review, cancellationToken) is not null)
         {
             return;
         }
@@ -104,11 +105,15 @@ public sealed partial class PrReviews
         {
             await StartFixerAsync(pr, review, cancellationToken);
         }
-        catch (FlightException ex)
+        catch (FlightException ex) when (ex is not AnnouncedFlightException)
         {
             // Retry is the same Fix it: once what stopped it is cleared (a branch checked out elsewhere), it starts the fixer.
             RaiseOnce(pr, review, CardBin.ForYou, FixFailedKind, subject, $"{pr}: the fixer could not start: {LegCommander.OneLine(ex.Message)}", ex.Message,
                 [new CardChoice { Label = "Start the fixer again", Verb = Verbs.FixPr, Target = subject }]);
+        }
+        catch (AnnouncedFlightException)
+        {
+            // The refusal raised its own card: nothing more to say.
         }
     }
 
@@ -188,6 +193,11 @@ public sealed partial class PrReviews
         try
         {
             await ActOnAnswerAsync(pr, review, decided.Answer, NodeDecides, null, false, null, cancellationToken, decision: decided);
+        }
+        catch (AnnouncedFlightException)
+        {
+            // The refusal raised its own card (the authoring session holds the branch); the answer stays stored for the next start.
+            SettleDecided(pr, review, decided, "the start was refused, and the card for that says why");
         }
         catch (FlightException ex)
         {
@@ -421,7 +431,7 @@ public sealed partial class PrReviews
         {
             fixerStart = await StartFixerAsync(pr, review, cancellationToken, chose);
         }
-        catch (FlightException ex) when (command is not null)
+        catch (FlightException ex) when (command is not null && ex is not AnnouncedFlightException)
         {
             // The answer stays stored (DesignAnswer), and the card's choice starts the fixer with it, without asking again.
             var subject = Verbs.PrTarget(pr.Repo, pr.Number);
@@ -566,7 +576,7 @@ public sealed partial class PrReviews
             {
                 var why = AuthorHoldsReason(author, holder, branch);
                 RaiseOnce(pr, review, CardBin.Handled, FixAuthorHoldsKind, Verbs.PrTarget(pr.Repo, pr.Number), $"{pr}: no fixer started, its authoring session holds the branch", $"No fixer started: {why}.");
-                throw new FlightException($"no fixer started: {why}");
+                throw new AnnouncedFlightException($"no fixer started: {why}");
             }
             var notBorrowed = await WhyNotBorrowAsync(clone, holder, branch, cancellationToken);
             if (notBorrowed is null)

@@ -149,13 +149,61 @@ public sealed class PrClosedIssueTests : PrFixTestsBase
     }
 
     [Fact]
-    public void GhsClosingReferencesOfAnotherRepoAreRefusedAndOwnRepoOnesRead()
+    public void GhsClosingReferencesOfAnotherRepoAreNamedAndOwnRepoOnesReadWithTheState()
     {
-        const string own = """{"url":"https://github.com/acme/widget/pull/7","closingIssuesReferences":[{"number":31,"repository":{"name":"widget","owner":{"login":"acme"}}}]}""";
-        const string foreign = """{"url":"https://github.com/acme/widget/pull/7","closingIssuesReferences":[{"number":31,"repository":{"name":"widget","owner":{"login":"acme"}}},{"number":5,"repository":{"name":"pilot","owner":{"login":"SharpAstro"}}}]}""";
+        const string own = """{"url":"https://github.com/acme/widget/pull/7","state":"MERGED","closingIssuesReferences":[{"number":31,"repository":{"name":"widget","owner":{"login":"acme"}}}]}""";
+        const string foreign = """{"url":"https://github.com/acme/widget/pull/7","state":"OPEN","closingIssuesReferences":[{"number":31,"repository":{"name":"widget","owner":{"login":"acme"}}},{"number":5,"repository":{"name":"pilot","owner":{"login":"SharpAstro"}}}]}""";
 
-        GhCli.ClosingIssuesFrom(own).ShouldBe([31]);
-        Should.Throw<FlightException>(() => GhCli.ClosingIssuesFrom(foreign));
+        var read = GhCli.ClosingIssuesFrom(own).ShouldNotBeNull();
+        read.Issues.ShouldBe([31]);
+        read.State.ShouldBe("MERGED");
+        read.Open.ShouldBeFalse();
+        read.Foreign.ShouldBeNull();
+        var refused = GhCli.ClosingIssuesFrom(foreign).ShouldNotBeNull();
+        refused.Open.ShouldBeTrue();
+        refused.Foreign.ShouldBe("SharpAstro/pilot#5");
+    }
+
+    [Theory]
+    [InlineData(new int[0])]
+    [InlineData(new[] { 32 })]
+    public async Task AMergedPrIsReadOnceWhateverItsIssues(int[] closes)
+    {
+        // No closing issue, or one still open: the state from the same read is enough to leave the PR alone after one look.
+        Looking();
+        await ReviewedWith(closes);
+        _github.Prs[Target] = _github.Prs[Target] with { State = "MERGED" };
+
+        await _reviews.SweepAsync(Ct);
+        await _reviews.SweepAsync(Ct);
+        await _reviews.SweepAsync(Ct);
+
+        _github.ClosingIssueReads[Target].ShouldBe(1);
+        Flags.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task AFlightsPrWithADesignQuestionAndEveryIssueClosedStillRingsItsDesignCard()
+    {
+        (await Run(Verbs.ReviewPr, Target, "controller")).Error.ShouldBeNull();
+        _github.ClosingIssues[Target] = [31];
+        _github.IssuesClosedOnGitHub.Add(31);
+        // A flight takes the PR on while its review runs: the flight's legs make changes, and its design question is the person's.
+        _state.PutFlight(new FlightRow
+        {
+            Code = "WID1", Repo = "widget", RepoPath = WidgetClone, Issue = 1, Branch = "feature/seven", Worktree = Path.Combine(_root, "plane-WID1"),
+            Base = "main", State = FlightState.Flying, CreatedAt = DateTimeOffset.UtcNow, PullRequest = 7, PullRequestUrl = "https://github.com/acme/widget/pull/7",
+        });
+
+        (await Run(Verbs.PrVerdict, Target, Row.Reviewer, "changes", "Two things are wrong.", "README.md:1 design: should this be a service at all?")).Error.ShouldBeNull();
+        for (var i = 0; i < 500 && _reviews.Of(Seven) is { PostedId: not null, State: not PrReviewState.Closed }; i++)
+        {
+            await Task.Delay(10, Ct);
+        }
+
+        Fixers.ShouldBeEmpty();
+        _state.Cards(openOnly: true).Where(c => c.Kind == PrReviews.DesignKind).ShouldHaveSingleItem().Title.ShouldContain("WID1");
+        Flags.ShouldBeEmpty();
     }
 
     [Fact]

@@ -19,6 +19,15 @@ public sealed record MergedPullRequest(int Number, string HeadRef, string HeadOi
 /// <param name="Labels">The labels it carries, as read by branch; null when the read did not ask for them.</param>
 /// <param name="MergeCommit">The commit it merged as on its base, as read by branch; empty before it merges or when not read.</param>
 /// <param name="MergedAt">When it merged, as read by branch; null before it merges or when not read.</param>
+/// <summary>What one read of a PR says about the issues it closes (PIL1341).</summary>
+/// <param name="Issues">The numbers of the issues of its own repo it closes when it merges (GitHub's closingIssuesReferences).</param>
+/// <param name="State">The PR's state from the same read: OPEN, CLOSED or MERGED.</param>
+/// <param name="Foreign">An issue of another repo it closes, as <c>owner/name#n</c>, which is not checked here; null when none.</param>
+public sealed record PrClosingIssues(int[] Issues, string State, string? Foreign = null)
+{
+    public bool Open => string.Equals(State, "OPEN", StringComparison.OrdinalIgnoreCase);
+}
+
 public sealed record PullRequest(int Number, string State, string Head, string Url, string Mergeable = "", string Title = "", string Author = "", string Base = "", IReadOnlyList<string>? Labels = null, string MergeCommit = "", DateTimeOffset? MergedAt = null, bool Draft = false, string HeadRef = "", bool Fork = false, bool? Rebaseable = null);
 
 /// <summary>
@@ -253,8 +262,8 @@ public interface IGitHub
     /// <exception cref="FlightException">gh could not close it.</exception>
     Task ClosePullRequestAsync(string repoPath, int number, string comment, CancellationToken cancellationToken);
 
-    /// <summary>The numbers of the issues PR <paramref name="number"/> closes when it merges (GitHub's closingIssuesReferences); null when GitHub would not say. Throws a FlightException when it closes an issue of another repo, which is not checked here (PIL1341).</summary>
-    Task<int[]?> ClosingIssuesAsync(string repoPath, int number, CancellationToken cancellationToken) => Task.FromResult<int[]?>(null);
+    /// <summary>The issues PR <paramref name="number"/> closes when it merges (GitHub's closingIssuesReferences) and its state, from one read; null when GitHub would not say (PIL1341).</summary>
+    Task<PrClosingIssues?> ClosingIssuesAsync(string repoPath, int number, CancellationToken cancellationToken) => Task.FromResult<PrClosingIssues?>(null);
 
     /// <summary>Whether issue <paramref name="number"/> is closed (true), open (false), or null when GitHub would not say (#753).</summary>
     Task<bool?> IssueClosedAsync(string repoPath, int number, CancellationToken cancellationToken) => Task.FromResult<bool?>(null);
