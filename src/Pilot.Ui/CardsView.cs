@@ -1043,12 +1043,13 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         // The page's row is the toast's frame (NotificationToast): its own text sizes, the node and time at its right, and no kind line.
         var titleSize = !full ? 14f : closed ? NotificationToast.ClosedTitleSize : NotificationToast.OpenTitleSize;
         var summarySize = full ? NotificationToast.SummarySize : 12f;
+        var grid = full && (PageGrid?.Invoke() ?? false);
         var repeats = full ? Math.Max(1, PageRepeats?.Invoke() ?? 1) : 1;
         var whenText = when ?? card.At.ToLocalTime().ToString("HH:mm");
         var meta = string.Join(" · ", new[] { nodeLabel, whenText, StaleMark(card), repeats > 1 ? $"×{repeats}" : null }.Where(s => !string.IsNullOrEmpty(s)));
         if (full && closed && !merged)
         {
-            return ClosedRow(card, node, severity, fill, closedInk, linker, titleSize, summarySize, meta, tokens);
+            return ClosedRow(card, node, severity, fill, closedInk, linker, titleSize, summarySize, meta, tokens, grid ? GridMeta(null, nodeLabel, whenText, repeats, closedMark: true) : null);
         }
         var head = Layout.Builder.Text($"{(merged ? "merged" : kindWord ?? (card.Bin == CardBin.Ring ? "RING" : "for you"))}{(nodeLabel is null ? "" : $" · {nodeLabel}")}{(when is null ? "" : $" · {when}")}{(closed && !merged ? " · closed" : "")}", 10f, accent).Selectable();
         var lines = new List<Layout.Node>
@@ -1081,6 +1082,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
             lines.Add(LegLink(card, ofLeg, ofLeg.ToString(), 12f).RowH(20f));
         }
         // The page draws no detail line the summary already says (the stray card's Reason line repeated its summary): a detail of nothing else has no fold.
+        Layout.Node? detailLink = null;
         var shownDetail = card.Detail is { Length: > 0 } rawDetail && full && summary is not null
             ? string.Join('\n', rawDetail.Split('\n').Where(l => !string.IsNullOrWhiteSpace(l) && !summary.Contains(l.Trim(), StringComparison.Ordinal)))
             : card.Detail;
@@ -1090,11 +1092,19 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
             var unfolded = !toast && (summary is null || Volatile.Read(ref _detailOpen).Contains(card.Id));
             if (summary is not null)
             {
-                var fold = Layout.Builder.Text($"{(unfolded ? "▾" : "▸")} Detail", full ? NotificationToast.MetaSize : 11f, Dim).BgHover(CardHover);
-                lines.Add((toast
+                var fold = Layout.Builder.Text($"{(unfolded ? "▾" : "▸")} Detail", full ? NotificationToast.MetaSize : 11f, grid ? Contrast.Readable(Link, fill, Bright) : Dim).BgHover(CardHover);
+                var foldNode = (toast
                     ? fold.Follows(new HitResult.ButtonHit($"toast:{card.Id}:detail"), _ => toPage?.Invoke())
                     : fold.Follows(new HitResult.ButtonHit($"card:{card.Id}:detail"), _ => ToggleDetail(card.Id)))
-                    .RowH(20f));
+                    .RowH(20f);
+                if (grid && !closed)
+                {
+                    detailLink = foldNode; // the grid card's Detail sits at the right of its buttons
+                }
+                else
+                {
+                    lines.Add(foldNode);
+                }
             }
             if (unfolded)
             {
@@ -1114,6 +1124,17 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
                     lines.Add(Whole(WrappedProse.Paragraphs(detail, 11f, Body, cap, LineChars), detail,
                         detail.Length > DetailFits || detail.Split('\n').Count(l => !string.IsNullOrWhiteSpace(l)) > 1));
                 }
+            }
+        }
+        if (grid && !closed && !merged && detailLink is null)
+        {
+            // Every open grid card has its Detail link; one with nothing past its summary unfolds what the card is (its kind and id).
+            var open = Volatile.Read(ref _detailOpen).Contains(card.Id);
+            detailLink = Layout.Builder.Text($"{(open ? "▾" : "▸")} Detail", NotificationToast.MetaSize, Contrast.Readable(Link, fill, Bright)).BgHover(CardHover)
+                .Follows(new HitResult.ButtonHit($"card:{card.Id}:detail"), _ => ToggleDetail(card.Id)).RowH(20f);
+            if (open)
+            {
+                lines.Add(WrappedProse.Of($"{card.Kind} · {card.Id}", NotificationToast.MetaSize, Dim));
             }
         }
         // The one image the node keeps for the card (an overlap's screenshot): a thumbnail under the detail, a click opens it full size.
@@ -1302,7 +1323,8 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         }
         if (full)
         {
-            return OpenRow(severity, fill, tokens, lines, buttons, closeCross, meta, Focused(card), PageNarrow?.Invoke() ?? false);
+            return OpenRow(severity, fill, tokens, lines, buttons, closeCross, meta, Focused(card), PageNarrow?.Invoke() ?? false,
+                grid ? GridMeta(kindWord ?? (card.Bin == CardBin.Ring ? "RING" : "for you"), nodeLabel, whenText, repeats, stale: StaleMark(card)) : null, detailLink);
         }
         lines.Add(Layout.Builder.Spacer().RowH(6f));
         // Wrapping: a waiting session's card has up to four buttons, more than one line of the panel holds.
@@ -1329,9 +1351,23 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
 
     /// <summary>The Notifications page's open row: the toast's frame (<see cref="NotificationToast"/>) round the severity icon, the card's parts, and at the right the meta, the Close cross and the buttons, which wrap within their column.</summary>
     private static Layout.Node OpenRow(NotificationSeverity severity, RGBAColor32 fill, NotificationsColors tokens, List<Layout.Node> lines,
-        List<(Layout.Node Node, bool Full)> buttons, Layout.Node? closeCross, string meta, bool focused, bool narrow)
+        List<(Layout.Node Node, bool Full)> buttons, Layout.Node? closeCross, string meta, bool focused, bool narrow, string? gridMeta = null, Layout.Node? detailLink = null)
     {
         var metaInk = Contrast.Readable(Dim, fill, Bright);
+        if (gridMeta is not null)
+        {
+            // The grid card (DSN-5 v1): the title with the Close cross at its right, the meta line under it, the summary, then the buttons with Detail at their right.
+            var head = Layout.Builder.HStack(lines[1].WStar(), closeCross ?? Layout.Builder.Spacer().WFixed(0f)).WithGap(8f).WStar();
+            var bottom = detailLink is null
+                ? ButtonRows(buttons)
+                : Layout.Builder.HStack(ButtonRows(buttons).WStar(), detailLink.WAuto()).WithGap(8f).WStar();
+            var body = new List<Layout.Node> { head, WrappedProse.Of(gridMeta, NotificationToast.MetaSize, metaInk) };
+            body.AddRange(lines.Skip(3));
+            body.Add(bottom);
+            return NotificationToast.Frame(focused ? FocusBg : fill, tokens.TintedEdge(severity), shadow: true,
+                [Layout.Sizing.Fixed(NotificationsLayout.ToastIconSize + NotificationsHost.Style.Gap), Layout.Sizing.Star()],
+                NotificationToast.Icon(severity, tokens.Of(severity)), Layout.Builder.VStack([.. body]).WithGap(NotificationsHost.Style.Gap).WStar());
+        }
         var topRight = new List<Layout.Node> { WrappedProse.Of(meta, NotificationToast.MetaSize, metaInk).WStar() };
         if (closeCross is not null)
         {
@@ -1355,7 +1391,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
 
     /// <summary>The Notifications page's closed row: one quiet line in the toast's frame toned toward the plain ground (icon, title, the summary in the middle, node and time at the right), with no buttons and no Close.</summary>
     private Layout.Node ClosedRow(CardRow card, NodeMark? node, NotificationSeverity severity, RGBAColor32 fill, RGBAColor32 ink, Func<float, Func<string, Layout.Node?>> linker,
-        float titleSize, float summarySize, string meta, NotificationsColors tokens)
+        float titleSize, float summarySize, string meta, NotificationsColors tokens, string? gridMeta = null)
     {
         var title = WrappedProse.Of(Titled(card), titleSize, ink, 0, linker(titleSize));
         var said = string.Join(' ', CardSummaryLines.Of(WrappedProse.Bound(card.Summary ?? "", SummaryChars)));
@@ -1368,12 +1404,12 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         }
         var edge = Contrast.Mix(tokens.TintedEdge(severity), tokens.Raised, ClosedTone);
         var iconInk = Contrast.Readable(Contrast.Mix(SeverityInk(severity), Dim, ClosedTone), fill, ink);
-        if (PageNarrow?.Invoke() ?? false)
+        if (gridMeta is not null || (PageNarrow?.Invoke() ?? false))
         {
-            // A narrow page stacks the line's parts: title, summary, then the node and time.
+            // A narrow page and a grid card stack the line's parts: title, summary, then the node and time.
             return NotificationToast.Frame(fill, edge, shadow: false,
                 [Layout.Sizing.Fixed(NotificationsLayout.ToastIconSize + NotificationsHost.Style.Gap), Layout.Sizing.Star()],
-                NotificationToast.Icon(severity, iconInk), Layout.Builder.VStack(title, summary, WrappedProse.Of(meta, NotificationToast.MetaSize, ink)).WStar());
+                NotificationToast.Icon(severity, iconInk), Layout.Builder.VStack(title, summary, WrappedProse.Of(gridMeta ?? meta, NotificationToast.MetaSize, ink)).WStar());
         }
         return NotificationToast.Frame(fill, edge, shadow: false,
             [Layout.Sizing.Fixed(NotificationsLayout.ToastIconSize + NotificationsHost.Style.Gap), Layout.Sizing.Star(1.2f), Layout.Sizing.Star(1.6f), Layout.Sizing.Star(0.7f, 0f, 260f)],
@@ -1386,6 +1422,13 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
 
     /// <summary>Whether the page being built is narrower than <see cref="NotificationToast.NarrowPage"/>: its rows then stack their parts.</summary>
     internal Func<bool>? PageNarrow { get; set; }
+
+    /// <summary>Whether the page being built draws cards in columns (the Grid view): its rows are then the grid card, with the meta line under the title.</summary>
+    internal Func<bool>? PageGrid { get; set; }
+
+    /// <summary>The grid card's meta line: <c>for you · SE1 · 21:11 · ×2</c>, a closed card's ending in <c>closed</c>.</summary>
+    private static string GridMeta(string? kind, string? node, string when, int repeats, bool closedMark = false, string? stale = null) =>
+        string.Join(" · ", new[] { kind, node, when, stale, repeats > 1 ? $"×{repeats}" : null, closedMark ? "closed" : null }.Where(x => !string.IsNullOrEmpty(x)));
 
     /// <summary>A toast's card body (<see cref="CardFit.Toast"/>): the same parts as the panel's and the page's, without buttons, which the library's row carries.</summary>
     internal Layout.Node ToastCard(CardRow card, string? nodeName, bool cutShort, Action toPage) =>

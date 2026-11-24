@@ -77,6 +77,7 @@ chrome.OnPageShown = page =>
 chrome.OnPageShown(chrome.SaidPage);
 var flights = chrome.Flights;
 flights.CanvasAvailable = false; // cells cannot draw an arrow: the terminal keeps the list
+chrome.NotificationsPage.GridAvailable = false; // columns of cards are for the window: the terminal keeps the rows
 var jobs = chrome.Jobs;
 var repos = chrome.Repos;
 var pullRequests = chrome.PullRequests;

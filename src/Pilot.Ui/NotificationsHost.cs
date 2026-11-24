@@ -25,6 +25,9 @@ internal sealed class NotificationsHost
     /// <summary>How many notifications the page row being built stands for (the N of a fold marked ×N); the page sets it round each row it builds.</summary>
     internal int PageRepeats { get; set; } = 1;
 
+    /// <summary>Whether the page being built draws its notifications as cards in columns (the Grid view); the page sets it while it builds.</summary>
+    internal bool PageGrid { get; set; }
+
     /// <summary>The width, in design units, of the page being built; a row stacks its right-hand cluster under its body below <see cref="NotificationToast.NarrowPage"/>.</summary>
     internal float PageWidth { get; set; } = float.MaxValue;
 
