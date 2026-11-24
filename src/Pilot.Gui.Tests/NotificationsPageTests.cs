@@ -325,7 +325,7 @@ public sealed class NotificationsPageTests
         // The frame takes the toast rule from the page it is given, as Program.cs builds it: the staying cards toast on any other page, and
         // here none covers the header's counts line.
         chrome.Notifications.ToastsOnPage.ShouldBeFalse();
-        shown.ShouldContain("you, 2 in the history", Case.Sensitive, "the header's counts line is whole: no toast stands over it");
+        shown.ShouldContain("you · 2 in the history", Case.Sensitive, "the header's counts line is whole: no toast stands over it");
         shown.IndexOf("Job two failed", StringComparison.Ordinal).ShouldBeLessThan(shown.IndexOf("Job one finished", StringComparison.Ordinal), "newest first");
     }
 }

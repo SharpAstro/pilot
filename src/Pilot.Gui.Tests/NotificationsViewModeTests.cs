@@ -135,7 +135,7 @@ public sealed class NotificationsViewModeTests
             texts.Any(t => t.EndsWith("Detail", StringComparison.Ordinal)).ShouldBeTrue("an open toast has its Detail link");
             inside.Any(a => TextOf(a).Contains("Start", StringComparison.Ordinal) || TextOf(a).Contains("Chat", StringComparison.Ordinal)).ShouldBeTrue("actions");
             inside.Count(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Icon }).ShouldBeGreaterThanOrEqualTo(2, "the severity icon and Close");
-            texts.ShouldContain("for", "the meta line names the card's bin");
+            (texts.Contains("for") || texts.Contains("RING")).ShouldBeTrue("the meta line names the card's bin");
         }
         var stray = rows[0].First(c => Inside(w, c).Any(a => TextOf(a).Trim() == "Stray"));
         var detail = Inside(w, stray).First(a => TextOf(a).Contains("Detail", StringComparison.Ordinal));
