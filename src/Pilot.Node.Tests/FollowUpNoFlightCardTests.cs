@@ -77,6 +77,19 @@ public sealed class FollowUpNoFlightCardTests : ReviewTestsBase
     }
 
     [Fact]
+    public async Task AFollowUpNoNodeCanPlaceIsReleasedByDismissingItsCardAndIsNotRungAgain()
+    {
+        PutLanded(Record());
+        var sweep = new FollowUpSweep(_state, _github, _time) { EnsureFlights = (_, _) => Task.CompletedTask };
+        await sweep.SweepAsync(Ct);
+        _state.CloseCard(Cards().ShouldHaveSingleItem().Id, "dismissed", "person").ShouldBeTrue();
+
+        await sweep.SweepAsync(Ct);
+
+        Cards().ShouldBeEmpty();
+    }
+
+    [Fact]
     public async Task TheSweepsEnsureStepThatPlacesTheFollowUpRaisesNoCard()
     {
         PutLanded(Record());

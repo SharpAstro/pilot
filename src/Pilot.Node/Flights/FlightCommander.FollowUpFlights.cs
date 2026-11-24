@@ -161,7 +161,8 @@ public sealed partial class FlightCommander
                 await CommentFollowUpAsync(path, followUp, landing, made, node);
                 if (followUp.Package)
                 {
-                    RaiseFollowUpPackageCard(landing, followUp, made, node, released);
+                    var held = await HoldPeerFlightAsync(node, made, landing, released, cancellationToken);
+                    RaiseFollowUpPackageCard(landing, followUp, made, node, released, held);
                 }
             }
             catch (Exception ex) when (ex is FlightException or IOException or InvalidOperationException or HttpRequestException or System.ComponentModel.Win32Exception)
@@ -172,14 +173,17 @@ public sealed partial class FlightCommander
     }
 
     /// <summary>A For-you card for a follow-up flight whose package wait this node cannot set: it names the package and the line to hold for. Never dropped silently.</summary>
-    private void RaiseFollowUpPackageCard(FlightRow landing, CrossRepoFollowUp followUp, string made, string node, PackageWait[] released)
+    private void RaiseFollowUpPackageCard(FlightRow landing, CrossRepoFollowUp followUp, string made, string node, PackageWait[] released, bool held = false)
     {
         var named = released.Length > 0
             ? string.Join(", ", released.Select(w => $"{w.Id} {w.Line}{(w.Above is { } above ? $" above {above}" : "")}"))
             : $"whatever package {landing.Code} released (its version line is in its Directory.Build.props)";
         state.RaiseCard(CardBin.ForYou, FollowUpPackageKind, Verbs.FlightTarget(made), $"{made} on {node} needs {named} from {landing.Code}",
-            $"{made} was made on {node} for {followUp.Repo}#{followUp.Issue.ToString(CultureInfo.InvariantCulture)}, which {landing.Code} recorded as needing a published package. Its wait cannot be set from here: hold {made} on {node} until {named} is on nuget.org.",
-            [new CardChoice { Label = "I have held it", Verb = Verbs.Dismiss, Target = "" }]);
+            $"{made} was made on {node} for {followUp.Repo}#{followUp.Issue.ToString(CultureInfo.InvariantCulture)}, which {landing.Code} recorded as needing a published package. "
+            + (held
+                ? $"Its wait cannot be set from here, so it was grounded on {node}: once {named} is on nuget.org, run 'pilot flight unground {made}' on {node}."
+                : $"Its wait cannot be set from here and the node could not ground it: hold {made} on {node} until {named} is on nuget.org."),
+            [new CardChoice { Label = held ? "I have released it" : "I have held it", Verb = Verbs.Dismiss, Target = "" }]);
     }
 
     /// <summary>
@@ -206,8 +210,12 @@ public sealed partial class FlightCommander
         {
             return;
         }
-        await EnsureLocalFollowUpFlightsAsync(landing, cancellationToken);
-        await EnsurePeerFollowUpFlightsAsync(landing.Code, [], cancellationToken);
+        // Called under the lock; the creates, GitHub and the peers are asked with it let go (PIL338).
+        await OffLockAsync(async () =>
+        {
+            await EnsureLocalFollowUpFlightsAsync(landing, cancellationToken);
+            await EnsurePeerFollowUpFlightsAsync(landing.Code, [], cancellationToken);
+        });
     }
 
     /// <summary><c>ensure-follow-ups</c> (the verb already holds the lock): the same step, answered with what is left.</summary>
@@ -223,6 +231,29 @@ public sealed partial class FlightCommander
         return left.Count == 0
             ? $"every follow-up of {flight.Code} has a flight"
             : $"{left.Count.ToString(CultureInfo.InvariantCulture)} follow-up(s) of {flight.Code} still have no flight: {string.Join("; ", left.Select(f => $"{f.Repo}#{f.Issue.ToString(CultureInfo.InvariantCulture)} ({f.Problem ?? "not tried"})"))}";
+    }
+
+    /// <summary>Grounds the flight made on a peer until the package is out, since its wait cannot be set from here; false when the peer refused or is away.</summary>
+    private async Task<bool> HoldPeerFlightAsync(string node, string code, FlightRow landing, PackageWait[] released, CancellationToken cancellationToken)
+    {
+        var peer = (Fleet?.Peers() ?? []).FirstOrDefault(p => string.Equals(p.Name, node, StringComparison.OrdinalIgnoreCase));
+        if (peer is null)
+        {
+            return false;
+        }
+        var named = released.Length > 0 ? string.Join(", ", released.Select(w => $"{w.Id} {w.Line}")) : $"the package {landing.Code} released";
+        try
+        {
+            var result = await peer.SendAsync(new CommandRequest
+            {
+                Verb = Verbs.Ground, Target = Verbs.FlightTarget(code), Who = "land", Args = [$"waits for {named} from {landing.Code} to be on nuget.org"],
+            }, cancellationToken);
+            return result.Ok;
+        }
+        catch (Exception ex) when (ex is HttpRequestException or IOException or TimeoutException or System.Net.WebSockets.WebSocketException)
+        {
+            return false;
+        }
     }
 
     private async Task<(string Code, string Node)> MakeOnPeerAsync(FlightRow landing, CrossRepoFollowUp followUp, CancellationToken cancellationToken)

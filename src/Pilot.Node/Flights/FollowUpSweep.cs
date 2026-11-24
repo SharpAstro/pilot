@@ -170,13 +170,14 @@ public sealed class FollowUpSweep(NodeState state, IGitHub? github, TimeProvider
                 state.CloseCardsAbout(subject, "every follow-up has a flight", LandedKind);
                 continue;
             }
-            if (state.Cards(openOnly: true).Any(c => c.Kind == LandedKind && c.Subject == subject))
+            // One the person dismissed stays dismissed: a follow-up no node can place is released that way, not rung again every sweep.
+            if (state.CardsOf(LandedKind, subject).Any(c => c.State == CardState.Open || c.ClosedBy != "node"))
             {
                 continue;
             }
             var named = string.Join(", ", left.Select(f => $"{f.Repo}#{f.Issue.ToString(System.Globalization.CultureInfo.InvariantCulture)}"));
             state.RaiseCard(CardBin.ForYou, LandedKind, subject, $"{landed.Code} landed, but its follow-up {named} has no flight",
-                $"{string.Join("\n", left.Select(f => f.Line()))}\n\nNothing picks them up until a flight is made on each: the button makes them",
+                $"{string.Join("\n", left.Select(f => f.Line()))}\n\nNothing picks them up until a flight is made on each: the button makes them. If no node can place one, dismiss this card to stop being asked",
                 choices: [new CardChoice { Label = "Create the flights", Verb = Verbs.EnsureFollowUps, Target = subject }]);
         }
     }

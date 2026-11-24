@@ -173,7 +173,8 @@ public sealed partial class FlightCommander
         var packaged = new HashSet<string>(StringComparer.Ordinal);
         if (foldedInto is null && github is not null && flight.RepoFollowUps.Any(f => f.Flight is null))
         {
-            packaged = await EnsureLocalFollowUpFlightsAsync(flight, cancellationToken);
+            // GitHub, git and peers are asked with the lock let go (PIL338), as the rest of the landing does.
+            packaged = await OffLockAsync(() => EnsureLocalFollowUpFlightsAsync(flight, cancellationToken));
         }
         var consumers = state.Flights().Where(f => f.State != FlightState.Landed && f.Connections.Contains(flight.Code, StringComparer.Ordinal)).ToList();
         // Every live session of the flight's too, not only the legs' current workers and the current reviewer: its planner,
@@ -459,7 +460,7 @@ public sealed partial class FlightCommander
         {
             try
             {
-                await EnsurePeerFollowUpFlightsAsync(flight.Code, released, cancellationToken);
+                await OffLockAsync(() => EnsurePeerFollowUpFlightsAsync(flight.Code, released, cancellationToken));
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {

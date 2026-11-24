@@ -124,6 +124,9 @@ public sealed class FollowUpLandTests : PackageWaitTestsBase
         (card.Bin, card.Subject).ShouldBe((CardBin.ForYou, "flight/PIL180"));
         card.Title.ShouldContain("DE1");
         card.Detail.ShouldNotBeNull().ShouldContain("package");
+        // The peer's flight is grounded until the package is out, as its wait cannot be set from here.
+        peer.Sent.ShouldContain(c => c.Verb == Verbs.Ground && c.Target == "flight/PIL180");
+        card.Detail.ShouldContain("grounded");
     }
 
     [Fact]
