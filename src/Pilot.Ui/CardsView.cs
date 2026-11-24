@@ -1345,11 +1345,11 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         {
             // A narrow page has no room for a column of actions: they stack under the body, inside the same frame.
             return NotificationToast.Frame(focused ? FocusBg : fill, tokens.TintedEdge(severity), shadow: true,
-                [Layout.Sizing.Fixed(NotificationsLayout.ToastIconSize), Layout.Sizing.Star()],
+                [Layout.Sizing.Fixed(NotificationsLayout.ToastIconSize + NotificationsHost.Style.Gap), Layout.Sizing.Star()],
                 NotificationToast.Icon(severity, tokens.Of(severity)), Layout.Builder.VStack([.. lines, actions]).WithGap(NotificationsHost.Style.Gap).WStar());
         }
         return NotificationToast.Frame(focused ? FocusBg : fill, tokens.TintedEdge(severity), shadow: true,
-            [Layout.Sizing.Fixed(NotificationsLayout.ToastIconSize), Layout.Sizing.Star(2f), Layout.Sizing.Star(1f, 0f, NotificationToast.ActionsWidth)],
+            [Layout.Sizing.Fixed(NotificationsLayout.ToastIconSize + NotificationsHost.Style.Gap), Layout.Sizing.Star(2f), Layout.Sizing.Star(1f, 0f, NotificationToast.ActionsWidth)],
             NotificationToast.Icon(severity, tokens.Of(severity)), Layout.Builder.VStack([.. lines]).WStar(), actions);
     }
 
@@ -1372,11 +1372,11 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         {
             // A narrow page stacks the line's parts: title, summary, then the node and time.
             return NotificationToast.Frame(fill, edge, shadow: false,
-                [Layout.Sizing.Fixed(NotificationsLayout.ToastIconSize), Layout.Sizing.Star()],
+                [Layout.Sizing.Fixed(NotificationsLayout.ToastIconSize + NotificationsHost.Style.Gap), Layout.Sizing.Star()],
                 NotificationToast.Icon(severity, iconInk), Layout.Builder.VStack(title, summary, WrappedProse.Of(meta, NotificationToast.MetaSize, ink)).WStar());
         }
         return NotificationToast.Frame(fill, edge, shadow: false,
-            [Layout.Sizing.Fixed(NotificationsLayout.ToastIconSize), Layout.Sizing.Star(1.2f), Layout.Sizing.Star(1.6f), Layout.Sizing.Star(0.7f, 0f, 260f)],
+            [Layout.Sizing.Fixed(NotificationsLayout.ToastIconSize + NotificationsHost.Style.Gap), Layout.Sizing.Star(1.2f), Layout.Sizing.Star(1.6f), Layout.Sizing.Star(0.7f, 0f, 260f)],
             NotificationToast.Icon(severity, Contrast.Readable(Contrast.Mix(SeverityInk(severity), Dim, ClosedTone), fill, ink)), title, summary,
             WrappedProse.Of(meta, NotificationToast.MetaSize, ink));
     }
