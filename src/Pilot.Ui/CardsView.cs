@@ -676,7 +676,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     // Cards whose detail fold is open, by id: swapped whole, as the presses are.
     private System.Collections.Immutable.ImmutableHashSet<string> _detailOpen = System.Collections.Immutable.ImmutableHashSet<string>.Empty;
 
-    private void ToggleDetail(string cardId) =>
+    internal void ToggleDetail(string cardId) =>
         System.Collections.Immutable.ImmutableInterlocked.Update(ref _detailOpen, open => open.Contains(cardId) ? open.Remove(cardId) : open.Add(cardId));
 
     /// <summary>Whether card <paramref name="cardId"/>'s detail fold is open, for a test or a dump.</summary>
