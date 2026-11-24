@@ -10,15 +10,6 @@ namespace Pilot.Node.Flights;
 /// <summary>A merged PR as <c>gh pr list --state merged</c> names it: its number, its head branch and the commit that branch was at when it merged (PIL1101).</summary>
 public sealed record MergedPullRequest(int Number, string HeadRef, string HeadOid);
 
-/// <summary>A flight's PR on GitHub: its number, state and head.</summary>
-/// <param name="Mergeable">GitHub's word on whether it merges into its base: MERGEABLE, CONFLICTING, or UNKNOWN while it works it out.</param>
-/// <param name="Rebaseable">GraphQL's <c>canBeRebased</c>: whether its commits replay onto the base. Read only for a MERGEABLE PR whose base merges by rebase (null otherwise: not asked, so no call is made on a squash repo).</param>
-/// <param name="Title">Its title, as read by repo and number; empty otherwise.</param>
-/// <param name="Author">Its author's login, as read by repo and number; empty otherwise.</param>
-/// <param name="Base">The branch it goes into, as read by repo and number; empty otherwise.</param>
-/// <param name="Labels">The labels it carries, as read by branch; null when the read did not ask for them.</param>
-/// <param name="MergeCommit">The commit it merged as on its base, as read by branch; empty before it merges or when not read.</param>
-/// <param name="MergedAt">When it merged, as read by branch; null before it merges or when not read.</param>
 /// <summary>What one read of a PR says about the issues it closes (PIL1341).</summary>
 /// <param name="Issues">The numbers of the issues of its own repo it closes when it merges (GitHub's closingIssuesReferences).</param>
 /// <param name="State">The PR's state from the same read: OPEN, CLOSED or MERGED.</param>
@@ -28,6 +19,15 @@ public sealed record PrClosingIssues(int[] Issues, string State, string? Foreign
     public bool Open => string.Equals(State, "OPEN", StringComparison.OrdinalIgnoreCase);
 }
 
+/// <summary>A flight's PR on GitHub: its number, state and head.</summary>
+/// <param name="Mergeable">GitHub's word on whether it merges into its base: MERGEABLE, CONFLICTING, or UNKNOWN while it works it out.</param>
+/// <param name="Rebaseable">GraphQL's <c>canBeRebased</c>: whether its commits replay onto the base. Read only for a MERGEABLE PR whose base merges by rebase (null otherwise: not asked, so no call is made on a squash repo).</param>
+/// <param name="Title">Its title, as read by repo and number; empty otherwise.</param>
+/// <param name="Author">Its author's login, as read by repo and number; empty otherwise.</param>
+/// <param name="Base">The branch it goes into, as read by repo and number; empty otherwise.</param>
+/// <param name="Labels">The labels it carries, as read by branch; null when the read did not ask for them.</param>
+/// <param name="MergeCommit">The commit it merged as on its base, as read by branch; empty before it merges or when not read.</param>
+/// <param name="MergedAt">When it merged, as read by branch; null before it merges or when not read.</param>
 public sealed record PullRequest(int Number, string State, string Head, string Url, string Mergeable = "", string Title = "", string Author = "", string Base = "", IReadOnlyList<string>? Labels = null, string MergeCommit = "", DateTimeOffset? MergedAt = null, bool Draft = false, string HeadRef = "", bool Fork = false, bool? Rebaseable = null);
 
 /// <summary>
