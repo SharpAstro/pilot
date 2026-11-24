@@ -29,6 +29,11 @@ internal static class NotificationToast
     /// <summary>Below this page width, in design units, a row stacks its actions under its body (and a closed row its summary and meta under its title) instead of in columns.</summary>
     internal const float NarrowPage = 900f;
 
+    private const float CrossSize = 12f;
+
+    /// <summary>The padding that centres the Close cross in the library's click box.</summary>
+    private static readonly float CrossPad = (NotificationsLayout.CloseBoxSize - CrossSize) / 2f;
+
     /// <summary>The severity's icon, as DIR.Lib's toast draws it.</summary>
     internal static Layout.IconKind IconOf(NotificationSeverity severity) => severity switch
     {
@@ -45,8 +50,8 @@ internal static class NotificationToast
     /// <summary>The Close cross of an open row: the toast's click box with the cross in it; a null <paramref name="hit"/> draws it dead (a press is with the node).</summary>
     internal static Layout.Node Close(RGBAColor32 ink, string? hit, Action? run)
     {
-        var cross = Layout.Builder.HStack(Layout.Builder.Icon(Layout.IconKind.Close, 12f, ink))
-            .Pad((NotificationsLayout.CloseBoxSize - 12f) / 2f)
+        var cross = Layout.Builder.HStack(Layout.Builder.Icon(Layout.IconKind.Close, CrossSize, ink))
+            .Pad(CrossPad)
             .CrossCenter()
             .WAuto();
         return hit is null || run is null

@@ -300,7 +300,7 @@ public sealed class NotificationsPageTests
         const int columns = 160, rows = 44;
         using var vessel = new RgbaImageRenderer(1, 1);
         var chrome = new PilotChrome<RgbaImage>(vessel, new SessionsView<RgbaImage>(vessel));
-        chrome.NotificationsPage.GridAvailable = false; // as pilot-tui sets it
+        chrome.ForTerminal(); // as pilot-tui sets it
         chrome.Notifications.Open = true;
         chrome.Notifications.PostEvent(Event("Job one finished"), null, T0.AddMinutes(1));
         chrome.Notifications.PostEvent(Event("Job two failed", NotificationSeverity.Error), null, T0.AddMinutes(2));

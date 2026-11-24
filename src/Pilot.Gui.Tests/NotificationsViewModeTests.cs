@@ -216,10 +216,24 @@ public sealed class NotificationsViewModeTests
     }
 
     [Fact]
+    public void ForTerminalTurnsOffTheFlightsCanvasAndTheNotificationsGrid()
+    {
+        using var vessel = new RgbaImageRenderer(1, 1);
+        var chrome = new PilotChrome<RgbaImage>(vessel, new SessionsView<RgbaImage>(vessel));
+        chrome.Flights.CanvasAvailable.ShouldBeTrue();
+        chrome.NotificationsPage.GridAvailable.ShouldBeTrue();
+
+        chrome.ForTerminal();
+
+        chrome.Flights.CanvasAvailable.ShouldBeFalse();
+        chrome.NotificationsPage.GridAvailable.ShouldBeFalse();
+    }
+
+    [Fact]
     public void TheTerminalHasNoSwitchAndDrawsList()
     {
         using var w = new Window(1600, 2400, NotificationsViewMode.Grid);
-        w.Chrome.NotificationsPage.GridAvailable = false; // as pilot-tui sets it
+        w.Chrome.ForTerminal(); // as pilot-tui sets it
         w.Fill();
 
         w.Chrome.NotificationsPage.GridShown.ShouldBeFalse("Grid falls back to List");

@@ -32,6 +32,10 @@ public sealed class LayoutDrivenTests
         // field widths (WFixed(Math.Min(..))) and the stacked-or-beside choice are the other hits. Raised from 0 on 2026-11-09 for
         // PIL770 (the owner's call in review), lowered when DIR.Lib can declare measured caption placement.
         ["Pilot.Ui/SettingsView.cs"] = 4,
+        // The Notifications page stacks a row's actions under its body on a page narrower than NotificationToast.NarrowPage. That is a
+        // choice between two trees by the page width, and CollapseBelow only drops a node: it cannot swap one arrangement for another,
+        // nor does DIR.Lib offer a wrap-to-next-line row. Raised from 0 on 2026-11-24 for PIL1348 for that alone.
+        ["Pilot.Ui/PilotChrome.cs"] = 1,
     };
 
     // A sizing call; its argument, read to the matching parenthesis, must not compute (an operator, a Math call).

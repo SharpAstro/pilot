@@ -189,7 +189,15 @@ public sealed class NotificationsToastPageTests
             inside.Count(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Icon }).ShouldBe(1, "the severity icon only, no Close");
             inside.Where(a => TextOf(a).Trim() is "Dismiss" or "Chat about this").ShouldBeEmpty();
             inside.Any(a => TextOf(a).Contains("Start", StringComparison.Ordinal)).ShouldBeFalse("no buttons");
-            row.Bounds.Height.ShouldBeLessThan(open, "one line, shorter than an open row");
+            row.Bounds.Height.ShouldBeLessThan(open, "shorter than an open row");
+            // One line: the icon, title, summary and meta share a top, and the row is under one and a half text heights.
+            var texts = inside.Where(a => TextOf(a).Length > 0).ToList();
+            var icon = inside.Single(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Icon });
+            (texts.Max(a => a.Bounds.Y) - texts.Min(a => a.Bounds.Y)).ShouldBeLessThan(6f, "title, summary and meta start on one line");
+            var tallest = texts.Max(a => a.Bounds.Height);
+            row.Bounds.Height.ShouldBeLessThan(tallest * 1.5f + 2 * 16f, "one line of text, its padding and nothing under it");
+            var iconMid = icon.Bounds.Y + icon.Bounds.Height / 2f;
+            iconMid.ShouldBeInRange(texts.Min(a => a.Bounds.Y), texts.Max(a => a.Bounds.Y + a.Bounds.Height), "the icon sits on the same line");
         }
         // Title, summary and the node and time: "Job one finished" / "took 4 min" / "DE1 · 21:..".
         var closedTexts = rows.Skip(3).SelectMany(r => Inside(w, r)).Select(TextOf).ToList();
@@ -232,6 +240,25 @@ public sealed class NotificationsToastPageTests
     }
 
     [Fact]
+    public void ADetailLineIsDroppedOnlyWhenItIsWholeALineOfTheSummaryNotWhenTheSummaryMerelyContainsIt()
+    {
+        using var w = new Window(1600);
+        w.Fill();
+        w.Chrome.Cards.ToggleDetail("c4");
+        w.Frame(T0.AddMinutes(6), CardsScreen.From(
+        [
+            Card("c4", CardBin.Ring, "Build failed", "dotnet build: exit 1", "exit 1
+dotnet build: exit 1
+Second line."),
+        ]));
+
+        // "exit" is in the summary once, in the detail's tail line once; the line equal to the summary is not drawn again.
+        w.Arranged.Count(a => TextOf(a).Trim() == "exit").ShouldBe(2, "the tail line is kept, the repeated whole line is not");
+        w.Arranged.Count(a => TextOf(a).Trim() == "build:").ShouldBe(1, "the line equal to the summary is dropped");
+        w.Arranged.Select(TextOf).ShouldContain(t => t.Trim() == "Second", "an unrelated line stays");
+    }
+
+    [Fact]
     public void TitleSummaryAndMetaAreThePrototypesSizesFromOneSetOfConstants()
     {
         NotificationToast.OpenTitleSize.ShouldBe(18f);
@@ -258,7 +285,7 @@ public sealed class NotificationsToastPageTests
         using var vessel = new RgbaImageRenderer(1, 1);
         var chrome = new PilotChrome<RgbaImage>(vessel, new SessionsView<RgbaImage>(vessel));
         chrome.Notifications.Open = true;
-        chrome.NotificationsPage.GridAvailable = false; // as pilot-tui sets it
+        chrome.ForTerminal(); // as pilot-tui sets it
         chrome.Notifications.PostEvent(Event("j3", "Job three finished", "dotnet build: exit 0", NotificationSeverity.Success, "SE1"), null, T0.AddMinutes(3));
         chrome.Notifications.PostEvent(Event("j4", "Job three finished", "dotnet build: exit 0", NotificationSeverity.Success, "SE1"), null, T0.AddMinutes(4));
         chrome.Notifications.Sync(Cards().Open, _ => "DE1", T0.AddMinutes(5));
