@@ -40,10 +40,6 @@ public sealed partial class PrReviews
     {
         try
         {
-            if (!string.Equals((await github.PullRequestOfAsync(review.Repo, review.Number, cancellationToken)).State, "OPEN", StringComparison.OrdinalIgnoreCase))
-            {
-                return null;
-            }
             var issues = await ClosingIssuesOfAsync(review, cancellationToken);
             if (issues.Length == 0)
             {
@@ -56,7 +52,8 @@ public sealed partial class PrReviews
                     return null;
                 }
             }
-            return issues;
+            // Last, and only for a PR whose issues are all closed: the PR read is the dearer call and most PRs never get here.
+            return string.Equals((await github.PullRequestOfAsync(review.Repo, review.Number, cancellationToken)).State, "OPEN", StringComparison.OrdinalIgnoreCase) ? issues : null;
         }
         catch (FlightException)
         {
