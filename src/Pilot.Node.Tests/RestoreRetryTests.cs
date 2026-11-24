@@ -97,7 +97,7 @@ public sealed class RestoreRetryTests : ReviewTestsBase
         Open().Where(c => c.Kind == PrChecks.RestoreFailedKind).ShouldHaveSingleItem();
 
         _github.PrFails = null;
-        _github.Queue = new MergeQueueState("OPEN", F(flight.Code).Review!.ReviewedHead!, Queued: true, Position: 1);
+        _github.Queue = GhAnswers.MergeQueue("queued", F(flight.Code).Review!.ReviewedHead!, 1);
         await checks.LookAsync(Ct);
 
         Open().ShouldNotContain(c => c.Kind == PrChecks.RestoreFailedKind);
