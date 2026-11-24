@@ -27,7 +27,6 @@ public sealed class RestoreRetryTests : ReviewTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")] // a real plane worktree and git commits: the flight is flown through the real leg commands
     public async Task AFailedRestoreRaisesNoCardAndTheNextLookRestoresItAndTheFlightMerges()
     {
         NodeAdvances();
@@ -48,7 +47,6 @@ public sealed class RestoreRetryTests : ReviewTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")] // a real plane worktree and git commits: the flight is flown through the real leg commands
     public async Task AllLegsDonePassedAtHeadGreenAndGhFailingOnceNeverLeavesTheFlightWithoutACard()
     {
         _github.Checks = ChoiceStatus.Pending;
@@ -70,7 +68,42 @@ public sealed class RestoreRetryTests : ReviewTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")] // a real plane worktree and git commits: the flight is flown through the real leg commands
+    public async Task AHoldingFlightPastTheBoundHasARingCardWhoseOneChoiceIsKeepTrying()
+    {
+        _github.Checks = ChoiceStatus.Pending;
+        var flight = await PassedWithNoCard("4");
+        _state.PutFlight(F(flight.Code) with { Holding = new FlightHolding { Reason = "waiting for a sibling", Since = _clock.GetUtcNow(), By = "watchtower" } });
+        var checks = Checks();
+
+        await checks.LookAsync(Ct);
+        _clock.Advance(checks.HoldingBound + TimeSpan.FromSeconds(1));
+        await checks.LookAsync(Ct);
+
+        // A holding flight's merge is refused, so "Land at the reviewed head" is not offered: only what can be used now.
+        var ring = Open().Where(c => c.Kind == PrChecks.RestoreFailedKind).ShouldHaveSingleItem();
+        ring.Choices.ShouldHaveSingleItem().Label.ShouldBe("Keep trying");
+    }
+
+    [Fact]
+    public async Task AFailingRestoreFollowedByAQueuedPrClosesTheRingCard()
+    {
+        _github.Checks = ChoiceStatus.Pending;
+        var flight = await PassedWithNoCard("5");
+        var checks = Checks();
+
+        await checks.LookAsync(Ct);
+        _clock.Advance(checks.HoldingBound + TimeSpan.FromSeconds(1));
+        await checks.LookAsync(Ct);
+        Open().Where(c => c.Kind == PrChecks.RestoreFailedKind).ShouldHaveSingleItem();
+
+        _github.PrFails = null;
+        _github.Queue = new MergeQueueState("OPEN", F(flight.Code).Review!.ReviewedHead!, Queued: true, Position: 1);
+        await checks.LookAsync(Ct);
+
+        Open().ShouldNotContain(c => c.Kind == PrChecks.RestoreFailedKind);
+    }
+
+    [Fact]
     public async Task ARestoreFailingPastTheBoundRaisesOneRingCardNamingTheErrorAndClosesItOnSuccess()
     {
         _github.Checks = ChoiceStatus.Pending;

@@ -38,7 +38,6 @@ public sealed class NotesLegNoCommitTests : ReviewTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")] // a real plane worktree and git commits: the flight is flown through the real leg commands
     public async Task ALegThatEndsWithNoCommitAndMadeNotesEndsTheHoldAtTheReviewedHead()
     {
         NodeAdvances();
@@ -51,6 +50,9 @@ public sealed class NotesLegNoCommitTests : ReviewTestsBase
         _state.PutFlight(F(flight.Code) with { Review = F(flight.Code).Review! with { ReviewedHead = head } });
         reviewed = head;
         _github.Pr = _github.Pr! with { Head = head };
+        // The PR-ready card the review pass raised still asks to merge the head it read; the card, ReviewedHead, the plane and the PR agree on one head.
+        var card = Open().Single(c => c.Kind == LegCommander.PrReady);
+        _state.UpdateCard(card.Id, card.Title, card.Detail, card.Choices.Select(c => c.Verb == Verbs.Merge ? c with { Args = [head, .. (c.Args ?? []).Skip(1)] } : c).ToList(), card.Link);
         (await Run(Verbs.FinishLeg, Verbs.LegTarget(flight.Code, "retake-captures"), worker, "done", Made)).Error.ShouldBeNull();
 
         var now = F(flight.Code);
@@ -63,15 +65,15 @@ public sealed class NotesLegNoCommitTests : ReviewTestsBase
         (ready.Detail ?? "").ShouldNotContain("merge is held");
         await Checks().LookAsync(Ct);
         // The node asks for the merge itself at the reviewed head (the plane's own, which the fake PR carries) and nothing refuses it: no hold,
-        // note or leg stands in its way, and no merge-refused card is raised (the fake lands a merge as an entry, as AutopilotMergeCardTests reads it).
+        // note or leg stands in its way, so the fake GitHub is asked to merge that head, and no merge-refused card is raised.
         var entry = _state.Merges().Single(m => m.Flight == flight.Code);
         entry.By.ShouldBe(MergeBy.Node);
-        $"{entry.State} {entry.Why} head={entry.Head} pr={_github.Pr!.Head} card={string.Join(',', ready.Choices.Select(c => string.Join('|', c.Args ?? [])))} merged={_github.Merged.Count}".ShouldBe("");
+        entry.State.ShouldNotBe(MergeEntryState.Dropped, entry.Why);
+        _github.Merged.ShouldHaveSingleItem().Head.ShouldBe(head);
         _state.Cards(openOnly: false).ShouldNotContain(c => c.Kind == PrChecks.NodeMergeRefused);
     }
 
     [Fact]
-    [Trait("Category", "Slow")] // a real plane worktree and git commits: the flight is flown through the real leg commands
     public async Task ALegThatEndsWithNoCommitAndARowForAnotherPointOnlyKeepsTheHold()
     {
         var (flight, worker) = await HoldingWithLeg("5", "retake-captures");
@@ -83,7 +85,6 @@ public sealed class NotesLegNoCommitTests : ReviewTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")] // a real plane worktree and git commits: the flight is flown through the real leg commands
     public async Task ALegThatEndsWithNoCommitAndANoteUnmadeKeepsTheHold()
     {
         var (flight, worker) = await HoldingWithLeg("2", "retake-captures");
@@ -94,7 +95,6 @@ public sealed class NotesLegNoCommitTests : ReviewTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")] // a real plane worktree and git commits: the flight is flown through the real leg commands
     public async Task ALegThatEndsWithANewCommitEndsTheHoldThroughThePushAndReviewsTheNewHead()
     {
         var (flight, worker) = await HoldingWithLeg("3", "retake-captures");
@@ -113,7 +113,6 @@ public sealed class NotesLegNoCommitTests : ReviewTestsBase
     }
 
     [Fact]
-    [Trait("Category", "Slow")] // a real plane worktree and git commits: the flight is flown through the real leg commands
     public async Task AHoldWithEveryLegDoneBelowTheCapAndNoOpenCardIsNotSilentEither()
     {
         NodeAdvances();
@@ -135,13 +134,12 @@ public sealed class NotesLegNoCommitTests : ReviewTestsBase
 
         await Checks().LookAsync(Ct);
 
-        var open = Open().Any(c => c.Subject == Verbs.FlightTarget(flight.Code));
-        var legOnTheWay = _state.Legs(flight.Code).Any(l => l.Name.StartsWith(LegCommander.ReviewNotesLeg, StringComparison.Ordinal) && l.State != LegState.Done);
-        (open || legOnTheWay).ShouldBeTrue("a hold with no leg on the way always has an open card");
+        // Below the cap the look plans the notes leg again (a leg, not a card); the person is rung only past the cap.
+        _state.Legs(flight.Code).ShouldContain(l => l.Name.StartsWith(LegCommander.ReviewNotesLeg, StringComparison.Ordinal) && l.State != LegState.Done,
+            "a hold below the cap with no leg on the way has its notes leg planned again");
     }
 
     [Fact]
-    [Trait("Category", "Slow")] // a real plane worktree and git commits: the flight is flown through the real leg commands
     public async Task AHoldWithEveryLegDoneAndNoOpenCardIsNotSilent()
     {
         NodeAdvances();
