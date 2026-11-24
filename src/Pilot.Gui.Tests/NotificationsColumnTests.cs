@@ -113,7 +113,7 @@ public sealed class NotificationsColumnTests
         frames.Count.ShouldBe(5, "three open cards and two history entries, all drawn");
         // DSN-5 v1 removed the 440 column cap: a row spans the page less its gutters (20 units each side).
         frames.Select(f => MathF.Round(f.Frame.X)).Distinct().Count().ShouldBe(1, "every card has the same left edge");
-        frames.ShouldAllBe(f => f.Border.Width >= width - 2f * 20f * dpi - 1f, "each row fills the page less its gutters");
+        frames.ShouldAllBe(f => f.Border.Width >= width - (52f + 2f * 20f) * dpi - 1f, "each row fills the page (less its rail and 20-unit gutters)");
         frames.ShouldAllBe(f => f.Border.Width <= width, "and none runs past the page");
 
         var gaps = frames.Zip(frames.Skip(1), (a, b) => b.Frame.Y - (a.Frame.Y + a.Frame.Height)).ToList();

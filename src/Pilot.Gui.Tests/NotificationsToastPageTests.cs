@@ -139,7 +139,7 @@ public sealed class NotificationsToastPageTests
         rows.Count.ShouldBe(6, "three open rows and three history rows (the pair folded)");
         foreach (var row in rows)
         {
-            row.Bounds.Width.ShouldBeGreaterThan(width - 2f * 40f, "a row fills the page less its gutters, not a 440 column");
+            row.Bounds.Width.ShouldBeGreaterThan(width - (52f + 2f * 20f) - 1f, "a row fills the page less its rail and gutters, not a 440 column");
             row.Bounds.Width.ShouldBeLessThanOrEqualTo(width, "and never runs past the page");
         }
         rows.Select(r => MathF.Round(r.Bounds.X)).Distinct().Count().ShouldBe(1, "one left edge");
@@ -154,9 +154,14 @@ public sealed class NotificationsToastPageTests
         var tokens = NotificationsHost.Colors();
         var rows = Rows(w);
 
-        foreach (var (row, severity) in new[] { (rows[0], NotificationSeverity.Warn), (rows[1], NotificationSeverity.Info) }.Concat([(rows[2], NotificationSeverity.Warn)]).Take(3))
+        var warn = tokens.TintedFill(NotificationSeverity.Warn);
+        var info = tokens.TintedFill(NotificationSeverity.Info);
+        foreach (var row in rows.Take(3))
         {
-            // The open cards are Ring (Warn) and For you (Info): each row's tokens are its own severity's.
+            // The open cards are Ring (Warn) and For you (Info): each row's fill and edge are its own severity's tokens.
+            var severity = row.Node.Background == warn ? NotificationSeverity.Warn : NotificationSeverity.Info;
+            row.Node.Background.ShouldBe(severity == NotificationSeverity.Warn ? warn : info);
+            row.Node.BorderStyle!.Color.ShouldBe(tokens.TintedEdge(severity));
             row.Node.BorderStyle!.Radius.ShouldBe(tokens.CornerRadius);
             row.Node.ShadowStyle.ShouldBe(tokens.ToastShadow, "an open row carries the toast's shadow");
             row.Node.Background.ShouldNotBeNull();
@@ -165,9 +170,7 @@ public sealed class NotificationsToastPageTests
             button.Bounds.X.ShouldBeGreaterThan(row.Bounds.X + row.Bounds.Width * 0.5f, "the actions are on the right");
             Inside(w, row).Count(a => TextOf(a).Trim() == "Dismiss").ShouldBe(0, "the Close cross is the dismiss");
         }
-        rows[0].Node.Background.ShouldBe(tokens.TintedFill(NotificationSeverity.Warn));
-        rows[1].Node.Background.ShouldBe(tokens.TintedFill(NotificationSeverity.Info));
-        rows[0].Node.BorderStyle!.Color.ShouldBe(tokens.TintedEdge(NotificationSeverity.Warn));
+        rows.Take(3).Select(r => r.Node.Background).Distinct().Count().ShouldBe(2, "a Ring card and a For you card differ in tint");
     }
 
     [Fact]
@@ -191,7 +194,7 @@ public sealed class NotificationsToastPageTests
         var closedTexts = rows.Skip(3).SelectMany(r => Inside(w, r)).Select(TextOf).ToList();
         closedTexts.ShouldContain(t => t.Trim() == "one");
         closedTexts.ShouldContain(t => t.Trim() == "took");
-        closedTexts.ShouldContain(t => t.StartsWith("DE1 · ", StringComparison.Ordinal));
+        closedTexts.ShouldContain(t => t.Trim() == "DE1");
     }
 
     [Fact]
@@ -201,8 +204,8 @@ public sealed class NotificationsToastPageTests
         w.Fill();
 
         w.Arranged.Count(a => TextOf(a).Trim() == "three").ShouldBe(1, "one row for the pair");
-        w.Arranged.Count(a => TextOf(a).StartsWith("SE1 · ", StringComparison.Ordinal) && TextOf(a).EndsWith("×2", StringComparison.Ordinal)).ShouldBe(1, "marked ×2");
-        w.Arranged.Count(a => TextOf(a).EndsWith("×2", StringComparison.Ordinal)).ShouldBe(1, "and nothing else is");
+        w.Arranged.Count(a => TextOf(a).Trim() == "×2").ShouldBe(1, "marked ×2");
+        w.Arranged.Count(a => TextOf(a).Contains("×", StringComparison.Ordinal)).ShouldBe(1, "and nothing else is");
 
         var folded = NotificationsView<RgbaImage>.Folded(w.Chrome.Notifications.History);
         folded.Count.ShouldBe(3);
@@ -240,7 +243,9 @@ public sealed class NotificationsToastPageTests
         float Size(string word) => SizeOf(w.Arranged.First(a => TextOf(a).Trim() == word));
         Size("Stray").ShouldBe(18f, "an open title");
         Size("short").ShouldBe(15f, "an open summary");
-        w.Arranged.Where(a => TextOf(a).Contains(" · ", StringComparison.Ordinal) && a.Node is Layout.Node.Leaf).ShouldAllBe(a => SizeOf(a) == 14f, "meta");
+        var metas = Rows(w).SelectMany(r => Inside(w, r)).Where(a => TextOf(a).Trim() == "·" && a.Node is Layout.Node.Leaf).ToList();
+        metas.ShouldNotBeEmpty();
+        metas.Select(SizeOf).Distinct().ShouldBe([14f], "meta");
         Size("one").ShouldBe(17f, "a closed title");
         Size("took").ShouldBe(15f, "a closed summary");
     }

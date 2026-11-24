@@ -1048,7 +1048,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         var meta = string.Join(" · ", new[] { nodeLabel, whenText, StaleMark(card), repeats > 1 ? $"×{repeats}" : null }.Where(s => !string.IsNullOrEmpty(s)));
         if (full && closed && !merged)
         {
-            return ClosedRow(card, severity, fill, closedInk, linker, titleSize, summarySize, meta, tokens);
+            return ClosedRow(card, node, severity, fill, closedInk, linker, titleSize, summarySize, meta, tokens);
         }
         var head = Layout.Builder.Text($"{(merged ? "merged" : kindWord ?? (card.Bin == CardBin.Ring ? "RING" : "for you"))}{(nodeLabel is null ? "" : $" · {nodeLabel}")}{(when is null ? "" : $" · {when}")}{(closed && !merged ? " · closed" : "")}", 10f, accent).Selectable();
         var lines = new List<Layout.Node>
@@ -1332,14 +1332,14 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         List<(Layout.Node Node, bool Full)> buttons, Layout.Node? closeCross, string meta, bool focused)
     {
         var metaInk = Contrast.Readable(Dim, fill, Bright);
-        var topRight = new List<Layout.Node> { Layout.Builder.Spacer().WStar(), Layout.Builder.Text(meta, NotificationToast.MetaSize, metaInk).Selectable().WAuto() };
+        var topRight = new List<Layout.Node> { WrappedProse.Of(meta, NotificationToast.MetaSize, metaInk).WStar() };
         if (closeCross is not null)
         {
             topRight.Add(closeCross);
         }
         var actions = Layout.Builder.VStack(
                 Layout.Builder.HStack([.. topRight]).WithGap(8f).CrossCenter().WStar(),
-                Layout.Builder.HStack(Layout.Builder.Spacer().WStar(), ButtonRows(buttons)).WStar())
+                ButtonRows(buttons))
             .WithGap(NotificationsHost.Style.Gap).WStar();
         return NotificationToast.Frame(focused ? FocusBg : fill, tokens.TintedEdge(severity), shadow: true,
             [Layout.Sizing.Fixed(NotificationsLayout.ToastIconSize), Layout.Sizing.Star(2f), Layout.Sizing.Star(1f, 0f, NotificationToast.ActionsWidth)],
@@ -1347,17 +1347,23 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     }
 
     /// <summary>The Notifications page's closed row: one quiet line in the toast's frame toned toward the plain ground (icon, title, the summary in the middle, node and time at the right), with no buttons and no Close.</summary>
-    private Layout.Node ClosedRow(CardRow card, NotificationSeverity severity, RGBAColor32 fill, RGBAColor32 ink, Func<float, Func<string, Layout.Node?>> linker,
+    private Layout.Node ClosedRow(CardRow card, NodeMark? node, NotificationSeverity severity, RGBAColor32 fill, RGBAColor32 ink, Func<float, Func<string, Layout.Node?>> linker,
         float titleSize, float summarySize, string meta, NotificationsColors tokens)
     {
         var title = WrappedProse.Of(Titled(card), titleSize, ink, 0, linker(titleSize));
         var said = string.Join(' ', CardSummaryLines.Of(WrappedProse.Bound(card.Summary ?? "", SummaryChars)));
-        var summary = said.Length > 0 ? WrappedProse.Of(said, summarySize, ink) : Layout.Builder.Spacer();
+        Layout.Node summary = said.Length > 0 ? WrappedProse.Of(said, summarySize, ink) : Layout.Builder.Spacer();
+        // The one image the node keeps for a card (an overlap's screenshot) stays reachable once the card is closed: its thumbnail under the summary.
+        if (card.Attachment is { Length: > 0 } image && card.AttachmentExt is { Length: > 0 } imageExt)
+        {
+            summary = Layout.Builder.VStack(summary,
+                Gallery.Single($"card:{card.Id}", new AttachmentRef(image, ImageTitle, imageExt, node), words => WrappedProse.Of(words, 11f, Dim, DetailLines, lineChars: LineChars / 2).WStar())).WStar();
+        }
         var edge = Contrast.Mix(tokens.TintedEdge(severity), tokens.Raised, ClosedTone);
         return NotificationToast.Frame(fill, edge, shadow: false,
-            [Layout.Sizing.Fixed(NotificationsLayout.ToastIconSize), Layout.Sizing.Star(1f), Layout.Sizing.Star(1.4f), Layout.Sizing.Auto],
+            [Layout.Sizing.Fixed(NotificationsLayout.ToastIconSize), Layout.Sizing.Star(1.2f), Layout.Sizing.Star(1.6f), Layout.Sizing.Star(0.7f, 0f, 260f)],
             NotificationToast.Icon(severity, Contrast.Readable(Contrast.Mix(SeverityInk(severity), Dim, ClosedTone), fill, ink)), title, summary,
-            Layout.Builder.Text(meta, NotificationToast.MetaSize, ink).Selectable().WAuto());
+            WrappedProse.Of(meta, NotificationToast.MetaSize, ink));
     }
 
     /// <summary>How many notifications the row being built stands for (one, or the N of a fold marked ×N); set by the page while it builds its rows.</summary>
