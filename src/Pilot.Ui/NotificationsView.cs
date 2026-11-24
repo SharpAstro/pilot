@@ -53,21 +53,16 @@ internal sealed class NotificationsView<TSurface>(Renderer<TSurface> renderer) :
         return About?.Over(page) ?? page;
     }
 
-    /// <summary>
-    /// The widest a card is drawn on the page, in design units: near the toast's width (<see cref="NotificationsHost.Style"/>'s ToastWidth) and no
-    /// wider than the panel's, so a card reads as it does in a toast and the lines stay short on a wide window.
-    /// </summary>
-    internal static float ColumnWidth => MathF.Round(NotificationsHost.Style.ToastWidth * 1.375f);
-
-    private const float Gutter = 14f, CardGap = 10f;
+    private const float Gutter = 20f, CardGap = 8f;
 
     /// <summary>
-    /// The list: Needs you, then History newest first, each notification the one card component (<c>CardsView.Card</c>) at page fit, in a
-    /// left-aligned column of <see cref="ColumnWidth"/> at most with one gap between cards. One declaration for the window and the terminal.
+    /// The list: Needs you, then History newest first, each notification the one card component (<c>CardsView.Card</c>) at page fit, a row across
+    /// the page less its gutters (DSN-5 v1: no column cap) with one gap between rows; notifications alike in title, node and text are one row
+    /// marked ×N. One declaration for the window and the terminal.
     /// </summary>
     private Layout.Node List(float width)
     {
-        var column = MathF.Max(1f, MathF.Min(ColumnWidth, width - 2f * Gutter));
+        var column = MathF.Max(1f, width - 2f * Gutter);
         var blocks = new List<Layout.Node>();
         var colors = NotificationsHost.Colors();
         Layout.Node Section(string title, int count, Layout.Node? action = null)
@@ -98,13 +93,44 @@ internal sealed class NotificationsView<TSurface>(Renderer<TSurface> renderer) :
 
     private void AddCards(List<Layout.Node> blocks, IReadOnlyList<DIR.Lib.Notifications.Notification> notifications, Func<Layout.Node, Layout.Node> place)
     {
+        foreach (var (n, count) in Folded(notifications))
+        {
+            Host.PageRepeats = count;
+            try
+            {
+                var card = n.Row is { } row
+                    ? row()
+                    : Host.EventCard?.Invoke(n.Title, n.Text, n.Source, n.Posted, n.Posted.ToLocalTime().ToString("HH:mm"), n.Id.ToString(), n.Severity) ?? Layout.Builder.Text(n.Title, 12f, Palette.Current.Bright).Selectable();
+                blocks.Add(place(card));
+            }
+            finally
+            {
+                Host.PageRepeats = 1;
+            }
+        }
+    }
+
+    /// <summary>
+    /// <paramref name="notifications"/> with those of one title, node and text folded into one, the newest of them kept (at the place of the first), with how many it stands for.
+    /// </summary>
+    internal static List<(DIR.Lib.Notifications.Notification Notification, int Count)> Folded(IReadOnlyList<DIR.Lib.Notifications.Notification> notifications)
+    {
+        var rows = new List<(DIR.Lib.Notifications.Notification Notification, int Count)>();
+        var at = new Dictionary<(string, string?, string), int>();
         foreach (var n in notifications)
         {
-            var card = n.Row is { } row
-                ? row()
-                : Host.EventCard?.Invoke(n.Title, n.Text, n.Source, n.Posted, n.Posted.ToLocalTime().ToString("HH:mm"), n.Id.ToString(), n.Severity) ?? Layout.Builder.Text(n.Title, 12f, Palette.Current.Bright).Selectable();
-            blocks.Add(place(card));
+            var key = (n.Title, n.Source, n.Text);
+            if (at.TryGetValue(key, out var i))
+            {
+                rows[i] = (rows[i].Notification.Posted >= n.Posted ? rows[i].Notification : n, rows[i].Count + 1);
+            }
+            else
+            {
+                at[key] = rows.Count;
+                rows.Add((n, 1));
+            }
         }
+        return rows;
     }
 
     /// <summary>A keep time as a person reads it: <c>24 hours</c>, <c>3 days</c>.</summary>

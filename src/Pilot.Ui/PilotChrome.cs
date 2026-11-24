@@ -243,6 +243,7 @@ internal sealed class PilotChrome<TSurface>
         Notifications.CardButtons = ToastButtons;
         Notifications.CardPage = (card, node) => () => WholeCard(card, node);
         Notifications.EventCard = Cards.EventCard;
+        Cards.PageRepeats = () => Notifications.PageRepeats;
         // A flight page's Merge is its card's own choice, run as the panel runs it.
         Flights.CoveredAt = DrawnAfterPage;
         Flights.OnAnswerCard = (card, number) => Cards.OnAnswer?.Invoke(card, number);

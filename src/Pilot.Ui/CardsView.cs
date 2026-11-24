@@ -1040,17 +1040,28 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
             return LegLink(card, about, shown[..at] + about + shown[(at + bare.Length)..] + " ", size).WAuto();
             };
         };
+        // The page's row is the toast's frame (NotificationToast): its own text sizes, the node and time at its right, and no kind line.
+        var titleSize = !full ? 14f : closed ? NotificationToast.ClosedTitleSize : NotificationToast.OpenTitleSize;
+        var summarySize = full ? NotificationToast.SummarySize : 12f;
+        var repeats = full ? Math.Max(1, PageRepeats?.Invoke() ?? 1) : 1;
+        var whenText = when ?? card.At.ToLocalTime().ToString("HH:mm");
+        var meta = string.Join(" · ", new[] { nodeLabel, whenText, StaleMark(card), repeats > 1 ? $"×{repeats}" : null }.Where(s => !string.IsNullOrEmpty(s)));
+        if (full && closed && !merged)
+        {
+            return ClosedRow(card, severity, fill, closedInk, linker, titleSize, summarySize, meta, tokens);
+        }
         var head = Layout.Builder.Text($"{(merged ? "merged" : kindWord ?? (card.Bin == CardBin.Ring ? "RING" : "for you"))}{(nodeLabel is null ? "" : $" · {nodeLabel}")}{(when is null ? "" : $" · {when}")}{(closed && !merged ? " · closed" : "")}", 10f, accent).Selectable();
         var lines = new List<Layout.Node>
         {
             // The stale age (#736) is a word of its own beside the head, so the head says the same whatever the clock reads.
-            StaleMark(card) is { } staleMark
+            full ? Layout.Builder.Spacer().RowH(0f)
+            : StaleMark(card) is { } staleMark
                 ? Layout.Builder.HStack(head.WAuto(), Layout.Builder.Text($"· {staleMark}", 10f, accent).Selectable().WAuto()).WithGap(4f).RowH(16f)
                 : head.RowH(16f),
             // A card about a page (its PR) has its title as the link to it, as a hyperlink reads: where the eye goes first.
             // Marked as a link to elsewhere, so it reads as "open the page", never as an action of its own. A waiting
             // session's link is its button, Answer in the browser, so its title is no second one.
-            Title(card, linker, closed && !merged ? closedInk : Bright),
+            Title(card, linker, closed && !merged ? closedInk : Bright, titleSize),
         };
         // A title of several lines is set off from the detail under it.
         lines.Add(Layout.Builder.Spacer().RowH(4f));
@@ -1062,20 +1073,24 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
             // rings read as a list, never run together and never cut with the rest only on hover (the owner, 2026-11-22).
             lines.Add(toast
                 ? WrappedProse.Of(summary, 12f, Dim, ToastSummaryLines, selectable: false)
-                : Whole(WrappedProse.Lines(CardSummaryLines.Of(WrappedProse.Bound(summary, SummaryChars)), 12f, closed && !merged ? closedInk : Body, linker(12f)), summary, summary.Length > SummaryChars));
+                : Whole(WrappedProse.Lines(CardSummaryLines.Of(WrappedProse.Bound(summary, SummaryChars)), summarySize, closed && !merged ? closedInk : Body, linker(summarySize)), summary, summary.Length > SummaryChars));
         }
         // The leg's name was not in the words above: a small link row of its own, so the leg is one click away all the same.
         if (leg is { } ofLeg && !linked)
         {
             lines.Add(LegLink(card, ofLeg, ofLeg.ToString(), 12f).RowH(20f));
         }
-        if (card.Detail is { Length: > 0 } detail && detail != summary)
+        // The page draws no detail line the summary already says (the stray card's Reason line repeated its summary): a detail of nothing else has no fold.
+        var shownDetail = card.Detail is { Length: > 0 } rawDetail && full && summary is not null
+            ? string.Join('\n', rawDetail.Split('\n').Where(l => !string.IsNullOrWhiteSpace(l) && !summary.Contains(l.Trim(), StringComparison.Ordinal)))
+            : card.Detail;
+        if (shownDetail is { Length: > 0 } detail && detail != summary)
         {
             // A toast never shows the detail: its fold is shut and opens the page, which lists the card.
             var unfolded = !toast && (summary is null || Volatile.Read(ref _detailOpen).Contains(card.Id));
             if (summary is not null)
             {
-                var fold = Layout.Builder.Text($"{(unfolded ? "▾" : "▸")} Detail", 11f, Dim).BgHover(CardHover);
+                var fold = Layout.Builder.Text($"{(unfolded ? "▾" : "▸")} Detail", full ? NotificationToast.MetaSize : 11f, Dim).BgHover(CardHover);
                 lines.Add((toast
                     ? fold.Follows(new HitResult.ButtonHit($"toast:{card.Id}:detail"), _ => toPage?.Invoke())
                     : fold.Follows(new HitResult.ButtonHit($"card:{card.Id}:detail"), _ => ToggleDetail(card.Id)))
@@ -1089,7 +1104,7 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
                 {
                     // An ask's detail is the whole call its Allow runs: drawn whole, uncapped, so the tail of a long command is seen (PIL855).
                     // The full card draws any detail so, each of its lines a paragraph, as the panel's fold would cut it.
-                    lines.Add(full ? WrappedProse.Lines(detail.Split('\n'), 11f, Body) : WrappedProse.Of(detail, 11f, Body));
+                    lines.Add(full ? WrappedProse.Lines(detail.Split('\n'), NotificationToast.SummarySize, Body) : WrappedProse.Of(detail, 11f, Body));
                 }
                 else
                 {
@@ -1258,22 +1273,36 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
             Put(Button(ChatAboutLabel, $"card:{card.Id}:chat", () => about(card)));
         }
         // A closed card (the history) has nothing left to dismiss: its choices stay as dead buttons, and the one Dismiss a card has is the open card's.
-        if (watched is null && !merged && !(closed && full))
+        void DismissCard()
+        {
+            // The row leaves on the click, not when the node's close reaches the stream. Not while another press on the card is
+            // with the node: the host sends no second press then (CardCommandAsync), so nothing would bring the row back.
+            if (OnDismiss is { } dismiss)
+            {
+                if (WorkingOn(card) is null)
+                {
+                    NoteDismissed(card);
+                }
+                dismiss(card);
+            }
+        }
+        Layout.Node? closeCross = null;
+        if (watched is null && !merged && full)
+        {
+            // The page's open row closes by the toast's Close cross, which presses the same Dismiss.
+            var crossInk = Contrast.Readable(Dim, fill, Bright);
+            closeCross = answering is not null
+                ? NotificationToast.Close(crossInk, null, null)
+                : Presses.Button(pressKey, DismissHit(card), () => NotificationToast.Close(crossInk, DismissHit(card), DismissCard), _ => NotificationToast.Close(crossInk, null, null));
+        }
+        else if (watched is null && !merged)
         {
             // Dismiss (a close x) stays a word for want of a glyph: SharpAstro/DIR.Lib#151.
-            Put(NodeButton("Dismiss", DismissHit(card), () =>
-            {
-                // The row leaves on the click, not when the node's close reaches the stream. Not while another press on the card is
-                // with the node: the host sends no second press then (CardCommandAsync), so nothing would bring the row back.
-                if (OnDismiss is { } dismiss)
-                {
-                    if (WorkingOn(card) is null)
-                    {
-                        NoteDismissed(card);
-                    }
-                    dismiss(card);
-                }
-            }));
+            Put(NodeButton("Dismiss", DismissHit(card), DismissCard));
+        }
+        if (full)
+        {
+            return OpenRow(severity, fill, tokens, lines, buttons, closeCross, meta, Focused(card));
         }
         lines.Add(Layout.Builder.Spacer().RowH(6f));
         // Wrapping: a waiting session's card has up to four buttons, more than one line of the panel holds.
@@ -1297,6 +1326,42 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
             .WStar()
             .HAuto();
     }
+
+    /// <summary>The Notifications page's open row: the toast's frame (<see cref="NotificationToast"/>) round the severity icon, the card's parts, and at the right the meta, the Close cross and the buttons, which wrap within their column.</summary>
+    private static Layout.Node OpenRow(NotificationSeverity severity, RGBAColor32 fill, NotificationsColors tokens, List<Layout.Node> lines,
+        List<(Layout.Node Node, bool Full)> buttons, Layout.Node? closeCross, string meta, bool focused)
+    {
+        var metaInk = Contrast.Readable(Dim, fill, Bright);
+        var topRight = new List<Layout.Node> { Layout.Builder.Spacer().WStar(), Layout.Builder.Text(meta, NotificationToast.MetaSize, metaInk).Selectable().WAuto() };
+        if (closeCross is not null)
+        {
+            topRight.Add(closeCross);
+        }
+        var actions = Layout.Builder.VStack(
+                Layout.Builder.HStack([.. topRight]).WithGap(8f).CrossCenter().WStar(),
+                Layout.Builder.HStack(Layout.Builder.Spacer().WStar(), ButtonRows(buttons)).WStar())
+            .WithGap(NotificationsHost.Style.Gap).WStar();
+        return NotificationToast.Frame(focused ? FocusBg : fill, tokens.TintedEdge(severity), shadow: true,
+            [Layout.Sizing.Fixed(NotificationsLayout.ToastIconSize), Layout.Sizing.Star(2f), Layout.Sizing.Star(1f, 0f, NotificationToast.ActionsWidth)],
+            NotificationToast.Icon(severity, tokens.Of(severity)), Layout.Builder.VStack([.. lines]).WStar(), actions);
+    }
+
+    /// <summary>The Notifications page's closed row: one quiet line in the toast's frame toned toward the plain ground (icon, title, the summary in the middle, node and time at the right), with no buttons and no Close.</summary>
+    private Layout.Node ClosedRow(CardRow card, NotificationSeverity severity, RGBAColor32 fill, RGBAColor32 ink, Func<float, Func<string, Layout.Node?>> linker,
+        float titleSize, float summarySize, string meta, NotificationsColors tokens)
+    {
+        var title = WrappedProse.Of(Titled(card), titleSize, ink, 0, linker(titleSize));
+        var said = string.Join(' ', CardSummaryLines.Of(WrappedProse.Bound(card.Summary ?? "", SummaryChars)));
+        var summary = said.Length > 0 ? WrappedProse.Of(said, summarySize, ink) : Layout.Builder.Spacer();
+        var edge = Contrast.Mix(tokens.TintedEdge(severity), tokens.Raised, ClosedTone);
+        return NotificationToast.Frame(fill, edge, shadow: false,
+            [Layout.Sizing.Fixed(NotificationsLayout.ToastIconSize), Layout.Sizing.Star(1f), Layout.Sizing.Star(1.4f), Layout.Sizing.Auto],
+            NotificationToast.Icon(severity, Contrast.Readable(Contrast.Mix(SeverityInk(severity), Dim, ClosedTone), fill, ink)), title, summary,
+            Layout.Builder.Text(meta, NotificationToast.MetaSize, ink).Selectable().WAuto());
+    }
+
+    /// <summary>How many notifications the row being built stands for (one, or the N of a fold marked ×N); set by the page while it builds its rows.</summary>
+    internal Func<int>? PageRepeats { get; set; }
 
     /// <summary>A toast's card body (<see cref="CardFit.Toast"/>): the same parts as the panel's and the page's, without buttons, which the library's row carries.</summary>
     internal Layout.Node ToastCard(CardRow card, string? nodeName, bool cutShort, Action toPage) =>
@@ -1328,14 +1393,14 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     internal Layout.Node PanelCard(CardRow card, NodeMark? node, bool closed = false) => Card(card, node, closed, fit: CardFit.Panel);
 
     /// <summary>The card's title, wrapped to <see cref="TitleLines"/> lines, with the whole text on hover where the cap could cut it.</summary>
-    private Layout.Node Title(CardRow card, Func<float, Func<string, Layout.Node?>> linker, RGBAColor32 ink)
+    private Layout.Node Title(CardRow card, Func<float, Func<string, Layout.Node?>> linker, RGBAColor32 ink, float size = 14f)
     {
         // The whole title is on hover where the cap (three lines) could cut it.
         var cut = card.Title.Length > TitleFits;
         // A card about a page (its PR) has its title as the link to it, as a hyperlink reads: where the eye goes first.
         // Marked as a link to elsewhere, so it reads as "open the page", never as an action of its own. A waiting
         // session's link is its button, Answer in the browser, so its title is no second one.
-        if (PullRequestTitle(card) is { } pullRequest)
+        if (PullRequestTitle(card, size) is { } pullRequest)
         {
             return pullRequest;
         }
@@ -1343,12 +1408,12 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
         {
             var inApp = InAppLinks.Is(titleLink);
             // Wraps like the plain one, every word the link: the same hit, hover and menu, and the ↗ on the last word.
-            return Whole(WrappedProse.Linked(Titled(card), 14f, Link, TitleLines,
+            return Whole(WrappedProse.Linked(Titled(card), size, Link, TitleLines,
                 word => _links.OnLink(word.BgHover(CardHover)
                     .Follows(new HitResult.ButtonHit($"card:{card.Id}:title"), _ => (inApp ? OnGoTo : OnOpen)?.Invoke(titleLink)), titleLink),
                 inApp ? "" : Followable.Away, LineChars, IsHovered(new HitResult.ButtonHit($"card:{card.Id}:title")) ? CardHover : null), card.Title, cut);
         }
-        return Whole(WrappedProse.Of(Titled(card), 14f, ink, TitleLines, linker(14f), lineChars: LineChars), card.Title, cut);
+        return Whole(WrappedProse.Of(Titled(card), size, ink, TitleLines, linker(size), lineChars: LineChars), card.Title, cut);
     }
 
     /// <summary>
@@ -1356,14 +1421,14 @@ internal sealed class CardsView<TSurface>(Renderer<TSurface> renderer) : PilotWi
     /// PR's row, which is a place of the app and so carries no ↗; and, smaller and beside it, a ↗ that opens GitHub. Null for any other
     /// card, a PR the node does not list (merged or closed by now), or where the host has no such page to open (<see cref="OnPullRequest"/> unset): its title is then the browser link as before.
     /// </summary>
-    private Layout.Node? PullRequestTitle(CardRow card)
+    private Layout.Node? PullRequestTitle(CardRow card, float size = 14f)
     {
         if (OnPullRequest is not { } route || PullRequestLinks.Of(card) is not { } pr || !PullRequestLinks.Lists(PullRequests, pr))
         {
             return null;
         }
         return PullRequestLink.Of(_links, $"card:{card.Id}:title", Titled(card), pr.ToString(), PullRequestLinks.Url(pr), OnOpen, () => route(card, pr),
-                "the Pull requests page", Link, CardHover, card.Title.Length > TitleFits, fill: true, size: 14f, tipSide: Layout.DockSide.Left,
+                "the Pull requests page", Link, CardHover, card.Title.Length > TitleFits, fill: true, size: size, tipSide: Layout.DockSide.Left,
             browserAction: $"card:{card.Id}:browser", wrapLines: TitleLines, lit: IsHovered(new HitResult.ButtonHit($"card:{card.Id}:title")));
     }
 
