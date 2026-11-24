@@ -285,13 +285,12 @@ public sealed class NotificationsToastPageTests
     [Theory]
     [InlineData(1600)]
     [InlineData(2000)]
-    public void TheCapturesAreWrittenWhenAskedFor(int width)
+    public void TheCapturesAreWrittenBesideTheTestOutput(int width)
     {
         using var w = new Window(width);
         w.Fill();
-        if (Environment.GetEnvironmentVariable("PILOT_JOB_ARTIFACTS") is { Length: > 0 } || Environment.GetEnvironmentVariable("PILOT_TEST_CAPTURE") is { Length: > 0 })
-        {
-            w.Save($"notifications-toast-list-{width}");
-        }
+        // Beside the test output, or in the job's artifacts folder when it is set, as the other capture tests do.
+        w.Save($"notifications-toast-list-{width}");
+        File.Exists(Path.Combine(ArtifactDir(), $"notifications-toast-list-{width}.png")).ShouldBeTrue();
     }
 }
