@@ -272,8 +272,24 @@ public sealed class BrainUsesTests
     [InlineData("thinking... NODE-ANSWER r1 {\"ring\": true}", "r1", true)]
     [InlineData("NODE-ANSWER r1 {\"ring\": tr", "r1", false)]
     [InlineData("NODE-ANSWER r2 {\"ring\": true}", "r1", false)]
+    [InlineData("NODE-ANSWER n12 {\"ring\": true}", "n1", false)]
+    [InlineData("NODE-ANWER n6 {\"summary\": \"## Needs you\\n- Decide\"}", "n6", true)]
     public void TheAnswerIsReadOnlyOnceItsJsonIsWholeAndItsIdMatches(string text, string id, bool read)
     {
         BrainClient.Extract(text, id).HasValue.ShouldBe(read);
+    }
+
+    /// <summary>
+    /// The watchtower once wrote <c>NODE-ANWER</c>: the node missed its answer, and the line, raw JSON with its <c>\n</c> showing, went to
+    /// the person's chat. A misspelt marker is still the node's answer and is kept out of the chat.
+    /// </summary>
+    [Theory]
+    [InlineData("NODE-ANWER n6 {\"summary\": \"x\"}", "")]
+    [InlineData("It is merged. NODE-ANSWR n2 {}", "It is merged.")]
+    [InlineData("The node runs on DE1.", "The node runs on DE1.")]
+    public void AMisspeltMarkerIsStillTheNodesAnswerAndStaysOutOfTheChat(string text, string person)
+    {
+        BrainClient.IsAnswer(text).ShouldBe(person != text);
+        BrainClient.ForPerson(text).ShouldBe(person);
     }
 }

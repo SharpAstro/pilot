@@ -220,6 +220,8 @@ public sealed partial class Watchtower : IStreamRoute
             }
             var tokens = session.ContextTokens;
             var code = e.ExitCode;
+            // The model it runs on, as Claude Code named it at the start; the alias it was started with until then.
+            var model = session.Model ?? e.Start.Model;
             row = new SessionRow
             {
                 Id = e.RowId,
@@ -229,10 +231,10 @@ public sealed partial class Watchtower : IStreamRoute
                 Kind = SessionKind.Background,
                 Cwd = e.Start.RepoPath,
                 Role = SessionRole.Watchtower,
-                Model = e.Start.Model,
+                Model = model,
                 Effort = e.Start.Effort,
                 ContextTokens = tokens,
-                ContextWindow = ContextWindows.For(e.Start.Model, e.Start.Model, tokens),
+                ContextWindow = ContextWindows.For(model, e.Start.Model, tokens),
                 LastResponseAt = e.LastResponseAt,
                 State = code is null ? session.Working ? SessionState.Working : SessionState.Idle
                     : e.StopReason is not null || code == 0 ? SessionState.Ended : SessionState.Failed,

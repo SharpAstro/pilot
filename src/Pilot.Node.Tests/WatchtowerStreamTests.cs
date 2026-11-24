@@ -201,6 +201,17 @@ public sealed class WatchtowerStreamTests : IDisposable
 
     private SessionRow Row() => _tower.Current().ShouldNotBeNull();
 
+    /// <summary>
+    /// The first process says its init line, and the test waits for the row it publishes: the init's model changes the ledger's entry,
+    /// which is saved from the stream's reader thread, so a test that ended at once had Dispose delete the data folder under that write
+    /// ("Directory not empty", PR #1345's CI).
+    /// </summary>
+    private Task InitAsync()
+    {
+        _launcher.Process(0).Emit(Init(_launcher.SessionOf(0)));
+        return Until(() => _tower.Current() is { Model: "sonnet" }, "the init's row");
+    }
+
     private static string Init(string id) => $$"""{"type":"system","subtype":"init","session_id":"{{id}}","model":"sonnet"}""";
 
     private const string Result = """{"type":"result","subtype":"success","is_error":false,"duration_ms":900,"session_id":"x"}""";
@@ -329,7 +340,7 @@ public sealed class WatchtowerStreamTests : IDisposable
     public async Task AMessageSentWhileItWorksIsWrittenAtOnceAndReadAtItsNextStepNotRefusedOrResumed()
     {
         await _tower.LookAsync(Ct);
-        _launcher.Process(0).Emit(Init(_launcher.SessionOf(0)));
+        await InitAsync();
         // Still on the brief's turn.
         Row().State.ShouldBe(SessionState.Working);
 
@@ -512,7 +523,7 @@ public sealed class WatchtowerStreamTests : IDisposable
     public async Task ACompactionIsRefusedWhileItWorksSinceItIsOnlyEverItsNextTurn()
     {
         await _tower.LookAsync(Ct);
-        _launcher.Process(0).Emit(Init(_launcher.SessionOf(0)));
+        await InitAsync();
 
         var compacted = await Compact();
 

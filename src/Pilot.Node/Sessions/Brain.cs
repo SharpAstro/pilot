@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Pilot.Contracts;
 
 namespace Pilot.Node.Sessions;
@@ -43,7 +44,7 @@ public interface IBrain
 /// words of the turn, found as they stream, so a request is answered in the turn it is written in, whether the brain was idle or working.
 /// One request at a time; the wait for the turn counts against its timeout.
 /// </summary>
-public sealed class BrainClient(Func<StreamSession?> session, TimeProvider time) : IBrain
+public sealed partial class BrainClient(Func<StreamSession?> session, TimeProvider time) : IBrain
 {
     /// <inheritdoc />
     public string? Unavailable => Reason(session());
@@ -213,7 +214,14 @@ public sealed class BrainClient(Func<StreamSession?> session, TimeProvider time)
     /// Whether <paramref name="text"/>, the brain's words so far or one entry of them, holds its answer to a request: kept out of the person's
     /// chat. Anywhere in it, as <see cref="Extract"/> finds it, so an answer after a few words of lead-in is kept out too.
     /// </summary>
-    public static bool IsAnswer(string text) => text.Contains(AnswerMarker + " ", StringComparison.Ordinal);
+    public static bool IsAnswer(string text) => AnyMarker().IsMatch(text);
+
+    /// <summary>
+    /// The marker as the brain may write it: <c>NODE-</c> and a word in capitals, then a space. The model has written <c>NODE-ANWER</c> for
+    /// <see cref="AnswerMarker"/>; read only to the letter, that answer was lost to the node and its raw JSON shown in the person's chat.
+    /// </summary>
+    [GeneratedRegex(@"NODE-[A-Z]{4,}\s")]
+    private static partial Regex AnyMarker();
 
     /// <summary>
     /// The person's part of <paramref name="text"/>: the words before the brain's answer to the node, when it holds one, else all of it. A
@@ -221,8 +229,8 @@ public sealed class BrainClient(Func<StreamSession?> session, TimeProvider time)
     /// </summary>
     public static string ForPerson(string text)
     {
-        var at = text.IndexOf(AnswerMarker + " ", StringComparison.Ordinal);
-        return at < 0 ? text : text[..at].TrimEnd();
+        var at = AnyMarker().Match(text);
+        return at.Success ? text[..at.Index].TrimEnd() : text;
     }
 
     /// <summary>
@@ -242,16 +250,19 @@ public sealed class BrainClient(Func<StreamSession?> session, TimeProvider time)
         Answer from what is above and what you already know; run no tool for this. Reply with exactly one line and nothing else: {AnswerMarker} {id} followed by one JSON object on that same line, no line breaks inside it (write a line break inside a text as \n).
         """;
 
-    /// <summary>The JSON object after <c>NODE-ANSWER &lt;id&gt;</c> in <paramref name="text"/>, once it is whole; null before that.</summary>
+    /// <summary>
+    /// The JSON object after <c>NODE-ANSWER &lt;id&gt;</c> in <paramref name="text"/>, once it is whole; null before that. A misspelt marker
+    /// (<see cref="AnyMarker"/>) is read too: the id, which the node made up for this request, is what says the line answers it.
+    /// </summary>
     public static JsonElement? Extract(string text, string id)
     {
-        var marker = $"{AnswerMarker} {id}";
-        var at = text.LastIndexOf(marker, StringComparison.Ordinal);
-        if (at < 0)
+        // The last marker for this id, spelt to the letter or not; the id must end there, so n1 is not read from an answer to n12.
+        var at = Regex.Match(text, $@"NODE-[A-Z]{{4,}}\s+{Regex.Escape(id)}(?![0-9A-Za-z])", RegexOptions.RightToLeft);
+        if (!at.Success)
         {
             return null;
         }
-        var rest = text[(at + marker.Length)..].TrimStart();
+        var rest = text[(at.Index + at.Length)..].TrimStart();
         if (!rest.StartsWith('{'))
         {
             return null;
