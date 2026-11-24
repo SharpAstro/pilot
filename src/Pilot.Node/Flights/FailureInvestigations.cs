@@ -32,10 +32,14 @@ public sealed record FailureFinding(string Test, string Message, string Signatur
 /// <summary>
 /// What one look into a failure found. <see cref="Read"/> is false when no failure could be read (no failed run, a build the PR broke,
 /// the changed files unreadable). With it, <see cref="Untouched"/> are the failures in tests the PR does not touch, and when there
-/// are none the failed tests are the PR's own to fix.
+/// are none the failed tests are the PR's own to fix. <see cref="Own"/> are the PR's own failures (tests it touches, and ones the base's
+/// latest run passed): a run with any is decided on those, even when it also has base-confirmed failures, which are filed all the same.
 /// </summary>
 public sealed record FailureLook(bool Read, IReadOnlyList<FailureFinding> Untouched)
 {
+    /// <summary>The full names of the PR's own failed tests; empty when there are none (not a stored record).</summary>
+    public IReadOnlyList<string> Own { get; init; } = [];
+
     /// <summary>A look that read nothing.</summary>
     public static FailureLook Nothing { get; } = new(false, []);
 }
@@ -173,6 +177,7 @@ public sealed class FailureInvestigations(NodeState state, IGitHub github, Failu
             await Error.WriteLineAsync($"failures: {site.Name}: the changed files could not be read, so nothing was filed: {ex.Message}");
             return FailureLook.Nothing;
         }
+        var own = found.Where(f => f.Test.Length > 0 && FailureSignature.Touches(f.Test, files)).Select(f => f.Test).ToList();
         var untouched = found.Where(f => f.Test.Length == 0 || !FailureSignature.Touches(f.Test, files))
             .GroupBy(f => f.Signature, StringComparer.Ordinal).Select(g => g.First()).ToList();
         if (site.Pr is not null && site.Where is FailureWhere.Ci or FailureWhere.Queue && untouched.Count > 0)
@@ -189,7 +194,9 @@ public sealed class FailureInvestigations(NodeState state, IGitHub github, Failu
                 }
                 var onBase = baseRun.Passed ? [] : FailureSignature.Tests(baseRun.Log).Select(t => FailureSignature.NameOf(t.Test)).ToHashSet(StringComparer.Ordinal);
                 var baseError = baseRun.Passed ? null : FailureSignature.ForError(baseRun.Log);
-                untouched.RemoveAll(f => unproven.Contains(f) && !(f.Test.Length > 0 ? onBase.Contains(FailureSignature.NameOf(f.Test)) : f.Signature == baseError));
+                var dropped = untouched.Where(f => unproven.Contains(f) && !(f.Test.Length > 0 ? onBase.Contains(FailureSignature.NameOf(f.Test)) : f.Signature == baseError)).ToList();
+                untouched.RemoveAll(dropped.Contains);
+                own.AddRange(dropped.Where(f => f.Test.Length > 0).Select(f => f.Test));
             }
         }
         // One investigation per test class: the failures of one class in a run share a cause until shown otherwise. An error line with no
@@ -217,7 +224,7 @@ public sealed class FailureInvestigations(NodeState state, IGitHub github, Failu
                 findings.Add(new FailureFinding(first.Test, first.Message, first.Signature, filed.Code, filed.Issue, runId, others));
             }
         }
-        return new FailureLook(true, findings);
+        return new FailureLook(true, findings) { Own = own.Distinct(StringComparer.Ordinal).ToList() };
     }
 
     // The branch the PR merges into: its PR's base when the flight's PR can be read, else main.

@@ -10,7 +10,10 @@ public enum FailureAnswer
     /// <summary>Nothing was read, or nothing can be done about it here: today's handling goes on.</summary>
     Unknown,
 
-    /// <summary>The failing tests are the PR's own: nothing is retried and its handling is today's (the leg goes around).</summary>
+    /// <summary>
+    /// The PR has failures of its own (a test it touches, or one the base passed), alone or beside base-confirmed ones, which are filed
+    /// all the same: nothing is retried, requeued or held and its handling is today's (the leg goes around).
+    /// </summary>
     Touched,
 
     /// <summary>A first failure of a test the PR does not touch: retry it once (a queue removal re-queued, a failed CI job rerun).</summary>
@@ -216,9 +219,10 @@ public sealed class FailureAlerts(NodeState state, IGitHub github, FailureInvest
                 return decision;
             }
         }
-        else if (look.Untouched.Count == 0)
+        else if (look.Own.Count > 0 || look.Untouched.Count == 0)
         {
-            decision = new FailureDecision(FailureAnswer.Touched);
+            // A mixed run is decided on the PR's own failures; the base-confirmed ones are already filed by the look.
+            decision = new FailureDecision(FailureAnswer.Touched, look.Untouched.FirstOrDefault());
         }
         else if (retriedSignature is not null)
         {
