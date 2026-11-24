@@ -152,31 +152,43 @@ public sealed partial class FlightCommander
             return;
         }
         // The lock is let go while peers answer, so two runs for one flight could overlap and comment and ground twice: one run per flight.
-        // The run it skips must not drop its released packages: they join the running one's, which reads them when it names a package.
-        // Only the map's own atomic steps: a miss means the entry vanished or changed, so the next pass either becomes the running run or joins
-        // the new one. Each pass makes progress and waits for nothing.
-        while (!_ensuringPeers.TryAdd(code, released))
+        // The run it skips must not drop its released packages: they are queued onto the running one, which reads its queue again whenever it
+        // names a package, so a join after an earlier read still reaches the card and the ground text.
+        var run = new PeerRun(released);
+        var running = _ensuringPeers.GetOrAdd(code, run);
+        if (!ReferenceEquals(running, run))
         {
-            if (_ensuringPeers.TryGetValue(code, out var current) && _ensuringPeers.TryUpdate(code, MergeReleased(current, released), current))
+            foreach (var wait in released)
             {
-                return;
+                running.Released.Enqueue(wait);
             }
+            return;
         }
         try
         {
-            await EnsurePeerFollowUpFlightsCoreAsync(code, landing, cancellationToken);
+            await EnsurePeerFollowUpFlightsCoreAsync(code, landing, run, cancellationToken);
         }
         finally
         {
-            _ensuringPeers.TryRemove(code, out _);
+            // Only our own entry: a later run for the code must not be removed by this one ending.
+            _ensuringPeers.TryRemove(new KeyValuePair<string, PeerRun>(code, run));
         }
     }
 
-    /// <summary>The running run's packages plus those of a run it replaces, each package once.</summary>
-    internal static PackageWait[] MergeReleased(PackageWait[] current, PackageWait[] joining) =>
-        [.. current, .. joining.Where(r => !current.Any(c => c.Id == r.Id && c.Producer == r.Producer))];
+    /// <summary>One running peer ensure of a flight and the packages released to it, from its caller and from every run it made wait.</summary>
+    internal sealed class PeerRun(PackageWait[] released)
+    {
+        public System.Collections.Concurrent.ConcurrentQueue<PackageWait> Released { get; } = new(released);
 
-    private async Task EnsurePeerFollowUpFlightsCoreAsync(string code, FlightRow landing, CancellationToken cancellationToken)
+        /// <summary>The queue as it is now, each package once.</summary>
+        public PackageWait[] Snapshot() => DistinctReleased([.. Released]);
+    }
+
+    /// <summary>A snapshot of the queue with each package (by id and producer) once, first one kept.</summary>
+    internal static PackageWait[] DistinctReleased(PackageWait[] snapshot) =>
+        [.. snapshot.DistinctBy(r => (r.Id, r.Producer))];
+
+    private async Task EnsurePeerFollowUpFlightsCoreAsync(string code, FlightRow landing, PeerRun run, CancellationToken cancellationToken)
     {
         foreach (var followUp in landing.RepoFollowUps.Where(f => f.Flight is null).ToList())
         {
@@ -188,9 +200,9 @@ public sealed partial class FlightCommander
                 await CommentFollowUpAsync(path, followUp, landing, made, node);
                 if (followUp.Package)
                 {
-                    var released = _ensuringPeers.GetValueOrDefault(code) ?? [];
-                    var held = await HoldPeerFlightAsync(node, made, landing, released, cancellationToken);
-                    RaiseFollowUpPackageCard(landing, followUp, made, node, released, held);
+                    var held = await HoldPeerFlightAsync(node, made, landing, run.Snapshot(), cancellationToken);
+                    // Read again: a run that joined while the peer was asked to ground is named on the card too.
+                    RaiseFollowUpPackageCard(landing, followUp, made, node, run.Snapshot(), held);
                 }
             }
             catch (Exception ex) when (ex is FlightException or IOException or InvalidOperationException or HttpRequestException or System.ComponentModel.Win32Exception)

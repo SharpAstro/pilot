@@ -211,12 +211,26 @@ public sealed class FollowUpLandTests : PackageWaitTestsBase
     }
 
     [Fact]
-    public void JoiningReleasesKeepsEachPackageOnce()
+    public void ASnapshotOfTheQueueNamesEachPackageOnce()
     {
         var a = new PackageWait { Id = "A", Line = "1.0", Producer = "TIA1", Since = Start };
         var b = new PackageWait { Id = "B", Line = "2.0", Producer = "TIA1", Since = Start };
 
-        FlightCommander.MergeReleased([a], [a, b]).ShouldBe([a, b]);
+        FlightCommander.DistinctReleased([a, a, b]).ShouldBe([a, b]);
+    }
+
+    [Fact]
+    public void APackageQueuedAfterTheLastReadIsInTheNextRead()
+    {
+        var a = new PackageWait { Id = "A", Line = "1.0", Producer = "TIA1", Since = Start };
+        var b = new PackageWait { Id = "B", Line = "2.0", Producer = "TIA1", Since = Start };
+        var run = new FlightCommander.PeerRun([a]);
+
+        run.Snapshot().ShouldBe([a]);
+        run.Released.Enqueue(b);
+        run.Released.Enqueue(a);
+
+        run.Snapshot().ShouldBe([a, b]);
     }
 
     private sealed class FakeFleet(params IFleetPeer[] peers) : IFleet
