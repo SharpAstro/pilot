@@ -376,6 +376,23 @@ public sealed class RetryAndHoldTests : IDisposable
     }
 
     [Fact]
+    public async Task AMixedRunReadAfterARetryIsAnsweredTouchedAndNotHeldAsTheRepeat()
+    {
+        // The after-a-retry branch of Settle: the retried failure is still there, but the PR's own failure decides, so no alert and no hold.
+        CiFlight("TIA80", 80, 'j', 5010);
+        MixedFailedRun(80, queue: false, 5010);
+        var site = new FailureSite("tianwen", "/r/tianwen", 80, "TIA80", Head('j'), FailureWhere.Ci);
+        _alerts.MarkRetried(site, new FailureFinding(Test, Message, "test:" + Test, "TIA901", 1, 5010, Others: false));
+        _time.Advance(TimeSpan.FromMinutes(3));
+
+        var decision = await _alerts.LookAtRunAsync(site, mergeGroup: false, Ct);
+
+        decision.Answer.ShouldBe(FailureAnswer.Touched);
+        _alerts.HoldOf("TIA80").ShouldBeNull();
+        Open(FailureAlerts.AlertKind).ShouldBeEmpty();
+    }
+
+    [Fact]
     public async Task AMixedQueueRemovalIsNotQueuedAgain()
     {
         Flight("TIA79", 79);
