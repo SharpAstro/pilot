@@ -355,7 +355,14 @@ public sealed partial class PrReviews
         string localBranch = read.HeadRef;
         try
         {
+            // The merged head may not be in this clone yet (the PR was rebuilt after the fixer fetched): the base carries it once squashed or fast-forwarded.
+            await git.RunAsync(["fetch", "--quiet", "origin", baseBranch], worktree, cancellationToken);
             var count = await git.RunAsync(["rev-list", "--count", $"{merged}..HEAD"], worktree, cancellationToken);
+            if (!count.Ok && !string.IsNullOrEmpty(review.Head) && review.Head != merged)
+            {
+                // Still unknown: what is past the head the fixer was reviewed at is counted instead, and the test merge below judges it.
+                count = await git.RunAsync(["rev-list", "--count", $"{review.Head}..HEAD"], worktree, cancellationToken);
+            }
             if (!count.Ok)
             {
                 state.RaiseCard(CardBin.ForYou, FixFollowUpFailedKind, subject,
