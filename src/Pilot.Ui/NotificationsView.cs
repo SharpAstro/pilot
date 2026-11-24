@@ -30,6 +30,35 @@ internal sealed class NotificationsView<TSurface>(Renderer<TSurface> renderer) :
     /// <summary>The window's node selection, whose pills the header shows while there is more than one node.</summary>
     public NodeFilter? Nodes { get; set; }
 
+    /// <summary>Whether this host can draw the grid: pilot-tui sets this false, keeps the list and shows no switch.</summary>
+    public bool GridAvailable { get; set; } = true;
+
+    /// <summary>The chosen view, kept for the window's life (the view is not rebuilt on a page switch).</summary>
+    public NotificationsViewMode Mode { get; set; } = NotificationsViewMode.Grid;
+
+    /// <summary>Whether the page is drawing the grid now.</summary>
+    public bool GridShown => GridAvailable && Mode == NotificationsViewMode.Grid;
+
+    // Grid and List as the marks DIR.Lib draws, each with its word as the tooltip, on the one ViewSwitch Flights and Ideas share.
+    private static readonly ViewChoice<NotificationsViewMode>[] ViewChoices =
+    [
+        new(NotificationsViewMode.Grid, "notifications:view:grid", "Grid", Icon: Layout.IconKind.Grid),
+        new(NotificationsViewMode.List, "notifications:view:list", "List", Icon: Layout.IconKind.List),
+    ];
+
+    /// <summary>The cards' gap in the grid, both ways, and the narrowest a card is drawn there (the library's toast width, or this where that is narrower).</summary>
+    internal const float GridGap = 14f, GridCardMin = 440f;
+
+    /// <summary>How many columns a grid <paramref name="width"/> design units wide holds: as many cards of at least <see cref="GridCardWidth"/> as fit, and at least one.</summary>
+    internal static int GridColumns(float width)
+    {
+        var inner = MathF.Max(1f, width - 2f * Gutter);
+        return Math.Max(1, (int)MathF.Floor((inner + GridGap) / (GridCardWidth + GridGap)));
+    }
+
+    /// <summary>The narrowest a grid card is drawn.</summary>
+    internal static float GridCardWidth => MathF.Max(GridCardMin, NotificationsHost.Style.ToastWidth);
+
     public void Render(RectF32 bounds, string source, DateTimeOffset asOf)
     {
         Palette.Use(Night);
@@ -45,36 +74,34 @@ internal sealed class NotificationsView<TSurface>(Renderer<TSurface> renderer) :
         var history = Host.History.Count;
         var header = TopBar.Build(new PageHeader("notifications")
         {
-            Counts = $"{needs} need{(needs == 1 ? "s" : "")} you, {history} in the history (kept {KeepText(Host.KeepFor)})",
-            CountsFit = true,
+            Counts = $"{needs} need{(needs == 1 ? "s" : "")} you · {history} in the history",
+            Buttons = GridAvailable ? [Pilot.Ui.ViewSwitch.Build(ViewChoices, Mode, mode => Mode = mode, Palette.Current)] : [],
             Source = PageHeader.SourceLine(source, asOf),
         }, new TopBarParts(Nodes, null, Autopilot, About, Night));
         var page = Layout.Builder.VStack(header, List(width).Stretch()).Bg(Palette.Current.Ground).Stretch();
         return About?.Over(page) ?? page;
     }
 
-    /// <summary>
-    /// The widest a card is drawn on the page, in design units: near the toast's width (<see cref="NotificationsHost.Style"/>'s ToastWidth) and no
-    /// wider than the panel's, so a card reads as it does in a toast and the lines stay short on a wide window.
-    /// </summary>
-    internal static float ColumnWidth => MathF.Round(NotificationsHost.Style.ToastWidth * 1.375f);
-
-    private const float Gutter = 14f, CardGap = 10f;
+    private const float Gutter = 20f, CardGap = 8f;
 
     /// <summary>
-    /// The list: Needs you, then History newest first, each notification the one card component (<c>CardsView.Card</c>) at page fit, in a
-    /// left-aligned column of <see cref="ColumnWidth"/> at most with one gap between cards. One declaration for the window and the terminal.
+    /// The list: Needs you, then History newest first, each notification the one card component (<c>CardsView.Card</c>) at page fit, a row across
+    /// the page less its gutters (DSN-5 v1: no column cap) with one gap between rows; notifications alike in title, node and text are one row
+    /// marked ×N. One declaration for the window and the terminal.
     /// </summary>
     private Layout.Node List(float width)
     {
-        var column = MathF.Max(1f, MathF.Min(ColumnWidth, width - 2f * Gutter));
+        Host.PageWidth = width;
+        Host.PageGrid = GridShown;
+        var column = MathF.Max(1f, width - 2f * Gutter);
         var blocks = new List<Layout.Node>();
         var colors = NotificationsHost.Colors();
         Layout.Node Section(string title, int count, Layout.Node? action = null)
         {
-            var label = Layout.Builder.Text($"{title} · {count}", 13f, colors.Dim).Selectable().WStar();
+            var label = Layout.Builder.Text($"{title} · {count}", 18f, Palette.Current.Bright).Selectable().WStar();
             return (action is null ? Layout.Builder.HStack(label) : Layout.Builder.HStack(label, action)).CrossCenter().RowH(30f).WFixed(column);
         }
+        var columns = GridShown ? GridColumns(width) : 0;
         Layout.Node Placed(Layout.Node card) => Layout.Builder.HStack(card.WFixed(column), Layout.Builder.Spacer().WStar()).HAuto();
 
         var needs = Host.Feed.NeedsYou;
@@ -85,30 +112,74 @@ internal sealed class NotificationsView<TSurface>(Renderer<TSurface> renderer) :
         }
         if (needs.Count > 0)
         {
-            blocks.Add(Section("Needs you", needs.Count));
-            AddCards(blocks, needs, Placed);
+            blocks.Add(Section("Need you", needs.Count));
+            AddCards(blocks, needs, Placed, columns);
         }
         if (history.Count > 0)
         {
             blocks.Add(Section("History", history.Count, CardsView<TSurface>.HeaderPill("Clear", "notifications:clear", Host.Clear)));
-            AddCards(blocks, history, Placed);
+            AddCards(blocks, history, Placed, columns);
         }
         return Layout.Builder.VStack([.. blocks]).WithGap(CardGap).WithScroll(Host.PageScroll).Pad(Gutter, 10f).Stretch();
     }
 
-    private void AddCards(List<Layout.Node> blocks, IReadOnlyList<DIR.Lib.Notifications.Notification> notifications, Func<Layout.Node, Layout.Node> place)
+    private void AddCards(List<Layout.Node> blocks, IReadOnlyList<DIR.Lib.Notifications.Notification> notifications, Func<Layout.Node, Layout.Node> place, int columns)
     {
-        foreach (var n in notifications)
+        var cells = new List<Layout.Node>();
+        foreach (var (n, count) in Folded(notifications))
         {
-            var card = n.Row is { } row
-                ? row()
-                : Host.EventCard?.Invoke(n.Title, n.Text, n.Source, n.Posted, n.Posted.ToLocalTime().ToString("HH:mm"), n.Id.ToString(), n.Severity) ?? Layout.Builder.Text(n.Title, 12f, Palette.Current.Bright).Selectable();
-            blocks.Add(place(card));
+            Host.PageRepeats = count;
+            try
+            {
+                var card = n.Row is { } row
+                    ? row()
+                    : Host.EventCard?.Invoke(n.Title, n.Text, n.Source, n.Posted, n.Posted.ToLocalTime().ToString("HH:mm"), n.Id.ToString(), n.Severity) ?? Layout.Builder.Text(n.Title, 12f, Palette.Current.Bright).Selectable();
+                if (columns > 0)
+                {
+                    cells.Add(card.WStar());
+                }
+                else
+                {
+                    blocks.Add(place(card));
+                }
+            }
+            finally
+            {
+                Host.PageRepeats = 1;
+            }
+        }
+        // The grid: rows of equal star columns, the last row's empty columns kept so its cards are the width of the rest.
+        for (var i = 0; i < cells.Count; i += columns)
+        {
+            var row = cells.Skip(i).Take(columns).ToList();
+            while (row.Count < columns)
+            {
+                row.Add(Layout.Builder.Spacer().WStar());
+            }
+            blocks.Add(Layout.Builder.HStack([.. row]).WithGap(GridGap).WStar().HAuto());
         }
     }
 
-    /// <summary>A keep time as a person reads it: <c>24 hours</c>, <c>3 days</c>.</summary>
-    internal static string KeepText(TimeSpan keep) =>
-        NotificationsHost.KeepChoices.FirstOrDefault(c => c.Keep == keep).Label
-        ?? (keep.TotalHours < 48 ? $"{(int)keep.TotalHours} hours" : $"{(int)keep.TotalDays} days");
+    /// <summary>
+    /// <paramref name="notifications"/> with those of one title, node and text folded into one, the newest of them kept (at the place of the first), with how many it stands for.
+    /// </summary>
+    internal static List<(DIR.Lib.Notifications.Notification Notification, int Count)> Folded(IReadOnlyList<DIR.Lib.Notifications.Notification> notifications)
+    {
+        var rows = new List<(DIR.Lib.Notifications.Notification Notification, int Count)>();
+        var at = new Dictionary<(string, string?, string), int>();
+        foreach (var n in notifications)
+        {
+            var key = (n.Title, n.Source, n.Text);
+            if (at.TryGetValue(key, out var i))
+            {
+                rows[i] = (rows[i].Notification.Posted >= n.Posted ? rows[i].Notification : n, rows[i].Count + 1);
+            }
+            else
+            {
+                at[key] = rows.Count;
+                rows.Add((n, 1));
+            }
+        }
+        return rows;
+    }
 }

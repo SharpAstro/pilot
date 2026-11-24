@@ -61,6 +61,7 @@ public static class TerminalWireframeSweepTests
         chrome.Chat.Cells = true;
         chrome.WithoutScrollBars();
         chrome.Flights.CanCommand = true;
+        chrome.ForTerminal(); // as pilot-tui does: the sweep draws the lists the terminal shows
         chrome.Jobs.CanCommand = true;
         chrome.Cards.CanTell = true;
         chrome.Nodes.Choices = data.Nodes;
@@ -309,8 +310,9 @@ public static class TerminalWireframeSweepTests
         ("pull requests | long | 100x30", "EmptyRows", "a filled container is arranged 2 rows tall but its content sits on row 11 only; 1 row(s) are empty inside its fill (own vertical padding 0 row(s), visible border 0 row(s))"), // pilot #1077
         ("pull requests | long | 100x30", "EmptyRows", "a filled container is arranged 2 rows tall but its content sits on row 13 only; 1 row(s) are empty inside its fill (own vertical padding 0 row(s), visible border 0 row(s))"), // pilot #1077
         ("pull requests | long | 100x30", "EmptyRows", "a filled container is arranged 2 rows tall but its content sits on row 21 only; 1 row(s) are empty inside its fill (own vertical padding 0 row(s), visible border 0 row(s))"), // pilot #1077
-        // PIL1292: the Notifications page's cards are the one card component in a scrolled column; at 80x24 the viewport's clip leaves the last card's frame one row tall (the same clip the design page entry above names). Added because it is a false positive of the rule (a frame cut by the clip, not a bar), filed as Console.Lib #108.
-        ("notifications | many | 80x24", "SolidStrip", "a filled node one row tall and 55 cells wide holds nothing and is painted solid; a rule should be a thin line, not a bar"), // Console.Lib #108
+        // PIL1292: the Notifications page's cards are the one card component in a scrolled column; at 250x60 (the two entries below) the viewport's clip leaves the last card's frame one row tall (the same clip the design page entry above names). Added because it is a false positive of the rule (a frame cut by the clip, not a bar), filed as Console.Lib #108.
+        ("notifications | many | 250x60", "SolidStrip", "a filled node one row tall and 245 cells wide holds nothing and is painted solid; a rule should be a thin line, not a bar"), // Console.Lib #108: the List's last card cut to one row by the viewport clip, at row 59 of 60
+        ("notifications | long | 250x60", "SolidStrip", "a filled node one row tall and 245 cells wide holds nothing and is painted solid; a rule should be a thin line, not a bar"), // Console.Lib #108: the List's last card cut to one row by the viewport clip, at row 59 of 60
         ("settings | many | 80x24", "SolidStrip", "a filled node one row tall and 43 cells wide holds nothing and is painted solid; a rule should be a thin line, not a bar"), // Console.Lib #77
         ("pull requests | many | 80x24", "EmptyRows", "a filled container is arranged 2 rows tall but its content sits on row 12 only; 1 row(s) are empty inside its fill (own vertical padding 0 row(s), visible border 0 row(s))"), // pilot #1077
         ("pull requests | many | 80x24", "EmptyRows", "a filled container is arranged 2 rows tall but its content sits on row 14 only; 1 row(s) are empty inside its fill (own vertical padding 0 row(s), visible border 0 row(s))"), // pilot #1077

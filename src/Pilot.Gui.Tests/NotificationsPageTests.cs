@@ -70,6 +70,7 @@ public sealed class NotificationsPageTests
             Chrome = new PilotChrome<RgbaImage>(Renderer, new SessionsView<RgbaImage>(Renderer)) { FontPath = SessionsCapture.FontPath, DpiScale = dpi };
             Chrome.Notifications.Open = false;
             Chrome.Show(PilotPage.Jobs);
+            Chrome.NotificationsPage.Mode = NotificationsViewMode.List; // these tests are the List view; Grid is NotificationsViewModeTests
             var seen = Chrome.NotificationsPage.Arranged;
             Chrome.NotificationsPage.Arranged = nodes =>
             {
@@ -129,10 +130,10 @@ public sealed class NotificationsPageTests
         w.Chrome.Page.ShouldBe(PilotPage.Notifications);
 
         var texts = w.Texts();
-        var needs = texts.FindIndex(t => t.StartsWith("Needs you", StringComparison.Ordinal));
+        var needs = texts.FindIndex(t => t.StartsWith("Need you", StringComparison.Ordinal));
         var history = texts.FindIndex(t => t.StartsWith("History", StringComparison.Ordinal));
         needs.ShouldBeGreaterThan(-1);
-        history.ShouldBeGreaterThan(needs, "Needs you comes first");
+        history.ShouldBeGreaterThan(needs, "Need you comes first");
         // The row is the whole card, its title in words (a wrap), so the title is found by one of them.
         texts.FindIndex(t => t.StartsWith("ready", StringComparison.Ordinal)).ShouldBeInRange(needs, history);
         var three = texts.FindIndex(history, t => t.Trim() == "three");
@@ -183,7 +184,7 @@ public sealed class NotificationsPageTests
         w.Frame(T0.AddMinutes(5), Ringing());
         var texts = w.Texts();
         texts.ShouldNotContain("Job one finished");
-        texts.ShouldContain(t => t.StartsWith("Needs you", StringComparison.Ordinal));
+        texts.ShouldContain(t => t.StartsWith("Need you", StringComparison.Ordinal));
         texts.ShouldNotContain(t => t.StartsWith("History", StringComparison.Ordinal));
     }
 
@@ -299,6 +300,7 @@ public sealed class NotificationsPageTests
         const int columns = 160, rows = 44;
         using var vessel = new RgbaImageRenderer(1, 1);
         var chrome = new PilotChrome<RgbaImage>(vessel, new SessionsView<RgbaImage>(vessel));
+        chrome.ForTerminal(); // as pilot-tui sets it
         chrome.Notifications.Open = true;
         chrome.Notifications.PostEvent(Event("Job one finished"), null, T0.AddMinutes(1));
         chrome.Notifications.PostEvent(Event("Job two failed", NotificationSeverity.Error), null, T0.AddMinutes(2));
@@ -318,12 +320,12 @@ public sealed class NotificationsPageTests
         }
         File.WriteAllText(Path.Combine(ArtifactDir(), $"notifications-tui-{columns}x{rows}.txt"), text.ToString());
         var shown = text.ToString();
-        shown.ShouldContain("Needs you", Case.Sensitive);
+        shown.ShouldContain("Need you", Case.Sensitive);
         shown.ShouldContain("History", Case.Sensitive);
         // The frame takes the toast rule from the page it is given, as Program.cs builds it: the staying cards toast on any other page, and
         // here none covers the header's counts line.
         chrome.Notifications.ToastsOnPage.ShouldBeFalse();
-        shown.ShouldContain("you, 2 in the history", Case.Sensitive, "the header's counts line is whole: no toast stands over it");
+        shown.ShouldContain("you · 2 in the history", Case.Sensitive, "the header's counts line is whole: no toast stands over it");
         shown.IndexOf("Job two failed", StringComparison.Ordinal).ShouldBeLessThan(shown.IndexOf("Job one finished", StringComparison.Ordinal), "newest first");
     }
 }

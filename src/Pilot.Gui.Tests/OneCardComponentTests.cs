@@ -64,11 +64,20 @@ public sealed class OneCardComponentTests
     public void TheSamePartsComeInTheSameOrderAndTheDetailIsCollapsed(Fit fit, float width)
     {
         var (_, arranged) = Build(fit, width, 1f);
-        var tops = Parts.Select(p => TopOf(arranged, p)).ToArray();
+        // DSN-5 v1: the page's row has no kind line (the node and time are at its right), so its parts begin at the title.
+        var parts = fit == Fit.Page ? Parts[1..] : Parts;
+        var tops = parts.Select(p => TopOf(arranged, p)).ToArray();
         tops.ShouldAllBe(t => !float.IsNaN(t), $"{fit}: every part is drawn");
-        tops.ShouldBe([.. tops.Order()], $"{fit}: kind and node line, title, summary, Detail fold, in that order");
+        tops.ShouldBe([.. tops.Order()], $"{fit}: kind and node line (not on the page), title, summary, Detail fold, in that order");
         ArrangedText.Concat(arranged).ShouldNotContain("no turn for 11 min", Case.Sensitive);
-        if (fit != Fit.Toast)
+        if (fit == Fit.Page)
+        {
+            // DSN-5 v1: the page's buttons are at the row's right, beside the title, not under the fold.
+            Buttons.Select(b => TopOf(arranged, b)).ShouldAllBe(t => !float.IsNaN(t), "Page: the card's own buttons are drawn");
+            var titleLeft = arranged.First(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text { Value: var v } } && v.Trim() == "PIL1293").Bounds.X;
+            arranged.Where(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text { Value: var v } } && v.Trim() == "Nudge").ShouldAllBe(a => a.Bounds.X > titleLeft);
+        }
+        else if (fit != Fit.Toast)
         {
             var fold = tops[^1];
             Buttons.Select(b => TopOf(arranged, b)).All(t => t > fold).ShouldBeTrue($"{fit}: the card's own buttons follow the fold");
@@ -92,7 +101,10 @@ public sealed class OneCardComponentTests
             tree.BorderStyle!.Radius.ShouldBe(colors.CornerRadius);
             tree.BorderStyle.Color.ShouldBe(colors.TintedEdge(NotificationSeverity.Warn));
             tree.Background.ShouldBe(colors.TintedFill(NotificationSeverity.Warn));
-            var inset = arranged.First(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text { Value: var v } } && v.Trim().StartsWith("RING", StringComparison.Ordinal)).Bounds.X;
+            // The page's row has no kind line: its first cell is the severity icon, which sits at the same inset as the panel's kind line.
+            var inset = fit == Fit.Page
+                ? arranged.First(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Icon }).Bounds.X
+                : arranged.First(a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text { Value: var v } } && v.Trim().StartsWith("RING", StringComparison.Ordinal)).Bounds.X;
             inset.ShouldBeGreaterThanOrEqualTo(style.Padding, $"{fit}: the content sits inside the toast's padding");
             left ??= inset;
             inset.ShouldBe(left.Value, 0.5f, "panel and page have the same padding");

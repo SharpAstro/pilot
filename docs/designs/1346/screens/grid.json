@@ -1,0 +1,145 @@
+{
+  "id": "grid",
+  "title": "Notifications: Grid",
+  "root": {
+    "kind": "dock", "background": "ContentBg",
+    "children": [
+      {
+        "kind": "hstack", "side": "top", "size": 56, "padding": 10, "gap": 12, "background": "HeaderBg", "border": "Separator",
+        "children": [
+          { "kind": "text", "text": "notifications", "fontSize": 22, "color": "HeaderText", "padding": 3 },
+          { "kind": "buttonGroup", "bind": "node", "options": ["All nodes", "DE1 (this)", "SE1"], "width": 260, "height": 34 },
+          { "kind": "spacer", "width": "star" },
+          { "kind": "text", "text": "2 need you · 18 in the history", "fontSize": 15, "color": "DimText", "padding": 8 },
+          {
+            "kind": "hstack", "height": 36, "gap": 2, "padding": 2, "background": "PanelBg", "borderRadius": 6, "tooltip": "View mode, like Flights and Ideas",
+            "children": [
+              { "kind": "hstack", "gap": 6, "padding": 7, "background": "Selection", "borderRadius": 5, "action": "goto:grid", "children": [ { "kind": "icon", "icon": "Grid", "iconSize": 16, "color": "SelectionText" }, { "kind": "text", "text": "Grid", "fontSize": 15, "color": "SelectionText" } ] },
+              { "kind": "hstack", "gap": 6, "padding": 7, "borderRadius": 5, "action": "goto:home", "children": [ { "kind": "icon", "icon": "List", "iconSize": 16, "color": "DimText" }, { "kind": "text", "text": "List", "fontSize": 15, "color": "BodyText" } ] }
+            ]
+          }
+        ]
+      },
+      {
+        "kind": "vstack", "width": "star", "height": "star", "gap": 12, "padding": 20,
+        "children": [
+          { "kind": "text", "text": "Need you · 2", "fontSize": 18, "color": "HeaderText" },
+          {
+            "kind": "grid", "columns": 3, "gap": 14, "width": "star",
+            "children": [
+              {
+                "kind": "vstack", "width": "star", "gap": 8, "padding": 14, "background": "#3a3020", "border": "Warn", "borderRadius": 10,
+                "children": [
+                  {
+                    "kind": "hstack", "width": "star", "gap": 10,
+                    "children": [
+                      { "kind": "icon", "icon": "Warning", "iconSize": 22, "color": "Warn" },
+                      {
+                        "kind": "vstack", "width": "star", "gap": 2,
+                        "children": [
+                          { "kind": "text", "text": "Stray conhost.exe 28420 still running", "fontSize": 18, "color": "HeaderText", "width": "star" },
+                          { "kind": "text", "text": "for you · SE1 · 21:11 · ×2", "fontSize": 14, "color": "DimText", "width": "star" }
+                        ]
+                      },
+                      { "kind": "icon", "icon": "Close", "iconSize": 14, "color": "DimText", "tooltip": "Close", "action": "toggle:closed" }
+                    ]
+                  },
+                  { "kind": "text", "text": "Still running 19 min after its session ended.", "fontSize": 15, "color": "BodyText", "width": "star" },
+                  {
+                    "kind": "hstack", "width": "star", "gap": 8,
+                    "children": [
+                      { "kind": "hstack", "padding": 8, "background": "Warn", "borderRadius": 6, "action": "set:end=28420", "children": [ { "kind": "text", "text": "End process", "fontSize": 15, "color": "#1a1a1a" } ] },
+                      { "kind": "hstack", "padding": 8, "background": "PanelBg", "borderRadius": 6, "action": "set:chat=1", "children": [ { "kind": "text", "text": "Chat about this", "fontSize": 15 } ] },
+                      { "kind": "spacer", "width": "star" },
+                      { "kind": "text", "text": "Detail", "fontSize": 14, "color": "Accent", "padding": 8, "action": "toggle:detail" }
+                    ]
+                  }
+                ]
+              },
+              {
+                "kind": "vstack", "width": "star", "gap": 8, "padding": 14, "background": "#1f2a3a", "border": "Info", "borderRadius": 10,
+                "children": [
+                  {
+                    "kind": "hstack", "width": "star", "gap": 10,
+                    "children": [
+                      { "kind": "icon", "icon": "Info", "iconSize": 22, "color": "Info" },
+                      {
+                        "kind": "vstack", "width": "star", "gap": 2,
+                        "children": [
+                          { "kind": "text", "text": "Sessions are not taking turns", "fontSize": 18, "color": "HeaderText", "width": "star" },
+                          { "kind": "text", "text": "for you · DE1 · since 21:04", "fontSize": 14, "color": "DimText", "width": "star" }
+                        ]
+                      },
+                      { "kind": "icon", "icon": "Close", "iconSize": 14, "color": "DimText", "tooltip": "Close", "action": "toggle:closed" }
+                    ]
+                  },
+                  { "kind": "text", "text": "No turn since 21:04: the account changed.", "fontSize": 15, "color": "BodyText", "width": "star" },
+                  {
+                    "kind": "hstack", "width": "star", "gap": 8,
+                    "children": [
+                      { "kind": "hstack", "padding": 8, "background": "Info", "borderRadius": 6, "action": "set:read=1", "children": [ { "kind": "text", "text": "Mark it read", "fontSize": 15, "color": "#1a1a1a" } ] },
+                      { "kind": "hstack", "padding": 8, "background": "PanelBg", "borderRadius": 6, "action": "set:chat=1", "children": [ { "kind": "text", "text": "Chat about this", "fontSize": 15 } ] },
+                      { "kind": "spacer", "width": "star" },
+                      { "kind": "text", "text": "Detail", "fontSize": 14, "color": "Accent", "padding": 8, "action": "toggle:detail" }
+                    ]
+                  }
+                ]
+              },
+              { "kind": "spacer", "width": "star" }
+            ]
+          },
+          {
+            "kind": "hstack", "width": "star", "gap": 12,
+            "children": [
+              { "kind": "text", "text": "History · 18", "fontSize": 18, "color": "HeaderText", "padding": 6 },
+              { "kind": "spacer", "width": "star" },
+              { "kind": "hstack", "padding": 8, "background": "PanelBg", "borderRadius": 6, "action": "set:clear=1", "children": [ { "kind": "text", "text": "Clear", "fontSize": 15 } ] }
+            ]
+          },
+          {
+            "kind": "grid", "columns": 3, "gap": 14, "width": "star",
+            "children": [
+              { "kind": "hstack", "width": "star", "gap": 10, "padding": 12, "background": "#1d3324", "borderRadius": 10, "children": [
+                { "kind": "icon", "icon": "Success", "iconSize": 20, "color": "Success" },
+                { "kind": "vstack", "width": "star", "gap": 2, "children": [
+                  { "kind": "text", "text": "Job j4404 succeeded", "fontSize": 17, "color": "BodyText", "width": "star" },
+                  { "kind": "text", "text": "dotnet build: exit 0", "fontSize": 14, "color": "DimText", "width": "star" },
+                  { "kind": "text", "text": "SE1 · 21:11 · closed", "fontSize": 13, "color": "DimText", "width": "star" } ] } ] },
+              { "kind": "hstack", "width": "star", "gap": 10, "padding": 12, "background": "#1d3324", "borderRadius": 10, "children": [
+                { "kind": "icon", "icon": "Success", "iconSize": 20, "color": "Success" },
+                { "kind": "vstack", "width": "star", "gap": 2, "children": [
+                  { "kind": "text", "text": "Job j4403 succeeded", "fontSize": 17, "color": "BodyText", "width": "star" },
+                  { "kind": "text", "text": "dotnet test: exit 0", "fontSize": 14, "color": "DimText", "width": "star" },
+                  { "kind": "text", "text": "SE1 · 21:06 · closed", "fontSize": 13, "color": "DimText", "width": "star" } ] } ] },
+              { "kind": "hstack", "width": "star", "gap": 10, "padding": 12, "background": "#3a1f22", "borderRadius": 10, "children": [
+                { "kind": "icon", "icon": "Error", "iconSize": 20, "color": "Error" },
+                { "kind": "vstack", "width": "star", "gap": 2, "children": [
+                  { "kind": "text", "text": "Job j4402 failed", "fontSize": 17, "color": "BodyText", "width": "star" },
+                  { "kind": "text", "text": "dotnet build: exit 1", "fontSize": 14, "color": "DimText", "width": "star" },
+                  { "kind": "text", "text": "SE1 · 21:05 · closed", "fontSize": 13, "color": "DimText", "width": "star" } ] } ] },
+              { "kind": "hstack", "width": "star", "gap": 10, "padding": 12, "background": "#1f2a3a", "borderRadius": 10, "children": [
+                { "kind": "icon", "icon": "Info", "iconSize": 20, "color": "Info" },
+                { "kind": "vstack", "width": "star", "gap": 2, "children": [
+                  { "kind": "text", "text": "PR #1314 merged", "fontSize": 17, "color": "BodyText", "width": "star" },
+                  { "kind": "text", "text": "PIL1292 notifications", "fontSize": 14, "color": "DimText", "width": "star" },
+                  { "kind": "text", "text": "DE1 · 20:58 · closed", "fontSize": 13, "color": "DimText", "width": "star" } ] } ] },
+              { "kind": "hstack", "width": "star", "gap": 10, "padding": 12, "background": "#3a3020", "borderRadius": 10, "children": [
+                { "kind": "icon", "icon": "Warning", "iconSize": 20, "color": "Warn" },
+                { "kind": "vstack", "width": "star", "gap": 2, "children": [
+                  { "kind": "text", "text": "Disk at 91% on SE1", "fontSize": 17, "color": "BodyText", "width": "star" },
+                  { "kind": "text", "text": "C: has 18 GB free", "fontSize": 14, "color": "DimText", "width": "star" },
+                  { "kind": "text", "text": "SE1 · 20:41 · closed", "fontSize": 13, "color": "DimText", "width": "star" } ] } ] },
+              { "kind": "hstack", "width": "star", "gap": 10, "padding": 12, "background": "#1d3324", "borderRadius": 10, "children": [
+                { "kind": "icon", "icon": "Success", "iconSize": 20, "color": "Success" },
+                { "kind": "vstack", "width": "star", "gap": 2, "children": [
+                  { "kind": "text", "text": "Job j4399 succeeded", "fontSize": 17, "color": "BodyText", "width": "star" },
+                  { "kind": "text", "text": "dotnet build: exit 0", "fontSize": 14, "color": "DimText", "width": "star" },
+                  { "kind": "text", "text": "DE1 · 20:30 · closed", "fontSize": 13, "color": "DimText", "width": "star" } ] } ] }
+            ]
+          },
+          { "kind": "spacer", "height": "star" }
+        ]
+      }
+    ]
+  }
+}
