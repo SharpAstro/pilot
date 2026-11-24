@@ -38,6 +38,12 @@ public sealed partial class PrReviews
     /// <summary>The For-you card said when a fixer's worktree could not be removed; the node tries again.</summary>
     public const string FixLeftKind = "pr-fix-left";
 
+    /// <summary>The For-you card of a fixer stopped because someone else moved the PR's head under it (pilot #1341).</summary>
+    public const string FixHeadMovedKind = "pr-fix-head-moved";
+
+    /// <summary>The Ring card of a fixer not started because the PR's authoring session holds its branch in a worktree (pilot #1341).</summary>
+    public const string FixAuthorHoldsKind = "pr-fix-author-holds";
+
     /// <summary>The Handled notice of an idle fixer of an approved PR that finished with nothing left and was ended (pilot #1327).</summary>
     public const string FixerFinishedKind = "pr-fixer-finished";
 
@@ -83,6 +89,22 @@ public sealed partial class PrReviews
             // The fixer's session working, waiting on a person or on a job of its own: it may push more, so it is left running and no review starts yet; a
             // later sweep looks again once it has finished. An idle one has finished (its turn is over and an idle session never ends by itself), so it is ended
             // below and the review of its push starts (pilot #1327).
+            // A head the fixer's worktree does not contain was pushed or rebuilt by someone else under it (tianwen#2480/#2483): its fixes are on a head the
+            // reviewed one no longer is. It is stopped, whatever it is doing, its work kept (the hold pushes it or rings), and no review starts on its behalf.
+            if (review.FixWorktree is { } movedTree && Directory.Exists(movedTree)
+                && !(await git.RunAsync(["merge-base", "--is-ancestor", read.Head, "HEAD"], movedTree, cancellationToken)).Ok)
+            {
+                foreach (var l in LiveFixersOf(review))
+                {
+                    await StopQuietly(l.Id, cancellationToken);
+                }
+                var kept = !await EndFixerAsync(review, cancellationToken, read.Head);
+                state.RaiseCard(CardBin.ForYou, FixHeadMovedKind, subject,
+                    $"{pr}: the head moved under {review.Fixer}, from {CommitRefs.Short(review.Head)} to {CommitRefs.Short(read.Head)}",
+                    $"Someone else pushed {pr}'s branch while {review.Fixer} worked on {CommitRefs.Short(review.Head)}, and its worktree does not have the new head {CommitRefs.Short(read.Head)}. It was stopped; whatever it committed or left uncommitted is kept{(kept ? "" : " in its worktree")} for the hold to push or ring about. A review of the new head comes first; Fix it then starts a fixer on that.",
+                    link: review.Url, summary: $"{pr}'s head moved from {CommitRefs.Short(review.Head)} to {CommitRefs.Short(read.Head)} under its fixer, which was stopped; review the new head first.");
+                return;
+            }
             var lives = LiveFixersOf(review);
             if (lives.Any(l => !FixerFinished(l)))
             {

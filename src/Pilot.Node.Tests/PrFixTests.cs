@@ -922,4 +922,30 @@ public sealed class PrReviewRuleTests : PrFixTestsBase
         Put(PrReviewState.Closed, Head);
         (await _reviews.WhyNoReviewAsync(Seven, Ct)).ShouldBeNull();
     }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AFixerIsNotStartedWhileGitHubsHeadIsNotTheOneTheReviewRead()
+    {
+        await Review("acme/widget#7", "comment", "README.md:1 design: should this be a service at all?");
+        FixerPushes("someone rebuilt the branch");
+
+        var refused = await Run(Verbs.FixPr, "acme/widget#7", "controller", "Keep", "it", "a", "library");
+
+        refused.Error.ShouldNotBeNull().ShouldContain("a review of the new head comes first");
+        Fixers.ShouldBeEmpty();
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AFixerIsNotStartedWhileAFixerSessionOfThePrLivesEvenIfTheRowNamesNone()
+    {
+        await Review("acme/widget#7", "comment", "README.md:1 design: should this be a service at all?");
+        _state.PutSession(Session("du1-fix-widget-7x", SessionState.Working, "job00077") with { Role = SessionRole.Fixer, Pr = 7, Repo = "widget" });
+
+        var refused = await Run(Verbs.FixPr, "acme/widget#7", "controller", "Keep", "it", "a", "library");
+
+        refused.Error.ShouldNotBeNull().ShouldContain("fixing it already");
+        Fixers.ShouldBeEmpty();
+    }
 }

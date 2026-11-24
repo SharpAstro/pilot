@@ -46,13 +46,19 @@ public sealed class PrFixWorktreeTests : PrFixTestsBase
 
     [Fact]
     [Trait("Category", "Slow")]
-    public async Task AWorktreeHeldByALiveSessionGetsADetachedFixPlane()
+    public async Task AWorktreeHeldByALiveNonFixerSessionStartsNoFixerAndRaisesOneCardNamingIt()
     {
         CheckOutBranchElsewhere();
         _state.PutSession(Session("someone", SessionState.Working) with { Cwd = Other });
-        var row = await Review("acme/widget#7", "changes", "README.md:1 wrong");
+        await Review("acme/widget#7", "comment", Question);
 
-        await AssertDetachedAsync(row);
+        var refused = await Run(Verbs.FixPr, "acme/widget#7", "controller", "Keep", "it", "a", "library");
+
+        refused.Error.ShouldNotBeNull().ShouldContain("someone");
+        Fixers.ShouldBeEmpty();
+        _state.Cards(openOnly: true).Where(c => c.Kind == PrReviews.FixAuthorHoldsKind).ShouldHaveSingleItem().Detail!.ShouldContain("someone");
+        // The same reason answers a recheck, so it starts none either.
+        (await _reviews.WhyNoFixerAsync(Seven, _reviews.Of(Seven).ShouldNotBeNull(), Ct)).ShouldNotBeNull().ShouldContain("someone");
     }
 
     [Fact]

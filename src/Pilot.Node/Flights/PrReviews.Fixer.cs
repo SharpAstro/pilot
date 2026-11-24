@@ -260,6 +260,22 @@ public sealed partial class PrReviews
         {
             return $"it is {review.Author ?? "someone else"}'s PR, and Fix it has not been chosen";
         }
+        // Its authoring session holds the branch in a worktree: it answers the review itself (tianwen#2490).
+        try
+        {
+            var read = await github.PullRequestOfAsync(pr.Repo, pr.Number, cancellationToken);
+            var clone = TrackedClone(pr)!;
+            if (read.HeadRef.Length > 0
+                && await HolderOfBranchAsync(clone, Path.Combine(clone, ".claude", "worktrees", $"fix-{Slug(pr.Name)}-{pr.Number}"), read.HeadRef, cancellationToken) is { } holder
+                && AuthoringSessionIn(holder) is { } author)
+            {
+                return AuthorHoldsReason(author, holder, read.HeadRef);
+            }
+        }
+        catch (FlightException)
+        {
+            // GitHub not answering is not a reason of its own; the start asks again.
+        }
         return null;
     }
 
@@ -504,6 +520,16 @@ public sealed partial class PrReviews
             throw new FlightException($"{pr} is {read.State.ToLowerInvariant()}, not open");
         }
         var branch = read.HeadRef.Length > 0 ? read.HeadRef : throw new FlightException($"gh did not say {pr}'s branch");
+        // The review was of review.Head: a fixer on a head the review did not read answers findings that may no longer hold (tianwen#2480/#2483).
+        if (read.Head.Length > 0 && review.Head.Length > 0 && !string.Equals(read.Head, review.Head, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new FlightException($"{pr}'s head is {CommitRefs.Short(read.Head)} now, not {CommitRefs.Short(review.Head)} its review read: a review of the new head comes first");
+        }
+        // One fixer per PR, judged from the session store and not only from the row (tianwen#2490 had four).
+        if (LiveFixersOf(Of(pr) ?? review) is { Count: > 0 } liveFixers)
+        {
+            throw new FlightException($"{pr} has {liveFixers[0].Name} fixing it already");
+        }
 
         var fetch = await git.RunAsync(["fetch", "--quiet", "origin", $"+refs/heads/{branch}:refs/remotes/origin/{branch}"], clone, cancellationToken);
         if (!fetch.Ok)
@@ -526,6 +552,12 @@ public sealed partial class PrReviews
         var detached = false;
         if (await HolderOfBranchAsync(clone, worktree, branch, cancellationToken) is { } holder)
         {
+            if (AuthoringSessionIn(holder) is { } author)
+            {
+                var why = AuthorHoldsReason(author, holder, branch);
+                RaiseOnce(pr, review, CardBin.Ring, FixAuthorHoldsKind, Verbs.PrTarget(pr.Repo, pr.Number), $"{pr}: no fixer started, its authoring session holds the branch", $"No fixer started: {why}.");
+                throw new FlightException($"no fixer started: {why}");
+            }
             var notBorrowed = await WhyNotBorrowAsync(clone, holder, branch, cancellationToken);
             if (notBorrowed is null)
             {
@@ -596,6 +628,14 @@ public sealed partial class PrReviews
         }
         return listed.FirstOrDefault(w => !w.Prunable && w.Branch == branch && !SamePath(w.Path, fixPlane)) is { } w2 ? Path.GetFullPath(w2.Path) : null;
     }
+
+    // A live session that is not a fixer and works in the worktree: the PR's authoring session, which answers a review itself.
+    private SessionRow? AuthoringSessionIn(string holder) =>
+        state.Sessions().FirstOrDefault(s => s.State != SessionState.Ended && s.State != SessionState.Failed && !s.Archived && !s.Gone
+            && !AdmissionGate.IsFixer(s) && s.Cwd is { Length: > 0 } cwd && SamePath(cwd, holder));
+
+    private static string AuthorHoldsReason(SessionRow author, string holder, string branch) =>
+        $"the session {author.Name} works in {holder}, which holds {branch}, so it answers the review itself and a second fixer would push beside it";
 
     private static bool SamePath(string a, string b) =>
         string.Equals(Path.TrimEndingDirectorySeparator(Path.GetFullPath(a)), Path.TrimEndingDirectorySeparator(Path.GetFullPath(b)),
