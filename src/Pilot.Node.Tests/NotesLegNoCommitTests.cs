@@ -62,9 +62,10 @@ public sealed class NotesLegNoCommitTests : ReviewTestsBase
         ready.Title.ShouldNotContain("holding");
         (ready.Detail ?? "").ShouldNotContain("merge is held");
         await Checks().LookAsync(Ct);
-        // The node merges the PR itself: no hold, note or leg stands in its way.
-        _github.Merged.ShouldHaveSingleItem();
+        // The node asks for the merge itself at the reviewed head (the plane's own, which the fake PR carries) and nothing refuses it: no hold,
+        // note or leg stands in its way, and no merge-refused card is raised (the fake lands a merge as an entry, as AutopilotMergeCardTests reads it).
         _state.Merges().Single(m => m.Flight == flight.Code).By.ShouldBe(MergeBy.Node);
+        _state.Cards(openOnly: false).ShouldNotContain(c => c.Kind == PrChecks.NodeMergeRefused);
     }
 
     [Fact]
