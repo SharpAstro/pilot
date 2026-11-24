@@ -201,7 +201,7 @@ public sealed class FollowUpLandTests : PackageWaitTestsBase
         await peer.Reached.Task.WaitAsync(TimeSpan.FromSeconds(5), Ct);
 
         // The landing's run is the one running; a second carrying a release must join it, not drop it.
-        await node.Flights.EnsurePeerFollowUpFlightsAsync("TIA1", [new PackageWait { Id = "Other.Pkg", Line = "3.4", Above = "3.4.1", Producer = "TIA1" }], Ct);
+        await node.Flights.EnsurePeerFollowUpFlightsAsync("TIA1", [new PackageWait { Id = "Other.Pkg", Line = "3.4", Above = "3.4.1", Producer = "TIA1", Since = Start }], Ct);
         peer.Gate.SetResult();
         await landing;
 
@@ -213,8 +213,8 @@ public sealed class FollowUpLandTests : PackageWaitTestsBase
     [Fact]
     public void JoiningReleasesKeepsEachPackageOnce()
     {
-        var a = new PackageWait { Id = "A", Line = "1.0", Producer = "TIA1" };
-        var b = new PackageWait { Id = "B", Line = "2.0", Producer = "TIA1" };
+        var a = new PackageWait { Id = "A", Line = "1.0", Producer = "TIA1", Since = Start };
+        var b = new PackageWait { Id = "B", Line = "2.0", Producer = "TIA1", Since = Start };
 
         FlightCommander.MergeReleased([a], [a, b]).ShouldBe([a, b]);
     }
