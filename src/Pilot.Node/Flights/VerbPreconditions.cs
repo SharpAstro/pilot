@@ -22,7 +22,7 @@ public static class VerbPreconditions
     /// <summary>The verbs <see cref="For"/> has a predicate for (pilot #1325): a card offering one is marked from it and its command refuses with its words.</summary>
     public static readonly IReadOnlySet<string> Covered = new HashSet<string>
     {
-        Verbs.StartReview, Verbs.GoAround, Verbs.StartLeg, Verbs.Merge, Verbs.RerunChecks, Verbs.OpenPr,
+        Verbs.StartReview, Verbs.GoAround, Verbs.StartLeg, Verbs.Merge, Verbs.RerunChecks, Verbs.OpenPr, Verbs.EnsureFollowUps,
     };
 
     /// <summary>
@@ -63,6 +63,12 @@ public static class VerbPreconditions
 
     private static List<string> LegsNotDone(IEnumerable<LegRow> legs) =>
         [.. legs.Where(l => l.State != LegState.Done).OrderBy(l => l.Order).Select(l => l.Name)];
+
+    /// <summary>Making the follow-ups' flights: the flight has landed and a recorded follow-up still has none.</summary>
+    public static VerbRefusal? EnsureFollowUps(FlightRow flight) =>
+        flight.State != FlightState.Landed ? new VerbRefusal($"{flight.Code} has not landed: its follow-ups get their flights when it does")
+        : flight.RepoFollowUps.All(f => f.Flight is not null) ? new VerbRefusal($"every follow-up of {flight.Code} has a flight")
+        : null;
 
     /// <summary>A review's start: the flight not landed and every leg done. The legs wait clears by itself, as the review starts once they land.</summary>
     public static VerbRefusal? StartReview(FlightRow flight, IEnumerable<LegRow> legs)
@@ -170,6 +176,7 @@ public static class VerbPreconditions
         Verbs.StartLeg when leg is not null => StartLeg(flight, leg, legs),
         Verbs.Merge or Verbs.RerunChecks => Merge(flight, legs, openCards),
         Verbs.OpenPr => OpenPr(flight, legs),
+        Verbs.EnsureFollowUps => EnsureFollowUps(flight),
         _ => null,
     };
 }

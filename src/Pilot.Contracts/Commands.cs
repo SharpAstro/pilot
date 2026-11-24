@@ -280,6 +280,12 @@ public static class Verbs
     /// </summary>
     public const string FlightFollowUp = "flight-follow-up";
 
+    /// <summary>
+    /// <c>ensure-follow-ups flight/&lt;code&gt;</c> (PIL1340): makes the flight of each follow-up a landed flight recorded in another repo that still has none, here or on a fleet
+    /// node. It is what the For-you card of a landed flight with follow-ups left without a flight offers.
+    /// </summary>
+    public const string EnsureFollowUps = "ensure-follow-ups";
+
     /// <summary>The fourth argument of <see cref="FlightFollowUp"/> when the flight needs the change as a published package, not only read at land.</summary>
     public const string PackageFlag = "--package";
 

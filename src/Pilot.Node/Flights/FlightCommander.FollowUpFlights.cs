@@ -192,18 +192,37 @@ public sealed partial class FlightCommander
         await _one.WaitAsync(cancellationToken);
         try
         {
-            var landing = Find(Verbs.FlightTarget(code));
-            if (landing.State != FlightState.Landed || landing.RepoFollowUps.All(f => f.Flight is not null) || github is null)
-            {
-                return;
-            }
-            await EnsureLocalFollowUpFlightsAsync(landing, cancellationToken);
-            await EnsurePeerFollowUpFlightsAsync(code, [], cancellationToken);
+            await EnsureFollowUpFlightsLockedAsync(Find(Verbs.FlightTarget(code)), cancellationToken);
         }
         finally
         {
             _one.Release();
         }
+    }
+
+    private async Task EnsureFollowUpFlightsLockedAsync(FlightRow landing, CancellationToken cancellationToken)
+    {
+        if (landing.State != FlightState.Landed || landing.RepoFollowUps.All(f => f.Flight is not null) || github is null)
+        {
+            return;
+        }
+        await EnsureLocalFollowUpFlightsAsync(landing, cancellationToken);
+        await EnsurePeerFollowUpFlightsAsync(landing.Code, [], cancellationToken);
+    }
+
+    /// <summary><c>ensure-follow-ups</c> (the verb already holds the lock): the same step, answered with what is left.</summary>
+    private async Task<string> EnsureFollowUpsVerbAsync(CommandRequest command, CancellationToken cancellationToken)
+    {
+        var flight = Find(command.Target);
+        if (VerbPreconditions.EnsureFollowUps(flight) is { } refused)
+        {
+            throw new FlightException(refused.Why);
+        }
+        await EnsureFollowUpFlightsLockedAsync(flight, cancellationToken);
+        var left = Find(command.Target).RepoFollowUps.Where(f => f.Flight is null).ToList();
+        return left.Count == 0
+            ? $"every follow-up of {flight.Code} has a flight"
+            : $"{left.Count.ToString(CultureInfo.InvariantCulture)} follow-up(s) of {flight.Code} still have no flight: {string.Join("; ", left.Select(f => $"{f.Repo}#{f.Issue.ToString(CultureInfo.InvariantCulture)} ({f.Problem ?? "not tried"})"))}";
     }
 
     private async Task<(string Code, string Node)> MakeOnPeerAsync(FlightRow landing, CrossRepoFollowUp followUp, CancellationToken cancellationToken)

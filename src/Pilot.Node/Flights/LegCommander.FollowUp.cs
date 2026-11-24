@@ -47,7 +47,9 @@ public sealed partial class LegCommander
             if (routed.Count > 0)
             {
                 await DeferredRoutes.RouteAsync(ctx, routed, flight.DeferredFilings, "", (title, detail) => state.RaiseCard(CardBin.ForYou, DeferredRoutes.OwnerDecisionKind, Verbs.FlightTarget(flight.Code), title, detail),
-                    lines => Record(flight.Code, f => f with { DeferredFilings = [.. (f.DeferredFilings ?? []), .. lines] }), call => OffLockAsync(null, call), cancellationToken);
+                    lines => Record(flight.Code, f => f with { DeferredFilings = [.. (f.DeferredFilings ?? []), .. lines] }), call => OffLockAsync(null, call), cancellationToken,
+                    followUp: (repo, filed, title) => Record(flight.Code, f => f.RepoFollowUps.Any(x => string.Equals(x.Repo, repo, StringComparison.OrdinalIgnoreCase) && x.Issue == filed.Number)
+                        ? f : f with { RepoFollowUps = [.. f.RepoFollowUps, new CrossRepoFollowUp { Repo = repo, Issue = filed.Number, Title = title, At = time.GetUtcNow() }] }));
                 fresh = [.. fresh.Except(routed)];
             }
             // The rest is the flight's one follow-up issue: the points larger than the flight and those with no reason.
