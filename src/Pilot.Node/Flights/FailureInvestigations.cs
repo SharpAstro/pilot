@@ -356,7 +356,7 @@ public sealed class FailureInvestigations(NodeState state, IGitHub github, Failu
             test = (cls.Length <= room ? cls : room > 3 ? cls[..(room - 3)] + "..." : "") + count;
         }
         state.RaiseCard(CardBin.ForYou, CardKind, subject,
-            head + test + tail,
+            $"{head}{test}{tail}",
             $"{Place(site)}: {run}, {WhereWords(site.Where)}.\n\n{(group.Count > 1 ? $"{group.Count} tests of {FailureSignature.ClassOf(failure.Test)} failed:\n{TestLines(group)}" : $"Test: {(failure.Test.Length > 0 ? failure.Test : "none, an error line")}\nAssertion message: {failure.Message}")}\n\nIt is a bug with a cause to find, filed as {site.Name}#{issue.Number} with priority high."
             + (notes.Count > 0 ? $"\n\nNot done: {string.Join("; ", notes)}." : ""),
             link: IssueLink(site, issue.Number));
