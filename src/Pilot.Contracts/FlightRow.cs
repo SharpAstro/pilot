@@ -687,9 +687,12 @@ public sealed record CrossRepoFollowUp
     /// <summary>When the issue was opened.</summary>
     public DateTimeOffset At { get; init; }
 
+    /// <summary>Why the last try at making its flight failed; null when none failed or the flight exists.</summary>
+    public string? Problem { get; init; }
+
     /// <summary>The one line status and the PR body show: the issue, its title, its flight (or that there is none yet) and whether the package is needed.</summary>
     public string Line() =>
-        $"{Repo}#{Issue}: {Title} ({(Flight is { Length: > 0 } f ? $"flight {f}{(Node is { Length: > 0 } n ? $" on {n}" : "")}" : "no flight yet")}{(Package ? ", needed as a package" : ", read at land")})";
+        $"{Repo}#{Issue}: {Title} ({(Flight is { Length: > 0 } f ? $"flight {f}{(Node is { Length: > 0 } n ? $" on {n}" : "")}" : $"no flight yet{(Problem is { Length: > 0 } p ? $"; last try: {p}" : "")}")}{(Package ? ", needed as a package" : ", read at land")})";
 }
 
 /// <summary>A producer's package a connected consumer now takes: the version the node found on nuget.org when the consumer's wait was met.</summary>
