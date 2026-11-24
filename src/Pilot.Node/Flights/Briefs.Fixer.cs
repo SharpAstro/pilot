@@ -31,6 +31,13 @@ public static partial class Briefs
         {
             text.AppendLine($"Work in this folder ({review.FixWorktree}), a worktree on the PR's own branch `{branch}`. A reviewer read the PR at");
         }
+        if (review.FixResumedWork is { Length: > 0 } resumed)
+        {
+            text.AppendLine();
+            text.AppendLine($"This worktree holds an earlier fixer's work that is not on the PR yet: {resumed}.");
+            text.AppendLine("Read it first, build and test it, finish the review's points from there and push plainly (a fast-forward, never force). Never discard, reset or clean it: it is the work.");
+            text.AppendLine();
+        }
         var passed = !string.Equals(review.Verdict, "changes", StringComparison.OrdinalIgnoreCase);
         text.AppendLine($"{shortHead} and {(passed ? "passed it, leaving points" : "asked for changes")}. Its report:");
         text.AppendLine();

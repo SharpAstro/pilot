@@ -233,7 +233,7 @@ public sealed partial class PrReviews
             state.RaiseCard(CardBin.ForYou, FixEndedKind, subject, $"{pr}: {review.Fixer} ended without a push",
                 left is null
                     ? $"The PR's head is still {CommitRefs.Short(review.Head)}. Fix it starts another fixer on the same findings."
-                    : $"The PR's head is still {CommitRefs.Short(review.Head)}, {FixLeftWorkMark} {review.FixWorktree}, kept there: {left}. Push it from there, or Fix it starts another fixer on the same findings in a fresh worktree.",
+                    : $"The PR's head is still {CommitRefs.Short(review.Head)}, {FixLeftWorkMark} {review.FixWorktree}, kept there: {left}. Push it from there, or Fix it starts another fixer on the same findings that continues in that same worktree, with the work in it kept.",
                 [new CardChoice { Label = FixLabel, Verb = Verbs.FixPr, Target = subject }], link: review.Url);
         }
     }
@@ -642,7 +642,7 @@ public sealed partial class PrReviews
         state.CloseCardsAbout(Verbs.PrTarget(review.Repo, review.Number), "the fixer ended", FixLeftKind);
         if (Of(PrRef.Parse($"{review.Repo}#{review.Number}")!) is { } latest)
         {
-            state.PutPrReview(latest with { Fixer = null, FixerJob = null, FixerResumedJob = null, FixWorktree = null, FixWorktreeBorrowed = null, FixDetached = null });
+            state.PutPrReview(latest with { Fixer = null, FixerJob = null, FixerResumedJob = null, FixWorktree = null, FixWorktreeBorrowed = null, FixDetached = null, FixResumedWork = null });
         }
         return true;
     }

@@ -82,6 +82,7 @@ public sealed partial class PrReviews
             FixRoundsAllowed = fixNow?.FixRoundsAllowed,
             FixWorktreeBorrowed = fixNow?.FixWorktreeBorrowed,
             FixDetached = fixNow?.FixDetached,
+            FixResumedWork = fixNow?.FixResumedWork,
             // The earlier rounds and the follow-up issue go on past a fresh review (pilot #1107): the re-review answers their points.
             Rounds = fixNow?.Rounds,
             FollowUpIssue = fixNow?.FollowUpIssue,
