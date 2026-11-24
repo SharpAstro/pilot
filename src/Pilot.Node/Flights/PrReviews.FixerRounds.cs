@@ -230,11 +230,19 @@ public sealed partial class PrReviews
                 RaiseDesignFixMissingCard(review, subject, $"{pr}");
                 return;
             }
+            // Push its commits only when the work has commits and the PR's branch is the node's to push to (not a fork): uncommitted files cannot be pushed.
+            var pushable = left is not null && review.FixWorktree is { } leftTree && await WorkPastAsync(leftTree, review.Head, cancellationToken) is { Commits: > 0 }
+                && !(await github.PullRequestOfAsync(review.Repo, review.Number, cancellationToken)).Fork;
+            var endedChoices = new List<CardChoice> { new() { Label = FixLabel, Verb = Verbs.FixPr, Target = subject } };
+            if (pushable)
+            {
+                endedChoices.Add(new CardChoice { Label = PushFixLabel, Verb = Verbs.PushFix, Target = subject });
+            }
             state.RaiseCard(CardBin.ForYou, FixEndedKind, subject, $"{pr}: {review.Fixer} ended without a push",
                 left is null
                     ? $"The PR's head is still {CommitRefs.Short(review.Head)}. Fix it starts another fixer on the same findings."
-                    : $"The PR's head is still {CommitRefs.Short(review.Head)}, {FixLeftWorkMark} {review.FixWorktree}, kept there: {left}. Push it from there, or Fix it starts another fixer on the same findings that continues in that same worktree, with the work in it kept.",
-                [new CardChoice { Label = FixLabel, Verb = Verbs.FixPr, Target = subject }], link: review.Url);
+                    : $"The PR's head is still {CommitRefs.Short(review.Head)}, {FixLeftWorkMark} {review.FixWorktree}, kept there: {left}. {(pushable ? $"{PushFixLabel} pushes its commits from there as they are (unbuilt, a plain push) and reviews the new head, or " : "")}Fix it starts another fixer on the same findings that continues in that same worktree, with the work in it kept.",
+                endedChoices, link: review.Url);
         }
     }
 

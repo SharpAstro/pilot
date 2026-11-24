@@ -577,6 +577,12 @@ public static class Verbs
     /// </summary>
     public const string FixPr = "fix-pr";
 
+    /// <summary>
+    /// <c>push-fix pr/&lt;owner&gt;/&lt;repo&gt;#&lt;n&gt;</c>: a plain push of the commits an ended fixer left in its kept fix worktree to the PR's branch, then a
+    /// review of the moved head. The choice on the <c>pr-fix-ended</c> card of a fixer that left commits; the person's, never the node's.
+    /// </summary>
+    public const string PushFix = "push-fix";
+
     /// <summary><c>extend-budget flight/&lt;code&gt;/&lt;leg&gt; &lt;tokens&gt;</c>: raises the leg's budget, in weighted tokens, to the new figure.</summary>
     public const string ExtendBudget = "extend-budget";
 

@@ -84,12 +84,19 @@ public static partial class PilotCommand
                     var pr = Pr(p.GetValue(prRef)!);
                     return Send(client, Verbs.FixPr, Verbs.PrTarget(pr.Repo, pr.Number), p.GetValue(fixAnswer) ?? [], who, ct);
                 });
+            var reviewPush = Action(new Command("push-fix", "Push the commits a fixer left in its kept fix worktree to the PR's branch (a plain push), as the ended card's Push its commits does; the moved head gets a review") { Arguments = { prRef } },
+                (p, client, ct) =>
+                {
+                    var pr = Pr(p.GetValue(prRef)!);
+                    return Send(client, Verbs.PushFix, Verbs.PrTarget(pr.Repo, pr.Number), [], who, ct);
+                });
             var review = new Command("review", "Review any PR (review pr), or give a review's verdict: a flight's pass offers the merge and changes rings for a go-around; a PR's rings with its findings")
             {
                 Subcommands =
                 {
                     reviewPr,
                     reviewFix,
+                    reviewPush,
                     Verdict("pass", "A flight's review: ready, the merge is offered"),
                     Verdict("changes", "A flight's or a PR's review: changes asked for, each one in the report"),
                     Verdict("approve", "A PR's review: it is right as it is"),
