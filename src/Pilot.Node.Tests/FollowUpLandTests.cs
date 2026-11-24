@@ -129,7 +129,7 @@ public sealed class FollowUpLandTests : PackageWaitTestsBase
     [Fact]
     public async Task ACreateThatFailsNeverRefusesTheLandAndIsRetriedWithoutMakingASecondFlight()
     {
-        // The folder is no git checkout, so the create is refused.
+        // The folder is no git checkout, so the repo counts as not cloned and no peer holds it: nothing can make the flight yet.
         Directory.CreateDirectory(Path.Combine(_root, "brokenapp"));
         var node = await ProducerWithFollowUp(Record("SharpAstro/brokenapp", 3));
 
@@ -139,7 +139,7 @@ public sealed class FollowUpLandTests : PackageWaitTestsBase
         node.State.Flights().ShouldNotContain(f => f.Repo == "brokenapp");
         var row = Flight(node, "TIA1").RepoFollowUps.ShouldHaveSingleItem();
         row.Flight.ShouldBeNull();
-        row.Problem.ShouldNotBeNull().ShouldContain("no git checkout");
+        row.Problem.ShouldNotBeNull().ShouldContain("not made here");
         row.Line().ShouldContain("last try:");
 
         _repos.Seed("brokenapp");
