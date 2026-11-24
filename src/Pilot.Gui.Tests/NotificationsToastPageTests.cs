@@ -46,17 +46,17 @@ public sealed class NotificationsToastPageTests
     };
 
     // Two open cards and a stray card whose detail starts with its own summary.
-    private static CardsScreen Cards() => CardsScreen.From(
+    internal static CardsScreen Cards() => CardsScreen.From(
     [
         Card("c1", CardBin.Ring, "TIA1818's PR #63 is ready to merge", "A short line on what happened."),
         Card("c2", CardBin.ForYou, "PIL795: 5 legs planned", "Five legs are ready to fly."),
         Card("c3", CardBin.Ring, StrayTitle, StraySummary, StraySummary + "\nProcess 28420 (conhost.exe), started 05:24Z, running 4 h 39 min."),
     ]);
 
-    private static PilotEvent Event(string id, string title, string text, NotificationSeverity severity, string node = "DE1") =>
+    internal static PilotEvent Event(string id, string title, string text, NotificationSeverity severity, string node = "DE1") =>
         new(PilotEventKind.JobEnded, id, title, text, severity, node);
 
-    private sealed class Window : IDisposable
+    internal sealed class Window : IDisposable
     {
         private ImmutableArray<Layout.ArrangedNode<float>> _arranged = [];
         private readonly PageData _data = PageData.For("sample");
@@ -66,13 +66,14 @@ public sealed class NotificationsToastPageTests
         public PilotChrome<RgbaImage> Chrome { get; }
         public ImmutableArray<Layout.ArrangedNode<float>> Arranged => _arranged;
 
-        public Window(int width, int height = 1500)
+        public Window(int width, int height = 1500, NotificationsViewMode mode = NotificationsViewMode.List)
         {
             Width = width;
             Height = height;
             Renderer = new RgbaImageRenderer((uint)width, (uint)height);
             Chrome = new PilotChrome<RgbaImage>(Renderer, new SessionsView<RgbaImage>(Renderer)) { FontPath = SessionsCapture.FontPath, DpiScale = 1f };
             Chrome.Notifications.Open = false;
+            Chrome.NotificationsPage.Mode = mode;
             Chrome.Show(PilotPage.Jobs);
             var seen = Chrome.NotificationsPage.Arranged;
             Chrome.NotificationsPage.Arranged = nodes =>
@@ -104,7 +105,7 @@ public sealed class NotificationsToastPageTests
         public void Dispose() => Renderer.Dispose();
     }
 
-    private static string ArtifactDir()
+    internal static string ArtifactDir()
     {
         var dir = Environment.GetEnvironmentVariable("PILOT_JOB_ARTIFACTS") is { Length: > 0 } given
             ? given : Path.Combine(AppContext.BaseDirectory, "captures");
@@ -112,18 +113,18 @@ public sealed class NotificationsToastPageTests
         return dir;
     }
 
-    private static string TextOf(Layout.ArrangedNode<float> a) => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text { Value: var v } } ? v : "";
+    internal static string TextOf(Layout.ArrangedNode<float> a) => a.Node is Layout.Node.Leaf { Content: Layout.Content.Text { Value: var v } } ? v : "";
 
     private static float SizeOf(Layout.ArrangedNode<float> a) => ((Layout.Content.Text)((Layout.Node.Leaf)a.Node).Content).FontSize;
 
     /// <summary>The page's rows: the toast-framed nodes (the library's corner radius) as wide as the page, top to bottom.</summary>
-    private static List<Layout.ArrangedNode<float>> Rows(Window w)
+    internal static List<Layout.ArrangedNode<float>> Rows(Window w)
     {
         var radius = NotificationsHost.Colors().CornerRadius;
         return [.. w.Arranged.Where(a => a.Node.BorderStyle is { } b && b.Radius == radius && a.Bounds.Width > w.Width * 0.5f && a.Bounds.Height > 20f).OrderBy(a => a.Bounds.Y)];
     }
 
-    private static IEnumerable<Layout.ArrangedNode<float>> Inside(Window w, Layout.ArrangedNode<float> row) =>
+    internal static IEnumerable<Layout.ArrangedNode<float>> Inside(Window w, Layout.ArrangedNode<float> row) =>
         w.Arranged.Where(a => a.Bounds.X >= row.Bounds.X && a.Bounds.Y >= row.Bounds.Y
             && a.Bounds.X + a.Bounds.Width <= row.Bounds.X + row.Bounds.Width + 0.5f && a.Bounds.Y + a.Bounds.Height <= row.Bounds.Y + row.Bounds.Height + 0.5f);
 
@@ -257,6 +258,7 @@ public sealed class NotificationsToastPageTests
         using var vessel = new RgbaImageRenderer(1, 1);
         var chrome = new PilotChrome<RgbaImage>(vessel, new SessionsView<RgbaImage>(vessel));
         chrome.Notifications.Open = true;
+        chrome.NotificationsPage.GridAvailable = false; // as pilot-tui sets it
         chrome.Notifications.PostEvent(Event("j3", "Job three finished", "dotnet build: exit 0", NotificationSeverity.Success, "SE1"), null, T0.AddMinutes(3));
         chrome.Notifications.PostEvent(Event("j4", "Job three finished", "dotnet build: exit 0", NotificationSeverity.Success, "SE1"), null, T0.AddMinutes(4));
         chrome.Notifications.Sync(Cards().Open, _ => "DE1", T0.AddMinutes(5));
