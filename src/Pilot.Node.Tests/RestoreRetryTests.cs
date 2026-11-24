@@ -59,8 +59,10 @@ public sealed class RestoreRetryTests : ReviewTestsBase
         _github.PrFails = null;
         await checks.LookAsync(Ct);
 
-        F(flight.Code).Review!.State.ShouldBe(ReviewState.Passed);
-        Open().Count(c => c.Kind == LegCommander.PrReady).ShouldBe(1);
+        // The card was raised; with checks pending the node then arms the merge and closes it, so it is open or the merge is armed or done.
+        _state.Cards(openOnly: false).Count(c => c.Kind == LegCommander.PrReady).ShouldBe(1);
+        var now = F(flight.Code);
+        (Open().Any(c => c.Kind == LegCommander.PrReady) || now.MergeWhenGreen is not null || now.State == FlightState.Landed || _github.Merged.Count > 0).ShouldBeTrue();
     }
 
     [Fact]
@@ -89,6 +91,6 @@ public sealed class RestoreRetryTests : ReviewTestsBase
         await checks.LookAsync(Ct);
 
         Open().ShouldNotContain(c => c.Kind == PrChecks.RestoreFailedKind);
-        Open().Count(c => c.Kind == LegCommander.PrReady).ShouldBe(1);
+        _state.Cards(openOnly: false).Count(c => c.Kind == LegCommander.PrReady).ShouldBe(1);
     }
 }

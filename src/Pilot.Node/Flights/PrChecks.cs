@@ -1069,7 +1069,7 @@ public sealed class PrChecks(NodeState state, IGitHub gitHub, TimeProvider time,
         // The person can land the PR at the head the passed review read without waiting for the card (as the holding timeout's card does).
         state.UpdateChoices(card.Id,
         [
-            new CardChoice { Label = "Merge it now", Verb = Verbs.Merge, Target = subject, Args = [flight.Review!.ReviewedHead!, legs?.Models.MergeMethod ?? "squash"] },
+            new CardChoice { Label = "Land at the reviewed head", Verb = Verbs.Merge, Target = subject, Args = [flight.Review!.ReviewedHead!, legs?.Models.MergeMethod ?? "squash"] },
             new CardChoice { Label = "Keep trying", Verb = Verbs.Dismiss, Target = Verbs.CardTarget(card.Id), Args = ["the node keeps trying to restore the card"] },
         ]);
     }
