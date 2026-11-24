@@ -134,7 +134,7 @@ public sealed class NotificationsColumnTests
 
         // DSN-5 v1: an open row is dismissed by the toast's Close cross (an icon, no Dismiss word); a closed row is one quiet line with neither.
         w.Arranged.Count(a => TextOf(a).Trim() == "Dismiss").ShouldBe(0);
-        bool IsClose(Layout.ArrangedNode<float> a) => a.Node is Layout.Node.Leaf { Content: Layout.Content.Icon { Kind: Layout.IconKind.Close } };
+        Func<Layout.ArrangedNode<float>, bool> IsClose = a => a.Node is Layout.Node.Leaf { Content: Layout.Content.Icon { Kind: Layout.IconKind.Close } };
         var frames = Frames(w);
         frames.Count.ShouldBe(5);
         w.Arranged.Count(IsClose).ShouldBe(3, "one Close cross per open card, none on a history row");
