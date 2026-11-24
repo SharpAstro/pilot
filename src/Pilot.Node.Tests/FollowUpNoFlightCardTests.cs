@@ -58,6 +58,7 @@ public sealed class FollowUpNoFlightCardTests : ReviewTestsBase
 
         asked.ShouldBe(["PIL9", "PIL9"]);
         var card = Cards().ShouldHaveSingleItem();
+        card.Kind.ShouldBe(FollowUpSweep.LandedKind);
         card.Bin.ShouldBe(CardBin.ForYou);
         card.Subject.ShouldBe(Verbs.FlightTarget("PIL9"));
         card.Title.ShouldContain("PIL9");
