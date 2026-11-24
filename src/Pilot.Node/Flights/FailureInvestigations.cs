@@ -250,7 +250,7 @@ public sealed class FailureInvestigations(NodeState state, IGitHub github, Failu
             try
             {
                 await github.CommentIssueAsync(site.RepoPath, existing.Issue,
-                    $"Seen again in {Place(site)}: {run}, {WhereWords(site.Where)}{InJobs(failure.Jobs)}.\n\n{(group.Count > 1 ? $"{group.Count} tests of {cls} failed:\n{TestLines(group)}" : $"Assertion message: {failure.Message}")}", cancellationToken);
+                    $"Seen again in {Place(site)}: {run}, {WhereWords(site.Where)}{InJobs(failure.Jobs)}.\n\n{(group.Count > 1 ? $"{group.Count} tests of {cls} failed:\n{TestLines(group)}" : $"Test: {(failure.Test.Length > 0 ? failure.Test : "none, an error line")}\nAssertion message: {failure.Message}")}", cancellationToken);
             }
             catch (FlightException ex)
             {
