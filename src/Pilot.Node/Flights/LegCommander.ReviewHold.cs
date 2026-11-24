@@ -32,8 +32,8 @@ public sealed partial class LegCommander
     }
 
     /// <summary>The not-blocking notes of the flight's last passed review that have no end yet (pilot #1226).</summary>
-    internal IReadOnlyList<ReviewPoints.Point> UnmadeNotesOf(FlightRow flight) =>
-        ReviewFollowUp.UnmadeNotes(flight.ReviewRounds, state.Legs(flight.Code).Where(l => l.Name.StartsWith(ReviewNotesLeg, StringComparison.Ordinal) && l.State == LegState.Done).Select(l => l.Report));
+    internal IReadOnlyList<ReviewPoints.Point> UnmadeNotesOf(FlightRow flight, string? holdLeg = null) =>
+        ReviewFollowUp.UnmadeNotes(flight.ReviewRounds, state.Legs(flight.Code).Where(l => (l.Name.StartsWith(ReviewNotesLeg, StringComparison.Ordinal) || (holdLeg is not null && l.Name == holdLeg)) && l.State == LegState.Done).Select(l => l.Report));
 
     /// <summary>
     /// While the flight's notes are unmade, only the owner's word clears the hold or takes the review-notes leg out (pilot #1226): the
@@ -69,6 +69,36 @@ public sealed partial class LegCommander
         if (FlightOf(Verbs.FlightTarget(code)).Holding is { } hold)
         {
             Record(code, f => f with { Holding = hold with { Reason = reason ?? LegHoldingReason(leg), By = leg } });
+        }
+    }
+
+    /// <summary>
+    /// A finished leg the hold waits on (whatever its name) that left the reviewed head ends the hold when its report leaves no note
+    /// unmade (pilot #1338): the flight goes ready at once. True when the hold was released.
+    /// </summary>
+    private bool EndHoldOfFinishedLeg(string code, string leg)
+    {
+        if (state.Flights().FirstOrDefault(f => f.Code == code) is not { State: not FlightState.Landed, Holding: { By: { } by } } flight
+            || by == "node" || !string.Equals(by, leg, StringComparison.Ordinal) || UnmadeNotesOf(flight, leg) is { Count: > 0 })
+        {
+            return false;
+        }
+        ReleaseNotesMade(flight, $"the {leg} leg ended with every note made");
+        return true;
+    }
+
+    /// <summary>Releases a hold whose notes all have an end: Holding null, a Handled line, and the PR-ready card says ready, not holding.</summary>
+    private void ReleaseNotesMade(FlightRow flight, string detail)
+    {
+        var code = flight.Code;
+        var subject = Verbs.FlightTarget(code);
+        Record(code, f => f with { Holding = null });
+        state.RaiseCard(CardBin.Handled, HoldingClearedKind, subject, $"{code}'s hold was released", detail);
+        // The PR-ready card says it is ready, not holding; the notes card says the flight merges with them.
+        if (state.Cards(openOnly: true).FirstOrDefault(c => c.Kind == PrReady && c.Subject == subject) is { } ready && flight.PullRequest is { } number)
+        {
+            state.UpdateCard(ready.Id, $"{code}'s PR #{number} is ready to merge", ready.Detail?.Replace(HeldDetailTail, ""), ready.Choices, ready.Link, PrReady,
+                $"{code} is reviewed and its PR #{number} is ready. Merge lands it; dismissing leaves the PR open.", MergeCardBin(flight.Repo));
         }
     }
 
@@ -151,15 +181,7 @@ public sealed partial class LegCommander
                 await PlanOrRingForNotesAsync(flight, unmade, "no review-notes leg is making them", cancellationToken);
                 return false;
             }
-            Record(code, f => f with { Holding = null });
-            state.RaiseCard(CardBin.Handled, HoldingClearedKind, subject, $"{code}'s hold was released",
-                "every note has an end, so the node released the hold");
-            // The PR-ready card says it is ready, not holding; the notes card says the flight merges with them.
-            if (state.Cards(openOnly: true).FirstOrDefault(c => c.Kind == PrReady && c.Subject == subject) is { } ready && flight.PullRequest is { } number)
-            {
-                state.UpdateCard(ready.Id, $"{code}'s PR #{number} is ready to merge", ready.Detail?.Replace(HeldDetailTail, ""), ready.Choices, ready.Link, PrReady,
-                    $"{code} is reviewed and its PR #{number} is ready. Merge lands it; dismissing leaves the PR open.", MergeCardBin(flight.Repo));
-            }
+            ReleaseNotesMade(flight, "every note has an end, so the node released the hold");
             return true;
         }
         finally
@@ -202,11 +224,18 @@ public sealed partial class LegCommander
         {
             // Past the cap the cap's card is the owner's one question: raised once, and once answered (Leave it, the owner plans by hand)
             // not asked again by a notes-unmade card beside it.
-            if (state.CardsOf(ReviewNotesCapKind, subject).Length == 0)
+            var capCards = state.CardsOf(ReviewNotesCapKind, subject);
+            if (capCards.Length == 0)
             {
                 RaiseReviewNotesCap(flight, [.. unmade.Select(p => p.Text)]);
+                return;
             }
-            return;
+            if (capCards.Any(c => c.State == CardState.Open))
+            {
+                return;
+            }
+            // The cap's card was answered and no leg is on the way: a hold never stays with no open card (#1338), so the notes-unmade
+            // card below is the question, bounded by NotesUnmadeBound as ever.
         }
         // One card per hold: an open one is the question. One closed during this hold (Keep waiting) is the owner's answer for a
         // while: every look settles the hold again, so without this the card came straight back; it asks again once NotesUnmadeBound

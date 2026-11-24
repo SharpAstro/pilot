@@ -703,6 +703,11 @@ whole width collapses (`CollapseBelow`), and nothing multiplies by the DPI or me
 `LayoutDrivenTests` reads the views' sources and fails on a computed size, a hand-applied DPI or a width breakpoint, as
 tianwen's own checks do.
 
+Holding pattern (#1338): a review that passes with Not blocking notes holds the flight. A finished leg the hold waits on (review-notes
+or another name) that leaves the reviewed head, with a report that leaves no note unmade, ends the hold at once: the PR-ready card
+loses its held tail and the node merges. A leg that moved the head ends the hold through a push and a review runs on the new head.
+A hold with no leg on the way always has an open card: the cap's card, else a notes-unmade Ring card.
+
 ## Designs
 
 A design (`DSN-<n>`) is a prototype of DIR.Lib screens the owner briefs, kept in versions under `<data>/designs/DSN-<n>/`:

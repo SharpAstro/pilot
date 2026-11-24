@@ -632,7 +632,11 @@ public sealed partial class LegCommander
         var behind = await ReviewBehindPlaneAsync(flight, cancellationToken);
         if (!behind)
         {
-            HoldForWatchtower(flight.Code, leg.Name);
+            // The leg the hold waits on ends it when its report leaves no note unmade (#1338); else the hold is the watchtower's own.
+            if (!EndHoldOfFinishedLeg(flight.Code, leg.Name))
+            {
+                HoldForWatchtower(flight.Code, leg.Name);
+            }
         }
         // On the owner's hold (#771) the fixed branch is neither pushed nor reviewed: the leg is recorded done and nothing follows.
         if (behind && state.Legs(flight.Code).All(l => l.State == LegState.Done) && OnHoldRefusal(flight) is null)
