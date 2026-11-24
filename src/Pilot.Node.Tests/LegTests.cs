@@ -1491,8 +1491,13 @@ internal sealed class FakeGitHub : IGitHub
     /// <summary>Every issue reopened, as (issue number, comment), in order.</summary>
     public ConcurrentQueue<(int Number, string Comment)> Reopened { get; } = [];
 
+    /// <summary>When set, PullRequestBodyAsync is refused with it, as gh refuses a PR it cannot read or edit.</summary>
+    public string? PrBodyFails { get; set; }
+
     public Task<string?> PullRequestBodyAsync(string repoPath, int number, CancellationToken cancellationToken) =>
-        Task.FromResult<string?>(PrBodies.TryGetValue(number, out var body) ? body : "");
+        PrBodyFails is { } why
+            ? Task.FromException<string?>(new FlightException(why))
+            : Task.FromResult<string?>(PrBodies.TryGetValue(number, out var body) ? body : "");
 
     public Task EditPullRequestBodyAsync(string repoPath, int number, string body, CancellationToken cancellationToken)
     {

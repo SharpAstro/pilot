@@ -110,7 +110,7 @@ public sealed partial class FlightCommander(NodeState state, Planes planes, Time
     public const string ReceivedKind = "received";
 
     /// <summary>Whether <paramref name="verb"/> is one of these.</summary>
-    public static bool Handles(string verb) => verb is Verbs.CreateFlight or Verbs.ReceiveFlight or Verbs.Connect or Verbs.Disconnect or Verbs.Land or Verbs.FlyAnyway or Verbs.FlightPriority or Verbs.AdoptFlight or Verbs.WithdrawFlight or Verbs.BranchRetry;
+    public static bool Handles(string verb) => verb is Verbs.CreateFlight or Verbs.ReceiveFlight or Verbs.Connect or Verbs.Disconnect or Verbs.Land or Verbs.FlyAnyway or Verbs.FlightPriority or Verbs.AdoptFlight or Verbs.WithdrawFlight or Verbs.BranchRetry or Verbs.FlightFollowUp;
 
     /// <summary>Runs <paramref name="command"/>; one that waits for the lock past <see cref="LockWait.Patience"/> is answered as queued, saying what holds it, and runs once it frees.</summary>
     public Task<CommandResult> RunAsync(CommandRequest command, CancellationToken cancellationToken) =>
@@ -149,6 +149,9 @@ public sealed partial class FlightCommander(NodeState state, Planes planes, Time
                         break;
                     case Verbs.BranchRetry:
                         made = BranchRetry(command);
+                        break;
+                    case Verbs.FlightFollowUp:
+                        made = await FollowUpAsync(command, cancellationToken);
                         break;
                     case Verbs.FlightPriority:
                         made = await SetPriorityAsync(command, cancellationToken);
