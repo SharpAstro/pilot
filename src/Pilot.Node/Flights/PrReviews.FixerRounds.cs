@@ -152,6 +152,12 @@ public sealed partial class PrReviews
             {
                 return;
             }
+            // A second live fixer of the PR (one the row does not name) that is still working keeps the round open: EndFixerAsync stops every live fixer,
+            // which mid-turn would cut it off. Looked at again next sweep, as the moved-head path does.
+            if (LiveFixersOf(review).Any(l => !FixerFinished(l)))
+            {
+                return;
+            }
             // What it left: a fixer that ended with its fix uncommitted, or committed and not pushed (a detached HEAD, a push that failed), had its worktree
             // force-removed with the work in it (pilot #1247: tianwen#2435's fix sat in a commit nothing pointed to). Its worktree is kept then, and the card
             // says where the work is and what it is.

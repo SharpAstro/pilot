@@ -8,7 +8,8 @@ namespace Pilot.Node.Tests;
 /// <summary>
 /// A fixer whose turn is over reads Idle and never ends by itself, so the sweep ends a finished one instead of waiting for an end that does not
 /// come (pilot #1327: tianwen #2480 and #2483 sat as 'fixing · idle' in the merge queue). One that waits on a pilot run job of its own is left
-/// alone; one that left work is nudged once, then rung with its worktree kept. Git is the in-memory <see cref="FakeRepoGit"/>.
+/// alone; one that left work is nudged once, then rung with its worktree kept. Git is the in-memory <see cref="FakeRepoGit"/>, except in the
+/// tests that call <c>RealGit()</c> (an unpushed commit, which the model cannot read): those are Slow.
 /// </summary>
 public sealed class IdleFixerTests : PrFixTestsBase
 {
@@ -130,6 +131,60 @@ public sealed class IdleFixerTests : PrFixTestsBase
         one.Text.ShouldNotContain("not committed");
         Row.FixerResumedJob.ShouldBe(job);
         Directory.Exists(worktree).ShouldBeTrue("the work is kept");
+
+        await _reviews.SweepAsync(Ct);
+
+        said.Count.ShouldBe(1, "nudged once per fixer job");
+        var card = _state.Cards(openOnly: true).Where(c => c.Kind == PrReviews.FixEndedKind).ShouldHaveSingleItem();
+        card.Detail.ShouldNotBeNull().ShouldContain($"{PrReviews.FixLeftWorkMark} {worktree}");
+        card.Detail.ShouldContain("1 commit not pushed");
+        Row.Fixer.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task AWorkingSecondFixerKeepsAnApprovedRoundOpenWithTheHeadUnmovedUntilItIsIdle()
+    {
+        await Review("acme/widget#7", "changes", "README.md:1 wrong");
+        var job = Row.FixerJob.ShouldNotBeNull();
+        _state.PutSession(IdleSession());
+        _state.PutSession(SecondFixer(SessionState.Working));
+        _state.PutPrReview(Row with { Verdict = "approve", Findings = [] });
+
+        await _reviews.SweepAsync(Ct);
+
+        _workers.Stopped.ShouldNotContain("job00099");
+        _workers.Stopped.ShouldNotContain(job);
+        Row.FixerJob.ShouldBe(job);
+
+        _state.PutSession(SecondFixer(SessionState.Idle));
+        await _reviews.SweepAsync(Ct);
+
+        _workers.Stopped.ShouldContain(job);
+        _workers.Stopped.ShouldContain("job00099");
+        Row.Fixer.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task AWorkingSecondFixerKeepsAChangesRoundOpenWithTheHeadUnmovedUntilItIsIdle()
+    {
+        await Review("acme/widget#7", "changes", "README.md:1 wrong");
+        var job = Row.FixerJob.ShouldNotBeNull();
+        _state.PutSession(IdleSession());
+        _state.PutSession(SecondFixer(SessionState.Working));
+
+        await _reviews.SweepAsync(Ct);
+
+        _workers.Stopped.ShouldNotContain("job00099");
+        _workers.Stopped.ShouldNotContain(job);
+        Row.FixerJob.ShouldBe(job);
+        _state.Cards().ShouldNotContain(c => c.Kind == PrReviews.FixEndedKind);
+
+        _state.PutSession(SecondFixer(SessionState.Idle));
+        await _reviews.SweepAsync(Ct);
+
+        _workers.Stopped.ShouldContain(job);
+        _workers.Stopped.ShouldContain("job00099");
+        Row.Fixer.ShouldBeNull();
     }
 
     [Fact]

@@ -327,44 +327,6 @@ public sealed class FixFollowUpTests : PrFixTestsBase
         Directory.Exists(FixWorktree).ShouldBeFalse();
     }
 
-    private static SessionRow SecondLiveFixer() =>
-        Session("du1-fix-widget-7b", SessionState.Working, "job00099") with { Role = SessionRole.Fixer, Pr = 7, Repo = "widget", Cwd = Path.Combine("x", "elsewhere") };
-
-    [Fact]
-    [Trait("Category", "Slow")]
-    public async Task AWorkingSecondFixerBesideTheRowsOwnIsStoppedByTheFollowUpOfAMergedPr()
-    {
-        await Review("acme/widget#7", "changes", "README.md:1 wrong");
-        var job = Row.FixerJob.ShouldNotBeNull();
-        var tip = FixerCommits();
-        _state.PutSession(SecondLiveFixer());
-        CreatingMakesPr71(tip);
-        Merge();
-
-        await _reviews.SweepAsync(Ct);
-
-        _workers.Stopped.ShouldContain(job);
-        _workers.Stopped.ShouldContain("job00099");
-    }
-
-    [Fact]
-    [Trait("Category", "Slow")]
-    public async Task TwoWorkingFixersTheRowDoesNotNameAreBothStoppedWhenTheMergedPrIsFollowedUp()
-    {
-        await Review("acme/widget#7", "changes", "README.md:1 wrong");
-        var tip = FixerCommits();
-        FixerGoneFromTheRow();
-        _state.PutSession(LiveFixer());
-        _state.PutSession(SecondLiveFixer());
-        CreatingMakesPr71(tip);
-        Merge();
-
-        await _reviews.SweepAsync(Ct);
-
-        _workers.Stopped.ShouldContain(LiveFixer().Id);
-        _workers.Stopped.ShouldContain("job00099");
-    }
-
     [Fact]
     [Trait("Category", "Slow")]
     public async Task ALiveFixerSessionOfAMergedPrIsStoppedByTheNodeThenItsCommitIsFollowedUp()
