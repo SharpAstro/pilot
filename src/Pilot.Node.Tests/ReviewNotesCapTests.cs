@@ -46,7 +46,9 @@ public sealed class ReviewNotesCapTests : ReviewTestsBase
         await _legs.PlanOrRingForNotesAsync(_state.Flights().Single(f => f.Code == flight.Code), [new ReviewPoints.Point($"{flight.Code}:R1.1", 1, 1, false, "a comment is stale")], "the grace ended", Ct);
 
         _state.Legs(flight.Code).Length.ShouldBe(legsBefore, "no leg past the cap from the hold's path");
-        Open().Where(c => c.Kind == LegCommander.NotesUnmadeKind || c.Kind == LegCommander.ReviewNotesCapKind).Select(c => $"{c.Id} {c.Kind} {c.Title}").ShouldBeEmpty();
+        // The cap's card was answered and no leg is on the way: one notes-unmade card, so the hold is never silent (#1338).
+        Open().Count(c => c.Kind == LegCommander.NotesUnmadeKind).ShouldBe(1);
+        Open().ShouldNotContain(c => c.Kind == LegCommander.ReviewNotesCapKind);
     }
 
     [Fact]
