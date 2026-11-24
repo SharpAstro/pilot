@@ -270,6 +270,38 @@ public sealed class FailureInvestigationTests
     }
 
     [Fact]
+    public async Task AMixedRunFilesTheBaseConfirmedFailureAndReportsTheOneTheBasePassedAsOwn()
+    {
+        const string own = "Pilot.Node.Tests.TheFlightsOwnTests.ThePrsOwnTestFails";
+        Flight("TIA83", 83);
+        _github.PrFiles[83] = ["src/Pilot.Node/Flights/PrChecks.cs"];
+        _github.FailedRuns[(83, false)] = new FailedRun(7003, "https://github.com/x/tianwen/actions/runs/7003", ["build"], Log() + "\n" + Log(own));
+        _github.BaseAnswer = new BaseRun(9000, false, Log());
+
+        var look = await _failures.LookAtRunAsync(PilSite(83), mergeGroup: false, Ct);
+
+        look.Read.ShouldBeTrue();
+        look.Untouched.ShouldHaveSingleItem().Test.ShouldBe(Test);
+        look.Own.ShouldBe([own]);
+        OneIssue().Title.ShouldContain("NodePlanetaryTests");
+    }
+
+    [Fact]
+    public async Task ATestThePrTouchesLandsInOwnBesideABaseConfirmedOne()
+    {
+        const string own = "Pilot.Node.Tests.TheFlightsOwnTests.ThePrsOwnTestFails";
+        Flight("TIA84", 84);
+        _github.PrFiles[84] = ["src/Pilot.Node.Tests/TheFlightsOwnTests.cs"];
+        _github.FailedRuns[(84, false)] = new FailedRun(7004, "https://github.com/x/tianwen/actions/runs/7004", ["build"], Log() + "\n" + Log(own));
+        _github.BaseAnswer = new BaseRun(9000, false, Log());
+
+        var look = await _failures.LookAtRunAsync(PilSite(84), mergeGroup: false, Ct);
+
+        look.Untouched.ShouldHaveSingleItem().Test.ShouldBe(Test);
+        look.Own.ShouldBe([own]);
+    }
+
+    [Fact]
     public async Task TheSameFiveFailingOnTheBaseToo()
     {
         PilShape(82);
