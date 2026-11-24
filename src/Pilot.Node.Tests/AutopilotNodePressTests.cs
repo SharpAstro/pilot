@@ -263,13 +263,14 @@ public sealed class AutopilotNodePressTests
     private const string LeftWorkDetail = $"The PR's head is still abc1234, {PrReviews.FixLeftWorkMark} C:\\w\\fix, kept there: 2 files uncommitted.";
 
     [Fact]
-    public async Task FixItIsLeftToThePersonWhenTheEndedFixerLeftWorkInItsKeptWorktree()
+    public async Task FixItIsPressedOnAnEndedFixerWithLeftWorkButThePushChoiceNeverIs()
     {
-        // R1.4: a fresh fixer would start beside that work; only a person says whether to push it from there.
+        // PIL1347: Fix it resumes in the same kept worktree, so the node may press it; pushing unbuilt work is the person's.
         _state.RaiseCard(CardBin.ForYou, PrReviews.FixEndedKind, PrSubject, "pilot#77: fixer ended without a push", LeftWorkDetail,
-            [new CardChoice { Label = PrReviews.FixLabel, Verb = Verbs.FixPr, Target = PrSubject }]);
-        (await PressedAsync()).ShouldBe(0);
-        _ran.ShouldBeEmpty();
+            [new CardChoice { Label = PrReviews.PushFixLabel, Verb = Verbs.PushFix, Target = PrSubject },
+             new CardChoice { Label = PrReviews.FixLabel, Verb = Verbs.FixPr, Target = PrSubject }]);
+        (await PressedAsync()).ShouldBe(1);
+        _ran.Select(c => c.Verb).ShouldBe([Verbs.FixPr]);
     }
 
     [Fact]
