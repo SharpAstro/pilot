@@ -347,6 +347,69 @@ public sealed class RetryAndHoldTests : IDisposable
         _state.Cards().ShouldNotContain(c => c.Kind == FailureAlerts.RetriedKind || c.Kind == FailureAlerts.AlertKind || c.Kind == "checks-rerun");
     }
 
+    private const string OwnTest = "Pilot.Node.Tests.TheFlightsOwnTests.ThePrsOwnTestFails";
+
+    // One test the base's latest run failed too, and one it passed: the second is the PR's own.
+    private static string MixedLog() => Log() + "\n" + Log(OwnTest);
+
+    private void MixedFailedRun(int pr, bool queue, long id)
+    {
+        _github.FailedRuns[(pr, queue)] = new FailedRun(id, $"https://github.com/x/tianwen/actions/runs/{id}", ["build"], MixedLog());
+        _github.BaseAnswer = new BaseRun(1, false, Log());
+    }
+
+    [Fact]
+    public async Task AMixedCiRunIsAnsweredTouchedRunsNoJobAndHoldsNothingWhileTheBaseConfirmedFailureIsFiled()
+    {
+        CiFlight("TIA78", 78, 'h', 5008);
+        MixedFailedRun(78, queue: false, 5008);
+
+        var decision = await _alerts.LookAtRunAsync(new FailureSite("tianwen", "/r/tianwen", 78, "TIA78", Head('h'), FailureWhere.Ci), mergeGroup: false, Ct);
+        await _checks.LookAsync(Ct);
+
+        decision.Answer.ShouldBe(FailureAnswer.Touched);
+        decision.Finding.ShouldNotBeNull().Test.ShouldBe(Test);
+        _github.Reruns.ShouldBeEmpty();
+        _github.IssuesCreated.ShouldHaveSingleItem().Title.ShouldContain("NodePlanetaryTests");
+        _alerts.HoldOf("TIA78").ShouldBeNull();
+        _state.Cards().ShouldNotContain(c => c.Kind == FailureAlerts.RetriedKind || c.Kind == FailureAlerts.AlertKind || c.Kind == "checks-rerun");
+    }
+
+    [Fact]
+    public async Task AMixedQueueRemovalIsNotQueuedAgain()
+    {
+        Flight("TIA79", 79);
+        _github.PrFiles[79] = ["src/Pilot.Node/Flights/PrChecks.cs"];
+        _github.PrOf[Branch("TIA79")] = GhAnswers.PullRequestByBranch(number: 79, head: Head('i'), url: "https://github.com/x/tianwen/pull/79");
+        MixedFailedRun(79, queue: true, 5009);
+        QueueRemoval(Head('i'));
+
+        await _checks.LookAsync(Ct);
+
+        _github.Merged.ShouldBeEmpty();
+        _github.IssuesCreated.ShouldHaveSingleItem();
+        _alerts.HoldOf("TIA79").ShouldBeNull();
+        _state.Cards().ShouldNotContain(c => c.Kind == FailureAlerts.RetriedKind || c.Kind == FailureAlerts.AlertKind);
+    }
+
+    [Fact]
+    public async Task AMixedRunWhoseBaseConfirmedSignatureHasAnOpenAlertDoesNotHoldTheFlight()
+    {
+        await QueueFlight("TIA71", 71, 'a', 5001);
+        _github.Queue = null;
+        CiFlight("TIA74", 74, 'd', 5003);
+        await _checks.LookAsync(Ct);
+        Open(FailureAlerts.AlertKind).ShouldHaveSingleItem();
+
+        CiFlight("TIA78", 78, 'h', 5008);
+        MixedFailedRun(78, queue: false, 5008);
+        var decision = await _alerts.LookAtRunAsync(new FailureSite("tianwen", "/r/tianwen", 78, "TIA78", Head('h'), FailureWhere.Ci), mergeGroup: false, Ct);
+
+        decision.Answer.ShouldBe(FailureAnswer.Touched);
+        _alerts.HoldOf("TIA78").ShouldBeNull();
+        _alerts.Open().ShouldHaveSingleItem().Holds.Select(h => h.Flight).ShouldNotContain("TIA78");
+    }
+
     [Fact]
     public async Task AFailureInALegCheckOfASecondFlightHoldsItAndLandingTheInvestigationReleasesEveryHoldAndDoesWhatEachWasHeldFrom()
     {
