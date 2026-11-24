@@ -247,9 +247,7 @@ public sealed class NotificationsToastPageTests
         w.Chrome.Cards.ToggleDetail("c4");
         w.Frame(T0.AddMinutes(6), CardsScreen.From(
         [
-            Card("c4", CardBin.Ring, "Build failed", "dotnet build: exit 1", "exit 1
-dotnet build: exit 1
-Second line."),
+            Card("c4", CardBin.Ring, "Build failed", "dotnet build: exit 1", "exit 1\ndotnet build: exit 1\nSecond line."),
         ]));
 
         // "exit" is in the summary once, in the detail's tail line once; the line equal to the summary is not drawn again.
