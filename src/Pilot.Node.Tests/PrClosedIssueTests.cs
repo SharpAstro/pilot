@@ -40,6 +40,7 @@ public sealed class PrClosedIssueTests : PrFixTestsBase
         await _reviews.SweepAsync(Ct);
 
         var card = Flags.ShouldHaveSingleItem();
+        card.Kind.ShouldBe(PrReviews.ClosedIssueKind);
         card.Bin.ShouldBe(CardBin.ForYou);
         card.Title.ShouldContain("acme/widget#7");
         card.Title.ShouldContain("#31");
