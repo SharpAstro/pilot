@@ -118,6 +118,9 @@ public sealed class PrFixResumeTests : PrFixTestsBase
         card.Detail.ShouldContain("git could not read");
         card.Choices.ShouldNotContain(c => c.Verb == Verbs.PushFix, "it read no commits to push");
         card.Choices.ShouldNotContain(c => c.Verb == Verbs.FixPr, "the start path refuses a folder git cannot read");
+        var again = card.Choices.ShouldHaveSingleItem("the one way on is to review the PR again once the folder is fixed");
+        again.Verb.ShouldBe(Verbs.ReviewPr);
+        again.Label.ShouldBe(PrReviews.ReviewAgainLabel);
     }
 
     [Fact]

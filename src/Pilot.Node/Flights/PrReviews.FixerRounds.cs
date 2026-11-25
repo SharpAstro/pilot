@@ -235,7 +235,7 @@ public sealed partial class PrReviews
             var pushable = leftUnread is null && leftWork is { Commits: > 0 } && !read.Fork;
             var endedChoices = new List<CardChoice>();
             if (leftUnread is null) { endedChoices.Add(new CardChoice { Label = FixLabel, Verb = Verbs.FixPr, Target = subject }); }
-            else { endedChoices.Add(new CardChoice { Label = "Review the PR again", Verb = Verbs.ReviewPr, Target = subject }); }
+            else { endedChoices.Add(new CardChoice { Label = ReviewAgainLabel, Verb = Verbs.ReviewPr, Target = subject }); }
             if (pushable) { endedChoices.Add(new CardChoice { Label = PushFixLabel, Verb = Verbs.PushFix, Target = subject }); }
             state.RaiseCard(CardBin.ForYou, FixEndedKind, subject, $"{pr}: {review.Fixer} ended without a push",
                 left is null

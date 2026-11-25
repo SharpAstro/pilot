@@ -191,7 +191,7 @@ public sealed partial class PrReviews
         string Ring(string why, string cause, bool unreadable = false)
         {
             RaiseOnce(pr, review, CardBin.ForYou, FixerWorkHeldKind, subject, unreadable ? $"{pr} is held: git cannot read its fixer's worktree" : $"{pr} is held: its fixer left work not pushed",
-                $"{why}. {cause}.\nThe PR is not queued or merged until that work is pushed or removed.", [new CardChoice { Label = "Review the PR again", Verb = Verbs.ReviewPr, Target = subject }], summary: $"Push or remove the work in {worktree}: {LegCommander.OneLine(cause)}.");
+                $"{why}. {cause}.\nThe PR is not queued or merged until that work is pushed or removed.", [new CardChoice { Label = ReviewAgainLabel, Verb = Verbs.ReviewPr, Target = subject }], summary: $"Push or remove the work in {worktree}: {LegCommander.OneLine(cause)}.");
             return Held(why);
         }
     }
@@ -243,6 +243,9 @@ public sealed partial class PrReviews
 
     /// <summary>The label of the ended card's choice that pushes the kept worktree's commits.</summary>
     public const string PushFixLabel = "Push its commits";
+
+    /// <summary>The label of the choice, on the work-held card and on the ended card for a worktree git cannot read, that reviews the PR again.</summary>
+    public const string ReviewAgainLabel = "Review the PR again";
 
     /// <summary>
     /// push-fix: a plain push of the commits a fixer left in its kept fix worktree to the PR's branch, then a review of the moved head. Refused while a
