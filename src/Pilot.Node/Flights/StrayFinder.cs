@@ -21,6 +21,7 @@ public sealed record StrayJob(
 /// <paramref name="NodeLaunched"/> is false for a person's interactive session: nothing under it is ever a stray.
 /// <paramref name="SessionIds"/> are the Claude Code session ids the row ran under (its current one and those it continued): a
 /// <c>claude</c> process whose command line starts one of them under the row's name is the session's own process, wherever it hangs.
+/// <paramref name="Watchtower"/> marks the node's watchtower, whose own process the node names but never ends for spinning.
 /// </summary>
 public sealed record StraySession(
     string Name,
@@ -30,7 +31,8 @@ public sealed record StraySession(
     string? Folder,
     DateTimeOffset? EndedAt = null,
     string? Flight = null,
-    IReadOnlyList<string>? SessionIds = null);
+    IReadOnlyList<string>? SessionIds = null,
+    bool Watchtower = false);
 
 /// <summary>The CPU time one process had at <paramref name="At"/>; the start tells it from another process with the same pid.</summary>
 public sealed record CpuSample(DateTimeOffset? Start, TimeSpan Cpu, DateTimeOffset At);
@@ -55,12 +57,14 @@ public sealed record StrayHistory(IReadOnlyDictionary<int, CpuSample> Cpu, IRead
 /// <param name="OwnerFolder">The plane folder the owning session worked in, null when it had none or was not in a plane (pilot #1270).</param>
 /// <param name="ByFolder">Whether it was tied to its owner only by its folder or command line, not by descent from the owner: a person's editor open in a plane looks the same, so the node names it and never ends it.</param>
 /// <param name="BySession">Whether it is a node session's own <c>claude</c> process (or below it), found by the session id and name its command line starts:
-/// the node launched exactly that process, so once its row has ended the node ends it itself, flight or none.</param>
+/// once its row has ended the node ends it itself when it also spins (<paramref name="Spinning"/>), flight or none, and only names it when it is quiet.</param>
 /// <param name="SpinningSession">Whether it is a live session's own process, named because it computes while its session is idle (the only
 /// reason a live owner's own process is ever a stray): a node session's is ended by the node, as an idle claude has nothing to compute.</param>
+/// <param name="Spinning">Whether it averaged <see cref="StrayFinder.IdleCpuCores"/> or more since the last sweep read it: a leftover found by
+/// its session id is ended only when it spins, and only named when it is quiet (review of #1354).</param>
 /// <param name="Busy">Whether it is any process on the machine, the node's or not, that has computed without a break for
 /// <see cref="StraySweep.BusyFor"/> (<see cref="StraySweep.BusyKind"/>): it rings, and only a person ends it.</param>
-public sealed record Stray(int Pid, string Name, string? CommandLine, TimeSpan Age, TimeSpan? Cpu, string Owner, string Reason, string KillCommand, bool NodeLaunched, DateTimeOffset? Start = null, bool OwnerEnded = false, bool ByFolder = false, string? OwnerFlight = null, string? OwnerFolder = null, bool BySession = false, bool SpinningSession = false, bool Busy = false);
+public sealed record Stray(int Pid, string Name, string? CommandLine, TimeSpan Age, TimeSpan? Cpu, string Owner, string Reason, string KillCommand, bool NodeLaunched, DateTimeOffset? Start = null, bool OwnerEnded = false, bool ByFolder = false, string? OwnerFlight = null, string? OwnerFolder = null, bool BySession = false, bool SpinningSession = false, bool Busy = false, bool Spinning = false);
 
 /// <summary>What one finding came to: the strays, and the CPU of every process looked at, which the next finding gets as its history.</summary>
 public sealed record StrayReading(IReadOnlyList<Stray> Strays, IReadOnlyDictionary<int, CpuSample> Cpu);
@@ -108,12 +112,14 @@ public sealed class StrayFinder(IProcessTable table, TimeProvider time, bool? wi
         public StrayJob? Job { get; init; }
         public string? Flight { get; init; }
         public IReadOnlyList<string> SessionIds { get; init; } = [];
+        public bool Watchtower { get; init; }
     }
 
     /// <summary>What a process found by its session's command line is tied by: <see cref="Stray.BySession"/> reads it back.</summary>
     internal const string SessionHow = "its command line runs session ";
 
-    private sealed record Assigned(Owner Owner, int Depth, string How);
+    // Root: the process the walk that reached it began at (itself for a root), whose spinning a leftover found by session id follows.
+    private sealed record Assigned(Owner Owner, int Depth, string How, int Root);
 
     /// <summary>The command a person runs to end <paramref name="pid"/> on this OS.</summary>
     public string KillCommandFor(int pid) => _windows ? $"Stop-Process -Id {pid} -Force" : $"kill -9 {pid}";
@@ -138,6 +144,7 @@ public sealed class StrayFinder(IProcessTable table, TimeProvider time, bool? wi
             EndedAt = s.EndedAt,
             Flight = s.Flight,
             SessionIds = s.SessionIds ?? [],
+            Watchtower = s.Watchtower,
         }).Concat(jobs.Select(j => new Owner
         {
             Kind = Kind.Job,
@@ -152,7 +159,7 @@ public sealed class StrayFinder(IProcessTable table, TimeProvider time, bool? wi
 
         var assigned = new Dictionary<int, Assigned>();
 
-        void Walk(int pid, DateTimeOffset? start, Owner owner, int depth, string how)
+        void Walk(int pid, DateTimeOffset? start, Owner owner, int depth, string how, int root)
         {
             foreach (var child in children[pid])
             {
@@ -169,8 +176,8 @@ public sealed class StrayFinder(IProcessTable table, TimeProvider time, bool? wi
                 {
                     continue;
                 }
-                assigned[child.Pid] = new Assigned(owner, depth, how);
-                Walk(child.Pid, childStart, owner, depth + 1, how);
+                assigned[child.Pid] = new Assigned(owner, depth, how, root);
+                Walk(child.Pid, childStart, owner, depth + 1, how, root);
             }
         }
 
@@ -179,17 +186,16 @@ public sealed class StrayFinder(IProcessTable table, TimeProvider time, bool? wi
         {
             if (owner.Pid is { } pid && byPid.ContainsKey(pid) && !assigned.ContainsKey(pid) && JobProcess.SameStart(table.StartOf(pid), owner.Start))
             {
-                assigned[pid] = new Assigned(owner, 0, "the owner's own process");
-                Walk(pid, owner.Start, owner, 1, "below the owner's process");
+                assigned[pid] = new Assigned(owner, 0, "the owner's own process", pid);
+                Walk(pid, owner.Start, owner, 1, "below the owner's process", pid);
             }
         }
 
-        // 1b. A node session's own claude process, found by the session id and the name its command line starts, wherever it hangs. The
-        // tracker knows a session only from `claude agents`, and a process that listing stops showing reads as gone: a Claude Code self-update
-        // renamed the running binary (claude.exe.old.*), the listing dropped it, the row turned "ended (no longer listed)" with no pid
-        // recorded, and the process, below Claude Code's own launcher rather than the node, span a core for 33 h with no owner seeing
-        // it (se1-fix-tianwen-2480, SE1, 2026-11-23 to 11-25). Its pid was never the node's, so step 1 could not reach it, and with a
-        // live parent it was no orphan for step 3.
+        // 1b. A node session's own claude process, found by the session id and the name its command line starts, wherever it hangs.
+        // se1-fix-tianwen-2480's claude (SE1, 2026-11-23 to 11-25, renamed claude.exe.old.* by a Claude Code self-update) span a core for
+        // 33 h: its row read ended ("its process went") while `claude agents` still listed it idle with its pid, so the node held no pid
+        // for it and step 1 could not reach it; it hung below Claude Code's own launcher, not the node, and with a live parent it was no
+        // orphan for step 3. Why the tracker ended the row is #1355.
         var sessionOwners = owners.Where(o => o.Kind == Kind.Session && o.NodeLaunched && o.SessionIds.Count > 0).ToList();
         if (sessionOwners.Count > 0)
         {
@@ -202,8 +208,8 @@ public sealed class StrayFinder(IProcessTable table, TimeProvider time, bool? wi
                 var start = table.StartOf(entry.Pid);
                 if (OwnSession(commandLine, start, sessionOwners) is { } match)
                 {
-                    assigned[entry.Pid] = new Assigned(match.Owner, 0, SessionHow + match.SessionId);
-                    Walk(entry.Pid, start, match.Owner, 1, SessionHow + match.SessionId);
+                    assigned[entry.Pid] = new Assigned(match.Owner, 0, SessionHow + match.SessionId, entry.Pid);
+                    Walk(entry.Pid, start, match.Owner, 1, SessionHow + match.SessionId, entry.Pid);
                 }
             }
         }
@@ -217,8 +223,8 @@ public sealed class StrayFinder(IProcessTable table, TimeProvider time, bool? wi
                 // protected process recorded with no start was the job's leftover for as long as it ran (wininit, 2026-11-09).
                 if (known.Start is not null && byPid.ContainsKey(known.Pid) && !assigned.ContainsKey(known.Pid) && JobProcess.SameStart(table.StartOf(known.Pid), known.Start))
                 {
-                    assigned[known.Pid] = new Assigned(owner, 1, "started by the job while it ran");
-                    Walk(known.Pid, known.Start, owner, 2, "started by the job while it ran");
+                    assigned[known.Pid] = new Assigned(owner, 1, "started by the job while it ran", known.Pid);
+                    Walk(known.Pid, known.Start, owner, 2, "started by the job while it ran", known.Pid);
                 }
             }
         }
@@ -234,8 +240,8 @@ public sealed class StrayFinder(IProcessTable table, TimeProvider time, bool? wi
             var detail = table.DetailsOf(entry.Pid);
             if (Attribute(entry, start, detail, owners) is { } match)
             {
-                assigned[entry.Pid] = new Assigned(match.Owner, 1, match.How);
-                Walk(entry.Pid, start, match.Owner, 2, match.How);
+                assigned[entry.Pid] = new Assigned(match.Owner, 1, match.How, entry.Pid);
+                Walk(entry.Pid, start, match.Owner, 2, match.How, entry.Pid);
             }
         }
 
@@ -259,10 +265,17 @@ public sealed class StrayFinder(IProcessTable table, TimeProvider time, bool? wi
             {
                 continue;
             }
+            // A process spins on its own reading, or as part of a tree whose root spins: the MCP servers below a session's spinning claude go
+            // with it, rather than stay behind as leftovers of their own.
+            var spinning = CoresSince(pid, start, cpu, history, now) >= IdleCpuCores
+                || found.Root != pid && CoresSince(found.Root, table.StartOf(found.Root), table.CpuTimeOf(found.Root), history, now) >= IdleCpuCores;
             var detail = table.DetailsOf(pid);
             strays.Add(new Stray(pid, byPid[pid].Name, detail?.CommandLine, start is { } at ? now - at : TimeSpan.Zero, cpu, owner.Label, reason, KillCommandFor(pid), owner.NodeLaunched, start, owner.EndedAt is not null, found.How.StartsWith("it works in", StringComparison.Ordinal) || found.How.StartsWith("its command line names", StringComparison.Ordinal), owner.Flight, owner.Folder,
                 BySession: found.How.StartsWith(SessionHow, StringComparison.Ordinal),
-                SpinningSession: found.Depth == 0 && owner.Kind == Kind.Session && owner.EndedAt is null));
+                // The only reason a live session's own process is a stray is the idle rule in Judge; the watchtower's is named, never ended
+                // by the node, as the node has no second watchtower to speak for it while one restarts (review of #1354).
+                SpinningSession: found.Depth == 0 && owner.Kind == Kind.Session && owner.EndedAt is null && !owner.Watchtower,
+                Spinning: spinning));
         }
         return new StrayReading(strays, cpuNow);
     }
@@ -285,16 +298,25 @@ public sealed class StrayFinder(IProcessTable table, TimeProvider time, bool? wi
         // Busy under a session that has done nothing for a while, or the session's own process busy while it does nothing: an idle claude
         // has nothing to compute, and one that spins is the bug itself. Depth 0 used to be skipped as "the session, not a child of it", and
         // an idle node session's claude span a core for 33 h unseen (se1-fix-tianwen-2480, SE1, 2026-11-23 to 11-25).
-        if (owner.Kind == Kind.Session && cpu is { } used
+        if (owner.Kind == Kind.Session
             && history.OwnerBusy.TryGetValue(owner.Label, out var busy) && now - busy > SessionIdleFor
-            && history.Cpu.TryGetValue(pid, out var before) && JobProcess.SameStart(start, before.Start) && before.Start is not null
-            && now - before.At >= MinCpuWindow
-            && (used - before.Cpu).TotalSeconds / (now - before.At).TotalSeconds >= IdleCpuCores)
+            && CoresSince(pid, start, cpu, history, now) is { } cores && cores >= IdleCpuCores
+            && history.Cpu.TryGetValue(pid, out var before))
         {
-            return $"using {(used - before.Cpu).TotalSeconds / (now - before.At).TotalSeconds:0.0} cores for {Describe(now - before.At)} while {owner.Label} has been idle for {Describe(now - busy)}";
+            return $"using {cores:0.0} cores for {Describe(now - before.At)} while {owner.Label} has been idle for {Describe(now - busy)}";
         }
         return null;
     }
+
+    /// <summary>
+    /// The cores <paramref name="pid"/> averaged since the last sweep read it, when that reading is of the same process (its start) and at least
+    /// <see cref="MinCpuWindow"/> old; null when there is no such reading.
+    /// </summary>
+    private static double? CoresSince(int pid, DateTimeOffset? start, TimeSpan? cpu, StrayHistory history, DateTimeOffset now) =>
+        cpu is { } used && history.Cpu.TryGetValue(pid, out var before) && before.Start is not null && JobProcess.SameStart(start, before.Start)
+            && now - before.At >= MinCpuWindow
+            ? (used - before.Cpu).TotalSeconds / (now - before.At).TotalSeconds
+            : null;
 
     // A process whose parent is not in the table, is init, or started after the child (a reused parent id).
     private bool IsOrphan(ProcessEntry entry, Dictionary<int, ProcessEntry> byPid)
@@ -356,18 +378,12 @@ public sealed class StrayFinder(IProcessTable table, TimeProvider time, bool? wi
     /// </summary>
     private static (Owner Owner, string SessionId)? OwnSession(string commandLine, DateTimeOffset? start, List<Owner> owners)
     {
-        var args = SplitArgs(commandLine);
-        string? Value(string flag)
-        {
-            var at = args.IndexOf(flag);
-            return at >= 0 && at + 1 < args.Count ? args[at + 1] : null;
-        }
-        var name = Value("-n") ?? Value("--name");
+        var (name, sessionId, resume) = SessionArgs(commandLine);
         if (name is not { Length: > 0 })
         {
             return null;
         }
-        foreach (var id in new[] { Value("--session-id"), Value("--resume") })
+        foreach (var id in new[] { sessionId, resume })
         {
             if (id is not { Length: > 0 })
             {
@@ -384,6 +400,18 @@ public sealed class StrayFinder(IProcessTable table, TimeProvider time, bool? wi
             }
         }
         return null;
+    }
+
+    /// <summary>The name (<c>-n</c>/<c>--name</c>), <c>--session-id</c> and <c>--resume</c> a claude command line starts a session with; null for one not given.</summary>
+    internal static (string? Name, string? SessionId, string? Resume) SessionArgs(string commandLine)
+    {
+        var args = SplitArgs(commandLine);
+        string? Value(string flag)
+        {
+            var at = args.IndexOf(flag);
+            return at >= 0 && at + 1 < args.Count ? args[at + 1] : null;
+        }
+        return (Value("-n") ?? Value("--name"), Value("--session-id"), Value("--resume"));
     }
 
     // A Windows command line's arguments, by spaces outside double quotes: enough for the flags the node passes (no escaped quotes in them).

@@ -13,9 +13,10 @@ namespace Pilot.Node.Flights;
 /// <remarks>
 /// The node ends a stray itself only in one case (pilot #1270): a landed flight's session, which the node started and which has ended, whose
 /// process descends from it or works in the landed plane's folder, and whose start was read; and a node session's own claude process, found by
-/// its identity, that outlived its row or computes while its session is idle (see <c>CanEnd</c>). Everything else is named and left to a person,
-/// who ends it on its card or with <c>pilot strays end</c>. Waiting is a timer
-/// (<see cref="TimeProvider"/>), never a loop on the CPU, and a sweep reads the process table once.
+/// its identity, that spins after its row has ended or while its session is idle (see <c>CanEnd</c>). Everything else is named and left to a
+/// person, who ends it on its card or with <c>pilot strays end</c>. Any process on the machine that computes without a break for
+/// <see cref="BusyFor"/> rings a <see cref="BusyKind"/> card, for the person to end. Waiting is a timer (<see cref="TimeProvider"/>), never a
+/// loop on the CPU. A sweep reads the process table twice: the finder for the node's own trees, and the busy look for every process's CPU time.
 /// </remarks>
 public sealed class StraySweep(NodeState state, IProcessTable table, TimeProvider time) : BackgroundService
 {
@@ -112,8 +113,10 @@ public sealed class StraySweep(NodeState state, IProcessTable table, TimeProvide
     private IReadOnlyList<MachineStray> SweepLocked()
     {
         var now = time.GetUtcNow();
-        var reading = Finder.Find(GatherJobs(now), GatherSessions(now), _history);
-        _history = new StrayHistory(reading.Cpu, BusyOwners(now));
+        // The sessions' busy times as of now, before the finder judges idleness by them: a turn taken since the last sweep counts at once.
+        var owners = BusyOwners(now);
+        var reading = Finder.Find(GatherJobs(now), GatherSessions(now), _history with { OwnerBusy = owners });
+        _history = new StrayHistory(reading.Cpu, owners);
 
         var landed = LandedFlights();
         var named = new List<MachineStray>();
@@ -126,10 +129,7 @@ public sealed class StraySweep(NodeState state, IProcessTable table, TimeProvide
             if (CanEnd(stray, landed) && !_tried.Contains(key))
             {
                 _tried.Add(key);
-                var why = stray.SpinningSession ? "The node started the session, and its own process computes while the session is idle"
-                    : stray.BySession ? "The node started the session, its row has ended, and this is the session's own process by its session id and name"
-                    : "The node started the owner, the owner has ended, and its flight has landed";
-                if (End(stray, now, why) is not EndOutcome.Failed)
+                if (End(stray, now, WhyEnded(stray, "its flight has landed")) is not EndOutcome.Failed)
                 {
                     continue;
                 }
@@ -182,7 +182,7 @@ public sealed class StraySweep(NodeState state, IProcessTable table, TimeProvide
             lock (_gate)
             {
                 var now = time.GetUtcNow();
-                var reading = Finder.Find(GatherJobs(now), GatherSessions(now), _history, new HashSet<string>([flight.Code], StringComparer.Ordinal));
+                var reading = Finder.Find(GatherJobs(now), GatherSessions(now), _history with { OwnerBusy = BusyOwners(now) }, new HashSet<string>([flight.Code], StringComparer.Ordinal));
                 var ended = new List<MachineStray>();
                 foreach (var stray in reading.Strays)
                 {
@@ -193,7 +193,7 @@ public sealed class StraySweep(NodeState state, IProcessTable table, TimeProvide
                         continue;
                     }
                     var key = KeyOf(stray);
-                    if (End(stray, now, $"The node started the owner, the owner has ended, and {flight.Code} has landed") is EndOutcome.Ended)
+                    if (End(stray, now, WhyEnded(stray, $"{flight.Code} has landed")) is EndOutcome.Ended)
                     {
                         ended.Add(Row(stray, now));
                         _named.TryRemove(key, out _);
@@ -246,15 +246,17 @@ public sealed class StraySweep(NodeState state, IProcessTable table, TimeProvide
     // plane folder, once its owner has ended. Once the flight landed and its plane is removed, nothing of a person's runs there: a person's
     // own session is never an owner here (the finder skips it), and a process of a flight still flying stays name-only. A stray whose start
     // was never read is named only: the reuse check in End compares against a null start, which any process at that pid satisfies.
-    // Two more, both a node session's own claude process found by identity, never by folder (se1-fix-tianwen-2480 span a core for 33 h,
-    // SE1, 2026-11-23 to 11-25, with the owner's NO BUSY SPINNING rule in force): one whose row has ended, found by the session id and
-    // name its command line starts (BySession); and a live one that computes while its session is idle (SpinningSession), which is
-    // ended so the node's liveness resumes or rings it instead of a core burning under a row that reads idle.
+    // Two more, both a node session's own claude process found by identity, never by folder, and both only while it spins
+    // (se1-fix-tianwen-2480 span a core for 33 h, SE1, 2026-11-23 to 11-25, with the owner's NO BUSY SPINNING rule in force): one whose row
+    // has ended, found by the session id and name its command line starts (BySession), and a live one that computes while its session is idle
+    // (SpinningSession), ended so the node's liveness resumes or rings it instead of a core burning under a row that reads idle. A quiet one
+    // found by identity after its row ended is only named: the row may have ended wrongly (#1355) with the session still at work, and Claude
+    // Code's own launcher started that process, not the node (review of #1354). The watchtower's own process is never ended for spinning.
     private static bool CanEnd(Stray stray, IReadOnlyList<FlightRow> landed) =>
         stray is { NodeLaunched: true, Start: not null }
         && stray.Owner.StartsWith("session ", StringComparison.Ordinal)
         && !NeverEnded(stray.Name)
-        && (stray is { OwnerEnded: true, BySession: true, ByFolder: false } || stray is { SpinningSession: true, ByFolder: false }
+        && (stray is { OwnerEnded: true, BySession: true, Spinning: true, ByFolder: false } || stray is { SpinningSession: true, ByFolder: false }
             || stray.OwnerEnded && landed.Any(f => (stray.OwnerFlight is { } code && string.Equals(code, f.Code, StringComparison.Ordinal))
                 || (stray.OwnerFolder is { Length: > 0 } folder && InFolder(folder, f.Worktree))));
 
@@ -309,13 +311,21 @@ public sealed class StraySweep(NodeState state, IProcessTable table, TimeProvide
         return EndOutcome.Ended;
     }
 
+    /// <summary>Why the node ended <paramref name="stray"/> itself, as its Handled line says it: the case <c>CanEnd</c> let it through by.</summary>
+    internal static string WhyEnded(Stray stray, string landed) =>
+        stray.SpinningSession ? "The node started the session, and its own process computes while the session is idle"
+        : stray is { BySession: true, Spinning: true } ? "The node started the session, its row has ended, and the session's own process, found by its session id and name, still computes"
+        : $"The node started the owner, the owner has ended, and {landed}";
+
     private void Raise(Stray stray, MachineStray row, string key)
     {
-        // The node ends only a landed flight's strays itself (CanEnd): each card says why the process is named, and the person decides.
+        // What the node did not end itself (CanEnd): each card says why the process is named, and the person decides.
         var how = stray.NodeLaunched && stray.OwnerEnded && stray.ByFolder
             ? "It is tied to its owner by its folder or command line only (it may be a person's own): end it by hand if it is not."
+            : stray.NodeLaunched && stray.OwnerEnded && stray.BySession
+                ? "It is the session's own process by its session id and name, and it is quiet, so the node only names it (the row may have ended while the session still works): end it by hand if the session is done."
             : stray.NodeLaunched && stray.OwnerEnded
-                ? "Its owner has ended, and the node ends a process itself only for a landed flight: end it by hand if it should not be running."
+                ? "Its owner has ended. The node ends a process itself only for a landed flight, or a node session's own process that spins: end this one by hand if it should not be running."
                 : stray.NodeLaunched
                     ? "Its owner has not ended: end it by hand if it should not be running."
                     : "The node did not start its owner, so it only names it: end it by hand if it should not be running.";
@@ -355,7 +365,13 @@ public sealed class StraySweep(NodeState state, IProcessTable table, TimeProvide
                 jobs.Add(known.Pid);
             }
         }
-        var names = state.Sessions().ToDictionary(s => s.Id, s => s.Name, StringComparer.Ordinal);
+        var rows = state.Sessions();
+        var names = rows.ToDictionary(s => s.Id, s => s.Name, StringComparer.Ordinal);
+        // A live session's claude by its session id and name, for a session the tracker gives no pid (the watchtower, a stream session).
+        var byId = rows.Where(r => r.State is not (SessionState.Ended or SessionState.Failed))
+            .SelectMany(r => SessionIdsOf(r).Select(id => (Id: id, r.Name)))
+            .GroupBy(p => p.Id, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.First().Name, StringComparer.OrdinalIgnoreCase);
         var sessions = new Dictionary<int, string>();
         foreach (var (id, pid) in LivePids())
         {
@@ -395,9 +411,11 @@ public sealed class StraySweep(NodeState state, IProcessTable table, TimeProvide
             {
                 continue;
             }
-            var session = Chain(entry.Pid, parents).Select(p => sessions.GetValueOrDefault(p)).FirstOrDefault(n => n is not null);
+            var commandLine = table.DetailsOf(entry.Pid)?.CommandLine;
+            var session = Chain(entry.Pid, parents).Select(p => sessions.GetValueOrDefault(p)).FirstOrDefault(n => n is not null)
+                ?? OwnSessionName(commandLine, byId);
             var owner = session is not null ? $"session {session}" : "no job or session of the node's";
-            found.Add((new Stray(entry.Pid, entry.Name, table.DetailsOf(entry.Pid)?.CommandLine, now - start, cpu, owner,
+            found.Add((new Stray(entry.Pid, entry.Name, commandLine, now - start, cpu, owner,
                 $"it has used {cores:0.0} cores without a break for {StrayAge(now - from)}, and nothing that waits computes",
                 Finder.KillCommandFor(entry.Pid), NodeLaunched: false, start, Busy: true), now - from));
         }
@@ -406,6 +424,16 @@ public sealed class StraySweep(NodeState state, IProcessTable table, TimeProvide
             _busy.Remove(gone);
         }
         return found;
+    }
+
+    // The live session a claude command line starts, by its session id and the name it gives; null when it names none of them.
+    private static string? OwnSessionName(string? commandLine, Dictionary<string, string> byId)
+    {
+        if (commandLine is not { Length: > 0 } || StrayFinder.SessionArgs(commandLine) is not { Name: { Length: > 0 } name } args)
+        {
+            return null;
+        }
+        return new[] { args.SessionId, args.Resume }.Any(id => id is not null && byId.TryGetValue(id, out var row) && row == name) ? name : null;
     }
 
     // A process and its ancestors, nearest first; bounded, and never a pid twice, as a reused pid can close a loop.
@@ -431,7 +459,7 @@ public sealed class StraySweep(NodeState state, IProcessTable table, TimeProvide
         var endable = stray.Pid != Environment.ProcessId && !NeverEnded(stray.Name);
         state.RaiseCard(CardBin.Ring, BusyKind, key,
             $"{(stray.Name.Length > 24 ? stray.Name[..24] : stray.Name)} {stray.Pid} has computed without a break for {StrayAge(busyFor)}",
-            $"{stray.Reason}.\n{Describe(row, endable ? "End it on this card if it should not be computing, or dismiss the card if it should (it is not raised again for the same process)." : "The node does not end this one: end it by hand if it should not be computing.")}",
+            $"{stray.Reason}.\n{Describe(row, endable ? "End it on this card if it should not be computing, or dismiss the card if it should (it is not raised again for a day)." : "The node does not end this one: end it by hand if it should not be computing.")}",
             endable ? [new CardChoice { Label = $"End process {stray.Pid}", Verb = Verbs.EndStray, Target = key }] : [],
             summary: $"Process {stray.Pid} ({stray.Name}) of {stray.Owner} {stray.Reason}",
             cause: key);
@@ -546,7 +574,7 @@ public sealed class StraySweep(NodeState state, IProcessTable table, TimeProvide
                     // Only a plane's folder ties a leftover to an ended session: a repo root is where a person's own tools work too.
                     // A pid whose start was never read is not handed over: it would match whatever process holds that pid now.
                     var known = seen.Start is not null;
-                    ended.Add(new StraySession(row.Name, launched, known ? seen.Pid : null, known ? seen.Start : null, IsPlane(row.Cwd) ? row.Cwd : null, at, row.Flight, SessionIdsOf(row)));
+                    ended.Add(new StraySession(row.Name, launched, known ? seen.Pid : null, known ? seen.Start : null, IsPlane(row.Cwd) ? row.Cwd : null, at, row.Flight, SessionIdsOf(row), row.Role == SessionRole.Watchtower));
                 }
             }
             else
@@ -567,7 +595,7 @@ public sealed class StraySweep(NodeState state, IProcessTable table, TimeProvide
                         ? (before.Start is null || (start is not null && !JobProcess.SameStart(start, before.Start)) ? (pid, null) : before)
                         : (pid, start);
                 }
-                live.Add(new StraySession(row.Name, launched, pid, start, row.Cwd, null, row.Flight, SessionIdsOf(row)));
+                live.Add(new StraySession(row.Name, launched, pid, start, row.Cwd, null, row.Flight, SessionIdsOf(row), row.Role == SessionRole.Watchtower));
             }
         }
         // Bounded: a session the node no longer holds is forgotten with its row.
@@ -594,13 +622,16 @@ public sealed class StraySweep(NodeState state, IProcessTable table, TimeProvide
             {
                 busy[label] = now;
             }
-            else if (_history.OwnerBusy.TryGetValue(label, out var before))
+            else
             {
-                busy[label] = before;
-            }
-            else if (row.LastResponseAt is { } answered)
-            {
-                busy[label] = answered;
+                // The later of what the last sweep kept and the row's last answer: a session that took a turn between two sweeps (idle at
+                // both) was busy then, and the CPU its turn used is not idle CPU (review of #1354).
+                DateTimeOffset? kept = _history.OwnerBusy.TryGetValue(label, out var before) ? before : null;
+                var since = kept is { } k && row.LastResponseAt is { } a ? (k > a ? k : a) : kept ?? row.LastResponseAt;
+                if (since is { } at)
+                {
+                    busy[label] = at;
+                }
             }
         }
         return busy;
