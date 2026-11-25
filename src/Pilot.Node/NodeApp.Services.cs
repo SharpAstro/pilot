@@ -94,19 +94,8 @@ public static partial class NodeApp
         builder.Services.AddSingleton(services => services.GetRequiredService<StoreRecovery>().State);
         builder.Services.AddSingleton<PageViews>();
         builder.Services.AddSingleton<EventHub>();
-        // The desktop toasts of Ring cards (#1356): through Windows PowerShell on Windows, nowhere else. Tests inject a fake runner instead.
-        if (OperatingSystem.IsWindows())
-        {
-            builder.Services.AddHostedService(services => new Pilot.Node.Toasts.Toaster(
-                services.GetRequiredService<NodeState>(), new Pilot.Node.Toasts.PowerShellToastRunner(), services.GetRequiredService<TimeProvider>(),
-                () => services.GetRequiredService<RoleModels>().Toasts, () => services.GetRequiredService<PageViews>().AnyShowsCards,
-                services.GetRequiredService<ILoggerFactory>().CreateLogger<Pilot.Node.Toasts.Toaster>()));
-            // The pilot: scheme a toast's click opens, per user (HKCU), when the GUI sits beside this node; a test host has none beside it, so writes nothing.
-            // Made here, inside the Windows guard (a lambda does not carry the guard to the analyzer).
-            var schemeRegistry = new Pilot.Node.Toasts.UserSchemeRegistry();
-            builder.Services.AddHostedService(services => new Pilot.Node.Toasts.SchemeRegistrar(schemeRegistry,
-                Environment.ProcessPath ?? "pilot-node", File.Exists, services.GetRequiredService<ILoggerFactory>().CreateLogger<Pilot.Node.Toasts.SchemeRegistrar>()));
-        }
+        // The desktop toasts of Ring cards (#1356) and the pilot: scheme their click opens: Windows only.
+        Pilot.Node.Toasts.ToastServices.AddToasts(builder.Services);
     }
 
     /// <summary>What the node knows of Claude Code: its agents, the hooks and the transcripts.</summary>
