@@ -160,7 +160,7 @@ public sealed partial class PrReviews
             // A folder git could not read all of may hold work (commits only its HEAD points to): nothing is pushed from it, and the PR is held, with
             // the folder named, until git reads it again or a person removes it.
             return Ring($"git could not read the fix worktree {worktree} ({unread}), so it may hold work the PR does not have{(found is { } some ? $": {some.Line} at least" : "")}",
-                "the node pushes nothing from a folder git cannot read; see to the folder, or remove it once its work is safe");
+                "the node pushes nothing from a folder git cannot read; see to the folder, or remove it once its work is safe", unreadable: true);
         }
         if (found is not { } work)
         {
@@ -188,9 +188,9 @@ public sealed partial class PrReviews
             return why;
         }
 
-        string Ring(string why, string cause)
+        string Ring(string why, string cause, bool unreadable = false)
         {
-            RaiseOnce(pr, review, CardBin.ForYou, FixerWorkHeldKind, subject, $"{pr} is held: its fixer left work not pushed",
+            RaiseOnce(pr, review, CardBin.ForYou, FixerWorkHeldKind, subject, unreadable ? $"{pr} is held: git cannot read its fixer's worktree" : $"{pr} is held: its fixer left work not pushed",
                 $"{why}. {cause}.\nThe PR is not queued or merged until that work is pushed or removed.", [new CardChoice { Label = "Review the PR again", Verb = Verbs.ReviewPr, Target = subject }], summary: $"Push or remove the work in {worktree}: {LegCommander.OneLine(cause)}.");
             return Held(why);
         }

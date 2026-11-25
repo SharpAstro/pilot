@@ -231,9 +231,14 @@ public sealed partial class PrReviews
                 return;
             }
             // Push its commits only when the work has commits and the PR's branch is the node's to push to (not a fork): uncommitted files cannot be pushed.
-            var pushable = left is not null && review.FixWorktree is { } leftTree && await WorkPastAsync(leftTree, review.Head, cancellationToken) is { Commits: > 0 }
-                && !read.Fork;
-            var endedChoices = new List<CardChoice> { new() { Label = FixLabel, Verb = Verbs.FixPr, Target = subject } };
+            // A folder git cannot read is no one's to fix or push yet: the start path refuses it, so the card offers neither.
+            var (leftWork, leftUnread) = left is not null && review.FixWorktree is { } leftTree ? await ReadWorkPastAsync(leftTree, review.Head, cancellationToken) : (null, null);
+            var pushable = leftUnread is null && leftWork is { Commits: > 0 } && !read.Fork;
+            var endedChoices = new List<CardChoice>();
+            if (leftUnread is null)
+            {
+                endedChoices.Add(new CardChoice { Label = FixLabel, Verb = Verbs.FixPr, Target = subject });
+            }
             if (pushable)
             {
                 endedChoices.Add(new CardChoice { Label = PushFixLabel, Verb = Verbs.PushFix, Target = subject });
@@ -241,6 +246,8 @@ public sealed partial class PrReviews
             state.RaiseCard(CardBin.ForYou, FixEndedKind, subject, $"{pr}: {review.Fixer} ended without a push",
                 left is null
                     ? $"The PR's head is still {CommitRefs.Short(review.Head)}. Fix it starts another fixer on the same findings."
+                    : leftUnread is not null
+                    ? $"The PR's head is still {CommitRefs.Short(review.Head)}, {FixLeftWorkMark} {review.FixWorktree}, kept there: {left}. No fixer starts on a folder git cannot read, so there is no Fix it yet: see to the folder (or remove it once its work is safe), then review the PR again."
                     : $"The PR's head is still {CommitRefs.Short(review.Head)}, {FixLeftWorkMark} {review.FixWorktree}, kept there: {left}. {(pushable ? $"{PushFixLabel} pushes its commits from there as they are (unbuilt, a plain push) and reviews the new head, or " : "")}Fix it starts another fixer on the same findings that continues in that same worktree, with the work in it kept.",
                 endedChoices, link: review.Url);
         }

@@ -272,6 +272,7 @@ public sealed class FixerHoldTests : PrFixTestsBase
         var card = _state.Cards(openOnly: true).Where(c => c.Kind == PrReviews.FixerWorkHeldKind).ShouldHaveSingleItem();
         card.Detail.ShouldNotBeNull().ShouldContain(FixWorktree);
         card.Detail.ShouldContain("git could not read");
+        card.Title.ShouldNotContain("left work not pushed");
         ran.ShouldNotContain(r => r.StartsWith("push", StringComparison.Ordinal) || r.StartsWith("worktree remove", StringComparison.Ordinal));
         Directory.Exists(FixWorktree).ShouldBeTrue();
     }
