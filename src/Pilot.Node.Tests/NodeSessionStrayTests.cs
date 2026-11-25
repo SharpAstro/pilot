@@ -117,6 +117,8 @@ public sealed class NodeSessionStrayTests
         var card = _state.Cards(openOnly: true).ShouldHaveSingleItem();
         card.Kind.ShouldBe(StraySweep.Kind);
         (card.Detail ?? "").ShouldContain("it is quiet, so the node only names it");
+        // Nor does the node's own press end it: it is the person's.
+        _sweep.NodeMayEnd(card.Subject).ShouldBeFalse();
     }
 
     [Fact]
@@ -199,12 +201,13 @@ public sealed class NodeSessionStrayTests
     [Fact]
     public void Of_two_rows_of_one_name_the_process_belongs_to_the_live_one_it_starts()
     {
-        // The old row ended under its own session id; the live one runs under SessionId. The process starts SessionId: it is the live row's.
+        // The old row ended, and it lists the process's session id among its earlier ones (a resume moved on from it); the live one runs under
+        // it now. The process starts SessionId: the live row wins, so a working session is never ended as the ended row's leftover.
         _state.PutSession(new SessionRow
         {
             Id = "da69e46a", SessionId = "da69e46a-d055-4256-ab6a-ea221f151290", Name = Name, Kind = SessionKind.Background, Cwd = Plane, Role = SessionRole.Fixer,
             ContextTokens = 0, ContextWindow = 200_000, State = SessionState.Ended, SpendWeighted = 0, StartedAt = Began, StartReason = SessionStartReasons.PrFix,
-            EndedAt = Began,
+            EndedAt = Began, EarlierSessionIds = [SessionId],
         });
         PutSession(SessionState.Working);
         _table.Add(34212, 29784, "claude.exe", Began.AddSeconds(7), NodeCommandLine(), TimeSpan.FromHours(1));
@@ -418,6 +421,53 @@ public sealed class NodeSessionStrayTests
 
         var card = _state.Cards(openOnly: true).Where(c => c.Kind == StraySweep.BusyKind).ShouldHaveSingleItem();
         (card.Detail ?? "").ShouldContain($"of session {Name}");
+    }
+
+    [Fact]
+    public void A_busy_stream_sessions_claude_names_its_session_by_session_id_and_name()
+    {
+        // The watchtower is a stream session: the tracker gives it no pid, so its process is known by its command line.
+        PutSession(SessionState.Working);
+        _table.Add(5003, 29784, "claude.exe", Began, $"claude.exe -p --input-format stream-json --session-id {SessionId} -n {Name}", TimeSpan.Zero);
+        _sweep.SweepOnce();
+
+        SweepFor(TimeSpan.FromMinutes(30), 5003, 1.0);
+
+        var card = _state.Cards(openOnly: true).Where(c => c.Kind == StraySweep.BusyKind).ShouldHaveSingleItem();
+        (card.Detail ?? "").ShouldContain($"of session {Name}");
+    }
+
+    [Fact]
+    public void A_busy_claude_whose_id_or_name_is_no_live_sessions_has_no_owner()
+    {
+        PutSession(SessionState.Working);
+        _table.Add(5004, 29784, "claude.exe", Began, $"claude.exe --session-id {SessionId} -n someone-else", TimeSpan.Zero);
+        _table.Add(5005, 29784, "claude.exe", Began, $"claude.exe --session-id 0bad0bad-0000-4000-8000-000000000000 -n {Name}", TimeSpan.Zero);
+        _sweep.SweepOnce();
+        for (var i = 0; i < 6; i++)
+        {
+            _time.Advance(TimeSpan.FromMinutes(5));
+            _table.Cpu[5004] += TimeSpan.FromMinutes(5);
+            _table.Cpu[5005] += TimeSpan.FromMinutes(5);
+            _sweep.SweepOnce();
+        }
+
+        var cards = _state.Cards(openOnly: true).Where(c => c.Kind == StraySweep.BusyKind).ToList();
+        cards.Count.ShouldBe(2);
+        cards.ShouldAllBe(c => (c.Detail ?? "").Contains("of no job or session of the node's"));
+    }
+
+    [Fact]
+    public void A_process_the_finder_named_is_not_rung_again_as_busy()
+    {
+        // A node session's leftover that spins after its row ended is the finder's stray (ended by the node), never also a busy card.
+        PutSession(SessionState.Ended, ended: Began);
+        _table.Add(34212, 29784, "claude.exe", Began.AddSeconds(7), NodeCommandLine(), TimeSpan.Zero);
+        _sweep.SweepOnce();
+
+        SweepFor(TimeSpan.FromMinutes(35), 34212, 1.0);
+
+        _state.Cards(openOnly: true).ShouldNotContain(c => c.Kind == StraySweep.BusyKind);
     }
 
     [Fact]

@@ -88,7 +88,7 @@ public static partial class PilotCommand
 
     private sealed partial class BuildContext
     {
-        /// <summary>Makes strays: the processes of the node's own tree its sweep named, as the machine row carries them.</summary>
+        /// <summary>Makes strays: the processes the node's sweep named (leftovers of its own tree, and busy processes on the machine), as the machine row carries them.</summary>
         internal Command StraysCommand() =>
             WithEnd(Action(new Command("strays", "The processes that should not be running (a job's or session's leftovers, or any process that computes without a break for half an hour), each with why and the command that ends it"),
                 async (p, client, ct) =>

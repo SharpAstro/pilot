@@ -272,7 +272,7 @@ public sealed class StrayFinder(IProcessTable table, TimeProvider time, bool? wi
             var detail = table.DetailsOf(pid);
             strays.Add(new Stray(pid, byPid[pid].Name, detail?.CommandLine, start is { } at ? now - at : TimeSpan.Zero, cpu, owner.Label, reason, KillCommandFor(pid), owner.NodeLaunched, start, owner.EndedAt is not null, found.How.StartsWith("it works in", StringComparison.Ordinal) || found.How.StartsWith("its command line names", StringComparison.Ordinal), owner.Flight, owner.Folder,
                 BySession: found.How.StartsWith(SessionHow, StringComparison.Ordinal),
-                // The only reason a live session's own process is a stray is the idle rule in Judge; the watchtower's is named, never ended
+                // The only reason a live session's own process is a stray is the idle rule in Judge; a live watchtower's is named, never ended
                 // by the node, as the node has no second watchtower to speak for it while one restarts (review of #1354).
                 SpinningSession: found.Depth == 0 && owner.Kind == Kind.Session && owner.EndedAt is null && !owner.Watchtower,
                 Spinning: spinning));

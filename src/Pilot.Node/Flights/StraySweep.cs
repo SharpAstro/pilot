@@ -251,7 +251,8 @@ public sealed class StraySweep(NodeState state, IProcessTable table, TimeProvide
     // has ended, found by the session id and name its command line starts (BySession), and a live one that computes while its session is idle
     // (SpinningSession), ended so the node's liveness resumes or rings it instead of a core burning under a row that reads idle. A quiet one
     // found by identity after its row ended is only named: the row may have ended wrongly (#1355) with the session still at work, and Claude
-    // Code's own launcher started that process, not the node (review of #1354). The watchtower's own process is never ended for spinning.
+    // Code's own launcher started that process, not the node (review of #1354). The watchtower's own process is never ended for spinning while
+    // its row is live; once its row has ended, its spinning process is ended like any session's.
     private static bool CanEnd(Stray stray, IReadOnlyList<FlightRow> landed) =>
         stray is { NodeLaunched: true, Start: not null }
         && stray.Owner.StartsWith("session ", StringComparison.Ordinal)
@@ -472,8 +473,10 @@ public sealed class StraySweep(NodeState state, IProcessTable table, TimeProvide
     /// Whether the node may press End on this stray's card itself (#1269): it launched the owner, the owner has ended, and the
     /// process is not tied to it by folder only (never kill what pilot did not launch).
     /// </summary>
+    // Not one found by its session id (BySession): the sweep ends that one itself while it spins, and a quiet one is a person's to end, as its
+    // row may have ended with the session still at work (#1355; review of #1354).
     public bool NodeMayEnd(string key) =>
-        _named.TryGetValue(key, out var stray) && stray is { NodeLaunched: true, OwnerEnded: true, ByFolder: false } && !NeverEnded(stray.Name);
+        _named.TryGetValue(key, out var stray) && stray is { NodeLaunched: true, OwnerEnded: true, ByFolder: false, BySession: false } && !NeverEnded(stray.Name);
 
     /// <summary>
     /// <c>end-stray process:&lt;pid&gt;@&lt;start&gt;</c>, the person's End on a stray's card: ends the process, whether its card is open or was
