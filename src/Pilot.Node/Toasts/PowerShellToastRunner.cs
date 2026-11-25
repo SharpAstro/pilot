@@ -56,7 +56,7 @@ public sealed class PowerShellToastRunner : IToastRunner
     /// <summary>The PowerShell that withdraws the toast of <paramref name="tag"/> (<c>History.Remove</c>); pure, so a test reads it.</summary>
     public static string RemoveScript(string tag) =>
         Prelude
-        + $"[Windows.UI.Notifications.ToastNotificationManager]::History.Remove({Decoded(tag)},{Quote(Group)}, {Quote(Aumid)})\r\n";
+        + $"[Windows.UI.Notifications.ToastNotificationManager]::History.Remove({Decoded(tag)}, {Quote(Group)}, {Quote(Aumid)})\r\n";
 
     /// <summary>
     /// A PowerShell expression of <paramref name="text"/> that holds no card text in the script: the UTF-8 bytes go as base64 (only
