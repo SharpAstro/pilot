@@ -81,7 +81,7 @@ public sealed partial class Watchtower
         // watchtower that is current (the card may wait hours, and the watchtower be replaced meanwhile). A command whose effect the node
         // cannot read has no such button, since a bare "done" is only a claim.
         var reading = RefusedCommand.Read(command);
-        var checkable = reading.Command is { } first && RefusedEffects.CanCheck(first);
+        var checkable = reading.Command is { } parsed && RefusedEffects.CanCheck(parsed);
         var done = checkable
             ? new CardChoice { Label = DoneCheckedLabel, Verb = Verbs.DoneChecked, Target = Verbs.WatchtowerTarget, Args = RefusedEffects.Encode(reading.Command!) }
             : null;
