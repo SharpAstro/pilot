@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Security;
+using System.Text;
 
 namespace Pilot.Node.Toasts;
 
@@ -65,11 +66,35 @@ public static class ToastXml
         if (string.IsNullOrWhiteSpace(text)) return string.Empty;
         var flat = string.Join(' ', text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
         // A control character (ESC from terminal output) is not valid in XML 1.0: SecurityElement leaves it and LoadXml then throws.
-        flat = new string([.. flat.Where(c => System.Xml.XmlConvert.IsXmlChar(c) || char.IsSurrogate(c))]);
+        flat = XmlCharsOf(flat);
         if (flat.Length <= limit) return flat;
         var end = limit - 1;
         if (end > 0 && char.IsHighSurrogate(flat[end - 1])) end--;
         return flat[..end].TrimEnd() + "…";
+    }
+
+    // The characters of text XML 1.0 takes: a control character is dropped, and a surrogate is kept only with its other half (a lone one,
+    // which only invalid text holds, makes LoadXml throw).
+    private static string XmlCharsOf(string text)
+    {
+        var kept = new StringBuilder(text.Length);
+        for (var i = 0; i < text.Length; i++)
+        {
+            var c = text[i];
+            if (char.IsHighSurrogate(c))
+            {
+                if (i + 1 < text.Length && System.Xml.XmlConvert.IsXmlSurrogatePair(text[i + 1], c))
+                {
+                    kept.Append(c).Append(text[i + 1]);
+                    i++;
+                }
+            }
+            else if (!char.IsLowSurrogate(c) && System.Xml.XmlConvert.IsXmlChar(c))
+            {
+                kept.Append(c);
+            }
+        }
+        return kept.ToString();
     }
 
     private static string Build(string launch, ToastTier tier, string title, string? body)

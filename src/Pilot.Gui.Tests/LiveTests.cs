@@ -42,6 +42,9 @@ internal sealed class FakeNode
 
     public List<(long? Since, string? Stream)> Opens { get; } = [];
 
+    /// <summary>What the feed said over each stream, as (which open it came over, the page, whether it shows the cards).</summary>
+    public System.Collections.Concurrent.ConcurrentQueue<(int Open, string? Page, bool? ShowsCards)> Said { get; } = new();
+
     /// <summary>When set, an open fails with this, as when no node listens.</summary>
     public Exception? Refuse { get; set; }
 
@@ -56,7 +59,7 @@ internal sealed class FakeNode
             }
 
             _current = Channel.CreateUnbounded<NodeEvent?>();
-            return Task.FromResult<INodeEvents>(new Events(_current.Reader));
+            return Task.FromResult<INodeEvents>(new Events(_current.Reader, Said, Opens.Count));
         }
     }
 
@@ -88,9 +91,15 @@ internal sealed class FakeNode
         }
     }
 
-    private sealed class Events(ChannelReader<NodeEvent?> reader) : INodeEvents
+    private sealed class Events(ChannelReader<NodeEvent?> reader, System.Collections.Concurrent.ConcurrentQueue<(int, string?, bool?)> said, int open) : INodeEvents
     {
         public async ValueTask<NodeEvent?> ReadAsync(CancellationToken cancellationToken) => await reader.ReadAsync(cancellationToken);
+
+        public ValueTask SayPageAsync(string? page, CancellationToken cancellationToken, bool? showsCards = null)
+        {
+            said.Enqueue((open, page, showsCards));
+            return ValueTask.CompletedTask;
+        }
 
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
@@ -127,6 +136,32 @@ public sealed class NodeFeedTests
         screen.Source.ShouldBe("live from the node on node.sock");
         // Live sessions first: the working one, then the one that ended.
         screen.Lines.Select(l => l.Name).ShouldBe(["two", "one"]);
+    }
+
+    [Fact]
+    public async Task ShowingTheCardsReachesTheOpenStreamAndIsSaidAgainAfterAReconnect()
+    {
+        // The node skips normal desktop toasts while a window shows the cards (#1356): the feed must say it now and on every new stream.
+        var node = new FakeNode();
+        await using var feed = new NodeFeed(node.Open, "node.sock", TimeSpan.FromMilliseconds(20));
+        feed.Start();
+        await Until(() => node.OpenCount == 1);
+        node.Send(Live.Snapshot(4, "s1", Live.Row("aaaa1111", "one")));
+        await Until(() => feed.Connected);
+        node.Said.ShouldBeEmpty("a window that shows no page and no cards says nothing");
+
+        feed.SayShowsCards(true);
+        await Until(() => node.Said.Contains((1, null, true)));
+
+        feed.SayPage(ClientPages.PullRequests);
+        await Until(() => node.Said.Contains((1, ClientPages.PullRequests, true)));
+
+        node.Close();
+        await Until(() => node.OpenCount == 2);
+        await Until(() => node.Said.Contains((2, ClientPages.PullRequests, true)));
+
+        feed.SayShowsCards(false);
+        await Until(() => node.Said.Contains((2, ClientPages.PullRequests, false)));
     }
 
     [Fact]

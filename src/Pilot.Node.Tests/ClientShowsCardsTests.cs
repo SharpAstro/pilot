@@ -61,6 +61,29 @@ public sealed class ClientShowsCardsTests
     }
 
     [Fact]
+    public async Task TheNodesToasterSkipsANormalCardWhileAClientShowsTheCardsAndShowsAnUrgentOne()
+    {
+        // The last link of the skip rule: the Toaster the node's own services build reads PageViews, not a lambda of a test's.
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "the node toasts on Windows only (AddToasts adds nothing elsewhere)");
+        await using var node = await NodeHarness.StartAsync(Ct);
+        var views = node.App.Services.GetRequiredService<PageViews>();
+        var runner = (RecordingToastRunner)node.App.Services.GetRequiredService<Pilot.Node.Toasts.IToastRunner>();
+        var state = node.App.Services.GetRequiredService<NodeState>();
+        var stream = await node.Client.OpenEventsAsync(since: null, stream: null, Ct);
+        await stream.ReadAsync(Ct);
+        await stream.SayPageAsync(null, Ct, showsCards: true);
+        await Until(() => views.AnyShowsCards);
+
+        state.RaiseCard(Pilot.Contracts.CardBin.Ring, "worker-waiting", "flight/SKIP", "a normal ring", "detail");
+        state.RaiseCard(Pilot.Contracts.CardBin.Ring, "push-blocked", "flight/URGENT", "an urgent ring", "detail");
+        await Until(() => runner.Shown.Any(s => s.Tag == "flight/URGENT"));
+
+        // The urgent card was raised after the normal one, so the Toaster has passed the normal one by now.
+        runner.Shown.ShouldNotContain(s => s.Tag == "flight/SKIP");
+        await stream.DisposeAsync();
+    }
+
+    [Fact]
     public async Task ATestNodeShowsNoRealToastAndWritesNoRealRegistry()
     {
         await using var node = await NodeHarness.StartAsync(Ct);

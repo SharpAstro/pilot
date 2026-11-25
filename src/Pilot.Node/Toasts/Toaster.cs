@@ -39,6 +39,8 @@ public sealed class Toaster : IAsyncDisposable, Microsoft.Extensions.Hosting.IHo
     private readonly Dictionary<string, string> _skipped = new(StringComparer.Ordinal);
     // Tags of cards found open at start (taken as seen, not toasted): their toast, if one is still up from before a restart, goes when they leave.
     private readonly Dictionary<string, string> _quietTags = new(StringComparer.Ordinal);
+    // Set by the quiet start sync, until the burst toast a run before this one may have left up is withdrawn.
+    private bool _quietBurst;
     private IReadOnlyCollection<string> _tags = [];
     private readonly List<(DateTimeOffset At, string Id)> _recent = [];
     private readonly HashSet<string> _burst = new(StringComparer.Ordinal);
@@ -120,23 +122,32 @@ public sealed class Toaster : IAsyncDisposable, Microsoft.Extensions.Hosting.IHo
 
     private async Task SyncLocked(bool quiet, CancellationToken cancel)
     {
+        var ring = _state.Cards(openOnly: true).Where(c => c.Bin == CardBin.Ring && c.State == CardState.Open).ToDictionary(c => c.Id, StringComparer.Ordinal);
+        await WithdrawGone(ring, cancel).ConfigureAwait(false);
+        foreach (var card in ring.Values.OrderBy(c => c.RungAt))
         {
-            var ring = _state.Cards(openOnly: true).Where(c => c.Bin == CardBin.Ring && c.State == CardState.Open).ToDictionary(c => c.Id, StringComparer.Ordinal);
-            await WithdrawGone(ring, cancel).ConfigureAwait(false);
-            foreach (var card in ring.Values.OrderBy(c => c.RungAt))
+            var signature = SignatureOf(card);
+            if (_shown.TryGetValue(card.Id, out var shown) && shown.Signature == signature) continue;
+            if (_skipped.TryGetValue(card.Id, out var skipped) && skipped == signature) continue;
+            if (quiet)
             {
-                var signature = SignatureOf(card);
-                if (_shown.TryGetValue(card.Id, out var shown) && shown.Signature == signature) continue;
-                if (_skipped.TryGetValue(card.Id, out var skipped) && skipped == signature) continue;
-                if (quiet)
-                {
-                    _skipped[card.Id] = signature;
-                    _quietTags[card.Id] = ToastXml.TagOf(card.Subject);
-                    continue;
-                }
-                await Raise(card, signature, cancel).ConfigureAwait(false);
+                _skipped[card.Id] = signature;
+                _quietTags[card.Id] = ToastXml.TagOf(card.Subject);
+                continue;
             }
+            await Raise(card, signature, cancel).ConfigureAwait(false);
         }
+        if (quiet) _quietBurst = true;
+        await WithdrawQuietBurst(cancel).ConfigureAwait(false);
+    }
+
+    // A burst toast may be up from before a restart, standing for cards found open at start (or for none, all closed meanwhile): it is withdrawn
+    // once those cards are gone and no burst of this run holds the tag (a missing tag is harmless).
+    private async Task WithdrawQuietBurst(CancellationToken cancel)
+    {
+        if (!_quietBurst || _quietTags.Count > 0) return;
+        _quietBurst = false;
+        if (_burst.Count == 0) await RemoveTag(ToastXml.BurstTag, cancel).ConfigureAwait(false);
     }
 
     private static string SignatureOf(CardRow card) => $"{card.RungAt.UtcTicks}|{card.Title}|{card.Summary}|{card.Detail}";

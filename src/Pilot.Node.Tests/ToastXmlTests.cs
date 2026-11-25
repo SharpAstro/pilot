@@ -67,6 +67,14 @@ public sealed class ToastXmlTests
     }
 
     [Fact]
+    public void ALoneSurrogateIsDroppedAndAPairKept()
+    {
+        ToastXml.Cut("a\uD83Db \uDE00c \uD83D\uDE00d", ToastXml.TitleLimit).ShouldBe("ab c \uD83D\uDE00d");
+        ToastXml.Cut("end\uD83D", ToastXml.TitleLimit).ShouldBe("end");
+        Parse(ToastXml.ForCard("c1", "x\uDE00y", "\uD83Dz", ToastTier.Normal)).Descendants("text").Select(t => t.Value).ShouldBe(["xy", "z"]);
+    }
+
+    [Fact]
     public void ANoBodyCardHasOnlyATitleLine()
     {
         Parse(ToastXml.ForCard("c1", "title", null, ToastTier.Normal)).Descendants("text").Count().ShouldBe(1);
@@ -179,6 +187,26 @@ public sealed class ToastXmlTests
         ToastXml.TagOf(new string('a', 100)).Length.ShouldBeLessThanOrEqualTo(ToastXml.TagLimit);
         ToastXml.TagOf("flight/PIL1356").ShouldBe("flight/PIL1356");
         ToastXml.TagOf(new string('a', ToastXml.TagLimit)).ShouldBe(new string('a', ToastXml.TagLimit));
+    }
+
+    [Fact]
+    public void BothScriptsCatchTheirErrorAndWriteItAsPlainText()
+    {
+        foreach (var script in new[] { PowerShellToastRunner.ShowScript("t", "<toast/>"), PowerShellToastRunner.RemoveScript("t") })
+        {
+            script.ShouldContain("try {");
+            script.ShouldEndWith("} catch { [Console]::Error.WriteLine($_.Exception.Message); exit 1 }\r\n");
+        }
+    }
+
+    [Fact]
+    public void AFailedScriptSaysItsExitAndItsFirstPlainErrorLine()
+    {
+        PowerShellToastRunner.FailureOf(0, "anything").ShouldBeNull();
+        PowerShellToastRunner.FailureOf(1, "Element not found.\r\nmore\r\n").ShouldBe("the toast script exited 1: Element not found.");
+        PowerShellToastRunner.FailureOf(1, "#< CLIXML\r\n<Objs Version=\"1.1.0.1\"><S S=\"Error\">boom</S></Objs>\r\nthe cause\r\n")
+            .ShouldBe("the toast script exited 1: the cause");
+        PowerShellToastRunner.FailureOf(2, "").ShouldBe("the toast script exited 2: no error text");
     }
 
     [Fact]

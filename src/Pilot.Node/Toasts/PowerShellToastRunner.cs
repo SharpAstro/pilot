@@ -40,8 +40,13 @@ public sealed class PowerShellToastRunner : IToastRunner
 
     private const string Prelude =
         "$ErrorActionPreference = 'Stop'\r\n"
+        + "try {\r\n"
         + "[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WinRT] | Out-Null\r\n"
         + "[Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WinRT] | Out-Null\r\n";
+
+    // Windows PowerShell 5.1 under -EncodedCommand writes its error stream as CLIXML, so an uncaught error would reach the log as "#< CLIXML":
+    // the script catches it and writes the message itself, as plain text.
+    private const string Coda = "} catch { [Console]::Error.WriteLine($_.Exception.Message); exit 1 }\r\n";
 
     /// <summary>The PowerShell that shows <paramref name="xml"/> as the toast of <paramref name="tag"/>; pure, so a test reads it.</summary>
     public static string ShowScript(string tag, string xml) =>
@@ -51,12 +56,14 @@ public sealed class PowerShellToastRunner : IToastRunner
         + "$toast = New-Object Windows.UI.Notifications.ToastNotification $xml\r\n"
         + $"$toast.Tag = {Decoded(tag)}\r\n"
         + $"$toast.Group = {Quote(Group)}\r\n"
-        + $"[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier({Quote(Aumid)}).Show($toast)\r\n";
+        + $"[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier({Quote(Aumid)}).Show($toast)\r\n"
+        + Coda;
 
     /// <summary>The PowerShell that withdraws the toast of <paramref name="tag"/> (<c>History.Remove</c>); pure, so a test reads it.</summary>
     public static string RemoveScript(string tag) =>
         Prelude
-        + $"[Windows.UI.Notifications.ToastNotificationManager]::History.Remove({Decoded(tag)}, {Quote(Group)}, {Quote(Aumid)})\r\n";
+        + $"[Windows.UI.Notifications.ToastNotificationManager]::History.Remove({Decoded(tag)}, {Quote(Group)}, {Quote(Aumid)})\r\n"
+        + Coda;
 
     /// <summary>
     /// A PowerShell expression of <paramref name="text"/> that holds no card text in the script: the UTF-8 bytes go as base64 (only
@@ -101,6 +108,18 @@ public sealed class PowerShellToastRunner : IToastRunner
         return start;
     }
 
+    /// <summary>
+    /// What a toast script's exit says, null for a success: the exit code and the first line of its error text that is not CLIXML (the
+    /// <c>#&lt; CLIXML</c> header and the serialized records Windows PowerShell writes for an error the script did not catch).
+    /// </summary>
+    public static string? FailureOf(int exitCode, string stderr)
+    {
+        if (exitCode == 0) return null;
+        var first = stderr.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .FirstOrDefault(line => !line.StartsWith("#<", StringComparison.Ordinal) && !line.StartsWith('<')) ?? "no error text";
+        return $"the toast script exited {exitCode}: {first}";
+    }
+
     private async Task Run(string script, CancellationToken cancel)
     {
         if (!OperatingSystem.IsWindows()) return;
@@ -119,10 +138,9 @@ public sealed class PowerShellToastRunner : IToastRunner
             await process.WaitForExitAsync(limit.Token).ConfigureAwait(false);
             await Task.WhenAll(output, error).ConfigureAwait(false);
             // A script that failed (parse error, bad AUMID, tag too long) says so, and the Toaster logs it.
-            if (process.ExitCode != 0)
+            if (FailureOf(process.ExitCode, await error.ConfigureAwait(false)) is { } failure)
             {
-                var first = (await error.ConfigureAwait(false)).Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).FirstOrDefault() ?? "no error text";
-                throw new InvalidOperationException($"the toast script exited {process.ExitCode}: {first}");
+                throw new InvalidOperationException(failure);
             }
         }
         catch (OperationCanceledException)

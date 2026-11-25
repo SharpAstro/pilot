@@ -262,9 +262,34 @@ public sealed class ToasterTests : IAsyncDisposable
 
         _state.CloseCard(card.Id, "done", "tests").ShouldBeTrue();
         await _toaster.Sync(cancel: Ct);
-        _runner.Removed.ShouldBe(["flight/Q1"]);
+        // The burst toast a run before may have left up goes too, once the cards found at start are all gone.
+        _runner.Removed.ShouldBe(["flight/Q1", ToastXml.BurstTag]);
+        await _toaster.Sync(cancel: Ct);
+        _runner.Removed.Count.ShouldBe(2, "withdrawn once");
+    }
+
+    [Fact]
+    public async Task ABurstToastUpFromBeforeARestartIsWithdrawnAtStartWhenNoCardIsOpen()
+    {
+        await _toaster.Sync(quiet: true, cancel: Ct);
+        _runner.Removed.ShouldBe([ToastXml.BurstTag]);
         await _toaster.Sync(cancel: Ct);
         _runner.Removed.Count.ShouldBe(1, "withdrawn once");
+    }
+
+    [Fact]
+    public async Task ABurstOfThisRunIsNotWithdrawnByTheRestartRule()
+    {
+        var old = Ring(Normal, "flight/O1");
+        await _toaster.Sync(quiet: true, cancel: Ct);
+        _runner.Removed.ShouldBeEmpty("a card found at start may still stand in the old burst");
+        for (var i = 1; i <= 4; i++) Ring(Normal, $"flight/B{i}");
+        await _toaster.Sync(cancel: Ct);
+        _runner.Shown[^1].Tag.ShouldBe(ToastXml.BurstTag);
+
+        _state.CloseCard(old.Id, "done", "tests").ShouldBeTrue();
+        await _toaster.Sync(cancel: Ct);
+        _runner.Removed.ShouldNotContain(ToastXml.BurstTag, "the burst up now is this run's, for open cards");
     }
 
     [Fact]
@@ -294,12 +319,32 @@ public sealed class ToasterTests : IAsyncDisposable
     public async Task AFailingRunnerIsLoggedAndTheNextCardStillToasts()
     {
         var runner = new ThrowingRunner();
-        await using var toaster = new Toaster(_state, runner, _time, () => "all", () => false);
+        var log = new CaptureLog();
+        await using var toaster = new Toaster(_state, runner, _time, () => "all", () => false, log);
         Ring(Urgent, "flight/F1");
         Ring(Urgent, "flight/F2");
         await toaster.Sync(cancel: Ct);
         // Both were tried: the first one failing did not stop the second.
         runner.Tags.Order().ToArray().ShouldBe(["flight/F1", "flight/F2"]);
+        log.Lines.Order().ToArray().ShouldBe([
+            "Warning toast flight/F1 was not shown: the toast script exited 1: boom",
+            "Warning toast flight/F2 was not shown: the toast script exited 1: boom",
+        ]);
+    }
+
+    private sealed class CaptureLog : Microsoft.Extensions.Logging.ILogger
+    {
+        private readonly System.Collections.Concurrent.ConcurrentQueue<string> _lines = new();
+
+        public IReadOnlyCollection<string> Lines => _lines;
+
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+        public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) => true;
+
+        public void Log<TState>(Microsoft.Extensions.Logging.LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state, Exception? exception,
+            Func<TState, Exception?, string> formatter) =>
+            _lines.Enqueue($"{logLevel} {formatter(state, exception)}: {exception?.Message}");
     }
 
     private sealed class ThrowingRunner : IToastRunner
