@@ -55,6 +55,7 @@ public static class PilotScheme
 }
 
 /// <summary>The registry of the current user (Windows only).</summary>
+[System.Runtime.Versioning.SupportedOSPlatform("windows")]
 public sealed class UserSchemeRegistry : ISchemeRegistry
 {
     /// <inheritdoc />
