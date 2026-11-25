@@ -27,7 +27,7 @@ public abstract class PrFixTestsBase : IDisposable
     /// <summary>The git the node under test runs: the model, or <see cref="GitCli"/> on a real-git run.</summary>
     private protected readonly IGit _git;
 
-    private readonly TestGit _testGit;
+    private protected readonly TestGit _testGit;
 
     /// <summary>acme/widget has a clone under the repo roots and a branch on its origin; acme/gadget has no clone.</summary>
     // The two origins, widget's branch and its clone, built once a run and copied into each test's folder, as PrReviewTests'
@@ -165,6 +165,24 @@ public abstract class PrFixTestsBase : IDisposable
     }
 
     private protected string FixWorktree => Path.Combine(WidgetClone, ".claude", "worktrees", "fix-widget-7");
+
+    /// <summary>
+    /// <c>git status</c> fails in <paramref name="folder"/> (an index git cannot read), every other git call runs as usual: the node's own decision on a
+    /// folder it could not read, not git's. Returns every git call the node made from then on, for a test that no <c>worktree remove</c> ran.
+    /// </summary>
+    private protected System.Collections.Concurrent.ConcurrentQueue<string> StatusFailsIn(string folder)
+    {
+        var ran = new System.Collections.Concurrent.ConcurrentQueue<string>();
+        var full = Path.GetFullPath(folder).TrimEnd('\\', '/');
+        _testGit.Intercept = (args, cwd) =>
+        {
+            ran.Enqueue(string.Join(' ', args));
+            return args is ["status", ..] && string.Equals(Path.GetFullPath(cwd).TrimEnd('\\', '/'), full, StringComparison.OrdinalIgnoreCase)
+                ? new GitRun(128, "", "fatal: unable to read index")
+                : null;
+        };
+        return ran;
+    }
 
     private protected PrReviewRow Row => _reviews.Of(Seven).ShouldNotBeNull();
 

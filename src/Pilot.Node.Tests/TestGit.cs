@@ -78,7 +78,11 @@ internal sealed class TestGit : IGit
     public void Verify() =>
         (_fake?.Unsupported ?? []).ShouldBeEmpty("this test needs real git: call UseReal() first, or pass realGit: true to the base class");
 
-    public Task<GitRun> RunAsync(IReadOnlyList<string> args, string cwd, CancellationToken cancellationToken) => _inner.RunAsync(args, cwd, cancellationToken);
+    /// <summary>Answers a run before git or the model does, as a git that fails in one folder: given the args and the folder, a run, or null to ask git.</summary>
+    public Func<IReadOnlyList<string>, string, GitRun?>? Intercept { get; set; }
+
+    public Task<GitRun> RunAsync(IReadOnlyList<string> args, string cwd, CancellationToken cancellationToken) =>
+        Intercept?.Invoke(args, cwd) is { } answered ? Task.FromResult(answered) : _inner.RunAsync(args, cwd, cancellationToken);
 
     public Task<GitRun> RunSmudgingAsync(IReadOnlyList<string> args, string cwd, CancellationToken cancellationToken) => _inner.RunSmudgingAsync(args, cwd, cancellationToken);
 }

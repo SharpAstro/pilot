@@ -62,7 +62,8 @@ public sealed class NodePress(NodeState state, Func<CommandRequest, Cancellation
     /// <summary>
     /// Whether the node would press a card raised now with this kind, subject, detail and choices, so the ring judge leaves it to the node
     /// (<see cref="NodeState.NodePresses"/>): only a card one of its rules takes, not every card of its four kinds. An overlap card the
-    /// planner did not ask to fold, a stray the node may not end, or a Fix it whose fixer left work still goes to the judge (R1.7). The
+    /// planner did not ask to fold, or a stray the node may not end, still goes to the judge (R1.7). On an ended card with Fix it and Push its commits the
+    /// node presses only Fix it and leaves Push its commits to the person; a card with no Fix it choice goes to the judge. The
     /// Fix it rule's last part (the round cap and the PR's author, asked of GitHub) is not read here, so a card that part refuses skips the
     /// judge and is left to the person as a plain For you card. The Review rule's read of GitHub's head is not made here either, so it answers from the choices alone.
     /// </summary>
@@ -70,7 +71,7 @@ public sealed class NodePress(NodeState state, Func<CommandRequest, Cancellation
     {
         StraySweep.Kind => StrayRule(subject, choices ?? []) is not null,
         CardKinds.Overlap => FoldRule(subject, choices ?? []) is not null,
-        PrReviews.FixEndedKind => FixChoice(detail, choices ?? []) is not null,
+        PrReviews.FixEndedKind => FixChoice(choices ?? []) is not null,
         PrReviews.PushedUnreviewedKind => ReviewChoice(choices ?? []) is not null,
         _ => false,
     };
@@ -170,7 +171,7 @@ public sealed class NodePress(NodeState state, Func<CommandRequest, Cancellation
             case CardKinds.Overlap:
                 return FoldRule(card.Subject, card.Choices);
             case PrReviews.FixEndedKind:
-                if (FixChoice(card.Detail, card.Choices) is { } fix && PrRef.Parse(card.Subject) is { } pr
+                if (FixChoice(card.Choices) is { } fix && PrRef.Parse(card.Subject) is { } pr
                     && await WhyNoFixer(pr, cancellationToken) is null)
                 {
                     return new Rule(fix, "the fixer ended without pushing, and the round cap, the PR's author and its design questions let the watchtower's own review fix through");
@@ -195,10 +196,9 @@ public sealed class NodePress(NodeState state, Func<CommandRequest, Cancellation
             ? new Rule(end, "the node launched the process's owner, the owner has ended, and the process descends from it (it is not tied to it by folder only)")
             : null;
 
-    // Fix it on an ended fixer, unless the fixer left work in its kept worktree (R1.4): a fresh fixer would start beside that work, and only a
-    // person can say whether to push it from there or let it go.
-    private static CardChoice? FixChoice(string? detail, IReadOnlyList<CardChoice> choices) =>
-        detail?.Contains(PrReviews.FixLeftWorkMark, StringComparison.Ordinal) == true ? null : ChoiceOf(PrReviews.FixEndedKind, choices);
+    // Fix it on an ended fixer, left work or not: Fix it resumes in the kept worktree, with the work in it kept (PIL1347). The card's other choice,
+    // Push its commits (push-fix), is never pressed: pushing unbuilt work is the person's.
+    private static CardChoice? FixChoice(IReadOnlyList<CardChoice> choices) => ChoiceOf(PrReviews.FixEndedKind, choices);
 
     // A fold the planner asked for (its overlap row's pick is fold) of a flight into another flight of this node.
     private Rule? FoldRule(string subject, IReadOnlyList<CardChoice> choices)

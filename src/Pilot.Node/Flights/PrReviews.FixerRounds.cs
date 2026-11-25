@@ -32,7 +32,7 @@ public sealed partial class PrReviews
     /// <summary>The For-you card of a fixer whose session ended with the PR's head where it was, with Fix it to try again.</summary>
     public const string FixEndedKind = "pr-fix-ended";
 
-    /// <summary>The words of a <see cref="FixEndedKind"/> card whose fixer left work in its kept worktree; the node does not press Fix it on one (#1269).</summary>
+    /// <summary>The words of a <see cref="FixEndedKind"/> card whose fixer left work in its kept worktree; the node presses Fix it on one (it resumes in that worktree) and never Push its commits, which is the person's (#1347).</summary>
     public const string FixLeftWorkMark = "but the fixer left work in";
 
     /// <summary>The For-you card said when a fixer's worktree could not be removed; the node tries again.</summary>
@@ -183,7 +183,7 @@ public sealed partial class PrReviews
             // What it left: a fixer that ended with its fix uncommitted, or committed and not pushed (a detached HEAD, a push that failed), had its worktree
             // force-removed with the work in it (pilot #1247: tianwen#2435's fix sat in a commit nothing pointed to). Its worktree is kept then, and the card
             // says where the work is and what it is.
-            var left = await LeftWorkAsync(review, cancellationToken);
+            var (left, leftWork, leftUnread) = await LeftWorkAsync(review, cancellationToken);
             // An idle fixer of an approved review with nothing left has done its part (its push was reviewed and passed): ended quietly, no card, since it did
             // not end 'without a push'. Idle with the head unmoved on a changes verdict, or with work left, takes the path of an ended one (pilot #1327).
             if (left is null && string.Equals(review.Verdict, "approve", StringComparison.OrdinalIgnoreCase) && sessions.All(s => s.State == SessionState.Idle))
@@ -230,11 +230,20 @@ public sealed partial class PrReviews
                 RaiseDesignFixMissingCard(review, subject, $"{pr}");
                 return;
             }
+            // Push its commits only when the work has commits and the PR's branch is the node's to push to (not a fork): uncommitted files cannot be pushed.
+            // A folder git cannot read is no one's to fix or push yet: the start path refuses it, so the card offers neither.
+            var pushable = leftUnread is null && leftWork is { Commits: > 0 } && !read.Fork;
+            var endedChoices = new List<CardChoice>();
+            if (leftUnread is null) { endedChoices.Add(new CardChoice { Label = FixLabel, Verb = Verbs.FixPr, Target = subject }); }
+            else { endedChoices.Add(new CardChoice { Label = ReviewAgainLabel, Verb = Verbs.ReviewPr, Target = subject }); }
+            if (pushable) { endedChoices.Add(new CardChoice { Label = PushFixLabel, Verb = Verbs.PushFix, Target = subject }); }
             state.RaiseCard(CardBin.ForYou, FixEndedKind, subject, $"{pr}: {review.Fixer} ended without a push",
                 left is null
                     ? $"The PR's head is still {CommitRefs.Short(review.Head)}. Fix it starts another fixer on the same findings."
-                    : $"The PR's head is still {CommitRefs.Short(review.Head)}, {FixLeftWorkMark} {review.FixWorktree}, kept there: {left}. Push it from there, or Fix it starts another fixer on the same findings in a fresh worktree.",
-                [new CardChoice { Label = FixLabel, Verb = Verbs.FixPr, Target = subject }], link: review.Url);
+                    : leftUnread is not null
+                    ? $"The PR's head is still {CommitRefs.Short(review.Head)}, {FixLeftWorkMark} {review.FixWorktree}, kept there: {left}. No fixer starts on a folder git cannot read, so there is no Fix it yet: see to the folder (or remove it once its work is safe), then review the PR again."
+                    : $"The PR's head is still {CommitRefs.Short(review.Head)}, {FixLeftWorkMark} {review.FixWorktree}, kept there: {left}. {(pushable ? $"{PushFixLabel} pushes its commits from there as they are (unbuilt, a plain push) and reviews the new head, or " : "")}Fix it starts another fixer on the same findings that continues in that same worktree, with the work in it kept.",
+                endedChoices, link: review.Url);
         }
     }
 
@@ -289,29 +298,41 @@ public sealed partial class PrReviews
 
     /// <summary>
     /// What an ended fixer left in its worktree that the PR does not have: its uncommitted files and its commits past the PR's head, in a line; null when
-    /// nothing (or no worktree of its own, or git cannot read it).
+    /// nothing (or no worktree of its own). A worktree git could not read all of is named as left work too, so its folder is kept, never removed.
     /// </summary>
-    private async Task<string?> LeftWorkAsync(PrReviewRow review, CancellationToken cancellationToken)
+    private async Task<(string? Line, WorkPast? Work, string? Unread)> LeftWorkAsync(PrReviewRow review, CancellationToken cancellationToken)
     {
         if (review.FixWorktree is not { } worktree || review.FixWorktreeBorrowed == true)
         {
-            return null;
+            return (null, null, null);
         }
-        return (await WorkPastAsync(worktree, review.Head, cancellationToken))?.Line;
+        var (work, unread) = await ReadWorkPastAsync(worktree, review.Head, cancellationToken);
+        var line = unread is null ? work?.Line : $"{(work is { } read ? $"{read.Line}, and maybe more" : "work")} git could not read ({unread})";
+        return (line, work, unread);
     }
 
     /// <summary>What a worktree holds that the PR does not have: its commits past <c>head</c> and its uncommitted files, as a line and as counts.</summary>
     private sealed record WorkPast(string Line, int Commits, int Files);
 
     /// <summary>
-    /// The work in <paramref name="worktree"/> past <paramref name="head"/> (the PR's head): commits not on it and uncommitted files; null when
-    /// nothing (or no folder, or git cannot read it).
+    /// The work in <paramref name="worktree"/> past <paramref name="head"/> (the PR's head): commits not on it and uncommitted files, as far as git read
+    /// them (a failed <c>git status</c> counts no files, failed reads of the commits count none); null when nothing was read (or no folder). A caller about
+    /// to remove the folder, re-make it or let the PR go reads it with <see cref="ReadWorkPastAsync"/>, which also says when git could not read all of it.
     /// </summary>
-    private async Task<WorkPast?> WorkPastAsync(string worktree, string head, CancellationToken cancellationToken)
+    private async Task<WorkPast?> WorkPastAsync(string worktree, string head, CancellationToken cancellationToken) =>
+        (await ReadWorkPastAsync(worktree, head, cancellationToken)).Work;
+
+    /// <summary>
+    /// <see cref="WorkPastAsync"/> with why git could not read all of the folder: <c>Unread</c> is set when the folder exists and <c>git status</c>
+    /// failed, both reads of its commits failed, or git could not be run in it. <c>Work</c> still holds what was read (the commits when only the status
+    /// failed), so a failed status never hides them. Unread means the folder may hold more: it is kept, never removed or re-made, and the PR is held.
+    /// Both are null for a folder that is gone or holds nothing.
+    /// </summary>
+    private async Task<(WorkPast? Work, string? Unread)> ReadWorkPastAsync(string worktree, string head, CancellationToken cancellationToken)
     {
         if (!Directory.Exists(worktree))
         {
-            return null;
+            return (null, null);
         }
         try
         {
@@ -322,8 +343,18 @@ public sealed partial class PrReviews
                 // The PR's head is not in this clone (someone else pushed it): what HEAD has that no remote branch has is what is not pushed.
                 ahead = await git.RunAsync(["log", "--format=%h %s", "HEAD", "--not", "--remotes"], worktree, cancellationToken);
             }
-            var files = status.Ok ? status.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) : [];
-            var commits = ahead.Ok ? ahead.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) : [];
+            var failed = new List<string>();
+            if (!status.Ok)
+            {
+                failed.Add($"git status failed in it: {status.Why}");
+            }
+            if (!ahead.Ok)
+            {
+                failed.Add($"git log failed in it: {ahead.Why}");
+            }
+            var unread = failed.Count > 0 ? string.Join("; ", failed) : null;
+            string[] files = status.Ok ? status.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) : [];
+            string[] commits = ahead.Ok ? ahead.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) : [];
             var parts = new List<string>();
             if (commits.Length > 0)
             {
@@ -333,11 +364,11 @@ public sealed partial class PrReviews
             {
                 parts.Add($"{files.Length} file{(files.Length == 1 ? "" : "s")} not committed ({string.Join(", ", files.Take(5).Select(f => f.Length > 3 ? f[3..] : f))}{(files.Length > 5 ? ", ..." : "")})");
             }
-            return parts.Count > 0 ? new WorkPast(string.Join(", and ", parts), commits.Length, files.Length) : null;
+            return (parts.Count > 0 ? new WorkPast(string.Join(", and ", parts), commits.Length, files.Length) : null, unread);
         }
         catch (Exception ex) when (ex is FlightException or System.ComponentModel.Win32Exception or IOException)
         {
-            return null;
+            return (null, $"git could not be run in it: {ex.Message}");
         }
     }
 
@@ -613,9 +644,14 @@ public sealed partial class PrReviews
             await StopQuietly(other.Id, cancellationToken);
         }
         // With the PR's current head given (an open PR), a worktree holding commits past it or uncommitted files is kept, never force-removed: the
-        // hold (FixerHoldAsync) pushes the commits or rings for it (pilot #1291).
-        var keep = prHead is not null && review.FixWorktree is { } kept && review.FixWorktreeBorrowed != true
-            && await WorkPastAsync(kept, prHead, cancellationToken) is not null;
+        // hold (FixerHoldAsync) pushes the commits or rings for it (pilot #1291). So is one git could not read all of (a failed status, say), which
+        // may hold commits only its HEAD points to: the hold rings for it with the folder named.
+        var keep = false;
+        if (prHead is not null && review.FixWorktree is { } kept && review.FixWorktreeBorrowed != true)
+        {
+            var (work, unread) = await ReadWorkPastAsync(kept, prHead, cancellationToken);
+            keep = work is not null || unread is not null;
+        }
         // A borrowed worktree is someone else's: only the row's fix fields are cleared.
         if (!keep && review.FixWorktree is { } worktree && review.FixWorktreeBorrowed != true)
         {
@@ -642,7 +678,7 @@ public sealed partial class PrReviews
         state.CloseCardsAbout(Verbs.PrTarget(review.Repo, review.Number), "the fixer ended", FixLeftKind);
         if (Of(PrRef.Parse($"{review.Repo}#{review.Number}")!) is { } latest)
         {
-            state.PutPrReview(latest with { Fixer = null, FixerJob = null, FixerResumedJob = null, FixWorktree = null, FixWorktreeBorrowed = null, FixDetached = null });
+            state.PutPrReview(latest with { Fixer = null, FixerJob = null, FixerResumedJob = null, FixWorktree = null, FixWorktreeBorrowed = null, FixDetached = null, FixResumedWork = null });
         }
         return true;
     }

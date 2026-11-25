@@ -241,7 +241,8 @@ public sealed class AutopilotNodePressTests
     [Fact]
     public void OnlyACardARuleTakesSkipsTheRingJudgeNotEveryCardOfTheKind()
     {
-        // R1.7: an overlap card the planner did not ask to fold, a stray the node may not end and a Fix it whose fixer left work go to the judge.
+        // R1.7: an overlap card the planner did not ask to fold, a stray the node may not end, and an ended card with no Fix it (Push its
+        // commits alone, which the node never presses) go to the judge; with Fix it beside the push, the node presses Fix it only.
         var press = Press();
         var fold = FoldCard();
         press.WouldPress(fold.Kind, fold.Subject, fold.Detail, fold.Choices).ShouldBeTrue();
@@ -256,20 +257,23 @@ public sealed class AutopilotNodePressTests
 
         var fix = FixCard();
         press.WouldPress(fix.Kind, fix.Subject, fix.Detail, fix.Choices).ShouldBeTrue();
-        press.WouldPress(fix.Kind, fix.Subject, LeftWorkDetail, fix.Choices).ShouldBeFalse();
+        press.WouldPress(fix.Kind, fix.Subject, LeftWorkDetail, fix.Choices).ShouldBeTrue();
         press.WouldPress(PrReviews.FixOfferKind, PrSubject, null, fix.Choices).ShouldBeFalse();
+        CardChoice[] pushOnly = [new() { Label = PrReviews.PushFixLabel, Verb = Verbs.PushFix, Target = PrSubject }];
+        press.WouldPress(fix.Kind, fix.Subject, LeftWorkDetail, pushOnly).ShouldBeFalse();
     }
 
     private const string LeftWorkDetail = $"The PR's head is still abc1234, {PrReviews.FixLeftWorkMark} C:\\w\\fix, kept there: 2 files uncommitted.";
 
     [Fact]
-    public async Task FixItIsLeftToThePersonWhenTheEndedFixerLeftWorkInItsKeptWorktree()
+    public async Task FixItIsPressedOnAnEndedFixerWithLeftWorkButThePushChoiceNeverIs()
     {
-        // R1.4: a fresh fixer would start beside that work; only a person says whether to push it from there.
+        // PIL1347: Fix it resumes in the same kept worktree, so the node may press it; pushing unbuilt work is the person's.
         _state.RaiseCard(CardBin.ForYou, PrReviews.FixEndedKind, PrSubject, "pilot#77: fixer ended without a push", LeftWorkDetail,
-            [new CardChoice { Label = PrReviews.FixLabel, Verb = Verbs.FixPr, Target = PrSubject }]);
-        (await PressedAsync()).ShouldBe(0);
-        _ran.ShouldBeEmpty();
+            [new CardChoice { Label = PrReviews.PushFixLabel, Verb = Verbs.PushFix, Target = PrSubject },
+             new CardChoice { Label = PrReviews.FixLabel, Verb = Verbs.FixPr, Target = PrSubject }]);
+        (await PressedAsync()).ShouldBe(1);
+        _ran.ShouldHaveSingleItem().Args.ShouldBe([PrReviews.FixLabel]);
     }
 
     [Fact]

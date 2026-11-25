@@ -134,7 +134,8 @@ public sealed partial class PrReviews
     /// Why the node must not queue, merge or arm this PR now, or null (pilot #1291): its fixer is live, or its fix worktree holds work the PR's head
     /// does not have. Judged from the facts (the session store and the worktree on disk), not only from the row's Fixer. Commits past the PR's head
     /// with no live fixer are pushed to the PR's branch from that worktree (a plain push, never forced), and the moved head gets a fresh review; a
-    /// refused push, or files never committed, is one For-you card, and the PR stays held.
+    /// refused push, or files never committed, is one For-you card, and the PR stays held. So is a fix worktree git could not read all of (a failed
+    /// status): it may hold work, so nothing is pushed from it and the card names the folder.
     /// </summary>
     internal async Task<string?> FixerHoldAsync(PrReviewRow review, PullRequest read, CancellationToken cancellationToken)
     {
@@ -148,50 +149,32 @@ public sealed partial class PrReviews
             return Held($"{review.Fixer ?? review.FixerJob} is its fixer, and its round is not settled yet");
         }
         var worktree = review.FixWorktree ?? Path.Combine(review.ClonePath, ".claude", "worktrees", $"fix-{Slug(pr.Name)}-{pr.Number}");
-        if (review.FixWorktreeBorrowed == true || await WorkPastAsync(worktree, read.Head, cancellationToken) is not { } work)
+        if (review.FixWorktreeBorrowed == true)
         {
             return null;
         }
         var subject = Verbs.PrTarget(review.Repo, review.Number);
+        var (found, unread) = await ReadWorkPastAsync(worktree, read.Head, cancellationToken);
+        if (unread is not null)
+        {
+            // A folder git could not read all of may hold work (commits only its HEAD points to): nothing is pushed from it, and the PR is held, with
+            // the folder named, until git reads it again or a person removes it.
+            return Ring($"git could not read the fix worktree {worktree} ({unread}), so it may hold work the PR does not have{(found is { } some ? $": {some.Line} at least" : "")}",
+                "the node pushes nothing from a folder git cannot read; see to the folder, or remove it once its work is safe", unreadable: true);
+        }
+        if (found is not { } work)
+        {
+            return null;
+        }
+        var why = $"the fix worktree {worktree} holds work the PR does not have: {work.Line}";
         if (work.Commits > 0 && read.HeadRef.Length > 0 && !read.Fork)
         {
-            try
-            {
-                var push = await git.RunAsync(["push", "origin", $"HEAD:refs/heads/{read.HeadRef}"], worktree, cancellationToken);
-                if (push.Ok)
-                {
-                    var now = await github.PullRequestOfAsync(review.Repo, review.Number, cancellationToken);
-                    if (now.Head.Length > 0 && !string.Equals(now.Head, review.Head, StringComparison.OrdinalIgnoreCase))
-                    {
-                        try
-                        {
-                            await StartAsync(pr, cancellationToken);
-                        }
-                        catch (FlightException ex)
-                        {
-                            state.RaiseCard(CardBin.ForYou, PushedUnreviewedKind, subject, $"{pr}: the fixer's push has no review yet", ex.Message,
-                                [new CardChoice { Label = "Review the fixer's push", Verb = Verbs.ReviewPr, Target = subject }], link: review.Url);
-                        }
-                    }
-                    else
-                    {
-                        // GitHub still read the old head right after the push: no review can start from that read, and the next sweep would note
-                        // the newer head and leave the row, so nothing would review the push. The person's card starts it.
-                        RaiseOnce(pr, review, CardBin.ForYou, PushedUnreviewedKind, subject, $"{pr}: the fixer's push has no review yet",
-                            $"The node pushed the fixer's work from {worktree} ({work.Line}), but GitHub still read the PR's head as {CommitRefs.Short(now.Head.Length > 0 ? now.Head : read.Head)}, so no review started on the push.",
-                            [new CardChoice { Label = "Review the fixer's push", Verb = Verbs.ReviewPr, Target = subject }],
-                            summary: $"Review {pr} again: the node pushed its fixer's work, and GitHub had not shown the new head yet.");
-                    }
-                    return Held($"its fixer's work in {worktree} was pushed ({work.Line}); the moved head gets a fresh review");
-                }
-                return Ring($"git could not push it: {push.Why}");
-            }
-            catch (Exception ex) when (ex is FlightException or System.ComponentModel.Win32Exception or IOException)
-            {
-                return Ring($"git could not push it: {ex.Message}");
-            }
+            var cause = await PushWorktreeAndReviewAsync(pr, review, read, worktree, work, cancellationToken);
+            return cause is null
+                ? Held($"its fixer's work in {worktree} was pushed ({work.Line}); the moved head gets a fresh review")
+                : Ring(why, cause);
         }
-        return Ring(work.Commits > 0 ? "its branch is on a fork, so the node cannot push it" : "it is not committed");
+        return Ring(why, work.Commits > 0 ? "its branch is on a fork, so the node cannot push it" : "it is not committed");
 
         string Held(string why)
         {
@@ -205,12 +188,98 @@ public sealed partial class PrReviews
             return why;
         }
 
-        string Ring(string cause)
+        string Ring(string why, string cause, bool unreadable = false)
         {
-            var why = $"the fix worktree {worktree} holds work the PR does not have: {work.Line}";
-            RaiseOnce(pr, review, CardBin.ForYou, FixerWorkHeldKind, subject, $"{pr} is held: its fixer left work not pushed",
-                $"{why}. {cause}.\nThe PR is not queued or merged until that work is pushed or removed.", [new CardChoice { Label = "Review the PR again", Verb = Verbs.ReviewPr, Target = subject }], summary: $"Push or remove the work in {worktree}: {LegCommander.OneLine(cause)}.");
+            RaiseOnce(pr, review, CardBin.ForYou, FixerWorkHeldKind, subject, unreadable ? $"{pr} is held: git cannot read its fixer's worktree" : $"{pr} is held: its fixer left work not pushed",
+                $"{why}. {cause}.\nThe PR is not queued or merged until that work is pushed or removed.", [new CardChoice { Label = ReviewAgainLabel, Verb = Verbs.ReviewPr, Target = subject }], summary: $"Push or remove the work in {worktree}: {LegCommander.OneLine(cause)}.");
             return Held(why);
         }
+    }
+
+    /// <summary>
+    /// Pushes the HEAD of a fix worktree to the PR's own branch, plainly (never forced), then starts the review of the moved head; when that review
+    /// cannot start, or GitHub still reads the old head, a For-you card offers it. Returns null once the push landed, else why git could not push.
+    /// One block for the hold path (<see cref="FixerHoldAsync"/>) and the person's push-fix choice (<see cref="PushFixAsync"/>).
+    /// </summary>
+    private async Task<string?> PushWorktreeAndReviewAsync(PrRef pr, PrReviewRow review, PullRequest read, string worktree, WorkPast work, CancellationToken cancellationToken)
+    {
+        var subject = Verbs.PrTarget(review.Repo, review.Number);
+        try
+        {
+            var push = await git.RunAsync(["push", "origin", $"HEAD:refs/heads/{read.HeadRef}"], worktree, cancellationToken);
+            if (!push.Ok)
+            {
+                return $"git could not push it: {push.Why}";
+            }
+            var now = await github.PullRequestOfAsync(review.Repo, review.Number, cancellationToken);
+            if (now.Head.Length > 0 && !string.Equals(now.Head, review.Head, StringComparison.OrdinalIgnoreCase))
+            {
+                try
+                {
+                    await StartAsync(pr, cancellationToken);
+                }
+                catch (FlightException ex)
+                {
+                    state.RaiseCard(CardBin.ForYou, PushedUnreviewedKind, subject, $"{pr}: the fixer's push has no review yet", ex.Message,
+                        [new CardChoice { Label = "Review the fixer's push", Verb = Verbs.ReviewPr, Target = subject }], link: review.Url);
+                }
+            }
+            else
+            {
+                // GitHub still read the old head right after the push: no review can start from that read, and the next sweep would note
+                // the newer head and leave the row, so nothing would review the push. The person's card starts it.
+                RaiseOnce(pr, review, CardBin.ForYou, PushedUnreviewedKind, subject, $"{pr}: the fixer's push has no review yet",
+                    $"The node pushed the fixer's work from {worktree} ({work.Line}), but GitHub still read the PR's head as {CommitRefs.Short(now.Head.Length > 0 ? now.Head : read.Head)}, so no review started on the push.",
+                    [new CardChoice { Label = "Review the fixer's push", Verb = Verbs.ReviewPr, Target = subject }],
+                    summary: $"Review {pr} again: the node pushed its fixer's work, and GitHub had not shown the new head yet.");
+            }
+            return null;
+        }
+        catch (Exception ex) when (ex is FlightException or System.ComponentModel.Win32Exception or IOException)
+        {
+            return $"git could not push it: {ex.Message}";
+        }
+    }
+
+    /// <summary>The label of the ended card's choice that pushes the kept worktree's commits.</summary>
+    public const string PushFixLabel = "Push its commits";
+
+    /// <summary>The label of the choice, on the work-held card and on the ended card for a worktree git cannot read, that reviews the PR again.</summary>
+    public const string ReviewAgainLabel = "Review the PR again";
+
+    /// <summary>
+    /// push-fix: a plain push of the commits a fixer left in its kept fix worktree to the PR's branch, then a review of the moved head. Refused while a
+    /// fixer is live, for a PR that is not open or is from a fork, with no commits past the PR's head, or when the PR's head is no ancestor of the
+    /// worktree's HEAD (the head moved: the work stays where it is). The worktree is never removed here.
+    /// </summary>
+    private async Task<string> PushFixAsync(PrRef pr, CancellationToken cancellationToken)
+    {
+        var review = Of(pr) ?? throw new FlightException($"{pr} has no review on this node");
+        if (LiveFixerOf(review) is { } live)
+        {
+            throw new FlightException($"{pr}'s fixer {live.Name} is still working on it; its commits are pushed once it ends");
+        }
+        var read = await github.PullRequestOfAsync(review.Repo, review.Number, cancellationToken);
+        if (!string.Equals(read.State, "OPEN", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new FlightException($"{pr} is {read.State.ToLowerInvariant()}, not open: nothing is pushed to it");
+        }
+        if (read.Fork || read.HeadRef.Length == 0)
+        {
+            throw new FlightException($"{pr}'s branch is on a fork, so the node cannot push to it");
+        }
+        var worktree = FixWorktreeOf(review, null) ?? throw new FlightException($"{pr} has no kept fix worktree on disk to push from");
+        var work = await WorkPastAsync(worktree, read.Head, cancellationToken);
+        if (work is not { Commits: > 0 })
+        {
+            throw new FlightException($"{worktree} has no commits past {pr}'s head {CommitRefs.Short(read.Head)} to push");
+        }
+        var ancestor = await git.RunAsync(["merge-base", "--is-ancestor", read.Head, "HEAD"], worktree, cancellationToken);
+        if (!ancestor.Ok)
+        {
+            throw new FlightException($"{pr}'s head {CommitRefs.Short(read.Head)} is not an ancestor of the HEAD in {worktree}: the head moved, so a plain push would be refused. The work stays in {worktree}: bring the PR head into it by hand (git fetch origin, then git merge origin/{read.HeadRef} there), then Fix it or Push its commits");
+        }
+        var cause = await PushWorktreeAndReviewAsync(pr, review, read, worktree, work, cancellationToken);
+        return cause is null ? $"pushed {work.Line} from {worktree}; the moved head gets a review" : throw new FlightException(cause);
     }
 }

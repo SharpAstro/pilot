@@ -104,6 +104,9 @@ public sealed record PrReviewRow
     /// <summary>True when the fixer's worktree is detached at the branch head, the branch being checked out in another worktree. Null otherwise; optional on the wire.</summary>
     public bool? FixDetached { get; init; }
 
+    /// <summary>What the fixer's kept worktree held that the PR did not have when this fixer resumed in it (an earlier fixer's commits and files, as a line); null for a fresh worktree. Cleared with the other fix fields; optional on the wire.</summary>
+    public string? FixResumedWork { get; init; }
+
     /// <summary>Which round of fixing the fixer is on, 1 for the first; null while there is no fixer.</summary>
     public int? FixRound { get; init; }
 

@@ -590,7 +590,11 @@ A PR pilot did not make, in a repo it may not fly, is reviewed from its link (#1
   `FixRound`. That review is queued by the same green-checks path as any approve or comment; a changes verdict starts
   the next fixer with the round plus one and the new findings, and after round 3 (the same cap as a flight's review
   go-arounds) rings a `pr-fix-capped` card with the findings and a link instead of starting a fourth. A fixer whose
-  session ended with the head unmoved leaves a For-you `pr-fix-ended` card with **Fix it**; a PR merged or closed
+  session ended with the head unmoved leaves a For-you `pr-fix-ended` card with **Fix it**, which resumes in the fixer's kept
+  worktree when it holds work the PR lacks. When that work has commits and the PR is not from a fork, the card also offers
+  **Push its commits** (`push-fix`): a plain fast-forward push of the worktree's HEAD to the PR's branch, then a review of the new
+  head; it is refused when the PR's head moved (the work stays in the worktree). When git cannot read the kept worktree the card offers neither, only **Review the PR again**, since no fixer starts on a folder git cannot read. The node presses Fix it, never the push (unbuilt
+  work is the person's to push); a PR merged or closed
   ends the fixer and its worktree. A review started by hand keeps the round count rather than resetting it.
 
 `pilot status` lists the reviews not over, and under a review whose fixer is on, `fixing, <fixer>, round <n>`; such a

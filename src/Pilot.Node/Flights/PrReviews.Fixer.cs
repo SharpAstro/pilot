@@ -570,7 +570,50 @@ public sealed partial class PrReviews
         var worktree = Path.Combine(clone, ".claude", "worktrees", plane);
         var borrowed = false;
         var detached = false;
-        if (await HolderOfBranchAsync(clone, worktree, branch, cancellationToken) is { } holder)
+        string? resumedWork = null;
+        var holder = await HolderOfBranchAsync(clone, worktree, branch, cancellationToken);
+        // A kept fix worktree an earlier fixer left work in (commits not on the PR, or files) is continued in, never removed or re-made.
+        var kept = read.Head.Length > 0 && await planes.WorktreesAsync(clone, cancellationToken) is { } listed
+            ? listed.FirstOrDefault(w => !w.Prunable && SamePath(w.Path, worktree))
+            : null;
+        var (keptWork, unread) = kept is null ? (null, null) : await ReadWorkPastAsync(worktree, read.Head, cancellationToken);
+        if (unread is not null)
+        {
+            // A kept worktree git could not read may hold work, and every path below re-makes or removes it, so none is taken. The
+            // pr-fix-failed card (or the command's error) names the folder; its retry is Fix it, once git can read the folder again.
+            throw new FlightException($"no fixer started: the kept fixer worktree {worktree} could not be read ({unread}), so it may hold work and is left as it is; Fix it again once git can read it");
+        }
+        if (kept is not null && keptWork is { } work)
+        {
+            if (!(await git.RunAsync(["merge-base", "--is-ancestor", read.Head, "HEAD"], worktree, cancellationToken)).Ok)
+            {
+                var why = $"{pr}'s head is {CommitRefs.Short(read.Head)} now and {worktree} does not have it; its work ({work.Line}) stays there";
+                state.RaiseCard(CardBin.ForYou, FixHeadMovedKind, Verbs.PrTarget(pr.Repo, pr.Number),
+                    $"{pr}: no fixer started, the head moved past the kept fixer worktree",
+                    $"No fixer started: {why}. Nothing in it was touched. Bring the PR head into that worktree by hand (git fetch origin, then git merge origin/{branch} there), then Fix it or Push its commits.", link: review.Url);
+                throw new AnnouncedFlightException($"no fixer started: {why}");
+            }
+            if (holder is not null && AuthoringSessionIn(holder) is { } resumeAuthor)
+            {
+                var why = AuthorHoldsReason(resumeAuthor, holder, branch);
+                RaiseOnce(pr, review, CardBin.Handled, FixAuthorHoldsKind, Verbs.PrTarget(pr.Repo, pr.Number), $"{pr}: no fixer started, its authoring session holds the branch", $"No fixer started: {why}.");
+                throw new AnnouncedFlightException($"no fixer started: {why}");
+            }
+            resumedWork = work.Line;
+            if (holder is not null || kept.Branch is not null && kept.Branch != branch)
+            {
+                detached = true;
+            }
+            else if (kept.Branch is null)
+            {
+                // Detached at the work: the branch moves to it only as a fast-forward, never a reset.
+                var ff = (await git.RunAsync(["merge-base", "--is-ancestor", $"refs/heads/{branch}", "HEAD"], worktree, cancellationToken)).Ok
+                    && (await git.RunAsync(["branch", "-f", branch, "HEAD"], worktree, cancellationToken)).Ok
+                    && (await git.RunAsync(["switch", branch], worktree, cancellationToken)).Ok;
+                detached = !ff;
+            }
+        }
+        else if (holder is not null)
         {
             if (AuthoringSessionIn(holder) is { } author)
             {
@@ -607,7 +650,7 @@ public sealed partial class PrReviews
         var fixing = review with
         {
             Fixer = fixer, FixWorktree = worktree, FixRound = (review.FixRound ?? 0) + 1,
-            FixWorktreeBorrowed = borrowed ? true : null, FixDetached = detached ? true : null,
+            FixWorktreeBorrowed = borrowed ? true : null, FixDetached = detached ? true : null, FixResumedWork = resumedWork,
         };
         string job;
         var counting = new object();
@@ -619,8 +662,8 @@ public sealed partial class PrReviews
         }
         catch (FlightException)
         {
-            // A borrowed worktree is someone else's and stays.
-            if (!borrowed)
+            // A borrowed worktree is someone else's and a resumed one holds an earlier fixer's work: both stay.
+            if (!borrowed && resumedWork is null)
             {
                 await planes.RemoveAsync(clone, worktree, cancellationToken, force: true);
             }

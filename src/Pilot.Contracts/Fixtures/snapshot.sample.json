@@ -440,6 +440,7 @@
       "fixWorktree": null,
       "fixWorktreeBorrowed": null,
       "fixDetached": null,
+      "fixResumedWork": null,
       "fixRound": null,
       "fixRoundsAllowed": null,
       "designAnswer": null,

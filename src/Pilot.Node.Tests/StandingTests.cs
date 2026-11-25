@@ -88,6 +88,28 @@ public sealed class StandingTests
     }
 
     [Fact]
+    public async Task PushingAFixersLeftCommitsIsThePersonsNotTheLookoutsNorAFlightSessions()
+    {
+        await using var node = await NodeHarness.StartAsync(Ct);
+        const string worker = "du1-tia1-parser";
+        var lookout = Lookout(node);
+        Fly(node, "TIA1", worker);
+        var target = Verbs.PrTarget("acme/widget", 7);
+        (await Error(node, Command(Verbs.PushFix, target, lookout, true))).ShouldNotBeNull().ShouldContain("not the watchtower's");
+        (await Error(node, Command(Verbs.PushFix, target, worker, true))).ShouldNotBeNull().ShouldContain("not a flight session's");
+
+        // Answering the push choice of an open pr-fix-ended card re-runs its verb as the answerer: refused, the card left open.
+        var choices = new[]
+        {
+            new CardChoice { Label = "Fix it", Verb = Verbs.FixPr, Target = target },
+            new CardChoice { Label = "Push its commits", Verb = Verbs.PushFix, Target = target },
+        };
+        var card = node.State.RaiseCard(CardBin.ForYou, "pr-fix-ended", target, "acme/widget#7: a fixer ended without a push", null, choices);
+        (await Error(node, Command(Verbs.Answer, Verbs.CardTarget(card.Id), lookout, true, "Push its commits"))).ShouldNotBeNull();
+        node.State.Cards().Single(c => c.Id == card.Id).State.ShouldBe(CardState.Open);
+    }
+
+    [Fact]
     public async Task AFlightsSessionMayNotAnswerARingCardAndTheLookoutMayOnlyWithWhatItMaySendItself()
     {
         await using var node = await NodeHarness.StartAsync(Ct);
