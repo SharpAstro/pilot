@@ -146,8 +146,8 @@ public sealed class ToastXmlTests
     {
         var runner = new FakeToastRunner();
         var xml = ToastXml.ForCard("c1", "t", "b", ToastTier.Normal);
-        await runner.Show("c1", xml);
-        await runner.Remove("c1");
+        await runner.Show("c1", xml, TestContext.Current.CancellationToken);
+        await runner.Remove("c1", TestContext.Current.CancellationToken);
         runner.Calls.ShouldBe([("show", "c1", xml), ("remove", "c1", null)]);
     }
 }
