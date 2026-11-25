@@ -954,6 +954,14 @@ public static class Verbs
     public const string EndPoller = "end-poller";
 
     /// <summary>
+    /// <c>done-checked watchtower &lt;verb&gt; &lt;target&gt; [args...]</c> (PIL1353): the button of a watchtower-refused card, "Done another way: check it".
+    /// Its args are the refused command's verb, target and args. The node reads that command's effect from its own state (and GitHub's for a PR):
+    /// with the effect there the press is ok, the card closes and the current watchtower is told what was seen; with it not there the press is
+    /// refused saying what is missing, the card stays open and nothing is told. The person's only: it closes a card for a command nobody here ran.
+    /// </summary>
+    public const string DoneChecked = "done-checked";
+
+    /// <summary>
     /// <c>end-session session/&lt;id&gt; &lt;why&gt;</c> (<c>pilot session end &lt;id&gt; &lt;why&gt;</c>): the node ends a running background
     /// session, cancels its queued and running jobs, and records <c>why</c> (required) and who asked in the session ledger. For the
     /// watchtower, whose own <c>claude stop</c> is refused under auto mode. An interactive or ended session is refused.

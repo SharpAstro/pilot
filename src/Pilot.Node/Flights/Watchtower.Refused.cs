@@ -76,20 +76,60 @@ public sealed partial class Watchtower
         var words = rest.Split((char[])[' ', '\t'], StringSplitOptions.RemoveEmptyEntries);
         var first = name == verb ? 0 : 1;
         var on = words.Length > first && !words[first].StartsWith('-') ? "/" + words[first].Trim('"', '\'') : "";
-        // The one press that moves it once the person has done it: told to the watchtower that is current when it is pressed (the card may
-        // wait hours, and the watchtower be replaced meanwhile), which goes on from the result.
-        IReadOnlyList<CardChoice> choices =
-            [new CardChoice { Label = DoneMyselfLabel, Verb = Verbs.Tell, Target = Verbs.WatchtowerTarget, Args = [$"The person did it themselves after Claude Code refused your `pilot {name}`: carry on from what it did (pilot status, pilot cards)."] }];
+        // The Run button runs the refused command as the person's own press (the answer is theirs alone, Standing.IsRefusedRun). The last
+        // button is the person having done it another way: the node checks the command's effect before it closes the card and tells the
+        // watchtower that is current (the card may wait hours, and the watchtower be replaced meanwhile). A command whose effect the node
+        // cannot read has no such button, since a bare "done" is only a claim.
+        var reading = RefusedCommand.Read(command);
+        var checkable = reading.Command is { } parsed && RefusedEffects.CanCheck(parsed);
+        var done = checkable
+            ? new CardChoice { Label = DoneCheckedLabel, Verb = Verbs.DoneChecked, Target = Verbs.WatchtowerTarget, Args = RefusedEffects.Encode(reading.Command!) }
+            : null;
+        var body = new System.Text.StringBuilder();
+        List<CardChoice> choices = [];
+        var unseen = $"The node cannot see pilot {name} done, so there is no button that says it was: dismiss this card once it is.";
+        if (reading.CanPress)
+        {
+            var run = reading.Command!;
+            choices.Add(new CardChoice { Label = $"{RunLabelPrefix}pilot {name}{on.Replace('/', ' ')}", Verb = run.Verb, Target = run.Target, Args = run.Args, Why = run.Why });
+            var other = done is null ? $"run it from a terminal. {unseen}" : $"run it from a terminal and press \"{DoneCheckedLabel}\" (the node checks it is done before it closes this card).";
+            body.Append($"{WhatToDo}press \"{choices[0].Label}\" to run it as yourself, or {other} It was refused by {reason}, so nothing it was meant to move moves until then.\n\nIt tried, at {at}:\n{command.Trim()}");
+        }
+        else
+        {
+            // The command as written, up to its first shell operator, on a line of its own so it can be selected and copied whole.
+            var restGroup = call.Groups["rest"];
+            var shown = command[call.Index..(restGroup.Index + rest.Length)].Trim();
+            var why = reading.Blocked switch
+            {
+                PressBlock.MoreThanOneCommand => "it is more than one pilot command, and a press runs one",
+                PressBlock.NotANodeVerb => $"the node has no button for it ({reading.Detail})",
+                _ => $"the node cannot read it back into a command ({reading.Detail})",
+            };
+            var then = done is null ? $"Run it from a terminal. {unseen}" : $"Run it from a terminal, then press \"{DoneCheckedLabel}\" (the node checks the first command is done before it closes this card).";
+            body.Append($"{WhatToDo}it cannot be pressed from here: {why}. {then} It was refused by {reason}, so nothing it was meant to move moves until then.\n\nThe command, at {at}:\n{shown}");
+            if (command.Trim() != shown)
+            {
+                body.Append($"\n\nThe whole line it tried:\n{command.Trim()}");
+            }
+        }
+        if (done is not null)
+        {
+            choices.Add(done);
+        }
         // The title is the command, short; what refused it is in the detail.
         state.RaiseCard(CardBin.Ring, RefusedKind, $"{Verbs.WatchtowerTarget}/refused/{name.Replace(' ', '-')}{on}",
             $"The watchtower could not run pilot {name}",
-            $"{WhatToDo}run it yourself, or do what it was for another way, then press \"{DoneMyselfLabel}\". It was refused by {reason}, so nothing it was meant to move moves until then.\n\nIt tried, at {at}:\n{command.Trim()}",
+            body.ToString(),
             choices);
         LogStream($"the watchtower's pilot {name} was refused ({reason}): a card rings");
     }
 
-    /// <summary>The button of a refused command's card: the person did it, and the watchtower is told to go on.</summary>
-    public const string DoneMyselfLabel = "Done: tell the watchtower";
+    /// <summary>The button of a refused command's card whose effect the node can see: the person did it another way, the node checks, and only then the card closes and the watchtower is told to go on.</summary>
+    public const string DoneCheckedLabel = "Done another way: check it";
+
+    /// <summary>What the label of a refused command's Run button starts with: the button runs the command as the person's own press.</summary>
+    public const string RunLabelPrefix = "Run it: ";
 
     // TranscriptBook.DenialOf's words for the person's own refusal.
     private const string PersonSaidNo = "you said no";
@@ -101,7 +141,7 @@ public sealed partial class Watchtower
     };
 
     // The words up to the first unquoted shell operator (; & | < > or a line break).
-    private static string OwnWords(string rest)
+    internal static string OwnWords(string rest)
     {
         var quote = '\0';
         for (var i = 0; i < rest.Length; i++)
@@ -141,7 +181,7 @@ public sealed partial class Watchtower
     // The node's CLI as the command word: at the start, or after an unquoted && ; | & ( or line break (as PowerShell's & "…" calls it).
     // Not a folder named pilot inside another command's words ("git -C C:/…/sharpastro/pilot push" is git's), and not a line of a quoted
     // argument (a "git commit -m" whose body has a line "Pilot is now quiet…", a gh comment's line "pilot answer c1 1").
-    private static Match? PilotCall(string command)
+    internal static Match? PilotCall(string command)
     {
         var quote = '\0';
         for (var i = 0; i < command.Length; i++)

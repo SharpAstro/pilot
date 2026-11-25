@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -31,6 +32,9 @@ internal sealed class NodeHarness : IAsyncDisposable
     }
 
     public WebApplication App { get; }
+
+    /// <summary>The commands the node was sent over its socket, as they arrived (verb, target, args, why), in order: what a CLI test compares.</summary>
+    public SentCommands Sent { get; private init; } = new();
 
     /// <summary>The temp folder holding the socket and the data folder, deleted on dispose.</summary>
     public string Folder { get; }
@@ -119,10 +123,12 @@ internal sealed class NodeHarness : IAsyncDisposable
         var milestoner = new FakeIdeaMilestoner();
         var splitter = new FakeIssueSplitter();
         var phase = Stopwatch.StartNew();
+        var sent = new SentCommands();
         try
         {
             var app = NodeApp.Build(options, held, builder =>
             {
+                builder.Services.AddSingleton<IStartupFilter>(new SentFilter(sent));
                 // The node's file logger stays: logs/node.log in the temp data folder.
 
                 builder.Logging.SetMinimumLevel(LogLevel.Warning);
@@ -187,7 +193,7 @@ internal sealed class NodeHarness : IAsyncDisposable
             // So is the flight sweep's: it tells the keeper of the Opus count what this node runs, and would free a slot a test had just taken.
             await app.Services.GetRequiredService<Pilot.Node.Flights.FlightAdvance>().FirstSweep.WaitAsync(cancellationToken);
             Took("flight sweep's first sweep", phase);
-            return new NodeHarness(app, held, folder, options, agents, delivery) { Workers = workers, Checks = checks, GitHub = github, NuGet = nuget, Summary = summary, Milestoner = milestoner, Splitter = splitter, PrPacing = prPacing };
+            return new NodeHarness(app, held, folder, options, agents, delivery) { Workers = workers, Checks = checks, GitHub = github, NuGet = nuget, Summary = summary, Milestoner = milestoner, Splitter = splitter, PrPacing = prPacing, Sent = sent };
         }
         catch
         {
@@ -218,6 +224,58 @@ internal sealed class NodeHarness : IAsyncDisposable
             {
                 // Set in this async lambda, so it flows into the rest of the request and goes when the request does.
                 TestEnvironment.CarryOwner(owner);
+                await rest(context);
+            });
+            next(app);
+        };
+    }
+
+    /// <summary>The commands a node took, read from the body of each POST to the commands route before the node ran it.</summary>
+    public sealed class SentCommands
+    {
+        private readonly List<CommandRequest> _all = [];
+
+        public IReadOnlyList<CommandRequest> All
+        {
+            get
+            {
+                lock (_all)
+                {
+                    return [.. _all];
+                }
+            }
+        }
+
+        internal void Add(CommandRequest command)
+        {
+            lock (_all)
+            {
+                _all.Add(command);
+            }
+        }
+    }
+
+    private sealed class SentFilter(SentCommands sent) : IStartupFilter
+    {
+        public Action<IApplicationBuilder> Configure(Action<IApplicationBuilder> next) => app =>
+        {
+            app.Use(async (context, rest) =>
+            {
+                if (context.Request.Method == "POST" && context.Request.Path == NodeWire.CommandsRoute)
+                {
+                    context.Request.EnableBuffering();
+                    try
+                    {
+                        if (await System.Text.Json.JsonSerializer.DeserializeAsync(context.Request.Body, PilotJsonContext.Default.CommandRequest, context.RequestAborted) is { } command)
+                        {
+                            sent.Add(command);
+                        }
+                    }
+                    catch (System.Text.Json.JsonException)
+                    {
+                    }
+                    context.Request.Body.Position = 0;
+                }
                 await rest(context);
             });
             next(app);

@@ -754,14 +754,14 @@ public sealed partial class LegCommander
     private static int RoundsAllowed(FlightRow flight) => Math.Max(ReviewLoopRound, flight.ReviewRoundsAllowed ?? 0);
 
     /// <summary>The rounds whose verdict asked for changes: a pass spends none of the rounds a loop may take.</summary>
-    private static int ChangesRounds(FlightRow flight) => flight.ReviewRounds?.Count(r => r.Verdict == ReviewState.Changes) ?? 0;
+    internal static int ChangesRounds(FlightRow flight) => flight.ReviewRounds?.Count(r => r.Verdict == ReviewState.Changes) ?? 0;
 
     /// <summary>
     /// Whether a flight's review has used the rounds with changes it may have without the watchtower's word, and the reviewer's own
     /// latest verdict still asks for changes. A review the node turned back to Changes after a pass (a red check, a merge taken back)
     /// ends on a passed round and is not held.
     /// </summary>
-    private static bool ReviewLoopHeld(FlightRow flight) =>
+    internal static bool ReviewLoopHeld(FlightRow flight) =>
         flight.Review is { State: ReviewState.Changes } && flight.ReviewRounds is [.., { Verdict: ReviewState.Changes }]
         && ChangesRounds(flight) >= RoundsAllowed(flight);
 

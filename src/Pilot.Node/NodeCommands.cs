@@ -428,6 +428,32 @@ public sealed partial class NodeCommands(IServiceProvider services, NodeState st
             && Get<RoleModels>().NoAutoMerge(flight.Repo);
     }
 
+    // A watchtower-refused card's checked Done (PIL1353): ok only when the node sees the refused command's effect, and then the current
+    // watchtower is told what was seen. With the effect not there the press is refused, the card stays open and nothing is told.
+    private async Task<CommandResult> DoneCheckedAsync(CommandRequest command, CancellationToken cancellationToken)
+    {
+        if (RefusedEffects.Decode(command.Args) is not { } refused)
+        {
+            return state.Complete(command, "done-checked takes the refused command's verb and target");
+        }
+        var effects = new RefusedEffects(state, async (pr, ct) => (await Get<IGitHub>().PullRequestOfAsync(pr.Repo, pr.Number, ct)).State);
+        var seen = await effects.SeeAsync(refused, cancellationToken);
+        if (seen.There is not true)
+        {
+            return state.Complete(command, seen.There is false
+                ? $"{seen.Seen}, so it is not done yet: the card stays open"
+                : $"{seen.Seen}: the card stays open, dismiss it once you have checked it yourself");
+        }
+        var message = $"The person did `pilot {RefusedCommand.PathOf(refused.Verb)}` another way after Claude Code refused yours, and the node checked: {seen.Seen}. Carry on from there (pilot status, pilot cards).";
+        var (target, why) = Get<Watchtower>().TellTarget();
+        if (target is null)
+        {
+            return state.Complete(command, null, made: $"{seen.Seen}; no watchtower is running to tell ({why})");
+        }
+        var said = await Get<SessionMessenger>().SayAsync(command with { Verb = Verbs.Say, Target = target, Args = [message] }, cancellationToken);
+        return state.Complete(command, said.Error, said.Way, said.SessionId, made: seen.Seen);
+    }
+
     private async Task<CommandResult> RouteAsync(CommandRequest command, CancellationToken cancellationToken)
     {
         if (command.Verb == Verbs.Tell)
@@ -623,6 +649,10 @@ public sealed partial class NodeCommands(IServiceProvider services, NodeState st
                 ? poller.EndOnWord(command)
                 : state.Complete(command, "this node does not look for pollers, so it has none to end");
         }
+        if (command.Verb == Verbs.DoneChecked)
+        {
+            return await DoneCheckedAsync(command, cancellationToken);
+        }
         if (command.Verb == Verbs.Say)
         {
             return await Get<SessionMessenger>().SayAsync(command, cancellationToken);
@@ -728,7 +758,7 @@ public sealed partial class NodeCommands(IServiceProvider services, NodeState st
         return state.Complete(command, null);
     }
 
-    private static CardChoice? FindChoice(CardRow card, string which) =>
+    internal static CardChoice? FindChoice(CardRow card, string which) =>
         int.TryParse(which, out var number) && number >= 1 && number <= card.Choices.Length
             ? card.Choices[number - 1]
             : card.Choices.FirstOrDefault(c => string.Equals(c.Label, which, StringComparison.OrdinalIgnoreCase));
@@ -920,7 +950,7 @@ public sealed partial class NodeCommands(IServiceProvider services, NodeState st
         try
         {
             _fromCard.Value = true;
-            result = await RunAsync(command with { Verb = choice.Verb, Target = choice.Target, Args = choice.Args, RequestId = null }, cancellationToken);
+            result = await RunAsync(command with { Verb = choice.Verb, Target = choice.Target, Args = choice.Args, Why = command.Why is { Length: > 0 } ? command.Why : choice.Why ?? command.Why, RequestId = null }, cancellationToken);
         }
         catch
         {
@@ -968,6 +998,16 @@ public sealed partial class NodeCommands(IServiceProvider services, NodeState st
         if (card.Kind == PrReviews.ReadyKind)
         {
             await Get<PrReviews>().SweepAsync(cancellationToken);
+        }
+        // A refused command the person ran from its card: the watchtower that is current now is told it is done, so it carries on.
+        if (card.Kind == Watchtower.RefusedKind && choice.Label.StartsWith(Watchtower.RunLabelPrefix, StringComparison.Ordinal))
+        {
+            var ran = choice.Label[Watchtower.RunLabelPrefix.Length..];
+            await RunAsync(new CommandRequest
+            {
+                Verb = Verbs.Tell, Target = Verbs.WatchtowerTarget, Who = LegWatch.Who,
+                Args = [$"{AnsweredBy(command)} ran your refused `{ran}` from its card, and it is done: carry on from what it did (pilot status, pilot cards)."],
+            }, cancellationToken);
         }
         // An assistant's ask allowed and done: the session that asked is told.
         if (card.Kind == CardKinds.AssistantAsk)

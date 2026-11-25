@@ -54,7 +54,7 @@ public sealed record Standing(StandingKind Kind, string? Flight = null, string? 
     /// </summary>
     public static readonly IReadOnlySet<string> YourOnlyVerbs = new HashSet<string>(StringComparer.Ordinal)
     {
-        Verbs.Merge, Verbs.RerunChecks, Verbs.Ground, Verbs.Unground, Verbs.MoveFlight, Verbs.AdoptFlight, Verbs.Land, Verbs.Set, Verbs.Setup, Verbs.AnswerGrant, Verbs.RevokeGrant, Verbs.Update, Verbs.RestartNode, Verbs.Reboot, Verbs.Maintenance, Verbs.LiftLimit, Verbs.RestartWatchtower, Verbs.ChatNow, Verbs.EndStray, Verbs.EndPoller,
+        Verbs.Merge, Verbs.RerunChecks, Verbs.Ground, Verbs.Unground, Verbs.MoveFlight, Verbs.AdoptFlight, Verbs.Land, Verbs.Set, Verbs.Setup, Verbs.AnswerGrant, Verbs.RevokeGrant, Verbs.Update, Verbs.RestartNode, Verbs.Reboot, Verbs.Maintenance, Verbs.LiftLimit, Verbs.RestartWatchtower, Verbs.ChatNow, Verbs.EndStray, Verbs.EndPoller, Verbs.DoneChecked,
     };
 
     /// <summary>
@@ -196,6 +196,21 @@ public sealed record Standing(StandingKind Kind, string? Flight = null, string? 
     public static bool IsAsk(CommandRequest command, NodeState state) =>
         command.Verb is Verbs.Answer or Verbs.Dismiss && CardOf(command, state) is { State: CardState.Open, Kind: CardKinds.AssistantAsk };
 
+    /// <summary>
+    /// Whether <paramref name="command"/> answers an open watchtower-refused card with its Run choice (PIL1353). Claude Code refused that very
+    /// command for the watchtower, so running it is the person's: the watchtower, an assistant and a flight's session are refused it.
+    /// </summary>
+    public static bool IsRefusedRun(CommandRequest command, NodeState state)
+    {
+        if (command.Verb != Verbs.Answer || CardOf(command, state) is not { State: CardState.Open, Kind: Flights.Watchtower.RefusedKind } card)
+        {
+            return false;
+        }
+        var args = command.Args ?? [];
+        var choice = NodeCommands.FindChoice(card, string.Join(' ', args).Trim()) ?? (args.Length > 1 ? NodeCommands.FindChoice(card, args[0].Trim()) : null);
+        return choice is not null && choice.Label.StartsWith(Flights.Watchtower.RunLabelPrefix, StringComparison.Ordinal);
+    }
+
     /// <summary>What a session is told when it sends <see cref="Verbs.AnswerAsk"/>, by the verb or by the ask's card.</summary>
     public const string AskIsThePersons = $"{Verbs.AnswerAsk} is the person's: the watchtower's permission prompts and questions are theirs to answer, from the chat or its card";
 
@@ -235,6 +250,9 @@ public sealed record Standing(StandingKind Kind, string? Flight = null, string? 
             // not a flight session's. A hand connection (no --anyway) a flight session may drop on its own flight.
             case StandingKind.Lookout or StandingKind.FlightSession when DropsOverlapAnswer(command):
                 return $"{command.Verb} {Verbs.AnywayFlag} undoes the controller's answer to an overlap: it is theirs, not {(Kind == StandingKind.Lookout ? "the watchtower's" : "a flight session's")}";
+            // The Run of a refused command's card is the person's press: it runs what Claude Code just refused the watchtower.
+            case not (StandingKind.Person or StandingKind.Grant) when IsRefusedRun(command, state):
+                return "Claude Code refused that very command for the watchtower, so its Run is the person's: press it on the card, or ask them to";
             case StandingKind.Investigator when yourOnly:
                 return $"{command.Verb} is the controller's, not an investigator's: end with {Verbs.Investigated} ring and say what they need to do";
             case StandingKind.Investigator when command.Verb == Verbs.Raise && (command.Args ?? []) is ["ring", ..]:

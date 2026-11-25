@@ -90,6 +90,8 @@ public sealed class FileJournal : INodeJournal, IDisposable
     /// 13: a session row with the role <c>investigator</c> (PIL1285). An older node cannot read the role, and would fail on the snapshot.
     /// 14: <c>repoFollowUps</c> on a flight (PIL1340). An older node would drop it when it compacts the snapshot, and a second <c>pilot follow-up</c> of the same repo and title would
     /// open the issue again.
+    /// Not bumped for <c>why</c> on a card choice (PIL1353): it is nullable, and an older node that drops it when it compacts the snapshot only loses the
+    /// <c>--why</c> a refused command's Run button carries; the command still runs, so there is no reason to refuse the store.
     /// Not bumped for <c>admittedAt</c> on a flight (PIL1321): it is nullable, and an older node that drops it when it compacts the snapshot only loses the
     /// stop of the CI red clock after a queue wait, so the clock counts as it did before; nothing breaks, so there is no reason to refuse the store.
     /// </remarks>
