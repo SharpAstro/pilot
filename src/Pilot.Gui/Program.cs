@@ -372,7 +372,7 @@ chrome.OnCardsShown = shows =>
     feed?.SayShowsCards(shows);
     fleetWatch.SayShowsCards(shows);
 };
-chrome.OnCardsShown(chrome.ShowsCards);
+chrome.OnCardsShown(chrome.ClientShowsCards);
 var fleetKnownAt = DateTimeOffset.MinValue;
 // The grants held, found by a node's machine name (its address only for an old entry), so a node on a new network keeps its grant.
 var held = HeldView.None;

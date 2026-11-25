@@ -81,7 +81,7 @@ chrome.OnCardsShown = shows =>
     feed.SayShowsCards(shows);
     fleetWatch.SayShowsCards(shows);
 };
-chrome.OnCardsShown(chrome.ShowsCards);
+chrome.OnCardsShown(chrome.ClientShowsCards);
 var flights = chrome.Flights;
 chrome.ForTerminal(); // cells cannot draw an arrow or columns of cards: the terminal keeps the lists
 var jobs = chrome.Jobs;

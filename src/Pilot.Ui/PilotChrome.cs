@@ -509,9 +509,9 @@ internal sealed class PilotChrome<TSurface>
     /// Whether this window shows the cards now: its For you bar is open or the Notifications page is. The node skips the normal desktop toasts
     /// while any client does (#1356).
     /// </summary>
-    public bool ShowsCards => Notifications.Open || Page == PilotPage.Notifications;
+    public bool ClientShowsCards => Notifications.Open || Page == PilotPage.Notifications;
 
-    /// <summary>Called with <see cref="ShowsCards"/> whenever it changes; the host says it to each node it streams from (<c>NodeFeed.SayShowsCards</c>), and once when it starts.</summary>
+    /// <summary>Called with <see cref="ClientShowsCards"/> whenever it changes; the host says it to each node it streams from (<c>NodeFeed.SayShowsCards</c>), and once when it starts.</summary>
     public Action<bool>? OnCardsShown
     {
         get;
@@ -519,7 +519,7 @@ internal sealed class PilotChrome<TSurface>
         {
             field = value;
             // The host says the first value itself when it starts, so a change is judged against that.
-            _saidCards = ShowsCards;
+            _saidCards = ClientShowsCards;
         }
     }
 
@@ -527,7 +527,7 @@ internal sealed class PilotChrome<TSurface>
 
     private void SayCardsIfChanged()
     {
-        var shows = ShowsCards;
+        var shows = ClientShowsCards;
         if (shows == _saidCards)
         {
             return;
