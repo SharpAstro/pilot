@@ -2013,6 +2013,19 @@ is taken, closed or run, reading the flight and the sessions as they are then: `
 the card staying open, so a client that pressed before it saw the mark runs nothing. The status is optional on the wire like the rest: an
 older client draws the button as it did and is refused with the reason.
 
+### Desktop toasts (#1356)
+
+On Windows the node shows a toast for every open Ring card (`Toasts/Toaster.cs`), through one windowless Windows PowerShell 5.1 process per
+toast (`PowerShellToastRunner`). The tag is the card's subject, so a card raised again replaces its toast, and the toast is withdrawn when
+the card closes or leaves the Ring; a card moved into the Ring by the ring judge or the investigator toasts then, not when first filed. A
+click opens `pilot://card/<id>`. `ToastTier.Of(kind)` is the one table of tiers: **urgent** (burning the machine or money, work about to be
+lost, pilot unable to watch itself) stays on screen until dismissed (`scenario="urgent"`), everything else is **normal**. More than 3 normal
+toasts within a minute become one "N cards need you" toast (tag `pilot-burst`, replaced as more come); urgent ones always show singly. Normal
+toasts are skipped while any client shows the cards (the GUI or TUI says it with its page, as `ClientPage.ShowsCards`, while its For you bar or
+the Notifications page is open; urgent ones toast anyway), and cards already open when the node starts are not toasted again. The `toasts`
+setting is `all` (the default, also when the stored member is null), `urgent` or `off`, in force at once. The Toaster waits on a signal from
+the state's event stream and never loops on the CPU; its tests run on a fake runner and clock.
+
 ## Hooks
 
 Claude Code's hooks tell the node the moment a session changes, where the agents listing is read every few seconds:
