@@ -9,8 +9,8 @@ using Xunit;
 namespace Pilot.Gui.Tests;
 
 /// <summary>
-/// The two ringing cards of a refused watchtower press (pilot#988), worded as the node words them: COD70's review card whose press was
-/// refused (c9919, 2026-11-10), and the card of a refused pilot command with its one button. Drawn at the panel's 420 and a wide 900 with
+/// The ringing cards of a refused watchtower press (pilot#988), worded as the node words them: COD70's review card whose press was
+/// refused (c9919, 2026-11-10), c30387's refused allow-round with its Run button, and a refused command that cannot be pressed (pilot#1353). Drawn at the panel's 420 and a wide 900 with
 /// nothing over text and no word past the panel; the captures (for the PR) are written beside PILOT_TEST_CAPTURE when it is set.
 /// </summary>
 public sealed class RefusedCardCaptureTests
@@ -32,10 +32,24 @@ public sealed class RefusedCardCaptureTests
         },
         new()
         {
-            Id = "c9930", Bin = CardBin.Ring, Kind = "watchtower-refused", Subject = "watchtower/refused/flight-merge/PIL1", State = CardState.Open, At = Fresh,
+            // c30387's allow-round as the node words it: the Run button (its label wraps), then the Done press.
+            Id = "c30387", Bin = CardBin.Ring, Kind = "watchtower-refused", Subject = "watchtower/refused/flight-allow-round/PIL1347", State = CardState.Open, At = Fresh,
+            Title = "The watchtower could not run pilot flight allow-round",
+            Summary = "Claude Code refused a pilot command the watchtower ran, so what it was for has not happened. Press Run to run it as yourself (or run the command the card shows from a terminal when it has no Run), then the watchtower is told and goes on.",
+            Detail = "What to do: press \"Run it: pilot flight allow-round PIL1347\" to run it as yourself, or run it from a terminal and press \"Done: tell the watchtower\". It was refused by auto mode: [Auto-Mode Bypass], so nothing it was meant to move moves until then.\n\nIt tried, at 23:41:\npilot flight allow-round PIL1347 \"Watchtower: one blocking point is left, a regression from round 2's own fix; the other round 3 note is not blocking.\" 2>&1 | head -20",
+            Choices =
+            [
+                new CardChoice { Label = "Run it: pilot flight allow-round PIL1347", Verb = Verbs.AllowRound, Target = "flight/PIL1347", Args = ["Watchtower: one blocking point is left"] },
+                new CardChoice { Label = "Done: tell the watchtower", Verb = Verbs.Tell, Target = "watchtower" },
+            ],
+        },
+        new()
+        {
+            // Two pilot commands joined by &&: no Run button, the first command on a line of its own to copy.
+            Id = "c30388", Bin = CardBin.Ring, Kind = "watchtower-refused", Subject = "watchtower/refused/flight-merge/PIL1347", State = CardState.Open, At = Fresh,
             Title = "The watchtower could not run pilot flight merge",
-            Summary = "Claude Code refused a pilot command the watchtower ran, so what it was for has not happened. Run it yourself, then press the button so the watchtower goes on.",
-            Detail = "What to do: run it yourself, or do what it was for another way, then press \"Done: tell the watchtower\". It was refused by auto mode: [Auto-Mode Bypass], so nothing it was meant to move moves until then.\n\nIt tried, at 23:41:\nC:/Users/SebastianGodelet/AppData/Local/pilot2/bin/pilot.exe flight merge PIL1 c834afcc0",
+            Summary = "Claude Code refused a pilot command the watchtower ran, so what it was for has not happened. Press Run to run it as yourself (or run the command the card shows from a terminal when it has no Run), then the watchtower is told and goes on.",
+            Detail = "What to do: it cannot be pressed from here: it is more than one pilot command, and a press runs one. Run it from a terminal, then press \"Done: tell the watchtower\". It was refused by auto mode: [Auto-Mode Bypass], so nothing it was meant to move moves until then.\n\nThe command, at 23:41:\npilot flight merge PIL1347 c834afcc0 --why \"j9 is green, the review passed with no blocking point left\"\n\nThe whole line it tried:\npilot flight merge PIL1347 c834afcc0 --why \"j9 is green, the review passed with no blocking point left\" && pilot flight land PIL1347",
             Choices = [new CardChoice { Label = "Done: tell the watchtower", Verb = Verbs.Tell, Target = "watchtower" }],
         },
     ];
@@ -56,7 +70,7 @@ public sealed class RefusedCardCaptureTests
         {
             return;
         }
-        const int height = 700;
+        const int height = 1500;
         using var shot = new RgbaImageRenderer((uint)width, height);
         new CardsView<RgbaImage>(shot) { FontPath = SessionsCapture.FontPath, Clock = Now }.Render(CardsScreen.From([.. Cards]), new RectF32(0, 0, width, height));
         File.WriteAllBytes(Path.Combine(Path.GetDirectoryName(capture) ?? ".", $"refused-cards-{width}.png"), PngWriter.Encode(shot.Surface.Pixels, width, height));

@@ -76,20 +76,54 @@ public sealed partial class Watchtower
         var words = rest.Split((char[])[' ', '\t'], StringSplitOptions.RemoveEmptyEntries);
         var first = name == verb ? 0 : 1;
         var on = words.Length > first && !words[first].StartsWith('-') ? "/" + words[first].Trim('"', '\'') : "";
-        // The one press that moves it once the person has done it: told to the watchtower that is current when it is pressed (the card may
+        // The Run button runs the refused command as the person's own press (the answer is theirs alone, Standing.IsRefusedRun); the last
+        // button is the person having done it another way. Either tells the watchtower that is current when it is pressed (the card may
         // wait hours, and the watchtower be replaced meanwhile), which goes on from the result.
-        IReadOnlyList<CardChoice> choices =
-            [new CardChoice { Label = DoneMyselfLabel, Verb = Verbs.Tell, Target = Verbs.WatchtowerTarget, Args = [$"The person did it themselves after Claude Code refused your `pilot {name}`: carry on from what it did (pilot status, pilot cards)."] }];
+        var done = new CardChoice { Label = DoneMyselfLabel, Verb = Verbs.Tell, Target = Verbs.WatchtowerTarget, Args = [$"The person did it themselves after Claude Code refused your `pilot {name}`: carry on from what it did (pilot status, pilot cards)."] };
+        var reading = RefusedCommand.Read(command);
+        var detail = new System.Text.StringBuilder();
+        IReadOnlyList<CardChoice> choices;
+        if (reading.CanPress)
+        {
+            var run = reading.Command!;
+            choices =
+            [
+                new CardChoice { Label = $"{RunLabelPrefix}pilot {name}{on.Replace('/', ' ')}", Verb = run.Verb, Target = run.Target, Args = run.Args, Why = run.Why },
+                done,
+            ];
+            detail.Append($"{WhatToDo}press \"{choices[0].Label}\" to run it as yourself, or run it from a terminal and press \"{DoneMyselfLabel}\". It was refused by {reason}, so nothing it was meant to move moves until then.\n\nIt tried, at {at}:\n{command.Trim()}");
+        }
+        else
+        {
+            choices = [done];
+            // The command as written, up to its first shell operator, on a line of its own so it can be selected and copied whole.
+            var restGroup = call.Groups["rest"];
+            var shown = command[call.Index..(restGroup.Index + rest.Length)].Trim();
+            var why = reading.Blocked switch
+            {
+                PressBlock.MoreThanOneCommand => "it is more than one pilot command, and a press runs one",
+                PressBlock.NotANodeVerb => $"the node has no button for it ({reading.Detail})",
+                _ => $"the node cannot read it back into a command ({reading.Detail})",
+            };
+            detail.Append($"{WhatToDo}it cannot be pressed from here: {why}. Run it from a terminal, then press \"{DoneMyselfLabel}\". It was refused by {reason}, so nothing it was meant to move moves until then.\n\nThe command, at {at}:\n{shown}");
+            if (command.Trim() != shown)
+            {
+                detail.Append($"\n\nThe whole line it tried:\n{command.Trim()}");
+            }
+        }
         // The title is the command, short; what refused it is in the detail.
         state.RaiseCard(CardBin.Ring, RefusedKind, $"{Verbs.WatchtowerTarget}/refused/{name.Replace(' ', '-')}{on}",
             $"The watchtower could not run pilot {name}",
-            $"{WhatToDo}run it yourself, or do what it was for another way, then press \"{DoneMyselfLabel}\". It was refused by {reason}, so nothing it was meant to move moves until then.\n\nIt tried, at {at}:\n{command.Trim()}",
+            detail.ToString(),
             choices);
         LogStream($"the watchtower's pilot {name} was refused ({reason}): a card rings");
     }
 
     /// <summary>The button of a refused command's card: the person did it, and the watchtower is told to go on.</summary>
     public const string DoneMyselfLabel = "Done: tell the watchtower";
+
+    /// <summary>What the label of a refused command's Run button starts with: the button runs the command as the person's own press.</summary>
+    public const string RunLabelPrefix = "Run it: ";
 
     // TranscriptBook.DenialOf's words for the person's own refusal.
     private const string PersonSaidNo = "you said no";

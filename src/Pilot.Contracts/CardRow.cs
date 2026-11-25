@@ -187,6 +187,12 @@ public sealed record CardChoice
     /// shows it as the button's hover, so a label ending in an ellipsis still carries its whole words. Null where the label is whole.
     /// </summary>
     public string? Hint { get; init; }
+
+    /// <summary>
+    /// The <c>--why</c> the choice's command carries (a refused <c>pilot flight merge ... --why</c> run again by its card's Run button): the node passes
+    /// it when the press brings none of its own. Null for an ordinary button.
+    /// </summary>
+    public string? Why { get; init; }
 }
 
 /// <summary>Kinds of card a client treats specially, matched by word (<see cref="CardRow.Kind"/>).</summary>

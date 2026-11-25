@@ -728,7 +728,7 @@ public sealed partial class NodeCommands(IServiceProvider services, NodeState st
         return state.Complete(command, null);
     }
 
-    private static CardChoice? FindChoice(CardRow card, string which) =>
+    internal static CardChoice? FindChoice(CardRow card, string which) =>
         int.TryParse(which, out var number) && number >= 1 && number <= card.Choices.Length
             ? card.Choices[number - 1]
             : card.Choices.FirstOrDefault(c => string.Equals(c.Label, which, StringComparison.OrdinalIgnoreCase));
@@ -920,7 +920,7 @@ public sealed partial class NodeCommands(IServiceProvider services, NodeState st
         try
         {
             _fromCard.Value = true;
-            result = await RunAsync(command with { Verb = choice.Verb, Target = choice.Target, Args = choice.Args, RequestId = null }, cancellationToken);
+            result = await RunAsync(command with { Verb = choice.Verb, Target = choice.Target, Args = choice.Args, Why = command.Why is { Length: > 0 } ? command.Why : choice.Why ?? command.Why, RequestId = null }, cancellationToken);
         }
         catch
         {
@@ -968,6 +968,16 @@ public sealed partial class NodeCommands(IServiceProvider services, NodeState st
         if (card.Kind == PrReviews.ReadyKind)
         {
             await Get<PrReviews>().SweepAsync(cancellationToken);
+        }
+        // A refused command the person ran from its card: the watchtower that is current now is told it is done, so it carries on.
+        if (card.Kind == Watchtower.RefusedKind && choice.Label.StartsWith(Watchtower.RunLabelPrefix, StringComparison.Ordinal))
+        {
+            var ran = choice.Label[Watchtower.RunLabelPrefix.Length..];
+            await RunAsync(new CommandRequest
+            {
+                Verb = Verbs.Tell, Target = Verbs.WatchtowerTarget, Who = LegWatch.Who,
+                Args = [$"{AnsweredBy(command)} ran your refused `{ran}` from its card, and it is done: carry on from what it did (pilot status, pilot cards)."],
+            }, cancellationToken);
         }
         // An assistant's ask allowed and done: the session that asked is told.
         if (card.Kind == CardKinds.AssistantAsk)
