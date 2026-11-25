@@ -2097,19 +2097,30 @@ is fail-open (input it cannot read passes, exit 0 always) and never calls the no
 
 **The stray sweep** (`StraySweep`, pilot #909) is what catches what the guard did not stop: a process of the node's own tree that
 outlived what started it (a job's `testhost`, a shell that never ended; one such fixture spun a core for four days). Every 5 minutes
-(a `PeriodicTimer` on the node's `TimeProvider`, first look a minute after start) it reads the OS process table once through
+(a `PeriodicTimer` on the node's `TimeProvider`, first look a minute after start) it reads the OS process table through
 `IProcessTable` and hands `StrayFinder` the jobs (their wrapper's pid and start, time limit, and the descendants `JobTree` saw below
 them, which it keeps after the job ends while any lives) and the sessions (the tracker's live pids; ended rows by their plane and end
 time, a live session before an ended one in the same plane). The finder names a stray when its owner ended more than 2 minutes ago,
 when a running job is over its time limit by more than a minute, or when it is busy (0.5 cores or more over 30 s or longer) under a
 session that has been idle for 10 minutes; a process under a session the node did not launch (a person's own) is never one. Each stray
 gets one For you card (`stray-process`, subject `process:<pid>@<start>`) naming the process (pid, name, command line, start, age, CPU
-time), its owner, why, and the exact kill command for the OS (`Stop-Process -Id <pid> -Force`, `kill -9 <pid>`). A dismissal holds for the same
+time), its owner, why, and the exact kill command for the OS (`Stop-Process -Id <pid> -Force`, `kill -9 <pid>`). A dismissal holds for a day for the same
 pid and start (not for a later process that reuses the pid), and the card closes by itself once the process is gone. The node ends a stray
 itself, through `IProcessTable.Kill`, only when it started the owner, the owner has ended, the process descends from the owner (a process
 that only works in the owner's plane or names it on its command line may be a person's editor, so it is named and left), and the start still
 matches; it tries once, says so on a Handled `stray-killed` card, and a process that survives is named again with "tried to end it and it is
-still here". Anything else is only named. A landed flight is the exception (#1270): when it lands, the node ends the strays of its sessions at once, with no 2 minute grace, those descended from a session and those only working in its plane folder, before the plane is removed, and again on every later sweep; the landing's Handled line names what it ended. The strays also ride on the machine row (`MachineRow.Strays`, optional, so `NodeWire.Version`
+still here". A node session's own `claude` is also found by identity, wherever it hangs (#1354): a process whose command line starts
+one of the session's ids (`--session-id`, else `--resume`) under its name (`-n`), started by the row's end plus the 2 minute grace, belongs to
+that session, so a session whose row reads ended while its process runs on below Claude Code's own launcher is still seen
+(se1-fix-tianwen-2480 span a core for 33 h that way). The node ends such a process itself only while it spins (0.5 cores or more since
+the last sweep): once its row has ended, or while its live session is idle; a quiet one is only named, as the row may have ended while
+the session still works (#1355). The watchtower's own process is never ended for spinning while its row is live, only named. The node's own press on a stray card
+(`NodePress`) never ends a process found by session id either: a quiet one is the person's to end. Anything else is only named. A landed flight is the exception (#1270): when it lands, the node ends the strays of its sessions at once, with no 2 minute grace, those descended from a session and those only working in its plane folder, before the plane is removed, and again on every later sweep; the landing's Handled line names what it ended. Separately, the sweep looks at every process on the machine, the node's or not:
+one that used 0.8 of a core or more in every interval between sweeps for 30 minutes, and is no running job's (a job's time limit bounds
+those), rings a `busy-process` card with its pid, command line, owner (a node session, found by pid or by its session id and name, or none)
+and kill command, and an End press for the person (`end-stray`); the node never presses it, and offers no End for itself or the shell's,
+browser's or Windows' own processes. A break in the computing starts the half hour again, and the card closes once the process stops
+computing or is gone. The strays also ride on the machine row (`MachineRow.Strays`, optional, so `NodeWire.Version`
 stays), which `pilot strays` lists with each one's why, command line and kill command, and the Machine part of `pilot status` shows
 as a `strays` line with one line under it for each. The sweep remembers a session's last process (pid and start, the first start seen for
 that pid) in memory only, so that a leftover of a session that ended can be tied to it by the lost parent's pid; a pid whose start

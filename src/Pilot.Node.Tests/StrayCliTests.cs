@@ -30,7 +30,7 @@ public sealed class StrayCliTests
     {
         var text = PilotCommand.Strays(Machine(Stray(501), Stray(502, "pwsh.exe", "session se1-old", 90, null)));
 
-        text.ShouldContain("2 strays in the node's tree:");
+        text.ShouldContain("2 strays on this machine:");
         text.ShouldContain("testhost.exe  pid 501  job j7  age 3 h 0 min  cpu 3 h 0 min");
         text.ShouldContain("why: job j7 has run 3 h 0 min, over its time limit of 10 min");
         text.ShouldContain(@"command line: testhost.exe --port 5000 C:\repos\pilot\Pilot.Node.Tests.dll");
@@ -53,10 +53,10 @@ public sealed class StrayCliTests
 
         var plain = PilotCommand.Status(snapshot);
         plain.ShouldContain("machine  cpu 7% · mem 1/16 GB");
-        plain.ShouldContain("strays  1 in the node's tree (pilot strays has the kill commands)");
+        plain.ShouldContain("strays  1 on this machine (pilot strays has the kill commands)");
         plain.ShouldContain("    testhost.exe 501 (job j7, 3 h 0 min, cpu 3 h 0 min): job j7 has run 3 h 0 min, over its time limit of 10 min");
         plain.IndexOf("machine  ", StringComparison.Ordinal).ShouldBeLessThan(plain.IndexOf("strays  ", StringComparison.Ordinal));
-        StatusMarkdown.Build(snapshot).ShouldContain("- **strays** 1 in the node's tree: testhost.exe 501 (job j7, 3 h 0 min, cpu 3 h 0 min)");
+        StatusMarkdown.Build(snapshot).ShouldContain("- **strays** 1 on this machine: testhost.exe 501 (job j7, 3 h 0 min, cpu 3 h 0 min)");
     }
 
     [Fact]

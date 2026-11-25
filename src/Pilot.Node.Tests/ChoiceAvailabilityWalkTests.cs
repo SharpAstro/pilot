@@ -155,11 +155,11 @@ public sealed class ChoiceAvailabilityWalkTests : IClassFixture<ChoiceAvailabili
         }
     }
 
-    // Verbs a card choice offers that no flight or leg predicate can speak for: they target a session, a job, a card, the node, an idea
+    // Verbs a card choice offers that no flight or leg predicate can speak for: they target a session, a job, a process, a card, the node, an idea
     // or a grant, so VerbPreconditions neither covers nor lists them.
     private static readonly HashSet<string> NotFlightOrLeg =
     [
-        Verbs.Say, Verbs.Tell, Verbs.Set, Verbs.Update, Verbs.NoteIdea, Verbs.AnswerGrant, Verbs.EndPoller, Verbs.RestartWatchtower,
+        Verbs.Say, Verbs.Tell, Verbs.Set, Verbs.Update, Verbs.NoteIdea, Verbs.AnswerGrant, Verbs.EndPoller, Verbs.EndStray, Verbs.RestartWatchtower,
         Verbs.EndSession, Verbs.Stop, Verbs.CancelJob, Verbs.Dismiss,
     ];
 

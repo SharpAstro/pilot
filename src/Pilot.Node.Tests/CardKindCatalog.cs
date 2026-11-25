@@ -189,6 +189,7 @@ internal static class CardKindCatalog
         new("stray-process", "ForYou", ["Flights/StraySweep.cs"], "StraySweepTests.OneCardPerStrayNamesTheProcessItsOwnerAndTheKillCommand", NodePressed: true),
         new("poller-caller", "Ring", ["Flights/PollerSweep.cs"], "PollerSweepTests.AFakeCallerAt300AnHourFor3HoursRingsExactlyOneCardNamingIt", "the node's own per-caller request tally shows a process that is none of a job's, a session's or pilot's own over 200 requests an hour for 2 full hours", [nameof(Verbs.EndPoller)]),
         new("poller-ended", "Handled", ["Flights/PollerSweep.cs"], "PollerSweepTests.PressingEndKillsOnlyWhileTheStartStillMatches"),
+        new("busy-process", "Ring", ["Flights/StraySweep.cs"], "NodeSessionStrayTests.A_process_that_computes_without_a_break_for_half_an_hour_rings_with_its_kill_command", "the process table shows the process used at least 0.8 of a core in every interval between sweeps for 30 minutes, and it is no running job's", [nameof(Verbs.EndStray)]),
         new("stray-killed", "Handled", ["Flights/StraySweep.cs"], "StraySweepTests.AProcessOfAnEndedJobTheNodeLaunchedIsKilledThroughTheTableAndNothingElseIs"),
         new("plane-left", "Handled", [Move, FlightCommanderLand], "RemovalQueueTests.ALandedFlightWhosePlaneFolderIsHeldSaysSoOnAHandledLineAndQueuesIt"),
         new("branch-kept", "ForYou|Handled", [FlightCommanderLand, "Flights/LandedBranchSweep.cs"], "LandingBranchTests.ALandedFlightWhoseLocalBranchIsOneCommitPastTheMergedHeadKeepsItAndRaisesOneCardNamingTheCommit"),
@@ -339,6 +340,7 @@ internal static class CardKindCatalog
     /// </summary>
     public static readonly Dictionary<string, string> PersonsOwn = new()
     {
+        ["busy-process"] = "any process on the machine, a person's own included: only the person knows whether it is meant to compute, so only the person ends it",
         ["pr-fix-offer"] = "another author's PR: the person gives Fix it, the node's fixer rule covers only an ended fixer",
         ["pr-review-design"] = "a design question: the person answers it, and the fixer starts on that answer",
         ["pr-review-no-fixer"] = "no fixer may start (round cap, author or design question): nothing the node's rule lets through",
