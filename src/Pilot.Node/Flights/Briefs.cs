@@ -219,6 +219,11 @@ public static partial class Briefs
         "The --filter-class siblings, --project and --solution are for a repo whose global.json or dotnet.config selects Microsoft.Testing.Platform; any other repo runs VSTest and takes `dotnet test <proj> --filter 'FullyQualifiedName~...'`, and `leg plan` refuses the wrong runner's switches. " +
         "`leg plan` also refuses a filter term (FullyQualifiedName~X, Name~X, ClassName~X, --filter-class) that matches no test in the project's sources, since it runs nothing and still passes: a test class this leg adds is declared with `--new-tests \"FooTests BarTests\"`.";
 
+    /// <summary>The line workers and reviewers are told about work that belongs to another repo (PIL1340): recorded through pilot, never a bare issue.</summary>
+    internal static string OtherRepoRule(string run) =>
+        $"Work that belongs to another repo is recorded with `{run} follow-up <owner/name> --title \"<title>\" --body \"<text>\" [--package]` (--package when this flight needs it as a published package), never with plain `gh issue create`: " +
+        "the node then makes a flight for it when this flight lands. A finding in this flight's own repo is fixed in the flight, not filed.";
+
     /// <summary>The line the worker is told: run the check and the classes touched, never the whole suite, which CI runs on the PR.</summary>
     internal const string WorkerScopeRule =
         "Run the check and the test classes you touch, never the whole suite: CI runs the whole suite on the PR, and an unrelated failure in it is not this leg's. " +

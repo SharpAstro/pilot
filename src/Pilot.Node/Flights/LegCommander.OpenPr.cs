@@ -357,7 +357,9 @@ public sealed partial class LegCommander
     {
         try
         {
-            if (await github.PullRequestBodyAsync(flight.RepoPath, number, cancellationToken) is { Length: > 0 } body && PrBodyWithReports(body, legs) is { } next)
+            if (await github.PullRequestBodyAsync(flight.RepoPath, number, cancellationToken) is { Length: > 0 } body
+                && (PrBodyWithReports(body, legs) ?? body) is var withReports
+                && (FlightCommander.PrBodyWithFollowUps(withReports, flight.RepoFollowUps) ?? (withReports != body ? withReports : null)) is { } next)
             {
                 await github.EditPullRequestBodyAsync(flight.RepoPath, number, next, cancellationToken);
             }
@@ -389,6 +391,11 @@ public sealed partial class LegCommander
             body.AppendLine(shortcut
                 ? $"Shortcut story sc-{folded.Number} (folded in from {folded.From})."
                 : $"Closes #{folded.Number} (folded in from {folded.From}).");
+        }
+        if (flight.RepoFollowUps.Length > 0)
+        {
+            body.AppendLine();
+            body.Append(FlightCommander.PrFollowUpsSection(flight.RepoFollowUps));
         }
         if (designs is { Length: > 0 })
         {

@@ -120,6 +120,12 @@ public sealed record FlightRow
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string[]? DeferredFilings { get; init; }
 
+    /// <summary>
+    /// The follow-ups this flight recorded in other repos (<c>pilot follow-up</c>, PIL1340): each an issue opened there, kept here so status and the PR body list it and
+    /// the flight made for it is known. Defaulted in its setter, since a store written before it has none.
+    /// </summary>
+    public CrossRepoFollowUp[] RepoFollowUps { get; init => field = value ?? []; } = [];
+
     /// <summary>When it landed; null until then.</summary>
     public DateTimeOffset? LandedAt { get; init; }
 
@@ -653,6 +659,40 @@ public sealed record PackageWait
 
     /// <summary>The producer's clone, for a producer that is a repo and no flight (<see cref="Producer"/> is then its name); null otherwise.</summary>
     public string? RepoPath { get; init; }
+}
+
+/// <summary>
+/// A follow-up a flight recorded in another repo (PIL1340): the issue opened there, and the flight made for it once there is one. Stored on
+/// <see cref="FlightRow.RepoFollowUps"/>.
+/// </summary>
+public sealed record CrossRepoFollowUp
+{
+    /// <summary>The repo as <c>owner/name</c>.</summary>
+    public required string Repo { get; init; }
+
+    /// <summary>The number of the issue opened in <see cref="Repo"/>.</summary>
+    public required int Issue { get; init; }
+
+    public required string Title { get; init; }
+
+    /// <summary>Whether this flight needs the change as a published package (<c>--package</c>); otherwise the change is read at land.</summary>
+    public bool Package { get; init; }
+
+    /// <summary>The code of the flight made for the issue; null while none is.</summary>
+    public string? Flight { get; init; }
+
+    /// <summary>The node that flight flies on; null while there is none.</summary>
+    public string? Node { get; init; }
+
+    /// <summary>When the issue was opened.</summary>
+    public DateTimeOffset At { get; init; }
+
+    /// <summary>Why the last try at making its flight failed; null when none failed or the flight exists.</summary>
+    public string? Problem { get; init; }
+
+    /// <summary>The one line status and the PR body show: the issue, its title, its flight (or that there is none yet) and whether the package is needed.</summary>
+    public string Line() =>
+        $"{Repo}#{Issue}: {Title} ({(Flight is { Length: > 0 } f ? $"flight {f}{(Node is { Length: > 0 } n ? $" on {n}" : "")}" : $"no flight yet{(Problem is { Length: > 0 } p ? $"; last try: {p}" : "")}")}{(Package ? ", needed as a package" : ", read at land")})";
 }
 
 /// <summary>A producer's package a connected consumer now takes: the version the node found on nuget.org when the consumer's wait was met.</summary>

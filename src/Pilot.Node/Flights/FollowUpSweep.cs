@@ -18,6 +18,12 @@ public sealed class FollowUpSweep(NodeState state, IGitHub? github, TimeProvider
     /// <summary>The kind of the card that rings for an issue with no flight.</summary>
     public const string RingKind = "follow-up-no-flight";
 
+    /// <summary>The kind of the For-you card of a landed flight whose recorded follow-ups in other repos still have no flight (PIL1340).</summary>
+    public const string LandedKind = "landed-follow-up-no-flight";
+
+    /// <summary>The ensure step a cycle runs for such a flight (its code): makes the follow-ups' flights. Null runs none, and the card still offers it.</summary>
+    public Func<string, CancellationToken, Task>? EnsureFlights { get; init; }
+
     public const string TitlePrefix = "Follow-up of";
 
     public TimeSpan Interval { get; init; } = TimeSpan.FromMinutes(30);
@@ -90,6 +96,7 @@ public sealed class FollowUpSweep(NodeState state, IGitHub? github, TimeProvider
         {
             return null;
         }
+        await LandedFollowUpsAsync(cancellationToken);
         var (peerFlights, peersComplete) = await PeerFlightsAsync(cancellationToken);
         var flights = peerFlights.Concat(state.Flights().Select(f => (f.Repo, f.Issue))).ToList();
         var rows = new List<FollowUpRepoRow>();
@@ -135,6 +142,46 @@ public sealed class FollowUpSweep(NodeState state, IGitHub? github, TimeProvider
         var row = new FollowUpsRow { ReadAt = now, Repos = [.. rows] };
         state.PutFollowUps(row);
         return row;
+    }
+
+    /// <summary>
+    /// Every landed flight with a recorded follow-up that has no flight: the ensure step runs for it, and what is still left raises one For-you card for the
+    /// flight naming each such follow-up's repo and issue, with a choice that runs the step again. The card closes once every follow-up has a flight.
+    /// </summary>
+    private async Task LandedFollowUpsAsync(CancellationToken cancellationToken)
+    {
+        foreach (var landed in state.Flights().Where(f => f.State == FlightState.Landed && f.RepoFollowUps.Length > 0).ToList())
+        {
+            var subject = Verbs.FlightTarget(landed.Code);
+            if (landed.RepoFollowUps.Any(f => f.Flight is null) && EnsureFlights is { } ensure)
+            {
+                try
+                {
+                    await ensure(landed.Code, cancellationToken);
+                }
+                catch (Exception ex) when (ex is FlightException or IOException)
+                {
+                    await Error.WriteLineAsync($"follow-up sweep: {landed.Code}'s follow-ups were not made: {ex.Message}");
+                }
+            }
+            var left = (state.Flights().FirstOrDefault(f => f.Code == landed.Code) ?? landed).RepoFollowUps.Where(f => f.Flight is null).ToList();
+            if (left.Count == 0)
+            {
+                state.CloseCardsAbout(subject, "every follow-up has a flight", LandedKind);
+                continue;
+            }
+            // One the person dismissed stays dismissed: a follow-up no node can place is released that way, not rung again every sweep.
+            // Only a dismissal counts: pressing "Create the flights" also closes the card by a person, with the choice's label as the outcome.
+            if (state.CardsOf(LandedKind, subject).Any(c => c.State == CardState.Open
+                || (c.Outcome is { } outcome && outcome.StartsWith("dismissed", StringComparison.Ordinal) && c.ClosedBy != "node")))
+            {
+                continue;
+            }
+            var named = string.Join(", ", left.Select(f => $"{f.Repo}#{f.Issue.ToString(System.Globalization.CultureInfo.InvariantCulture)}"));
+            state.RaiseCard(CardBin.ForYou, LandedKind, subject, $"{landed.Code} landed, but its follow-up {named} has no flight",
+                $"{string.Join("\n", left.Select(f => f.Line()))}\n\nNothing picks them up until a flight is made on each: the button makes them. If no node can place one, dismiss this card to stop being asked",
+                choices: [new CardChoice { Label = "Create the flights", Verb = Verbs.EnsureFollowUps, Target = subject }]);
+        }
     }
 
     /// <summary>Whether this node rings for <paramref name="repo"/>: no other node's name is on the repo's latest pull request read.</summary>

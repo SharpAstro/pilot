@@ -87,7 +87,7 @@ internal static class DeferredRoutes
     /// </summary>
     /// <exception cref="FlightException">A point names no repo, or gh refused: the points not yet recorded are filed by the next call.</exception>
     public static async Task<IReadOnlyList<string>> RouteAsync(Context c, IReadOnlyList<ReviewFollowUp.Item> items, string[]? filings, string noFlightNote,
-        Action<string, string> raiseCard, Action<IReadOnlyList<string>> record, Func<Func<Task>, Task> off, CancellationToken cancellationToken)
+        Action<string, string> raiseCard, Action<IReadOnlyList<string>> record, Func<Func<Task>, Task> off, CancellationToken cancellationToken, Action<string, IssueInfo, string>? followUp = null)
     {
         var all = new List<string>(filings ?? []);
         var made = new List<string>();
@@ -132,6 +132,8 @@ internal static class DeferredRoutes
             await off(async () => issue = await c.Github.CreateIssueWithLabelsAsync(path, $"{c.Subject}: {(list.Count == 1 ? "a point its review" : "points its review")} deferred to {repo}",
                 $"{c.Subject} merges with {(list.Count == 1 ? "this point" : "these points")} deferred to this repo, because the change belongs here (pilot #1226).\n\n{ReviewFollowUp.Points(list, ReviewFollowUp.KeyOf(c.Subject))}", [FrameworkLabel], cancellationToken));
             number = issue.Number;
+            // A flight records the issue as one of its follow-ups, so it flies when the flight lands; a PR no flight owns passes none (PIL1340).
+            followUp?.Invoke(repo, issue, $"{c.Subject}: {(list.Count == 1 ? "a point its review" : "points its review")} deferred to {repo}");
             Add([.. keys.Select(k => Line(OwnReason, repo, number, k))]);
             if (c.PullRequest is { } pr)
             {

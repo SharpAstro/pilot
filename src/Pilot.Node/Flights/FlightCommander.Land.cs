@@ -168,6 +168,14 @@ public sealed partial class FlightCommander
         }
         // What it releases is read before its plane goes, and before anything is changed: a land that cannot say what its
         // consumers wait for is refused, never half done. A folded flight released nothing.
+        // Its recorded follow-ups in other repos get their flights first, connected to it, so they are consumers like any other (PIL1340).
+        // Said and left for the next try on any failure: a land is never refused for them.
+        var packaged = new HashSet<string>(StringComparer.Ordinal);
+        if (foldedInto is null && github is not null && flight.RepoFollowUps.Any(f => f.Flight is null))
+        {
+            // GitHub, git and peers are asked with the lock let go (PIL338), as the rest of the landing does.
+            packaged = await OffLockAsync(() => EnsureLocalFollowUpFlightsAsync(flight, cancellationToken));
+        }
         var consumers = state.Flights().Where(f => f.State != FlightState.Landed && f.Connections.Contains(flight.Code, StringComparer.Ordinal)).ToList();
         // Every live session of the flight's too, not only the legs' current workers and the current reviewer: its planner,
         // an earlier reviewer, a validator or a renamed copy sat idle in TIA368's plane after it landed, holding the folder
@@ -254,7 +262,7 @@ public sealed partial class FlightCommander
 
             var released = foldedInto is null && packages is not null && consumers.Count > 0
                 ? await MergeOfAsync(flight, cancellationToken) is var (mergeCommit, mergedAt)
-                    ? await packages.WaitsAsync(flight, consumers, mergedHead, mergeCommit, mergedAt, cancellationToken)
+                    ? await packages.WaitsAsync(flight, consumers, mergedHead, mergeCommit, mergedAt, cancellationToken, packaged)
                     : []
                 : [];
             // Which of the consumers use what it released is read now too, with the rest of what asks the network.
@@ -263,7 +271,7 @@ public sealed partial class FlightCommander
             {
                 foreach (var release in released.Where(r => !consumer.PackageWaits.Any(w => w.Id == r.Id && w.Producer == r.Producer)))
                 {
-                    if (await packages!.ConsumesAsync(consumer, flight, release.Id, cancellationToken))
+                    if (packaged.Contains(consumer.Code) || await packages!.ConsumesAsync(consumer, flight, release.Id, cancellationToken))
                     {
                         consumed.Add((consumer.Code, release.Id, release.Producer));
                     }
@@ -445,6 +453,23 @@ public sealed partial class FlightCommander
                 continue;
             }
             state.PutFlight(Settle(waiting));
+        }
+
+        // A follow-up only a peer can make (not cloned here, or another node's label): made there now that this flight has landed.
+        if (foldedInto is null && github is not null)
+        {
+            try
+            {
+                await OffLockAsync(async () =>
+                {
+                    await EnsurePeerFollowUpFlightsAsync(flight.Code, released, cancellationToken);
+                    return true;
+                });
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                await Error.WriteLineAsync($"follow-up: {flight.Code}'s follow-ups on other nodes were not made: {ex.Message}");
+            }
         }
     }
 

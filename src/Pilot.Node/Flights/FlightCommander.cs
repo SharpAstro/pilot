@@ -23,6 +23,11 @@ public sealed partial class FlightCommander(NodeState state, Planes planes, Time
     // Two creates must not claim one code, but a create's git work (the checkout, the worktree) holds no other verb: it has its own lock.
     private readonly SemaphoreSlim _creating = new(1, 1);
 
+    // The landed flights whose follow-ups are being made on a peer with the lock let go, with the packages their landing released: a second run
+    // for one is not started but adds its packages here, and the running one reads them as it goes. A late join is named on the card only,
+    // and a join after the last read is named nowhere (inherent to a lock-free join with no retry).
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, PeerRun> _ensuringPeers = new(StringComparer.Ordinal);
+
     // The flights being landed, whose plane and sessions are being taken down with the lock let go: a second land of one is refused.
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, bool> _landing = new(StringComparer.Ordinal);
 
@@ -110,7 +115,7 @@ public sealed partial class FlightCommander(NodeState state, Planes planes, Time
     public const string ReceivedKind = "received";
 
     /// <summary>Whether <paramref name="verb"/> is one of these.</summary>
-    public static bool Handles(string verb) => verb is Verbs.CreateFlight or Verbs.ReceiveFlight or Verbs.Connect or Verbs.Disconnect or Verbs.Land or Verbs.FlyAnyway or Verbs.FlightPriority or Verbs.AdoptFlight or Verbs.WithdrawFlight or Verbs.BranchRetry;
+    public static bool Handles(string verb) => verb is Verbs.CreateFlight or Verbs.ReceiveFlight or Verbs.Connect or Verbs.Disconnect or Verbs.Land or Verbs.FlyAnyway or Verbs.FlightPriority or Verbs.AdoptFlight or Verbs.WithdrawFlight or Verbs.BranchRetry or Verbs.FlightFollowUp or Verbs.EnsureFollowUps;
 
     /// <summary>Runs <paramref name="command"/>; one that waits for the lock past <see cref="LockWait.Patience"/> is answered as queued, saying what holds it, and runs once it frees.</summary>
     public Task<CommandResult> RunAsync(CommandRequest command, CancellationToken cancellationToken) =>
@@ -149,6 +154,12 @@ public sealed partial class FlightCommander(NodeState state, Planes planes, Time
                         break;
                     case Verbs.BranchRetry:
                         made = BranchRetry(command);
+                        break;
+                    case Verbs.FlightFollowUp:
+                        made = await FollowUpAsync(command, cancellationToken);
+                        break;
+                    case Verbs.EnsureFollowUps:
+                        made = await EnsureFollowUpsVerbAsync(command, cancellationToken);
                         break;
                     case Verbs.FlightPriority:
                         made = await SetPriorityAsync(command, cancellationToken);

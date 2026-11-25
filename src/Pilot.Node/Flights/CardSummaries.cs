@@ -120,6 +120,8 @@ public static partial class CardSummaries
             LegCommander.ValidatingKind => $"A validator was started to check {what} against the tree before its worker starts. Nothing to do; the node starts the leg on its answer.",
             LegCommander.TickerStartedKind => $"The worker of {what} ended with its work committed and steps still open, so the node started a finishing pass to close what the commits cover. Nothing to do; it rings only if that pass stops without finishing.",
             LegCommander.SiblingBehindKind => $"{what} compiles against a sibling clone that is behind origin and the node could not pull it. Pull it by hand, or let the leg run on the clone it has.",
+            FollowUpSweep.LandedKind => $"{what} landed with a follow-up in another repo that has no flight yet. Nothing picks it up until one is made on it.",
+            FlightCommander.FollowUpPackageKind => $"{what} was made for a follow-up that needs a package its landed flight released, and this node could not set its wait. Hold it until the package is on nuget.org.",
             Designs.Designers.SayFailedKind => $"The node could not tell the designer of {what} what waits for it, and backs off between tries, at most 15 minutes apart.",
             Designs.DesignRecord.OversizeKind => $"A built design's files for {what} are over a size limit, so they are not committed to the PR. Make the renders smaller, publish a new version, then move the flight to it with pilot flight replan-design.",
             LegCommander.SiblingPulledKind => $"The node pulled a sibling clone that was behind origin before it started {what}. Nothing to do.",

@@ -51,6 +51,7 @@ namespace Pilot.Contracts;
 [JsonSerializable(typeof(FoldedIssue))]
 [JsonSerializable(typeof(PackageWait))]
 [JsonSerializable(typeof(PackagePin))]
+[JsonSerializable(typeof(CrossRepoFollowUp))]
 [JsonSerializable(typeof(PeerConnection))]
 [JsonSerializable(typeof(LegWait))]
 [JsonSerializable(typeof(GoAroundReason))]

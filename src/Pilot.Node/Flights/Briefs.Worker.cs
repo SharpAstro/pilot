@@ -89,6 +89,7 @@ public static partial class Briefs
         text.AppendLine();
         text.AppendLine(CiRule);
         text.AppendLine(WorkerScopeRule);
+        text.AppendLine(OtherRepoRule(run));
         text.AppendLine(MachineLoadRule(run));
         // PIL795 (TIA2000): no CI loop on a PR push, and a failure the flight did not cause is an issue, never one of its legs.
         text.AppendLine(OnDemandProofRule);
