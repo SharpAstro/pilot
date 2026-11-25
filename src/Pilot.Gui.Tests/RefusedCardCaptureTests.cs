@@ -35,12 +35,12 @@ public sealed class RefusedCardCaptureTests
             // c30387's allow-round as the node words it: the Run button (its label wraps), then the Done press.
             Id = "c30387", Bin = CardBin.Ring, Kind = "watchtower-refused", Subject = "watchtower/refused/flight-allow-round/PIL1347", State = CardState.Open, At = Fresh,
             Title = "The watchtower could not run pilot flight allow-round",
-            Summary = "Claude Code refused a pilot command the watchtower ran, so what it was for has not happened. Press Run to run it as yourself (or run the command the card shows from a terminal when it has no Run), then the watchtower is told and goes on.",
-            Detail = "What to do: press \"Run it: pilot flight allow-round PIL1347\" to run it as yourself, or run it from a terminal and press \"Done: tell the watchtower\". It was refused by auto mode: [Auto-Mode Bypass], so nothing it was meant to move moves until then.\n\nIt tried, at 23:41:\npilot flight allow-round PIL1347 \"Watchtower: one blocking point is left, a regression from round 2's own fix; the other round 3 note is not blocking.\" 2>&1 | head -20",
+            Summary = "Claude Code refused a pilot command the watchtower ran, so what it was for has not happened. Press Run to run it as yourself, or run the command from a terminal and press Done another way: the node checks the effect is there, closes the card and tells the watchtower. A command whose effect the node cannot see has no Done button: dismiss the card once it is done.",
+            Detail = "What to do: press \"Run it: pilot flight allow-round PIL1347\" to run it as yourself, or run it from a terminal and press \"Done another way: check it\". It was refused by auto mode: [Auto-Mode Bypass], so nothing it was meant to move moves until then.\n\nIt tried, at 23:41:\npilot flight allow-round PIL1347 \"Watchtower: one blocking point is left, a regression from round 2's own fix; the other round 3 note is not blocking.\" 2>&1 | head -20",
             Choices =
             [
                 new CardChoice { Label = "Run it: pilot flight allow-round PIL1347", Verb = Verbs.AllowRound, Target = "flight/PIL1347", Args = ["Watchtower: one blocking point is left"] },
-                new CardChoice { Label = "Done: tell the watchtower", Verb = Verbs.Tell, Target = "watchtower" },
+                new CardChoice { Label = "Done another way: check it", Verb = Verbs.DoneChecked, Target = "watchtower", Args = [Verbs.AllowRound, "flight/PIL1347"] },
             ],
         },
         new()
@@ -48,9 +48,9 @@ public sealed class RefusedCardCaptureTests
             // Two pilot commands joined by &&: no Run button, the first command on a line of its own to copy.
             Id = "c30388", Bin = CardBin.Ring, Kind = "watchtower-refused", Subject = "watchtower/refused/flight-merge/PIL1347", State = CardState.Open, At = Fresh,
             Title = "The watchtower could not run pilot flight merge",
-            Summary = "Claude Code refused a pilot command the watchtower ran, so what it was for has not happened. Press Run to run it as yourself (or run the command the card shows from a terminal when it has no Run), then the watchtower is told and goes on.",
-            Detail = "What to do: it cannot be pressed from here: it is more than one pilot command, and a press runs one. Run it from a terminal, then press \"Done: tell the watchtower\". It was refused by auto mode: [Auto-Mode Bypass], so nothing it was meant to move moves until then.\n\nThe command, at 23:41:\npilot flight merge PIL1347 c834afcc0 --why \"j9 is green, the review passed with no blocking point left\"\n\nThe whole line it tried:\npilot flight merge PIL1347 c834afcc0 --why \"j9 is green, the review passed with no blocking point left\" && pilot flight land PIL1347",
-            Choices = [new CardChoice { Label = "Done: tell the watchtower", Verb = Verbs.Tell, Target = "watchtower" }],
+            Summary = "Claude Code refused a pilot command the watchtower ran, so what it was for has not happened. Press Run to run it as yourself, or run the command from a terminal and press Done another way: the node checks the effect is there, closes the card and tells the watchtower. A command whose effect the node cannot see has no Done button: dismiss the card once it is done.",
+            Detail = "What to do: it cannot be pressed from here: it is more than one pilot command, and a press runs one. Run it from a terminal, then press \"Done another way: check it\". It was refused by auto mode: [Auto-Mode Bypass], so nothing it was meant to move moves until then.\n\nThe command, at 23:41:\npilot flight merge PIL1347 c834afcc0 --why \"j9 is green, the review passed with no blocking point left\"\n\nThe whole line it tried:\npilot flight merge PIL1347 c834afcc0 --why \"j9 is green, the review passed with no blocking point left\" && pilot flight land PIL1347",
+            Choices = [new CardChoice { Label = "Done another way: check it", Verb = Verbs.DoneChecked, Target = "watchtower", Args = [Verbs.AllowRound, "flight/PIL1347"] }],
         },
     ];
 

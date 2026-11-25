@@ -93,10 +93,7 @@ public sealed partial class Watchtower
             var run = reading.Command!;
             choices.Add(new CardChoice { Label = $"{RunLabelPrefix}pilot {name}{on.Replace('/', ' ')}", Verb = run.Verb, Target = run.Target, Args = run.Args, Why = run.Why });
             var other = done is null ? $"run it from a terminal. {unseen}" : $"run it from a terminal and press \"{DoneCheckedLabel}\" (the node checks it is done before it closes this card).";
-            body.Append($"{WhatToDo}press \"{choices[0].Label}\" to run it as yourself, or {other} It was refused by {reason}, so nothing it was meant to move moves until then.
-
-It tried, at {at}:
-{command.Trim()}");
+            body.Append($"{WhatToDo}press \"{choices[0].Label}\" to run it as yourself, or {other} It was refused by {reason}, so nothing it was meant to move moves until then.\n\nIt tried, at {at}:\n{command.Trim()}");
         }
         else
         {
@@ -110,16 +107,10 @@ It tried, at {at}:
                 _ => $"the node cannot read it back into a command ({reading.Detail})",
             };
             var then = done is null ? $"Run it from a terminal. {unseen}" : $"Run it from a terminal, then press \"{DoneCheckedLabel}\" (the node checks the first command is done before it closes this card).";
-            body.Append($"{WhatToDo}it cannot be pressed from here: {why}. {then} It was refused by {reason}, so nothing it was meant to move moves until then.
-
-The command, at {at}:
-{shown}");
+            body.Append($"{WhatToDo}it cannot be pressed from here: {why}. {then} It was refused by {reason}, so nothing it was meant to move moves until then.\n\nThe command, at {at}:\n{shown}");
             if (command.Trim() != shown)
             {
-                body.Append($"
-
-The whole line it tried:
-{command.Trim()}");
+                body.Append($"\n\nThe whole line it tried:\n{command.Trim()}");
             }
         }
         if (done is not null)
