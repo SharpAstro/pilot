@@ -297,7 +297,7 @@ public sealed partial class PrReviews
 
     /// <summary>
     /// What an ended fixer left in its worktree that the PR does not have: its uncommitted files and its commits past the PR's head, in a line; null when
-    /// nothing (or no worktree of its own, or git cannot read it).
+    /// nothing (or no worktree of its own). A worktree git could not read all of is named as left work too, so its folder is kept, never removed.
     /// </summary>
     private async Task<string?> LeftWorkAsync(PrReviewRow review, CancellationToken cancellationToken)
     {
@@ -305,23 +305,26 @@ public sealed partial class PrReviews
         {
             return null;
         }
-        return (await WorkPastAsync(worktree, review.Head, cancellationToken))?.Line;
+        var (work, unread) = await ReadWorkPastAsync(worktree, review.Head, cancellationToken);
+        return unread is null ? work?.Line : $"{(work is { } read ? $"{read.Line}, and maybe more" : "work")} git could not read ({unread})";
     }
 
     /// <summary>What a worktree holds that the PR does not have: its commits past <c>head</c> and its uncommitted files, as a line and as counts.</summary>
     private sealed record WorkPast(string Line, int Commits, int Files);
 
     /// <summary>
-    /// The work in <paramref name="worktree"/> past <paramref name="head"/> (the PR's head): commits not on it and uncommitted files; null when
-    /// nothing (or no folder, or git cannot read it). A caller about to remove or re-make the folder reads it with <see cref="ReadWorkPastAsync"/>,
-    /// which tells a folder git could not read from one that holds nothing.
+    /// The work in <paramref name="worktree"/> past <paramref name="head"/> (the PR's head): commits not on it and uncommitted files, as far as git read
+    /// them (a failed <c>git status</c> counts no files, failed reads of the commits count none); null when nothing was read (or no folder). A caller about
+    /// to remove the folder, re-make it or let the PR go reads it with <see cref="ReadWorkPastAsync"/>, which also says when git could not read all of it.
     /// </summary>
     private async Task<WorkPast?> WorkPastAsync(string worktree, string head, CancellationToken cancellationToken) =>
         (await ReadWorkPastAsync(worktree, head, cancellationToken)).Work;
 
     /// <summary>
-    /// <see cref="WorkPastAsync"/> with why git could not read the folder: <c>Unread</c> is set (and <c>Work</c> null) when the folder exists but
-    /// <c>git status</c> failed, both reads of its commits failed, or git could not be run in it. Both are null for a folder that is gone or holds nothing.
+    /// <see cref="WorkPastAsync"/> with why git could not read all of the folder: <c>Unread</c> is set when the folder exists and <c>git status</c>
+    /// failed, both reads of its commits failed, or git could not be run in it. <c>Work</c> still holds what was read (the commits when only the status
+    /// failed), so a failed status never hides them. Unread means the folder may hold more: it is kept, never removed or re-made, and the PR is held.
+    /// Both are null for a folder that is gone or holds nothing.
     /// </summary>
     private async Task<(WorkPast? Work, string? Unread)> ReadWorkPastAsync(string worktree, string head, CancellationToken cancellationToken)
     {
@@ -332,22 +335,24 @@ public sealed partial class PrReviews
         try
         {
             var status = await git.RunAsync(["status", "--porcelain"], worktree, cancellationToken);
-            if (!status.Ok)
-            {
-                return (null, $"git status failed in it: {status.Why}");
-            }
             var ahead = await git.RunAsync(["log", "--format=%h %s", $"{head}..HEAD"], worktree, cancellationToken);
             if (!ahead.Ok)
             {
                 // The PR's head is not in this clone (someone else pushed it): what HEAD has that no remote branch has is what is not pushed.
                 ahead = await git.RunAsync(["log", "--format=%h %s", "HEAD", "--not", "--remotes"], worktree, cancellationToken);
             }
+            var failed = new List<string>();
+            if (!status.Ok)
+            {
+                failed.Add($"git status failed in it: {status.Why}");
+            }
             if (!ahead.Ok)
             {
-                return (null, $"git log failed in it: {ahead.Why}");
+                failed.Add($"git log failed in it: {ahead.Why}");
             }
-            var files = status.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-            var commits = ahead.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            var unread = failed.Count > 0 ? string.Join("; ", failed) : null;
+            string[] files = status.Ok ? status.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) : [];
+            string[] commits = ahead.Ok ? ahead.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) : [];
             var parts = new List<string>();
             if (commits.Length > 0)
             {
@@ -357,7 +362,7 @@ public sealed partial class PrReviews
             {
                 parts.Add($"{files.Length} file{(files.Length == 1 ? "" : "s")} not committed ({string.Join(", ", files.Take(5).Select(f => f.Length > 3 ? f[3..] : f))}{(files.Length > 5 ? ", ..." : "")})");
             }
-            return (parts.Count > 0 ? new WorkPast(string.Join(", and ", parts), commits.Length, files.Length) : null, null);
+            return (parts.Count > 0 ? new WorkPast(string.Join(", and ", parts), commits.Length, files.Length) : null, unread);
         }
         catch (Exception ex) when (ex is FlightException or System.ComponentModel.Win32Exception or IOException)
         {
@@ -637,9 +642,14 @@ public sealed partial class PrReviews
             await StopQuietly(other.Id, cancellationToken);
         }
         // With the PR's current head given (an open PR), a worktree holding commits past it or uncommitted files is kept, never force-removed: the
-        // hold (FixerHoldAsync) pushes the commits or rings for it (pilot #1291).
-        var keep = prHead is not null && review.FixWorktree is { } kept && review.FixWorktreeBorrowed != true
-            && await WorkPastAsync(kept, prHead, cancellationToken) is not null;
+        // hold (FixerHoldAsync) pushes the commits or rings for it (pilot #1291). So is one git could not read all of (a failed status, say), which
+        // may hold commits only its HEAD points to: the hold rings for it with the folder named.
+        var keep = false;
+        if (prHead is not null && review.FixWorktree is { } kept && review.FixWorktreeBorrowed != true)
+        {
+            var (work, unread) = await ReadWorkPastAsync(kept, prHead, cancellationToken);
+            keep = work is not null || unread is not null;
+        }
         // A borrowed worktree is someone else's: only the row's fix fields are cleared.
         if (!keep && review.FixWorktree is { } worktree && review.FixWorktreeBorrowed != true)
         {

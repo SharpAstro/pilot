@@ -166,6 +166,24 @@ public abstract class PrFixTestsBase : IDisposable
 
     private protected string FixWorktree => Path.Combine(WidgetClone, ".claude", "worktrees", "fix-widget-7");
 
+    /// <summary>
+    /// <c>git status</c> fails in <paramref name="folder"/> (an index git cannot read), every other git call runs as usual: the node's own decision on a
+    /// folder it could not read, not git's. Returns every git call the node made from then on, for a test that no <c>worktree remove</c> ran.
+    /// </summary>
+    private protected System.Collections.Concurrent.ConcurrentQueue<string> StatusFailsIn(string folder)
+    {
+        var ran = new System.Collections.Concurrent.ConcurrentQueue<string>();
+        var full = Path.GetFullPath(folder).TrimEnd('\\', '/');
+        _testGit.Intercept = (args, cwd) =>
+        {
+            ran.Enqueue(string.Join(' ', args));
+            return args is ["status", ..] && string.Equals(Path.GetFullPath(cwd).TrimEnd('\\', '/'), full, StringComparison.OrdinalIgnoreCase)
+                ? new GitRun(128, "", "fatal: unable to read index")
+                : null;
+        };
+        return ran;
+    }
+
     private protected PrReviewRow Row => _reviews.Of(Seven).ShouldNotBeNull();
 
     /// <summary>One fresh review at <paramref name="head"/> after a fixer's push, its reviewer giving <paramref name="verdict"/>.</summary>

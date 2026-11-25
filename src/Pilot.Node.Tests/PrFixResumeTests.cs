@@ -65,14 +65,7 @@ public sealed class PrFixResumeTests : PrFixTestsBase
         Fixers.ShouldHaveSingleItem();
         _state.PutPrReview(Row with { Fixer = null, FixerJob = null, FixWorktree = null, FixWorktreeBorrowed = null, FixDetached = null, FixResumedWork = null });
         Directory.Exists(FixWorktree).ShouldBeTrue();
-        var ran = new List<string>();
-        _testGit.Intercept = (args, cwd) =>
-        {
-            ran.Add(string.Join(' ', args));
-            return args is ["status", ..] && string.Equals(Path.GetFullPath(cwd).TrimEnd('\\', '/'), Path.GetFullPath(FixWorktree), StringComparison.OrdinalIgnoreCase)
-                ? new GitRun(128, "", "fatal: unable to read index")
-                : null;
-        };
+        var ran = StatusFailsIn(FixWorktree);
 
         var refused = await Run(Verbs.FixPr, "acme/widget#7", "controller");
 
@@ -81,6 +74,49 @@ public sealed class PrFixResumeTests : PrFixTestsBase
         Fixers.ShouldHaveSingleItem();
         Directory.Exists(FixWorktree).ShouldBeTrue();
         ran.ShouldNotContain(r => r.StartsWith("worktree remove", StringComparison.Ordinal) || r.StartsWith("worktree add", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")] // real git: the commit only a detached HEAD points to, which a force remove would take with the folder, is git's
+    public async Task AFinishedFixerWhoseWorktreeStatusFailsIsEndedWithItsUnpushedCommitKept()
+    {
+        RealGit();
+        await Review("acme/widget#7", "changes", "README.md:1 wrong");
+        var pushed = FixerPushes("one");
+        // After its push it went on, detached, and committed once more: that commit is on no branch and no remote.
+        PrOrigins.Git(FixWorktree, "checkout", "-q", "--detach");
+        Commit("left on a detached HEAD");
+        var commit = PrOrigins.Git(FixWorktree, "rev-parse", "HEAD");
+        _state.PutSession(FixerSession(SessionState.Ended));
+        var ran = StatusFailsIn(FixWorktree);
+
+        await _reviews.SweepAsync(Ct);
+
+        Row.Fixer.ShouldBeNull("the finished fixer is ended");
+        Row.Head.ShouldBe(pushed, "the review of its push starts");
+        ran.ShouldNotContain(r => r.StartsWith("worktree remove", StringComparison.Ordinal), "a failed status never lets the commits go with the folder");
+        Directory.Exists(FixWorktree).ShouldBeTrue();
+        _testGit.Intercept = null;
+        PrOrigins.Git(FixWorktree, "rev-parse", "HEAD").ShouldBe(commit);
+    }
+
+    [Fact]
+    public async Task AnEndedFixerWhoseWorktreeGitCannotReadKeepsItAndTheCardNamesIt()
+    {
+        // The model: the ended fixer's head is unmoved, and git cannot read its folder, so nothing says it holds nothing.
+        await Review("acme/widget#7", "changes", "README.md:1 wrong");
+        _state.PutSession(FixerSession(SessionState.Ended));
+        var ran = StatusFailsIn(FixWorktree);
+
+        await _reviews.SweepAsync(Ct);
+
+        ran.ShouldNotContain(r => r.StartsWith("worktree remove", StringComparison.Ordinal));
+        Directory.Exists(FixWorktree).ShouldBeTrue();
+        Row.Fixer.ShouldBeNull();
+        var card = _state.Cards(openOnly: true).Where(c => c.Kind == PrReviews.FixEndedKind).ShouldHaveSingleItem();
+        card.Detail.ShouldNotBeNull().ShouldContain(FixWorktree);
+        card.Detail.ShouldContain("git could not read");
+        card.Choices.ShouldNotContain(c => c.Verb == Verbs.PushFix, "it read no commits to push");
     }
 
     [Fact]

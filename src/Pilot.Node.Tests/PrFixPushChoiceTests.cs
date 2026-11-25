@@ -165,6 +165,8 @@ public sealed class PrFixPushChoiceTests : PrFixTestsBase
 
         refused.Error.ShouldNotBeNull().ShouldContain("not an ancestor");
         refused.Error.ShouldContain("work stays");
+        // How to go on: fetch, then merge the PR's branch in by hand; it no longer promises that Fix it carries on past the moved head.
+        refused.Error.ShouldContain("git fetch origin, then git merge origin/feature/seven");
         PrOrigins.Git(FixWorktree, "rev-parse", "HEAD").ShouldBe(before);
         PrOrigins.Git(Origin, "rev-parse", "refs/heads/feature/seven").ShouldBe(branchBefore);
         Directory.Exists(FixWorktree).ShouldBeTrue();

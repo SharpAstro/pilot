@@ -255,6 +255,28 @@ public sealed class FixerHoldTests : PrFixTestsBase
     }
 
     [Fact]
+    public async Task AFixWorktreeGitCannotReadHoldsTheGreenPrWithOneCardNamingIt()
+    {
+        // The model: a failed status is the node's decision, not git's. The folder may hold work, so the PR waits and nothing is pushed from it.
+        _github.Login = "ada";
+        await Review("acme/widget#7", "changes", "README.md:1 wrong");
+        PassedWithNoFixerOnTheRow();
+        GreenAndQueueing(Row.Head);
+        var ran = StatusFailsIn(FixWorktree);
+
+        await _reviews.SweepAsync(Ct);
+        await _reviews.SweepAsync(Ct);
+
+        _github.Merged.ShouldBeEmpty();
+        Row.QueuedAt.ShouldBeNull();
+        var card = _state.Cards(openOnly: true).Where(c => c.Kind == PrReviews.FixerWorkHeldKind).ShouldHaveSingleItem();
+        card.Detail.ShouldNotBeNull().ShouldContain(FixWorktree);
+        card.Detail.ShouldContain("git could not read");
+        ran.ShouldNotContain(r => r.StartsWith("push", StringComparison.Ordinal) || r.StartsWith("worktree remove", StringComparison.Ordinal));
+        Directory.Exists(FixWorktree).ShouldBeTrue();
+    }
+
+    [Fact]
     public async Task TheCardsMergeIsRefusedWithWordsNamingTheFixer()
     {
         _github.Login = "ada";

@@ -590,7 +590,7 @@ public sealed partial class PrReviews
                 var why = $"{pr}'s head is {CommitRefs.Short(read.Head)} now and {worktree} does not have it; its work ({work.Line}) stays there";
                 state.RaiseCard(CardBin.ForYou, FixHeadMovedKind, Verbs.PrTarget(pr.Repo, pr.Number),
                     $"{pr}: no fixer started, the head moved past the kept fixer worktree",
-                    $"No fixer started: {why}. Nothing in it was touched. Bring the PR head into that worktree by hand (git merge origin/{branch} there), then Fix it or Push its commits.", link: review.Url);
+                    $"No fixer started: {why}. Nothing in it was touched. Bring the PR head into that worktree by hand (git fetch origin, then git merge origin/{branch} there), then Fix it or Push its commits.", link: review.Url);
                 throw new AnnouncedFlightException($"no fixer started: {why}");
             }
             if (holder is not null && AuthoringSessionIn(holder) is { } resumeAuthor)
