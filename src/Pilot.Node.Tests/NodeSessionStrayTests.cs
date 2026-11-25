@@ -181,6 +181,86 @@ public sealed class NodeSessionStrayTests
         _table.Killed.ShouldBeEmpty();
     }
 
+    // Sweeps every 5 minutes for the given span, the process using the given cores in each interval.
+    private void SweepFor(TimeSpan span, int pid, double cores)
+    {
+        for (var at = TimeSpan.Zero; at < span; at += TimeSpan.FromMinutes(5))
+        {
+            _time.Advance(TimeSpan.FromMinutes(5));
+            _table.Cpu[pid] += TimeSpan.FromMinutes(5 * cores);
+            _sweep.SweepOnce();
+        }
+    }
+
+    [Fact]
+    public void A_process_that_computes_without_a_break_for_half_an_hour_rings_with_its_kill_command()
+    {
+        // Nothing of the node's: a process the machine runs, one thread spinning.
+        _table.Add(5000, 29784, "spinner.exe", Began, "spinner.exe --wait-for-a-flag", TimeSpan.Zero);
+        _sweep.SweepOnce();
+
+        SweepFor(TimeSpan.FromMinutes(25), 5000, 1.0);
+        _state.Cards(openOnly: true).ShouldNotContain(c => c.Kind == StraySweep.BusyKind);
+
+        SweepFor(TimeSpan.FromMinutes(5), 5000, 1.0);
+
+        var card = _state.Cards(openOnly: true).ShouldHaveSingleItem();
+        card.Kind.ShouldBe(StraySweep.BusyKind);
+        card.Bin.ShouldBe(CardBin.Ring);
+        card.Title.ShouldBe("spinner.exe 5000 has computed without a break for 30 min");
+        (card.Detail ?? "").ShouldContain("spinner.exe --wait-for-a-flag");
+        (card.Detail ?? "").ShouldContain("Stop-Process -Id 5000 -Force");
+        (card.Detail ?? "").ShouldContain("no job or session of the node's");
+        card.Choices.ShouldHaveSingleItem().Verb.ShouldBe(Verbs.EndStray);
+        // The node only names it: a person presses End.
+        _table.Killed.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void A_break_in_the_computing_starts_the_half_hour_again_and_closes_the_card()
+    {
+        _table.Add(5000, 29784, "spinner.exe", Began, "spinner.exe", TimeSpan.Zero);
+        _sweep.SweepOnce();
+        SweepFor(TimeSpan.FromMinutes(20), 5000, 1.0);
+        SweepFor(TimeSpan.FromMinutes(5), 5000, 0.1);
+        SweepFor(TimeSpan.FromMinutes(25), 5000, 1.0);
+        _state.Cards(openOnly: true).ShouldBeEmpty();
+
+        SweepFor(TimeSpan.FromMinutes(5), 5000, 1.0);
+        _state.Cards(openOnly: true).ShouldHaveSingleItem().Kind.ShouldBe(StraySweep.BusyKind);
+
+        SweepFor(TimeSpan.FromMinutes(5), 5000, 0.0);
+        _state.Cards(openOnly: true).ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void End_on_a_busy_card_ends_that_one_process()
+    {
+        _table.Add(5000, 29784, "spinner.exe", Began, "spinner.exe", TimeSpan.Zero);
+        _sweep.SweepOnce();
+        SweepFor(TimeSpan.FromMinutes(30), 5000, 1.0);
+        var card = _state.Cards(openOnly: true).ShouldHaveSingleItem();
+
+        var result = _sweep.EndOnWord(new CommandRequest { Verb = Verbs.EndStray, Target = card.Subject, Who = "owner" });
+
+        result.Error.ShouldBeNull();
+        _table.Killed.ShouldBe([5000]);
+        _state.Cards(openOnly: true).ShouldNotContain(c => c.Kind == StraySweep.BusyKind);
+    }
+
+    [Fact]
+    public void A_running_jobs_busy_process_is_left_to_its_time_limit()
+    {
+        _state.PutJob(new JobRow { Id = "j7", Command = "dotnet test", Cwd = Plane, Pid = 6000, StartedAt = Began, Timeout = TimeSpan.FromHours(2), State = JobState.Running, LogPath = "C:/data/jobs/j7.log" });
+        _table.Add(6000, 29784, "pwsh.exe", Began, "pwsh -c dotnet test", TimeSpan.Zero);
+        _table.Add(6001, 6000, "testhost.exe", Began, "testhost.exe", TimeSpan.Zero);
+        _sweep.SweepOnce();
+
+        SweepFor(TimeSpan.FromMinutes(40), 6001, 1.0);
+
+        _state.Cards(openOnly: true).ShouldNotContain(c => c.Kind == StraySweep.BusyKind);
+    }
+
     [Fact]
     public void A_persons_spinning_session_is_never_ended_nor_named()
     {

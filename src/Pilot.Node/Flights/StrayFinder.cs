@@ -58,7 +58,9 @@ public sealed record StrayHistory(IReadOnlyDictionary<int, CpuSample> Cpu, IRead
 /// the node launched exactly that process, so once its row has ended the node ends it itself, flight or none.</param>
 /// <param name="SpinningSession">Whether it is a live session's own process, named because it computes while its session is idle (the only
 /// reason a live owner's own process is ever a stray): a node session's is ended by the node, as an idle claude has nothing to compute.</param>
-public sealed record Stray(int Pid, string Name, string? CommandLine, TimeSpan Age, TimeSpan? Cpu, string Owner, string Reason, string KillCommand, bool NodeLaunched, DateTimeOffset? Start = null, bool OwnerEnded = false, bool ByFolder = false, string? OwnerFlight = null, string? OwnerFolder = null, bool BySession = false, bool SpinningSession = false);
+/// <param name="Busy">Whether it is any process on the machine, the node's or not, that has computed without a break for
+/// <see cref="StraySweep.BusyFor"/> (<see cref="StraySweep.BusyKind"/>): it rings, and only a person ends it.</param>
+public sealed record Stray(int Pid, string Name, string? CommandLine, TimeSpan Age, TimeSpan? Cpu, string Owner, string Reason, string KillCommand, bool NodeLaunched, DateTimeOffset? Start = null, bool OwnerEnded = false, bool ByFolder = false, string? OwnerFlight = null, string? OwnerFolder = null, bool BySession = false, bool SpinningSession = false, bool Busy = false);
 
 /// <summary>What one finding came to: the strays, and the CPU of every process looked at, which the next finding gets as its history.</summary>
 public sealed record StrayReading(IReadOnlyList<Stray> Strays, IReadOnlyDictionary<int, CpuSample> Cpu);
