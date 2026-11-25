@@ -1322,7 +1322,7 @@ loop.CheckNeedsRedraw = () =>
     {
         window.Activate();
         // The second launch's link (a toast's click): opened on the next frame, with the cards that window already holds.
-        if (Pilot.Ui.PilotLink.TryParse(handed, out var handedLink))
+        if (Pilot.Ui.PilotLink.TryParse(handed.Payload, out var handedLink))
         {
             pendingLink = handedLink;
         }
