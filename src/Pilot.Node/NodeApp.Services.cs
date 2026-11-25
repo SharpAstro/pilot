@@ -102,7 +102,9 @@ public static partial class NodeApp
                 () => services.GetRequiredService<RoleModels>().Toasts, () => services.GetRequiredService<PageViews>().AnyShowsCards,
                 services.GetRequiredService<ILoggerFactory>().CreateLogger<Pilot.Node.Toasts.Toaster>()));
             // The pilot: scheme a toast's click opens, per user (HKCU), when the GUI sits beside this node; a test host has none beside it, so writes nothing.
-            builder.Services.AddHostedService(services => new Pilot.Node.Toasts.SchemeRegistrar(new Pilot.Node.Toasts.UserSchemeRegistry(),
+            // Made here, inside the Windows guard (a lambda does not carry the guard to the analyzer).
+            var schemeRegistry = new Pilot.Node.Toasts.UserSchemeRegistry();
+            builder.Services.AddHostedService(services => new Pilot.Node.Toasts.SchemeRegistrar(schemeRegistry,
                 Environment.ProcessPath ?? "pilot-node", File.Exists, services.GetRequiredService<ILoggerFactory>().CreateLogger<Pilot.Node.Toasts.SchemeRegistrar>()));
         }
     }
