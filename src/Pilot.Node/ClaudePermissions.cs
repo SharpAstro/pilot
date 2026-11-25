@@ -26,13 +26,15 @@ public static class ClaudePermissions
 
     /// <summary>
     /// The verbs a watchtower session runs, each as narrow as its job: the card verbs whole, and of <c>flight</c>, <c>leg</c> only the
-    /// sub-verbs a press of a card takes (merge, clear, fold, connect; plan, start), so <c>update</c>, <c>node</c> and <c>flight withdraw</c>
-    /// stay with the auto-mode classifier.
+    /// sub-verbs a press of a card takes (merge, clear, fold, connect, allow-round; plan, start), so <c>update</c>, <c>node</c> and
+    /// <c>flight withdraw</c> stay with the auto-mode classifier. <c>flight allow-round</c> is the review-loop card's own button and the
+    /// watchtower's brief gives it that word when the points left are small; left to the classifier it was refused as undermining
+    /// oversight, and PIL1347 sat at its third round for a day (c30387, 2026-11-25). The owner put it here.
     /// </summary>
     public static readonly IReadOnlyList<string> SessionVerbs =
     [
         "answer", "dismiss", "cards", "status", "tell", "say", "sessions", "review",
-        "flight merge", "flight clear", "flight fold", "flight connect", "leg plan", "leg start",
+        "flight merge", "flight clear", "flight fold", "flight connect", "flight allow-round", "leg plan", "leg start",
     ];
 
     /// <summary>
