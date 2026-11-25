@@ -63,7 +63,7 @@ public sealed record MachineRow
     public double? OwnedCpuPercent { get; init; }
 
     /// <summary>
-    /// The processes of the node's own trees that should not be there (pilot #909): a job's or a session's leftovers, named by the node's stray sweep with
+    /// The processes that should not be there (pilot #909, #1354): a job's or a session's leftovers, and any process on the machine that computes without a break, named by the node's stray sweep with
     /// why and the command that ends each. Optional, so it does not raise <c>NodeWire.Version</c>: an older client ignores it and an older node's row reads none.
     /// </summary>
     public MachineStray[] Strays

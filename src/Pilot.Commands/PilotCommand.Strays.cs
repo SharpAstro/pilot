@@ -14,7 +14,7 @@ public static partial class PilotCommand
         {
             yield break;
         }
-        yield return $"strays  {strays.Length} in the node's tree (pilot strays has the kill commands)";
+        yield return $"strays  {strays.Length} on this machine (pilot strays has the kill commands)";
         foreach (var stray in strays)
         {
             yield return $"    {stray.Line()}";
@@ -22,7 +22,7 @@ public static partial class PilotCommand
     }
 
     /// <summary>
-    /// <c>pilot strays</c>: each process of the node's own tree the sweep named, with its pid, name, command line, age, CPU, owner, why and the
+    /// <c>pilot strays</c>: each process the sweep named (a leftover of the node's own tree, or any process that computes without a break), with its pid, name, command line, age, CPU, owner, why and the
     /// exact command that ends it. A node that has named none says so.
     /// </summary>
     internal static string Strays(MachineRow? machine)
@@ -33,10 +33,10 @@ public static partial class PilotCommand
         }
         if (machine.Strays.Length == 0)
         {
-            return "No strays: nothing in the node's tree runs that should not.\n";
+            return "No strays: nothing on this machine runs that should not.\n";
         }
         var text = new StringBuilder();
-        text.AppendLine($"{machine.Strays.Length} {(machine.Strays.Length == 1 ? "stray" : "strays")} in the node's tree:");
+        text.AppendLine($"{machine.Strays.Length} {(machine.Strays.Length == 1 ? "stray" : "strays")} on this machine:");
         foreach (var stray in machine.Strays)
         {
             text.AppendLine($"{stray.Name}  pid {stray.Pid.ToString(CultureInfo.InvariantCulture)}  {stray.Owner}  age {MachineStray.Age(stray.AgeSeconds)}{(stray.CpuSeconds is { } cpu ? $"  cpu {MachineStray.Age((long)cpu)}" : "")}");
@@ -88,9 +88,9 @@ public static partial class PilotCommand
 
     private sealed partial class BuildContext
     {
-        /// <summary>Makes strays: the processes of the node's own tree its sweep named, as the machine row carries them.</summary>
+        /// <summary>Makes strays: the processes the node's sweep named (leftovers of its own tree, and busy processes on the machine), as the machine row carries them.</summary>
         internal Command StraysCommand() =>
-            WithEnd(Action(new Command("strays", "The processes of the node's own tree that should not be running (a job's or session's leftovers), each with why and the command that ends it"),
+            WithEnd(Action(new Command("strays", "The processes that should not be running (a job's or session's leftovers, or any process that computes without a break for half an hour), each with why and the command that ends it"),
                 async (p, client, ct) =>
                 {
                     var snapshot = await SnapshotAsync(client, ct);
