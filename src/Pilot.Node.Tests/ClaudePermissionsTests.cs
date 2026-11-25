@@ -78,7 +78,7 @@ public sealed class ClaudePermissionsTests : IDisposable
         var suffixes = socket is null ? new[] { "" } : ["", $" --node-socket \"{socket}\""];
         // Every verb and sub-verb a press takes, in every form a session writes: bare pilot and pilot.exe (SE1's
         // 'pilot.exe answer c12854 1 --why ...'), the full path bare and quoted, PowerShell's call operator, each with and without the socket.
-        string[] verbs = ["answer", "dismiss", "cards", "status", "tell", "say", "sessions", "review", "flight merge", "flight clear", "flight fold", "flight connect", "leg plan", "leg start"];
+        string[] verbs = ["answer", "dismiss", "cards", "status", "tell", "say", "sessions", "review", "flight merge", "flight clear", "flight fold", "flight connect", "flight allow-round", "leg plan", "leg start"];
         foreach (var verb in verbs)
         {
             foreach (var suffix in suffixes)
