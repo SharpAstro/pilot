@@ -101,7 +101,7 @@ public sealed partial class Watchtower
     };
 
     // The words up to the first unquoted shell operator (; & | < > or a line break).
-    private static string OwnWords(string rest)
+    internal static string OwnWords(string rest)
     {
         var quote = '\0';
         for (var i = 0; i < rest.Length; i++)
@@ -141,7 +141,7 @@ public sealed partial class Watchtower
     // The node's CLI as the command word: at the start, or after an unquoted && ; | & ( or line break (as PowerShell's & "…" calls it).
     // Not a folder named pilot inside another command's words ("git -C C:/…/sharpastro/pilot push" is git's), and not a line of a quoted
     // argument (a "git commit -m" whose body has a line "Pilot is now quiet…", a gh comment's line "pilot answer c1 1").
-    private static Match? PilotCall(string command)
+    internal static Match? PilotCall(string command)
     {
         var quote = '\0';
         for (var i = 0; i < command.Length; i++)

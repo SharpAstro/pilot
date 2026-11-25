@@ -56,6 +56,24 @@ public sealed partial class WatchtowerChatTests
     }
 
     [Fact]
+    public async Task ARefusedMcpCallsLineKeepsItsWhyAndTheCardsSubjectIsUnchanged()
+    {
+        var process = await StreamIdleAsync();
+        process.Emit(JsonSerializer.Serialize(new
+        {
+            type = "assistant",
+            message = new { role = "assistant", content = new object[] { new { type = "tool_use", id = "w1", name = "mcp__pilot__flight_allow-round", input = new { code = "PIL1347", why = "round 3's note is not blocking" } } } },
+        }));
+        process.Emit(ShellResult("w1", AutoModeRefusal, error: true));
+        await UntilAsync(() => _state.Cards(openOnly: true).Any(c => c.Kind == Watchtower.RefusedKind), "the refused call's card");
+
+        var refused = _state.Cards(openOnly: true).Single(c => c.Kind == Watchtower.RefusedKind);
+        refused.Title.ShouldBe("The watchtower could not run pilot flight allow-round");
+        refused.Detail.ShouldNotBeNull().ShouldContain("pilot flight allow-round PIL1347 --why \"round 3's note is not blocking\"");
+        RefusedCommand.Read("pilot flight allow-round PIL1347 --why \"round 3's note is not blocking\"").Command.ShouldNotBeNull().Args.ShouldBe(["round 3's note is not blocking"]);
+    }
+
+    [Fact]
     public async Task APressThroughPilotsMcpToolThatIsRefusedRingsTheCardToo()
     {
         var process = await StreamIdleAsync();
