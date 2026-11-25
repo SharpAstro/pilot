@@ -121,6 +121,49 @@ public sealed class JobRetellTests : IDisposable
         (card.Bin, card.Kind, card.Subject).ShouldBe((CardBin.Ring, JobRunner.UnansweredKind, Verbs.JobTarget("j1")));
     }
 
+    /// <summary>
+    /// A sweep reads the sessions once per told job, not once per session it compares. With the wake target looked up inside the
+    /// lambda that picks its row, each comparison copied every session under the state lock: DE1, with thousands of session rows kept,
+    /// spent one core flat out on that tick for ten hours (2026-11-25). At this node's scale the sweep stays well inside a second.
+    /// </summary>
+    [Fact]
+    public async Task ASweepOverManySessionsAndToldJobsDoesNotReadTheSessionsPerSession()
+    {
+        // The session rows a long-running node keeps: ended workers, none of them an owner here, all started after the owner, so the
+        // owner's row sits last in Sessions() (newest start first), as an owner that has been at it a while does.
+        for (var i = 0; i < 2000; i++)
+        {
+            _state.PutSession(new SessionRow
+            {
+                Id = $"x{i:D7}", SessionId = $"x{i:D7}-0000-4000-8000-000000000000", Name = $"de1-old-{i}", Kind = SessionKind.Background, Cwd = _root,
+                Role = SessionRole.Worker, Flight = "OLD1", Leg = "old", ContextTokens = 0, ContextWindow = 200_000, SpendWeighted = 0,
+                State = SessionState.Ended, StartedAt = _clock.GetUtcNow().AddMinutes(-30),
+            });
+        }
+        var now = _clock.GetUtcNow();
+        for (var i = 0; i < 20; i++)
+        {
+            _state.PutJob(new JobRow
+            {
+                Id = $"j{i}", Command = "echo hi", Cwd = _root, Owner = "w0000001", State = JobState.Succeeded, ExitCode = 0,
+                LogPath = Path.Combine(_root, $"j{i}.log"), Timeout = TimeSpan.FromMinutes(1), StartedAt = now.AddMinutes(-2), EndedAt = now.AddMinutes(-1),
+                Told = true, ToldAt = now,
+            });
+        }
+        _clock.Advance(After);
+
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        (await Sweep()).ShouldBeTrue();
+        watch.Stop();
+
+        // Every job is still retold to its owner: the lookup moved, what it finds did not.
+        _said.Count.ShouldBe(20);
+        _said.ShouldAllBe(text => text.StartsWith("Repeat:", StringComparison.Ordinal));
+        // Linear it takes milliseconds. Read per session, one sweep of 4000 sessions and 100 jobs took 5 min 34 s on DE1; at this size it
+        // takes several seconds, well past the bound.
+        watch.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(2));
+    }
+
     [Fact]
     public async Task AnAdHocSessionsJobIsToldOnceAndNeverRetoldOrRungFor()
     {

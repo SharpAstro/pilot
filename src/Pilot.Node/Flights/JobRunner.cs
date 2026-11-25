@@ -438,7 +438,10 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
                 ForgetTell(row.Id);
                 continue;
             }
-            var target = replacement ?? sessions.FirstOrDefault(s => s.Id == WakeTarget(row.Owner!, row.OwnerName)) ?? ownerRow;
+            // The wake target once, from the rows already read: inside the lambda it ran for every row compared, each run copying every
+            // session under the state lock, so a tick cost (told jobs) x (sessions)^2 and held one core and the lock flat out (DE1, 2026-11-25).
+            var wakeId = WakeTarget(row.Owner!, sessions);
+            var target = replacement ?? sessions.FirstOrDefault(s => s.Id == wakeId) ?? ownerRow;
             if (target.State != SessionState.Idle)
             {
                 continue;
@@ -630,7 +633,10 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
             {
                 continue;
             }
-            var target = replacement ?? sessions.FirstOrDefault(s => s.Id == WakeTarget(row.Owner!, row.OwnerName)) ?? ownerRow;
+            // The wake target once, from the rows already read: inside the lambda it ran for every row compared, each run copying every
+            // session under the state lock, so a tick cost (told jobs) x (sessions)^2 and held one core and the lock flat out (DE1, 2026-11-25).
+            var wakeId = WakeTarget(row.Owner!, sessions);
+            var target = replacement ?? sessions.FirstOrDefault(s => s.Id == wakeId) ?? ownerRow;
             var window = windows.First(w => InWindow(row.ToldAt!.Value, w) || row.RetoldAt is { } at && InWindow(at, w));
             var how = row.State switch { JobState.Succeeded => "succeeded", JobState.Cancelled => row.Error ?? "was cancelled", _ => $"failed: {row.Error}" };
             var took = row.EndedAt!.Value - row.StartedAt;
@@ -3269,12 +3275,15 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
     private bool OwnerEnded(SessionRow row, JobRow job) =>
         !EndedWhileJobOpen(row, job) && (EndedNormally(row) || EndedForGood?.Invoke(row.Id) == true);
 
-    internal string WakeTarget(string owner, string? ownerName)
+    internal string WakeTarget(string owner, string? ownerName) => WakeTarget(owner, state.Sessions());
+
+    /// <summary>
+    /// The row a job's tell goes to, from <paramref name="sessions"/> as the caller read them. By id only, never a namesake (#542): the
+    /// owner's own row, or the row its id moved to (a continuation lists it among its earlier ids), else the owner as recorded.
+    /// </summary>
+    internal static string WakeTarget(string owner, IReadOnlyList<SessionRow> sessions)
     {
-        // By id only, never a namesake (#542): the owner's own row, or the row its id moved to (a continuation lists it among its
-        // earlier ids), else the owner as recorded.
-        var sessions = state.Sessions();
-        if (sessions.FirstOrDefault(s => s.Id == owner) is not null)
+        if (sessions.Any(s => s.Id == owner))
         {
             return owner;
         }
