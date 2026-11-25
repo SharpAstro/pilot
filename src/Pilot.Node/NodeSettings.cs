@@ -38,6 +38,8 @@ public sealed record NodeSettings
     /// <summary>What <see cref="JobBuildCacheKey"/> is when the settings file does not say: off.</summary>
     public const bool JobBuildCacheDefault = false;
     public const string MergeMethodKey = "merge-method";
+    /// <summary>Which Ring cards show a desktop toast (#1356): all (the default), urgent or off.</summary>
+    public const string ToastsKey = "toasts";
     public const string StartLimitKey = "start-limit";
     public const string PriorityStartLimitKey = "priority-start-limit";
     public const string PriorityReposKey = "priority-repos";
@@ -230,9 +232,12 @@ public sealed record NodeSettings
     /// repo's docs may cite (tianwen's rule); squash makes one commit of them; merge adds a merge commit.</summary>
     public static IReadOnlyList<string> MergeMethods { get; } = ["rebase", "squash", "merge"];
 
+    /// <summary>The values of <see cref="ToastsKey"/>; the first is the default.</summary>
+    public static IReadOnlyList<string> ToastModes { get; } = ["all", "urgent", "off"];
+
     /// <summary>Every key, in the order the Settings page shows them: the node's own, then a range per role.</summary>
     public static IReadOnlyList<string> Keys { get; } =
-        [LanKey, MachineKey, RepoRootsKey, UpdateChannelKey, UpdatePolicyKey, MaxJobsKey, JobsPerRepoKey, GuiSlotsKey, JobMemoryKey, JobPriorityKey, JobPlaneOutputKey, JobBuildCacheKey, LanPortKey, StartLimitKey, PriorityReposKey, PriorityStartLimitKey, WeekLimitKey, WeekPaceKey, SpendAlertKey, WatchtowerCompactShareKey, WatchtowerChatMessagesKey, WatchtowerCompactIdleKey, WatchtowerCompactAboveKey, MergeMethodKey, MaintenanceKey, AcceptFleetFlightsKey, AutopilotKey, ReviewDeepFirstKey, UserSkillsKey, ShortcutTokenKey, RepoTrackersKey, NoAutoMergeReposKey, OpusCapKey, ReviewLimitKey, OneFlightPerRepoKey, SubTaskReposKey, MergeBatchKey, PrWatchIdleKey, AdoptAfterKey, ArchiveLandedAfterKey, MaintenanceEveryKey, MaintenanceIdleKey, PackageAgeDaysKey, GitPruneDaysKey, MaintenancePruneHoursKey, DeleteLandedBranchesKey, MaxGoAroundsKey, ScratchDaysKey, DesignerKeepKey, DiskAlertGbKey, FlightCiBudgetKey, AutopilotCiGrantsKey, AutopilotStallMinutesKey, AutopilotInvestigationsKey, StaleFlightHoursKey, StalePrHoursKey, StaleRecheckHoursKey, StaleCardHoursKey, StaleHoldsKey, StaleUnreachableHoursKey,
+        [LanKey, MachineKey, RepoRootsKey, UpdateChannelKey, UpdatePolicyKey, MaxJobsKey, JobsPerRepoKey, GuiSlotsKey, JobMemoryKey, JobPriorityKey, JobPlaneOutputKey, JobBuildCacheKey, LanPortKey, StartLimitKey, PriorityReposKey, PriorityStartLimitKey, WeekLimitKey, WeekPaceKey, SpendAlertKey, WatchtowerCompactShareKey, WatchtowerChatMessagesKey, WatchtowerCompactIdleKey, WatchtowerCompactAboveKey, MergeMethodKey, ToastsKey, MaintenanceKey, AcceptFleetFlightsKey, AutopilotKey, ReviewDeepFirstKey, UserSkillsKey, ShortcutTokenKey, RepoTrackersKey, NoAutoMergeReposKey, OpusCapKey, ReviewLimitKey, OneFlightPerRepoKey, SubTaskReposKey, MergeBatchKey, PrWatchIdleKey, AdoptAfterKey, ArchiveLandedAfterKey, MaintenanceEveryKey, MaintenanceIdleKey, PackageAgeDaysKey, GitPruneDaysKey, MaintenancePruneHoursKey, DeleteLandedBranchesKey, MaxGoAroundsKey, ScratchDaysKey, DesignerKeepKey, DiskAlertGbKey, FlightCiBudgetKey, AutopilotCiGrantsKey, AutopilotStallMinutesKey, AutopilotInvestigationsKey, StaleFlightHoursKey, StalePrHoursKey, StaleRecheckHoursKey, StaleCardHoursKey, StaleHoldsKey, StaleUnreachableHoursKey,
          .. BenchKeys, .. RoleModels.Roles.Select(RoleModels.RangeKey), SummaryModelKey, WorkerLadderKey];
 
     /// <summary>Whether <paramref name="key"/> is a role's range (<see cref="RoleModels"/>).</summary>
@@ -387,6 +392,9 @@ public sealed record NodeSettings
     public Pilot.Node.Flights.JobPriority? JobPriority { get; init; }
 
     public string? MergeMethod { get; init; }
+
+    /// <summary>Which Ring cards toast (<see cref="ToastsKey"/>); all unless set, also when the stored member is null.</summary>
+    public string? Toasts { get; init; }
 
     public double? StartLimit { get; init; }
 
@@ -678,6 +686,7 @@ public sealed record NodeSettings
         JobPriorityKey => JobPriority is { } priority ? [Pilot.Node.Flights.JobPriorities.Name(priority)] : null,
         JobMemoryKey => JobMemoryGigabytes is { } memory ? [memory.ToString(CultureInfo.InvariantCulture)] : null,
         MergeMethodKey => MergeMethod is { } merge ? [merge] : null,
+        ToastsKey => Toasts is { } toasts ? [toasts] : null,
         StartLimitKey => StartLimit is { } limit ? [limit.ToString(CultureInfo.InvariantCulture)] : null,
         PriorityStartLimitKey => PriorityStartLimit is { } high ? [high.ToString(CultureInfo.InvariantCulture)] : null,
         WeekLimitKey => WeekLimit is { } week ? [week.ToString(CultureInfo.InvariantCulture)] : null,
@@ -1285,6 +1294,14 @@ public sealed record NodeSettings
                 return One()?.ToLowerInvariant() is { } merge && MergeMethods.Contains(merge)
                     ? (settings with { MergeMethod = merge }, null)
                     : (null, $"merge-method takes {string.Join(", ", MergeMethods)}");
+            case ToastsKey:
+                if (clear)
+                {
+                    return (settings with { Toasts = null }, null);
+                }
+                return One()?.ToLowerInvariant() is { } toasts && ToastModes.Contains(toasts)
+                    ? (settings with { Toasts = toasts }, null)
+                    : (null, $"toasts takes {string.Join(", ", ToastModes)}");
             case SummaryModelKey:
             {
                 var roles = new Dictionary<string, string>(settings.Roles ?? new Dictionary<string, string>(), StringComparer.Ordinal);

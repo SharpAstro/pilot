@@ -369,6 +369,18 @@ internal sealed class FleetWatch : IAsyncDisposable
         }
     }
 
+    private bool _showsCards;
+
+    /// <summary>Tells every node watched whether this window shows the cards (#1356), and each one known later at once.</summary>
+    public void SayShowsCards(bool shows)
+    {
+        Volatile.Write(ref _showsCards, shows);
+        foreach (var (feed, _, _) in _feeds.Values)
+        {
+            feed.SayShowsCards(shows);
+        }
+    }
+
     /// <summary>Moves whenever any node's feed does, so the loop knows to draw again.</summary>
     public long Version => _feeds.Values.Sum(f => f.Feed.Version);
 
@@ -397,6 +409,7 @@ internal sealed class FleetWatch : IAsyncDisposable
             {
                 var feed = _feedFor(e);
                 feed.SayPage(Volatile.Read(ref _page));
+                feed.SayShowsCards(Volatile.Read(ref _showsCards));
                 feed.Start();
                 return (feed, name, machine);
             });

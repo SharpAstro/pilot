@@ -237,6 +237,18 @@ public sealed partial class RoleModels
         }
     }
 
+    /// <summary>Which Ring cards toast (<see cref="NodeSettings.ToastsKey"/>): all unless the settings say urgent or off, also when the stored member is null.</summary>
+    public string Toasts
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _settings.Toasts is { } mode && NodeSettings.ToastModes.Contains(mode) ? mode : NodeSettings.ToastModes[0];
+            }
+        }
+    }
+
     /// <summary>Whether a flight goes on by itself once a leg is done (its next leg, or its PR and review): always on a
     /// node; a test's commander does not, as it never did.</summary>
     public bool Advances => _defaults;

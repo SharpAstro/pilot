@@ -361,6 +361,7 @@ internal sealed class PilotChrome<TSurface>
         // And the Night switch beside it, one state every page reads.
         sessions.Night = Flights.Night = Repos.Night = Jobs.Night = Fleet.Night = Settings.Night = Home.Night = Chat.Night = PullRequests.Night = Ideas.Night = Spend.Night = Designs.Night = NotificationsPage.Night = Night;
         Settings.Notifications = Notifications;
+        Notifications.OpenChanged += _ => SayCardsIfChanged();
         // A transcript or a flight's page opened from inside a page (Enter, a click on a row) is a move too.
         sessions.Transcript.Opening = RecordOpening;
         Flights.Opening = RecordOpening;
@@ -503,6 +504,37 @@ internal sealed class PilotChrome<TSurface>
 
     /// <summary>What the page shown now says to the nodes (<see cref="OnPageShown"/>).</summary>
     public string? SaidPage => SaidOf(Page);
+
+    /// <summary>
+    /// Whether this window shows the cards now: its For you bar is open or the Notifications page is. The node skips the normal desktop toasts
+    /// while any client does (#1356).
+    /// </summary>
+    public bool ShowsCards => Notifications.Open || Page == PilotPage.Notifications;
+
+    /// <summary>Called with <see cref="ShowsCards"/> whenever it changes; the host says it to each node it streams from (<c>NodeFeed.SayShowsCards</c>), and once when it starts.</summary>
+    public Action<bool>? OnCardsShown
+    {
+        get;
+        set
+        {
+            field = value;
+            // The host says the first value itself when it starts, so a change is judged against that.
+            _saidCards = ShowsCards;
+        }
+    }
+
+    private bool _saidCards;
+
+    private void SayCardsIfChanged()
+    {
+        var shows = ShowsCards;
+        if (shows == _saidCards)
+        {
+            return;
+        }
+        _saidCards = shows;
+        OnCardsShown?.Invoke(shows);
+    }
 
     private static string? SaidOf(PilotPage page) => page switch
     {
@@ -773,6 +805,7 @@ internal sealed class PilotChrome<TSurface>
         {
             OnPageShown?.Invoke(SaidOf(page));
         }
+        SayCardsIfChanged();
         // The chat follows its feed while its page is the one shown, and only then.
         if (page == PilotPage.Chat)
         {

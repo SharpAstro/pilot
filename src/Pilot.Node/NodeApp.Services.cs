@@ -94,6 +94,14 @@ public static partial class NodeApp
         builder.Services.AddSingleton(services => services.GetRequiredService<StoreRecovery>().State);
         builder.Services.AddSingleton<PageViews>();
         builder.Services.AddSingleton<EventHub>();
+        // The desktop toasts of Ring cards (#1356): through Windows PowerShell on Windows, nowhere else. Tests inject a fake runner instead.
+        if (OperatingSystem.IsWindows())
+        {
+            builder.Services.AddHostedService(services => new Pilot.Node.Toasts.Toaster(
+                services.GetRequiredService<NodeState>(), new Pilot.Node.Toasts.PowerShellToastRunner(), services.GetRequiredService<TimeProvider>(),
+                () => services.GetRequiredService<RoleModels>().Toasts, () => services.GetRequiredService<PageViews>().AnyShowsCards,
+                services.GetRequiredService<ILoggerFactory>().CreateLogger<Pilot.Node.Toasts.Toaster>()));
+        }
     }
 
     /// <summary>What the node knows of Claude Code: its agents, the hooks and the transcripts.</summary>

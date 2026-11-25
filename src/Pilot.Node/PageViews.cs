@@ -72,8 +72,54 @@ public sealed class PageViews
         }
     }
 
+    private readonly HashSet<object> _cards = new(ReferenceEqualityComparer.Instance);
+
+    /// <summary>Raised, outside the lock, when the clients showing the cards go from none to some (true) or from some to none (false).</summary>
+    public event Action<bool>? CardsChanged;
+
+    /// <summary>True while any client says it shows the cards (its For you bar or Notifications page is open): normal desktop toasts wait (#1356).</summary>
+    public bool AnyShowsCards
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _cards.Count > 0;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Sets whether <paramref name="client"/> shows the cards. Kept beside the page, never in it, so the pages the PR watch and the machine
+    /// sampler read are untouched by it.
+    /// </summary>
+    public void SayCards(object client, bool shows)
+    {
+        bool? changed = null;
+        lock (_gate)
+        {
+            var before = _cards.Count > 0;
+            if (shows ? !_cards.Add(client) : !_cards.Remove(client))
+            {
+                return;
+            }
+            if ((_cards.Count > 0) != before)
+            {
+                changed = _cards.Count > 0;
+            }
+        }
+        if (changed is { } now)
+        {
+            CardsChanged?.Invoke(now);
+        }
+    }
+
     /// <summary>Forgets what <paramref name="client"/> showed: its stream closed.</summary>
-    public void Forget(object client) => Say(client, null);
+    public void Forget(object client)
+    {
+        Say(client, null);
+        SayCards(client, false);
+    }
 
     private int CountOf(string page) => _pages.Values.Count(p => p == page);
 }

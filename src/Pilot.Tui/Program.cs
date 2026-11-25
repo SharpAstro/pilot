@@ -75,6 +75,13 @@ chrome.OnPageShown = page =>
     fleetWatch.SayPage(page);
 };
 chrome.OnPageShown(chrome.SaidPage);
+// The node skips the normal desktop toasts while this window shows the cards (its For you bar or the Notifications page is open).
+chrome.OnCardsShown = shows =>
+{
+    feed.SayShowsCards(shows);
+    fleetWatch.SayShowsCards(shows);
+};
+chrome.OnCardsShown(chrome.ShowsCards);
 var flights = chrome.Flights;
 chrome.ForTerminal(); // cells cannot draw an arrow or columns of cards: the terminal keeps the lists
 var jobs = chrome.Jobs;
