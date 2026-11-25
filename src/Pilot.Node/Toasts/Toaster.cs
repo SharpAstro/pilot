@@ -41,6 +41,7 @@ public sealed class Toaster : IAsyncDisposable, Microsoft.Extensions.Hosting.IHo
     private readonly HashSet<string> _burst = new(StringComparer.Ordinal);
     private IDisposable? _subscription;
     private Task? _run;
+    private int _disposed;
 
     private sealed record Shown(string Tag, string Signature, bool InBurst);
 
@@ -240,6 +241,8 @@ public sealed class Toaster : IAsyncDisposable, Microsoft.Extensions.Hosting.IHo
     /// <summary>Stops listening and ends the consumer.</summary>
     public async ValueTask DisposeAsync()
     {
+        // The host stops it (StopAsync) and then disposes it, so a second call does nothing.
+        if (Interlocked.Exchange(ref _disposed, 1) == 1) return;
         _subscription?.Dispose();
         await _stop.CancelAsync().ConfigureAwait(false);
         if (_run is { } run)
