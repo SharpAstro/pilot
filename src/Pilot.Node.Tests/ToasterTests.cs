@@ -197,7 +197,7 @@ public sealed class ToasterTests : IAsyncDisposable
         await using var toaster = new Toaster(_state, runner, _time, () => "all", () => false);
         toaster.Start();
         Ring(Normal, "flight/W1");
-        await shown.Task.WaitAsync(TimeSpan.FromSeconds(30), Ct);
+        await shown.Task.WaitAsync(TimeSpan.FromSeconds(10), Ct);
         runner.Tags.ShouldContain("flight/W1");
     }
 
