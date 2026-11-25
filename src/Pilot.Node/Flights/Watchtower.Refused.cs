@@ -81,7 +81,7 @@ public sealed partial class Watchtower
         // wait hours, and the watchtower be replaced meanwhile), which goes on from the result.
         var done = new CardChoice { Label = DoneMyselfLabel, Verb = Verbs.Tell, Target = Verbs.WatchtowerTarget, Args = [$"The person did it themselves after Claude Code refused your `pilot {name}`: carry on from what it did (pilot status, pilot cards)."] };
         var reading = RefusedCommand.Read(command);
-        var detail = new System.Text.StringBuilder();
+        var body = new System.Text.StringBuilder();
         IReadOnlyList<CardChoice> choices;
         if (reading.CanPress)
         {
@@ -91,7 +91,7 @@ public sealed partial class Watchtower
                 new CardChoice { Label = $"{RunLabelPrefix}pilot {name}{on.Replace('/', ' ')}", Verb = run.Verb, Target = run.Target, Args = run.Args, Why = run.Why },
                 done,
             ];
-            detail.Append($"{WhatToDo}press \"{choices[0].Label}\" to run it as yourself, or run it from a terminal and press \"{DoneMyselfLabel}\". It was refused by {reason}, so nothing it was meant to move moves until then.\n\nIt tried, at {at}:\n{command.Trim()}");
+            body.Append($"{WhatToDo}press \"{choices[0].Label}\" to run it as yourself, or run it from a terminal and press \"{DoneMyselfLabel}\". It was refused by {reason}, so nothing it was meant to move moves until then.\n\nIt tried, at {at}:\n{command.Trim()}");
         }
         else
         {
@@ -105,16 +105,16 @@ public sealed partial class Watchtower
                 PressBlock.NotANodeVerb => $"the node has no button for it ({reading.Detail})",
                 _ => $"the node cannot read it back into a command ({reading.Detail})",
             };
-            detail.Append($"{WhatToDo}it cannot be pressed from here: {why}. Run it from a terminal, then press \"{DoneMyselfLabel}\". It was refused by {reason}, so nothing it was meant to move moves until then.\n\nThe command, at {at}:\n{shown}");
+            body.Append($"{WhatToDo}it cannot be pressed from here: {why}. Run it from a terminal, then press \"{DoneMyselfLabel}\". It was refused by {reason}, so nothing it was meant to move moves until then.\n\nThe command, at {at}:\n{shown}");
             if (command.Trim() != shown)
             {
-                detail.Append($"\n\nThe whole line it tried:\n{command.Trim()}");
+                body.Append($"\n\nThe whole line it tried:\n{command.Trim()}");
             }
         }
         // The title is the command, short; what refused it is in the detail.
         state.RaiseCard(CardBin.Ring, RefusedKind, $"{Verbs.WatchtowerTarget}/refused/{name.Replace(' ', '-')}{on}",
             $"The watchtower could not run pilot {name}",
-            detail.ToString(),
+            body.ToString(),
             choices);
         LogStream($"the watchtower's pilot {name} was refused ({reason}): a card rings");
     }
