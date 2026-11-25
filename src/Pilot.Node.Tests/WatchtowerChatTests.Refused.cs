@@ -166,10 +166,16 @@ public sealed partial class WatchtowerChatTests
     private async Task<CardRow> RefusedCardAsync(string line)
     {
         var process = await StreamIdleAsync();
-        process.Emit(ShellCall("rc", line));
-        process.Emit(ShellResult("rc", AutoModeRefusal, error: true));
-        await UntilAsync(() => _state.Cards(openOnly: true).Any(c => c.Kind == Watchtower.RefusedKind), "the refused command's card");
-        return _state.Cards(openOnly: true).Single(c => c.Kind == Watchtower.RefusedKind);
+        return await RefusedOnAsync(process, "rc", line, 1);
+    }
+
+    // The line refused on a stream that is up; the newest card once <paramref name="count"/> refused cards are open.
+    private async Task<CardRow> RefusedOnAsync(WatchtowerStreamTests.FakeProcess process, string id, string line, int count)
+    {
+        process.Emit(ShellCall(id, line));
+        process.Emit(ShellResult(id, AutoModeRefusal, error: true));
+        await UntilAsync(() => _state.Cards(openOnly: true).Count(c => c.Kind == Watchtower.RefusedKind) == count, "the refused command's card");
+        return _state.Cards(openOnly: true).Where(c => c.Kind == Watchtower.RefusedKind).OrderByDescending(c => c.Id.Length).ThenByDescending(c => c.Id, StringComparer.Ordinal).First();
     }
 
     // PIL1347 as it was held: three rounds with changes, its one leg done, the review asking for changes.
@@ -248,7 +254,8 @@ public sealed partial class WatchtowerChatTests
     [Fact]
     public async Task TwoPilotCommandsJoinedByAndAndAVerbNoRowHasGetNoRunButtonAndTheCommandOnALineOfItsOwn()
     {
-        var joined = await RefusedCardAsync("pilot flight allow-round PIL1347 one more round && pilot flight merge PIL1347 abc123");
+        var process = await StreamIdleAsync();
+        var joined = await RefusedOnAsync(process, "j1", "pilot flight allow-round PIL1347 one more round && pilot flight merge PIL1347 abc123", 1);
 
         joined.Choices.Select(c => c.Label).ShouldBe([Watchtower.DoneMyselfLabel]);
         var lines = joined.Detail.ShouldNotBeNull().Split('\n');
@@ -256,7 +263,7 @@ public sealed partial class WatchtowerChatTests
         joined.Detail.ShouldContain("cannot be pressed");
         joined.Detail.ShouldContain("terminal");
 
-        var unknown = await RefusedCardAsync("pilot flight teleport PIL1347");
+        var unknown = await RefusedOnAsync(process, "j2", "pilot flight teleport PIL1347", 2);
         unknown.Choices.Select(c => c.Label).ShouldBe([Watchtower.DoneMyselfLabel]);
         unknown.Detail.ShouldNotBeNull().Split('\n').ShouldContain("pilot flight teleport PIL1347");
     }
