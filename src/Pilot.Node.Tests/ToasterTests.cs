@@ -1,4 +1,3 @@
-using Microsoft.Extensions.Time.Testing;
 using Pilot.Contracts;
 using Pilot.Node.Toasts;
 using Shouldly;
@@ -32,7 +31,16 @@ public sealed class ToasterTests : IAsyncDisposable
     private const string Normal = "worker-waiting";
     private const string Urgent = "push-blocked";
 
-    private readonly FakeTimeProvider _time = new(new DateTimeOffset(2026, 11, 25, 9, 0, 0, TimeSpan.Zero));
+    private sealed class Clock(DateTimeOffset start) : TimeProvider
+    {
+        private DateTimeOffset _now = start;
+
+        public void Advance(TimeSpan by) => _now += by;
+
+        public override DateTimeOffset GetUtcNow() => _now;
+    }
+
+    private readonly Clock _time = new(new DateTimeOffset(2026, 11, 25, 9, 0, 0, TimeSpan.Zero));
     private readonly NodeState _state;
     private readonly FakeRunner _runner = new();
     private readonly Toaster _toaster;
