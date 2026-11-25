@@ -183,7 +183,7 @@ public sealed partial class PrReviews
             // What it left: a fixer that ended with its fix uncommitted, or committed and not pushed (a detached HEAD, a push that failed), had its worktree
             // force-removed with the work in it (pilot #1247: tianwen#2435's fix sat in a commit nothing pointed to). Its worktree is kept then, and the card
             // says where the work is and what it is.
-            var left = await LeftWorkAsync(review, cancellationToken);
+            var (left, leftWork, leftUnread) = await LeftWorkAsync(review, cancellationToken);
             // An idle fixer of an approved review with nothing left has done its part (its push was reviewed and passed): ended quietly, no card, since it did
             // not end 'without a push'. Idle with the head unmoved on a changes verdict, or with work left, takes the path of an ended one (pilot #1327).
             if (left is null && string.Equals(review.Verdict, "approve", StringComparison.OrdinalIgnoreCase) && sessions.All(s => s.State == SessionState.Idle))
@@ -232,10 +232,10 @@ public sealed partial class PrReviews
             }
             // Push its commits only when the work has commits and the PR's branch is the node's to push to (not a fork): uncommitted files cannot be pushed.
             // A folder git cannot read is no one's to fix or push yet: the start path refuses it, so the card offers neither.
-            var (leftWork, leftUnread) = left is not null && review.FixWorktree is { } leftTree ? await ReadWorkPastAsync(leftTree, review.Head, cancellationToken) : (null, null);
             var pushable = leftUnread is null && leftWork is { Commits: > 0 } && !read.Fork;
             var endedChoices = new List<CardChoice>();
             if (leftUnread is null) { endedChoices.Add(new CardChoice { Label = FixLabel, Verb = Verbs.FixPr, Target = subject }); }
+            else { endedChoices.Add(new CardChoice { Label = "Review the PR again", Verb = Verbs.ReviewPr, Target = subject }); }
             if (pushable) { endedChoices.Add(new CardChoice { Label = PushFixLabel, Verb = Verbs.PushFix, Target = subject }); }
             state.RaiseCard(CardBin.ForYou, FixEndedKind, subject, $"{pr}: {review.Fixer} ended without a push",
                 left is null
@@ -300,14 +300,15 @@ public sealed partial class PrReviews
     /// What an ended fixer left in its worktree that the PR does not have: its uncommitted files and its commits past the PR's head, in a line; null when
     /// nothing (or no worktree of its own). A worktree git could not read all of is named as left work too, so its folder is kept, never removed.
     /// </summary>
-    private async Task<string?> LeftWorkAsync(PrReviewRow review, CancellationToken cancellationToken)
+    private async Task<(string? Line, WorkPast? Work, string? Unread)> LeftWorkAsync(PrReviewRow review, CancellationToken cancellationToken)
     {
         if (review.FixWorktree is not { } worktree || review.FixWorktreeBorrowed == true)
         {
-            return null;
+            return (null, null, null);
         }
         var (work, unread) = await ReadWorkPastAsync(worktree, review.Head, cancellationToken);
-        return unread is null ? work?.Line : $"{(work is { } read ? $"{read.Line}, and maybe more" : "work")} git could not read ({unread})";
+        var line = unread is null ? work?.Line : $"{(work is { } read ? $"{read.Line}, and maybe more" : "work")} git could not read ({unread})";
+        return (line, work, unread);
     }
 
     /// <summary>What a worktree holds that the PR does not have: its commits past <c>head</c> and its uncommitted files, as a line and as counts.</summary>

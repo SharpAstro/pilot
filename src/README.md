@@ -593,7 +593,7 @@ A PR pilot did not make, in a repo it may not fly, is reviewed from its link (#1
   session ended with the head unmoved leaves a For-you `pr-fix-ended` card with **Fix it**, which resumes in the fixer's kept
   worktree when it holds work the PR lacks. When that work has commits and the PR is not from a fork, the card also offers
   **Push its commits** (`push-fix`): a plain fast-forward push of the worktree's HEAD to the PR's branch, then a review of the new
-  head; it is refused when the PR's head moved (the work stays in the worktree). The node presses Fix it, never the push (unbuilt
+  head; it is refused when the PR's head moved (the work stays in the worktree). When git cannot read the kept worktree the card offers neither, only **Review the PR again**, since no fixer starts on a folder git cannot read. The node presses Fix it, never the push (unbuilt
   work is the person's to push); a PR merged or closed
   ends the fixer and its worktree. A review started by hand keeps the round count rather than resetting it.
 
