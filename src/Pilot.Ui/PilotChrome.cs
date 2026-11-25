@@ -361,6 +361,7 @@ internal sealed class PilotChrome<TSurface>
         // And the Night switch beside it, one state every page reads.
         sessions.Night = Flights.Night = Repos.Night = Jobs.Night = Fleet.Night = Settings.Night = Home.Night = Chat.Night = PullRequests.Night = Ideas.Night = Spend.Night = Designs.Night = NotificationsPage.Night = Night;
         Settings.Notifications = Notifications;
+        Notifications.OpenChanged += _ => SayCardsIfChanged();
         // A transcript or a flight's page opened from inside a page (Enter, a click on a row) is a move too.
         sessions.Transcript.Opening = RecordOpening;
         Flights.Opening = RecordOpening;
@@ -503,6 +504,37 @@ internal sealed class PilotChrome<TSurface>
 
     /// <summary>What the page shown now says to the nodes (<see cref="OnPageShown"/>).</summary>
     public string? SaidPage => SaidOf(Page);
+
+    /// <summary>
+    /// Whether this window shows the cards now: its For you bar is open or the Notifications page is. The node skips the normal desktop toasts
+    /// while any client does (#1356).
+    /// </summary>
+    public bool ClientShowsCards => Notifications.Open || Page == PilotPage.Notifications;
+
+    /// <summary>Called with <see cref="ClientShowsCards"/> whenever it changes; the host says it to each node it streams from (<c>NodeFeed.SayShowsCards</c>), and once when it starts.</summary>
+    public Action<bool>? OnCardsShown
+    {
+        get;
+        set
+        {
+            field = value;
+            // The host says the first value itself when it starts, so a change is judged against that.
+            _saidCards = ClientShowsCards;
+        }
+    }
+
+    private bool _saidCards;
+
+    private void SayCardsIfChanged()
+    {
+        var shows = ClientShowsCards;
+        if (shows == _saidCards)
+        {
+            return;
+        }
+        _saidCards = shows;
+        OnCardsShown?.Invoke(shows);
+    }
 
     private static string? SaidOf(PilotPage page) => page switch
     {
@@ -773,6 +805,7 @@ internal sealed class PilotChrome<TSurface>
         {
             OnPageShown?.Invoke(SaidOf(page));
         }
+        SayCardsIfChanged();
         // The chat follows its feed while its page is the one shown, and only then.
         if (page == PilotPage.Chat)
         {
@@ -821,7 +854,7 @@ internal sealed class PilotChrome<TSurface>
     /// <summary>
     /// Opens what <paramref name="card"/> is about, the way the card's own title does: a card about an open PR (<see cref="PullRequestLinks"/>)
     /// opens the Pull requests page on its row. The one entry for anything that brings a card to the person from outside the panel, a
-    /// desktop notification's click among them (v2 raises none yet: the node's rings reach the person through the watchtower's push). False
+    /// desktop toast's click among them (the node raises one per Ring card, #1356; <see cref="OpenCardLink"/> is its entry, by id). False
     /// for a card that is about no PR, which the caller opens by its own link.
     /// </summary>
     public bool OpenCard(CardRow card)
@@ -832,6 +865,41 @@ internal sealed class PilotChrome<TSurface>
         }
         OpenPullRequest(pr.Repo, pr.Number);
         return true;
+    }
+
+    /// <summary>
+    /// Opens what a toast's <see cref="PilotLink"/> names: a PR card on its Pull requests row, any other open card in the For you bar (lit by its
+    /// flight), the bare cards link the bar alone. Null when it opened; otherwise the sentence to say, for a card that is closed or that this
+    /// window does not know.
+    /// </summary>
+    public string? OpenCardLink(PilotLink link)
+    {
+        if (link.CardId is not { } id)
+        {
+            Notifications.Open = true;
+            return null;
+        }
+        var now = _cardsNow;
+        if (now.Open.FirstOrDefault(c => c.Id == id) is { } card)
+        {
+            if (!OpenCard(card))
+            {
+                Notifications.Open = true;
+                Cards.Focus = Verbs.FlightCodeOf(card.Subject);
+            }
+            return null;
+        }
+        var closed = now.Handled.Any(c => c.Id == id);
+        var said = closed
+            ? $"Card {id} is closed already; nothing is left to do on it."
+            : $"This window does not know card {id}; it may be on another node, or older than the cards it holds.";
+        // Said where the person looks, in the window (a line on the console is seen by nobody): a fading toast, which the collapsed bar draws and
+        // the history keeps. A click on a stale toast raised the window, so it must also say why nothing opened.
+        Notifications.Open = false;
+        Notifications.PostEvent(
+            new PilotEvent(PilotEventKind.CardLinkMissed, id, closed ? "That card is closed" : "That card is not here", said, NotificationSeverity.Warn, null),
+            null, Clock?.Invoke() ?? DateTimeOffset.UtcNow);
+        return said;
     }
 
     /// <summary>Whether <see cref="Back"/> has a place to return to.</summary>

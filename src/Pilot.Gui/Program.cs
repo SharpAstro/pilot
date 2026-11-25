@@ -34,6 +34,14 @@ void Note(string line)
 
 AppDomain.CurrentDomain.UnhandledException += (_, e) => LogLine($"pilot-gui: unhandled exception: {e.ExceptionObject}");
 
+// A toast's click starts the GUI with its link as the one argument (pilot://card/<id>, registered per user by the node, #1356): taken
+// out here, so the options never see it.
+var linkArgument = args.FirstOrDefault(a => a.StartsWith(Pilot.Ui.PilotLink.Scheme + ":", StringComparison.OrdinalIgnoreCase));
+if (linkArgument is not null)
+{
+    args = [.. args.Where(a => !ReferenceEquals(a, linkArgument))];
+}
+
 if (GuiOptions.Parse(args, out var error, out var isHelp) is not { } options)
 {
     if (isHelp)
@@ -240,7 +248,7 @@ var gateChannel = InstanceGate.ChannelFor("pilot-v2-gui", remoteEndpoint?.ToLowe
 using var gate = InstanceGate.TryClaim(gateChannel);
 if (gate is null)
 {
-    if (InstanceGate.TryHandOff(gateChannel, string.Empty, TimeSpan.FromSeconds(5)))
+    if (InstanceGate.TryHandOff(gateChannel, linkArgument ?? string.Empty, TimeSpan.FromSeconds(5)))
     {
         Note("pilot-gui: pilot v2's window is already open; raised it instead of opening another.");
         return 0;
@@ -366,6 +374,13 @@ chrome.OnPageShown = page =>
     fleetWatch.SayPage(page);
 };
 chrome.OnPageShown(chrome.SaidPage);
+// The node skips the normal desktop toasts while this window shows the cards (its For you bar or the Notifications page is open).
+chrome.OnCardsShown = shows =>
+{
+    feed?.SayShowsCards(shows);
+    fleetWatch.SayShowsCards(shows);
+};
+chrome.OnCardsShown(chrome.ClientShowsCards);
 var fleetKnownAt = DateTimeOffset.MinValue;
 // The grants held, found by a node's machine name (its address only for an old entry), so a node on a new network keeps its grant.
 var held = HeldView.None;
@@ -1053,6 +1068,9 @@ void Say(string line) => console.Writer.TryWrite(line);
 // Every fault the live text check finds is a console line, a card or not (with no node connected it is all there is).
 chrome.TextCheck.Log = line => Say($"pilot-gui: {line}");
 CardsScreen? cards = snapshot is null ? null : CardsScreen.From(snapshot.Cards);
+// The link this window was started with, or a running one was handed, until it has opened.
+Pilot.Ui.PilotLink? pendingLink = Pilot.Ui.PilotLink.TryParse(linkArgument, out var startLink) ? startLink : null;
+var startedAt = Environment.TickCount64;
 JobsScreen? jobs = snapshot is null ? null : new JobsScreen(JobLine.Build(snapshot.Jobs, snapshot.At), screen.Source, snapshot.At);
 FleetScreen? fleet = null;
 ReposScreen? repos = null;
@@ -1277,6 +1295,16 @@ void RenderFrame()
         chrome.Flights.Decisions = decisionReads.Flights;
     }
     chrome.Render(screen, flights, cards, jobs, fleet, repos, pullRequests, new RectF32(0, 0, width, height), machines, ideas, spendReads?.Screen ?? fileSpend, designReads?.Screen(screen.Source, screen.AsOf, chrome.Designs.OpenId));
+    // A link from a toast's click, once the chrome has the cards: a fresh window waits for its first snapshot to hold the card (up to 10 s).
+    if (pendingLink is { } link && (cards is { Open.Count: > 0 } || cards is { Handled.Count: > 0 } || Environment.TickCount64 - startedAt > 10_000))
+    {
+        pendingLink = null;
+        if (chrome.OpenCardLink(link) is { } said)
+        {
+            Say($"pilot-gui: {said}");
+        }
+        loop.RequestRedraw();
+    }
     // The hover text the router says is due, last, over everything.
     chrome.Tooltips.Render(router.Tooltip, new RectF32(0, 0, width, height));
     router.AfterPaint();
@@ -1290,9 +1318,14 @@ void RenderFrame()
 }
 loop.CheckNeedsRedraw = () =>
 {
-    while (gate?.TryDequeue(out _) == true)
+    while (gate?.TryDequeue(out var handed) == true)
     {
         window.Activate();
+        // The second launch's link (a toast's click): opened on the next frame, with the cards that window already holds.
+        if (Pilot.Ui.PilotLink.TryParse(handed.Payload, out var handedLink))
+        {
+            pendingLink = handedLink;
+        }
         Say("pilot-gui: another launch asked for this window; raised it.");
         return true;
     }

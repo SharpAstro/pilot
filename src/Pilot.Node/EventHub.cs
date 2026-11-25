@@ -111,6 +111,10 @@ public sealed class EventHub(NodeState state, PageViews views, ILogger<EventHub>
                     if (message.Length is > 0 && message.Length <= MaxMessage && ReadPage(message.GetBuffer().AsSpan(0, (int)message.Length)) is { } said)
                     {
                         views.Say(client, said.Page);
+                        if (said.ShowsCards is { } cards)
+                        {
+                            views.SayCards(client, cards);
+                        }
                     }
                     message.SetLength(0);
                 }

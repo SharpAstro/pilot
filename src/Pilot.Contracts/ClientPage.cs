@@ -10,6 +10,12 @@ public sealed record ClientPage
 {
     /// <summary>The page shown (<see cref="ClientPages"/>), or null for one the node has no use of knowing.</summary>
     public string? Page { get; init; }
+
+    /// <summary>
+    /// Whether the client shows the cards now (its For you bar or the Notifications page is open), so the node skips the normal desktop toasts
+    /// meanwhile (#1356). Null says nothing (an older client), which keeps what the client said before; sent with <see cref="Page"/> every time.
+    /// </summary>
+    public bool? ShowsCards { get; init; }
 }
 
 /// <summary>The pages a client may say it shows, where the node does more while someone looks.</summary>

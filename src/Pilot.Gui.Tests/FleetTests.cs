@@ -33,6 +33,32 @@ public sealed class FleetTests
     }
 
     [Fact]
+    public async Task ShowingTheCardsTellsEveryNodeWatchedAndANodeKnownLater()
+    {
+        // The skip rule of the desktop toasts (#1356): every node in the fleet hears that this window shows the cards, a node known
+        // only after it was said too, with no further call.
+        var nodes = new Dictionary<string, FakeNode>(StringComparer.OrdinalIgnoreCase) { ["10.0.0.9:47731"] = new(), ["10.0.0.5:47731"] = new() };
+        await using var watch = new FleetWatch(endpoint => new NodeFeed(nodes[endpoint].Open, endpoint, TimeSpan.FromMilliseconds(20)));
+        watch.Know([("10.0.0.9:47731", "SE2")]);
+        await Until(() => nodes["10.0.0.9:47731"].OpenCount == 1);
+
+        watch.SayShowsCards(true);
+        await Until(() => nodes["10.0.0.9:47731"].Said.Any(s => s.ShowsCards == true));
+
+        watch.Know([("10.0.0.5:47731", "LE1")]);
+        await Until(() => nodes["10.0.0.5:47731"].Said.Any(s => s.ShowsCards == true));
+    }
+
+    private static async Task Until(Func<bool> condition)
+    {
+        for (var i = 0; i < 500 && !condition(); i++)
+        {
+            await Task.Delay(10, Ct);
+        }
+        condition().ShouldBeTrue();
+    }
+
+    [Fact]
     public async Task TheWatchKeepsAFeedPerNodeAndANodeHeardTwiceIsOneRow()
     {
         var nodes = new Dictionary<string, FakeNode>(StringComparer.OrdinalIgnoreCase) { ["10.0.0.9:47731"] = new(), ["10.0.0.5:47731"] = new() };

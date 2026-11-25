@@ -94,6 +94,8 @@ public static partial class NodeApp
         builder.Services.AddSingleton(services => services.GetRequiredService<StoreRecovery>().State);
         builder.Services.AddSingleton<PageViews>();
         builder.Services.AddSingleton<EventHub>();
+        // The desktop toasts of Ring cards (#1356) and the pilot: scheme their click opens: Windows only.
+        Pilot.Node.Toasts.ToastServices.AddToasts(builder.Services);
     }
 
     /// <summary>What the node knows of Claude Code: its agents, the hooks and the transcripts.</summary>

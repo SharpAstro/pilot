@@ -329,9 +329,9 @@ public sealed class NodeEventStream : IAsyncDisposable
     }
 
     /// <summary>Tells the node which page this client shows (<see cref="ClientPages"/>), or none with null; it holds until the stream closes or this says another.</summary>
-    public async ValueTask SayPageAsync(string? page, CancellationToken cancellationToken)
+    public async ValueTask SayPageAsync(string? page, CancellationToken cancellationToken, bool? showsCards = null)
     {
-        var bytes = JsonSerializer.SerializeToUtf8Bytes(new ClientPage { Page = page }, PilotJsonContext.Default.ClientPage);
+        var bytes = JsonSerializer.SerializeToUtf8Bytes(new ClientPage { Page = page, ShowsCards = showsCards }, PilotJsonContext.Default.ClientPage);
         await _socket.SendAsync(bytes, WebSocketMessageType.Text, endOfMessage: true, cancellationToken).ConfigureAwait(false);
     }
 

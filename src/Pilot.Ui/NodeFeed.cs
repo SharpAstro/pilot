@@ -9,7 +9,7 @@ internal interface INodeEvents : IAsyncDisposable
     ValueTask<NodeEvent?> ReadAsync(CancellationToken cancellationToken);
 
     /// <summary>Tells the node which page this client shows (<see cref="ClientPages"/>); a stream that cannot say it ignores it.</summary>
-    ValueTask SayPageAsync(string? page, CancellationToken cancellationToken) => ValueTask.CompletedTask;
+    ValueTask SayPageAsync(string? page, CancellationToken cancellationToken, bool? showsCards = null) => ValueTask.CompletedTask;
 }
 
 /// <summary>
@@ -177,6 +177,7 @@ internal sealed class NodeFeed : IAsyncDisposable
     // The page this window shows (ClientPages) and the stream it is said over now, if one is open: the node forgets a page when
     // its stream closes, so every new stream is told it again.
     private string? _page;
+    private bool _showsCards;
     private INodeEvents? _live;
 
     /// <summary>Tells the node which page this window shows, or none with null: now over the open stream, and again on every reconnect.</summary>
@@ -185,15 +186,25 @@ internal sealed class NodeFeed : IAsyncDisposable
         Volatile.Write(ref _page, page);
         if (Volatile.Read(ref _live) is { } live)
         {
-            _ = SayAsync(live, page, _stop.Token);
+            _ = SayAsync(live, page, Volatile.Read(ref _showsCards), _stop.Token);
         }
     }
 
-    private async Task SayAsync(INodeEvents events, string? page, CancellationToken cancellationToken)
+    /// <summary>Tells the node whether this window shows the cards (its For you bar or Notifications page is open), so it skips the normal desktop toasts meanwhile (#1356); said again on every reconnect.</summary>
+    public void SayShowsCards(bool shows)
+    {
+        Volatile.Write(ref _showsCards, shows);
+        if (Volatile.Read(ref _live) is { } live)
+        {
+            _ = SayAsync(live, Volatile.Read(ref _page), shows, _stop.Token);
+        }
+    }
+
+    private async Task SayAsync(INodeEvents events, string? page, bool showsCards, CancellationToken cancellationToken)
     {
         try
         {
-            await events.SayPageAsync(page, cancellationToken).ConfigureAwait(false);
+            await events.SayPageAsync(page, cancellationToken, showsCards).ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is OperationCanceledException or ObjectDisposedException or InvalidOperationException or System.Net.WebSockets.WebSocketException or IOException)
         {
@@ -295,9 +306,9 @@ internal sealed class NodeFeed : IAsyncDisposable
                 await using var events = await _open(since, stream, cancellationToken).ConfigureAwait(false);
                 await AskVersionAsync(cancellationToken).ConfigureAwait(false);
                 Volatile.Write(ref _live, events);
-                if (Volatile.Read(ref _page) is { } shown)
+                if (Volatile.Read(ref _page) is not null || Volatile.Read(ref _showsCards))
                 {
-                    await SayAsync(events, shown, cancellationToken).ConfigureAwait(false);
+                    await SayAsync(events, Volatile.Read(ref _page), Volatile.Read(ref _showsCards), cancellationToken).ConfigureAwait(false);
                 }
                 try
                 {
@@ -529,7 +540,7 @@ internal sealed class NodeFeed : IAsyncDisposable
     {
         public ValueTask<NodeEvent?> ReadAsync(CancellationToken cancellationToken) => stream.ReadAsync(cancellationToken);
 
-        public ValueTask SayPageAsync(string? page, CancellationToken cancellationToken) => stream.SayPageAsync(page, cancellationToken);
+        public ValueTask SayPageAsync(string? page, CancellationToken cancellationToken, bool? showsCards = null) => stream.SayPageAsync(page, cancellationToken, showsCards);
 
         public ValueTask DisposeAsync() => stream.DisposeAsync();
     }

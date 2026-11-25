@@ -9,6 +9,8 @@ internal enum PilotEventKind
     JobEnded,
     FlightLanded,
     DesignPublished,
+    /// <summary>A desktop toast's link named a card this window cannot open (closed, or unknown).</summary>
+    CardLinkMissed,
 }
 
 /// <summary>One thing that happened on a node: a fading toast's words and what a click on it opens.</summary>
