@@ -74,9 +74,6 @@ public sealed class PageViews
 
     private readonly HashSet<object> _cards = new(ReferenceEqualityComparer.Instance);
 
-    /// <summary>Raised, outside the lock, when the clients showing the cards go from none to some (true) or from some to none (false).</summary>
-    public event Action<bool>? CardsChanged;
-
     /// <summary>True while any client says it shows the cards (its For you bar or Notifications page is open): normal desktop toasts wait (#1356).</summary>
     public bool AnyShowsCards
     {
@@ -95,22 +92,9 @@ public sealed class PageViews
     /// </summary>
     public void SayCards(object client, bool shows)
     {
-        bool? changed = null;
         lock (_gate)
         {
-            var before = _cards.Count > 0;
-            if (shows ? !_cards.Add(client) : !_cards.Remove(client))
-            {
-                return;
-            }
-            if ((_cards.Count > 0) != before)
-            {
-                changed = _cards.Count > 0;
-            }
-        }
-        if (changed is { } now)
-        {
-            CardsChanged?.Invoke(now);
+            if (shows) _cards.Add(client); else _cards.Remove(client);
         }
     }
 

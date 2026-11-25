@@ -37,6 +37,9 @@ public sealed class Toaster : IAsyncDisposable, Microsoft.Extensions.Hosting.IHo
     private readonly Dictionary<string, Shown> _shown = new(StringComparer.Ordinal);
     // Cards seen and not toasted (skipped while a client looked, or a tier the setting mutes), by what they said: they never toast later.
     private readonly Dictionary<string, string> _skipped = new(StringComparer.Ordinal);
+    // Tags of cards found open at start (taken as seen, not toasted): their toast, if one is still up from before a restart, goes when they leave.
+    private readonly Dictionary<string, string> _quietTags = new(StringComparer.Ordinal);
+    private IReadOnlyCollection<string> _tags = [];
     private readonly List<(DateTimeOffset At, string Id)> _recent = [];
     private readonly HashSet<string> _burst = new(StringComparer.Ordinal);
     private IDisposable? _subscription;
@@ -60,16 +63,7 @@ public sealed class Toaster : IAsyncDisposable, Microsoft.Extensions.Hosting.IHo
     }
 
     /// <summary>The tags shown now (the set a test reads); a card id maps to its tag, so two cards of one subject show one.</summary>
-    public IReadOnlyCollection<string> Tags
-    {
-        get
-        {
-            lock (_shown)
-            {
-                return [.. _shown.Values.Select(s => s.Tag).Distinct(StringComparer.Ordinal)];
-            }
-        }
-    }
+    public IReadOnlyCollection<string> Tags => Volatile.Read(ref _tags);
 
     /// <summary>Starts listening: the cards open in Ring now are taken as seen (a restart must not toast them again), then every change is toasted.</summary>
     public void Start()
@@ -108,6 +102,25 @@ public sealed class Toaster : IAsyncDisposable, Microsoft.Extensions.Hosting.IHo
         await _sync.WaitAsync(cancel).ConfigureAwait(false);
         try
         {
+            try
+            {
+                await SyncLocked(quiet, cancel).ConfigureAwait(false);
+            }
+            finally
+            {
+                // An immutable snapshot, so a reader never enumerates what the consumer is changing.
+                Volatile.Write(ref _tags, [.. _shown.Values.Select(s => s.Tag).Distinct(StringComparer.Ordinal)]);
+            }
+        }
+        finally
+        {
+            _sync.Release();
+        }
+    }
+
+    private async Task SyncLocked(bool quiet, CancellationToken cancel)
+    {
+        {
             var ring = _state.Cards(openOnly: true).Where(c => c.Bin == CardBin.Ring && c.State == CardState.Open).ToDictionary(c => c.Id, StringComparer.Ordinal);
             await WithdrawGone(ring, cancel).ConfigureAwait(false);
             foreach (var card in ring.Values.OrderBy(c => c.RungAt))
@@ -118,14 +131,11 @@ public sealed class Toaster : IAsyncDisposable, Microsoft.Extensions.Hosting.IHo
                 if (quiet)
                 {
                     _skipped[card.Id] = signature;
+                    _quietTags[card.Id] = ToastXml.TagOf(card.Subject);
                     continue;
                 }
                 await Raise(card, signature, cancel).ConfigureAwait(false);
             }
-        }
-        finally
-        {
-            _sync.Release();
         }
     }
 
@@ -136,6 +146,12 @@ public sealed class Toaster : IAsyncDisposable, Microsoft.Extensions.Hosting.IHo
         foreach (var id in _skipped.Keys.Where(id => !ring.ContainsKey(id)).ToList())
         {
             _skipped.Remove(id);
+        }
+        // A card open when the node started may still have its toast up from before the restart: withdraw it (a missing tag is harmless).
+        foreach (var (id, tag) in _quietTags.Where(p => !ring.ContainsKey(p.Key)).ToList())
+        {
+            _quietTags.Remove(id);
+            if (!_shown.Values.Any(s => !s.InBurst && s.Tag == tag)) await RemoveTag(tag, cancel).ConfigureAwait(false);
         }
         foreach (var (id, shown) in _shown.Where(p => !ring.ContainsKey(p.Key)).ToList())
         {
@@ -157,7 +173,7 @@ public sealed class Toaster : IAsyncDisposable, Microsoft.Extensions.Hosting.IHo
     {
         var tier = ToastTier.Of(card.Kind) ?? ToastTier.Normal;
         var mode = _mode();
-        // A card that was toasted and is raised again is replaced even if the setting or a client now mutes it: only a new toast is held back.
+        // A card muted now (the setting, or a client showing the cards) is not toasted; one toasted before keeps its old toast as it was.
         var muted = mode == "off" || tier == ToastTier.Normal && (mode == "urgent" || _clientShowsCards());
         if (muted)
         {
@@ -165,8 +181,9 @@ public sealed class Toaster : IAsyncDisposable, Microsoft.Extensions.Hosting.IHo
             return;
         }
         _skipped.Remove(card.Id);
+        _quietTags.Remove(card.Id);
 
-        var tag = card.Subject;
+        var tag = ToastXml.TagOf(card.Subject);
         if (tier == ToastTier.Normal)
         {
             var now = _time.GetUtcNow();
@@ -194,12 +211,14 @@ public sealed class Toaster : IAsyncDisposable, Microsoft.Extensions.Hosting.IHo
     {
         foreach (var (_, id) in _recent)
         {
-            if (id == card.Id || !_shown.TryGetValue(id, out var single) || single.InBurst) continue;
+            if (!_shown.TryGetValue(id, out var single) || single.InBurst) continue;
             _shown[id] = single with { InBurst = true };
             _burst.Add(id);
             if (!_shown.Values.Any(s => !s.InBurst && s.Tag == single.Tag)) await RemoveTag(single.Tag, cancel).ConfigureAwait(false);
         }
-        _shown[card.Id] = new Shown(card.Subject, signature, InBurst: true);
+        // The card itself may have a single toast up from its earlier ring: it is replaced by the burst, so that goes too (the loop above did it,
+        // since the card is in _recent). A card not yet in _shown has nothing to withdraw.
+        _shown[card.Id] = new Shown(ToastXml.TagOf(card.Subject), signature, InBurst: true);
         _burst.Add(card.Id);
         await ShowTag(ToastXml.BurstTag, ToastXml.Burst(_burst.Count), cancel).ConfigureAwait(false);
     }

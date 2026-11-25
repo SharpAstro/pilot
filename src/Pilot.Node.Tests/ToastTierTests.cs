@@ -30,9 +30,9 @@ public sealed class ToastTierTests
     }
 
     [Fact]
-    public void BusyProcessIsUrgentBeforeItsCardKindLands()
+    public void BusyProcessIsACatalogRingKindAndUrgent()
     {
-        CardKindCatalog.All.Any(e => e.Kind == "busy-process").ShouldBeFalse("this test is for the time before #1354 lands; drop it when it does");
+        CardKindCatalog.All.Single(e => e.Kind == "busy-process").Bins.Split('|').ShouldContain("Ring");
         ToastTier.Of("busy-process").ShouldBeSameAs(ToastTier.Urgent);
     }
 

@@ -25,6 +25,20 @@ public static class ToastXml
     /// <summary>The toast's dismiss button label.</summary>
     public const string DismissLabel = "Dismiss";
 
+    /// <summary>The longest tag Windows takes (<c>ToastNotification.Tag</c> and <c>Group</c> are 64 characters at most; a longer one throws).</summary>
+    public const int TagLimit = 64;
+
+    /// <summary>
+    /// The toast tag of a card's <paramref name="subject"/>: the subject itself when it fits <see cref="TagLimit"/>, else <c>s:</c> and the first
+    /// 40 hex characters of its SHA-256 (stable, so a show and the later withdraw name the same toast). One function for both.
+    /// </summary>
+    public static string TagOf(string subject)
+    {
+        if (subject.Length <= TagLimit) return subject;
+        var hash = System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(subject));
+        return "s:" + Convert.ToHexStringLower(hash)[..40];
+    }
+
     /// <summary>The link a click on a card's toast opens: <c>pilot://card/&lt;id&gt;</c>.</summary>
     public static string CardLink(string cardId) => $"{Scheme}://card/{Uri.EscapeDataString(cardId)}";
 
@@ -50,6 +64,8 @@ public static class ToastXml
     {
         if (string.IsNullOrWhiteSpace(text)) return string.Empty;
         var flat = string.Join(' ', text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+        // A control character (ESC from terminal output) is not valid in XML 1.0: SecurityElement leaves it and LoadXml then throws.
+        flat = new string([.. flat.Where(c => System.Xml.XmlConvert.IsXmlChar(c) || char.IsSurrogate(c))]);
         if (flat.Length <= limit) return flat;
         var end = limit - 1;
         if (end > 0 && char.IsHighSurrogate(flat[end - 1])) end--;

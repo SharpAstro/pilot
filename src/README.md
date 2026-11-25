@@ -2024,7 +2024,13 @@ toasts within a minute become one "N cards need you" toast (tag `pilot-burst`, r
 toasts are skipped while any client shows the cards (the GUI or TUI says it with its page, as `ClientPage.ShowsCards`, while its For you bar or
 the Notifications page is open; urgent ones toast anyway), and cards already open when the node starts are not toasted again. The `toasts`
 setting is `all` (the default, also when the stored member is null), `urgent` or `off`, in force at once. The Toaster waits on a signal from
-the state's event stream and never loops on the CPU; its tests run on a fake runner and clock.
+the state's event stream and never loops on the CPU; its tests run on a fake runner and clock. A card that was toasted and is muted when raised
+again (the setting, a client showing the cards) keeps its old toast as it was. The tag is the subject when it fits Windows' 64 characters, else
+`s:` and 40 hex characters of its SHA-256 (`ToastXml.TagOf`, the one function for show and withdraw). A toast up from before a node restart is
+withdrawn when its card closes. Card text is never written into the PowerShell script: the tag and the XML go as base64 and are decoded inside
+it (the four curly single quotes are quotes to PowerShell); a script that exits non-zero is logged with its first error line. `IToastRunner` and
+`ISchemeRegistry` are services, and the test harness registers a recording runner and an in-memory registry, so a test node never starts
+PowerShell or writes HKCU. A click on a toast whose card is closed or unknown says so in the window, as a fading notice.
 
 ## Hooks
 

@@ -47,19 +47,39 @@ public sealed class PowerShellToastRunner : IToastRunner
     public static string ShowScript(string tag, string xml) =>
         Prelude
         + "$xml = New-Object Windows.Data.Xml.Dom.XmlDocument\r\n"
-        + $"$xml.LoadXml({Quote(xml)})\r\n"
+        + $"$xml.LoadXml({Decoded(xml)})\r\n"
         + "$toast = New-Object Windows.UI.Notifications.ToastNotification $xml\r\n"
-        + $"$toast.Tag = {Quote(tag)}\r\n"
+        + $"$toast.Tag = {Decoded(tag)}\r\n"
         + $"$toast.Group = {Quote(Group)}\r\n"
         + $"[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier({Quote(Aumid)}).Show($toast)\r\n";
 
     /// <summary>The PowerShell that withdraws the toast of <paramref name="tag"/> (<c>History.Remove</c>); pure, so a test reads it.</summary>
     public static string RemoveScript(string tag) =>
         Prelude
-        + $"[Windows.UI.Notifications.ToastNotificationManager]::History.Remove({Quote(tag)}, {Quote(Group)}, {Quote(Aumid)})\r\n";
+        + $"[Windows.UI.Notifications.ToastNotificationManager]::History.Remove({Decoded(tag)},{Quote(Group)}, {Quote(Aumid)})\r\n";
 
-    /// <summary>A PowerShell single-quoted string literal of <paramref name="text"/> (an apostrophe is doubled; nothing else is special).</summary>
-    public static string Quote(string text) => "'" + text.Replace("'", "''", StringComparison.Ordinal) + "'";
+    /// <summary>
+    /// A PowerShell expression of <paramref name="text"/> that holds no card text in the script: the UTF-8 bytes go as base64 (only
+    /// <c>A-Za-z0-9+/=</c>, nothing to break out of the literal) and are decoded inside the script. Card text is model-written, so it is never
+    /// interpolated: PowerShell reads U+2018, U+2019, U+201A and U+201B as quotes too.
+    /// </summary>
+    public static string Decoded(string text) =>
+        $"[System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('{Convert.ToBase64String(Encoding.UTF8.GetBytes(text))}'))";
+
+    /// <summary>
+    /// A PowerShell single-quoted string literal of <paramref name="text"/>, for the node's own constants only (never card text): each of
+    /// the characters PowerShell takes for a single quote (U+0027, U+2018, U+2019, U+201A, U+201B) is doubled.
+    /// </summary>
+    public static string Quote(string text)
+    {
+        var quoted = new StringBuilder("'");
+        foreach (var c in text)
+        {
+            quoted.Append(c);
+            if (c is '\'' or '‘' or '’' or '‚' or '‛') quoted.Append(c);
+        }
+        return quoted.Append('\'').ToString();
+    }
 
     /// <summary>The <c>-EncodedCommand</c> argument of <paramref name="script"/>: base64 of its UTF-16LE bytes.</summary>
     public static string Encode(string script) => Convert.ToBase64String(Encoding.Unicode.GetBytes(script));
@@ -98,6 +118,12 @@ public sealed class PowerShellToastRunner : IToastRunner
             var error = process.StandardError.ReadToEndAsync(limit.Token);
             await process.WaitForExitAsync(limit.Token).ConfigureAwait(false);
             await Task.WhenAll(output, error).ConfigureAwait(false);
+            // A script that failed (parse error, bad AUMID, tag too long) says so, and the Toaster logs it.
+            if (process.ExitCode != 0)
+            {
+                var first = (await error.ConfigureAwait(false)).Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).FirstOrDefault() ?? "no error text";
+                throw new InvalidOperationException($"the toast script exited {process.ExitCode}: {first}");
+            }
         }
         catch (OperationCanceledException)
         {

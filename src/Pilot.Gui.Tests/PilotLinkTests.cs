@@ -125,5 +125,92 @@ public sealed class PilotLinkTests
         chrome.Notifications.Open.ShouldBeFalse();
     }
 
+    [Fact]
+    public void AClosedOrUnknownCardSaysSoInTheWindowItselfAsAToast()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 520);
+        var chrome = Window(renderer);
+        chrome.Clock = () => Now;
+        var closed = Card("c3", Verbs.FlightTarget("PIL901"), "PIL901 was answered", null, CardState.Closed);
+        var cards = new Pilot.Ui.CardsScreen([], [closed]);
+        var screen = Prs(new PullRequestRow
+        {
+            Repo = "SharpAstro/pilot", Number = 1, Title = "t", Url = "https://github.com/SharpAstro/pilot/pull/1", Author = "ada", Kind = PullRequestKind.Draft,
+            Label = "Draft", UpdatedAt = Now, CreatedAt = Now, Head = "x", Base = "main",
+        });
+        Draw(chrome, cards, screen);
+        chrome.Show(PilotPage.Home);
+        chrome.Notifications.Open = true;
+
+        Pilot.Ui.PilotLink.TryParse(Contract("c3"), out var link).ShouldBeTrue();
+        chrome.OpenCardLink(link).ShouldNotBeNull();
+        chrome.Notifications.Open.ShouldBeFalse("the bar is collapsed so the notice is drawn");
+        Draw(chrome, cards, screen);
+        chrome.Notifications.Animating.ShouldBeTrue("a fading toast is up");
+        var said = chrome.Notifications.History.ShouldHaveSingleItem();
+        said.Title.ShouldBe("That card is closed");
+        said.Text.ShouldContain("c3");
+
+        Pilot.Ui.PilotLink.TryParse(Contract("no-such-card"), out var unknown).ShouldBeTrue();
+        chrome.OpenCardLink(unknown).ShouldNotBeNull();
+        chrome.Notifications.History.Select(n => n.Title).ShouldContain("That card is not here");
+    }
+
+    [Fact]
+    public void OpeningTheForYouBarOrTheNotificationsPageSaysTheCardsAreShownAndClosingSaysNot()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 520);
+        var chrome = Window(renderer);
+        var said = new List<bool>();
+        chrome.Notifications.Open = false;
+        chrome.OnCardsShown = said.Add;
+        said.ShouldBeEmpty("the host says the first value itself; setting the callback calls nothing");
+
+        chrome.Notifications.Open = true;
+        said.ShouldBe([true]);
+        chrome.Notifications.Open = true;
+        said.ShouldBe([true], "an unchanged state calls nothing");
+        chrome.Notifications.Open = false;
+        said.ShouldBe([true, false]);
+
+        chrome.Show(PilotPage.Notifications);
+        said.ShouldBe([true, false, true]);
+        chrome.Show(PilotPage.Home);
+        said.ShouldBe([true, false, true, false]);
+        chrome.ClientShowsCards.ShouldBeFalse();
+    }
+
+    // With PILOT_TEST_CAPTURE set, writes the notice a stale toast's click leaves, at a narrow and a wide window, with a long card id.
+    [Fact]
+    public void CapturesTheNoticeOfAClosedAndAnUnknownCardAtNarrowAndWideWindows()
+    {
+        if (Environment.GetEnvironmentVariable("PILOT_TEST_CAPTURE") is not { Length: > 0 } capture)
+        {
+            return;
+        }
+        var dir = Path.GetDirectoryName(capture) ?? ".";
+        var longId = "c-" + string.Join("-", Enumerable.Repeat("8f3a2b1c9d4e", 5));
+        foreach (var (name, closed) in new[] { ("closed", true), ("unknown", false) })
+        {
+            foreach (var (width, height) in new[] { (520, 520), (1280, 520) })
+            {
+                using var renderer = new RgbaImageRenderer((uint)width, (uint)height);
+                var chrome = Window(renderer);
+                chrome.Clock = () => Now;
+                var cards = new Pilot.Ui.CardsScreen([], closed ? [Card(longId, Verbs.FlightTarget("PIL901"), "PIL901 was answered", null, CardState.Closed)] : []);
+                var screen = Prs(new PullRequestRow
+                {
+                    Repo = "SharpAstro/pilot", Number = 1, Title = "t", Url = "https://github.com/SharpAstro/pilot/pull/1", Author = "ada", Kind = PullRequestKind.Draft,
+                    Label = "Draft", UpdatedAt = Now, CreatedAt = Now, Head = "x", Base = "main",
+                });
+                chrome.Render(new Pilot.Ui.SessionsScreen([], "test", Now), null, cards, null, null, null, screen, new RectF32(0, 0, width, height));
+                Pilot.Ui.PilotLink.TryParse(Contract(longId), out var link).ShouldBeTrue();
+                chrome.OpenCardLink(link).ShouldNotBeNull();
+                chrome.Render(new Pilot.Ui.SessionsScreen([], "test", Now), null, cards, null, null, null, screen, new RectF32(0, 0, width, height));
+                File.WriteAllBytes(Path.Combine(dir, $"card-link-{name}-{width}.png"), SharpAstro.Png.PngWriter.Encode(renderer.Surface.Pixels, width, height));
+            }
+        }
+    }
+
     private static string Contract(string id) => $"pilot://card/{Uri.EscapeDataString(id)}";
 }

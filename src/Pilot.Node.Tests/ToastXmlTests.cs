@@ -115,13 +115,70 @@ public sealed class ToastXmlTests
         var script = PowerShellToastRunner.ShowScript("card:c1", xml);
         script.ShouldContain("Windows.UI.Notifications.ToastNotificationManager");
         script.ShouldContain("Windows.Data.Xml.Dom.XmlDocument");
-        script.ShouldContain("$toast.Tag = 'card:c1'");
+        script.ShouldContain($"$toast.Tag = {PowerShellToastRunner.Decoded("card:c1")}");
         script.ShouldContain("$toast.Group = 'pilot'");
         script.ShouldContain(@"CreateToastNotifier('{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powershell.exe').Show($toast)");
-        script.ShouldContain("it&apos;s");
+        script.ShouldContain(PowerShellToastRunner.Decoded(xml), Case.Sensitive);
         PowerShellToastRunner.Quote("it's").ShouldBe("'it''s'");
-        PowerShellToastRunner.ShowScript("a'b", "<toast/>").ShouldContain("$toast.Tag = 'a''b'");
         script.ShouldNotContain("while");
+    }
+
+    // The four curly quotes PowerShell reads as single quotes, written as escapes so no source line starts with one.
+    private static readonly string[] CurlyQuotes = ["\u2018", "\u2019", "\u201A", "\u201B"];
+
+    [Fact]
+    public void CardTextNeverReachesTheScriptAsText()
+    {
+        foreach (var quote in CurlyQuotes)
+        {
+            var text = $"Don{quote}t'; calc.exe; {quote}'";
+            var xml = ToastXml.ForCard("c1", text, text, ToastTier.Normal);
+            var script = PowerShellToastRunner.ShowScript(text, xml);
+            script.ShouldNotContain(quote, Case.Sensitive, "no card text, so no quote of any kind, is written into the script");
+            script.ShouldNotContain("calc.exe");
+            PowerShellToastRunner.RemoveScript(text).ShouldNotContain(quote);
+            // What the script decodes is exactly the card's own text.
+            PowerShellToastRunner.Decoded(text).ShouldContain(Convert.ToBase64String(Encoding.UTF8.GetBytes(text)));
+        }
+    }
+
+    [Fact]
+    public void QuoteDoublesEveryCharacterPowerShellTakesForASingleQuote()
+    {
+        foreach (var quote in CurlyQuotes.Append("'"))
+            PowerShellToastRunner.Quote($"a{quote}b").ShouldBe($"'a{quote}{quote}b'");
+    }
+
+    [Fact]
+    public void ACurlyQuoteInTheTitleBodyAndTagKeepsTheXmlWellFormed()
+    {
+        foreach (var quote in CurlyQuotes)
+        {
+            var xml = ToastXml.ForCard("c1", $"Don{quote}t", $"it{quote}s", ToastTier.Normal);
+            Parse(xml).Descendants("text").Select(t => t.Value).ShouldBe([$"Don{quote}t", $"it{quote}s"]);
+            ToastXml.TagOf($"flight/a{quote}b").ShouldBe($"flight/a{quote}b");
+        }
+    }
+
+    [Fact]
+    public void AControlCharacterInTheTextIsDroppedSoTheXmlLoads()
+    {
+        var xml = ToastXml.ForCard("c1", "red\u001b[31m alert", "a\u0000b\u0007c", ToastTier.Normal);
+        Parse(xml).Descendants("text").Select(t => t.Value).ShouldBe(["red[31m alert", "abc"]);
+    }
+
+    [Fact]
+    public void ALongSubjectGetsAStableShortTagAndAShortOneKeepsItsOwn()
+    {
+        var repo = @"repo/C:\Users\SebastianGodelet\source\repos\sharpastro\openphd2-multiscope-with-a-long-name-" + new string('x', 40);
+        var tag = ToastXml.TagOf(repo);
+        tag.Length.ShouldBeLessThanOrEqualTo(ToastXml.TagLimit);
+        tag.ShouldStartWith("s:");
+        ToastXml.TagOf(repo).ShouldBe(tag, "the same subject has the same tag, for the show and the withdraw");
+        ToastXml.TagOf(repo + "y").ShouldNotBe(tag);
+        ToastXml.TagOf(new string('a', 100)).Length.ShouldBeLessThanOrEqualTo(ToastXml.TagLimit);
+        ToastXml.TagOf("flight/PIL1356").ShouldBe("flight/PIL1356");
+        ToastXml.TagOf(new string('a', ToastXml.TagLimit)).ShouldBe(new string('a', ToastXml.TagLimit));
     }
 
     [Fact]

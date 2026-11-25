@@ -889,9 +889,17 @@ internal sealed class PilotChrome<TSurface>
             }
             return null;
         }
-        return now.Handled.Any(c => c.Id == id)
+        var closed = now.Handled.Any(c => c.Id == id);
+        var said = closed
             ? $"Card {id} is closed already; nothing is left to do on it."
             : $"This window does not know card {id}; it may be on another node, or older than the cards it holds.";
+        // Said where the person looks, in the window (a line on the console is seen by nobody): a fading toast, which the collapsed bar draws and
+        // the history keeps. A click on a stale toast raised the window, so it must also say why nothing opened.
+        Notifications.Open = false;
+        Notifications.PostEvent(
+            new PilotEvent(PilotEventKind.CardLinkMissed, id, closed ? "That card is closed" : "That card is not here", said, NotificationSeverity.Warn, null),
+            null, Clock?.Invoke() ?? DateTimeOffset.UtcNow);
+        return said;
     }
 
     /// <summary>Whether <see cref="Back"/> has a place to return to.</summary>

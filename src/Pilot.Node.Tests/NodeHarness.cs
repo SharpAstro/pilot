@@ -162,6 +162,9 @@ internal sealed class NodeHarness : IAsyncDisposable
                 {
                     builder.Services.AddSingleton<IStartupFilter>(new OwnerFilter(owner));
                 }
+                // Nor shows a desktop toast or writes the pilot: scheme to HKCU: the toaster runs on a recording runner (#1356).
+                builder.Services.AddSingleton<Pilot.Node.Toasts.IToastRunner>(new RecordingToastRunner());
+                builder.Services.AddSingleton<Pilot.Node.Toasts.ISchemeRegistry>(new MemorySchemeRegistry());
                 builder.Services.AddSingleton<Pilot.Node.Flights.IIdeaMilestoner>(milestoner);
                 builder.Services.AddSingleton<Pilot.Node.Flights.IIssueSplitter>(splitter);
                 builder.Services.AddSingleton(new SessionTrackerOptions(

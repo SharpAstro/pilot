@@ -220,8 +220,6 @@ public sealed class ToasterTests : IAsyncDisposable
     {
         var views = new PageViews();
         var client = new object();
-        var changes = new List<bool>();
-        views.CardsChanged += changes.Add;
         views.Say(client, ClientPages.PullRequests);
         views.AnyShowsCards.ShouldBeFalse();
         views.SayCards(client, true);
@@ -230,6 +228,89 @@ public sealed class ToasterTests : IAsyncDisposable
         views.Count(ClientPages.PullRequests).ShouldBe(1, "saying the cards leaves the page alone");
         views.Forget(client);
         views.AnyShowsCards.ShouldBeFalse();
-        changes.ShouldBe([true, false]);
+    }
+
+    [Fact]
+    public async Task ACardRaisedAgainAsTheFourthNormalRingLeavesNoSingleToastBehind()
+    {
+        var n1 = Ring(Normal, "flight/N1");
+        await _toaster.Sync(cancel: Ct);
+        _time.Advance(TimeSpan.FromMinutes(2));
+        for (var i = 2; i <= 4; i++)
+        {
+            Ring(Normal, $"flight/N{i}");
+            await _toaster.Sync(cancel: Ct);
+        }
+        _runner.Shown.Select(s => s.Tag).ShouldBe(["flight/N1", "flight/N2", "flight/N3", "flight/N4"]);
+
+        _state.RingAgain(n1.Id, "again").ShouldBeTrue();
+        await _toaster.Sync(cancel: Ct);
+        _runner.Shown[^1].Tag.ShouldBe(ToastXml.BurstTag);
+        _runner.Removed.ShouldBe(["flight/N2", "flight/N3", "flight/N4", "flight/N1"], "the card's own earlier single toast goes when it joins the burst");
+
+        _state.CloseCard(n1.Id, "done", "tests").ShouldBeTrue();
+        await _toaster.Sync(cancel: Ct);
+        _runner.Removed.Count(t => t == "flight/N1").ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task AToastUpFromBeforeARestartIsWithdrawnWhenItsCardCloses()
+    {
+        var card = Ring(Urgent, "flight/Q1");
+        await _toaster.Sync(quiet: true, cancel: Ct);
+        _runner.Shown.ShouldBeEmpty();
+
+        _state.CloseCard(card.Id, "done", "tests").ShouldBeTrue();
+        await _toaster.Sync(cancel: Ct);
+        _runner.Removed.ShouldBe(["flight/Q1"]);
+        await _toaster.Sync(cancel: Ct);
+        _runner.Removed.Count.ShouldBe(1, "withdrawn once");
+    }
+
+    [Fact]
+    public async Task ALongSubjectIsShownAndWithdrawnUnderOneShortTag()
+    {
+        var subject = @"repo/C:\Users\SebastianGodelet\source\repos\sharpastro\openphd2-multiscope-with-a-long-name-" + new string('x', 40);
+        var card = Ring(Urgent, subject);
+        await _toaster.Sync(cancel: Ct);
+        var tag = _runner.Shown.Single().Tag;
+        tag.Length.ShouldBeLessThanOrEqualTo(ToastXml.TagLimit);
+        tag.ShouldBe(ToastXml.TagOf(subject));
+        _toaster.Tags.ShouldBe([tag]);
+
+        _state.CloseCard(card.Id, "done", "tests").ShouldBeTrue();
+        await _toaster.Sync(cancel: Ct);
+        _runner.Removed.ShouldBe([tag], "the withdraw names the same tag as the show");
+
+        var hundred = Ring(Urgent, new string('s', 100));
+        await _toaster.Sync(cancel: Ct);
+        _runner.Shown[^1].Tag.Length.ShouldBeLessThanOrEqualTo(ToastXml.TagLimit);
+        _state.CloseCard(hundred.Id, "done", "tests").ShouldBeTrue();
+        await _toaster.Sync(cancel: Ct);
+        _runner.Removed[^1].ShouldBe(_runner.Shown[^1].Tag);
+    }
+
+    [Fact]
+    public async Task AFailingRunnerIsLoggedAndTheNextCardStillToasts()
+    {
+        var runner = new ThrowingRunner();
+        await using var toaster = new Toaster(_state, runner, _time, () => "all", () => false);
+        Ring(Urgent, "flight/F1");
+        Ring(Urgent, "flight/F2");
+        await toaster.Sync(cancel: Ct);
+        runner.Tags.ShouldBe(["flight/F1", "flight/F2"]);
+    }
+
+    private sealed class ThrowingRunner : IToastRunner
+    {
+        public List<string> Tags { get; } = [];
+
+        public Task Show(string tag, string xml, CancellationToken cancel = default)
+        {
+            Tags.Add(tag);
+            throw new InvalidOperationException("the toast script exited 1: boom");
+        }
+
+        public Task Remove(string tag, CancellationToken cancel = default) => Task.CompletedTask;
     }
 }
