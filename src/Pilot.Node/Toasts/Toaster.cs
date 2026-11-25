@@ -83,6 +83,8 @@ public sealed class Toaster : IAsyncDisposable, Microsoft.Extensions.Hosting.IHo
     {
         try
         {
+            // The first sync withdraws a burst toast left from before a restart, off the host's start.
+            await Sync(quiet: false, cancel).ConfigureAwait(false);
             while (await _signal.Reader.WaitToReadAsync(cancel).ConfigureAwait(false))
             {
                 _signal.Reader.TryRead(out _);
@@ -137,7 +139,12 @@ public sealed class Toaster : IAsyncDisposable, Microsoft.Extensions.Hosting.IHo
             }
             await Raise(card, signature, cancel).ConfigureAwait(false);
         }
-        if (quiet) _quietBurst = true;
+        if (quiet)
+        {
+            // The start sync runs inside the host's start: it only notes, and the withdrawal (a real PowerShell process) is the consumer's first sync.
+            _quietBurst = true;
+            return;
+        }
         await WithdrawQuietBurst(cancel).ConfigureAwait(false);
     }
 

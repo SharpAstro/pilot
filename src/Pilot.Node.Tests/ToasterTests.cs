@@ -272,9 +272,34 @@ public sealed class ToasterTests : IAsyncDisposable
     public async Task ABurstToastUpFromBeforeARestartIsWithdrawnAtStartWhenNoCardIsOpen()
     {
         await _toaster.Sync(quiet: true, cancel: Ct);
+        _runner.Removed.ShouldBeEmpty("the start sync only notes: no process runs inside the host's start");
+        await _toaster.Sync(cancel: Ct);
         _runner.Removed.ShouldBe([ToastXml.BurstTag]);
         await _toaster.Sync(cancel: Ct);
         _runner.Removed.Count.ShouldBe(1, "withdrawn once");
+    }
+
+    [Fact]
+    public async Task TheConsumerWithdrawsTheOldBurstAfterStartReturns()
+    {
+        var removed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var runner = new RemovedRunner(removed);
+        await using var toaster = new Toaster(_state, runner, _time, () => "all", () => false);
+        toaster.Start();
+        await removed.Task.WaitAsync(TimeSpan.FromSeconds(10), Ct);
+        runner.Tags.ShouldBe([ToastXml.BurstTag]);
+    }
+
+    private sealed class RemovedRunner(TaskCompletionSource removed) : IToastRunner
+    {
+        public List<string> Tags { get; } = [];
+        public Task Show(string tag, string xml, CancellationToken cancel = default) => Task.CompletedTask;
+        public Task Remove(string tag, CancellationToken cancel = default)
+        {
+            Tags.Add(tag);
+            removed.TrySetResult();
+            return Task.CompletedTask;
+        }
     }
 
     [Fact]
