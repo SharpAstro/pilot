@@ -269,7 +269,7 @@ public sealed class ToasterTests : IAsyncDisposable
     }
 
     [Fact]
-    public async Task ABurstToastUpFromBeforeARestartIsWithdrawnAtStartWhenNoCardIsOpen()
+    public async Task ABurstToastUpFromBeforeARestartIsNotWithdrawnByTheStartSyncButByTheNextWhenNoCardIsOpen()
     {
         await _toaster.Sync(quiet: true, cancel: Ct);
         _runner.Removed.ShouldBeEmpty("the start sync only notes: no process runs inside the host's start");
@@ -285,17 +285,23 @@ public sealed class ToasterTests : IAsyncDisposable
         var removed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var runner = new RemovedRunner(removed);
         await using var toaster = new Toaster(_state, runner, _time, () => "all", () => false);
-        toaster.Start();
+        RemovedRunner.InsideStart = true;
+        try { toaster.Start(); }
+        finally { RemovedRunner.InsideStart = false; }
         await removed.Task.WaitAsync(TimeSpan.FromSeconds(10), Ct);
         runner.Tags.ShouldBe([ToastXml.BurstTag]);
+        runner.RemovedInsideStart.ShouldBeFalse("Start() returns before any withdraw runs; the consumer does it");
     }
 
     private sealed class RemovedRunner(TaskCompletionSource removed) : IToastRunner
     {
+        [ThreadStatic] public static bool InsideStart;
         public List<string> Tags { get; } = [];
+        public bool RemovedInsideStart { get; private set; }
         public Task Show(string tag, string xml, CancellationToken cancel = default) => Task.CompletedTask;
         public Task Remove(string tag, CancellationToken cancel = default)
         {
+            if (InsideStart) RemovedInsideStart = true;
             Tags.Add(tag);
             removed.TrySetResult();
             return Task.CompletedTask;
