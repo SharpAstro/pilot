@@ -298,7 +298,7 @@ public sealed class ToasterTests : IAsyncDisposable
         Ring(Urgent, "flight/F1");
         Ring(Urgent, "flight/F2");
         await toaster.Sync(cancel: Ct);
-        runner.Tags.ShouldBe(["flight/F1", "flight/F2"]);
+        runner.Tags.Order().ShouldBe(["flight/F1", "flight/F2"], "both were tried: the first one failing did not stop the second");
     }
 
     private sealed class ThrowingRunner : IToastRunner

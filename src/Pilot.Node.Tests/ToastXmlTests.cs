@@ -185,7 +185,7 @@ public sealed class ToastXmlTests
     public void TheWithdrawScriptRemovesTheTagFromTheHistory()
     {
         var script = PowerShellToastRunner.RemoveScript("card:c1");
-        script.ShouldContain(@"History.Remove('card:c1', 'pilot', '{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powershell.exe')");
+        script.ShouldContain(@"History.Remove(" + PowerShellToastRunner.Decoded("card:c1") + @", 'pilot', '{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powershell.exe')");
         script.ShouldNotContain("Show(");
     }
 
