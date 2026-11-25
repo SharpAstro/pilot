@@ -159,7 +159,7 @@ public sealed class ChoiceAvailabilityWalkTests : IClassFixture<ChoiceAvailabili
     // or a grant, so VerbPreconditions neither covers nor lists them.
     private static readonly HashSet<string> NotFlightOrLeg =
     [
-        Verbs.Say, Verbs.Tell, Verbs.Set, Verbs.Update, Verbs.NoteIdea, Verbs.AnswerGrant, Verbs.EndPoller, Verbs.EndStray, Verbs.RestartWatchtower,
+        Verbs.Say, Verbs.Tell, Verbs.DoneChecked, Verbs.Set, Verbs.Update, Verbs.NoteIdea, Verbs.AnswerGrant, Verbs.EndPoller, Verbs.EndStray, Verbs.RestartWatchtower,
         Verbs.EndSession, Verbs.Stop, Verbs.CancelJob, Verbs.Dismiss,
     ];
 

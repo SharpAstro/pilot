@@ -28,6 +28,15 @@ public sealed class StaleRefused(NodeState state)
         var prs = new Dictionary<PrRef, string?>();
         foreach (var card in state.Cards(openOnly: true).Where(c => c.Kind == Watchtower.RefusedKind || IsRefusedPress(c)).ToList())
         {
+            if (card.Kind == Watchtower.RefusedKind && await EffectThereAsync(card, cancellationToken) is { } seen)
+            {
+                // The refused command's effect is there, whoever did it (the review-loop card's own button, the person from a terminal): the card
+                // closes with what was seen, and the watchtower that is current is told once, as the checked Done press would have told it.
+                state.CloseCardsAbout(card.Subject, $"{seen}: done another way", card.Kind);
+                closed++;
+                await TellAsync(seen, cancellationToken);
+                continue;
+            }
             var why = card.Kind == Watchtower.RefusedKind ? await NamedGoneAsync(card.Subject, prs, cancellationToken) : await GoneAsync(card.Subject, prs, cancellationToken);
             if (why is null)
             {
@@ -42,6 +51,32 @@ public sealed class StaleRefused(NodeState state)
             _prStates.Remove(gone);
         }
         return closed;
+    }
+
+    /// <summary>Tells the watchtower that is current what the node saw; null tells nobody.</summary>
+    public Func<string, CancellationToken, Task>? Tell { get; init; }
+
+    private RefusedEffects? _effects;
+
+    // What a card's checked Done carries (the refused command's verb and target), looked up in the node's state: the words of what was seen
+    // when the effect is there, else null. A card raised before the checked button has only the old Done and is left to the look as it was.
+    private async Task<string?> EffectThereAsync(CardRow card, CancellationToken cancellationToken)
+    {
+        if (card.Choices.FirstOrDefault(c => c.Verb == Verbs.DoneChecked) is not { } done || RefusedEffects.Decode(done.Args) is not { } command)
+        {
+            return null;
+        }
+        _effects ??= new RefusedEffects(state, CachedPrStateAsync);
+        var seen = await _effects.SeeAsync(command, cancellationToken);
+        return seen.There is true ? seen.Seen : null;
+    }
+
+    private async Task TellAsync(string seen, CancellationToken cancellationToken)
+    {
+        if (Tell is { } tell)
+        {
+            await tell($"A refused pilot command of yours was done another way, and the node saw it: {seen}. Its card is closed; carry on from there (pilot status, pilot cards).", cancellationToken);
+        }
     }
 
     private async Task<string?> GoneAsync(string subject, Dictionary<PrRef, string?> prs, CancellationToken cancellationToken)
@@ -115,28 +150,33 @@ public sealed class StaleRefused(NodeState state)
     // Across looks: a PR's card is looked at every 30 s, and GitHub is asked about it at most once per PrStateFor (R1.5).
     private readonly Dictionary<PrRef, (string? State, DateTimeOffset At)> _prStates = [];
 
+    // GitHub's state of a PR, asked at most once per PrStateFor whoever asks (a PR's card, or a refused merge's effect check).
+    private async Task<string?> CachedPrStateAsync(PrRef pr, CancellationToken cancellationToken)
+    {
+        var now = Time.GetUtcNow();
+        if (_prStates.TryGetValue(pr, out var kept) && (kept.State is "MERGED" or "CLOSED" || now - kept.At < PrStateFor))
+        {
+            return kept.State;
+        }
+        string? said;
+        try
+        {
+            said = await PrState(pr, cancellationToken);
+        }
+        catch (FlightException)
+        {
+            // GitHub not answering is not a reason to close a card: the next look past PrStateFor asks again.
+            said = null;
+        }
+        _prStates[pr] = (said, now);
+        return said;
+    }
+
     private async Task<string?> PrGoneAsync(PrRef pr, Dictionary<PrRef, string?> prs, CancellationToken cancellationToken)
     {
         if (!prs.TryGetValue(pr, out var said))
         {
-            var now = Time.GetUtcNow();
-            if (_prStates.TryGetValue(pr, out var kept) && (kept.State is "MERGED" or "CLOSED" || now - kept.At < PrStateFor))
-            {
-                said = kept.State;
-            }
-            else
-            {
-                try
-                {
-                    said = await PrState(pr, cancellationToken);
-                }
-                catch (FlightException)
-                {
-                    // GitHub not answering is not a reason to close a card: the next look past PrStateFor asks again.
-                    said = null;
-                }
-                _prStates[pr] = (said, now);
-            }
+            said = await CachedPrStateAsync(pr, cancellationToken);
             prs[pr] = said;
         }
         return said switch

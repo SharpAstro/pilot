@@ -102,6 +102,9 @@ public static partial class RefusedCommand
     /// <summary>The commands of a pilot call group's verb that have a row, by path.</summary>
     public static IEnumerable<string> Paths => Table.Select(r => r.Path);
 
+    /// <summary>The CLI path (<c>flight allow-round</c>) of a node verb, or the verb itself when no row has it.</summary>
+    public static string PathOf(string verb) => Table.FirstOrDefault(r => r.Verb == verb)?.Path ?? verb;
+
     // <code>/<leg>, as pilot leg finish PIL1157/job-fails-empty-terms done names it.
     [GeneratedRegex(@"^[A-Za-z]+\d+/[a-z0-9][a-z0-9-]*$")]
     private static partial Regex LegWord();

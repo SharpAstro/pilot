@@ -141,7 +141,7 @@ public sealed partial class WatchtowerChatTests
         refused.Title.ShouldBe("The watchtower could not run pilot flight merge");
         refused.Detail.ShouldNotBeNull().ShouldContain("flight merge PIL1 abc123");
         refused.Choices.Select(c => (c.Label, c.Verb)).ShouldBe(
-            [("Run it: pilot flight merge PIL1", Verbs.Merge), (Watchtower.DoneMyselfLabel, Verbs.Tell)], "a ringing card offers to run the command, then the press that says it was done");
+            [("Run it: pilot flight merge PIL1", Verbs.Merge), (Watchtower.DoneCheckedLabel, Verbs.DoneChecked)], "a ringing card offers to run the command, then the press that says it was done and has the node check it");
 
         // Another flight's refused merge is a card of its own; the person's own no, and a verb's words, ring nothing more.
         process.Emit(ShellCall("m2", "pilot flight merge PIL2 def456"));
@@ -210,7 +210,7 @@ public sealed partial class WatchtowerChatTests
     public async Task ARefusedAllowRoundRingsACardWhoseFirstButtonRunsItAsThePersonAndTheWatchtowerIsToldAfterwards()
     {
         var refused = await RefusedCardAsync(AllowRoundLine);
-        refused.Choices.Select(c => c.Label).ShouldBe(["Run it: pilot flight allow-round PIL1347", Watchtower.DoneMyselfLabel]);
+        refused.Choices.Select(c => c.Label).ShouldBe(["Run it: pilot flight allow-round PIL1347", Watchtower.DoneCheckedLabel]);
         refused.Choices[0].Verb.ShouldBe(Verbs.AllowRound);
         refused.Choices[0].Target.ShouldBe("flight/PIL1347");
         refused.Choices[0].Args.ShouldBe(["Watchtower: one blocking point is left, round 3's other note is not blocking."]);
@@ -257,14 +257,66 @@ public sealed partial class WatchtowerChatTests
         var process = await StreamIdleAsync();
         var joined = await RefusedOnAsync(process, "j1", "pilot flight allow-round PIL1347 one more round && pilot flight merge PIL1347 abc123", 1);
 
-        joined.Choices.Select(c => c.Label).ShouldBe([Watchtower.DoneMyselfLabel]);
+        joined.Choices.Select(c => c.Label).ShouldBe([Watchtower.DoneCheckedLabel]);
         var lines = joined.Detail.ShouldNotBeNull().Split('\n');
         lines.ShouldContain("pilot flight allow-round PIL1347 one more round");
         joined.Detail.ShouldContain("cannot be pressed");
         joined.Detail.ShouldContain("terminal");
 
         var unknown = await RefusedOnAsync(process, "j2", "pilot flight teleport PIL1347", 2);
-        unknown.Choices.Select(c => c.Label).ShouldBe([Watchtower.DoneMyselfLabel]);
+        unknown.Choices.ShouldBeEmpty("a command the node cannot read has no Done: it could not be checked");
         unknown.Detail.ShouldNotBeNull().Split('\n').ShouldContain("pilot flight teleport PIL1347");
+        unknown.Detail.ShouldContain("cannot see pilot flight teleport done");
+    }
+
+    [Fact]
+    public async Task ARefusedSayHasNoDoneButtonAndSaysTheNodeCannotSeeItDone()
+    {
+        var say = await RefusedCardAsync("pilot say hello there");
+
+        say.Choices.ShouldBeEmpty();
+        say.Detail.ShouldNotBeNull().ShouldContain("cannot see");
+        say.Detail.ShouldContain("dismiss");
+    }
+
+    [Fact]
+    public async Task TheCheckedDoneWithTheEffectNotThereLeavesTheCardOpenAndTellsTheWatchtowerNothing()
+    {
+        var refused = await RefusedCardAsync(AllowRoundLine);
+        var done = refused.Choices.Single(c => c.Verb == Verbs.DoneChecked);
+        done.Args.Take(2).ShouldBe([Verbs.AllowRound, "flight/PIL1347"]);
+
+        using var repos = new SeededRepos(Path.Combine(Path.GetTempPath(), "p2c-" + Guid.NewGuid().ToString("N")[..8]));
+        await using var node = await NodeHarness.StartAsync(Ct, git: repos.Git);
+        HeldFlight(node, repos.Seed("plane"));
+        await TowerBusyAsync(node);
+        var card = node.State.RaiseCard(refused.Bin, refused.Kind, refused.Subject, refused.Title, refused.Detail, refused.Choices);
+        var calls = node.Delivery.Calls.Count;
+
+        var result = await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Answer, Target = Verbs.CardTarget(card.Id), Args = [Watchtower.DoneCheckedLabel], Who = "gui" }, Ct);
+
+        result.Response.ShouldNotBeNull().Error.ShouldNotBeNull().ShouldContain("PIL1347's review is still held at its third round");
+        node.State.Cards().Single(c => c.Id == card.Id).State.ShouldBe(CardState.Open);
+        node.Delivery.Calls.Count.ShouldBe(calls, "the watchtower was told nothing");
+    }
+
+    [Fact]
+    public async Task TheCheckedDoneWithTheEffectThereClosesTheCardAndTellsTheWatchtower()
+    {
+        var refused = await RefusedCardAsync(AllowRoundLine);
+        using var repos = new SeededRepos(Path.Combine(Path.GetTempPath(), "p2c-" + Guid.NewGuid().ToString("N")[..8]));
+        await using var node = await NodeHarness.StartAsync(Ct, git: repos.Git);
+        HeldFlight(node, repos.Seed("plane"));
+        await TowerBusyAsync(node);
+        var card = node.State.RaiseCard(refused.Bin, refused.Kind, refused.Subject, refused.Title, refused.Detail, refused.Choices);
+        // The person's allow-round from a terminal lifted the cap (the same record the command writes).
+        node.State.PutFlight(node.State.Flights().Single() with { ReviewRoundsAllowed = 4 });
+        var calls = node.Delivery.Calls.Count;
+
+        var result = await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Answer, Target = Verbs.CardTarget(card.Id), Args = [Watchtower.DoneCheckedLabel], Who = "gui" }, Ct);
+
+        result.Response.ShouldNotBeNull().Error.ShouldBeNull();
+        node.State.Cards().Single(c => c.Id == card.Id).State.ShouldBe(CardState.Closed);
+        node.Delivery.Calls.Count.ShouldBeGreaterThan(calls, "the watchtower is told what was seen");
     }
 }

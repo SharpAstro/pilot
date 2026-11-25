@@ -24,6 +24,15 @@ public static partial class NodeApp
                 {
                     Time = services.GetRequiredService<TimeProvider>(),
                     PrState = async (pr, cancellationToken) => (await services.GetRequiredService<IGitHub>().PullRequestOfAsync(pr.Repo, pr.Number, cancellationToken)).State,
+                    Tell = async (words, cancellationToken) =>
+                    {
+                        // The node's own word to the current watchtower, as its cards and nudges go: not the person's message.
+                        if (services.GetRequiredService<Watchtower>().TellTarget() is ({ } target, _))
+                        {
+                            await services.GetRequiredService<SessionMessenger>().SayAsync(
+                                new CommandRequest { Verb = Verbs.Say, Target = target, Args = [words], Who = "node" }, cancellationToken);
+                        }
+                    },
                     StrayGone = key =>
                     {
                         var state = services.GetRequiredService<NodeState>();

@@ -76,26 +76,30 @@ public sealed partial class Watchtower
         var words = rest.Split((char[])[' ', '\t'], StringSplitOptions.RemoveEmptyEntries);
         var first = name == verb ? 0 : 1;
         var on = words.Length > first && !words[first].StartsWith('-') ? "/" + words[first].Trim('"', '\'') : "";
-        // The Run button runs the refused command as the person's own press (the answer is theirs alone, Standing.IsRefusedRun); the last
-        // button is the person having done it another way. Either tells the watchtower that is current when it is pressed (the card may
-        // wait hours, and the watchtower be replaced meanwhile), which goes on from the result.
-        var done = new CardChoice { Label = DoneMyselfLabel, Verb = Verbs.Tell, Target = Verbs.WatchtowerTarget, Args = [$"The person did it themselves after Claude Code refused your `pilot {name}`: carry on from what it did (pilot status, pilot cards)."] };
+        // The Run button runs the refused command as the person's own press (the answer is theirs alone, Standing.IsRefusedRun). The last
+        // button is the person having done it another way: the node checks the command's effect before it closes the card and tells the
+        // watchtower that is current (the card may wait hours, and the watchtower be replaced meanwhile). A command whose effect the node
+        // cannot read has no such button, since a bare "done" is only a claim.
         var reading = RefusedCommand.Read(command);
+        var checkable = reading.Command is { } first && RefusedEffects.CanCheck(first);
+        var done = checkable
+            ? new CardChoice { Label = DoneCheckedLabel, Verb = Verbs.DoneChecked, Target = Verbs.WatchtowerTarget, Args = RefusedEffects.Encode(reading.Command!) }
+            : null;
         var body = new System.Text.StringBuilder();
-        IReadOnlyList<CardChoice> choices;
+        List<CardChoice> choices = [];
+        var unseen = $"The node cannot see pilot {name} done, so there is no button that says it was: dismiss this card once it is.";
         if (reading.CanPress)
         {
             var run = reading.Command!;
-            choices =
-            [
-                new CardChoice { Label = $"{RunLabelPrefix}pilot {name}{on.Replace('/', ' ')}", Verb = run.Verb, Target = run.Target, Args = run.Args, Why = run.Why },
-                done,
-            ];
-            body.Append($"{WhatToDo}press \"{choices[0].Label}\" to run it as yourself, or run it from a terminal and press \"{DoneMyselfLabel}\". It was refused by {reason}, so nothing it was meant to move moves until then.\n\nIt tried, at {at}:\n{command.Trim()}");
+            choices.Add(new CardChoice { Label = $"{RunLabelPrefix}pilot {name}{on.Replace('/', ' ')}", Verb = run.Verb, Target = run.Target, Args = run.Args, Why = run.Why });
+            var other = done is null ? $"run it from a terminal. {unseen}" : $"run it from a terminal and press \"{DoneCheckedLabel}\" (the node checks it is done before it closes this card).";
+            body.Append($"{WhatToDo}press \"{choices[0].Label}\" to run it as yourself, or {other} It was refused by {reason}, so nothing it was meant to move moves until then.
+
+It tried, at {at}:
+{command.Trim()}");
         }
         else
         {
-            choices = [done];
             // The command as written, up to its first shell operator, on a line of its own so it can be selected and copied whole.
             var restGroup = call.Groups["rest"];
             var shown = command[call.Index..(restGroup.Index + rest.Length)].Trim();
@@ -105,11 +109,22 @@ public sealed partial class Watchtower
                 PressBlock.NotANodeVerb => $"the node has no button for it ({reading.Detail})",
                 _ => $"the node cannot read it back into a command ({reading.Detail})",
             };
-            body.Append($"{WhatToDo}it cannot be pressed from here: {why}. Run it from a terminal, then press \"{DoneMyselfLabel}\". It was refused by {reason}, so nothing it was meant to move moves until then.\n\nThe command, at {at}:\n{shown}");
+            var then = done is null ? $"Run it from a terminal. {unseen}" : $"Run it from a terminal, then press \"{DoneCheckedLabel}\" (the node checks the first command is done before it closes this card).";
+            body.Append($"{WhatToDo}it cannot be pressed from here: {why}. {then} It was refused by {reason}, so nothing it was meant to move moves until then.
+
+The command, at {at}:
+{shown}");
             if (command.Trim() != shown)
             {
-                body.Append($"\n\nThe whole line it tried:\n{command.Trim()}");
+                body.Append($"
+
+The whole line it tried:
+{command.Trim()}");
             }
+        }
+        if (done is not null)
+        {
+            choices.Add(done);
         }
         // The title is the command, short; what refused it is in the detail.
         state.RaiseCard(CardBin.Ring, RefusedKind, $"{Verbs.WatchtowerTarget}/refused/{name.Replace(' ', '-')}{on}",
@@ -119,8 +134,8 @@ public sealed partial class Watchtower
         LogStream($"the watchtower's pilot {name} was refused ({reason}): a card rings");
     }
 
-    /// <summary>The button of a refused command's card: the person did it, and the watchtower is told to go on.</summary>
-    public const string DoneMyselfLabel = "Done: tell the watchtower";
+    /// <summary>The button of a refused command's card whose effect the node can see: the person did it another way, the node checks, and only then the card closes and the watchtower is told to go on.</summary>
+    public const string DoneCheckedLabel = "Done another way: check it";
 
     /// <summary>What the label of a refused command's Run button starts with: the button runs the command as the person's own press.</summary>
     public const string RunLabelPrefix = "Run it: ";
