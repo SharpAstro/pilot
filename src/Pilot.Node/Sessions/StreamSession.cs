@@ -916,13 +916,24 @@ public sealed class StreamSession : IAsyncDisposable
                 };
                 string? Word(string key) => input.TryGetProperty(key, out var v) && string.Join(' ', Words(v)) is { Length: > 0 } words ? words : null;
                 string[] given = Word("card") is { } card ? [card, .. Word("choice") is { } choice ? [choice] : Array.Empty<string>()]
-                    : [.. input.EnumerateObject().Where(p => !McpOptions.Contains(p.Name)).SelectMany(p => Words(p.Value))];
-                yield return (id, string.Join(' ', ["pilot", .. path, .. given]));
+                    : [.. input.EnumerateObject().Where(p => !McpOptions.Contains(p.Name) && p.Name != "leg").SelectMany(p => Words(p.Value))];
+                // The leg is an option of the CLI (--leg), and the why stays at the end as --why with its words quoted, so a refused call's
+                // line carries what RefusedCommand reads back (pilot #1353). Watchtower.Refused reads the line up to its first option.
+                string[] options = [.. Word("leg") is { } leg ? ["--leg", leg] : Array.Empty<string>(), .. Word("why") is { } why ? ["--why", QuoteWhy(why)] : Array.Empty<string>()];
+                yield return (id, string.Join(' ', ["pilot", .. path, .. given, .. options]));
             }
         }
     }
 
     private const string PilotMcpTool = "mcp__pilot__";
+
+    // The words in the quote the line's reader (Watchtower.OwnWords, RefusedCommand) keeps whole: one line, in the quote the text does not hold.
+    // A text holding both has its double quotes made single, as the line has no escape.
+    private static string QuoteWhy(string why)
+    {
+        why = why.ReplaceLineEndings(" ").Trim();
+        return why.Contains('"') && !why.Contains('\'') ? $"'{why}'" : $"\"{why.Replace('"', '\'')}\"";
+    }
 
     // The options pilot's MCP tools take beside their arguments, which name no target and are left out of the line.
     private static readonly HashSet<string> McpOptions = new(StringComparer.Ordinal) { "why", "words", "node", "acting-on", "output-format", "detail" };

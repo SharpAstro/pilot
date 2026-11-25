@@ -33,7 +33,14 @@ public sealed class StaleRefusedCardTests
             return Task.FromResult(_prState);
         },
         StrayGone = _ => _strayGone,
+        Tell = (words, _) =>
+        {
+            _told.Add(words);
+            return Task.CompletedTask;
+        },
     };
+
+    private readonly List<string> _told = [];
 
     private CardRow Refused(string kind, string subject) =>
         _state.RaiseCard(CardBin.Ring, kind, subject, Watchtower.RefusedPrefix + "something", "What to do: press it yourself.");
@@ -198,5 +205,54 @@ public sealed class StaleRefusedCardTests
         var press = new NodePress(_state, (_, _) => throw new InvalidOperationException("nothing is pressed"), new ManualTime(Began)) { Stale = Stale() };
         (await press.PressAsync(CancellationToken.None)).ShouldBe(0);
         StateOf(card).ShouldBe(CardState.Closed);
+    }
+
+    private CardRow RefusedAllowRound(string code, bool checkedDone)
+    {
+        var command = new PressedCommand(Verbs.AllowRound, Verbs.FlightTarget(code), ["why"], null);
+        CardChoice done = checkedDone
+            ? new() { Label = Watchtower.DoneCheckedLabel, Verb = Verbs.DoneChecked, Target = Verbs.WatchtowerTarget, Args = RefusedEffects.Encode(command) }
+            : new() { Label = "Done: tell the watchtower", Verb = Verbs.Tell, Target = Verbs.WatchtowerTarget, Args = ["done"] };
+        return _state.RaiseCard(CardBin.Ring, Watchtower.RefusedKind, $"{Verbs.WatchtowerTarget}/refused/flight-allow-round/{code}", "The watchtower could not run pilot flight allow-round", null, [done]);
+    }
+
+    private void HeldAt(string code, int allowed)
+    {
+        _state.PutFlight(new FlightRow
+        {
+            Code = code, Repo = "pilot", RepoPath = @"C:", Issue = 1, Branch = "flight/" + code.ToLowerInvariant(), Worktree = @"C:", Base = "main", State = FlightState.Flying, CreatedAt = Began,
+            Review = new ReviewRow { State = ReviewState.Changes, Reviewer = "r", StartedAt = Began, FinishedAt = Began },
+            ReviewRounds = [.. Enumerable.Range(1, 3).Select(n => new ReviewRound { Round = n, Verdict = ReviewState.Changes, Findings = "f" })],
+            ReviewRoundsAllowed = allowed,
+        });
+    }
+
+    [Fact]
+    public async Task ARefusedAllowRoundClosesAtTheNextLookOnceTheCapWasLiftedByAnyoneAndTheWatchtowerIsToldOnce()
+    {
+        HeldAt("PIL1347", 0);
+        var card = RefusedAllowRound("PIL1347", checkedDone: true);
+        var stale = Stale();
+        (await stale.CloseAsync(CancellationToken.None)).ShouldBe(0);
+        StateOf(card).ShouldBe(CardState.Open);
+        _told.ShouldBeEmpty();
+
+        // The person's allow-round from a terminal, or the review-loop card's Allow one more round: the same record.
+        HeldAt("PIL1347", 4);
+        (await stale.CloseAsync(CancellationToken.None)).ShouldBe(1);
+        StateOf(card).ShouldBe(CardState.Closed);
+        _state.Cards().Single(c => c.Id == card.Id).Outcome.ShouldNotBeNull().ShouldContain("no longer held");
+        (await stale.CloseAsync(CancellationToken.None)).ShouldBe(0);
+        _told.Count.ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task ACardRaisedBeforeTheCheckedButtonWithOnlyTheOldDoneIsLeftToTheLookAsItWas()
+    {
+        HeldAt("PIL1347", 4);
+        var card = RefusedAllowRound("PIL1347", checkedDone: false);
+        (await Stale().CloseAsync(CancellationToken.None)).ShouldBe(0);
+        StateOf(card).ShouldBe(CardState.Open);
+        _told.ShouldBeEmpty();
     }
 }
