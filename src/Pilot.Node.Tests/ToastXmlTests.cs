@@ -118,7 +118,9 @@ public sealed class ToastXmlTests
         script.ShouldContain("$toast.Tag = 'card:c1'");
         script.ShouldContain("$toast.Group = 'pilot'");
         script.ShouldContain(@"CreateToastNotifier('{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powershell.exe').Show($toast)");
-        script.ShouldContain("it''s");
+        script.ShouldContain("it&apos;s");
+        PowerShellToastRunner.Quote("it's").ShouldBe("'it''s'");
+        PowerShellToastRunner.ShowScript("a'b", "<toast/>").ShouldContain("$toast.Tag = 'a''b'");
         script.ShouldNotContain("while");
     }
 
