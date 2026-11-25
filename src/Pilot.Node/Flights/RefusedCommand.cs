@@ -71,12 +71,12 @@ public static partial class RefusedCommand
 
     private static readonly Row[] Table =
     [
-        new("flight allow-round", Verbs.AllowRound, Target.Flight, 0, int.MaxValue, WhyGoes.Args, None, None, Words, ["flight", "allow-round", "PIL1", "one more round is worth it"]),
+        new("flight allow-round", Verbs.AllowRound, Target.Flight, 0, int.MaxValue, WhyGoes.Args, None, None, (w, _) => w, ["flight", "allow-round", "PIL1", "one more round is worth it"]),
         new("flight merge", Verbs.Merge, Target.Flight, 1, 1, WhyGoes.Why, ["--squash", "--rebase", "--merge"], ["--method"], MergeArgs, ["flight", "merge", "PIL1", "abc123", "--squash", "--why", "job j9 is green"]),
         new("flight land", Verbs.Land, Target.Flight, 0, 0, WhyGoes.Why, None, None, (_, _) => [], ["flight", "land", "PIL1", "--why", "merged by hand"]),
-        new("flight clear", Verbs.Clear, Target.Flight, 0, int.MaxValue, WhyGoes.Args, None, None, Words, ["flight", "clear", "PIL1", "the notes are minor"]),
-        new("flight ground", Verbs.Ground, Target.Flight, 1, int.MaxValue, WhyGoes.Args, None, None, Words, ["flight", "ground", "PIL1", "the owner asked for a hold"]),
-        new("flight unground", Verbs.Unground, Target.Flight, 0, int.MaxValue, WhyGoes.Args, None, None, Words, ["flight", "unground", "PIL1", "the hold is released"]),
+        new("flight clear", Verbs.Clear, Target.Flight, 0, int.MaxValue, WhyGoes.Args, None, None, (w, _) => w, ["flight", "clear", "PIL1", "the notes are minor"]),
+        new("flight ground", Verbs.Ground, Target.Flight, 1, int.MaxValue, WhyGoes.Args, None, None, (w, _) => w, ["flight", "ground", "PIL1", "the owner asked for a hold"]),
+        new("flight unground", Verbs.Unground, Target.Flight, 0, int.MaxValue, WhyGoes.Args, None, None, (w, _) => w, ["flight", "unground", "PIL1", "the hold is released"]),
         new("flight connect", Verbs.Connect, Target.Flight, 1, 1, WhyGoes.Nowhere, None, None, (w, _) => w, ["flight", "connect", "PIL1", "PIL2"]),
         new("flight disconnect", Verbs.Disconnect, Target.Flight, 1, 1, WhyGoes.Why, [Verbs.AnywayFlag], None, (w, o) => [.. w, .. o.ContainsKey(Verbs.AnywayFlag) ? [Verbs.AnywayFlag] : Array.Empty<string>()], ["flight", "disconnect", "PIL1", "PIL2", Verbs.AnywayFlag, "--why", "the owner chose it"]),
         new("flight ci-budget", Verbs.CiBudget, Target.Flight, 1, 1, WhyGoes.Why, None, None, (w, _) => w, ["flight", "ci-budget", "PIL1", Verbs.CiContinue, "--why", "the budget is fine"]),
