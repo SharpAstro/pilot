@@ -101,6 +101,9 @@ public static partial class NodeApp
                 services.GetRequiredService<NodeState>(), new Pilot.Node.Toasts.PowerShellToastRunner(), services.GetRequiredService<TimeProvider>(),
                 () => services.GetRequiredService<RoleModels>().Toasts, () => services.GetRequiredService<PageViews>().AnyShowsCards,
                 services.GetRequiredService<ILoggerFactory>().CreateLogger<Pilot.Node.Toasts.Toaster>()));
+            // The pilot: scheme a toast's click opens, per user (HKCU), when the GUI sits beside this node; a test host has none beside it, so writes nothing.
+            builder.Services.AddHostedService(services => new Pilot.Node.Toasts.SchemeRegistrar(new Pilot.Node.Toasts.UserSchemeRegistry(),
+                Environment.ProcessPath ?? "pilot-node", File.Exists, services.GetRequiredService<ILoggerFactory>().CreateLogger<Pilot.Node.Toasts.SchemeRegistrar>()));
         }
     }
 

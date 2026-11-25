@@ -854,7 +854,7 @@ internal sealed class PilotChrome<TSurface>
     /// <summary>
     /// Opens what <paramref name="card"/> is about, the way the card's own title does: a card about an open PR (<see cref="PullRequestLinks"/>)
     /// opens the Pull requests page on its row. The one entry for anything that brings a card to the person from outside the panel, a
-    /// desktop notification's click among them (v2 raises none yet: the node's rings reach the person through the watchtower's push). False
+    /// desktop toast's click among them (the node raises one per Ring card, #1356; <see cref="OpenCardLink"/> is its entry, by id). False
     /// for a card that is about no PR, which the caller opens by its own link.
     /// </summary>
     public bool OpenCard(CardRow card)
@@ -865,6 +865,33 @@ internal sealed class PilotChrome<TSurface>
         }
         OpenPullRequest(pr.Repo, pr.Number);
         return true;
+    }
+
+    /// <summary>
+    /// Opens what a toast's <see cref="PilotLink"/> names: a PR card on its Pull requests row, any other open card in the For you bar (lit by its
+    /// flight), the bare cards link the bar alone. Null when it opened; otherwise the sentence to say, for a card that is closed or that this
+    /// window does not know.
+    /// </summary>
+    public string? OpenCardLink(PilotLink link)
+    {
+        if (link.CardId is not { } id)
+        {
+            Notifications.Open = true;
+            return null;
+        }
+        var now = _cardsNow;
+        if (now.Open.FirstOrDefault(c => c.Id == id) is { } card)
+        {
+            if (!OpenCard(card))
+            {
+                Notifications.Open = true;
+                Cards.Focus = Verbs.FlightCodeOf(card.Subject);
+            }
+            return null;
+        }
+        return now.Handled.Any(c => c.Id == id)
+            ? $"Card {id} is closed already; nothing is left to do on it."
+            : $"This window does not know card {id}; it may be on another node, or older than the cards it holds.";
     }
 
     /// <summary>Whether <see cref="Back"/> has a place to return to.</summary>
