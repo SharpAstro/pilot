@@ -166,7 +166,9 @@ public sealed class RefusedEffectTests
     {
         var command = new PressedCommand(Verbs.Merge, "flight/PIL1", ["abc", "squash"], "why");
         var decoded = RefusedEffects.Decode(RefusedEffects.Encode(command)).ShouldNotBeNull();
-        (decoded.Verb, decoded.Target, decoded.Args).ShouldBe((command.Verb, command.Target, command.Args));
+        decoded.Verb.ShouldBe(command.Verb);
+        decoded.Target.ShouldBe(command.Target);
+        decoded.Args.ShouldBe(command.Args);
         RefusedEffects.Decode(["only-one"]).ShouldBeNull();
     }
 }
