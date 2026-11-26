@@ -1,0 +1,79 @@
+{
+  "id": "settings",
+  "title": "Buddy settings",
+  "root": {
+    "kind": "dock",
+    "background": "#1f2a36",
+    "padding": 24,
+    "children": [
+      {
+        "kind": "dock", "side": "bottom", "size": 180,
+        "children": [
+          {
+            "kind": "vstack", "side": "right", "size": 200,
+            "children": [
+              { "kind": "spacer", "height": "star" },
+              { "kind": "overlay", "width": 200, "height": 160, "action": "goto:home", "children": [
+                { "kind": "overlay", "children": [
+                  {"kind":"vstack","children":[{"kind":"box","color":"#00000000","width":1,"height":14},{"kind":"hstack","children":[{"kind":"box","color":"#00000000","width":44,"height":1},{"kind":"box","background":"#a7adb6","width":40,"height":40,"borderRadius":8,"border":"#1b1b1f","borderWidth":4},{"kind":"box","color":"#00000000","width":32,"height":1},{"kind":"box","background":"#a7adb6","width":40,"height":40,"borderRadius":8,"border":"#1b1b1f","borderWidth":4}]}]},
+                  { "kind": "overlay", "children": [
+                  {"kind":"vstack","children":[{"kind":"box","color":"#00000000","width":1,"height":24},{"kind":"hstack","children":[{"kind":"box","color":"#00000000","width":56,"height":1},{"kind":"box","background":"#f29bab","width":16,"height":16,"borderRadius":5},{"kind":"box","color":"#00000000","width":56,"height":1},{"kind":"box","background":"#f29bab","width":16,"height":16,"borderRadius":5}]}]},
+                  { "kind": "overlay", "children": [
+                  {"kind":"vstack","children":[{"kind":"box","color":"#00000000","width":1,"height":70},{"kind":"hstack","children":[{"kind":"box","color":"#00000000","width":22,"height":1},{"kind":"box","background":"#a7adb6","width":160,"height":82,"borderRadius":30,"border":"#1b1b1f","borderWidth":4}]}]},
+                  { "kind": "overlay", "children": [
+                  {"kind":"vstack","children":[{"kind":"box","color":"#00000000","width":1,"height":30},{"kind":"hstack","children":[{"kind":"box","color":"#00000000","width":34,"height":1},{"kind":"box","background":"#a7adb6","width":136,"height":84,"borderRadius":28,"border":"#1b1b1f","borderWidth":4}]}]},
+                  { "kind": "overlay", "children": [
+                  {"kind":"vstack","children":[{"kind":"box","color":"#00000000","width":1,"height":36},{"kind":"hstack","children":[{"kind":"box","color":"#00000000","width":86,"height":1},{"kind":"box","background":"#7d838c","width":8,"height":18,"borderRadius":4},{"kind":"box","color":"#00000000","width":4,"height":1},{"kind":"box","background":"#7d838c","width":8,"height":18,"borderRadius":4},{"kind":"box","color":"#00000000","width":4,"height":1},{"kind":"box","background":"#7d838c","width":8,"height":18,"borderRadius":4}]}]},
+                  { "kind": "overlay", "children": [
+                  {"kind":"vstack","children":[{"kind":"box","color":"#00000000","width":1,"height":90},{"kind":"hstack","children":[{"kind":"box","color":"#00000000","width":10,"height":1},{"kind":"box","background":"#1b1b1f","width":30,"height":3,"borderRadius":1},{"kind":"box","color":"#00000000","width":124,"height":1},{"kind":"box","background":"#1b1b1f","width":30,"height":3,"borderRadius":1}]}]},
+                  {"kind":"vstack","children":[{"kind":"box","color":"#00000000","width":1,"height":136},{"kind":"hstack","children":[{"kind":"box","color":"#00000000","width":58,"height":1},{"kind":"box","background":"#ffffff","width":32,"height":20,"borderRadius":10,"border":"#1b1b1f","borderWidth":4},{"kind":"box","color":"#00000000","width":24,"height":1},{"kind":"box","background":"#ffffff","width":32,"height":20,"borderRadius":10,"border":"#1b1b1f","borderWidth":4},{"kind":"box","color":"#00000000","width":4,"height":1},{"kind":"box","background":"#7d838c","width":44,"height":20,"borderRadius":10,"border":"#1b1b1f","borderWidth":4}]}]}
+                  ] } ] } ] } ] } ] }
+                ] },
+                { "kind": "overlay", "children": [
+                  {"kind":"vstack","children":[{"kind":"box","color":"#00000000","width":1,"height":72},{"kind":"hstack","children":[{"kind":"box","color":"#00000000","width":62,"height":1},{"kind":"box","background":"#1b1b1f","width":30,"height":5,"borderRadius":3},{"kind":"box","color":"#00000000","width":22,"height":1},{"kind":"box","background":"#1b1b1f","width":30,"height":5,"borderRadius":3}]}]},
+                  { "kind": "overlay", "children": [
+                  {"kind":"vstack","children":[{"kind":"box","color":"#00000000","width":1,"height":90},{"kind":"hstack","children":[{"kind":"box","color":"#00000000","width":96,"height":1},{"kind":"box","background":"#e86f86","width":12,"height":8,"borderRadius":4}]}]},
+                  {"kind":"vstack","children":[{"kind":"box","color":"#00000000","width":1,"height":102},{"kind":"hstack","children":[{"kind":"box","color":"#00000000","width":90,"height":1},{"kind":"box","background":"#1b1b1f","width":24,"height":4,"borderRadius":2}]}]}
+                  ] }
+                ] }
+              ] },
+              { "kind": "box", "background": "#7a6450", "width": 190, "height": 10, "borderRadius": 5, "border": "#1b1b1f", "borderWidth": 3 }
+            ]
+          },
+          { "kind": "fill" }
+        ]
+      },
+      {
+        "kind": "dock",
+        "children": [
+          {
+            "kind": "vstack", "side": "right", "size": 340,
+            "children": [
+              { "kind": "spacer", "height": "star" },
+              {
+                "kind": "vstack", "gap": 10, "padding": 14, "background": "PanelBg", "border": "Separator", "borderWidth": 1, "borderRadius": 12,
+                "children": [
+                  { "kind": "text", "text": "Grump", "fontSize": 16, "color": "HeaderText" },
+                  { "kind": "dropdown", "label": "Watch", "bind": "source", "options": ["Watchtower (every node)", "This node only"], "width": 300 },
+                  { "kind": "text", "text": "Wake up for", "color": "DimText" },
+                  { "kind": "checkbox", "bind": "wakeAsk", "label": "A session asks me something" },
+                  { "kind": "checkbox", "bind": "wakeMerged", "label": "A PR merged or a flight landed" },
+                  { "kind": "checkbox", "bind": "wakeFailed", "label": "CI failed or a session got stuck" },
+                  { "kind": "text", "text": "Sit in corner", "color": "DimText" },
+                  { "kind": "buttonGroup", "bind": "corner", "options": ["Bottom right", "Bottom left", "Top right"], "width": 300 },
+                  { "kind": "checkbox", "bind": "clickThrough", "label": "Clicks pass through while asleep" },
+                  { "kind": "dropdown", "label": "Snooze", "bind": "snooze", "options": ["Off", "1 hour", "Until tomorrow"], "width": 300 },
+                  { "kind": "hstack", "gap": 24, "children": [
+                    { "kind": "text", "text": "Done", "color": "Accent", "action": "goto:home" },
+                    { "kind": "text", "text": "Other cats", "color": "Accent", "action": "goto:cats" }
+                  ] }
+                ]
+              }
+            ]
+          },
+          { "kind": "fill" }
+        ]
+      }
+    ]
+  }
+}
