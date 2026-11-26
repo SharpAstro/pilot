@@ -71,6 +71,48 @@ public sealed class SessionMcpConfigTests : IDisposable
     }
 
     [Fact]
+    public void TheWatchtowersConfigHoldsTheBuddyServerInAFileOfItsOwn()
+    {
+        var repo = Repo(null, null);
+        var data = Path.Combine(_root, "data");
+        var worker = SessionMcpConfig.Ensure(data, "/opt/pilot", null, repo);
+        var watchtower = SessionMcpConfig.Ensure(data, "/opt/pilot", null, repo, buddyExe: "/opt/pilot-buddy");
+
+        watchtower.ShouldNotBe(worker);
+        ServerNames(worker).ShouldBe(["pilot"]);
+        ServerNames(watchtower).ShouldBe(["pilot", "buddy"]);
+        var buddy = JsonNode.Parse(File.ReadAllText(watchtower))!["mcpServers"]!["buddy"]!;
+        buddy["command"]!.GetValue<string>().ShouldBe("/opt/pilot-buddy");
+        buddy["args"]!.AsArray().Select(a => a!.GetValue<string>()).ShouldBe(["mcp"]);
+    }
+
+    [Fact]
+    public void TheBuddyIsFoundOnlyWhenItsBinaryIsBesideTheNode()
+    {
+        var folder = Directory.CreateDirectory(Path.Combine(_root, "bin")).FullName;
+        SessionMcpConfig.BuddyBeside(folder).ShouldBeNull();
+
+        var exe = Path.Combine(folder, OperatingSystem.IsWindows() ? "pilot-buddy.exe" : "pilot-buddy");
+        File.WriteAllText(exe, "");
+
+        SessionMcpConfig.BuddyBeside(folder).ShouldBe(exe);
+    }
+
+    [Fact]
+    public void AWorkersStartNeverGetsTheBuddyAndAWatchtowerStartGetsNoneWithTheBinaryAbsent()
+    {
+        var repo = Repo("# PILOT.md\n", null);
+        var launcher = new ClaudeWorkerLauncher(new ClaudeTrust(Path.Combine(_root, "claude.json")), options: new NodeOptions("/run/node.sock", Path.Combine(_root, "data")));
+
+        var worker = launcher.WithMcp(new WorkerStart("de1-pil1-worker", repo, "pil1", "b", "sonnet", "low"));
+        var watchtower = launcher.WithMcp(new WorkerStart("de1-watchtower", repo, null, "b", "sonnet", "low", Reason: SessionStartReasons.WatchtowerStart));
+
+        ServerNames(worker.McpConfig!).ShouldBe(["pilot"]);
+        // No pilot-buddy beside the test host, so the watchtower's config leaves the server out.
+        ServerNames(watchtower.McpConfig!).ShouldBe(["pilot"]);
+    }
+
+    [Fact]
     public void TheFileIsRewrittenOnlyWhenItsContentsChange()
     {
         var repo = Repo(null, null);

@@ -26,6 +26,19 @@ public static partial class SessionMcpConfig
 {
     public const string ServerName = "pilot";
 
+    /// <summary>The name of the desktop cat's server (<c>pilot-buddy mcp</c>, #1367), given to the watchtower session only, in a file of its own so a worker's config never gains it.</summary>
+    public const string BuddyServerName = "buddy";
+
+    /// <summary>
+    /// The <c>pilot-buddy</c> binary beside <paramref name="nodeFolder"/> (the folder the node runs from), or null when it is absent: a node
+    /// with no buddy installed leaves the server out rather than naming a binary claude cannot start.
+    /// </summary>
+    public static string? BuddyBeside(string nodeFolder)
+    {
+        var exe = Path.Combine(nodeFolder, OperatingSystem.IsWindows() ? "pilot-buddy.exe" : "pilot-buddy");
+        return File.Exists(exe) ? exe : null;
+    }
+
     public const string Heading = "MCP servers for legs";
 
     [GeneratedRegex(@"^#{1,6}\s*" + Heading + @"\s*$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
@@ -72,7 +85,7 @@ public static partial class SessionMcpConfig
     }
 
     /// <summary>The config's text: pilot's server, then the declared extras the repo's <c>.mcp.json</c> defines.</summary>
-    public static string Build(string pilotExe, string? socket, string repoPath)
+    public static string Build(string pilotExe, string? socket, string repoPath, string? buddyExe = null)
     {
         var servers = new JsonObject
         {
@@ -82,6 +95,10 @@ public static partial class SessionMcpConfig
                 ["args"] = new JsonArray([.. (socket is null ? [] : new[] { "--node-socket", socket }).Append("mcp").Select(a => (JsonNode)JsonValue.Create(a))]),
             },
         };
+        if (buddyExe is { Length: > 0 })
+        {
+            servers[BuddyServerName] = new JsonObject { ["command"] = buddyExe, ["args"] = new JsonArray("mcp") };
+        }
         var declared = Declared(repoPath);
         if (declared.Count > 0)
         {
@@ -111,12 +128,14 @@ public static partial class SessionMcpConfig
     /// <c>mcp.json</c>, or <c>mcp-&lt;repo&gt;.json</c> when the repo declares extras) and returns its path. An unchanged
     /// file is left as it is; a file that cannot be written is still named, so claude says why.
     /// </summary>
-    public static string Ensure(string folder, string pilotExe, string? socket, string repoPath)
+    public static string Ensure(string folder, string pilotExe, string? socket, string repoPath, string? buddyExe = null)
     {
-        var text = Build(pilotExe, socket, repoPath);
+        var text = Build(pilotExe, socket, repoPath, buddyExe);
         var extras = Declared(repoPath).Count > 0;
         var repo = new string([.. Path.GetFileName(repoPath.TrimEnd('/', '\\')).Select(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_' ? c : '-')]);
-        var path = Path.Combine(folder, extras && repo.Length > 0 ? $"mcp-{repo}.json" : "mcp.json");
+        var name = extras && repo.Length > 0 ? $"mcp-{repo}" : "mcp";
+        // The watchtower's file (with the buddy) is its own, so it never overwrites the file the workers load.
+        var path = Path.Combine(folder, buddyExe is { Length: > 0 } ? $"{name}-buddy.json" : $"{name}.json");
         try
         {
             Directory.CreateDirectory(folder);
