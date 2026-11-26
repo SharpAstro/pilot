@@ -50,7 +50,7 @@ public sealed class BuddyMcpTests
     }
 
     private static string Call(string tool, string arguments = "{}") =>
-        $$"""{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"{{tool}}","arguments":{{arguments}}}}""";
+        "{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"tools/call\",\"params\":{\"name\":\"" + tool + "\",\"arguments\":" + arguments + "}}";
 
     private static (string Text, bool IsError) Reply(string? line)
     {
