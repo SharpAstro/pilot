@@ -89,12 +89,14 @@ public sealed class BuddySilhouetteTests
 
         // Nothing is in the mask that is not the cat's box (with its z Z and cushion), the bubble or the card.
         var cat = (layout.CatX, layout.CatY, GrumpCat.Width, GrumpCat.CushionY + GrumpCat.CushionHeight);
+        // The furious cat's anger marks are drawn beside its head, outside the box the body sits in; they are the cat, so they are in the shape.
+        var catSlack = what == "trouble" ? 40f : 2f;
         var outside = 0;
         for (var y = 0; y < Height; y++)
         {
             for (var x = 0; x < Width; x++)
             {
-                if (BuddySilhouette.Catches(mask, x, y) && !InRect(x, y, cat) && !InRect(x, y, geometry.Bubble) && !InRect(x, y, geometry.Card))
+                if (BuddySilhouette.Catches(mask, x, y) && !InRect(x, y, cat, catSlack) && !InRect(x, y, geometry.Bubble) && !InRect(x, y, geometry.Card))
                 {
                     outside++;
                 }
