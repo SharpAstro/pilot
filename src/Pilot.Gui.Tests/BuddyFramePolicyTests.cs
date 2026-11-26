@@ -407,11 +407,11 @@ public sealed class BuddyFramePolicyTests
         var model = new BuddyModel(new Clock());
         var feed = new BuddyFeed(model, new Clock(), () => new BuddySettings());
         // The host hands one gate to the chat, the relay, the desk and the link; each must hold that very object, or the window draws under another lock.
-        var chat = new BuddyChat(new NullNode(), Gui, () => null, gate);
+        var chat = new BuddyChat(new NullNode(), new RecordingGui(), () => null, gate);
         chat.Gate.ShouldBeSameAs(gate);
         new BuddyRelay(model, feed, new Clock(), gate).Gate.ShouldBeSameAs(gate);
         new BuddyRelay(model, feed, new Clock()).Gate.ShouldNotBeNull();
-        new BuddyDesk(model, feed, chat, Gui, new Window(), () => new BuddySettings(), _ => { }, new Clock(), TimeZoneInfo.Utc, gate, () => { }).Gate.ShouldBeSameAs(gate);
+        new BuddyDesk(model, feed, chat, new RecordingGui(), new FakeWindow(), () => new BuddySettings(), _ => { }, new Clock(), TimeZoneInfo.Utc, gate, () => { }).Gate.ShouldBeSameAs(gate);
         new BuddyNodeLink((_, _, _) => Task.FromException<IBuddyEvents>(new IOException()), _ => Task.FromException<NodeInfo>(new IOException()), feed, chat, gate, () => { }, _ => { }, TimeSpan.Zero)
             .Gate.ShouldBeSameAs(gate);
     }
