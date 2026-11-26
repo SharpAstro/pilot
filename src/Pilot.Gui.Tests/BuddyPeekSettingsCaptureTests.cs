@@ -239,7 +239,7 @@ public sealed class BuddyPeekSettingsCaptureTests
     {
         Directory.CreateDirectory(OutFolder);
         var path = Path.Combine(OutFolder, name + ".png");
-        File.WriteAllBytes(path, PngWriter.Encode(renderer.Surface.Pixels, width, height));
+        File.WriteAllBytes(path, PngWriter.Encode(renderer.Surface.Pixels, (uint)width, (uint)height));
         global::System.Console.WriteLine($"buddy capture: {path}");
     }
 }
