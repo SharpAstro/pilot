@@ -218,7 +218,7 @@ internal sealed class BuddyHost : IBuddyWindow, IDisposable
                 _desk.FocusLost();
                 break;
             case EventType.TextInput:
-                _desk.TextTyped(evt.Text.GetText() ?? string.Empty);
+                _desk.TextTyped(System.Runtime.InteropServices.Marshal.PtrToStringUTF8(evt.Text.Text) ?? string.Empty);
                 break;
             case EventType.KeyDown:
                 switch (evt.Key.Key)

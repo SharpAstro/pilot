@@ -394,7 +394,7 @@ public sealed class BuddyDesk(
     }
 
     /// <summary>A chat verb runs on the thread pool; the desk repaints when it ends, under the gate the host draws under.</summary>
-    private async Task RunAsync<T>(Func<CancellationToken, Task<T>> work)
+    private async Task RunAsync(Func<CancellationToken, Task> work)
     {
         try
         {

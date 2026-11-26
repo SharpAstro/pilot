@@ -17,7 +17,7 @@ internal static class Program
         if (args.Length > 0 && args[0] == "mcp")
         {
             var server = new BuddyMcpServer(new PipeBuddyLink(BuddyPipeName.Current, CallDeadline, TimeProvider.System));
-            server.RunAsync(Console.In, Console.Out, CancellationToken.None).GetAwaiter().GetResult();
+            server.RunAsync(System.Console.In, System.Console.Out, CancellationToken.None).GetAwaiter().GetResult();
             return 0;
         }
 
@@ -26,7 +26,7 @@ internal static class Program
         {
             if (!log.Write(line))
             {
-                Console.Error.WriteLine(line);
+                System.Console.Error.WriteLine(line);
             }
         }
 
@@ -34,7 +34,7 @@ internal static class Program
         {
             if (isHelp)
             {
-                Console.Out.Write(error);
+                System.Console.Out.Write(error);
                 return 0;
             }
             Say(error!);

@@ -21,7 +21,9 @@ public sealed class BuddyNodeLink(NodeClient client, BuddyFeed feed, BuddyChat c
                 string? stream;
                 lock (gate)
                 {
-                    (since, stream) = fresh || feed.Mirror.Stream is null ? (null, null) : (feed.Mirror.Seq, feed.Mirror.Stream);
+                    var resume = !fresh && feed.Mirror.Stream is not null;
+                    since = resume ? feed.Mirror.Seq : null;
+                    stream = resume ? feed.Mirror.Stream : null;
                 }
                 await using var events = await client.OpenEventsAsync(since, stream, cancellationToken).ConfigureAwait(false);
                 if (fresh)

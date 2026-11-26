@@ -29,17 +29,19 @@ public sealed record BuddyOptions
         isHelp = false;
         error = null;
         var options = new BuddyOptions();
+        string? problem = null;
         for (var i = 0; i < args.Count; i++)
         {
             string Next(string name)
             {
                 if (i + 1 >= args.Count)
                 {
-                    error = $"{name} needs a value";
+                    problem = $"{name} needs a value";
                     return string.Empty;
                 }
                 return args[++i];
             }
+            error = problem;
 
             switch (args[i])
             {
