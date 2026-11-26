@@ -79,7 +79,7 @@ internal sealed partial class ChatView<TSurface>(Renderer<TSurface> renderer) : 
     private TaskCompletionSource _nudge = NewNudge();
 
     private readonly ListScrollController _scroll = new() { Mode = ScrollBarMode.Interactive, Anchor = ScrollAnchor.Bottom };
-    private readonly TranscriptEntryView _entries = new() { PromptLabel = "you", AssistantLabel = "watchtower", AssistantLines = int.MaxValue };
+    private readonly TranscriptEntryView _entries = new() { PromptLabel = "you", AssistantLabel = "watchtower", AssistantLines = int.MaxValue, Gallery = new() };
     // The Held.Epoch _entries' index-keyed caches were last built under: a render clears them first when the list it draws has another.
     private object _rowsEpoch = Held.Empty.Epoch;
     private readonly ChatComposer _composer = new();
@@ -413,6 +413,9 @@ internal sealed partial class ChatView<TSurface>(Renderer<TSurface> renderer) : 
 
     // What a sent line says in the chat: a message about a screen shows the About chip and then the words.
     private static string ShownOut(string text) => TryParseScreen(text, out var title, out var words) ? $"> About: {title}\n{words}" : text;
+
+    // An outbox line: its words, and a short marker for a picture that goes with it (held apart from the words) or one its text names; never the path.
+    private static string ShownOut(Out mine) => WithoutPath(ShownOut(mine.Text), mine.Picture is null ? 0 : 1);
 
     /// <summary>Drops the card the next message was about; it is then sent as a plain one.</summary>
     public void Detach()
@@ -1043,7 +1046,14 @@ internal sealed partial class ChatView<TSurface>(Renderer<TSurface> renderer) : 
         Palette.Use(Night);
         BeginFrame();
         NoteHeight(bounds);
-        RenderLayout(Tree(), bounds);
+        RenderLayout(Tree(), bounds, drawFill: Gallery.DrawFill);
+    }
+
+    /// <summary>The window's shared gallery (PIL1366): a person's message with a picture draws its thumbnail through it, and a click opens it window-wide.</summary>
+    public AttachmentGallery Gallery
+    {
+        get => _entries.Gallery!;
+        set => _entries.Gallery = value;
     }
 
     /// <summary>The page as a tree: what <see cref="Render"/> paints, and what pilot-tui arranges in cells.</summary>
@@ -1056,6 +1066,8 @@ internal sealed partial class ChatView<TSurface>(Renderer<TSurface> renderer) : 
         // Ctrl+V with a picture on the clipboard keeps it for the next message; with none the paste is the text's.
         _composer.Input.OnKeyOverride = GetClipboardImage is null ? null : key => key == TextInputKey.Paste && PastePicture();
         _entries.OpenDivider = OpenDivider;
+        _entries.Cells = Cells;
+        _entries.PictureNode = Node;
         var canSend = CurrentSend() is not null;
         var buttons = new List<Layout.Node>();
         if (!_scroll.IsFollowingEnd)
@@ -1163,7 +1175,7 @@ internal sealed partial class ChatView<TSurface>(Renderer<TSurface> renderer) : 
                     }
                 }
             }
-            rows.Add(Waiting(held.Queued[i], behind, pill, refusal).WStar());
+            rows.Add(Waiting(WithoutPath(held.Queued[i]), behind, pill, refusal).WStar());
         }
         // What the person sent that the feed does not carry yet: once an entry or a queued line carries its id only the feed's copy
         // shows. The words are compared only with the feed's lines that have no id (an older node's).
@@ -1179,10 +1191,10 @@ internal sealed partial class ChatView<TSurface>(Renderer<TSurface> renderer) : 
             var id = mine.Id;
             var row = mine.State switch
             {
-                OutState.Sending => Sent(ShownOut(mine.Text), "you · sending…", null),
-                OutState.Queued => Sent(ShownOut(mine.Text), $"you · queued {++place}", CardsView<TSurface>.Pill("Drop", $"chat:drop:{id:N}", () => Drop(id))),
-                OutState.Failed => FailedLine(ShownOut(mine.Text), mine.Reason ?? "", CardsView<TSurface>.Pill("Retry", $"chat:retry:{id:N}", () => Retry(id)), CardsView<TSurface>.Pill("Edit", $"chat:edit:{id:N}", () => Edit(id))),
-                _ => Sent(ShownOut(mine.Text), "you", null),
+                OutState.Sending => Sent(ShownOut(mine), "you · sending…", null),
+                OutState.Queued => Sent(ShownOut(mine), $"you · queued {++place}", CardsView<TSurface>.Pill("Drop", $"chat:drop:{id:N}", () => Drop(id))),
+                OutState.Failed => FailedLine(ShownOut(mine), mine.Reason ?? "", CardsView<TSurface>.Pill("Retry", $"chat:retry:{id:N}", () => Retry(id)), CardsView<TSurface>.Pill("Edit", $"chat:edit:{id:N}", () => Edit(id))),
+                _ => Sent(ShownOut(mine), "you", null),
             };
             rows.Add(row.WStar());
         }
@@ -1284,6 +1296,18 @@ internal sealed partial class ChatView<TSurface>(Renderer<TSurface> renderer) : 
     /// </summary>
     internal static TranscriptEntry AsQuoted(TranscriptEntry entry)
     {
+        // A tell's picture line follows the words: the card's block is read from the words alone, and the picture lines go back after the quote
+        // (as the bare name, which the row reads the id and extension from), so the row draws the thumbnail and never the path (PIL1366).
+        if (entry is { Kind: TranscriptKind.User, From: null, Note: false } && entry.Text.Contains(TellPictures.Lead, StringComparison.Ordinal)
+            && CrossSessionMessage.Parse(entry.Text) is null)
+        {
+            var (words, pictures) = TellPictures.Split(entry.Text);
+            if (pictures.Count > 0)
+            {
+                var quoted = AsQuoted(entry with { Text = words });
+                return quoted with { Text = quoted.Text + string.Concat(pictures.Select(p => TellPictures.Line($"{p.Id}.{p.Ext}"))) };
+            }
+        }
         if (entry is { Kind: TranscriptKind.User, From: null, Note: true } && CardNotice.TryParse(entry.Text, out var notice))
         {
             return entry with { Text = QuotedNotice(notice) };
@@ -1690,7 +1714,7 @@ internal sealed partial class ChatView<TSurface>(Renderer<TSurface> renderer) : 
                 WrappedProse.OneLine(named, 12f, Body).WStar().RowH(24f).Whole(named),
                 CardsView<TSurface>.Pill("Drop", "chat:drop-picture", DropPicture).RowH(24f)).WithGap(6f).RowH(24f));
         }
-        var can = GetClipboardImage is not null && ResolvePictureTarget().Send is not null ? " · Ctrl+V pastes a picture" : "";
+        var can = !Cells && GetClipboardImage is not null && ResolvePictureTarget().Send is not null ? " · Ctrl+V pastes a picture" : "";
         var hint = (lines > 1 ? $"{lines} lines · Enter sends · Shift+Enter a new line" : "Enter sends · Shift+Enter a new line") + can;
         rows.Add(WrappedProse.OneLine(hint, 10f, Dim).RowH(16f).Whole(hint));
         return Layout.Builder.VStack([.. rows]).Pad(12f, 6f).Bg(FootBg).WStar().HAuto();
