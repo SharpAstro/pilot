@@ -1,3 +1,4 @@
+using Pilot.Contracts;
 using System.Text;
 using System.Xml.Linq;
 using Pilot.Node.Toasts;
