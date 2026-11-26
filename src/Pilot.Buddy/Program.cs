@@ -68,7 +68,11 @@ internal static class Program
         using var host = new BuddyHost(options, Say, client, new InstanceGateHandOff(remote));
         using var stop = new CancellationTokenSource();
         // The watchtower's end of the pipe: calls from `pilot-buddy mcp` reach the model under the gate the window draws under.
-        _ = new BuddyPipeServer(BuddyPipeName.Current, host.Relay).RunAsync(stop.Token);
+        // A capture is a look, not the cat: it leaves the pipe to the one that is running.
+        if (options.Capture is null)
+        {
+            _ = new BuddyPipeServer(BuddyPipeName.Current, host.Relay).RunAsync(stop.Token);
+        }
         try
         {
             return host.Run(stop.Token);
