@@ -665,13 +665,23 @@ public sealed class BuddyToastRuleTests
         }
 
         stream.Events.Writer.TryWrite(Nudge());
-        (await linked.Logged.Reader.ReadAsync(Ct)).ShouldContain("NotSupportedException");
+        await LoggedWith(linked, "NotSupportedException");
         // The loop released itself: a later nudge is read (and logged) again, not swallowed by a stuck "refreshing" flag.
         stream.Events.Writer.TryWrite(Nudge());
-        (await linked.Logged.Reader.ReadAsync(Ct)).ShouldContain("NotSupportedException");
+        await LoggedWith(linked, "NotSupportedException");
 
         await stop.CancelAsync();
         await run.WaitAsync(TimeSpan.FromSeconds(10), Ct);
+    }
+
+    /// <summary>Reads the link's log until a line holds <paramref name="text"/> (other lines, such as the node's name not read, come first), with a deadline.</summary>
+    private static async Task LoggedWith(Linked linked, string text)
+    {
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(Ct);
+        deadline.CancelAfter(TimeSpan.FromSeconds(10));
+        while (!(await linked.Logged.Reader.ReadAsync(deadline.Token)).Contains(text, StringComparison.Ordinal))
+        {
+        }
     }
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
