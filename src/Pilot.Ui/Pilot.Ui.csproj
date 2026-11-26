@@ -50,6 +50,7 @@
   <ItemGroup>
     <InternalsVisibleTo Include="pilot-gui" />
     <InternalsVisibleTo Include="pilot-tui" />
+    <InternalsVisibleTo Include="pilot-buddy" />
     <InternalsVisibleTo Include="Pilot.Gui.Tests" />
   </ItemGroup>
 

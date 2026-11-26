@@ -5,8 +5,11 @@ namespace Pilot.Buddy;
 /// <summary>What the scene draws now: the cat's face and breath, and the bubble's notice or the hover summary. Derived from the model by <see cref="BuddyScene.ViewOf"/>.</summary>
 public sealed record BuddyView(GrumpFace Face, int Breath, BuddyNotice? Notice, string? Summary);
 
-/// <summary>Where the scene put the cat and its bubble (device pixels), for a test or the window's hit testing.</summary>
-public sealed record SceneLayout(SpeechBubble? Bubble, float BubbleX, float BubbleY, float CatX, float CatY);
+/// <summary>
+/// Where the scene put the cat, its bubble and the open card (device pixels), for a test or the window's hit testing. <paramref name="Scale"/> is the
+/// device pixels per design pixel the scene drew at; <paramref name="Card"/> is the card drawn in the bubble's place, if one was asked for.
+/// </summary>
+public sealed record SceneLayout(SpeechBubble? Bubble, float BubbleX, float BubbleY, float CatX, float CatY, BuddyCard? Card = null, float CardX = 0, float CardY = 0, float Scale = 1f);
 
 /// <summary>
 /// The buddy's scene as the transparent window draws it: the cat on its cushion in the bottom-right corner, the bubble above it, right aligned
@@ -32,24 +35,45 @@ public static class BuddyScene
         return new BuddyView(face, model.BreathPose, model.Current, mood == BuddyMood.OneEyeOpen ? summary : null);
     }
 
-    /// <summary>Draws the scene into a surface the renderer draws on at <paramref name="scale"/> (device pixels per design pixel).</summary>
-    public static SceneLayout Draw<TSurface>(Renderer<TSurface> renderer, string fontPath, BuddyPalette palette, BuddyView view, float scale = 1f, bool paintDesktop = false)
+    /// <summary>
+    /// Draws the scene into a surface the renderer draws on at <paramref name="scale"/> (device pixels per design pixel). <paramref name="corner"/> is the
+    /// settings' index into <see cref="BuddySettings.CornerChoices"/>: the cat sits in that corner of the surface and what it says opens towards the
+    /// middle (above a bottom corner, below the top one, right aligned on the right and left aligned on the left). <paramref name="cardFactory"/>
+    /// builds the peek, settings or chat card, measured with a pen of the same scale, and draws it in the bubble's place.
+    /// </summary>
+    public static SceneLayout Draw<TSurface>(Renderer<TSurface> renderer, string fontPath, BuddyPalette palette, BuddyView view, float scale = 1f, bool paintDesktop = false,
+        int corner = 0, Func<Pen<TSurface>, BuddyCard>? cardFactory = null)
     {
         if (paintDesktop)
         {
             renderer.FillRectangle(new RectInt(new PointInt((int)renderer.Width, (int)renderer.Height), new PointInt(0, 0)), palette.Desktop);
         }
 
-        // The cushion's bottom sits Margin above the bottom edge, the cat's box right aligned Margin in from the right.
-        var catX = renderer.Width - (Margin + GrumpCat.Width + 4) * scale;
-        var catY = renderer.Height - (Margin + GrumpCat.CushionY + GrumpCat.CushionHeight) * scale;
+        var left = corner == 1;
+        var top = corner == 2;
+        var catBottom = GrumpCat.CushionY + GrumpCat.CushionHeight;
+        // The cushion's bottom sits Margin from the edge it is in the corner of, the cat's box Margin in from the side.
+        var catX = left ? Margin * scale : renderer.Width - (Margin + GrumpCat.Width + 4) * scale;
+        var catY = top ? Margin * scale : renderer.Height - (Margin + catBottom) * scale;
         var catPen = new Pen<TSurface>(renderer, fontPath, catX, catY, scale);
         GrumpCat.Draw(catPen, view.Face, palette, view.Breath);
+
+        float PlaceX(float width) => left ? (Margin + 4) * scale : renderer.Width - (Margin + 4 + width) * scale;
+        float PlaceY(float height) => top ? catY + (catBottom + BubbleGap) * scale : catY - (BubbleGap + height) * scale;
+
+        var measure = new Pen<TSurface>(renderer, fontPath, 0, 0, scale);
+        if (cardFactory is not null)
+        {
+            var card = cardFactory(measure);
+            var cardX = PlaceX(card.Width);
+            var cardY = PlaceY(card.Height);
+            card.Draw(new Pen<TSurface>(renderer, fontPath, cardX, cardY, scale), palette);
+            return new SceneLayout(null, 0, 0, catX, catY, card, cardX, cardY, scale);
+        }
 
         SpeechBubble? bubble = null;
         var bubbleX = 0f;
         var bubbleY = 0f;
-        var measure = new Pen<TSurface>(renderer, fontPath, 0, 0, scale);
         if (view.Notice is { } notice)
         {
             bubble = SpeechBubble.ForNotice(measure, notice);
@@ -60,10 +84,10 @@ public static class BuddyScene
         }
         if (bubble is not null)
         {
-            bubbleX = renderer.Width - (Margin + 4 + bubble.Width) * scale;
-            bubbleY = catY - (BubbleGap + bubble.Height) * scale;
+            bubbleX = PlaceX(bubble.Width);
+            bubbleY = PlaceY(bubble.Height);
             bubble.Draw(new Pen<TSurface>(renderer, fontPath, bubbleX, bubbleY, scale), palette);
         }
-        return new SceneLayout(bubble, bubbleX, bubbleY, catX, catY);
+        return new SceneLayout(bubble, bubbleX, bubbleY, catX, catY, Scale: scale);
     }
 }

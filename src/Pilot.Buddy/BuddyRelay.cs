@@ -58,9 +58,10 @@ public sealed class BuddyRelay(BuddyModel model, BuddyFeed feed, TimeProvider ti
     /// <summary>Answers one call; an unknown tool is a refusal.</summary>
     public BuddyAnswer Handle(BuddyCall call)
     {
+        BuddyAnswer answer;
         lock (Gate)
         {
-            return call.Tool switch
+            answer = call.Tool switch
             {
                 BuddyCall.Say => Say(call),
                 BuddyCall.Point => Point(call),
@@ -69,7 +70,13 @@ public sealed class BuddyRelay(BuddyModel model, BuddyFeed feed, TimeProvider ti
                 _ => new BuddyAnswer(false, $"the buddy has no tool '{call.Tool}'"),
             };
         }
+        // The window sleeps on its event queue: a call that changed the cat wakes it so it asks whether a frame is due.
+        Changed?.Invoke();
+        return answer;
     }
+
+    /// <summary>Called after each call, outside the gate: the host wakes its loop.</summary>
+    public Action? Changed { get; set; }
 
     private BuddyAnswer Say(BuddyCall call)
     {

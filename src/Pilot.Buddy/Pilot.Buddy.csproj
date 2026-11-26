@@ -13,6 +13,16 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Pilot.Contracts\Pilot.Contracts.csproj" />
+    <!-- DesktopAccent (the accent the desktop picks for this chrome), which the buddy parses as the GUI does. -->
+    <ProjectReference Include="..\Pilot.Ui\Pilot.Ui.csproj" />
+    <!-- NodeTargets: how a node is named and connected to, as the GUI and the CLI do. -->
+    <ProjectReference Include="..\Pilot.Commands\Pilot.Commands.csproj" />
+  </ItemGroup>
+
+  <!-- The UI face, one file shared with the GUI: the buddy finds it beside its binary at Fonts\DejaVuSans.ttf. -->
+  <ItemGroup>
+    <Content Include="..\Pilot.Gui\Fonts\DejaVuSans.ttf" Link="Fonts\DejaVuSans.ttf" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\Pilot.Gui\Fonts\DejaVuSans.LICENSE.txt" Link="Fonts\DejaVuSans.LICENSE.txt" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <!--
@@ -73,6 +83,17 @@
   <ItemGroup Condition="'$(UseLocalSdlVulkanRenderer)' != 'true'">
     <PackageReference Include="SdlVulkan.Renderer" Condition="'$(Configuration)' != 'Debug'" />
     <PackageReference Include="SdlVulkan.Renderer.Debug" Condition="'$(Configuration)' == 'Debug'" />
+  </ItemGroup>
+
+  <!-- The capture's PNG encoder, as the GUI takes it (a local DIR.Lib brings the Codecs clone's). -->
+  <PropertyGroup>
+    <UseLocalSharpAstroPng Condition="'$(UseLocalSharpAstroPng)' == '' AND '$(UseLocalDirLib)' == 'true' AND Exists('$(SharpAstroRoot)Codecs\src\SharpAstro.Png\SharpAstro.Png.csproj')">true</UseLocalSharpAstroPng>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(UseLocalSharpAstroPng)' == 'true'">
+    <ProjectReference Include="$(SharpAstroRoot)Codecs\src\SharpAstro.Png\SharpAstro.Png.csproj" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(UseLocalSharpAstroPng)' != 'true'">
+    <PackageReference Include="SharpAstro.Png" />
   </ItemGroup>
 
   <ItemGroup>

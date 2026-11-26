@@ -40,6 +40,9 @@ public sealed record BuddySettings
     /// <summary>Index into <see cref="SnoozeChoices"/>; null is off. The choice is what the card shows; <see cref="SnoozedUntil"/> is what holds.</summary>
     public int? Snooze { get; init; }
 
+    /// <summary>The name of the monitor the cat sits on (SDL's display name), so a drag to another monitor is where it returns; null is the primary one.</summary>
+    public string? Monitor { get; init; }
+
     /// <summary>The moment the snooze ends; null or past is awake.</summary>
     public DateTimeOffset? SnoozedUntil { get; init; }
 
