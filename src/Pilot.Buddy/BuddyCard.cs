@@ -127,13 +127,15 @@ public abstract class BuddyCard
     {
         var h = LineHeight(pen, size);
         var (fit, cut) = Fit(pen, text, size, width);
+        var drawn = pen.Measure(fit, size).Width;
         Items.Add(new CardItem(CardItemKind.Text, x, y, width, h, fit, size, tone));
-        Lines.Add(new CardLine(fit, x, y, width, h, size));
+        // The line's own extent is what it drew, not the room it was given: a status right after it is beside it, not over it.
+        Lines.Add(new CardLine(fit, x, y, MathF.Min(width, drawn + 1), h, size));
         if (cut && tooltipId is not null)
         {
             Tooltips[tooltipId] = text;
         }
-        return pen.Measure(fit, size).Width;
+        return drawn;
     }
 
     /// <summary>Adds wrapped text of at most <paramref name="maxLines"/> lines from <paramref name="y"/> and returns the y after it.</summary>
