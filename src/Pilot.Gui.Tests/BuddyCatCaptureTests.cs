@@ -177,8 +177,8 @@ public sealed class BuddyCatCaptureTests
             const int margin = 20;
             var w = (int)ComicBang.Width + 2 * margin;
             var h = (int)ComicBang.Height + 2 * margin;
-            using var renderer = new RgbaImageRenderer(w, h);
-            renderer.FillRectangle(new RectInt(new PointInt((uint)w, (uint)h), new PointInt(0, 0)), palette.Desktop);
+            using var renderer = new RgbaImageRenderer((uint)w, (uint)h);
+            renderer.FillRectangle(new RectInt(new PointInt(w, h), new PointInt(0, 0)), palette.Desktop);
             ComicBang.Draw(new Pen<RgbaImage>(renderer, Font, margin, margin, 1f), 0, 0, stroke);
             var px = renderer.Surface.Pixels;
             var bg = palette.Desktop;
@@ -209,7 +209,7 @@ public sealed class BuddyCatCaptureTests
         foreach (var (dark, col) in new[] { (false, 0), (true, 1) })
         {
             var palette = BuddyPalette.For(dark);
-            renderer.FillRectangle(new RectInt(new PointInt((uint)((col + 1) * cell * scale), (uint)(cell * scale)), new PointInt((uint)(col * cell * scale), 0)), palette.Desktop);
+            renderer.FillRectangle(new RectInt(new PointInt(((col + 1) * cell * scale), (cell * scale)), new PointInt((col * cell * scale), 0)), palette.Desktop);
             foreach (var (stroke, i) in new[] { (BangStroke.Trapezium, 0), (BangStroke.Triangle, 1) })
             {
                 var pen = new Pen<RgbaImage>(renderer, Font, col * cell * scale + (6 + i * 28) * scale, 8 * scale, scale);
