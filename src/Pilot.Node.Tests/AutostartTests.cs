@@ -31,6 +31,22 @@ public sealed class AutostartTests
     }
 
     [Fact]
+    public void TheCatsRunEntryIsItsQuotedPathWithNoConsoleWrapperAndItsOwnName()
+    {
+        Autostart.BuddyName.ShouldBe("pilot-buddy");
+        Autostart.BuddyName.ShouldNotBe(Autostart.Name, "the cat and the node are two Run values; one never replaces the other");
+        Autostart.BuddyCommand(@"C:\Users\ada\AppData\Local\pilot2\bin\pilot-buddy.exe").ShouldBe(@"C:\Users\ada\AppData\Local\pilot2\bin\pilot-buddy.exe");
+        Autostart.BuddyCommand(@"C:\Program Files\pilot\pilot-buddy.exe").ShouldBe(@"""C:\Program Files\pilot\pilot-buddy.exe""");
+    }
+
+    [Fact]
+    public void ANodeInstalledAloneHasNoCatToStart()
+    {
+        // A folder that does not exist holds no cat: no entry is made for a binary that is not there.
+        Autostart.BuddyBeside(Path.Combine(Path.GetTempPath(), "pilot-no-such-folder-" + Guid.NewGuid().ToString("N"), "pilot-node.exe")).ShouldBeNull();
+    }
+
+    [Fact]
     public void TheUnitRestartsTheNodeButNotWhenAnotherHoldsTheSocket()
     {
         var unit = Autostart.SystemdUnit("/home/ada/.local/share/pilot2/bin/pilot-node", ["--lan", "--repo-root", "/home/ada/src/my org"]);
