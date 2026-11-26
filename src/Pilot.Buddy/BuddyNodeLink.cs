@@ -59,6 +59,12 @@ public sealed class BuddyNodeLink
     /// <summary>The gate the link, the chat, the desk and the relay all share with the window.</summary>
     public object Gate => _gate;
 
+    /// <summary>
+    /// A test seam, null in production: called by the chat refresh loop after its last look (_refreshAgain read as 0) and just before it releases
+    /// _refreshing. A nudge landed here sets _refreshAgain but sees _refreshing set and starts no loop; only the re-check after the release reads it.
+    /// </summary>
+    internal Action? BeforeRefreshReleased { get; set; }
+
     private int _pendingShows = -1;
     private int _sending;
     private int _refreshing;
@@ -142,6 +148,7 @@ public sealed class BuddyNodeLink
             }
             finally
             {
+                BeforeRefreshReleased?.Invoke();
                 Volatile.Write(ref _refreshing, 0);
             }
             // A nudge that came after the last look but before the release saw _refreshing set and left: take it up here, or the end of a turn is never read.

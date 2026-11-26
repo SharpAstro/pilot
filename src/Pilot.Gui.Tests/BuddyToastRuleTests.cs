@@ -636,6 +636,54 @@ public sealed class BuddyToastRuleTests
         await run.WaitAsync(TimeSpan.FromSeconds(10), Ct);
     }
 
+    [Fact]
+    public async Task ANudgeThatLandsAsTheRefreshLoopIsAboutToReleaseIsReadByTheRecheckNotLost()
+    {
+        var stream = new FakeStream();
+        var node = new HeldChatNode();
+        var linked = LinkOver((_, _, _) => Task.FromResult<IBuddyEvents>(stream), node);
+        var atWindow = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var proceed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var hits = 0;
+        // Only the first loop stops here; the wait is on an event with a deadline, on the loop's own pool thread.
+        linked.Link.BeforeRefreshReleased = () =>
+        {
+            if (Interlocked.Increment(ref hits) == 1)
+            {
+                atWindow.TrySetResult();
+                proceed.Task.Wait(TimeSpan.FromSeconds(10));
+            }
+        };
+        using var stop = new CancellationTokenSource();
+        var run = linked.Link.RunAsync(stop.Token);
+        stream.Events.Writer.TryWrite(Snapshot("s", 0));
+        await Changes(linked, 1);
+        lock (linked.Gate)
+        {
+            linked.Chat.CardOpen = true;
+        }
+
+        stream.Events.Writer.TryWrite(Nudge());
+        (await NextRead(node)).ShouldBe(1);
+        node.FirstRead.SetResult();
+        await atWindow.Task.WaitAsync(TimeSpan.FromSeconds(10), Ct);
+
+        // The loop has made its last look and still holds _refreshing: the nudge sets the flag, starts no loop of its own, and leaves.
+        while (linked.Changes.Reader.TryRead(out _))
+        {
+        }
+        stream.Events.Writer.TryWrite(Nudge());
+        await Changes(linked, 1);
+        node.Reads.ShouldBe(1, "the nudge started no read of its own");
+
+        proceed.SetResult();
+        (await NextRead(node)).ShouldBe(2, "the re-check after the release took the nudge up: one more read, not lost");
+
+        await stop.CancelAsync();
+        await run.WaitAsync(TimeSpan.FromSeconds(10), Ct);
+        node.Reads.ShouldBe(2);
+    }
+
     /// <summary>A node whose chat read throws something the link does not list as "the node did not answer".</summary>
     private sealed class ThrowingChatNode : IBuddyNode
     {
