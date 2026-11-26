@@ -1,0 +1,382 @@
+using DIR.Lib;
+using Pilot.Buddy;
+using Pilot.Contracts;
+using Shouldly;
+using Xunit;
+
+namespace Pilot.Gui.Tests;
+
+/// <summary>
+/// When the desktop cat draws and what a pointer does to it (NO BUSY SPINNING): on a fake clock and a fake window, no SDL, no thread, nothing waits.
+/// An asleep cat asks no frame between its breathing steps, a mood change asks one, and hover, click, right-click and drag go to the handler of
+/// what is under the pointer. Clicks pass through the sleeping cat when the setting says so.
+/// </summary>
+public sealed class BuddyFramePolicyTests
+{
+    private static string Font => SessionsCapture.FontPath;
+
+    /// <summary>A clock the test moves by hand, whose timers the test fires by hand.</summary>
+    private sealed class Clock : TimeProvider
+    {
+        private DateTimeOffset _now = new(2026, 11, 26, 9, 0, 0, TimeSpan.Zero);
+
+        public List<(FakeTimer Timer, TimeSpan Due)> Timers { get; } = [];
+
+        public override DateTimeOffset GetUtcNow() => _now;
+
+        public void Advance(TimeSpan by) => _now += by;
+
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+        {
+            var timer = new FakeTimer(callback, state);
+            Timers.Add((timer, dueTime));
+            return timer;
+        }
+    }
+
+    private sealed class FakeTimer(TimerCallback callback, object? state) : ITimer
+    {
+        public bool Disposed { get; private set; }
+
+        public void Fire() => callback(state);
+
+        public bool Change(TimeSpan dueTime, TimeSpan period) => true;
+
+        public void Dispose() => Disposed = true;
+
+        public ValueTask DisposeAsync()
+        {
+            Disposed = true;
+            return ValueTask.CompletedTask;
+        }
+    }
+
+    private sealed class FakeWindow : IBuddyWindow
+    {
+        public List<(int X, int Y)> Moves { get; } = [];
+
+        public int Drops { get; private set; }
+
+        public void MoveBy(int dx, int dy) => Moves.Add((dx, dy));
+
+        public void Dropped() => Drops++;
+    }
+
+    private sealed class NullNode : IBuddyNode
+    {
+        public Task<string?> SayAsync(string text, CancellationToken cancellationToken) => Task.FromResult<string?>(null);
+
+        public Task<string?> AskAsync(string question, CancellationToken cancellationToken) => Task.FromResult<string?>(null);
+
+        public Task<string?> ChatNowAsync(string sendId, CancellationToken cancellationToken) => Task.FromResult<string?>(null);
+
+        public Task<string?> AnswerAskAsync(string requestId, string decision, string? words, CancellationToken cancellationToken) => Task.FromResult<string?>(null);
+
+        public Task<ChatPage?> GetChatAsync(int after, CancellationToken cancellationToken) => Task.FromResult<ChatPage?>(null);
+    }
+
+    private sealed class RecordingGui : IGuiHandOff
+    {
+        public List<string> Links { get; } = [];
+
+        public bool Open(string link)
+        {
+            Links.Add(link);
+            return true;
+        }
+    }
+
+    /// <summary>Everything the window host wires together, on fakes, with the scene drawn on the CPU at 480 x 720 to give the desk its geometry.</summary>
+    private sealed class Rig
+    {
+        public Clock Clock { get; } = new();
+
+        public BuddyModel Model { get; }
+
+        public BuddyFeed Feed { get; }
+
+        public FakeWindow Window { get; } = new();
+
+        public RecordingGui Gui { get; } = new();
+
+        public BuddyDesk Desk { get; }
+
+        public BuddyFramePolicy Policy { get; }
+
+        public BuddySettings Settings { get; set; } = new();
+
+        public int Wakes { get; private set; }
+
+        public Rig()
+        {
+            Model = new BuddyModel(Clock);
+            Feed = new BuddyFeed(Model, Clock, () => Settings);
+            var chat = new BuddyChat(new NullNode(), Gui, () => null);
+            Desk = new BuddyDesk(Model, Feed, chat, Gui, Window, () => Settings, changed => Settings = changed, Clock, TimeZoneInfo.Utc, new object(), () => Wakes++);
+            Policy = new BuddyFramePolicy(Model, () => Desk.Version, Desk.ContentKey, () => Settings.SnoozedUntil, Clock);
+            Draw();
+        }
+
+        /// <summary>The frame the host would draw: the scene, then the geometry the desk hit-tests with.</summary>
+        public SceneLayout Draw()
+        {
+            using var renderer = new RgbaImageRenderer(480, 720);
+            var layout = BuddyScene.Draw(renderer, Font, BuddyPalette.For(false), BuddyScene.ViewOf(Model, Feed.Summary), 1f, false, Settings.CornerIndex, Desk.CardFactory<RgbaImage>());
+            Desk.Geometry = new BuddyGeometry(layout);
+            Policy.Drawn(TimeSpan.Zero);
+            return layout;
+        }
+
+        public (float X, float Y) CatBody => (Desk.Geometry!.Layout.CatX + 100, Desk.Geometry.Layout.CatY + 80);
+
+        public (float X, float Y) Cushion => (Desk.Geometry!.Layout.CatX + 100, Desk.Geometry.Layout.CatY + GrumpCat.CushionY + 5);
+
+        public void Click(int button, (float X, float Y) at)
+        {
+            Desk.ButtonDown(button, at.X, at.Y);
+            Desk.ButtonUp(button, at.X, at.Y);
+        }
+    }
+
+    private static BuddyNotice Ask() => new("card:ask-1", NoticeKind.Ask, "DE1 · DSN-2 designer asks you", "Publish v3 of Desktop cat buddy, or change the bubble first?");
+
+    [Fact]
+    public void AnAsleepCatAsksNoFrameBetweenItsBreathingSteps()
+    {
+        var rig = new Rig();
+        rig.Policy.NeedsFrame().ShouldBeFalse("the frame just drawn is what is shown");
+
+        // The model's breathing step is 2.5 s: a second, then two, later nothing has changed.
+        rig.Clock.Advance(TimeSpan.FromSeconds(1));
+        rig.Policy.NeedsFrame().ShouldBeFalse();
+        rig.Clock.Advance(TimeSpan.FromSeconds(1));
+        rig.Policy.NeedsFrame().ShouldBeFalse();
+
+        // At the step the body grows two pixels: one frame, and then none again until the next step.
+        rig.Clock.Advance(TimeSpan.FromSeconds(1));
+        rig.Policy.NeedsFrame().ShouldBeTrue();
+        rig.Draw();
+        rig.Policy.NeedsFrame().ShouldBeFalse();
+        rig.Policy.Frames.ShouldBe(2);
+    }
+
+    [Fact]
+    public void TheNextWakeIsTheNextBreathAndAnEarlierSnoozeEndWinsOverIt()
+    {
+        var rig = new Rig();
+        rig.Policy.NextWake.ShouldBe(rig.Model.NextWake);
+        rig.Policy.NextWake.ShouldBeGreaterThan(rig.Clock.GetUtcNow());
+
+        var until = rig.Clock.GetUtcNow() + TimeSpan.FromSeconds(1);
+        rig.Settings = new BuddySettings { SnoozedUntil = until };
+        rig.Policy.NextWake.ShouldBe(until, "a snooze that ends before the breath is a change with no event");
+        rig.Clock.Advance(TimeSpan.FromSeconds(2));
+        rig.Policy.NextWake.ShouldBe(rig.Model.NextWake, "once it has ended it is no wake");
+    }
+
+    [Fact]
+    public void AMoodChangeAsksExactlyOneFrame()
+    {
+        var rig = new Rig();
+        rig.Model.Tell(Ask());
+        rig.Policy.NeedsFrame().ShouldBeTrue();
+        rig.Draw();
+        rig.Policy.NeedsFrame().ShouldBeFalse();
+
+        // The same notice told again (a card raised again) changes nothing shown; a new text does.
+        rig.Model.Tell(Ask());
+        rig.Policy.NeedsFrame().ShouldBeFalse();
+        rig.Model.Tell(Ask() with { Body = "Something else." });
+        rig.Policy.NeedsFrame().ShouldBeTrue();
+    }
+
+    [Fact]
+    public void GoodNewsEndsByItselfAndTheWakeIsItsEndNotAPoll()
+    {
+        var rig = new Rig();
+        rig.Model.Tell(new BuddyNotice("merged:1", NoticeKind.GoodNews, "PR #1 merged", "Flight 1 landed."));
+        rig.Draw();
+        rig.Policy.NextWake.ShouldBeLessThanOrEqualTo(rig.Clock.GetUtcNow() + BuddyModel.GoodNewsFor);
+
+        rig.Clock.Advance(BuddyModel.GoodNewsFor);
+        rig.Policy.NeedsFrame().ShouldBeTrue("the cat goes back to sleep by itself");
+    }
+
+    [Fact]
+    public void HoverOpensOneEyeAndLeavingClosesIt()
+    {
+        var rig = new Rig();
+        rig.Desk.PointerMoved(rig.CatBody.X, rig.CatBody.Y);
+        rig.Model.Mood.ShouldBe(BuddyMood.OneEyeOpen);
+        rig.Policy.NeedsFrame().ShouldBeTrue();
+        rig.Draw();
+
+        rig.Desk.PointerLeft();
+        rig.Model.Mood.ShouldBe(BuddyMood.Asleep);
+        rig.Policy.NeedsFrame().ShouldBeTrue();
+    }
+
+    [Fact]
+    public void AMoveOffTheCatDoesNotWakeIt()
+    {
+        var rig = new Rig();
+        rig.Desk.PointerMoved(5, 5);
+        rig.Model.Mood.ShouldBe(BuddyMood.Asleep);
+        rig.Policy.NeedsFrame().ShouldBeFalse();
+    }
+
+    [Fact]
+    public void AClickPeeksAndAnotherClosesIt()
+    {
+        var rig = new Rig();
+        rig.Click(1, rig.CatBody);
+        rig.Desk.Card.ShouldBe(DeskCard.Peek);
+        rig.Policy.NeedsFrame().ShouldBeTrue();
+        rig.Draw();
+        rig.Desk.Geometry!.Layout.Card.ShouldBeOfType<PeekCard>();
+
+        rig.Click(1, rig.CatBody);
+        rig.Desk.Card.ShouldBe(DeskCard.None);
+    }
+
+    [Fact]
+    public void ARightClickOpensTheSettingsAndTheCushionToo()
+    {
+        var rig = new Rig();
+        rig.Click(3, rig.CatBody);
+        rig.Desk.Card.ShouldBe(DeskCard.Settings);
+        rig.Draw();
+        rig.Desk.Geometry!.Layout.Card.ShouldBeOfType<SettingsCard>();
+
+        rig.Click(3, rig.Cushion);
+        rig.Desk.Card.ShouldBe(DeskCard.None, "a right-click on the cushion toggles the same card");
+    }
+
+    [Fact]
+    public void LosingTheFocusClosesTheCardAndEscapeToo()
+    {
+        var rig = new Rig();
+        rig.Click(1, rig.CatBody);
+        rig.Desk.FocusLost();
+        rig.Desk.Card.ShouldBe(DeskCard.None);
+
+        rig.Click(3, rig.CatBody);
+        rig.Desk.Escape();
+        rig.Desk.Card.ShouldBe(DeskCard.None);
+    }
+
+    [Fact]
+    public void ADragMovesTheWindowAndDropsItAndIsNotAClick()
+    {
+        var rig = new Rig();
+        var (x, y) = rig.CatBody;
+        rig.Desk.ButtonDown(1, x, y);
+        // Under the threshold it is still a click.
+        rig.Desk.PointerMoved(x + 1, y);
+        rig.Window.Moves.ShouldBeEmpty();
+        rig.Desk.PointerMoved(x + 20, y + 10);
+        rig.Desk.PointerMoved(x + 30, y + 10);
+        rig.Desk.ButtonUp(1, x + 30, y + 10);
+
+        rig.Window.Moves.ShouldBe([(20, 10), (30, 10)]);
+        rig.Window.Drops.ShouldBe(1);
+        rig.Desk.Card.ShouldBe(DeskCard.None, "a drag does not peek");
+        rig.Desk.Dragging.ShouldBeFalse();
+    }
+
+    [Fact]
+    public void AClickWhileTheCatSpeaksOpensTheChatAndLaterPutsItBackToSleep()
+    {
+        var rig = new Rig();
+        rig.Model.Tell(Ask());
+        var layout = rig.Draw();
+        var later = layout.Bubble!.Buttons.Single(b => b.Label == SpeechBubble.LaterLabel);
+        var open = layout.Bubble.Buttons.Single(b => b.Label == SpeechBubble.PrimaryLabel(BubbleStyle.Ask));
+
+        rig.Click(1, rig.CatBody);
+        rig.Desk.Card.ShouldBe(DeskCard.Chat);
+        rig.Click(1, rig.CatBody);
+        rig.Desk.Card.ShouldBe(DeskCard.None);
+
+        rig.Click(1, (layout.BubbleX + later.X + later.Width / 2, layout.BubbleY + later.Y + later.Height / 2));
+        rig.Model.Current.ShouldBeNull();
+        rig.Gui.Links.ShouldBeEmpty();
+
+        rig.Model.Tell(Ask());
+        rig.Click(1, (layout.BubbleX + open.X + open.Width / 2, layout.BubbleY + open.Y + open.Height / 2));
+        rig.Gui.Links.ShouldBe([BuddyFeed.CardLink("ask-1")], "Open the chat hands the card to the GUI");
+        rig.Model.Current.ShouldBeNull();
+    }
+
+    [Fact]
+    public void ASettingsRowPressedChangesTheSettingsAndTheCornerMovesTheScene()
+    {
+        var rig = new Rig();
+        rig.Click(3, rig.CatBody);
+        var layout = rig.Draw();
+        var card = layout.Card!;
+        var hit = card.Hits.Single(h => h.Id == "corner:1");
+
+        rig.Click(1, (layout.CardX + hit.X + hit.Width / 2, layout.CardY + hit.Y + hit.Height / 2));
+        rig.Settings.CornerIndex.ShouldBe(1);
+        var moved = rig.Draw();
+        moved.CatX.ShouldBeLessThan(layout.CatX, "the cat sits in the bottom left corner now");
+
+        var done = moved.Card!.Hits.Single(h => h.Id == "done");
+        rig.Click(1, (moved.CardX + done.X + done.Width / 2, moved.CardY + done.Y + done.Height / 2));
+        rig.Desk.Card.ShouldBe(DeskCard.None);
+    }
+
+    [Fact]
+    public void ClicksPassThroughTheSleepingCatWhenTheSettingSaysSoAndOnlyTheseDoNot()
+    {
+        var rig = new Rig();
+        using var renderer = new RgbaImageRenderer(480, 720);
+        var layout = BuddyScene.Draw(renderer, Font, BuddyPalette.For(false), BuddyScene.ViewOf(rig.Model), 1f);
+        var geometry = new BuddyGeometry(layout);
+
+        var through = BuddySilhouette.For(renderer.Surface, geometry, asleep: true, clicksPassThrough: true);
+        BuddySilhouette.Catches(through, (int)rig.CatBody.X, (int)rig.CatBody.Y).ShouldBeFalse("the body passes the click to the window below");
+        BuddySilhouette.Catches(through, 5, 5).ShouldBeFalse();
+        BuddySilhouette.Catches(through, (int)(layout.CatX + 170), (int)(layout.CatY + 10)).ShouldBeTrue("the z Z is what hover wakes");
+        BuddySilhouette.Catches(through, (int)rig.Cushion.X, (int)rig.Cushion.Y).ShouldBeTrue("the cushion takes the right-click for the settings");
+
+        var caught = BuddySilhouette.For(renderer.Surface, geometry, asleep: true, clicksPassThrough: false);
+        BuddySilhouette.Catches(caught, (int)rig.CatBody.X, (int)rig.CatBody.Y).ShouldBeTrue();
+
+        // Awake (a bubble is showing) the cat catches its clicks whatever the setting says.
+        var awake = BuddySilhouette.For(renderer.Surface, geometry, asleep: false, clicksPassThrough: true);
+        BuddySilhouette.Catches(awake, (int)rig.CatBody.X, (int)rig.CatBody.Y).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void TheWakeTimerArmsOneTimerForTheNextChangeAndRearmsOnlyForAnother()
+    {
+        var clock = new Clock();
+        var wakes = 0;
+        using var timer = new BuddyWakeTimer(clock, () => wakes++);
+        var at = clock.GetUtcNow() + TimeSpan.FromSeconds(2.5);
+
+        timer.Arm(at);
+        timer.Arm(at);
+        clock.Timers.Count.ShouldBe(1);
+        clock.Timers[0].Due.ShouldBe(TimeSpan.FromSeconds(2.5));
+        wakes.ShouldBe(0, "armed, not fired: nothing runs until the moment comes");
+
+        clock.Timers[0].Timer.Fire();
+        wakes.ShouldBe(1);
+
+        timer.Arm(at + TimeSpan.FromSeconds(2.5));
+        clock.Timers.Count.ShouldBe(2);
+        clock.Timers[0].Timer.Disposed.ShouldBeTrue("the earlier timer is replaced");
+    }
+
+    [Fact]
+    public void TheSummaryLineSaysFramesAsksAndTheDrawTime()
+    {
+        var rig = new Rig();
+        rig.Policy.NeedsFrame();
+        rig.Policy.NeedsFrame();
+        rig.Policy.Summary().ShouldContain("1 frames for 2 asks");
+    }
+}
