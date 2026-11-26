@@ -131,7 +131,7 @@ public sealed class BuddyPeekSettingsCaptureTests
     {
         var (width, height) = wide ? (1280, 720) : (480, 720);
         var palette = BuddyPalette.For(dark);
-        using var renderer = new RgbaImageRenderer(width, height);
+        using var renderer = new RgbaImageRenderer((uint)width, (uint)height);
         var model = new BuddyModel(TimeProvider.System);
         var layout = BuddyScene.Draw(renderer, Font, palette, BuddyScene.ViewOf(model), paintDesktop: true);
 
@@ -239,7 +239,7 @@ public sealed class BuddyPeekSettingsCaptureTests
     {
         Directory.CreateDirectory(OutFolder);
         var path = Path.Combine(OutFolder, name + ".png");
-        File.WriteAllBytes(path, PngWriter.Encode(renderer.Surface.Pixels, (uint)width, (uint)height));
+        File.WriteAllBytes(path, PngWriter.Encode(renderer.Surface.Pixels, width, height));
         global::System.Console.WriteLine($"buddy capture: {path}");
     }
 }
