@@ -77,12 +77,37 @@ public sealed class BuddyFramePolicyTests
 
     private sealed class RecordingGui : IGuiHandOff
     {
-        public List<string> Links { get; } = [];
+        private readonly System.Collections.Concurrent.ConcurrentQueue<string> _links = new();
+        private readonly System.Collections.Concurrent.ConcurrentQueue<string> _launched = new();
+
+        /// <summary>False makes <see cref="Open"/> refuse, as when no pilot-gui runs.</summary>
+        public bool Takes { get; set; } = true;
+
+        /// <summary>Whether the fallback start worked.</summary>
+        public bool LaunchWorks { get; set; }
+
+        /// <summary>Signalled by every hand-off; the desk runs them on the pool, so a test awaits this instead of the clock.</summary>
+        public SemaphoreSlim Done { get; } = new(0);
+
+        public IReadOnlyList<string> Links => [.. _links];
+
+        public IReadOnlyList<string> Launched => [.. _launched];
 
         public bool Open(string link)
         {
-            Links.Add(link);
-            return true;
+            _links.Enqueue(link);
+            if (Takes)
+            {
+                Done.Release();
+            }
+            return Takes;
+        }
+
+        public bool Launch(string link)
+        {
+            _launched.Enqueue(link);
+            Done.Release();
+            return LaunchWorks;
         }
     }
 
@@ -112,7 +137,11 @@ public sealed class BuddyFramePolicyTests
             Model = new BuddyModel(Clock);
             Feed = new BuddyFeed(Model, Clock, () => Settings);
             var chat = new BuddyChat(new NullNode(), Gui, () => null);
-            Desk = new BuddyDesk(Model, Feed, chat, Gui, Window, () => Settings, changed => Settings = changed, Clock, TimeZoneInfo.Utc, new object(), () => Wakes++);
+            Desk = new BuddyDesk(Model, Feed, chat, Gui, Window, () => Settings, changed => Settings = changed, Clock, TimeZoneInfo.Utc, new object(), () =>
+            {
+                Wakes++;
+                Woke.Release();
+            });
             Policy = new BuddyFramePolicy(Model, () => Desk.Version, Desk.ContentKey, () => Settings.SnoozedUntil, Clock);
             Draw();
         }
@@ -130,6 +159,11 @@ public sealed class BuddyFramePolicyTests
         public (float X, float Y) CatBody => (Desk.Geometry!.Layout.CatX + 100, Desk.Geometry.Layout.CatY + 80);
 
         public (float X, float Y) Cushion => (Desk.Geometry!.Layout.CatX + 100, Desk.Geometry.Layout.CatY + GrumpCat.CushionY + 5);
+
+        /// <summary>Released after each hand-off or chat verb of the desk ends and has repainted (its wake): awaited on the event, never on the clock.</summary>
+        public SemaphoreSlim Woke { get; } = new(0);
+
+        public Task AfterHandOff() => Woke.WaitAsync(TimeSpan.FromSeconds(10));
 
         public void Click(int button, (float X, float Y) at)
         {
@@ -285,7 +319,7 @@ public sealed class BuddyFramePolicyTests
     }
 
     [Fact]
-    public void AClickWhileTheCatSpeaksOpensTheChatAndLaterPutsItBackToSleep()
+    public async Task AClickWhileTheCatSpeaksOpensTheChatAndLaterPutsItBackToSleep()
     {
         var rig = new Rig();
         rig.Model.Tell(Ask());
@@ -304,8 +338,42 @@ public sealed class BuddyFramePolicyTests
 
         rig.Model.Tell(Ask());
         rig.Click(1, (layout.BubbleX + open.X + open.Width / 2, layout.BubbleY + open.Y + open.Height / 2));
+        await rig.Gui.Done.WaitAsync(TimeSpan.FromSeconds(10));
         rig.Gui.Links.ShouldBe([BuddyFeed.CardLink("ask-1")], "Open the chat hands the card to the GUI");
+        await rig.AfterHandOff();
         rig.Model.Current.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task WhenNoGuiRunsTheNoticeStaysUntilTheFallbackStartedOneAndTakesTheLink()
+    {
+        var rig = new Rig();
+        rig.Gui.Takes = false;
+        rig.Model.Tell(Ask());
+        var layout = rig.Draw();
+        var open = layout.Bubble!.Buttons.Single(b => b.Label == SpeechBubble.PrimaryLabel(BubbleStyle.Ask));
+
+        rig.Click(1, (layout.BubbleX + open.X + open.Width / 2, layout.BubbleY + open.Y + open.Height / 2));
+        await rig.Gui.Done.WaitAsync(TimeSpan.FromSeconds(10));
+        rig.Gui.Launched.ShouldBe([BuddyFeed.CardLink("ask-1")], "no GUI took it, so the fallback starts pilot-gui with the link");
+        await rig.AfterHandOff();
+        rig.Model.Current.ShouldNotBeNull("neither worked: the notice is kept, not lost");
+
+        rig.Gui.LaunchWorks = true;
+        rig.Click(1, (layout.BubbleX + open.X + open.Width / 2, layout.BubbleY + open.Y + open.Height / 2));
+        await rig.Gui.Done.WaitAsync(TimeSpan.FromSeconds(10));
+        await rig.AfterHandOff();
+        rig.Model.Current.ShouldBeNull("the fallback started the GUI, which has the card now");
+    }
+
+    [Fact]
+    public void TheHostRelayDeskChatAndLinkShareOneGate()
+    {
+        var gate = new object();
+        var model = new BuddyModel(new Clock());
+        var feed = new BuddyFeed(model, new Clock(), () => new BuddySettings());
+        new BuddyRelay(model, feed, new Clock(), gate).Gate.ShouldBeSameAs(gate);
+        new BuddyRelay(model, feed, new Clock()).Gate.ShouldNotBeNull();
     }
 
     [Fact]

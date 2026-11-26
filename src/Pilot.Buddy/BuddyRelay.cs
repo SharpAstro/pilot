@@ -123,7 +123,11 @@ public sealed class BuddyRelay(BuddyModel model, BuddyFeed feed, TimeProvider ti
         var urgent = known && ToastTier.Of(card!.Kind) == ToastTier.Urgent;
         var title = known ? card!.Title : "Card " + call.Card;
         var body = known ? card!.Summary ?? card.Detail ?? string.Empty : "The watchtower points you to this card.";
-        _told.Add(id);
+        if (!known)
+        {
+            // A card the stream raised belongs to the stream (its card closing ends it); only what the watchtower pointed at on its own is cleared by buddy_sleep.
+            _told.Add(id);
+        }
         model.Tell(new BuddyNotice(id, urgent ? NoticeKind.Trouble : NoticeKind.Ask, title, body));
         return new BuddyAnswer(true, known ? $"the cat is up and points at card {call.Card}" : $"the cat is up; card {call.Card} is not one the buddy knows, so it shows the id");
     }

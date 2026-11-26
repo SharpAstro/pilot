@@ -155,6 +155,11 @@ public sealed class BuddyModel(TimeProvider time)
         Advance();
         var gone = _current;
         _current = null;
+        if (gone is { } said && said.Id.StartsWith("say:", StringComparison.Ordinal))
+        {
+            // A failure the watchtower opened by saying it has no card to close it: it ends with its notice.
+            _openFailures.Remove(said.Id);
+        }
         ShowNext();
         return gone;
     }

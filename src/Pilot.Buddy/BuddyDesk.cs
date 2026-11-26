@@ -292,6 +292,7 @@ public sealed class BuddyDesk(
         }
         Card = card;
         _inputFocus = card == DeskCard.Chat;
+        chat.CardOpen = card == DeskCard.Chat;
         model.Hover(false);
         if (card == DeskCard.Chat)
         {

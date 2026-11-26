@@ -192,13 +192,13 @@ public sealed class BuddyFeedTests
             var read = BuddySettings.Load(path);
             read.CornerIndex.ShouldBe(2);
             read.WakesForAsk.ShouldBeTrue("a member the file lacks takes its default");
-            read.ClicksPassThrough.ShouldBeTrue();
+            read.ClicksPassThrough.ShouldBeFalse("pass-through is opt-in: a sleeping cat must be hoverable and clickable out of the box");
 
-            var changed = read with { WakeFailed = false, ClickThrough = false };
+            var changed = read with { WakeFailed = false, ClickThrough = true };
             changed.Save(path).ShouldBeTrue();
             var again = BuddySettings.Load(path);
             again.WakesForFailed.ShouldBeFalse();
-            again.ClicksPassThrough.ShouldBeFalse();
+            again.ClicksPassThrough.ShouldBeTrue();
             again.CornerIndex.ShouldBe(2);
 
             File.WriteAllText(path, "not json");

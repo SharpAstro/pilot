@@ -44,23 +44,88 @@ public sealed class BuddyNodeLink
         // The feed calls this under the gate when ShowsCards changes (hidden, snoozed, closing, or the snooze ending).
         feed.ShowsCardsChanged = shows =>
         {
-            if (Volatile.Read(ref _live) is { } live)
+            if (Volatile.Read(ref _live) is not null)
             {
-                _ = SayShowsCardsAsync(live, shows);
+                // One writer, latest wins: two quick changes (snooze on then off) are never two tasks that can overlap or arrive reversed.
+                Volatile.Write(ref _pendingShows, shows ? 1 : 0);
+                if (Interlocked.CompareExchange(ref _sending, 1, 0) == 0)
+                {
+                    _ = Task.Run(DrainShowsCardsAsync);
+                }
             }
         };
     }
 
-    private async Task SayShowsCardsAsync(IBuddyEvents live, bool shows)
+    private int _pendingShows = -1;
+    private int _sending;
+    private int _refreshing;
+    private int _refreshAgain;
+
+    private async Task DrainShowsCardsAsync()
     {
-        try
+        while (true)
         {
-            await live.SayPageAsync(null, _ct, shows).ConfigureAwait(false);
+            while (Interlocked.Exchange(ref _pendingShows, -1) is var value and >= 0)
+            {
+                if (Volatile.Read(ref _live) is not { } live)
+                {
+                    break;
+                }
+                try
+                {
+                    await live.SayPageAsync(null, _ct, value == 1).ConfigureAwait(false);
+                }
+                catch (Exception ex) when (ex is OperationCanceledException or ObjectDisposedException or InvalidOperationException or System.Net.WebSockets.WebSocketException or IOException)
+                {
+                    // The stream went first; a new stream is told when it opens.
+                }
+            }
+            Volatile.Write(ref _sending, 0);
+            // A change that came between the last look and the release is not lost.
+            if (Volatile.Read(ref _pendingShows) < 0 || Interlocked.CompareExchange(ref _sending, 1, 0) != 0)
+            {
+                return;
+            }
         }
-        catch (Exception ex) when (ex is OperationCanceledException or ObjectDisposedException or InvalidOperationException or System.Net.WebSockets.WebSocketException or IOException)
+    }
+
+    /// <summary>
+    /// A chatChanged event streams the watchtower's words one at a time: the chat is read again only while it is wanted (its card open, a turn working, an ask
+    /// pending), one read at a time, and a burst is one more read after it. The stream's reader never waits for it.
+    /// </summary>
+    private void RefreshChatSoon()
+    {
+        if (!_chat.Wanted)
         {
-            // The stream went first; a new stream is told when it opens.
+            return;
         }
+        Volatile.Write(ref _refreshAgain, 1);
+        if (Interlocked.CompareExchange(ref _refreshing, 1, 0) != 0)
+        {
+            return;
+        }
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                while (Interlocked.Exchange(ref _refreshAgain, 0) == 1)
+                {
+                    try
+                    {
+                        await _chat.RefreshAsync(_ct).ConfigureAwait(false);
+                    }
+                    catch (Exception ex) when (ex is HttpRequestException or IOException or OperationCanceledException or InvalidOperationException)
+                    {
+                        // The node did not answer; the stream's own state says so.
+                    }
+                    _changed();
+                }
+            }
+            finally
+            {
+                Volatile.Write(ref _refreshing, 0);
+            }
+        });
     }
 
     /// <summary>Reads events until <paramref name="cancellationToken"/> ends it.</summary>
@@ -100,7 +165,7 @@ public sealed class BuddyNodeLink
                     }
                     if (nodeEvent is ChatChangedEvent)
                     {
-                        await _chat.RefreshAsync(cancellationToken).ConfigureAwait(false);
+                        RefreshChatSoon();
                     }
                     _changed();
                 }
@@ -117,6 +182,14 @@ public sealed class BuddyNodeLink
                 Volatile.Write(ref _live, null);
                 // A skipped delta (InvalidOperationException) is resynced from a snapshot, not from where it stood.
                 fresh = ex is InvalidOperationException or System.Text.Json.JsonException;
+                Down(ex.Message);
+            }
+            catch (Exception ex)
+            {
+                // Anything else must not leave the cat deaf with no word: log it, resync from a snapshot and try again.
+                Volatile.Write(ref _live, null);
+                fresh = true;
+                _log($"pilot-buddy: the node link failed unexpectedly ({ex.GetType().Name}); reconnecting: {ex.Message}");
                 Down(ex.Message);
             }
             try

@@ -184,6 +184,20 @@ public sealed class BuddyToastRuleTests
     }
 
     [Fact]
+    public void ABuddyThatDoesNotWakeForAsksDoesNotMuteTheNodesToastForThem()
+    {
+        var (model, feed) = Make();
+        _settings = new BuddySettings { WakeAsk = false };
+        feed.ShowsCards.ShouldBeFalse("visible but no bubble would show: the node must toast a normal card as today");
+
+        Raise(feed, "n1", Normal);
+        model.Current.ShouldBeNull();
+
+        _settings = new BuddySettings();
+        feed.ShowsCards.ShouldBeTrue();
+    }
+
+    [Fact]
     public void TheFeedReportsEachChangeOfShowingTheCardsOnceAndTheRelaysHiddenIsTheSameFlag()
     {
         var model = new BuddyModel(_clock);

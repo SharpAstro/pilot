@@ -64,6 +64,12 @@ public sealed class BuddyChat(IBuddyNode node, IGuiHandOff gui, Func<string?> di
     private int _fromIndex = -1;
     private ChatPage? _page;
 
+    /// <summary>True while the chat card is open (set by the desk).</summary>
+    public bool CardOpen { get; set; }
+
+    /// <summary>Whether a <c>chatChanged</c> is worth a read: the card is open, a turn works, or an ask waits.</summary>
+    public bool Wanted => CardOpen || Working || PendingAsk is not null;
+
     /// <summary>What has been typed.</summary>
     public string Input => _input;
 
