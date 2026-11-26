@@ -193,6 +193,31 @@ public sealed class BuddyMcpTests
     }
 
     [Fact]
+    public async Task BuddySleepLeavesACardTheStreamRaisedAfterTheWatchtowerPointedAtIt()
+    {
+        // The watchtower points at a card it just made before the buddy's stream has it: the relay owns the notice then.
+        Snapshot();
+        await _server.HandleAsync(Call("buddy_point", """{"card":"busy"}"""), CancellationToken.None);
+        _feed.IsTold("busy").ShouldBeFalse();
+
+        // The stream raises it: the feed tells the same notice and owns it now, so its closing (not buddy_sleep) ends it.
+        _feed.Apply(new CardAddedEvent { Seq = 2, At = _clock.GetUtcNow(), Card = Card("busy", "busy-process", CardState.Open) });
+        _feed.IsTold("busy").ShouldBeTrue();
+
+        var (text, _) = Reply(await _server.HandleAsync(Call("buddy_sleep"), CancellationToken.None));
+
+        text.ShouldContain("still has what the node raised");
+        _model.GrumpyFace.ShouldBeTrue();
+        _model.Mood.ShouldBe(BuddyMood.Trouble);
+        _model.Current.ShouldNotBeNull().Id.ShouldBe(BuddyFeed.CardNoticeId("busy"));
+
+        // And the card closing still clears it.
+        _feed.Apply(new CardChangedEvent { Seq = 3, At = _clock.GetUtcNow(), Card = Card("busy", "busy-process", CardState.Closed) });
+        _model.GrumpyFace.ShouldBeFalse();
+        _model.Mood.ShouldBe(BuddyMood.Asleep);
+    }
+
+    [Fact]
     public async Task LaterOnAnUrgentSayEndsItsFailure()
     {
         // No card closes for a say, so putting its bubble off (Later) is what ends the failure it opened.

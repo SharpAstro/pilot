@@ -44,7 +44,9 @@ public interface IBuddyLink
 /// </summary>
 public sealed class BuddyRelay(BuddyModel model, BuddyFeed feed, TimeProvider time, object? gate = null)
 {
-    private readonly HashSet<string> _told = new(StringComparer.Ordinal);
+    // What the watchtower woke the cat with: each notice id, and the card it points at (null for a say), so buddy_sleep can leave a card the feed took
+    // over after the watchtower pointed at it.
+    private readonly Dictionary<string, string?> _told = new(StringComparer.Ordinal);
     private long _sequence;
 
     /// <summary>The lock over the model and the feed that the host and this relay both take.</summary>
@@ -104,7 +106,7 @@ public sealed class BuddyRelay(BuddyModel model, BuddyFeed feed, TimeProvider ti
         }
         var urgent = string.Equals(call.Urgency, "urgent", StringComparison.OrdinalIgnoreCase);
         var id = "say:" + (++_sequence).ToString(CultureInfo.InvariantCulture);
-        _told.Add(id);
+        _told[id] = null;
         LastSaid = call.Text;
         LastSaidAt = time.GetUtcNow();
         // Urgent is trouble (red bubble); anything else asks for a look (the attention bubble).
@@ -127,7 +129,7 @@ public sealed class BuddyRelay(BuddyModel model, BuddyFeed feed, TimeProvider ti
         {
             // A card the feed told belongs to the stream (its card closing ends it). Anything else the watchtower pointed at (an unknown card, a
             // resolved one, or one whose kind of wake is off) is the watchtower's, and buddy_sleep clears it: no one else would.
-            _told.Add(id);
+            _told[id] = call.Card;
         }
         model.Tell(new BuddyNotice(id, urgent ? NoticeKind.Trouble : NoticeKind.Ask, title, body));
         return new BuddyAnswer(true, known ? $"the cat is up and points at card {call.Card}" : $"the cat is up; card {call.Card} is not one the buddy knows, so it shows the id");
@@ -136,8 +138,14 @@ public sealed class BuddyRelay(BuddyModel model, BuddyFeed feed, TimeProvider ti
     private BuddyAnswer Sleep()
     {
         // Only what the watchtower woke it with goes; an ask or failure the stream raised stays until its card closes.
-        foreach (var id in _told)
+        foreach (var (id, card) in _told)
         {
+            // The watchtower can point at a card it just made before the buddy's stream raises it: the feed then tells the same notice and owns it, and
+            // clearing it here would leave the cat asleep with the card open (the feed does not tell it again while its ring is the same).
+            if (card is not null && feed.IsTold(card))
+            {
+                continue;
+            }
             model.Clear(id);
         }
         _told.Clear();

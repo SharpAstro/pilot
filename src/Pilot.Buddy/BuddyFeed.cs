@@ -60,7 +60,10 @@ public sealed class BuddyFeed(BuddyModel model, TimeProvider time, Func<BuddySet
     /// <summary>The node's name for the peek rows (its machine code); the rows of other nodes come with the watchtower's own summary, not from here.</summary>
     public string NodeName { get; set; } = "node";
 
-    /// <summary>How many nodes the peek header counts: this one, plus the peers the host reads.</summary>
+    /// <summary>
+    /// How many nodes the peek header counts. The buddy reads only its own node's stream, so nothing outside the tests sets it and the header says one node:
+    /// the design's multi-node peek (the peers' sessions in the list) is not built yet.
+    /// </summary>
     public int NodeCount { get; set; } = 1;
 
     /// <summary>

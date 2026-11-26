@@ -86,6 +86,9 @@ public sealed class BuddyFramePolicyTests
         /// <summary>Whether the fallback start worked.</summary>
         public bool LaunchWorks { get; set; }
 
+        /// <summary>Thrown by <see cref="Open"/> when set: a hand-off that fails in a way the desk does not list.</summary>
+        public Exception? Throws { get; set; }
+
         /// <summary>Signalled by every hand-off; the desk runs them on the pool, so a test awaits this instead of the clock.</summary>
         public SemaphoreSlim Done { get; } = new(0);
 
@@ -96,6 +99,10 @@ public sealed class BuddyFramePolicyTests
         public bool Open(string link)
         {
             _links.Enqueue(link);
+            if (Throws is { } thrown)
+            {
+                throw thrown;
+            }
             if (Takes)
             {
                 Done.Release();
@@ -132,6 +139,9 @@ public sealed class BuddyFramePolicyTests
 
         public int Wakes { get; private set; }
 
+        /// <summary>What the desk logged; a chat verb or hand-off runs on the pool, so the queue is a concurrent one.</summary>
+        public System.Collections.Concurrent.ConcurrentQueue<string> Logged { get; } = new();
+
         public Rig()
         {
             Model = new BuddyModel(Clock);
@@ -141,7 +151,7 @@ public sealed class BuddyFramePolicyTests
             {
                 Wakes++;
                 Woke.Release();
-            });
+            }, Logged.Enqueue);
             Policy = new BuddyFramePolicy(Model, () => Desk.Version, Desk.ContentKey, () => Settings.SnoozedUntil, Clock);
             Draw();
         }
@@ -163,7 +173,9 @@ public sealed class BuddyFramePolicyTests
         /// <summary>Released after each hand-off or chat verb of the desk ends and has repainted (its wake): awaited on the event, never on the clock.</summary>
         public SemaphoreSlim Woke { get; } = new(0);
 
-        public Task AfterHandOff() => Woke.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
+        // The deadline is a guard against a hang, not a wait: a wake that never came fails here instead of passing silently.
+        public async Task AfterHandOff() =>
+            (await Woke.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken)).ShouldBeTrue("the desk woke the window when its work ended");
 
         public void Click(int button, (float X, float Y) at)
         {
@@ -367,6 +379,25 @@ public sealed class BuddyFramePolicyTests
         await rig.Gui.Done.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
         await rig.AfterHandOff();
         rig.Model.Current.ShouldBeNull("the fallback started the GUI, which has the card now");
+    }
+
+    [Fact]
+    public async Task AHandOffThatThrowsAnythingIsLoggedAndTheWindowStillRepaints()
+    {
+        var rig = new Rig();
+        // Not one of the exceptions the desk lists for a node that does not answer: before, it skipped the repaint and the wake, unobserved.
+        rig.Gui.Throws = new System.ComponentModel.Win32Exception(5, "Access is denied");
+        rig.Model.Tell(Ask());
+        var layout = rig.Draw();
+        var open = layout.Bubble!.Buttons.Single(b => b.Label == SpeechBubble.PrimaryLabel(BubbleStyle.Ask));
+
+        rig.Click(1, (layout.BubbleX + open.X + open.Width / 2, layout.BubbleY + open.Y + open.Height / 2));
+        // The wake comes only after the repaint under the gate, so it proves both.
+        await rig.AfterHandOff();
+
+        rig.Logged.ShouldHaveSingleItem().ShouldContain("Win32Exception");
+        rig.Logged.Single().ShouldContain("Access is denied");
+        rig.Model.Current.ShouldNotBeNull("nothing took the link, so the notice is kept");
     }
 
     [Fact]

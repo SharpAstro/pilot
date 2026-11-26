@@ -242,22 +242,177 @@ public sealed class BuddyToastRuleTests
         public bool Open(string link) => true;
     }
 
+    /// <summary>Put on <see cref="FakeStream.Events"/>, it makes that read throw <paramref name="Error"/>: the stream broke.</summary>
+    private sealed record Break(Exception Error) : NodeEvent;
+
     private sealed class FakeStream : IBuddyEvents
     {
+        private int _inFlight;
+        private int _overlapped;
+
         public Channel<NodeEvent?> Events { get; } = Channel.CreateUnbounded<NodeEvent?>();
 
         public Channel<bool?> Said { get; } = Channel.CreateUnbounded<bool?>();
 
-        public ValueTask<NodeEvent?> ReadAsync(CancellationToken cancellationToken) => Events.Reader.ReadAsync(cancellationToken);
+        /// <summary>Runs as each say starts, before it is recorded in <see cref="Said"/>: a test holds a say on a task, or makes it throw.</summary>
+        public Func<bool?, Task>? Saying { get; set; }
 
-        public ValueTask SayPageAsync(string? page, CancellationToken cancellationToken, bool? showsCards = null)
+        /// <summary>True once two says were in flight at the same time: the link has one writer, so never.</summary>
+        public bool Overlapped => Volatile.Read(ref _overlapped) == 1;
+
+        public async ValueTask<NodeEvent?> ReadAsync(CancellationToken cancellationToken)
+        {
+            var next = await Events.Reader.ReadAsync(cancellationToken);
+            return next is Break broken ? throw broken.Error : next;
+        }
+
+        public async ValueTask SayPageAsync(string? page, CancellationToken cancellationToken, bool? showsCards = null)
         {
             page.ShouldBeNull("the buddy shows no page");
-            Said.Writer.TryWrite(showsCards);
-            return ValueTask.CompletedTask;
+            if (Interlocked.Increment(ref _inFlight) > 1)
+            {
+                Volatile.Write(ref _overlapped, 1);
+            }
+            try
+            {
+                if (Saying is { } saying)
+                {
+                    await saying(showsCards);
+                }
+                Said.Writer.TryWrite(showsCards);
+            }
+            finally
+            {
+                Interlocked.Decrement(ref _inFlight);
+            }
         }
 
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
+    /// <summary>A node whose chat reads are counted, the first one held until the test lets it go.</summary>
+    private sealed class HeldChatNode : IBuddyNode
+    {
+        private int _reads;
+
+        public TaskCompletionSource FirstRead { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        /// <summary>The number of each read as it starts.</summary>
+        public Channel<int> Reading { get; } = Channel.CreateUnbounded<int>();
+
+        public int Reads => Volatile.Read(ref _reads);
+
+        public Task<string?> SayAsync(string text, CancellationToken cancellationToken) => Task.FromResult<string?>(null);
+
+        public Task<string?> AskAsync(string question, CancellationToken cancellationToken) => Task.FromResult<string?>(null);
+
+        public Task<string?> ChatNowAsync(string sendId, CancellationToken cancellationToken) => Task.FromResult<string?>(null);
+
+        public Task<string?> AnswerAskAsync(string requestId, string decision, string? words, CancellationToken cancellationToken) => Task.FromResult<string?>(null);
+
+        public async Task<ChatPage?> GetChatAsync(int after, CancellationToken cancellationToken)
+        {
+            var read = Interlocked.Increment(ref _reads);
+            Reading.Writer.TryWrite(read);
+            if (read == 1)
+            {
+                await FirstRead.Task.WaitAsync(cancellationToken);
+            }
+            return null;
+        }
+    }
+
+    /// <summary>A link on fakes, retrying at once (TimeSpan.Zero): what it logs and each time it says something changed go to channels a test awaits.</summary>
+    private sealed record Linked(BuddyFeed Feed, BuddyChat Chat, object Gate, BuddyNodeLink Link, Channel<string> Logged, Channel<int> Changes);
+
+    private Linked LinkOver(Func<long?, string?, CancellationToken, Task<IBuddyEvents>> open, IBuddyNode? node = null)
+    {
+        var model = new BuddyModel(_clock);
+        var feed = new BuddyFeed(model, _clock, () => _settings);
+        var gate = new object();
+        var chat = new BuddyChat(node ?? new FakeNode(), new FakeGui(), () => null, gate);
+        var logged = Channel.CreateUnbounded<string>();
+        var changes = Channel.CreateUnbounded<int>();
+        var link = new BuddyNodeLink(open, _ => Task.FromException<NodeInfo>(new HttpRequestException("no node in a unit test")), feed, chat, gate,
+            () => changes.Writer.TryWrite(0), line => logged.Writer.TryWrite(line), TimeSpan.Zero);
+        return new Linked(feed, chat, gate, link, logged, changes);
+    }
+
+    /// <summary>
+    /// An opener that answers each open with the next of <paramref name="answers"/> and records what it was asked (where to resume from). Past the last
+    /// answer it hands out a stream that never speaks, so a link retrying at once waits on it instead of spinning.
+    /// </summary>
+    private static Func<long?, string?, CancellationToken, Task<IBuddyEvents>> Opener(Channel<(long? Since, string? Stream)> opened, params Func<Task<IBuddyEvents>>[] answers)
+    {
+        var next = 0;
+        return (since, stream, _) =>
+        {
+            opened.Writer.TryWrite((since, stream));
+            var i = Interlocked.Increment(ref next) - 1;
+            return i < answers.Length ? answers[i]() : Task.FromResult<IBuddyEvents>(new FakeStream());
+        };
+    }
+
+    private SnapshotEvent Snapshot(string stream, long seq) => new() { Seq = seq, At = _clock.GetUtcNow(), Stream = stream, Sessions = [], Notes = [], Cards = [], Flights = [] };
+
+    private ChatChangedEvent Nudge() => new() { Seq = 0, At = _clock.GetUtcNow() };
+
+    // Every wait below is on an event (a channel, a task); the deadline only ends a test that would hang.
+    private static CancellationTokenSource Deadline()
+    {
+        var deadline = CancellationTokenSource.CreateLinkedTokenSource(Ct);
+        deadline.CancelAfter(TimeSpan.FromSeconds(10));
+        return deadline;
+    }
+
+    private static async Task<string> NextLogged(Linked linked, string containing)
+    {
+        using var deadline = Deadline();
+        await foreach (var line in linked.Logged.Reader.ReadAllAsync(deadline.Token))
+        {
+            if (line.Contains(containing, StringComparison.Ordinal))
+            {
+                return line;
+            }
+        }
+        throw new ShouldAssertException($"no log line with '{containing}'");
+    }
+
+    private static async Task<(long? Since, string? Stream)> NextOpened(Channel<(long? Since, string? Stream)> opened)
+    {
+        using var deadline = Deadline();
+        return await opened.Reader.ReadAsync(deadline.Token);
+    }
+
+    private static async Task Changes(Linked linked, int count)
+    {
+        using var deadline = Deadline();
+        for (var i = 0; i < count; i++)
+        {
+            await linked.Changes.Reader.ReadAsync(deadline.Token);
+        }
+    }
+
+    private static async Task Until(Linked linked, Func<bool> condition)
+    {
+        using var deadline = Deadline();
+        while (true)
+        {
+            lock (linked.Gate)
+            {
+                if (condition())
+                {
+                    return;
+                }
+            }
+            await linked.Changes.Reader.ReadAsync(deadline.Token);
+        }
+    }
+
+    private static async Task<int> NextRead(HeldChatNode node)
+    {
+        using var deadline = Deadline();
+        return await node.Reading.Reader.ReadAsync(deadline.Token);
     }
 
     private static async Task<bool?> NextSaid(FakeStream stream) => await stream.Said.Reader.ReadAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(10));
@@ -312,6 +467,170 @@ public sealed class BuddyToastRuleTests
             feed.WindowVisible = false;
         }
         (await NextSaid(stream)).ShouldBe(false, "closing");
+
+        await stop.CancelAsync();
+        await run.WaitAsync(TimeSpan.FromSeconds(10), Ct);
+    }
+
+    [Fact]
+    public async Task ASayThatFailsInAnUnlistedWayIsLoggedAndTheNextChangeStillReachesTheNode()
+    {
+        var stream = new FakeStream();
+        var says = 0;
+        stream.Saying = _ => Interlocked.Increment(ref says) == 1 ? Task.FromException(new NotSupportedException("the wire said no")) : Task.CompletedTask;
+        var linked = LinkOver((_, _, _) => Task.FromResult<IBuddyEvents>(stream));
+        using var stop = new CancellationTokenSource();
+        var run = linked.Link.RunAsync(stop.Token);
+
+        // The say as the stream opens throws something the writer does not list: it is logged, not lost with the writer's task.
+        var line = await NextLogged(linked, "whether the cat shows the cards failed");
+        line.ShouldContain(nameof(NotSupportedException));
+        line.ShouldContain("the wire said no");
+
+        // The writer was not wedged: the next change, and the one after, still reach the node.
+        lock (linked.Gate)
+        {
+            linked.Feed.WindowVisible = false;
+        }
+        (await NextSaid(stream)).ShouldBe(false, "hidden, said after the failed say");
+        lock (linked.Gate)
+        {
+            linked.Feed.WindowVisible = true;
+        }
+        (await NextSaid(stream)).ShouldBe(true);
+
+        await stop.CancelAsync();
+        await run.WaitAsync(TimeSpan.FromSeconds(10), Ct);
+    }
+
+    [Fact]
+    public async Task ABurstOfChangesWhileASayIsHeldSendsOnlyTheLastOneAfterIt()
+    {
+        var first = new FakeStream();
+        var second = new FakeStream();
+        var held = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var started = new TaskCompletionSource<bool?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var says = 0;
+        first.Saying = value =>
+        {
+            if (Interlocked.Increment(ref says) != 1)
+            {
+                return Task.CompletedTask;
+            }
+            started.TrySetResult(value);
+            return held.Task;
+        };
+        var opened = Channel.CreateUnbounded<(long? Since, string? Stream)>();
+        var linked = LinkOver(Opener(opened, () => Task.FromResult<IBuddyEvents>(first), () => Task.FromResult<IBuddyEvents>(second)));
+        using var stop = new CancellationTokenSource();
+        var run = linked.Link.RunAsync(stop.Token);
+
+        (await started.Task.WaitAsync(TimeSpan.FromSeconds(10), Ct)).ShouldBe(true, "the say as the stream opens, held on the wire");
+
+        // Hidden, shown, hidden again while that say is held: three changes, each said by the feed under the gate.
+        foreach (var visible in new[] { false, true, false })
+        {
+            lock (linked.Gate)
+            {
+                linked.Feed.WindowVisible = visible;
+            }
+        }
+        held.SetResult();
+
+        (await NextSaid(first)).ShouldBe(true, "the held say finishes first");
+        (await NextSaid(first)).ShouldBe(false, "then the last of the burst, once: the two before it are dropped, latest wins");
+
+        // The end marker: the node closes this stream and the link opens the next, telling it where the cat stands. Every say after the reconnect goes
+        // to the new stream, so whatever the first stream holds now is all it was ever sent.
+        first.Events.Writer.TryWrite(null);
+        (await NextSaid(second)).ShouldBe(false, "the new stream is told the latest");
+        first.Said.Reader.TryRead(out var extra).ShouldBeFalse($"the burst sent nothing after its last value (got {extra})");
+        first.Overlapped.ShouldBeFalse("one writer: never two says on the wire at once");
+        (await NextOpened(opened)).Since.ShouldBeNull();
+        (await NextOpened(opened)).Since.ShouldBeNull("no snapshot came, so there is nothing to resume from");
+
+        await stop.CancelAsync();
+        await run.WaitAsync(TimeSpan.FromSeconds(10), Ct);
+    }
+
+    [Fact]
+    public async Task AnOpenThatFailsInAnUnlistedWayIsLoggedAndTheLinkResyncsFromASnapshot()
+    {
+        var first = new FakeStream();
+        var second = new FakeStream();
+        var opened = Channel.CreateUnbounded<(long? Since, string? Stream)>();
+        var linked = LinkOver(Opener(opened,
+            () => Task.FromResult<IBuddyEvents>(first),
+            () => Task.FromException<IBuddyEvents>(new NotSupportedException("a socket option the host refuses")),
+            () => Task.FromResult<IBuddyEvents>(second)));
+        using var stop = new CancellationTokenSource();
+        var run = linked.Link.RunAsync(stop.Token);
+
+        var open = await NextOpened(opened);
+        open.Since.ShouldBeNull("the first open asks for a snapshot");
+        first.Events.Writer.TryWrite(Snapshot("s1", 5));
+
+        // A drop the link lists (the connection reset) resumes from where the stream stood...
+        first.Events.Writer.TryWrite(new Break(new IOException("connection reset")) { Seq = 0, At = _clock.GetUtcNow() });
+        open = await NextOpened(opened);
+        open.Since.ShouldBe(5L);
+        open.Stream.ShouldBe("s1");
+
+        // ...and that open throws what nobody listed: logged, and the cat is not left deaf; the next open starts over from a snapshot.
+        (await NextLogged(linked, "the node link failed unexpectedly")).ShouldContain(nameof(NotSupportedException));
+        open = await NextOpened(opened);
+        open.Since.ShouldBeNull("after an unexpected failure the link resyncs from a snapshot, not from where it stood");
+        open.Stream.ShouldBeNull();
+
+        second.Events.Writer.TryWrite(Snapshot("s2", 0));
+        await Until(linked, () => linked.Feed.Mirror.Stream == "s2" && linked.Feed.ChatDisabledReason is null);
+        (await NextSaid(second)).ShouldBe(true, "the new stream is told whether the cat shows the cards");
+
+        await stop.CancelAsync();
+        await run.WaitAsync(TimeSpan.FromSeconds(10), Ct);
+    }
+
+    [Fact]
+    public async Task TheChatIsReadOnlyWhileWantedAndABurstOfNudgesIsOneMoreRead()
+    {
+        var stream = new FakeStream();
+        var node = new HeldChatNode();
+        var linked = LinkOver((_, _, _) => Task.FromResult<IBuddyEvents>(stream), node);
+        using var stop = new CancellationTokenSource();
+        var run = linked.Link.RunAsync(stop.Token);
+
+        // Not wanted (no chat card, no turn, no ask): the nudges are read off the stream and drawn, and the chat is not read.
+        stream.Events.Writer.TryWrite(Snapshot("s", 0));
+        for (var i = 0; i < 3; i++)
+        {
+            stream.Events.Writer.TryWrite(Nudge());
+        }
+        await Changes(linked, 4);
+        node.Reads.ShouldBe(0, "a nudge nobody wants reads nothing");
+
+        // Wanted (the chat card is open): the first nudge reads the chat, and that read is held.
+        lock (linked.Gate)
+        {
+            linked.Chat.CardOpen = true;
+        }
+        stream.Events.Writer.TryWrite(Nudge());
+        (await NextRead(node)).ShouldBe(1);
+
+        // A burst while it is held: each nudge is taken and drawn at once (the stream's reader never waits for the read), and none starts a read of its own.
+        for (var i = 0; i < 3; i++)
+        {
+            stream.Events.Writer.TryWrite(Nudge());
+        }
+        await Changes(linked, 4);
+        node.Reads.ShouldBe(1, "one read at a time");
+
+        node.FirstRead.SetResult();
+        (await NextRead(node)).ShouldBe(2, "the burst is one more read after the first");
+
+        // One more nudge is exactly one more read, so the burst made no other.
+        stream.Events.Writer.TryWrite(Nudge());
+        (await NextRead(node)).ShouldBe(3);
+        node.Reads.ShouldBe(3);
 
         await stop.CancelAsync();
         await run.WaitAsync(TimeSpan.FromSeconds(10), Ct);

@@ -131,7 +131,7 @@ public interface IBuddyWindow
 /// </summary>
 public sealed class BuddyDesk(
     BuddyModel model, BuddyFeed feed, BuddyChat chat, IGuiHandOff gui, IBuddyWindow window,
-    Func<BuddySettings> settings, Action<BuddySettings> changeSettings, TimeProvider time, TimeZoneInfo zone, object gate, Action wake)
+    Func<BuddySettings> settings, Action<BuddySettings> changeSettings, TimeProvider time, TimeZoneInfo zone, object gate, Action wake, Action<string>? log = null)
 {
     /// <summary>The pointer must move this far from where it went down before a press is a drag, not a click.</summary>
     public const float DragThreshold = 4;
@@ -427,16 +427,28 @@ public sealed class BuddyDesk(
         return Task.CompletedTask;
     });
 
-    /// <summary>A chat verb runs on the thread pool; the desk repaints when it ends, under the gate the host draws under.</summary>
+    /// <summary>
+    /// A chat verb runs on the thread pool; the desk repaints when it ends, under the gate the host draws under. Nothing awaits the task, so it never ends
+    /// faulted: whatever the work throws is caught here, and the window repaints and wakes whatever it was.
+    /// </summary>
     private async Task RunAsync(Func<CancellationToken, Task> work)
     {
         try
         {
             await Task.Run(() => work(CancellationToken.None)).ConfigureAwait(false);
         }
-        catch (Exception ex) when (ex is HttpRequestException or IOException or OperationCanceledException or InvalidOperationException)
+        catch (OperationCanceledException)
+        {
+            // Cancelled: nothing to say, the repaint below shows where it stands.
+        }
+        catch (Exception ex) when (ex is HttpRequestException or IOException or InvalidOperationException)
         {
             // The node did not answer: the chat card shows why from the feed's own state on the next frame.
+        }
+        catch (Exception ex)
+        {
+            // Anything else would go unobserved and leave the card as it was: log it, then repaint as ever.
+            log?.Invoke($"pilot-buddy: a chat action failed ({ex.GetType().Name}): {ex.Message}");
         }
         lock (gate)
         {

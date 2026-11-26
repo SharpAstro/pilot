@@ -58,7 +58,7 @@ internal sealed class BuddyHost : IBuddyWindow, IDisposable
         _feed = new BuddyFeed(_model, _time, () => _settings);
         _chat = new BuddyChat(new NodeBuddyClient(client), handOff, () => _feed.ChatDisabledReason, _gate);
         _relay = new BuddyRelay(_model, _feed, _time, _gate);
-        _desk = new BuddyDesk(_model, _feed, _chat, handOff, this, () => _settings, Apply, _time, TimeZoneInfo.Local, _gate, Wake);
+        _desk = new BuddyDesk(_model, _feed, _chat, handOff, this, () => _settings, Apply, _time, TimeZoneInfo.Local, _gate, Wake, log);
         _policy = new BuddyFramePolicy(_model, () => _desk.Version, _desk.ContentKey, () => _settings.SnoozedUntil, _time);
         Link = new BuddyNodeLink(client, _feed, _chat, _gate, Wake, log, TimeSpan.FromSeconds(5));
         Relay = _relay;
