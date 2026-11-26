@@ -329,6 +329,9 @@ public sealed class BuddyFramePolicyTests
 
         rig.Click(1, rig.CatBody);
         rig.Desk.Card.ShouldBe(DeskCard.Chat);
+        // Opening the chat refreshes it on the pool, and that run wakes the window once: take that wake now, so the wait after the hand-off below
+        // cannot return on this stale one before the hand-off ran.
+        await rig.AfterHandOff();
         rig.Click(1, rig.CatBody);
         rig.Desk.Card.ShouldBe(DeskCard.None);
 

@@ -79,6 +79,12 @@ public sealed class BuddyNodeLink
                 {
                     // The stream went first; a new stream is told when it opens.
                 }
+                catch (Exception ex)
+                {
+                    // Anything else is logged and the writer goes on: a fault here would leave _sending set, and the node would never hear the cat hide
+                    // or snooze again (its Toaster would mute normal cards for a cat that shows none).
+                    _log($"pilot-buddy: telling the node whether the cat shows the cards failed ({ex.GetType().Name}): {ex.Message}");
+                }
             }
             Volatile.Write(ref _sending, 0);
             // A change that came between the last look and the release is not lost.

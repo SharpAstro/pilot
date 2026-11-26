@@ -115,9 +115,11 @@ public sealed class EventHub(NodeState state, PageViews views, ILogger<EventHub>
                 return;
             }
             _told[client] = others;
+            // Sent inside the lock too, so two threads that both changed _told reach the client in the order they changed it. TellClient only
+            // enqueues under NodeState's own lock, and nothing takes _told under that one, so the two locks have no reverse order.
+            var json = JsonSerializer.SerializeToUtf8Bytes<NodeEvent>(new OthersShowCardsEvent { Seq = 0, At = DateTimeOffset.UtcNow, Shown = others }, PilotJsonContext.Default.NodeEvent);
+            state.TellClient(client, json);
         }
-        var json = JsonSerializer.SerializeToUtf8Bytes<NodeEvent>(new OthersShowCardsEvent { Seq = 0, At = DateTimeOffset.UtcNow, Shown = others }, PilotJsonContext.Default.NodeEvent);
-        state.TellClient(client, json);
     }
 
     private static ClientPage? ReadPage(ReadOnlySpan<byte> json)

@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Pilot.Buddy;
+using Pilot.Contracts;
 using Shouldly;
 using Xunit;
 
@@ -39,13 +40,15 @@ public sealed class BuddyMcpTests
 
     private readonly Clock _clock = new();
     private readonly BuddyModel _model;
+    private readonly BuddyFeed _feed;
     private readonly BuddyRelay _relay;
     private readonly BuddyMcpServer _server;
 
     public BuddyMcpTests()
     {
         _model = new BuddyModel(_clock);
-        _relay = new BuddyRelay(_model, new BuddyFeed(_model, _clock, () => new BuddySettings()), _clock);
+        _feed = new BuddyFeed(_model, _clock, () => new BuddySettings());
+        _relay = new BuddyRelay(_model, _feed, _clock);
         _server = new BuddyMcpServer(new InMemoryLink(_relay));
     }
 
@@ -146,6 +149,60 @@ public sealed class BuddyMcpTests
         _model.Mood.ShouldBe(BuddyMood.Asleep);
         _model.GrumpyFace.ShouldBeFalse();
         _model.Waiting.ShouldBeEmpty();
+    }
+
+    private CardRow Card(string id, string kind, CardState state) => new()
+    {
+        Id = id, Bin = CardBin.Ring, Kind = kind, Subject = "session/" + id, Title = "Title of " + id, Summary = "pwsh has used a core for 52 h",
+        At = _clock.GetUtcNow(), State = state,
+    };
+
+    private void Snapshot(params CardRow[] cards) => _feed.Apply(new SnapshotEvent
+    {
+        Seq = 1, At = _clock.GetUtcNow(), Stream = "s", Sessions = [], Notes = [], Cards = cards, Flights = [],
+    });
+
+    [Fact]
+    public async Task BuddySleepClearsAFailureThatBuddyPointOpenedOnAResolvedUrgentCard()
+    {
+        // The mirror keeps a closed card, so the card is known, but the feed never told it and will never clear it: buddy_sleep must.
+        Snapshot(Card("busy", "busy-process", CardState.Closed));
+        _feed.IsTold("busy").ShouldBeFalse();
+
+        await _server.HandleAsync(Call("buddy_point", """{"card":"busy"}"""), CancellationToken.None);
+        _model.Mood.ShouldBe(BuddyMood.Trouble);
+
+        await _server.HandleAsync(Call("buddy_sleep"), CancellationToken.None);
+
+        _model.GrumpyFace.ShouldBeFalse();
+        _model.Mood.ShouldBe(BuddyMood.Asleep);
+    }
+
+    [Fact]
+    public async Task BuddySleepLeavesAFailureOnACardTheFeedOwns()
+    {
+        // An open urgent card the stream raised: the feed told it and its closing clears it, so buddy_sleep leaves it.
+        Snapshot(Card("busy", "busy-process", CardState.Open));
+        _feed.IsTold("busy").ShouldBeTrue();
+
+        await _server.HandleAsync(Call("buddy_point", """{"card":"busy"}"""), CancellationToken.None);
+        await _server.HandleAsync(Call("buddy_sleep"), CancellationToken.None);
+
+        _model.GrumpyFace.ShouldBeTrue();
+        _model.Mood.ShouldBe(BuddyMood.Trouble);
+    }
+
+    [Fact]
+    public async Task LaterOnAnUrgentSayEndsItsFailure()
+    {
+        // No card closes for a say, so putting its bubble off (Later) is what ends the failure it opened.
+        await _server.HandleAsync(Call("buddy_say", """{"text":"CI is red","urgency":"urgent"}"""), CancellationToken.None);
+        _model.GrumpyFace.ShouldBeTrue();
+
+        _model.Dismiss();
+
+        _model.GrumpyFace.ShouldBeFalse();
+        _model.Mood.ShouldBe(BuddyMood.Asleep);
     }
 
     [Fact]

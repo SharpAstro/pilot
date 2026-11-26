@@ -123,9 +123,10 @@ public sealed class BuddyRelay(BuddyModel model, BuddyFeed feed, TimeProvider ti
         var urgent = known && ToastTier.Of(card!.Kind) == ToastTier.Urgent;
         var title = known ? card!.Title : "Card " + call.Card;
         var body = known ? card!.Summary ?? card.Detail ?? string.Empty : "The watchtower points you to this card.";
-        if (!known)
+        if (!feed.IsTold(call.Card))
         {
-            // A card the stream raised belongs to the stream (its card closing ends it); only what the watchtower pointed at on its own is cleared by buddy_sleep.
+            // A card the feed told belongs to the stream (its card closing ends it). Anything else the watchtower pointed at (an unknown card, a
+            // resolved one, or one whose kind of wake is off) is the watchtower's, and buddy_sleep clears it: no one else would.
             _told.Add(id);
         }
         model.Tell(new BuddyNotice(id, urgent ? NoticeKind.Trouble : NoticeKind.Ask, title, body));

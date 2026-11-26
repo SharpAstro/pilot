@@ -28,7 +28,7 @@ public sealed record BuddySettings
     /// <summary>Index into <see cref="CornerChoices"/>; null is the bottom right.</summary>
     public int? Corner { get; init; }
 
-    /// <summary>Clicks pass through to the window below while the cat sleeps; null is on.</summary>
+    /// <summary>Clicks pass through to the window below while the cat sleeps; null is off, so the shape alone limits clicks and a sleeping cat can be hovered and clicked.</summary>
     public bool? ClickThrough { get; init; }
 
     /// <summary>Index into <see cref="SnoozeChoices"/>; null is off. The choice is what the card shows; <see cref="SnoozedUntil"/> is what holds.</summary>

@@ -51,6 +51,12 @@ public sealed class BuddyFeed(BuddyModel model, TimeProvider time, Func<BuddySet
     /// <summary>The copy of the node's state the feed reads.</summary>
     public NodeMirror Mirror => _mirror;
 
+    /// <summary>
+    /// The feed told the cat of card <paramref name="cardId"/> and still owns its notice: the card closing clears it. A card the feed did not tell
+    /// (resolved already, or its kind of wake is off in the settings) is not the feed's to clear.
+    /// </summary>
+    public bool IsTold(string cardId) => _told.ContainsKey(cardId);
+
     /// <summary>The node's name for the peek rows (its machine code); the rows of other nodes come with the watchtower's own summary, not from here.</summary>
     public string NodeName { get; set; } = "node";
 

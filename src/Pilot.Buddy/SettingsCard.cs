@@ -1,8 +1,8 @@
 namespace Pilot.Buddy;
 
 /// <summary>
-/// The settings card (DSN-2 v5): Watch (a dropdown), Wake up for three check boxes, Sit in corner (segmented, one of three), Clicks pass through while
-/// asleep (a switch), Snooze (a dropdown), then the links Done and Other cats. Hit ids: <c>source</c>, <c>wakeAsk</c>, <c>wakeMerged</c>,
+/// The settings card (DSN-2 v5, without the design's Watch row, which needs the buddy to read peers): Wake up for three check boxes, Sit in corner (segmented, one of three), Clicks pass through while
+/// asleep (a switch), Snooze (a dropdown), then the links Done and Other cats. Hit ids: <c>wakeAsk</c>, <c>wakeMerged</c>,
 /// <c>wakeFailed</c>, <c>corner:&lt;i&gt;</c>, <c>clickThrough</c>, <c>snooze</c>, <c>done</c>, <c>cats</c>. <see cref="Press"/> turns a hit into the settings it makes.
 /// </summary>
 public sealed class SettingsCard : BuddyCard

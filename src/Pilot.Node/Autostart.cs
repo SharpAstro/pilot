@@ -32,9 +32,9 @@ public static class Autostart
     /// <summary>The desktop cat's binary beside <paramref name="nodePath"/>, or null when there is none (the cat ships with the other binaries, so a node installed alone has no cat).</summary>
     public static string? BuddyBeside(string nodePath)
     {
+        // One rule for where the cat lives: the watchtower's MCP config finds it the same way.
         var folder = Path.GetDirectoryName(nodePath);
-        var path = folder is null ? null : Path.Combine(folder, OperatingSystem.IsWindows() ? "pilot-buddy.exe" : "pilot-buddy");
-        return path is not null && File.Exists(path) ? path : null;
+        return string.IsNullOrEmpty(folder) ? null : Flights.SessionMcpConfig.BuddyBeside(folder);
     }
 
     /// <summary>The Run value's command for the cat: its path, quoted. A WinExe has no console, so nothing wraps it.</summary>

@@ -47,6 +47,23 @@ public sealed class AutostartTests
     }
 
     [Fact]
+    public void ACatBesideTheNodeIsTheOneStarted()
+    {
+        // A temporary folder holding an empty cat binary beside the node: its path is the cat to start. The folder is removed after.
+        var folder = Directory.CreateTempSubdirectory("pilot-autostart-");
+        try
+        {
+            var buddy = Path.Combine(folder.FullName, OperatingSystem.IsWindows() ? "pilot-buddy.exe" : "pilot-buddy");
+            File.WriteAllBytes(buddy, []);
+            Autostart.BuddyBeside(Path.Combine(folder.FullName, OperatingSystem.IsWindows() ? "pilot-node.exe" : "pilot-node")).ShouldBe(buddy);
+        }
+        finally
+        {
+            folder.Delete(recursive: true);
+        }
+    }
+
+    [Fact]
     public void TheUnitRestartsTheNodeButNotWhenAnotherHoldsTheSocket()
     {
         var unit = Autostart.SystemdUnit("/home/ada/.local/share/pilot2/bin/pilot-node", ["--lan", "--repo-root", "/home/ada/src/my org"]);
