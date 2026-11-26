@@ -337,7 +337,8 @@ public sealed class ReviewLoopTests : ReviewTestsBase
         (await Run(Verbs.Review, Verbs.FlightTarget(flight.Code), Reviewer(flight.Code), "changes", Answered(flight.Code) + "## Blocking\n- Parser.cs:20 the loop never ends")).Error.ShouldBeNull();
 
         var rounds = F(flight.Code).ReviewRounds.ShouldNotBeNull();
-        (rounds.Length, rounds[^1].FixUntouched, rounds[0].Head == rounds[^1].Head, F(flight.Code).Review!.ReviewedHead == rounds[^1].Head).ShouldBe((2, true, false, true));
+        var probe = await _git.RunAsync(["log", "--first-parent", "--no-merges", "--name-only", "--format=", $"{rounds[0].Head}..{rounds[^1].Head}"], F(flight.Code).Worktree, Ct);
+        (rounds.Length, rounds[^1].FixUntouched, probe.Ok, probe.Output, ReviewFindings.Read(rounds[0].Findings).BlockingFiles.Count, Directory.Exists(F(flight.Code).Worktree)).ShouldBe((2, true, true, "other.txt\n", 1, true));
         var card = Open().Single(c => c.Kind == LegCommander.ReviewLoopKind);
         card.Title.ShouldContain("changed none of the files named");
     }
