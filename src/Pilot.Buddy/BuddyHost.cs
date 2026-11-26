@@ -2,6 +2,7 @@ using DIR.Lib;
 using Pilot.Contracts;
 using SdlVulkan.Renderer;
 using SharpAstro.AppShell;
+using SharpAstro.Png;
 using static SDL3.SDL;
 
 namespace Pilot.Buddy;
@@ -118,22 +119,88 @@ internal sealed class BuddyHost : IBuddyWindow, IDisposable
         {
             DrawFrame();
         }
+        // A capture looks at the screen under the window first without it: whatever the desktop shows there is the known backdrop.
+        _backdrop = _options.Capture is null ? null : Grab();
         _window.Show();
         _window.SetAlwaysOnTop(true);
 
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         _ = Link.RunAsync(linked.Token);
-        var deadline = _options.ExitAfter is { } after ? _time.GetUtcNow() + after : (DateTimeOffset?)null;
+        // A capture is the window up for --hold (the frame drawn, the compositor given its time), then one look at the screen.
+        var deadline = _options.Capture is not null ? _time.GetUtcNow() + _options.Hold
+            : _options.ExitAfter is { } after ? _time.GetUtcNow() + after : (DateTimeOffset?)null;
+        var exit = 0;
         try
         {
             Loop(deadline);
+            if (_options.Capture is { } path)
+            {
+                exit = TakeCapture(path);
+            }
         }
         finally
         {
             linked.Cancel();
             _log(_policy.Summary());
         }
-        return 0;
+        return exit;
+    }
+
+    private byte[]? _backdrop;
+
+    /// <summary>The screen under the window now, RGBA, or null.</summary>
+    private byte[]? Grab()
+    {
+        _window!.GetPosition(out var x, out var y);
+        return WindowsShell.CaptureScreen((int)(x * _density), (int)(y * _density), _pixelWidth, _pixelHeight);
+    }
+
+    /// <summary>
+    /// Writes the screen under the window to <paramref name="path"/> (and the backdrop alone beside it), and says in the log what it shows: whether the
+    /// corner away from the cat is the backdrop (transparent and clicks through) and the cat's body is not (drawn).
+    /// </summary>
+    private int TakeCapture(string path)
+    {
+        var after = Grab();
+        if (after is null || _backdrop is null)
+        {
+            _log("pilot-buddy: the screen could not be captured (not Windows, or no display)");
+            return 1;
+        }
+        var folder = Path.GetDirectoryName(Path.GetFullPath(path));
+        if (folder is { Length: > 0 })
+        {
+            Directory.CreateDirectory(folder);
+        }
+        File.WriteAllBytes(path, PngWriter.Encode(after, _pixelWidth, _pixelHeight));
+        var backdropPath = Path.ChangeExtension(path, ".backdrop.png");
+        File.WriteAllBytes(backdropPath, PngWriter.Encode(_backdrop, _pixelWidth, _pixelHeight));
+
+        var layout = _desk.Geometry!.Layout;
+        var cornerX = layout.CatX < _pixelWidth / 2f ? _pixelWidth - 16 : 2;
+        var cornerY = layout.CatY < _pixelHeight / 2f ? _pixelHeight - 16 : 2;
+        var corner = MeanDifference(after, _backdrop, cornerX, cornerY, 14, 14);
+        var body = MeanDifference(after, _backdrop, (int)(layout.CatX + 80 * _scale), (int)(layout.CatY + 70 * _scale), (int)(40 * _scale), (int)(20 * _scale));
+        _log($"pilot-buddy: capture {path} (backdrop alone: {backdropPath}); AlphaPresentation {_context!.AlphaPresentation}; "
+            + $"mean difference from the backdrop per channel: corner {corner} (0 means transparent), cat's body {body} (more than 20 means drawn); "
+            + (corner < 3 && body > 20 ? "VERDICT: as expected" : "VERDICT: NOT as expected, look at the pictures"));
+        return corner < 3 && body > 20 ? 0 : 3;
+    }
+
+    private int MeanDifference(byte[] a, byte[] b, int x, int y, int w, int h)
+    {
+        long sum = 0;
+        var count = 0;
+        for (var j = Math.Max(0, y); j < Math.Min(_pixelHeight, y + h); j++)
+        {
+            for (var i = Math.Max(0, x); i < Math.Min(_pixelWidth, x + w); i++)
+            {
+                var at = (j * _pixelWidth + i) * 4;
+                sum += Math.Abs(a[at] - b[at]) + Math.Abs(a[at + 1] - b[at + 1]) + Math.Abs(a[at + 2] - b[at + 2]);
+                count += 3;
+            }
+        }
+        return count == 0 ? 0 : (int)(sum / count);
     }
 
     private void Loop(DateTimeOffset? deadline)
