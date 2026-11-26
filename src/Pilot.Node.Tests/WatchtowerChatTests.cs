@@ -398,6 +398,42 @@ public sealed partial class WatchtowerChatTests : IDisposable
     }
 
     [Fact]
+    public async Task APastWatchtowersMissingTranscriptIsLookedForAgainOnlyAfterAWhile()
+    {
+        var chat = new WatchtowerChat(_tower, _book, time: _time);
+        (await _tower.RestartAsync("first", Ct)).ShouldBeNull();
+        Row("job00001", First, SessionState.Idle);
+        _time.Advance(TimeSpan.FromHours(3));
+        (await _tower.RestartAsync("its brief changed", Ct)).ShouldBeNull();
+        Row("job00001", First, SessionState.Ended);
+        Row("job00002", Second, SessionState.Idle);
+        _profile.Append(_profile.TranscriptPath(Second), Said("assistant", "Handled it."));
+
+        // Claude Code deleted the first one's transcript after its cleanup period; each look for it goes through every projects folder.
+        chat.Page(-1).Entries.Select(e => e.Text).ShouldBe(["Handled it."]);
+
+        // The next pages do not look for it again (DE1, 2026-11-26: 119 such sessions at every page, a third of a core).
+        _profile.Append(_profile.TranscriptPath(First), Said("user", "Let's launch a flight"));
+        chat.Page(-1).Entries.Select(e => e.Text).ShouldBe(["Handled it."]);
+
+        _time.Advance(WatchtowerChat.MissingLookAgain);
+        chat.Page(-1).Entries.Select(e => e.Text).ShouldBe(["Let's launch a flight", "A fresh watchtower started: its brief changed", "Handled it."]);
+    }
+
+    [Fact]
+    public async Task TheCurrentWatchtowersTranscriptIsLookedForAtEveryPage()
+    {
+        var chat = new WatchtowerChat(_tower, _book, time: _time);
+        (await _tower.RestartAsync("first", Ct)).ShouldBeNull();
+        Row("job00001", First, SessionState.Idle);
+        chat.Page(-1).Entries.ShouldBeEmpty();
+
+        // A fresh watchtower's first words show at the next page, not a while later.
+        _profile.Append(_profile.TranscriptPath(First), Said("assistant", "On it."));
+        chat.Page(-1).Entries.Select(e => e.Text).ShouldBe(["On it."]);
+    }
+
+    [Fact]
     public void ARowOfItsNameAnOlderNodeStartedIsAWatchtowerToo()
     {
         // No record kept: only rows, as a node from before the chat left them.

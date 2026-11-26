@@ -418,6 +418,9 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
             return retold;
         }
         var now = time.GetUtcNow();
+        // The sessions once per tick, and again after a retell (its say can resume a session). Read for every told job, each read copying and
+        // sorting every session under the state lock, a tick cost (told jobs) x (sessions) and a quarter of a core (4,378 x 2,532, DE1, 2026-11-26).
+        var sessions = state.Sessions();
         foreach (var row in state.Jobs().Where(j => j is { Owner: not null, Told: true, ToldAt: not null, EndedAt: not null, RetellRung: null } && j.Kind != JobKind.Check).ToList())
         {
             if (row.ToldWay is "owner-ended" or "gone")
@@ -425,7 +428,6 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
                 ForgetTell(row.Id);
                 continue;
             }
-            var sessions = state.Sessions();
             var ownerRow = OwnerRow(row.Owner!, sessions);
             if (ownerRow is null)
             {
@@ -527,6 +529,7 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
             _contextAtTell[row.Id] = target.ContextTokens;
             state.PutJob(row with { RetoldAt = now, RetoldWay = way });
             retold = true;
+            sessions = state.Sessions();
         }
         return retold;
     }
