@@ -163,7 +163,7 @@ public sealed class BuddyFramePolicyTests
         /// <summary>Released after each hand-off or chat verb of the desk ends and has repainted (its wake): awaited on the event, never on the clock.</summary>
         public SemaphoreSlim Woke { get; } = new(0);
 
-        public Task AfterHandOff() => Woke.WaitAsync(TimeSpan.FromSeconds(10));
+        public Task AfterHandOff() => Woke.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
 
         public void Click(int button, (float X, float Y) at)
         {
@@ -338,7 +338,7 @@ public sealed class BuddyFramePolicyTests
 
         rig.Model.Tell(Ask());
         rig.Click(1, (layout.BubbleX + open.X + open.Width / 2, layout.BubbleY + open.Y + open.Height / 2));
-        await rig.Gui.Done.WaitAsync(TimeSpan.FromSeconds(10));
+        await rig.Gui.Done.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
         rig.Gui.Links.ShouldBe([BuddyFeed.CardLink("ask-1")], "Open the chat hands the card to the GUI");
         await rig.AfterHandOff();
         rig.Model.Current.ShouldBeNull();
@@ -354,14 +354,14 @@ public sealed class BuddyFramePolicyTests
         var open = layout.Bubble!.Buttons.Single(b => b.Label == SpeechBubble.PrimaryLabel(BubbleStyle.Ask));
 
         rig.Click(1, (layout.BubbleX + open.X + open.Width / 2, layout.BubbleY + open.Y + open.Height / 2));
-        await rig.Gui.Done.WaitAsync(TimeSpan.FromSeconds(10));
+        await rig.Gui.Done.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
         rig.Gui.Launched.ShouldBe([BuddyFeed.CardLink("ask-1")], "no GUI took it, so the fallback starts pilot-gui with the link");
         await rig.AfterHandOff();
         rig.Model.Current.ShouldNotBeNull("neither worked: the notice is kept, not lost");
 
         rig.Gui.LaunchWorks = true;
         rig.Click(1, (layout.BubbleX + open.X + open.Width / 2, layout.BubbleY + open.Y + open.Height / 2));
-        await rig.Gui.Done.WaitAsync(TimeSpan.FromSeconds(10));
+        await rig.Gui.Done.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
         await rig.AfterHandOff();
         rig.Model.Current.ShouldBeNull("the fallback started the GUI, which has the card now");
     }
