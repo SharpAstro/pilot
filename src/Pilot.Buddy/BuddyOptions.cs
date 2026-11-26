@@ -59,26 +59,26 @@ public sealed record BuddyOptions
                     options = options with { Capture = Next("--capture") };
                     break;
                 case "--hold":
-                    if (!TryParseDuration(Next("--hold"), out var hold) && error is null)
+                    if (!TryParseDuration(Next("--hold"), out var hold) && problem is null)
                     {
-                        error = "--hold takes a duration such as 3s or 500ms";
+                        problem = "--hold takes a duration such as 3s or 500ms";
                     }
                     options = options with { Hold = hold };
                     break;
                 case "--exit-after":
-                    if (!TryParseDuration(Next("--exit-after"), out var after) && error is null)
+                    if (!TryParseDuration(Next("--exit-after"), out var after) && problem is null)
                     {
-                        error = "--exit-after takes a duration such as 5s, 500ms or 2m";
+                        problem = "--exit-after takes a duration such as 5s, 500ms or 2m";
                     }
                     options = options with { ExitAfter = after };
                     break;
                 default:
-                    error = $"unknown option {args[i]}";
+                    problem = $"unknown option {args[i]}";
                     break;
             }
-            if (error is not null)
+            if (problem is not null)
             {
-                error += Environment.NewLine + "pilot-buddy --help lists the options";
+                error = problem + Environment.NewLine + "pilot-buddy --help lists the options";
                 return null;
             }
         }
