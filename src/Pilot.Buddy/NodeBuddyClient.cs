@@ -50,4 +50,33 @@ public sealed class InstanceGateHandOff(string? remoteEndpoint = null) : IGuiHan
     /// <inheritdoc />
     public bool Open(string link) =>
         InstanceGate.TryHandOff(InstanceGate.ChannelFor("pilot-v2-gui", remoteEndpoint?.ToLowerInvariant() ?? string.Empty), link, TimeSpan.FromSeconds(5));
+
+    /// <inheritdoc />
+    public bool Launch(string link)
+    {
+        try
+        {
+            var gui = Path.Combine(AppContext.BaseDirectory, OperatingSystem.IsWindows() ? "pilot-gui.exe" : "pilot-gui");
+            if (File.Exists(gui))
+            {
+                var start = new System.Diagnostics.ProcessStartInfo(gui) { UseShellExecute = false };
+                if (link.Length > 0)
+                {
+                    start.ArgumentList.Add(link);
+                }
+                using var process = System.Diagnostics.Process.Start(start);
+                return process is not null;
+            }
+            if (link.StartsWith("pilot://", StringComparison.Ordinal))
+            {
+                // No pilot-gui beside the binary: the shell's own handler for pilot:// is what a toast's click uses.
+                using var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(link) { UseShellExecute = true });
+                return process is not null;
+            }
+        }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException or IOException)
+        {
+        }
+        return false;
+    }
 }

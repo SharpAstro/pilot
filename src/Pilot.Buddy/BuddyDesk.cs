@@ -312,9 +312,16 @@ public sealed class BuddyDesk(
         // "Open the chat" / "Open the run": the GUI opens the card the notice is about; the notice has been seen, so the cat sleeps.
         if (notice is not null)
         {
-            gui.Open(notice.Id.StartsWith("card:", StringComparison.Ordinal) ? BuddyFeed.CardLink(notice.Id["card:".Length..]) : string.Empty);
-            model.Dismiss();
-            Changed();
+            // The hand-off blocks (a GUI's channel, or the GUI starting), so it runs on the pool; the notice is dismissed only once the GUI has taken it,
+            // else it stays showing: a CI failure must not be gone because pilot-gui was not running.
+            var id = notice.Id;
+            HandOff(notice.Id.StartsWith("card:", StringComparison.Ordinal) ? BuddyFeed.CardLink(notice.Id["card:".Length..]) : string.Empty, () =>
+            {
+                if (model.Current is { } now && now.Id == id)
+                {
+                    model.Dismiss();
+                }
+            });
         }
     }
 
@@ -337,7 +344,7 @@ public sealed class BuddyDesk(
                 var rows = feed.Peek().Rows;
                 if (row >= 0 && row < rows.Count)
                 {
-                    gui.Open(rows[row].Link ?? string.Empty);
+                    HandOff(rows[row].Link ?? string.Empty, null);
                 }
                 break;
             case DeskCard.Chat:
@@ -350,7 +357,11 @@ public sealed class BuddyDesk(
     {
         if (id == "more")
         {
-            chat.OpenInGui();
+            _ = RunAsync(_ =>
+            {
+                chat.OpenInGui();
+                return Task.CompletedTask;
+            });
         }
         else if (id == "whatsgoing")
         {
@@ -396,12 +407,31 @@ public sealed class BuddyDesk(
         }
     }
 
+    /// <summary>
+    /// Hands <paramref name="link"/> to the running GUI, starting it when none runs, on the thread pool. <paramref name="taken"/> runs under the gate once the GUI took
+    /// it (not when neither worked); the window repaints either way.
+    /// </summary>
+    private void HandOff(string link, Action? taken) => _ = RunAsync(_ =>
+    {
+        if (gui.Open(link) || gui.Launch(link))
+        {
+            if (taken is not null)
+            {
+                lock (gate)
+                {
+                    taken();
+                }
+            }
+        }
+        return Task.CompletedTask;
+    });
+
     /// <summary>A chat verb runs on the thread pool; the desk repaints when it ends, under the gate the host draws under.</summary>
     private async Task RunAsync(Func<CancellationToken, Task> work)
     {
         try
         {
-            await work(CancellationToken.None).ConfigureAwait(false);
+            await Task.Run(() => work(CancellationToken.None)).ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is HttpRequestException or IOException or OperationCanceledException or InvalidOperationException)
         {

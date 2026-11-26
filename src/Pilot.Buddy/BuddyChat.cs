@@ -27,6 +27,12 @@ public interface IGuiHandOff
 {
     /// <summary>Opens <paramref name="link"/> in the GUI (<c>pilot://card/&lt;id&gt;</c>, as a toast's click does; empty just raises the window). False when the GUI did not take it.</summary>
     bool Open(string link);
+
+    /// <summary>
+    /// The fallback when no GUI runs (<see cref="Open"/> returned false): starts pilot-gui with <paramref name="link"/>, or hands the link to the shell as a toast's
+    /// click does. False when neither worked. Blocks while it starts, so callers run it off the window's thread.
+    /// </summary>
+    bool Launch(string link) => false;
 }
 
 /// <summary>A button of the chat card: a choice of a question, or allow/deny of a permission prompt. <c>Words</c> is the JSON an answer sends.</summary>
@@ -37,8 +43,11 @@ public sealed record ChoiceButton(string Label, string RequestId, string Decisio
 /// speaks the node's own chat verbs through <see cref="IBuddyNode"/>, so the exchange is the one the GUI and the CLI share. State only: the card that
 /// draws it is <see cref="ChatCard"/>, and the window feeds it keys and the node's <c>chatChanged</c> events.
 /// </summary>
-public sealed class BuddyChat(IBuddyNode node, IGuiHandOff gui, Func<string?> disabledReason)
+public sealed class BuddyChat(IBuddyNode node, IGuiHandOff gui, Func<string?> disabledReason, object? gate = null)
 {
+    // The window draws under this lock, so every write of the chat's state (typed on the window's thread, set by a chat verb on the pool) takes it too.
+    private readonly object _gate = gate ?? new();
+
     /// <summary>What the input says while empty and usable.</summary>
     public const string Placeholder = "Ask the watchtower";
 
@@ -137,9 +146,12 @@ public sealed class BuddyChat(IBuddyNode node, IGuiHandOff gui, Func<string?> di
     /// <summary>Deletes the last character.</summary>
     public void Backspace()
     {
-        if (_input.Length > 0)
+        lock (_gate)
         {
-            _input = _input[..^1];
+            if (_input.Length > 0)
+            {
+                _input = _input[..^1];
+            }
         }
     }
 
@@ -182,20 +194,27 @@ public sealed class BuddyChat(IBuddyNode node, IGuiHandOff gui, Func<string?> di
 
     private async Task<bool> AfterSendAsync(string text, string? refused, CancellationToken cancellationToken)
     {
-        Refused = refused;
-        if (refused is not null)
+        lock (_gate)
         {
-            return false;
+            Refused = refused;
+            if (refused is not null)
+            {
+                return false;
+            }
+            _input = string.Empty;
+            _fromIndex = _page?.Total ?? 0;
         }
-        _input = string.Empty;
-        _fromIndex = _page?.Total ?? 0;
         await RefreshAsync(cancellationToken);
         if (Working && _page?.Queued is { } queued && _page.QueuedIds is { } ids)
         {
             var i = Array.FindLastIndex(queued, q => q == text);
             if (i >= 0 && i < ids.Length && ids[i] is { Length: > 0 } sendId)
             {
-                Refused = await node.ChatNowAsync(sendId, cancellationToken);
+                var chatNow = await node.ChatNowAsync(sendId, cancellationToken);
+                lock (_gate)
+                {
+                    Refused = chatNow;
+                }
             }
         }
         return true;
@@ -206,10 +225,13 @@ public sealed class BuddyChat(IBuddyNode node, IGuiHandOff gui, Func<string?> di
     {
         if (await node.GetChatAsync(-1, cancellationToken) is { } page)
         {
-            _page = page;
-            if (_fromIndex < 0)
+            lock (_gate)
             {
-                _fromIndex = page.Total;
+                _page = page;
+                if (_fromIndex < 0)
+                {
+                    _fromIndex = page.Total;
+                }
             }
         }
     }
@@ -217,14 +239,18 @@ public sealed class BuddyChat(IBuddyNode node, IGuiHandOff gui, Func<string?> di
     /// <summary>A choice button was pressed: answers the ask through <c>answer-ask</c>. Returns true when the node took it.</summary>
     public async Task<bool> PressAsync(ChoiceButton button, CancellationToken cancellationToken)
     {
-        Refused = await node.AnswerAskAsync(button.RequestId, button.Decision, button.Words, cancellationToken);
-        if (Refused is null)
+        var refused = await node.AnswerAskAsync(button.RequestId, button.Decision, button.Words, cancellationToken);
+        lock (_gate)
+        {
+            Refused = refused;
+        }
+        if (refused is null)
         {
             await RefreshAsync(cancellationToken);
         }
-        return Refused is null;
+        return refused is null;
     }
 
-    /// <summary>"more in the GUI": hands the window the chat (it only raises the running window, as the cards link is not the chat's).</summary>
-    public bool OpenInGui() => gui.Open(string.Empty);
+    /// <summary>"more in the GUI": hands the window the chat (it only raises the running window, as the cards link is not the chat's); starts the GUI when none runs. Blocks, so off the window's thread.</summary>
+    public bool OpenInGui() => gui.Open(string.Empty) || gui.Launch(string.Empty);
 }

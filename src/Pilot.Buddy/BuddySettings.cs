@@ -10,17 +10,11 @@ namespace Pilot.Buddy;
 /// </summary>
 public sealed record BuddySettings
 {
-    /// <summary>The "Watch" choices: the watchtower sees every node, "this node only" reads the local node directly.</summary>
-    public static readonly IReadOnlyList<string> SourceChoices = ["Watchtower (every node)", "This node only"];
-
     /// <summary>The "Sit in corner" choices.</summary>
     public static readonly IReadOnlyList<string> CornerChoices = ["Bottom right", "Bottom left", "Top right"];
 
     /// <summary>The "Snooze" choices.</summary>
     public static readonly IReadOnlyList<string> SnoozeChoices = ["Off", "1 hour", "Until tomorrow"];
-
-    /// <summary>Index into <see cref="SourceChoices"/>; null is the watchtower.</summary>
-    public int? Source { get; init; }
 
     /// <summary>A session asks me something wakes the cat; null is on.</summary>
     public bool? WakeAsk { get; init; }
@@ -46,9 +40,6 @@ public sealed record BuddySettings
     /// <summary>The moment the snooze ends; null or past is awake.</summary>
     public DateTimeOffset? SnoozedUntil { get; init; }
 
-    /// <summary>See <see cref="Source"/>.</summary>
-    [JsonIgnore] public int SourceIndex => Math.Clamp(Source ?? 0, 0, SourceChoices.Count - 1);
-
     /// <summary>See <see cref="WakeAsk"/>.</summary>
     [JsonIgnore] public bool WakesForAsk => WakeAsk ?? true;
 
@@ -62,7 +53,7 @@ public sealed record BuddySettings
     [JsonIgnore] public int CornerIndex => Math.Clamp(Corner ?? 0, 0, CornerChoices.Count - 1);
 
     /// <summary>See <see cref="ClickThrough"/>.</summary>
-    [JsonIgnore] public bool ClicksPassThrough => ClickThrough ?? true;
+    [JsonIgnore] public bool ClicksPassThrough => ClickThrough ?? false;
 
     /// <summary>See <see cref="Snooze"/>.</summary>
     [JsonIgnore] public int SnoozeIndex => Math.Clamp(Snooze ?? 0, 0, SnoozeChoices.Count - 1);

@@ -42,13 +42,13 @@ public interface IBuddyLink
 /// pipe's own thread.
 /// </para>
 /// </summary>
-public sealed class BuddyRelay(BuddyModel model, BuddyFeed feed, TimeProvider time)
+public sealed class BuddyRelay(BuddyModel model, BuddyFeed feed, TimeProvider time, object? gate = null)
 {
     private readonly HashSet<string> _told = new(StringComparer.Ordinal);
     private long _sequence;
 
     /// <summary>The lock over the model and the feed that the host and this relay both take.</summary>
-    public object Gate { get; } = new();
+    public object Gate { get; } = gate ?? new();
 
     /// <summary>The window is hidden (the settings' "hide the cat"); reported by buddy_state, and the words still queue.</summary>
     public bool Hidden

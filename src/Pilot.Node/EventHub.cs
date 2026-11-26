@@ -105,9 +105,11 @@ public sealed class EventHub(NodeState state, PageViews views, ILogger<EventHub>
     // Says whether others show the cards when that differs from what the client was last told (a new client hears it only when it is true).
     private void Tell(INodeEventSink client)
     {
-        var others = views.OthersShowCards(client);
+        bool others;
         lock (_told)
         {
+            // Read inside the lock, so two clients saying at once cannot write the older answer last.
+            others = views.OthersShowCards(client);
             if (!_told.TryGetValue(client, out var told) || told == others)
             {
                 return;

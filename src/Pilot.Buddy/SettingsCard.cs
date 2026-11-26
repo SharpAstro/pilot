@@ -29,7 +29,6 @@ public sealed class SettingsCard : BuddyCard
         var y = CardPadding;
 
         y += card.Row(pen, "Grump", y, inner, 16, CardTone.Header) + RowGap;
-        y += card.Dropdown(pen, "source", "Watch", BuddySettings.SourceChoices[settings.SourceIndex], y, inner) + RowGap;
         y += card.Row(pen, "Wake up for", y, inner, 13, CardTone.Muted) + RowGap;
         y += card.CheckRow(pen, "wakeAsk", "A session asks me something", settings.WakesForAsk, y, inner) + RowGap;
         y += card.CheckRow(pen, "wakeMerged", "A PR merged or a flight landed", settings.WakesForMerged, y, inner) + RowGap;
@@ -123,7 +122,6 @@ public sealed class SettingsCard : BuddyCard
         }
         return hitId switch
         {
-            "source" => settings with { Source = (settings.SourceIndex + 1) % BuddySettings.SourceChoices.Count },
             "wakeAsk" => settings with { WakeAsk = !settings.WakesForAsk },
             "wakeMerged" => settings with { WakeMerged = !settings.WakesForMerged },
             "wakeFailed" => settings with { WakeFailed = !settings.WakesForFailed },

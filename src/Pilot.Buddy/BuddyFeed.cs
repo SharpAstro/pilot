@@ -81,7 +81,7 @@ public sealed class BuddyFeed(BuddyModel model, TimeProvider time, Func<BuddySet
     /// Whether the buddy shows the cards to the person: its window is visible and not snoozed. It is what the buddy says to the node (as Pilot.Gui does), so
     /// the node's Toaster mutes a normal card for it and toasts an urgent one regardless.
     /// </summary>
-    public bool ShowsCards => _windowVisible && !settings().IsSnoozed(time.GetUtcNow());
+    public bool ShowsCards => _windowVisible && !settings().IsSnoozed(time.GetUtcNow()) && settings().WakesForAsk;
 
     /// <summary>Called, with the gate held, when <see cref="ShowsCards"/> changes (and for the first time it is known): the node link says it over the stream.</summary>
     public Action<bool>? ShowsCardsChanged { get; set; }
