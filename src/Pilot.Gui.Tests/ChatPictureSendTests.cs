@@ -169,7 +169,7 @@ public sealed class ChatPictureSendTests
         rig.CtrlV().ShouldBeFalse();
         rig.Described().ShouldNotContain("Ctrl+V pastes a picture");
 
-        // A picture held for this node's chat, then the person moves to a target that cannot take it: SwitchTo keeps no picture, so hold one on the card instead.
+        // A picture held for this node's chat, then the person moves to a target that cannot take it: SwitchTo leaves a held picture alone (only Restart clears it), so hold one on the card instead.
         rig.Chat.SwitchTo(null);
         rig.CtrlV().ShouldBeTrue();
         rig.Chat.Attach(Card("c1"), null);

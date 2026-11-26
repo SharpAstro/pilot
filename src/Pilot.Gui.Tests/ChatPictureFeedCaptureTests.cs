@@ -8,7 +8,7 @@ using Xunit;
 namespace Pilot.Gui.Tests;
 
 /// <summary>
-/// Captures of the Chat page with a picture held in the box and one sent (PIL1366), light and dark, narrow and wide, written to
+/// Captures of the Chat page with a picture held in the box and one sent (PIL1366), day and night, narrow and wide, written to
 /// PILOT_JOB_ARTIFACTS for the PR.
 /// </summary>
 public sealed class ChatPictureFeedCaptureTests
@@ -42,6 +42,6 @@ public sealed class ChatPictureFeedCaptureTests
 
         held.Chat.Render(new RectF32(0, 0, width, height));
         held.Painted.ShouldNotBeEmpty();
-        File.WriteAllBytes(System.IO.Path.Combine(ArtifactDir(), $"chat-picture-{(night ? "dark" : "light")}-{width}.png"), PngWriter.Encode(held.Renderer.Surface.Pixels, width, height));
+        File.WriteAllBytes(System.IO.Path.Combine(ArtifactDir(), $"chat-picture-{(night ? "night" : "day")}-{width}.png"), PngWriter.Encode(held.Renderer.Surface.Pixels, width, height));
     }
 }

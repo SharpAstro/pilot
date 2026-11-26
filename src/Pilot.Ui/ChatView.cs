@@ -1712,7 +1712,7 @@ internal sealed partial class ChatView<TSurface>(Renderer<TSurface> renderer) : 
             var named = $"picture: {picture.Name} ({picture.Bytes.Length / 1024 + 1} KB), sent with the next message";
             rows.Add(Layout.Builder.HStack(
                 WrappedProse.OneLine(named, 12f, Body, vAlign: TextAlign.Center).WStar().RowH(24f).Whole(named),
-                CardsView<TSurface>.Pill("Drop", "chat:drop-picture", DropPicture).RowH(24f)).WithGap(6f).RowH(24f));
+                CardsView<TSurface>.Pill("Drop", "chat:drop-picture", DropPicture).RowH(24f).WAuto()).WithGap(6f).RowH(24f));
         }
         var can = !Cells && GetClipboardImage is not null && ResolvePictureTarget().Send is not null ? " · Ctrl+V pastes a picture" : "";
         var hint = (lines > 1 ? $"{lines} lines · Enter sends · Shift+Enter a new line" : "Enter sends · Shift+Enter a new line") + can;

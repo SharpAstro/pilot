@@ -54,6 +54,7 @@ public sealed class ChatPictureFeedTests
             {
                 Task.Delay(50, TestContext.Current.CancellationToken).GetAwaiter().GetResult();
             }
+            Chat.Entries.Count.ShouldBe(entries.Length, "the page did not finish loading");
             Chat.Close();
         }
 
