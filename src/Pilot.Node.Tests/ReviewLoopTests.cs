@@ -69,11 +69,11 @@ public sealed class ReviewLoopTests : ReviewTestsBase
     public async Task TheLoopCardTitlesTheRoundsInAllAndListsThePointsInThreeGroups()
     {
         var table = "## Earlier points\n| Point | Answer | Where or reason |\n|---|---|---|\n"
-            + "| R1.1 | addressed | Parser.cs:20 |\n| R2.1 | deferred: larger than the flight | the decision belongs to the owner |\n\n";
+            + "| R1.1 | not addressed | still open |\n| R2.1 | deferred: larger than the flight | the decision belongs to the owner |\n\n";
         var code = await Looping("1", 3, table, stuck: true);
 
         var card = Open().Single(c => c.Kind == LegCommander.ReviewLoopKind);
-        card.Title.ShouldContain("3 rounds in all");
+        card.Title.ShouldContain("point R1.1 is still open");
         var detail = card.Detail.ShouldNotBeNull();
         detail.ShouldContain("Points after 3 rounds:");
         detail.ShouldContain("Addressed (0):");
@@ -185,9 +185,9 @@ public sealed class ReviewLoopTests : ReviewTestsBase
         Commit(F(code).Worktree, "fix4.txt");
         (await Run(Verbs.StartReview, Verbs.FlightTarget(code), Tower)).Error.ShouldBeNull();
         await Started(_legs, code);
-        (await Run(Verbs.Review, Verbs.FlightTarget(code), Reviewer(code), "changes", Answered(code) + "## Blocking\n- finding of round 4")).Error.ShouldBeNull();
+        (await Run(Verbs.Review, Verbs.FlightTarget(code), Reviewer(code), "changes", StuckTable(code) + "## Blocking\n- finding of round 4")).Error.ShouldBeNull();
 
-        // The fourth round with changes holds the loop again: a fifth needs another word.
+        // The point is still open in the fourth round: the loop holds again, and a fifth needs another word.
         Open().ShouldContain(c => c.Kind == LegCommander.ReviewLoopKind);
         (await Run(Verbs.StartReview, Verbs.FlightTarget(code), Tower)).Error.ShouldNotBeNull().ShouldContain("watchtower's call");
     }
@@ -325,7 +325,14 @@ public sealed class ReviewLoopTests : ReviewTestsBase
         await Fly(flight, "parser");
         (await Run(Verbs.OpenPr, Verbs.FlightTarget(flight.Code), "controller")).Error.ShouldBeNull();
         (await Run(Verbs.Review, Verbs.FlightTarget(flight.Code), Reviewer(flight.Code), "changes", "## Blocking\n- Parser.cs:20 the loop never ends")).Error.ShouldBeNull();
-        await FixRound(flight.Code, "other.txt");
+        // The finish gate (pilot #1024) refuses a round that touched none of the named files once; the worker's report at the same head
+        // is its answer that none needs a change, and the round goes on to its review.
+        await _legs.WhenNotStartingAsync(flight.Code, TimeSpan.FromMinutes(5), Ct);
+        var worker = _state.Legs(flight.Code).Single(l => l.Name == "parser").Worker.ShouldNotBeNull();
+        Commit(F(flight.Code).Worktree, "other.txt");
+        (await Run(Verbs.FinishLeg, Verbs.LegTarget(flight.Code, "parser"), worker, "done", "no change needed")).Error.ShouldNotBeNull();
+        (await Run(Verbs.FinishLeg, Verbs.LegTarget(flight.Code, "parser"), worker, "done", "no change needed")).Error.ShouldBeNull();
+        await _legs.WhenNotStartingAsync(flight.Code, TimeSpan.FromMinutes(5), Ct);
 
         (await Run(Verbs.Review, Verbs.FlightTarget(flight.Code), Reviewer(flight.Code), "changes", Answered(flight.Code) + "## Blocking\n- Parser.cs:20 the loop never ends")).Error.ShouldBeNull();
 

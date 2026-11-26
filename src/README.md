@@ -315,8 +315,9 @@ default, set with `pilot set node max-go-arounds <n>` (1 to 50, in force at once
 leg (`GoAroundReasons`). Past the cap the watchtower and the node's own sends (the lookout of legs, the open-conflict send) are
 refused with the count and the cap, and a Ring `go-around-cap` card on the leg lists what each round said, with **Go around**
 and **Accept** (the leg as it stands: a failed leg is marked done anyway, a flying one stopped and marked done, a done one kept)
-that only the person may press. A person's own go-around passes the cap. The review's own cap (`MaxReviewGoArounds`, 3 rounds
-on its findings) stays as it is.
+that only the person may press. A person's own go-around passes the cap. The review's own cap (`MaxReviewGoArounds`, 8 rounds
+on its findings) is the runaway guard; a review that makes progress goes on past three rounds, and one that stops making
+progress is held earlier (`ReviewConvergence`).
 
 **A go-around that touches none of the files its findings name is not pushed.** A review round with changes costs the loop one of its rounds (the third is held for the watchtower). When the last leg finishes a go-around on that round's findings, the node lists the files the leg's own commits changed since the round's head (first-parent, no merges, so a base merge does not count). If the Blocking findings name files and none was changed, the finish is refused before any base merge, check rerun or push: the leg stays flying, no reviewer starts and the round count is unchanged. The refusal names the files and quotes the Blocking items. Finishing again at the same head with a report saying why no named file needs a change goes through, and a Handled card quotes that report. A round whose findings name no file, a first review and a leg that is not a review go-around are never gated, and a failed leg's self-finish applies the same rule.
 

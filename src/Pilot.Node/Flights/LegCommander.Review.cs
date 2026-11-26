@@ -839,7 +839,7 @@ public sealed partial class LegCommander
         // The rounds the PR has had in all, and every point in three groups (pilot #1107), read from the stored answers.
         detail.AppendLine().AppendLine($"Points after {ReviewRing.Rounds(rounds)}:").Append(ReviewRing.Points(rounds));
         // Rings the person at once (PIL1229): Pass with notes is an override, theirs; the watchtower may only allow one more round.
-        state.RaiseCard(CardBin.Ring, ReviewLoopKind, target, $"{flight.Code}'s review is in a loop ({hold?.Title ?? "no progress"}): {ReviewRing.Rounds(rounds)} in all, {rounds.Count(r => r.Verdict == ReviewState.Changes)} with changes",
+        state.RaiseCard(CardBin.Ring, ReviewLoopKind, target, $"{flight.Code} review held: {hold?.Title ?? "no progress"}",
             detail.ToString().TrimEnd(),
             [
                 new CardChoice { Label = "Pass with notes", Verb = Verbs.Review, Target = target, Args = ["pass", "passed with the findings noted: repeated or not blocking"] },
