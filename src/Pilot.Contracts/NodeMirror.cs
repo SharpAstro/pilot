@@ -166,7 +166,7 @@ public sealed class NodeMirror
             throw new InvalidOperationException($"A delta ({nodeEvent.Seq}) arrived before any snapshot");
         }
         // A chat nudge is not numbered (it carries the last delta's number): it changes no state and moves nothing.
-        if (nodeEvent is ChatChangedEvent)
+        if (nodeEvent is ChatChangedEvent or OthersShowCardsEvent)
         {
             return;
         }
@@ -303,6 +303,7 @@ public sealed class NodeMirror
                 // A result changes no state; the deltas the command made carry that.
                 break;
             case ChatChangedEvent:
+            case OthersShowCardsEvent:
                 // A nudge to read the chat feed; it changes no state.
                 break;
             case DecisionEvent:

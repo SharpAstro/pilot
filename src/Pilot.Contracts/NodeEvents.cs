@@ -49,6 +49,7 @@ namespace Pilot.Contracts;
 [JsonDerivedType(typeof(NodeChangedEvent), "nodeChanged")]
 [JsonDerivedType(typeof(DecisionEvent), "decision")]
 [JsonDerivedType(typeof(ChatChangedEvent), "chatChanged")]
+[JsonDerivedType(typeof(OthersShowCardsEvent), "othersShowCards")]
 public abstract record NodeEvent
 {
     /// <summary>
@@ -279,6 +280,18 @@ public sealed record DecisionEvent : NodeEvent
 /// moving its own number.
 /// </summary>
 public sealed record ChatChangedEvent : NodeEvent;
+
+/// <summary>
+/// Whether any OTHER client on the node's stream shows the cards (#1357's notification rule): the node says it to each client, once when
+/// it connects and again each time the answer changes, from <c>PageViews</c>, so a client never polls and never guesses. The desktop
+/// buddy reads it: with a GUI showing the cards a normal card only wakes the cat with a badge. Like <see cref="ChatChangedEvent"/> it is
+/// not numbered, journalled or held (its <see cref="NodeEvent.Seq"/> is 0), and a mirror takes it without moving its own number.
+/// </summary>
+public sealed record OthersShowCardsEvent : NodeEvent
+{
+    /// <summary>True while some client other than the one it is sent to says it shows the cards.</summary>
+    public required bool Shown { get; init; }
+}
 
 /// <summary>A note on the node: the state the demo verb <c>note node</c> changes.</summary>
 public sealed record NodeNote
