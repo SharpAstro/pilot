@@ -667,6 +667,40 @@ if (feed is not null && client is not null && clients is not null)
         Note($"pilot-gui: tell card {card.Id}: {refused ?? "told"}");
         return refused;
     };
+    // A picture pasted into the box (Ctrl+V) goes with the words to the node whose watchtower is told, uploaded to that node.
+    chrome.Chat.GetClipboardImage = ClipboardImage.Read;
+    chrome.Chat.OnSendWithPicture = async (text, picture) =>
+    {
+        var refused = picture is { } held
+            ? await ChatCommands.TellWithPictureAsync(client, text, held, GuiSay.Who, cts.Token)
+            : await ChatCommands.TellAsync(client, text, GuiSay.Who, cts.Token);
+        Note($"pilot-gui: tell watchtower (picture): {refused ?? "told"}");
+        return refused;
+    };
+    chrome.Chat.OnSendOnWithPicture = async (node, text, picture) =>
+    {
+        if (clients.For(node) is not { } to)
+        {
+            return FleetClients.WatchOnly(node);
+        }
+        var refused = picture is { } held
+            ? await ChatCommands.TellWithPictureAsync(to, text, held, GuiSay.Who, cts.Token)
+            : await ChatCommands.TellAsync(to, text, GuiSay.Who, cts.Token);
+        Note($"pilot-gui: tell {node.Name}'s watchtower (picture): {refused ?? "told"}");
+        return refused;
+    };
+    chrome.Chat.OnSendAboutCardWithPicture = async (card, node, words, picture) =>
+    {
+        if (clients.For(node) is not { } to)
+        {
+            return FleetClients.WatchOnly(node);
+        }
+        var refused = picture is { } held
+            ? await ChatCommands.TellAboutCardWithPictureAsync(to, card.Id, words, held, GuiSay.Who, cts.Token)
+            : await ChatCommands.TellAboutCardAsync(to, card.Id, words, GuiSay.Who, cts.Token);
+        Note($"pilot-gui: tell card {card.Id} (picture): {refused ?? "told"}");
+        return refused;
+    };
     chrome.Chat.OnAnswerNow = async sendId =>
     {
         var refused = await ChatCommands.AnswerNowAsync(client, sendId, GuiSay.Who, cts.Token);

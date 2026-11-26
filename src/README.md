@@ -1425,6 +1425,7 @@ Control on if it had it.
 ```bash
 pilot tell <text…>                             # to the watchtower, whichever session it is now
 pilot tell --card <id> <text…>                 # the same, about a card: its whole context goes ahead of your words
+pilot tell --attachment <file> <text…>        # with a picture (png, jpg, jpeg, gif, webp or bmp, at most 10 MB); works with --card too
 pilot watchtower restart [why…]                # a fresh one, briefed from the node's state
 pilot order <text…>                            # a standing order the node keeps; prints its id (o1)
 pilot orders                                   # the orders that stand now, with their ids
@@ -1452,6 +1453,8 @@ subject and title, its detail, each choice numbered with its command (`verb targ
 (its legs, PR and review), then a blank line and the words. It goes the way a plain tell does, so it is the person's turn
 (`ActingForPerson`). `CardContext` (Pilot.Contracts) composes it and `CardContext.TryParse` reads it back as the card's id and
 title, a short quote and the words, for a client to show in the chat.
+
+**A tell's picture** (`pilot tell --attachment <file> <words…>`, PIL1366, wire 32) sends the watchtower one image. The file is checked (an image, not empty, at most 10 MB) before anything is uploaded; a node on an older wire is refused in words, since it would drop the picture without a word. The upload goes to the node's attachments, and the tell carries its `<id>.<ext>` as `CommandRequest.Attachment`, plain or with `--card`. The node refuses an image it does not hold before anything is told, then tells the words (after the card's context for a card) followed by the picture's absolute path on the node and a line to open it with Read (`TellPictures.Line`; `TellPictures.Split` reads the id and extension back, with either path separator). `TellPicture` (Pilot.Commands) is the one client helper the CLI, the MCP tell tool and the GUI share.
 
 ### The chat (#207)
 

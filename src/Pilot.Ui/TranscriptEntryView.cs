@@ -134,6 +134,63 @@ internal sealed class TranscriptEntryView
 
     private float _stampGutter = ScrollGutter;
 
+    /// <summary>The window's shared gallery (PIL1366): a person's message with a picture shows a thumbnail that opens window-wide. Null in a host with no pictures.</summary>
+    public AttachmentGallery? Gallery { get; set; }
+
+    /// <summary>The node the pictures of this transcript are held on; null for this node.</summary>
+    public NodeMark? PictureNode { get; set; }
+
+    /// <summary>True in a terminal: a picture is a line of words there, never a thumbnail.</summary>
+    public bool Cells { get; set; }
+
+    /// <summary>The short marker for <paramref name="count"/> pictures, where a line shows no thumbnail.</summary>
+    internal static string PictureMarker(int count) => count == 1 ? "[picture attached]" : $"[{count} pictures attached]";
+
+    /// <summary>A queued or outbox line as shown: its words, and a short marker where a picture came with it, never the path.</summary>
+    internal static string WithoutPath(string text, int extra = 0)
+    {
+        var (words, pictures) = TellPictures.Split(text);
+        var count = pictures.Count + extra;
+        return count == 0 ? text : words.Length == 0 ? PictureMarker(count) : $"{words}\n{PictureMarker(count)}";
+    }
+
+    // The pictures a person's message names, from the text a row shows (a relayed message's body, a card tell's words).
+    private static IReadOnlyList<(string Id, string Ext)> PicturesOf(TranscriptEntry entry)
+    {
+        if (entry is not { Kind: TranscriptKind.User, From: null, Note: false } || !entry.Text.Contains(TellPictures.Lead, StringComparison.Ordinal))
+        {
+            return [];
+        }
+        var words = CrossSessionMessage.Parse(entry.Text)?.Body ?? entry.Text;
+        if (CrossSessionMessage.TryParseWatchtower(words) is { } tower)
+        {
+            words = tower.Body;
+        }
+        return TellPictures.Split(words).Pictures;
+    }
+
+    // What a kept row's pictures were when it was built: which copies the host had given up on. A copy that fails to fetch later changes it, so the row is rebuilt to say so.
+    private string PictureState(TranscriptEntry entry)
+    {
+        var pictures = PicturesOf(entry);
+        return pictures.Count == 0 ? "" : string.Concat(pictures.Select(p => Gallery?.Failed?.Invoke(new AttachmentRef(p.Id, "", p.Ext, PictureNode)) == true ? 'x' : '.'));
+    }
+
+    private IEnumerable<Layout.Node> PictureNodes(TranscriptEntry entry, IReadOnlyList<(string Id, string Ext)> pictures)
+    {
+        for (var i = 0; i < pictures.Count; i++)
+        {
+            var (id, ext) = pictures[i];
+            if (Cells || Gallery is null)
+            {
+                yield return Layout.Builder.Text($"[picture, {ext.ToUpperInvariant()}: shown in the window]", 12f, Dim).Selectable();
+                continue;
+            }
+            yield return Gallery.Single($"chat:{entry.Index}:{i}", new AttachmentRef(id, "picture", ext, PictureNode),
+                words => WrappedProse.Of(words, 11f, Dim, 3).WStar());
+        }
+    }
+
     /// <summary>Forgets what was opened and parsed: another transcript is about to show.</summary>
     public void Reset()
     {
@@ -269,6 +326,7 @@ internal sealed class TranscriptEntryView
         public required SubagentRow? Link;
         public required string? LinkLabel;
         public required Layout.Node Node;
+        public required string Pictures;
         public int Pass;
     }
 
@@ -278,7 +336,7 @@ internal sealed class TranscriptEntryView
 
     // What a row's build reads that is not in its entry: the labels, the links' openers and the palette. A change of any of them
     // builds every row again.
-    private (string Prompt, string Assistant, int Lines, Action<string>? OpenLink, Action<SubagentRow>? OpenAgent, Action<string>? Copy, Palette Palette)? _rowsBuiltWith;
+    private (string Prompt, string Assistant, int Lines, Action<string>? OpenLink, Action<SubagentRow>? OpenAgent, Action<string>? Copy, Palette Palette, NodeMark? Node, bool Cells)? _rowsBuiltWith;
 
     /// <summary>How many rows <see cref="Rows"/> built (rather than handed back from its cache) over its last call.</summary>
     internal int RowsBuilt { get; private set; }
@@ -292,7 +350,7 @@ internal sealed class TranscriptEntryView
     /// </summary>
     internal List<Layout.Node> Rows(List<TranscriptEntry> entries, bool live)
     {
-        var built = (Prompt: PromptLabel, Assistant: AssistantLabel, Lines: AssistantLines, OpenLink, OpenAgent, Copy: CopyText, Palette: Palette.Current);
+        var built = (Prompt: PromptLabel, Assistant: AssistantLabel, Lines: AssistantLines, OpenLink, OpenAgent, Copy: CopyText, Palette: Palette.Current, Node: PictureNode, Cells: Cells);
         if (_rowsBuiltWith != built)
         {
             _rows.Clear();
@@ -339,8 +397,9 @@ internal sealed class TranscriptEntryView
                 link = ReporterOf(entry);
             }
             var open = _expanded.Contains(entry.Index);
+            var pictures = PictureState(entry);
             if (_rows.TryGetValue(entry.Index, out var kept) && ReferenceEquals(kept.Entry, entry) && ReferenceEquals(kept.Answer, result) && Equals(kept.Run, RunOf(entry))
-                && kept.Open == open && kept.Live == isLive && Equals(kept.Link, link) && kept.LinkLabel == linkLabel)
+                && kept.Pictures == pictures && kept.Open == open && kept.Live == isLive && Equals(kept.Link, link) && kept.LinkLabel == linkLabel)
             {
                 kept.Pass = pass;
                 nodes.Add(kept.Node);
@@ -349,7 +408,7 @@ internal sealed class TranscriptEntryView
             }
             // Stretched here, inside the kept node: the owners add no wrapper of their own, whose reference would change every frame.
             var node = (entry.Kind == TranscriptKind.ToolUse ? Call(entry, result, live) : entry.Kind == TranscriptKind.Divider ? Divider(entry, OpenDivider?.Invoke(entry)) : Row(entry)).WStar();
-            _rows[entry.Index] = new KeptRow { Entry = entry, Answer = result, Run = RunOf(entry), Open = open, Live = isLive, Link = link, LinkLabel = linkLabel, Node = node, Pass = pass };
+            _rows[entry.Index] = new KeptRow { Entry = entry, Answer = result, Run = RunOf(entry), Open = open, Live = isLive, Link = link, LinkLabel = linkLabel, Node = node, Pictures = pictures, Pass = pass };
             nodes.Add(node);
             seen++;
             RowsBuilt++;
@@ -502,13 +561,15 @@ internal sealed class TranscriptEntryView
             var words = CrossSessionMessage.Parse(entry.Text)?.Body ?? entry.Text.Trim();
             if (CrossSessionMessage.TryParseWatchtower(words) is { } tower)
             {
-                return Said(entry, $"{tower.Node}'s watchtower", Tool, Dim, tower.Body);
+                var (towerWords, towerPictures) = TellPictures.Split(tower.Body);
+                return Said(entry, $"{tower.Node}'s watchtower", Tool, Dim, towerWords, towerPictures);
             }
         }
         if (entry is { Kind: TranscriptKind.User, From: null, Note: false } && CrossSessionMessage.Parse(entry.Text) is { } relayed)
         {
             var mine = relayed.From == CrossSessionMessage.Controller;
-            return Said(entry, mine ? PromptLabel : relayed.From, mine ? Prompt : Tool, mine ? Bright : Body, relayed.Body);
+            var (relayedWords, relayedPictures) = TellPictures.Split(relayed.Body);
+            return Said(entry, mine ? PromptLabel : relayed.From, mine ? Prompt : Tool, mine ? Bright : Body, relayedWords, relayedPictures);
         }
         var (label, labelColor, textColor, lines) = entry switch
         {
@@ -537,7 +598,8 @@ internal sealed class TranscriptEntryView
         // What the assistant wrote, and what a subagent reported, is Markdown; prompts and notes are said as typed.
         body.AddRange(entry is { Kind: TranscriptKind.Assistant or TranscriptKind.Thinking } or { From: not null }
             ? FoldedMarkdown(entry, entry.Kind == TranscriptKind.Thinking ? Thought : Prose, lines)
-            : Folded(entry, entry.Text, textColor, lines, ""));
+            : Folded(entry, PicturesOf(entry).Count > 0 ? TellPictures.Split(entry.Text).Words : entry.Text, textColor, lines, ""));
+        body.AddRange(PictureNodes(entry, PicturesOf(entry)));
         if (entry.Kind == TranscriptKind.Error && RunOf(entry) is { } run)
         {
             // ASCII hyphen: the times are this machine's, the last one is also the stamp column's.
@@ -555,10 +617,10 @@ internal sealed class TranscriptEntryView
     }
 
     // A prompt row with its own label and words: a relayed message's sender and body.
-    private Layout.Node Said(TranscriptEntry entry, string label, RGBAColor32 labelColor, RGBAColor32 textColor, string text) =>
+    private Layout.Node Said(TranscriptEntry entry, string label, RGBAColor32 labelColor, RGBAColor32 textColor, string text, IReadOnlyList<(string Id, string Ext)> pictures) =>
         Layout.Builder.HStack(
                 Layout.Builder.Text(label, 12f, labelColor).Selectable().WStar(LabelWeight, 0f, LabelWidth).Whole(label),
-                Layout.Builder.VStack([.. Folded(entry, text, textColor, 12, "")]).WStar(BodyWeight),
+                Layout.Builder.VStack([.. Folded(entry, text, textColor, 12, ""), .. PictureNodes(entry, pictures)]).WStar(BodyWeight),
                 ListTable.Top(Stamp(entry.At)).WStar(1f, 0f, TimeWidth).CollapseBelow(TimeMin))
             .WithGap(10f)
             .Pad(0f, ProseSpace);
