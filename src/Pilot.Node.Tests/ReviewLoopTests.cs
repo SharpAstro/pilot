@@ -361,7 +361,7 @@ public sealed class ReviewLoopTests : ReviewTestsBase
         var brief = Briefs.WatchtowerRules(Tower, "pilot");
 
         brief.ShouldContain("A review loop is your job");
-        brief.ShouldContain("stops making progress");
+        brief.ShouldContain("only when it stops converging");
         brief.ShouldContain("pass with them noted");
         brief.ShouldContain("settle in the plane");
         brief.ShouldContain("is the person's, never yours");

@@ -74,8 +74,7 @@ is neither built nor tested by CI.
 
 ## Stored records
 
-An update starts on the store the last release wrote, and the JSON reader sets a member missing from it to null whatever its
-initialiser says (beta 1718 stopped every node so, on `AdmissionRow.WaitingOnPerson`).
+An update starts on the store the last release wrote, and the JSON reader sets a member missing from it to null whatever its initialiser says (beta 1718 stopped every node so, on `AdmissionRow.WaitingOnPerson`).
 
 - A member added to a stored record (snapshot, journal events, settings, job and session rows) is nullable, or defaulted
   in its setter (`init => field = value ?? []`). A kind or field an older reader would drop also bumps `FileJournal.StoreContract`.
