@@ -328,25 +328,34 @@ public sealed class BuddyFramePolicyTests
     }
 
     [Fact]
-    public void ClicksPassThroughTheSleepingCatWhenTheSettingSaysSoAndOnlyTheseDoNot()
+    public void ClicksPassThroughTheSleepingCatWhenTheSettingSaysSoAndTheCatStaysDrawn()
     {
         var rig = new Rig();
         using var renderer = new RgbaImageRenderer(480, 720);
         var layout = BuddyScene.Draw(renderer, Font, BuddyPalette.For(false), BuddyScene.ViewOf(rig.Model), 1f);
         var geometry = new BuddyGeometry(layout);
 
-        var through = BuddySilhouette.For(renderer.Surface, geometry, asleep: true, clicksPassThrough: true);
-        BuddySilhouette.Catches(through, (int)rig.CatBody.X, (int)rig.CatBody.Y).ShouldBeFalse("the body passes the click to the window below");
-        BuddySilhouette.Catches(through, 5, 5).ShouldBeFalse();
-        BuddySilhouette.Catches(through, (int)(layout.CatX + 170), (int)(layout.CatY + 10)).ShouldBeTrue("the z Z is what hover wakes");
-        BuddySilhouette.Catches(through, (int)rig.Cushion.X, (int)rig.Cushion.Y).ShouldBeTrue("the cushion takes the right-click for the settings");
+        // The shape is the drawn silhouette whatever the setting: a shape also cuts what is drawn outside it, so the sleeping cat would vanish.
+        var mask = BuddySilhouette.Of(renderer.Surface);
+        BuddySilhouette.Catches(mask, (int)rig.CatBody.X, (int)rig.CatBody.Y).ShouldBeTrue("the cat is drawn, so it is in the shape");
 
-        var caught = BuddySilhouette.For(renderer.Surface, geometry, asleep: true, clicksPassThrough: false);
-        BuddySilhouette.Catches(caught, (int)rig.CatBody.X, (int)rig.CatBody.Y).ShouldBeTrue();
+        // The pass is the window's own style, on only while nothing can be clicked.
+        BuddySilhouette.PassesClicks(geometry, asleep: true, setting: true).ShouldBeTrue();
+        BuddySilhouette.PassesClicks(geometry, asleep: true, setting: false).ShouldBeFalse();
+        BuddySilhouette.PassesClicks(geometry, asleep: false, setting: true).ShouldBeFalse("a cat that speaks takes clicks on its buttons");
 
-        // Awake (a bubble is showing) the cat catches its clicks whatever the setting says.
-        var awake = BuddySilhouette.For(renderer.Surface, geometry, asleep: false, clicksPassThrough: true);
-        BuddySilhouette.Catches(awake, (int)rig.CatBody.X, (int)rig.CatBody.Y).ShouldBeTrue();
+        rig.Click(1, rig.CatBody);
+        var open = rig.Draw();
+        BuddySilhouette.PassesClicks(new BuddyGeometry(open), asleep: true, setting: true).ShouldBeFalse("an open card takes clicks");
+    }
+
+    [Fact]
+    public void TheSettingsCardOpensWithoutAClickForTheWayBackToTheSwitch()
+    {
+        var rig = new Rig();
+        rig.Desk.ShowSettings();
+        rig.Desk.Card.ShouldBe(DeskCard.Settings);
+        rig.Policy.NeedsFrame().ShouldBeTrue();
     }
 
     [Fact]
