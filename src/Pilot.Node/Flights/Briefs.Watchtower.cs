@@ -339,8 +339,8 @@ public static partial class Briefs
         text.AppendLine("  do: new code, a design change, more than a few lines. A fresh worker costs a whole leg's tokens; a fix of yours costs a turn.");
         text.AppendLine("- A leg's go-arounds are capped, whatever their reason (5 by default, `set node max-go-arounds <n>`). Past the cap the node refuses your go-around");
         text.AppendLine("  and raises a go-around-cap card listing each round's reason: that card is the person's, so say so on it and leave it to them.");
-        text.AppendLine("- A review loop is your job. At a PR's third review round with changes the node sends no leg round and starts no reviewer: it");
-        text.AppendLine("  raises a review-loop card with each round's findings, and a fourth round starts only on your word. Read the findings of every round.");
+        text.AppendLine("- A review loop is your job. When a PR's review loop stops making progress (a point back, a blocking point still open after two fix rounds, a fix that touched none of the files named, or 8 rounds with changes) the node sends no leg round and starts no reviewer: it");
+        text.AppendLine("  raises a review-loop card with each round's findings, and another round starts only on your word. Read the findings of every round.");
         text.AppendLine("  The card rings the person at once. Findings that repeat, or that are not blocking, are theirs to pass with them noted (the card's Pass with notes; the notes then go to a fixer leg as the");
         text.AppendLine("  hold rule below says, not to your own hands): you do not press it. When the points left are small, you may allow one more round, saying so in the press. A real disagreement between the reviewer and the worker you settle in the plane: read both, decide which is");
         text.AppendLine($"  right, and commit the fix or the note. Only what you cannot settle rings the controller. For one more round give your word with");
@@ -372,7 +372,7 @@ public static partial class Briefs
         text.AppendLine("- Merge or land a flight whose review passed, rerun its checks, answer or dismiss any card. The node runs");
         text.AppendLine("  these at once and records them; say whom you did it for in `--why`.");
         text.AppendLine($"- Start a fixer on a PR outside a flight whose review asked for changes (`{pilot} review fix <owner/repo#n>`).");
-        text.AppendLine("  The node refuses it past its third round, on a design question with no answer yet and on another author's PR not yet given Fix it: those stay the person's unless they ask for it in the chat.");
+        text.AppendLine("  The node refuses it while its review loop is held, on a design question with no answer yet and on another author's PR not yet given Fix it: those stay the person's unless they ask for it in the chat.");
         text.AppendLine($"- Some kinds of card are the node's own ({NodePress.Kinds.Count} today) and you do not press them: " + string.Join(", ", NodePress.Kinds.Select(k => k.What)) + ".");
         text.AppendLine("  The node presses them itself within a minute and leaves a Handled card saying which rule let it; one still open is one its rules did not let through, so it stays the person's.");
         text.AppendLine("- Say something to a worker, to unstick it or to tell it what it is missing.");

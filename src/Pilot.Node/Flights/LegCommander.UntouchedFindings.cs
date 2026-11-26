@@ -53,6 +53,29 @@ public sealed partial class LegCommander
     }
 
     /// <summary>
+    /// For a verdict that asks for changes (pilot #1371): whether the fix round since the last round with changes touched none of the files
+    /// that round's blocking findings name, read from the plane's commits between that round's head and the head now reviewed. Null when
+    /// it cannot say (a first round, no head, no named file, no plane), so the loop never holds on a guess.
+    /// </summary>
+    private async Task<bool?> FixUntouchedAsync(FlightRow flight, CancellationToken cancellationToken)
+    {
+        if (flight.ReviewRounds?.LastOrDefault() is not { Verdict: ReviewState.Changes, Head: { Length: > 0 } before } round
+            || flight.Review?.ReviewedHead is not { Length: > 0 } after
+            || before == after
+            || !Directory.Exists(flight.Worktree))
+        {
+            return null;
+        }
+        var findings = ReviewFindings.Read(round.Findings);
+        if (findings.BlockingFiles.Count == 0)
+        {
+            return null;
+        }
+        var changed = await git.RunAsync(["log", "--first-parent", "--no-merges", "--name-only", "--format=", $"{before}..{after}"], flight.Worktree, cancellationToken);
+        return changed.Ok ? !findings.Touches(changed.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)) : null;
+    }
+
+    /// <summary>
     /// Null when the finish may go on; else why it is refused. A refusal is remembered at the plane's head, so the same finish again
     /// with a report (the worker saying why no named file needs a change) goes through and a Handled card quotes that report.
     /// </summary>

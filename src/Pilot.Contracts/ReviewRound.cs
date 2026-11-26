@@ -40,6 +40,12 @@ public sealed record ReviewRound
     /// a round kept before the passer was stored; only a round that names one is read as a pass anyway, never one whose prose quotes a tail.
     /// </summary>
     public string? PassedBy { get; init; }
+
+    /// <summary>
+    /// Whether the fix round before this one changed none of the files the previous round's blocking findings name (pilot #1371), as the
+    /// node read it from the plane when the verdict came. Null when it could not say (no head, no named file, a first round, an old store).
+    /// </summary>
+    public bool? FixUntouched { get; init; }
 }
 
 /// <summary>One row of a re-review's table: the point's id, its answer (addressed, left, not addressed) and the where or the reason.</summary>

@@ -186,7 +186,7 @@ public sealed partial class WatchtowerChatTests
             Code = "PIL1347", Repo = "pilot", RepoPath = plane, Issue = 1347, Branch = "flight/pil1347", Worktree = plane, Base = "main",
             State = FlightState.Flying, CreatedAt = DateTimeOffset.UtcNow, Title = "Held flight",
             Review = new ReviewRow { State = ReviewState.Changes, Reviewer = "du1-pil1347-review", Report = "## Blocking\n- the third round's point", StartedAt = DateTimeOffset.UtcNow, FinishedAt = DateTimeOffset.UtcNow },
-            ReviewRounds = [.. Enumerable.Range(1, 3).Select(n => new ReviewRound { Round = n, Verdict = ReviewState.Changes, Findings = $"point of round {n}" })],
+            ReviewRounds = [.. Enumerable.Range(1, ReviewConvergence.RunawayRounds).Select(n => new ReviewRound { Round = n, Verdict = ReviewState.Changes, Findings = $"point of round {n}" })],
         });
         node.State.PutLeg(new LegRow { Flight = "PIL1347", Name = "parser", Order = 1, Goal = "g", DoneWhen = "d", State = LegState.Done, Worker = "du1-pil1347-parser", Report = "done" });
     }
@@ -227,7 +227,7 @@ public sealed partial class WatchtowerChatTests
         var result = await PressAsync(node, card, "gui", agent: false);
 
         result.Error.ShouldBeNull();
-        node.State.Flights().Single().ReviewRoundsAllowed.ShouldBe(4);
+        node.State.Flights().Single().ReviewRoundsAllowed.ShouldBe(ReviewConvergence.RunawayRounds + 1);
         node.Workers.Started.Count.ShouldBeGreaterThan(started);
         node.Workers.Started.Last().Brief.ShouldContain("round 3's other note is not blocking");
         node.State.Cards().Single(c => c.Id == card.Id).State.ShouldBe(CardState.Closed);
@@ -310,7 +310,7 @@ public sealed partial class WatchtowerChatTests
         await TowerBusyAsync(node);
         var card = node.State.RaiseCard(refused.Bin, refused.Kind, refused.Subject, refused.Title, refused.Detail, refused.Choices);
         // The person's allow-round from a terminal lifted the cap (the same record the command writes).
-        node.State.PutFlight(node.State.Flights().Single() with { ReviewRoundsAllowed = 4 });
+        node.State.PutFlight(node.State.Flights().Single() with { ReviewRoundsAllowed = ReviewConvergence.RunawayRounds + 1 });
         var calls = node.Delivery.Calls.Count;
 
         var result = await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Answer, Target = Verbs.CardTarget(card.Id), Args = [Watchtower.DoneCheckedLabel], Who = "gui" }, Ct);

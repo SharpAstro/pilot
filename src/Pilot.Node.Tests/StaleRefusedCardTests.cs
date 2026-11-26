@@ -222,7 +222,7 @@ public sealed class StaleRefusedCardTests
         {
             Code = code, Repo = "pilot", RepoPath = @"C:", Issue = 1, Branch = "flight/" + code.ToLowerInvariant(), Worktree = @"C:", Base = "main", State = FlightState.Flying, CreatedAt = Began,
             Review = new ReviewRow { State = ReviewState.Changes, Reviewer = "r", StartedAt = Began, FinishedAt = Began },
-            ReviewRounds = [.. Enumerable.Range(1, 3).Select(n => new ReviewRound { Round = n, Verdict = ReviewState.Changes, Findings = "f" })],
+            ReviewRounds = [.. Enumerable.Range(1, ReviewConvergence.RunawayRounds).Select(n => new ReviewRound { Round = n, Verdict = ReviewState.Changes, Findings = "f" })],
             ReviewRoundsAllowed = allowed,
         });
     }
@@ -238,7 +238,7 @@ public sealed class StaleRefusedCardTests
         _told.ShouldBeEmpty();
 
         // The person's allow-round from a terminal, or the review-loop card's Allow one more round: the same record.
-        HeldAt("PIL1347", 4);
+        HeldAt("PIL1347", 9);
         (await stale.CloseAsync(CancellationToken.None)).ShouldBe(1);
         StateOf(card).ShouldBe(CardState.Closed);
         _state.Cards().Single(c => c.Id == card.Id).Outcome.ShouldNotBeNull().ShouldContain("no longer held");
@@ -249,7 +249,7 @@ public sealed class StaleRefusedCardTests
     [Fact]
     public async Task ACardRaisedBeforeTheCheckedButtonWithOnlyTheOldDoneIsLeftToTheLookAsItWas()
     {
-        HeldAt("PIL1347", 4);
+        HeldAt("PIL1347", 9);
         var card = RefusedAllowRound("PIL1347", checkedDone: false);
         (await Stale().CloseAsync(CancellationToken.None)).ShouldBe(0);
         StateOf(card).ShouldBe(CardState.Open);

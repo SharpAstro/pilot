@@ -91,7 +91,7 @@ public static partial class PilotCommand
                 (p, client, ct) => Send(client, Verbs.StartReview, Verbs.FlightTarget(p.GetValue(code)!), [], who, ct));
 
             var allowWhy = Words("why", "Why one more round is worth it", required: false);
-            var allowRound = Action(new Command("allow-round", "Allow one more review round on a flight whose review loop was held at its third round with changes") { Arguments = { code, allowWhy } },
+            var allowRound = Action(new Command("allow-round", "Allow one more review round on a flight whose review loop was held for making no progress") { Arguments = { code, allowWhy } },
                 (p, client, ct) => Send(client, Verbs.AllowRound, Verbs.FlightTarget(p.GetValue(code)!), p.GetValue(allowWhy) ?? [], who, ct));
 
             var retryMore = new Argument<string[]>("more") { Description = "More landed flights' codes", Arity = ArgumentArity.ZeroOrMore };
