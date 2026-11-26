@@ -13,6 +13,7 @@ the [Pilot v2 design](https://claude.ai/code/artifact/0ebd8a10-0b5c-475b-a909-2e
 | `Pilot.Cli` | The CLI, `pilot`: the node's commands, for the controller, workers and scripts, and `pilot mcp`, the same as an MCP server; native AOT. |
 | `Pilot.Gui` | The GUI, `pilot-gui`: every session on the machine as a row, live from the node, and a bar to say something to the selected one; on DIR.Lib and SdlVulkan.Renderer, native AOT. |
 | `Pilot.Gui.Tests` | xunit.v3 tests rendering the sessions view on the CPU from the sample snapshot, the live feed on a fake stream, the say bar, and a flight's page (its legs, checklists and artifacts) as a view model, on pixels and in cells. |
+| `Pilot.Buddy` | The desktop cat, `pilot-buddy` (#1367): a transparent always-on-top window with Grump, that wakes for an ask, good news or trouble; `pilot-buddy mcp` is the watchtower's stdio server that speaks through it. Native AOT. |
 
 ## Build, test, run
 
@@ -1349,6 +1350,17 @@ usable grant) keeps its transcript and log readable, but its say bar, Stop, Arch
 say bar and the row menu say *Connect to LE1 to steer*, and a **Connect** pill stands there (and in place of Cancel on
 Background tasks), running the same ask as the Fleet page's. There is no second window per node. The new-flight wizard stays this window's
 node's. pilot-tui shows the same merged pages.
+
+## The desktop cat
+
+`pilot-buddy` is a small transparent, borderless, always-on-top window with no taskbar entry (DSN-2 v5): Grump sleeps on a cushion in a corner,
+opens one eye on hover with the fleet summary, peeks at the sessions on a click (or opens the one-line chat under its bubble while it speaks), and
+shows the settings on a right-click. A ring card wakes it (an ask, or trouble in red), a merged PR or landed flight is good news for 10 s, and a
+failure left open keeps its face grumpy while it sleeps. It reads the node's event stream as the GUI does and chats through the node's own verbs.
+One per desktop (`InstanceGate` `pilot-v2-buddy`); it draws only on a change and on its breathing step, sleeping on the SDL event queue between,
+and logs its frames and `AlphaPresentation` to `buddy.log`. Where it sits (a corner, per monitor) and what wakes it are in `buddy-settings.json`.
+`pilot-node autostart install` also starts it at logon (Windows) when `pilot-buddy` sits beside the node. `pilot-buddy --capture <out.png>` opens
+the window over a backdrop, writes the screen under it and exits, for the GUI lane.
 
 ## The TUI
 

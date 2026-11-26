@@ -287,7 +287,7 @@ jobs:
         echo "VERSION=$MM.$patch-beta.${{ github.run_number }}" >> "$GITHUB_ENV"
     - name: Publish the node, the CLI, the GUI and the TUI (Debug, framework-dependent)
       run: |
-        for project in Pilot.Node Pilot.Cli Pilot.Gui Pilot.Tui; do
+        for project in Pilot.Node Pilot.Cli Pilot.Gui Pilot.Tui Pilot.Buddy; do
           dotnet publish src/$project -c Debug -r ${{ matrix.rid }} --self-contained false -p:PublishAot=false \
             -o publish -p:Version=$VERSION -p:ContinuousIntegrationBuild=true
         done
