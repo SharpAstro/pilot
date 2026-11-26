@@ -23,6 +23,19 @@ public class WatchtowerBriefTests
     };
 
     [Fact]
+    public void TheBriefHoldsAReviewLoopOnNoProgressAndNoLongerCountsRounds()
+    {
+        var brief = Brief();
+
+        brief.ShouldContain("A fix round answering a review's findings is not a review round");
+        brief.ShouldContain("a settled point comes back");
+        brief.ShouldContain($"still open after {ReviewConvergence.StuckFixRounds} fix rounds");
+        brief.ShouldContain("touched none of the files its findings name");
+        brief.ShouldContain($"the {ReviewConvergence.RunawayRounds}-round guard");
+        brief.ShouldNotContain("refuses a fourth round");
+    }
+
+    [Fact]
     public void ThePlaybookNamesNuGetsHttpCacheForAnNu1102OnAListedVersionAndNeverRegistrationLag()
     {
         var brief = Brief();
