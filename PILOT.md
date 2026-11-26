@@ -39,9 +39,9 @@ is neither built nor tested by CI.
 
 - main's merge queue **squashes** each PR into one commit (the ruleset's `merge_method` is `SQUASH`), so a branch's own history
   never matters: merge commits, a conflict-resolving merge of main, many small commits all land as one. A rebase that would conflict is no reason to hold a PR.
-- Take main by a merge (`git fetch origin`, then `git merge origin/main`), never by a rebase, and never push with
-  `--force`. A repo whose queue rebases says so in its own PILOT.md; tianwen's squashes too since 2026-11-08.
-- The node deletes a landed flight's branch, locally and on origin, once its PR merged and the plane is gone; one holding commits past the merge is kept with a card. A fix round answering a review's findings is not a review round (#1371): the node holds a flight's review loop only when it stops converging (settled point back, blocking point open after two fix rounds, no named file touched) or at the 8-round guard; the card names which, and `pilot flight allow-round` lets one more.
+- Take main by a merge (`git fetch origin`, then `git merge origin/main`), never by a rebase, and never push with `--force`. A repo whose queue rebases says so in its own PILOT.md; tianwen's squashes too since 2026-11-08.
+- The node deletes a landed flight's branch, locally and on origin, once its PR merged and the plane is gone; one holding commits past the merge is kept with a card.
+- A fix round answering a review's findings is not a review round (#1371): the node holds a flight's review loop only when it stops converging (settled point back, blocking point open after two fix rounds, no named file touched) or at the 8-round guard; the card names which, and `pilot flight allow-round` lets one more.
 
 ## Sessions and the watchtower
 

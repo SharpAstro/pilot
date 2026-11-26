@@ -99,15 +99,16 @@ public sealed class ConflictResolutionTests : ReviewTestsBase
     {
         var flight = await Conflicted("42");
         var started = _workers.Started.Count;
-        // Past the cap of review go-arounds, where the node sends the leg round no more for a review's findings.
-        _state.PutLeg(_state.Legs(flight.Code).Single() with { GoArounds = LegCommander.MaxReviewGoArounds, ReviewGoArounds = LegCommander.MaxReviewGoArounds });
+        // Past the cap of review go-arounds, where the node sends the leg round no more for a review's findings; the go-arounds
+        // stay under the default go-around cap, which would refuse the conflict round on its own ground.
+        _state.PutLeg(_state.Legs(flight.Code).Single() with { GoArounds = 3, ReviewGoArounds = LegCommander.MaxReviewGoArounds });
 
         await new PrChecks(_state, _github, TimeProvider.System, legs: _legs).LookAsync(Ct);
 
         var leg = _state.Legs(flight.Code).Single();
         leg.State.ShouldBe(LegState.Flying);
         leg.ReviewGoArounds.ShouldBe(LegCommander.MaxReviewGoArounds);
-        leg.GoArounds.ShouldBe(LegCommander.MaxReviewGoArounds + 1);
+        leg.GoArounds.ShouldBe(4);
         _workers.Started.Count.ShouldBe(started + 1);
         NoCardAboutIt();
     }

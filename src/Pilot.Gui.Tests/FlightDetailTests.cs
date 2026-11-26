@@ -107,7 +107,7 @@ public sealed class FlightDetailTests
         // PIL294's page showed a "review changes" chip and every step ticked, while the findings sat on a card cut short.
         var asks = "1) CI is red: LayoutDrivenTests rejects JobsView.cs:680. 2) The memory gate takes the smaller of the estimate and job-memory, so a job that measured 8 GB starts with 2 GB free.";
         var flight = Flight() with { Review = new ReviewRow { State = ReviewState.Changes, Reviewer = "du1-tia1611-review", Report = asks, StartedAt = Live.At } };
-        var legs = Legs().Select(l => l.Name == "render" ? l with { State = LegState.Done, ReviewGoArounds = 3 } : l).ToArray();
+        var legs = Legs().Select(l => l.Name == "render" ? l with { State = LegState.Done, ReviewGoArounds = LegRow.MaxReviewGoArounds } : l).ToArray();
         using var renderer = new RgbaImageRenderer(1280, 800);
         var view = new FlightsView<RgbaImage>(renderer);
         // The prose wraps word by word, one leaf each: read the leaves back as the text a person would see.
@@ -121,7 +121,7 @@ public sealed class FlightDetailTests
         said.ShouldContain("The review asks for changes:");
         said.ShouldContain("JobsView.cs:680");
         said.ShouldContain("starts with 2 GB free");
-        said.ShouldContain("render has been sent back 3 times");
+        said.ShouldContain($"render has been sent back {LegRow.MaxReviewGoArounds} times");
         said.ShouldContain("send it back once more from its card, or land it with the findings unfixed");
         // An earlier capped leg with a later one planned after it is not the person's round: the node still lets the watchtower go around.
         var planned = legs.Append(legs[0] with { Name = "polish", Order = 3, State = LegState.Planned, ReviewGoArounds = 0 }).ToArray();
