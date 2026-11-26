@@ -1107,7 +1107,7 @@ public sealed class ReviewTests2 : ReviewTestsBase
         await Run(Verbs.OpenPr, Verbs.FlightTarget("TIA42"), "controller");
         // Three go-arounds, none of them on the review: the leg went round for its own failures before it was done.
         var leg = _state.Legs("TIA42").Single();
-        _state.PutLeg(leg with { GoArounds = LegCommander.MaxReviewGoArounds, ReviewGoArounds = 0 });
+        _state.PutLeg(leg with { GoArounds = 3, ReviewGoArounds = 0 });
         (await Run(Verbs.Review, "flight/TIA42", Reviewer("TIA42"), "changes", "a test is missing")).Ok.ShouldBeTrue();
 
         // Under the cap, so the node sent the round itself: the leg flies again, counted once on the review, with no card to decide.

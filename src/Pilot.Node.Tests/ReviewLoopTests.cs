@@ -24,7 +24,7 @@ public sealed class ReviewLoopTests : ReviewTestsBase
             : "";
 
     /// <summary>
-    /// A flight whose review has given <paramref name="rounds"/> rounds of changes. Below the round limit the node sends each round
+    /// A flight whose review has given <paramref name="rounds"/> rounds of changes. While the loop is not held the node sends each round
     /// itself (pilot #1271), so each later round follows the leg's new worker committing and finishing.
     /// </summary>
     private async Task<string> Looping(string issue, int rounds, string? lastTable = null, bool stuck = false)
@@ -93,7 +93,7 @@ public sealed class ReviewLoopTests : ReviewTestsBase
     {
         var code = await Looping("1", 2);
 
-        // Below the round limit the node sends the round itself: the leg flies again, and neither card is raised.
+        // While the loop is not held the node sends the round itself: the leg flies again, and neither card is raised.
         var leg = _state.Legs(code).Single(l => l.Name == "parser");
         (leg.State, leg.ReviewGoArounds).ShouldBe((LegState.Flying, 2));
         Open().ShouldNotContain(c => c.Kind == LegCommander.ReviewChanges);

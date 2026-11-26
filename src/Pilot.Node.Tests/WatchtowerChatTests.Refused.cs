@@ -295,7 +295,7 @@ public sealed partial class WatchtowerChatTests
 
         var result = await node.Client.SendAsync(new CommandRequest { Verb = Verbs.Answer, Target = Verbs.CardTarget(card.Id), Args = [Watchtower.DoneCheckedLabel], Who = "gui" }, Ct);
 
-        result.Response.ShouldNotBeNull().Error.ShouldNotBeNull().ShouldContain("PIL1347's review is still held at its third round");
+        result.Response.ShouldNotBeNull().Error.ShouldNotBeNull().ShouldContain("PIL1347's review is still held");
         node.State.Cards().Single(c => c.Id == card.Id).State.ShouldBe(CardState.Open);
         node.Delivery.Calls.Count.ShouldBe(calls, "the watchtower was told nothing");
     }

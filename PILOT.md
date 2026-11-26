@@ -41,8 +41,7 @@ is neither built nor tested by CI.
   never matters: merge commits, a conflict-resolving merge of main, many small commits all land as one. A rebase that would conflict is no reason to hold a PR.
 - Take main by a merge (`git fetch origin`, then `git merge origin/main`), never by a rebase, and never push with
   `--force`. A repo whose queue rebases says so in its own PILOT.md; tianwen's squashes too since 2026-11-08.
-- A fix round answering a review's findings is not a review round (#1371). The node holds a flight's review loop only when it stops converging: a settled point comes back, a blocking point is still open after two fix rounds, a fix round touched none of the files its findings name, or the 8-round guard (rounds with changes) is reached. The review-loop card rings at once and names which; `pilot flight allow-round` lets one more round.
-- The node deletes a landed flight's branch, locally and on origin, once its PR merged and the plane is gone; one holding commits past the merge is kept with a card.
+- The node deletes a landed flight's branch, locally and on origin, once its PR merged and the plane is gone; one holding commits past the merge is kept with a card. A fix round answering a review's findings is not a review round (#1371): the node holds a flight's review loop only when it stops converging (settled point back, blocking point open after two fix rounds, no named file touched) or at the 8-round guard; the card names which, and `pilot flight allow-round` lets one more.
 
 ## Sessions and the watchtower
 
@@ -74,7 +73,8 @@ is neither built nor tested by CI.
 
 ## Stored records
 
-An update starts on the store the last release wrote, and the JSON reader sets a member missing from it to null whatever its initialiser says (beta 1718 stopped every node so, on `AdmissionRow.WaitingOnPerson`).
+An update starts on the store the last release wrote, and the JSON reader sets a member missing from it to null whatever its
+initialiser says (beta 1718 stopped every node so, on `AdmissionRow.WaitingOnPerson`).
 
 - A member added to a stored record (snapshot, journal events, settings, job and session rows) is nullable, or defaulted
   in its setter (`init => field = value ?? []`). A kind or field an older reader would drop also bumps `FileJournal.StoreContract`.

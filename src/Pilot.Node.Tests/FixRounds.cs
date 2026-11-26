@@ -5,7 +5,7 @@ using Shouldly;
 namespace Pilot.Node.Tests;
 
 /// <summary>
-/// The fix round the node sends itself when a review asks for changes below the round limit (pilot #1271): the leg flies again with a
+/// The fix round the node sends itself when a review asks for changes while its loop is not held (pilot #1271): the leg flies again with a
 /// fresh worker, who commits in the plane and finishes, which pushes the new head and starts the next review by itself. A test that
 /// started that review by hand after a changes verdict was the person pressing the card's button, in the old default the switch kept.
 /// </summary>

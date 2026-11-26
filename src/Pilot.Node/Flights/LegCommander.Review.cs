@@ -47,7 +47,7 @@ public sealed partial class LegCommander
         {
             throw new FlightException(refused.Why);
         }
-        // A review loop held at its round limit starts no reviewer for the node or the watchtower: that round is the watchtower's word or the person's.
+        // A review loop held starts no reviewer for the node or the watchtower: that round is the watchtower's word or the person's.
         var loopHeld = ReviewLoopHeld(flight);
         if (loopHeld && !IsPerson(flight, who))
         {

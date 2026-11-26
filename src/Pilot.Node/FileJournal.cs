@@ -92,6 +92,8 @@ public sealed class FileJournal : INodeJournal, IDisposable
     /// open the issue again.
     /// Not bumped for <c>why</c> on a card choice (PIL1353): it is nullable, and an older node that drops it when it compacts the snapshot only loses the
     /// <c>--why</c> a refused command's Run button carries; the command still runs, so there is no reason to refuse the store.
+    /// Not bumped for <c>fixUntouched</c> on a review round (PIL1371): it is nullable, and an older node that drops it when it compacts the snapshot only loses the
+    /// record that a fix round touched none of the files its findings name, so the loop is judged on the other facts; nothing breaks, so there is no reason to refuse the store.
     /// Not bumped for <c>admittedAt</c> on a flight (PIL1321): it is nullable, and an older node that drops it when it compacts the snapshot only loses the
     /// stop of the CI red clock after a queue wait, so the clock counts as it did before; nothing breaks, so there is no reason to refuse the store.
     /// </remarks>
