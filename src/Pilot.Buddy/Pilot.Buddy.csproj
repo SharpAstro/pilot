@@ -36,7 +36,16 @@
     <SharpAstroRoot Condition="'$(SharpAstroRoot)' == '' AND '$(UseLocalSiblings)' == 'true' AND Exists('$(MSBuildThisFileDirectory)..\..\..\..\..\..\DIR.Lib')">$(MSBuildThisFileDirectory)..\..\..\..\..\..\</SharpAstroRoot>
     <UseLocalDirLib Condition="'$(UseLocalDirLib)' == '' AND '$(SharpAstroRoot)' != '' AND Exists('$(SharpAstroRoot)DIR.Lib\src\DIR.Lib\DIR.Lib.csproj')">true</UseLocalDirLib>
     <UseLocalSdlVulkanRenderer Condition="'$(UseLocalSdlVulkanRenderer)' == '' AND '$(SharpAstroRoot)' != '' AND Exists('$(SharpAstroRoot)SdlVulkan.Renderer\src\SdlVulkan.Renderer\SdlVulkan.Renderer.csproj')">true</UseLocalSdlVulkanRenderer>
-      </PropertyGroup>
+    <UseLocalAppShell Condition="'$(UseLocalAppShell)' == '' AND '$(SharpAstroRoot)' != '' AND Exists('$(SharpAstroRoot)AppShell\src\SharpAstro.AppShell\SharpAstro.AppShell.csproj')">true</UseLocalAppShell>
+  </PropertyGroup>
+
+  <!-- AppShell holds InstanceGate, the hand-off to the running pilot-gui. -->
+  <ItemGroup Condition="'$(UseLocalAppShell)' == 'true'">
+    <ProjectReference Include="$(SharpAstroRoot)AppShell\src\SharpAstro.AppShell\SharpAstro.AppShell.csproj" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(UseLocalAppShell)' != 'true'">
+    <PackageReference Include="SharpAstro.AppShell" />
+  </ItemGroup>
 
   <!--
     Every Debug build attaches the live debug inspector. Against sibling source it is the siblings' own Debug build; against

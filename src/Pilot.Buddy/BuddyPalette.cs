@@ -40,6 +40,9 @@ public sealed record BuddyPalette
     /// <summary>The red of trouble: its border, its icon, the "#@!".</summary>
     public required RGBAColor32 Red { get; init; }
 
+    /// <summary>The green of "all fine": an idle session's check in the peek.</summary>
+    public required RGBAColor32 Green { get; init; }
+
     /// <summary>The accent: good news' border and icon, the picked card.</summary>
     public required RGBAColor32 Accent { get; init; }
 
@@ -74,6 +77,7 @@ public sealed record BuddyPalette
                 ButtonText = new RGBAColor32(0xe4, 0xe4, 0xe8, 0xff),
                 Amber = new RGBAColor32(0xf5, 0xb8, 0x2e, 0xff),
                 Red = new RGBAColor32(0xff, 0x6b, 0x6b, 0xff),
+                Green = new RGBAColor32(0x4c, 0xc2, 0x7a, 0xff),
                 Accent = chosen,
                 DesktopText = new RGBAColor32(0xcf, 0xe6, 0xff, 0xff),
                 Alert = new RGBAColor32(0xff, 0xc2, 0x33, 0xff),
@@ -91,6 +95,7 @@ public sealed record BuddyPalette
                 ButtonText = new RGBAColor32(0x1b, 0x1b, 0x1f, 0xff),
                 Amber = new RGBAColor32(0xa8, 0x62, 0x00, 0xff),
                 Red = new RGBAColor32(0xc6, 0x28, 0x28, 0xff),
+                Green = new RGBAColor32(0x1b, 0x7a, 0x3e, 0xff),
                 Accent = chosen,
                 DesktopText = new RGBAColor32(0x1f, 0x3a, 0x5f, 0xff),
                 Alert = new RGBAColor32(0x9a, 0x5b, 0x00, 0xff),
