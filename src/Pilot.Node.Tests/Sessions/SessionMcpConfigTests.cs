@@ -1,3 +1,4 @@
+using Pilot.Contracts;
 using Pilot.Node.Sessions;
 using Pilot.Node.Flights;
 using Shouldly;
