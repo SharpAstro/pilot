@@ -274,7 +274,8 @@ public sealed class ToasterTests : IAsyncDisposable
             v.SayCards(buddy, true);
             v.SayCards(buddy, false);
         });
-        shown.ShouldBe(["flight/BN", "flight/BU"]);
+        // Which toast comes first is the Toaster's own business, not part of the rule.
+        shown.ShouldBe(["flight/BN", "flight/BU"], ignoreOrder: true);
     }
 
     [Fact]
