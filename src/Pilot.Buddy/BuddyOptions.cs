@@ -24,8 +24,10 @@ public sealed record BuddyOptions
     public TimeSpan? ExitAfter { get; init; }
 
     /// <summary>Parses <paramref name="args"/>; null with the reason in <paramref name="error"/> on a mistake, and for <c>--help</c> (<paramref name="isHelp"/> is then true and the text is in <paramref name="error"/>).</summary>
-    public static BuddyOptions? Parse(IReadOnlyList<string> args, out string? error, out bool isHelp)
+    public static BuddyOptions? Parse(IReadOnlyList<string> given, out string? error, out bool isHelp)
     {
+        // --name=value is --name value too, so a launcher that cannot pass a space-separated pair (a shell that joins an argument list) can still give an option.
+        var args = given.SelectMany(a => a.StartsWith("--", StringComparison.Ordinal) && a.IndexOf('=') is > 2 and var eq ? new[] { a[..eq], a[(eq + 1)..] } : [a]).ToList();
         isHelp = false;
         error = null;
         var options = new BuddyOptions();
