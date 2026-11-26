@@ -458,6 +458,16 @@ public sealed partial class NodeCommands(IServiceProvider services, NodeState st
     {
         if (command.Verb == Verbs.Tell)
         {
+            // PIL1366: a tell's picture is one the node holds; an unknown one is refused before anything is told.
+            string? heldPicture = null;
+            if (command.Attachment is { Length: > 0 } pictureName)
+            {
+                if (KeepCardImage(pictureName, out var pictureId, out var pictureExt, "pilot tell --attachment <file>") is { } notHeld)
+                {
+                    return state.Complete(command, notHeld);
+                }
+                heldPicture = Path.GetFullPath(Get<Attachments>().PathOf(Attachments.IdeaOwner, pictureId!, pictureExt!));
+            }
             if (command.Target.StartsWith(Verbs.CardTargetPrefix, StringComparison.Ordinal))
             {
                 var id = command.Target[Verbs.CardTargetPrefix.Length..];
@@ -479,6 +489,10 @@ public sealed partial class NodeCommands(IServiceProvider services, NodeState st
                 var flight = subject is ["flight", { } code, ..] ? state.Flights().FirstOrDefault(f => f.Code == code) : null;
                 var message = CardContext.Compose(card, Get<NodeOptions>().Machine, flight is null ? null : Briefs.FlightStatus(flight, state.Legs()), words);
                 command = command with { Args = [message] };
+            }
+            if (heldPicture is not null)
+            {
+                command = command with { Args = [string.Join(' ', command.Args ?? []).TrimEnd() + TellPictures.Line(heldPicture)] };
             }
             var (target, why) = Get<Watchtower>().TellTarget();
             if (target is null)
@@ -1128,7 +1142,7 @@ public sealed partial class NodeCommands(IServiceProvider services, NodeState st
     /// (or an idea) lives in a folder no archive empties and is kept as it is; a leg artifact's copy goes when its flight lands, so a card
     /// gets a copy of its own. Null when it is kept, else why not.
     /// </summary>
-    private string? KeepCardImage(string named, out string? id, out string? ext)
+    private string? KeepCardImage(string named, out string? id, out string? ext, string upload = "pilot ring --attachment <file>")
     {
         id = ext = null;
         var attachments = Get<Attachments>();
@@ -1163,7 +1177,7 @@ public sealed partial class NodeCommands(IServiceProvider services, NodeState st
                 return $"could not keep a copy of {named}: {ex.Message}";
             }
         }
-        return $"the node holds no image {wanted}.{kind}: upload it first (pilot ring --attachment <file>)";
+        return $"the node holds no image {wanted}.{kind}: upload it first ({upload})";
     }
 
     private T Get<T>() where T : notnull => services.GetRequiredService<T>();

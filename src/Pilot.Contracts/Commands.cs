@@ -48,7 +48,7 @@ public sealed record CommandRequest
     public string? SessionId { get; init; }
 
     /// <summary>
-    /// The image a <see cref="Verbs.Raise"/> card carries, as <c>&lt;id&gt;.&lt;ext&gt;</c> of a copy the node holds (uploaded through
+    /// The image a <see cref="Verbs.Raise"/> card carries, or a <see cref="Verbs.Tell"/> sends to the watchtower (its path is told after the words), as <c>&lt;id&gt;.&lt;ext&gt;</c> of a copy the node holds (uploaded through
     /// <see cref="NodeWire.AttachmentsRoute"/>, or a leg's artifact copy). Optional: a raise without it is the form it always was.
     /// </summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
