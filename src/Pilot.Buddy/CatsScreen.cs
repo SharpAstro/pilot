@@ -63,8 +63,8 @@ public static class CatsScreen
     private static float DrawCard<TSurface>(Pen<TSurface> pen, BuddyPalette palette, CatCard card, int index, float x, float y, List<Line> lines)
     {
         var inner = CardWidth - 2 * Padding;
-        var nameH = MathF.Ceiling(pen.Measure("Ag", 15).Height);
-        var bodyH = MathF.Ceiling(pen.Measure("Ag", 13).Height);
+        var nameH = MathF.Ceiling(MathF.Max(pen.Measure("Ag", 15).Height, 15 * SpeechBubble.LineSpacing));
+        var bodyH = MathF.Ceiling(MathF.Max(pen.Measure("Ag", 13).Height, 13 * SpeechBubble.LineSpacing));
         var description = TextWrap.Lines(t => pen.Measure(t, 13).Width, card.Description, inner, 6);
         var height = Padding + CatRoom + 8 + nameH + 6 + bodyH * description.Lines.Count + Padding;
 

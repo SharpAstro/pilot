@@ -52,7 +52,7 @@ public sealed class SpeechBubble
     public const float Padding = 12, Gap = 8, Radius = 12, BorderWidth = 1.5f, IconSize = 16, IconGap = 6;
 
     /// <summary>Font sizes, and the most lines a title and a body take before the ellipsis.</summary>
-    public const float TitleSize = 14, BodySize = 13;
+    public const float TitleSize = 14, BodySize = 13, LineSpacing = 1.35f;
 
     /// <summary>The most lines of the title and of the body.</summary>
     public const int MaxTitleLines = 2, MaxBodyLines = 5;
@@ -117,7 +117,7 @@ public sealed class SpeechBubble
         {
             var textX = Padding + IconSize + IconGap;
             var wrapped = TextWrap.Lines(text => pen.Measure(text, TitleSize).Width, title, width - Padding - textX, MaxTitleLines);
-            var lineH = MathF.Ceiling(pen.Measure("Ag", TitleSize).Height);
+            var lineH = MathF.Ceiling(MathF.Max(pen.Measure("Ag", TitleSize).Height, TitleSize * LineSpacing));
             var rowH = MathF.Max(IconSize, lineH * wrapped.Lines.Count);
             tooltip |= wrapped.Truncated;
             for (var i = 0; i < wrapped.Lines.Count; i++)
@@ -130,7 +130,7 @@ public sealed class SpeechBubble
         if (body.Length > 0)
         {
             var wrapped = TextWrap.Lines(text => pen.Measure(text, BodySize).Width, body, inner, MaxBodyLines);
-            var lineH = MathF.Ceiling(pen.Measure("Ag", BodySize).Height);
+            var lineH = MathF.Ceiling(MathF.Max(pen.Measure("Ag", BodySize).Height, BodySize * LineSpacing));
             tooltip |= wrapped.Truncated;
             for (var i = 0; i < wrapped.Lines.Count; i++)
             {
