@@ -1,0 +1,78 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>pilot-buddy</AssemblyName>
+    <RootNamespace>Pilot.Buddy</RootNamespace>
+    <!-- One native binary, as pilot-gui is. The trim/AOT analyzers' IL2xxx/IL3xxx warnings only show on a publish with -r <rid>. -->
+    <PublishAot>true</PublishAot>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <DebugType Condition="'$(Configuration)' == 'Release'">none</DebugType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Pilot.Contracts\Pilot.Contracts.csproj" />
+  </ItemGroup>
+
+  <!--
+    The SharpAstro stack, compiled from the sibling clones when they are present and restored as packages otherwise
+    (CI), one switch per sibling as .github/docs/dotnet-ci-pattern.md describes. Pass -p:UseLocal<X>=false to build
+    what CI restores.
+
+    SharpAstroRoot is the org root. From src/Pilot.Buddy it is ..\..\.. in a clone; a Claude Code worktree sits three
+    folders deeper (pilot\.claude\worktrees\<name>), so there it is three more up, and that second probe is opt-in:
+    a plane builds on the published packages, as CI does, unless UseLocalSiblings is true (PIL802). The node sets it
+    for the jobs of a flight whose issue carries the `pilot: sibling source` label, the exception that needs a
+    sibling's unreleased source; anything else that needs an unreleased sibling takes its preview package.
+
+    A publish with a runtime identifier (dotnet publish -r win-arm64) takes the packages, as CI does. It has to: -r
+    reaches every project restore walks, and the SdlVulkan.Renderer clone also targets net10.0-android, for which a
+    win-arm64 runtime pack does not exist (NU1101, Microsoft.NETCore.App.Runtime.Mono.win-arm64). The binary a
+    publish makes is then the one that ships, built against the pins.
+  -->
+  <PropertyGroup>
+    <SharpAstroRoot Condition="'$(SharpAstroRoot)' == '' AND Exists('$(MSBuildThisFileDirectory)..\..\..\DIR.Lib')">$(MSBuildThisFileDirectory)..\..\..\</SharpAstroRoot>
+    <SharpAstroRoot Condition="'$(SharpAstroRoot)' == '' AND '$(UseLocalSiblings)' == 'true' AND Exists('$(MSBuildThisFileDirectory)..\..\..\..\..\..\DIR.Lib')">$(MSBuildThisFileDirectory)..\..\..\..\..\..\</SharpAstroRoot>
+    <UseLocalDirLib Condition="'$(UseLocalDirLib)' == '' AND '$(SharpAstroRoot)' != '' AND Exists('$(SharpAstroRoot)DIR.Lib\src\DIR.Lib\DIR.Lib.csproj')">true</UseLocalDirLib>
+    <UseLocalSdlVulkanRenderer Condition="'$(UseLocalSdlVulkanRenderer)' == '' AND '$(SharpAstroRoot)' != '' AND Exists('$(SharpAstroRoot)SdlVulkan.Renderer\src\SdlVulkan.Renderer\SdlVulkan.Renderer.csproj')">true</UseLocalSdlVulkanRenderer>
+      </PropertyGroup>
+
+  <!--
+    Every Debug build attaches the live debug inspector. Against sibling source it is the siblings' own Debug build; against
+    the packages it is the .Debug twins (DIR.Lib.Debug, Console.Lib.Debug, SdlVulkan.Renderer.Debug, taken below in place of
+    the Release packages when Configuration is Debug), which carry the inspector's types, so the CS0234 trap of a Debug build
+    against a Release package no longer applies. The beta channel's zips are Debug builds against the packages, so they carry
+    the inspector. Set here in the project body, where $(Configuration) is settled, never in Directory.Build.props, where a
+    plain `dotnet build` still sees it empty.
+  -->
+  <PropertyGroup Condition="'$(Configuration)' == 'Debug'">
+    <DefineConstants>$(DefineConstants);PILOT_DEBUG_INSPECTOR</DefineConstants>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(UseLocalDirLib)' == 'true'">
+    <ProjectReference Include="$(SharpAstroRoot)DIR.Lib\src\DIR.Lib\DIR.Lib.csproj" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(UseLocalDirLib)' != 'true'">
+    <PackageReference Include="DIR.Lib" Condition="'$(Configuration)' != 'Debug'" />
+    <PackageReference Include="DIR.Lib.Debug" Condition="'$(Configuration)' == 'Debug'" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(UseLocalSdlVulkanRenderer)' == 'true'">
+    <ProjectReference Include="$(SharpAstroRoot)SdlVulkan.Renderer\src\SdlVulkan.Renderer\SdlVulkan.Renderer.csproj" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(UseLocalSdlVulkanRenderer)' != 'true'">
+    <PackageReference Include="SdlVulkan.Renderer" Condition="'$(Configuration)' != 'Debug'" />
+    <PackageReference Include="SdlVulkan.Renderer.Debug" Condition="'$(Configuration)' == 'Debug'" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="SDL3-CS" NoWarn="NU5104" />
+    <PackageReference Include="SDL3-CS.Native" NoWarn="NU5104" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Pilot.Gui.Tests" />
+  </ItemGroup>
+
+</Project>

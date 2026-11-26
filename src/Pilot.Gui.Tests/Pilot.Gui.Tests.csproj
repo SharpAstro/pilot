@@ -25,6 +25,8 @@
        the capture draws. -->
   <ItemGroup>
     <ProjectReference Include="..\Pilot.Gui\Pilot.Gui.csproj" />
+    <!-- The desktop cat: its mood model and its draw calls, rendered on the CPU here (BuddyCatCaptureTests). -->
+    <ProjectReference Include="..\Pilot.Buddy\Pilot.Buddy.csproj" />
     <ProjectReference Include="..\Pilot.Ui\Pilot.Ui.csproj" />
   </ItemGroup>
 
