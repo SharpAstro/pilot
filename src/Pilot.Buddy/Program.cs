@@ -41,6 +41,12 @@ internal static class Program
             return 2;
         }
 
+        // A bare capture name goes to the job's artifacts folder when there is one (the GUI lane's PILOT_JOB_ARTIFACTS), never into the working folder.
+        if (options.Capture is { } capture && !Path.IsPathRooted(capture) && Environment.GetEnvironmentVariable("PILOT_JOB_ARTIFACTS") is { Length: > 0 } artifacts)
+        {
+            options = options with { Capture = Path.Combine(artifacts, capture) };
+        }
+
         // One cat per desktop: a second launch finds the gate taken and leaves.
         var channel = InstanceGate.ChannelFor("pilot-v2-buddy", string.Empty);
         using var gate = InstanceGate.TryClaim(channel);
