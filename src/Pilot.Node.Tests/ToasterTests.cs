@@ -230,6 +230,54 @@ public sealed class ToasterTests : IAsyncDisposable
         views.AnyShowsCards.ShouldBeFalse();
     }
 
+    // #1357's rule, as the node's Toaster sees it: the buddy says it shows the cards only while visible and not snoozed, the GUI says it as before,
+    // and the Toaster reads PageViews.AnyShowsCards, so it needs no rule of its own for the buddy.
+    private async Task<List<string>> ToastsWith(Action<PageViews> clients)
+    {
+        var views = new PageViews();
+        clients(views);
+        var runner = new FakeRunner();
+        await using var toaster = new Toaster(_state, runner, _time, () => "all", () => views.AnyShowsCards);
+        Ring(Normal, "flight/BN");
+        Ring(Urgent, "flight/BU");
+        await toaster.Sync(cancel: Ct);
+        return [.. runner.Shown.Select(s => s.Tag)];
+    }
+
+    [Fact]
+    public async Task BuddyAloneVisibleMutesTheNormalCardAndStillToastsTheUrgentOne()
+    {
+        var buddy = new object();
+        var shown = await ToastsWith(v => v.SayCards(buddy, true));
+        shown.ShouldBe(["flight/BU"]);
+    }
+
+    [Fact]
+    public async Task BuddyPlusGuiShowingCardsMutesTheNormalCardAndStillToastsTheUrgentOne()
+    {
+        var buddy = new object();
+        var gui = new object();
+        var shown = await ToastsWith(v =>
+        {
+            v.SayCards(buddy, true);
+            v.SayCards(gui, true);
+        });
+        shown.ShouldBe(["flight/BU"]);
+    }
+
+    [Fact]
+    public async Task BuddySnoozedOrHiddenLeavesTheToastsAsToday()
+    {
+        var buddy = new object();
+        var shown = await ToastsWith(v =>
+        {
+            v.SayCards(buddy, true);
+            v.SayCards(buddy, false);
+        });
+        // Which toast comes first is the Toaster's own business, not part of the rule.
+        shown.ShouldBe(["flight/BN", "flight/BU"], ignoreOrder: true);
+    }
+
     [Fact]
     public async Task ACardRaisedAgainAsTheFourthNormalRingLeavesNoSingleToastBehind()
     {

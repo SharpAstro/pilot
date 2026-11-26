@@ -92,9 +92,33 @@ public sealed class PageViews
     /// </summary>
     public void SayCards(object client, bool shows)
     {
+        bool changed;
         lock (_gate)
         {
-            if (shows) _cards.Add(client); else _cards.Remove(client);
+            changed = shows ? _cards.Add(client) : _cards.Remove(client);
+        }
+        if (changed)
+        {
+            CardsChanged?.Invoke();
+        }
+    }
+
+    /// <summary>Raised, outside the lock, when a client starts or stops showing the cards: <see cref="EventHub"/> tells each client whether others do.</summary>
+    public event Action? CardsChanged;
+
+    /// <summary>True while a client other than <paramref name="client"/> shows the cards (#1357): what the buddy is told, so PageViews stays the one source.</summary>
+    public bool OthersShowCards(object client)
+    {
+        lock (_gate)
+        {
+            foreach (var shown in _cards)
+            {
+                if (!ReferenceEquals(shown, client))
+                {
+                    return true;
+                }
+            }
+            return false;
         }
     }
 

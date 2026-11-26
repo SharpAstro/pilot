@@ -1,4 +1,4 @@
-namespace Pilot.Node.Toasts;
+namespace Pilot.Contracts;
 
 /// <summary>
 /// How loudly a Ring card's desktop toast shows (#1356): <see cref="Urgent"/> stays until dismissed (<c>scenario="urgent"</c>), <see cref="Normal"/>

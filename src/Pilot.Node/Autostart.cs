@@ -24,7 +24,21 @@ public static class Autostart
     /// <summary>The Run value's name, and the unit's.</summary>
     public const string Name = "pilot-node";
 
+    /// <summary>The desktop cat's Run value (Windows): pilot-buddy, started at logon when it sits beside the node.</summary>
+    public const string BuddyName = "pilot-buddy";
+
     private const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
+
+    /// <summary>The desktop cat's binary beside <paramref name="nodePath"/>, or null when there is none (the cat ships with the other binaries, so a node installed alone has no cat).</summary>
+    public static string? BuddyBeside(string nodePath)
+    {
+        // One rule for where the cat lives: the watchtower's MCP config finds it the same way.
+        var folder = Path.GetDirectoryName(nodePath);
+        return string.IsNullOrEmpty(folder) ? null : Flights.SessionMcpConfig.BuddyBeside(folder);
+    }
+
+    /// <summary>The Run value's command for the cat: its path, quoted. A WinExe has no console, so nothing wraps it.</summary>
+    public static string BuddyCommand(string buddyPath) => Quote(buddyPath);
 
     /// <summary>The command line the Run value holds: the node, windowless, with its options.</summary>
     public static string WindowsCommand(string nodePath, IReadOnlyList<string> nodeArgs, string? systemRoot = null)
@@ -180,6 +194,16 @@ public static class Autostart
             WriteRun(command);
             where = $@"HKCU\{RunKey}\{Name}";
             await output.WriteLineAsync($"autostart: {where} = {command}");
+            // The desktop cat starts at logon too, when pilot-buddy sits beside the node.
+            if (BuddyBeside(nodePath) is { } buddy)
+            {
+                WriteRun(BuddyCommand(buddy), BuddyName);
+                await output.WriteLineAsync($@"autostart: HKCU\{RunKey}\{BuddyName} = {BuddyCommand(buddy)} (the desktop cat, at logon)");
+            }
+            else
+            {
+                await output.WriteLineAsync("autostart: no pilot-buddy beside the node, so no desktop cat is started at logon");
+            }
         }
         else if (OperatingSystem.IsLinux())
         {
@@ -235,7 +259,11 @@ public static class Autostart
     {
         if (OperatingSystem.IsWindows())
         {
-            await output.WriteLineAsync(DeleteRun() ? $@"autostart: removed HKCU\{RunKey}\{Name}" : "autostart: there was none");
+            await output.WriteLineAsync(DeleteRun(Name) ? $@"autostart: removed HKCU\{RunKey}\{Name}" : "autostart: there was none");
+            if (DeleteRun(BuddyName))
+            {
+                await output.WriteLineAsync($@"autostart: removed HKCU\{RunKey}\{BuddyName}");
+            }
             return 0;
         }
         if (OperatingSystem.IsLinux())
@@ -270,21 +298,21 @@ public static class Autostart
     }
 
     [SupportedOSPlatform("windows")]
-    private static void WriteRun(string command)
+    private static void WriteRun(string command, string? name = null)
     {
         using var key = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(RunKey, writable: true);
-        key.SetValue(Name, command, Microsoft.Win32.RegistryValueKind.String);
+        key.SetValue(name ?? Name, command, Microsoft.Win32.RegistryValueKind.String);
     }
 
     [SupportedOSPlatform("windows")]
-    private static bool DeleteRun()
+    private static bool DeleteRun(string name)
     {
         using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(RunKey, writable: true);
-        if (key?.GetValue(Name) is null)
+        if (key?.GetValue(name) is null)
         {
             return false;
         }
-        key.DeleteValue(Name);
+        key.DeleteValue(name);
         return true;
     }
 

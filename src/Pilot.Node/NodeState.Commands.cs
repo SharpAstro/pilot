@@ -136,6 +136,29 @@ public sealed partial class NodeState
     }
 
     /// <summary>
+    /// Writes one serialized event to a single live client, under the lock like every other write (a queue has one writer). False when the
+    /// client has gone or its queue is full, in which case it is dropped as <see cref="WriteToSinks"/> does.
+    /// </summary>
+    public bool TellClient(INodeEventSink sink, byte[] json)
+    {
+        lock (_gate)
+        {
+            var at = _sinks.IndexOf(sink);
+            if (at < 0)
+            {
+                return false;
+            }
+            if (sink.TryWrite(json))
+            {
+                return true;
+            }
+            _sinks.RemoveAt(at);
+            sink.Overflowed();
+            return false;
+        }
+    }
+
+    /// <summary>
     /// Records a decision: a <see cref="DecisionEvent"/> on the stream, kept whole by the journal. Under the lock, as
     /// <see cref="Complete"/> is.
     /// </summary>

@@ -275,7 +275,7 @@ public sealed class StoreCompatibilityTests : IDisposable
 
         // A delta of every kind the stream has but the snapshot: a new kind is a new type under NodeEvent, and fails here until the writer makes one.
         // Not the kinds the node never journals (the snapshot is one; a chat change is sent to the clients connected and is in no store, see its summary).
-        var neverStored = new[] { typeof(SnapshotEvent), typeof(ChatChangedEvent) };
+        var neverStored = new[] { typeof(SnapshotEvent), typeof(ChatChangedEvent), typeof(OthersShowCardsEvent) };
         var kinds = typeof(NodeEvent).GetCustomAttributes<JsonDerivedTypeAttribute>().Select(a => a.DerivedType).Where(t => !neverStored.Contains(t)).ToHashSet();
         var written = history.Deltas.Select(d => d.GetType()).ToHashSet();
         kinds.Except(written).Select(t => t.Name).Order().ShouldBeEmpty("the fixture writer leaves out a delta of each of these kinds");

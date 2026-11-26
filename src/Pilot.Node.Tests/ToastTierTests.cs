@@ -1,3 +1,4 @@
+using Pilot.Contracts;
 using Pilot.Node.Toasts;
 using Shouldly;
 using Xunit;

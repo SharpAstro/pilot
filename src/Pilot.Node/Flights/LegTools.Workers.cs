@@ -48,7 +48,9 @@ public sealed partial class ClaudeWorkerLauncher(
             ? start
             : start with
             {
-                McpConfig = SessionMcpConfig.Ensure(options.DataFolder, Path.Combine(AppContext.BaseDirectory, OperatingSystem.IsWindows() ? "pilot.exe" : "pilot"), options.SocketPath, start.RepoPath),
+                McpConfig = SessionMcpConfig.Ensure(options.DataFolder, Path.Combine(AppContext.BaseDirectory, OperatingSystem.IsWindows() ? "pilot.exe" : "pilot"), options.SocketPath, start.RepoPath,
+                    // The cat speaks for the watchtower alone: a worker's config never holds the buddy.
+                    buddyExe: start.Reason is SessionStartReasons.WatchtowerStart or SessionStartReasons.WatchtowerRestart ? SessionMcpConfig.BuddyBeside(AppContext.BaseDirectory) : null),
             };
 
     private static readonly TimeSpan Timeout = TimeSpan.FromMinutes(2);

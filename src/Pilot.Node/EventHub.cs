@@ -31,6 +31,10 @@ public sealed class EventHub(NodeState state, PageViews views, ILogger<EventHub>
 
     private int _clients;
 
+    // Each client with the last "others show cards" fact it was sent (a client assumes false until told), so a change is sent once.
+    private readonly Dictionary<INodeEventSink, bool> _told = new(ReferenceEqualityComparer.Instance);
+    private bool _watching;
+
     /// <summary>How many clients are on the stream now.</summary>
     public int ClientCount => Volatile.Read(ref _clients);
 
@@ -42,6 +46,7 @@ public sealed class EventHub(NodeState state, PageViews views, ILogger<EventHub>
         try
         {
             using var subscription = state.Subscribe(since, stream, client);
+            Track(client);
             var sender = SendQueuedAsync(client);
             await ReceiveUntilClosedAsync(socket, client, stopping);
             client.Stop();
@@ -60,9 +65,60 @@ public sealed class EventHub(NodeState state, PageViews views, ILogger<EventHub>
         finally
         {
             // Whatever ended the stream, what it showed goes with it.
+            lock (_told)
+            {
+                _told.Remove(client);
+            }
             views.Forget(client);
             client.Stop();
             Interlocked.Decrement(ref _clients);
+        }
+    }
+
+    private void Track(EventClient client)
+    {
+        lock (_told)
+        {
+            _told[client] = false;
+            if (!_watching)
+            {
+                _watching = true;
+                views.CardsChanged += TellAll;
+            }
+        }
+        Tell(client);
+    }
+
+    private void TellAll()
+    {
+        INodeEventSink[] all;
+        lock (_told)
+        {
+            all = [.. _told.Keys];
+        }
+        foreach (var client in all)
+        {
+            Tell(client);
+        }
+    }
+
+    // Says whether others show the cards when that differs from what the client was last told (a new client hears it only when it is true).
+    private void Tell(INodeEventSink client)
+    {
+        bool others;
+        lock (_told)
+        {
+            // Read inside the lock, so two clients saying at once cannot write the older answer last.
+            others = views.OthersShowCards(client);
+            if (!_told.TryGetValue(client, out var told) || told == others)
+            {
+                return;
+            }
+            _told[client] = others;
+            // Sent inside the lock too, so two threads that both changed _told reach the client in the order they changed it. TellClient only
+            // enqueues under NodeState's own lock, and nothing takes _told under that one, so the two locks have no reverse order.
+            var json = JsonSerializer.SerializeToUtf8Bytes<NodeEvent>(new OthersShowCardsEvent { Seq = 0, At = DateTimeOffset.UtcNow, Shown = others }, PilotJsonContext.Default.NodeEvent);
+            state.TellClient(client, json);
         }
     }
 
