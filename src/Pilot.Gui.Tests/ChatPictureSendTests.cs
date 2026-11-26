@@ -98,8 +98,11 @@ public sealed class ChatPictureSendTests
         rig.Chat.Input.InsertText("plain words");
         await rig.Chat.SendAsync();
 
-        rig.Plain.ShouldBe(["plain words"]);
-        rig.Sent.ShouldBeEmpty();
+        // This node's own send takes a picture, so the words go through it with none, as a design chat's do.
+        rig.Plain.ShouldBeEmpty();
+        var (_, words, picture) = rig.Sent.ShouldHaveSingleItem();
+        words.ShouldBe("plain words");
+        picture.ShouldBeNull();
     }
 
     [Fact]

@@ -338,7 +338,10 @@ internal sealed partial class ChatView<TSurface>(Renderer<TSurface> renderer) : 
         {
             if (quoted.Node is { Here: false } other && Node?.Where != other.Where && CurrentSend() is not null)
             {
-                return (CurrentPictureSend(), Node is { } shown ? $"{shown.Name}'s watchtower" : "the fleet chat");
+                // The words name the card and its node, as the plain send's do.
+                var toShown = CurrentPictureSend();
+                var named = quoted.Card;
+                return (toShown is null ? null : (text, picture) => toShown(AboutOtherNodesCard(named, other, text), picture), Node is { } shown ? $"{shown.Name}'s watchtower" : "the fleet chat");
             }
             var card = quoted.Card;
             var cardNode = quoted.Node;
