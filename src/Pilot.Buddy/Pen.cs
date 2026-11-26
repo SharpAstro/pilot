@@ -76,10 +76,40 @@ public sealed class Pen<TSurface>(Renderer<TSurface> renderer, string fontPath, 
 
     private void FillConvex((float X, float Y)[] points, RGBAColor32 color)
     {
-        // A fan from the first point: exact for a convex shape.
-        for (var i = 1; i + 1 < points.Length; i++)
+        // The pinned renderer has no polygon or triangle fill, so a convex shape is filled one device row at a time: each row's span is where
+        // the row's middle meets the polygon's edges.
+        var n = points.Length;
+        var dev = new (float X, float Y)[n];
+        var top = float.MaxValue;
+        var bottom = float.MinValue;
+        for (var i = 0; i < n; i++)
         {
-            Renderer.FillTriangle(X(points[0].X), Y(points[0].Y), X(points[i].X), Y(points[i].Y), X(points[i + 1].X), Y(points[i + 1].Y), color);
+            dev[i] = (Origin.X + points[i].X * Scale, Origin.Y + points[i].Y * Scale);
+            top = MathF.Min(top, dev[i].Y);
+            bottom = MathF.Max(bottom, dev[i].Y);
+        }
+        for (var row = (int)MathF.Floor(top); row < (int)MathF.Ceiling(bottom); row++)
+        {
+            var yMid = row + 0.5f;
+            var left = float.MaxValue;
+            var right = float.MinValue;
+            for (var i = 0; i < n; i++)
+            {
+                var (a, b) = (dev[i], dev[(i + 1) % n]);
+                if ((a.Y <= yMid) == (b.Y <= yMid))
+                {
+                    continue;
+                }
+                var x = a.X + (yMid - a.Y) / (b.Y - a.Y) * (b.X - a.X);
+                left = MathF.Min(left, x);
+                right = MathF.Max(right, x);
+            }
+            if (right > left)
+            {
+                var x0 = (int)MathF.Round(left);
+                var x1 = Math.Max(x0 + 1, (int)MathF.Round(right));
+                Renderer.FillRectangle(new RectInt(new PointInt(x1, row + 1), new PointInt(x0, row)), color);
+            }
         }
     }
 
