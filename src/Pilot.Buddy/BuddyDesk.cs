@@ -133,6 +133,9 @@ public sealed class BuddyDesk(
     BuddyModel model, BuddyFeed feed, BuddyChat chat, IGuiHandOff gui, IBuddyWindow window,
     Func<BuddySettings> settings, Action<BuddySettings> changeSettings, TimeProvider time, TimeZoneInfo zone, object gate, Action wake, Action<string>? log = null)
 {
+    /// <summary>The gate the window draws under, shared with the chat, the link and the relay.</summary>
+    public object Gate => gate;
+
     /// <summary>The pointer must move this far from where it went down before a press is a drag, not a click.</summary>
     public const float DragThreshold = 4;
 

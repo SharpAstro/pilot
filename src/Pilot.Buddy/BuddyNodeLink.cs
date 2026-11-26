@@ -56,6 +56,9 @@ public sealed class BuddyNodeLink
         };
     }
 
+    /// <summary>The gate the link, the chat, the desk and the relay all share with the window.</summary>
+    public object Gate => _gate;
+
     private int _pendingShows = -1;
     private int _sending;
     private int _refreshing;
@@ -110,7 +113,12 @@ public sealed class BuddyNodeLink
         {
             return;
         }
-        _ = Task.Run(async () =>
+        _ = Task.Run(RefreshChatLoopAsync);
+    }
+
+    private async Task RefreshChatLoopAsync()
+    {
+        while (true)
         {
             try
             {
@@ -124,6 +132,11 @@ public sealed class BuddyNodeLink
                     {
                         // The node did not answer; the stream's own state says so.
                     }
+                    catch (Exception ex)
+                    {
+                        // Anything else is logged and the loop goes on: it must not be unobserved, nor leave the last words unread.
+                        _log($"pilot-buddy: reading the watchtower's chat failed ({ex.GetType().Name}): {ex.Message}");
+                    }
                     _changed();
                 }
             }
@@ -131,7 +144,12 @@ public sealed class BuddyNodeLink
             {
                 Volatile.Write(ref _refreshing, 0);
             }
-        });
+            // A nudge that came after the last look but before the release saw _refreshing set and left: take it up here, or the end of a turn is never read.
+            if (Volatile.Read(ref _refreshAgain) == 0 || Interlocked.CompareExchange(ref _refreshing, 1, 0) != 0)
+            {
+                return;
+            }
+        }
     }
 
     /// <summary>Reads events until <paramref name="cancellationToken"/> ends it.</summary>

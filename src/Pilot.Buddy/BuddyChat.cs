@@ -48,6 +48,9 @@ public sealed class BuddyChat(IBuddyNode node, IGuiHandOff gui, Func<string?> di
     // The window draws under this lock, so every write of the chat's state (typed on the window's thread, set by a chat verb on the pool) takes it too.
     private readonly object _gate = gate ?? new();
 
+    /// <summary>The gate the window draws under.</summary>
+    public object Gate => _gate;
+
     /// <summary>What the input says while empty and usable.</summary>
     public const string Placeholder = "Ask the watchtower";
 

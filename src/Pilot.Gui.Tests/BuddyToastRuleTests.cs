@@ -636,5 +636,43 @@ public sealed class BuddyToastRuleTests
         await run.WaitAsync(TimeSpan.FromSeconds(10), Ct);
     }
 
+    /// <summary>A node whose chat read throws something the link does not list as "the node did not answer".</summary>
+    private sealed class ThrowingChatNode : IBuddyNode
+    {
+        public Task<string?> SayAsync(string text, CancellationToken cancellationToken) => Task.FromResult<string?>(null);
+
+        public Task<string?> AskAsync(string question, CancellationToken cancellationToken) => Task.FromResult<string?>(null);
+
+        public Task<string?> ChatNowAsync(string sendId, CancellationToken cancellationToken) => Task.FromResult<string?>(null);
+
+        public Task<string?> AnswerAskAsync(string requestId, string decision, string? words, CancellationToken cancellationToken) => Task.FromResult<string?>(null);
+
+        public Task<ChatPage?> GetChatAsync(int after, CancellationToken cancellationToken) => throw new NotSupportedException("a read nobody listed");
+    }
+
+    [Fact]
+    public async Task AChatReadThatFailsInAnUnlistedWayIsLoggedAndTheNextNudgeReadsAgain()
+    {
+        var stream = new FakeStream();
+        var linked = LinkOver((_, _, _) => Task.FromResult<IBuddyEvents>(stream), new ThrowingChatNode());
+        using var stop = new CancellationTokenSource();
+        var run = linked.Link.RunAsync(stop.Token);
+        stream.Events.Writer.TryWrite(Snapshot("s", 0));
+        await Changes(linked, 1);
+        lock (linked.Gate)
+        {
+            linked.Chat.CardOpen = true;
+        }
+
+        stream.Events.Writer.TryWrite(Nudge());
+        (await linked.Logged.Reader.ReadAsync(Ct)).ShouldContain("NotSupportedException");
+        // The loop released itself: a later nudge is read (and logged) again, not swallowed by a stuck "refreshing" flag.
+        stream.Events.Writer.TryWrite(Nudge());
+        (await linked.Logged.Reader.ReadAsync(Ct)).ShouldContain("NotSupportedException");
+
+        await stop.CancelAsync();
+        await run.WaitAsync(TimeSpan.FromSeconds(10), Ct);
+    }
+
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 }
