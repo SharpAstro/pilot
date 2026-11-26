@@ -336,6 +336,8 @@ public sealed class ReviewLoopTests : ReviewTestsBase
 
         (await Run(Verbs.Review, Verbs.FlightTarget(flight.Code), Reviewer(flight.Code), "changes", Answered(flight.Code) + "## Blocking\n- Parser.cs:20 the loop never ends")).Error.ShouldBeNull();
 
+        var rounds = F(flight.Code).ReviewRounds.ShouldNotBeNull();
+        (rounds.Length, rounds[^1].FixUntouched, rounds[0].Head == rounds[^1].Head, F(flight.Code).Review!.ReviewedHead == rounds[^1].Head).ShouldBe((2, true, false, true));
         var card = Open().Single(c => c.Kind == LegCommander.ReviewLoopKind);
         card.Title.ShouldContain("changed none of the files named");
     }
@@ -344,6 +346,8 @@ public sealed class ReviewLoopTests : ReviewTestsBase
     [Trait("Category", "Slow")]
     public async Task EightRoundsWithChangesHoldAsTheRunawayGuardAndRingNamingIt()
     {
+        // The node's own cap on a leg's go-arounds (5 by default) is another guard with its own card; lifted here, the loop's guard is what holds.
+        _legs.Models = new RoleModels(new NodeSettings { MaxGoArounds = 20 });
         var code = await Looping("1", ReviewConvergence.RunawayRounds);
 
         var card = Open().Single(c => c.Kind == LegCommander.ReviewLoopKind);
