@@ -155,7 +155,7 @@ public static class GrumpCat
                 pen.Oval(94, 106 + b, 10, 12, Ink);
                 if (withText)
                 {
-                    ComicBang.Draw(pen, 168, 0);
+                    ComicBang.Draw(pen, 172, 0);
                 }
                 break;
 

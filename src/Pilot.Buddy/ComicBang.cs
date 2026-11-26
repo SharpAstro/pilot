@@ -29,7 +29,7 @@ public static class ComicBang
     public const float OutlineWidth = 2.5f;
 
     /// <summary>The design size of the mark: it fits this box, outline included.</summary>
-    public const float Width = 26, Height = 42;
+    public const float Width = 24, Height = 36;
 
     /// <summary>
     /// Draws the mark inside the box whose top left is (<paramref name="x"/>, <paramref name="y"/>) and which is <see cref="Width"/> x <see cref="Height"/>,
@@ -40,13 +40,13 @@ public static class ComicBang
         var o = OutlineWidth;
         var cx = x + Width / 2;
         var top = y + o;
-        var strokeH = 24f;
-        var topHalf = 9f;
+        var strokeH = 19f;
+        var topHalf = 8f;
         (float X, float Y)[] shape = stroke == BangStroke.Trapezium
-            ? [(cx - topHalf, top), (cx + topHalf, top), (cx + 4.5f, top + strokeH), (cx - 4.5f, top + strokeH)]
+            ? [(cx - topHalf, top), (cx + topHalf, top), (cx + 4f, top + strokeH), (cx - 4f, top + strokeH)]
             : [(cx - topHalf, top), (cx + topHalf, top), (cx, top + strokeH)];
         pen.Polygon(shape, Fill, Outline, o);
-        var d = 10f;
-        pen.Oval(cx - d / 2, top + strokeH + 4, d, d, Fill, Outline, o);
+        var d = 8f;
+        pen.Oval(cx - d / 2, top + strokeH + 3.5f, d, d, Fill, Outline, o);
     }
 }

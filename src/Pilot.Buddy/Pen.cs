@@ -123,7 +123,7 @@ public sealed class Pen<TSurface>(Renderer<TSurface> renderer, string fontPath, 
             var (a, b) = (points[i], points[(i + 1) % n]);
             area += a.X * b.Y - b.X * a.Y;
         }
-        var sign = area > 0 ? -1f : 1f;
+        var sign = area > 0 ? 1f : -1f;
         var grown = new (float X, float Y)[n];
         for (var i = 0; i < n; i++)
         {
