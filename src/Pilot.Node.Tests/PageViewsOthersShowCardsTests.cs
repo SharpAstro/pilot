@@ -50,7 +50,7 @@ public sealed class PageViewsOthersShowCardsTests
         raised.ShouldBe(2);
     }
 
-    private static async Task<bool> NextOthers(INodeEvents stream)
+    private static async Task<bool> NextOthers(NodeEventStream stream)
     {
         // Bounded by the node's answering: the harness's own stream ends the read when the test's token is cancelled.
         while (await stream.ReadAsync(Ct) is { } next)
