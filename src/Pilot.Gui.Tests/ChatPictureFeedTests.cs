@@ -50,7 +50,7 @@ public sealed class ChatPictureFeedTests
             Chat.Load = (after, _) => Task.FromResult(after < 0 ? shown : new ChatPage { Entries = [], Total = shown.Total });
             Chat.OnSend = _ => Task.FromResult<string?>(null);
             Chat.Open();
-            for (var i = 0; i < 100 && Chat.Entries.Count < entries.Length; i++)
+            for (var i = 0; i < 100 && (Chat.Entries.Count < entries.Length || Texts().Contains("Loading the conversation")); i++)
             {
                 Task.Delay(50, TestContext.Current.CancellationToken).GetAwaiter().GetResult();
             }
@@ -106,7 +106,7 @@ public sealed class ChatPictureFeedTests
         using var held = new Held(1280, 900, Feed());
         held.Chat.Render(new RectF32(0, 0, 1280, 900));
 
-        Regions(held.Chat).Single(r => r.Result is HitResult.ButtonHit { Action: "attachment:chat:1:0" }).OnClick!.Invoke(InputModifier.None);
+        Regions(held.Chat).Single(r => r.Result is HitResult.ButtonHit { Action: "attachment:chat:1:0:ab12cd34" }).OnClick!.Invoke(InputModifier.None);
         var open = held.Chat.Gallery.Viewing.ShouldNotBeNull();
         open.Id.ShouldBe("ab12cd34");
         open.Ext.ShouldBe("png");
