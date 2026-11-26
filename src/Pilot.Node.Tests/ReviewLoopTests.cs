@@ -20,11 +20,7 @@ public sealed class ReviewLoopTests : ReviewTestsBase
     /// <summary>The table of a re-review that answers every earlier point not addressed: a blocking point raised two rounds back is then stuck.</summary>
     private string StuckTable(string code) =>
         ReviewPoints.Number(F(code).ReviewRounds ?? []) is { Count: > 0 } points
-            ? "## Earlier points
-" + string.Join("
-", points.Select(p => $"| {p.Id} | not addressed | still open |")) + "
-
-"
+            ? "## Earlier points\n" + string.Join("\n", points.Select(p => $"| {p.Id} | not addressed | still open |")) + "\n\n"
             : "";
 
     /// <summary>
@@ -311,14 +307,9 @@ public sealed class ReviewLoopTests : ReviewTestsBase
     {
         var code = await Looping("1", 2);
         await FixRound(code, "fix3.txt");
-        var back = "## Earlier points
-| R1.1 | not addressed | undone |
-| R2.1 | addressed | fix.txt:1 |
+        var back = "## Earlier points\n| R1.1 | not addressed | undone |\n| R2.1 | addressed | fix.txt:1 |\n\n";
 
-";
-
-        (await Run(Verbs.Review, Verbs.FlightTarget(code), Reviewer(code), "changes", back + "## Blocking
-- finding of round 3")).Error.ShouldBeNull();
+        (await Run(Verbs.Review, Verbs.FlightTarget(code), Reviewer(code), "changes", back + "## Blocking\n- finding of round 3")).Error.ShouldBeNull();
 
         var card = Open().Single(c => c.Kind == LegCommander.ReviewLoopKind);
         card.Title.ShouldContain("point R1.1 came back");
@@ -333,12 +324,10 @@ public sealed class ReviewLoopTests : ReviewTestsBase
         var flight = await NewFlight("1", "parser");
         await Fly(flight, "parser");
         (await Run(Verbs.OpenPr, Verbs.FlightTarget(flight.Code), "controller")).Error.ShouldBeNull();
-        (await Run(Verbs.Review, Verbs.FlightTarget(flight.Code), Reviewer(flight.Code), "changes", "## Blocking
-- Parser.cs:20 the loop never ends")).Error.ShouldBeNull();
+        (await Run(Verbs.Review, Verbs.FlightTarget(flight.Code), Reviewer(flight.Code), "changes", "## Blocking\n- Parser.cs:20 the loop never ends")).Error.ShouldBeNull();
         await FixRound(flight.Code, "other.txt");
 
-        (await Run(Verbs.Review, Verbs.FlightTarget(flight.Code), Reviewer(flight.Code), "changes", Answered(flight.Code) + "## Blocking
-- Parser.cs:20 the loop never ends")).Error.ShouldBeNull();
+        (await Run(Verbs.Review, Verbs.FlightTarget(flight.Code), Reviewer(flight.Code), "changes", Answered(flight.Code) + "## Blocking\n- Parser.cs:20 the loop never ends")).Error.ShouldBeNull();
 
         var card = Open().Single(c => c.Kind == LegCommander.ReviewLoopKind);
         card.Title.ShouldContain("changed none of the files named");
