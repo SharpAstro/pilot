@@ -61,6 +61,64 @@ public sealed class Pen<TSurface>(Renderer<TSurface> renderer, string fontPath, 
         Renderer.FillEllipse(Rect(x, y, w, h), fill);
     }
 
+    /// <summary>
+    /// A filled, optionally outlined, convex polygon (counter-clockwise or clockwise). The outline is the same polygon pushed out by
+    /// <paramref name="borderWidth"/> at every edge, drawn first, so the fill sits inside it like <see cref="Box"/>'s.
+    /// </summary>
+    public void Polygon((float X, float Y)[] points, RGBAColor32 fill, RGBAColor32? border = null, float borderWidth = 0)
+    {
+        if (border is { } edge && borderWidth > 0)
+        {
+            FillConvex(Grow(points, borderWidth), edge);
+        }
+        FillConvex(points, fill);
+    }
+
+    private void FillConvex((float X, float Y)[] points, RGBAColor32 color)
+    {
+        // A fan from the first point: exact for a convex shape.
+        for (var i = 1; i + 1 < points.Length; i++)
+        {
+            Renderer.FillTriangle(X(points[0].X), Y(points[0].Y), X(points[i].X), Y(points[i].Y), X(points[i + 1].X), Y(points[i + 1].Y), color);
+        }
+    }
+
+    /// <summary>The polygon with each edge moved out by <paramref name="by"/> (mitred corners).</summary>
+    private static (float X, float Y)[] Grow((float X, float Y)[] points, float by)
+    {
+        var n = points.Length;
+        var area = 0f;
+        for (var i = 0; i < n; i++)
+        {
+            var (a, b) = (points[i], points[(i + 1) % n]);
+            area += a.X * b.Y - b.X * a.Y;
+        }
+        var sign = area > 0 ? -1f : 1f;
+        var grown = new (float X, float Y)[n];
+        for (var i = 0; i < n; i++)
+        {
+            var prev = points[(i + n - 1) % n];
+            var cur = points[i];
+            var next = points[(i + 1) % n];
+            var n1 = Normal(prev, cur, sign);
+            var n2 = Normal(cur, next, sign);
+            var mx = n1.X + n2.X;
+            var my = n1.Y + n2.Y;
+            // Miter: the offset along the bisector is by / cos(half the turn), capped so a sharp tip does not run away.
+            var dot = MathF.Max(0.35f, 1 + n1.X * n2.X + n1.Y * n2.Y);
+            grown[i] = (cur.X + mx * by / dot, cur.Y + my * by / dot);
+        }
+        return grown;
+    }
+
+    private static (float X, float Y) Normal((float X, float Y) a, (float X, float Y) b, float sign)
+    {
+        var dx = b.X - a.X;
+        var dy = b.Y - a.Y;
+        var len = MathF.Sqrt(dx * dx + dy * dy);
+        return (sign * dy / len, -sign * dx / len);
+    }
+
     /// <summary>A line of <paramref name="width"/> design pixels.</summary>
     public void Line(float x0, float y0, float x1, float y1, RGBAColor32 color, float width = 1)
         => Renderer.DrawLine(X(x0), Y(y0), X(x1), Y(y1), color, D(width));

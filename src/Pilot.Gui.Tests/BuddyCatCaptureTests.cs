@@ -154,6 +154,72 @@ public sealed class BuddyCatCaptureTests
         Count(renderer, border).ShouldBeGreaterThan(0, "the bubble's border and icon");
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void TheComicBangReadsOnTheDesktopThroughItsFillOrItsOutlineAndStaysInsideItsBox(bool dark)
+    {
+        var palette = BuddyPalette.For(dark);
+        // The edge of the mark that meets the desktop is the outline on a bright one and the yellow fill's own edge on a dark one;
+        // the outline is what keeps it at 3:1 where the yellow alone would not (yellow on white is about 1.6:1).
+        var fillOnDesktop = BuddyContrast.Ratio(ComicBang.Fill, palette.Desktop);
+        var outlineOnDesktop = BuddyContrast.Ratio(ComicBang.Outline, palette.Desktop);
+        global::System.Console.WriteLine($"comic bang {(dark ? "dark" : "light")}: fill/desktop {fillOnDesktop:0.00}, outline/desktop {outlineOnDesktop:0.00}, fill/outline {BuddyContrast.Ratio(ComicBang.Fill, ComicBang.Outline):0.00}");
+        Math.Max(fillOnDesktop, outlineOnDesktop).ShouldBeGreaterThanOrEqualTo(BuddyContrast.Edge, "the mark against the desktop");
+        BuddyContrast.Ratio(ComicBang.Fill, ComicBang.Outline).ShouldBeGreaterThanOrEqualTo(BuddyContrast.Edge, "fill against outline");
+        if (!dark)
+        {
+            outlineOnDesktop.ShouldBeGreaterThanOrEqualTo(BuddyContrast.Edge, "the outline on a bright desktop");
+        }
+
+        foreach (var stroke in Enum.GetValues<BangStroke>())
+        {
+            const int margin = 20;
+            var w = (int)ComicBang.Width + 2 * margin;
+            var h = (int)ComicBang.Height + 2 * margin;
+            using var renderer = new RgbaImageRenderer(w, h);
+            renderer.FillRectangle(new RectInt(new PointInt(w, h), new PointInt(0, 0)), palette.Desktop);
+            ComicBang.Draw(new Pen<RgbaImage>(renderer, Font, margin, margin, 1f), 0, 0, stroke);
+            var px = renderer.Surface.Pixels;
+            var bg = palette.Desktop;
+            var drawnPixels = 0;
+            for (var y = 0; y < h; y++)
+            {
+                for (var x = 0; x < w; x++)
+                {
+                    var i = (y * w + x) * 4;
+                    if (px[i] == bg.Red && px[i + 1] == bg.Green && px[i + 2] == bg.Blue)
+                    {
+                        continue;
+                    }
+                    var inBox = x >= margin && x < margin + ComicBang.Width && y >= margin && y < margin + ComicBang.Height;
+                    inBox.ShouldBeTrue($"{stroke}: pixel ({x - margin},{y - margin}) is outside the box");
+                    drawnPixels++;
+                }
+            }
+            drawnPixels.ShouldBeGreaterThan(200, $"{stroke} is drawn");
+        }
+    }
+
+    [Fact]
+    public void TheTrapeziumAndTheTriangleSideBySideOnBrightAndDark()
+    {
+        const int scale = 6, cell = 60;
+        using var renderer = new RgbaImageRenderer(cell * scale * 2, cell * scale);
+        foreach (var (dark, col) in new[] { (false, 0), (true, 1) })
+        {
+            var palette = BuddyPalette.For(dark);
+            renderer.FillRectangle(new RectInt(new PointInt((col + 1) * cell * scale, cell * scale), new PointInt(col * cell * scale, 0)), palette.Desktop);
+            foreach (var (stroke, i) in new[] { (BangStroke.Trapezium, 0), (BangStroke.Triangle, 1) })
+            {
+                var pen = new Pen<RgbaImage>(renderer, Font, col * cell * scale + (6 + i * 28) * scale, 8 * scale, scale);
+                ComicBang.Draw(pen, 0, 0, stroke);
+            }
+        }
+        Directory.CreateDirectory(OutFolder);
+        File.WriteAllBytes(Path.Combine(OutFolder, "comic-bang-trapezium-vs-triangle.png"), PngWriter.Encode(renderer.Surface.Pixels, cell * scale * 2, cell * scale));
+    }
+
     [Fact]
     public void ADistinctFaceIsDrawnForEveryMoodAndTheGrumpyAsleepOneDiffersFromAsleep()
     {
