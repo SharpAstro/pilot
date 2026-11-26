@@ -21,6 +21,14 @@ internal static class Program
             return 0;
         }
 
+        // pilot-buddy settings: opens the settings card of the cat on this desktop, the way back to the switch while clicks pass through a sleeping cat.
+        if (args.Length > 0 && args[0] == "settings")
+        {
+            var answer = new PipeBuddyLink(BuddyPipeName.Current, CallDeadline, TimeProvider.System).CallAsync(new BuddyCall(BuddyCall.Settings), CancellationToken.None).GetAwaiter().GetResult();
+            System.Console.Out.WriteLine(answer.Text);
+            return answer.Ok ? 0 : 1;
+        }
+
         var log = new RollingLog("buddy");
         void Say(string line)
         {

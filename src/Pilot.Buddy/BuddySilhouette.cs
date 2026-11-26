@@ -26,46 +26,16 @@ public static class BuddySilhouette
     }
 
     /// <summary>
-    /// The mask for a cat asleep while "clicks pass through while asleep" is on: clicks pass through the cat to the window below, so only the "z Z" (the
-    /// hover that opens one eye) and the cushion (the right-click for the settings) catch the pointer.
+    /// Whether every click goes through the window: the cat sleeps with nothing to say, no card is open, and "clicks pass through while asleep" is on.
+    /// The shape stays the drawn silhouette, since a shape also cuts what is drawn outside it (a cat that passes clicks must still be seen); the pass is
+    /// the window's own style (<c>WindowsShell.SetClickThrough</c>), which takes no mouse event at all while it holds.
     /// </summary>
-    public static RgbaImage SleepingPassThrough(int width, int height, BuddyGeometry geometry)
-    {
-        var mask = new RgbaImage(width, height);
-        Fill(mask, geometry.Zzz);
-        Fill(mask, geometry.Cushion);
-        return mask;
-    }
-
-    /// <summary>
-    /// The mask the window gets: the drawn silhouette, or for a sleeping cat with click-through on (and no bubble or card open) just the places that
-    /// wake it.
-    /// </summary>
-    public static RgbaImage For(RgbaImage drawn, BuddyGeometry geometry, bool asleep, bool clicksPassThrough)
-    {
-        var open = geometry.Layout.Bubble is not null || geometry.Layout.Card is not null;
-        return asleep && clicksPassThrough && !open ? SleepingPassThrough(drawn.Width, drawn.Height, geometry) : Of(drawn);
-    }
+    public static bool PassesClicks(BuddyGeometry geometry, bool asleep, bool setting) =>
+        setting && asleep && geometry.Layout.Bubble is null && geometry.Layout.Card is null;
 
     /// <summary>Whether the mask lets a click at (<paramref name="x"/>, <paramref name="y"/>) land on the buddy.</summary>
     public static bool Catches(RgbaImage mask, int x, int y) =>
         x >= 0 && y >= 0 && x < mask.Width && y < mask.Height && mask.Pixels[(y * mask.Width + x) * 4 + 3] != 0;
-
-    private static void Fill(RgbaImage mask, (float X, float Y, float W, float H) box)
-    {
-        var x0 = Math.Max(0, (int)MathF.Floor(box.X));
-        var y0 = Math.Max(0, (int)MathF.Floor(box.Y));
-        var x1 = Math.Min(mask.Width, (int)MathF.Ceiling(box.X + box.W));
-        var y1 = Math.Min(mask.Height, (int)MathF.Ceiling(box.Y + box.H));
-        for (var y = y0; y < y1; y++)
-        {
-            for (var x = x0; x < x1; x++)
-            {
-                var i = (y * mask.Width + x) * 4;
-                mask.Pixels[i] = mask.Pixels[i + 1] = mask.Pixels[i + 2] = mask.Pixels[i + 3] = 255;
-            }
-        }
-    }
 }
 
 /// <summary>A display's usable bounds in pixels, as the host reads them from SDL.</summary>

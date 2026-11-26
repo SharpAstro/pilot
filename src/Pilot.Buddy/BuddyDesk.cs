@@ -278,6 +278,9 @@ public sealed class BuddyDesk(
         SetHover(false);
     }
 
+    /// <summary>Opens the settings card, as a right-click does: for <c>pilot-buddy settings</c>, the way back to the switch while clicks pass through a sleeping cat.</summary>
+    public void ShowSettings() => Open(DeskCard.Settings);
+
     /// <summary>Esc closes the card.</summary>
     public void Escape() => Open(DeskCard.None);
 

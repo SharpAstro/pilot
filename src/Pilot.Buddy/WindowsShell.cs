@@ -57,6 +57,52 @@ internal static class WindowsShell
     [DllImport("gdi32.dll")]
     private static extern int DeleteDC(nint dc);
 
+    [DllImport("user32.dll")]
+    private static extern nint WindowFromPoint(long point);
+
+    [DllImport("user32.dll")]
+    private static extern nint GetAncestor(nint hwnd, uint flags);
+
+    [DllImport("user32.dll")]
+    private static extern int SetLayeredWindowAttributes(nint hwnd, uint key, byte alpha, uint flags);
+
+    private const long WsExLayered = 0x80000, WsExTransparent = 0x20;
+
+    /// <summary>
+    /// Lets every click of the window pass to the window below while it is drawn as ever (a layered, transparent window style), or takes that off.
+    /// A window with this style takes no mouse event at all, so the host sets it only while nothing can be clicked: a sleeping cat with the
+    /// setting on, and no bubble or card open.
+    /// </summary>
+    public static void SetClickThrough(nint hwnd, bool through)
+    {
+        if (!OperatingSystem.IsWindows() || hwnd == 0)
+        {
+            return;
+        }
+        var style = GetWindowLongPtr(hwnd, GwlExStyle);
+        if (through)
+        {
+            SetWindowLongPtr(hwnd, GwlExStyle, (nint)(style | WsExLayered | WsExTransparent));
+            // Fully opaque: the layer only exists so the style takes; the pixels' own alpha still decides what blends.
+            SetLayeredWindowAttributes(hwnd, 0, 255, 2);
+        }
+        else
+        {
+            SetWindowLongPtr(hwnd, GwlExStyle, (nint)(style & ~WsExTransparent));
+        }
+    }
+
+    /// <summary>The top-level window a click at screen (<paramref name="x"/>, <paramref name="y"/>) would reach, or 0.</summary>
+    public static nint WindowAt(int x, int y)
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return 0;
+        }
+        var hit = WindowFromPoint((long)(uint)x | ((long)y << 32));
+        return hit == 0 ? 0 : GetAncestor(hit, 2);
+    }
+
     /// <summary>The screen under a rectangle (what the user sees, windows included), as RGBA rows from the top; null when it could not be read. For the GUI lane's capture.</summary>
     public static byte[]? CaptureScreen(int x, int y, int width, int height)
     {

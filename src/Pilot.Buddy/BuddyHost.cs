@@ -63,6 +63,7 @@ internal sealed class BuddyHost : IBuddyWindow, IDisposable
         Link = new BuddyNodeLink(client, _feed, _chat, _relay.Gate, Wake, log, TimeSpan.FromSeconds(5));
         Relay = _relay;
         _relay.Changed = Wake;
+        _relay.OpenSettings = _desk.ShowSettings;
     }
 
     /// <summary>The reader of the node's stream, started by <see cref="Run"/>.</summary>
@@ -181,8 +182,12 @@ internal sealed class BuddyHost : IBuddyWindow, IDisposable
         var cornerY = layout.CatY < _pixelHeight / 2f ? _pixelHeight - 16 : 2;
         var corner = MeanDifference(after, _backdrop, cornerX, cornerY, 14, 14);
         var body = MeanDifference(after, _backdrop, (int)(layout.CatX + 80 * _scale), (int)(layout.CatY + 70 * _scale), (int)(40 * _scale), (int)(20 * _scale));
+        // Where a click at the cat's body would go, as the desktop says: this window (caught) or another (through).
+        _window!.GetPosition(out var wx, out var wy);
+        var at = WindowsShell.WindowAt((int)(wx * _density + layout.CatX + 100 * _scale), (int)(wy * _density + layout.CatY + 80 * _scale));
+        var clicks = at == 0 ? "unknown" : at == _window.GetNativeWindowHandle() ? "caught by the cat" : "passing through to the window below";
         _log($"pilot-buddy: capture {path} (backdrop alone: {backdropPath}); AlphaPresentation {_context!.AlphaPresentation}; "
-            + $"mean difference from the backdrop per channel: corner {corner} (0 means transparent), cat's body {body} (more than 20 means drawn); "
+            + $"mean difference from the backdrop per channel: corner {corner} (0 means transparent), cat's body {body} (more than 20 means drawn); a click on the cat's body is {clicks} (click-through is {(_clickThrough ? "on" : "off")}); "
             + (corner < 3 && body > 20 ? "VERDICT: as expected" : "VERDICT: NOT as expected, look at the pictures"));
         return corner < 3 && body > 20 ? 0 : 3;
     }
@@ -325,7 +330,8 @@ internal sealed class BuddyHost : IBuddyWindow, IDisposable
                 layout = BuddyScene.Draw(cpu, _font, palette, view, _scale, false, corner, _desk.CardFactory<RgbaImage>());
                 var geometry = new BuddyGeometry(layout);
                 _desk.Geometry = geometry;
-                SetShape(BuddySilhouette.For(cpu.Surface, geometry, _model.Current is null, _settings.ClicksPassThrough));
+                SetShape(BuddySilhouette.Of(cpu.Surface));
+                SetClickThrough(BuddySilhouette.PassesClicks(geometry, _model.Current is null, _settings.ClicksPassThrough));
             }
             if (_renderer!.BeginFrame(new RGBAColor32(0, 0, 0, 0)))
             {
@@ -333,6 +339,17 @@ internal sealed class BuddyHost : IBuddyWindow, IDisposable
                 _renderer.EndFrame();
             }
         });
+    }
+
+    private bool _clickThrough;
+
+    private void SetClickThrough(bool through)
+    {
+        if (through != _clickThrough)
+        {
+            _clickThrough = through;
+            WindowsShell.SetClickThrough(_window!.GetNativeWindowHandle(), through);
+        }
     }
 
     /// <summary>Sets the window's click-through shape, only when it differs from the one set (it costs a few milliseconds).</summary>

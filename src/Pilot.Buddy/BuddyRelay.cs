@@ -11,6 +11,9 @@ public sealed record BuddyCall(string Tool, string? Text = null, string? Urgency
     public const string Point = "point";
     public const string State = "state";
     public const string Sleep = "sleep";
+
+    /// <summary>Opens the settings card: sent by <c>pilot-buddy settings</c>, not offered to the watchtower.</summary>
+    public const string Settings = "settings";
 }
 
 /// <summary>What the buddy answers a call with; <paramref name="Ok"/> false is a refusal the tool reports as an error.</summary>
@@ -67,12 +70,22 @@ public sealed class BuddyRelay(BuddyModel model, BuddyFeed feed, TimeProvider ti
                 BuddyCall.Point => Point(call),
                 BuddyCall.State => State(),
                 BuddyCall.Sleep => Sleep(),
+                BuddyCall.Settings => OpenSettingsCard(),
                 _ => new BuddyAnswer(false, $"the buddy has no tool '{call.Tool}'"),
             };
         }
         // The window sleeps on its event queue: a call that changed the cat wakes it so it asks whether a frame is due.
         Changed?.Invoke();
         return answer;
+    }
+
+    /// <summary>Opens the settings card on the window; set by the host.</summary>
+    public Action? OpenSettings { get; set; }
+
+    private BuddyAnswer OpenSettingsCard()
+    {
+        OpenSettings?.Invoke();
+        return new BuddyAnswer(true, "the settings card is open");
     }
 
     /// <summary>Called after each call, outside the gate: the host wakes its loop.</summary>
