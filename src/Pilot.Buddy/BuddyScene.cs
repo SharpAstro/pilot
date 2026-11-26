@@ -32,7 +32,7 @@ public static class BuddyScene
         return new BuddyView(face, model.BreathPose, model.Current, mood == BuddyMood.OneEyeOpen ? summary : null);
     }
 
-    /// <summary>Draws the scene into a <paramref name="width"/> x <paramref name="height"/> surface at <paramref name="scale"/> (device pixels per design pixel).</summary>
+    /// <summary>Draws the scene into a surface the renderer draws on at <paramref name="scale"/> (device pixels per design pixel).</summary>
     public static SceneLayout Draw<TSurface>(Renderer<TSurface> renderer, string fontPath, BuddyPalette palette, BuddyView view, float scale = 1f, bool paintDesktop = false)
     {
         if (paintDesktop)
