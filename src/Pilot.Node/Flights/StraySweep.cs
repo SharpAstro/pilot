@@ -415,10 +415,14 @@ public sealed class StraySweep(NodeState state, IProcessTable table, TimeProvide
             var commandLine = table.DetailsOf(entry.Pid)?.CommandLine;
             var session = Chain(entry.Pid, parents).Select(p => sessions.GetValueOrDefault(p)).FirstOrDefault(n => n is not null)
                 ?? OwnSessionName(commandLine, byId);
-            var owner = session is not null ? $"session {session}" : "no job or session of the node's";
-            found.Add((new Stray(entry.Pid, entry.Name, commandLine, now - start, cpu, owner,
-                $"it has used {cores:0.0} cores without a break for {StrayAge(now - from)}, and nothing that waits computes",
-                Finder.KillCommandFor(entry.Pid), NodeLaunched: false, start, Busy: true), now - from));
+            // The node's own process is named as the node: its card was read as a stranger's for 4 h while the node spun a core (DE1, 2026-11-26).
+            var self = entry.Pid == Environment.ProcessId;
+            var owner = self ? "the node itself" : session is not null ? $"session {session}" : "no job or session of the node's";
+            var why = self
+                ? $"it has used {cores:0.0} cores without a break for {StrayAge(now - from)}; that is the node's own work, which is a bug in the node"
+                : $"it has used {cores:0.0} cores without a break for {StrayAge(now - from)}, and nothing that waits computes";
+            found.Add((new Stray(entry.Pid, entry.Name, commandLine, now - start, cpu, owner, why,
+                self ? "pilot node restart" : Finder.KillCommandFor(entry.Pid), NodeLaunched: false, start, Busy: true), now - from));
         }
         foreach (var gone in _busy.Keys.Where(k => !seen.Contains(k)).ToList())
         {
@@ -457,12 +461,18 @@ public sealed class StraySweep(NodeState state, IProcessTable table, TimeProvide
     {
         _named[key] = stray;
         // The node's own process and the shell's, the browser's and Windows' own are named only: a press would end the node, or the desktop.
-        var endable = stray.Pid != Environment.ProcessId && !NeverEnded(stray.Name);
+        var self = stray.Pid == Environment.ProcessId;
+        var endable = !self && !NeverEnded(stray.Name);
+        var name = stray.Name.Length > 24 ? stray.Name[..24] : stray.Name;
+        var what = endable ? "End it on this card if it should not be computing, or dismiss the card if it should (it is not raised again for a day)."
+            // A restart frees the core only until the same work comes round again, and it loses what a trace would show.
+            : self ? $"Find what spins before restarting: take a trace (dotnet-trace collect -p {stray.Pid} --profile dotnet-sampled-thread-time --duration 00:00:00:30) and file the cause. 'pilot node restart' frees the core only until the same work comes round again."
+            : "The node does not end this one: end it by hand if it should not be computing.";
         state.RaiseCard(CardBin.Ring, BusyKind, key,
-            $"{(stray.Name.Length > 24 ? stray.Name[..24] : stray.Name)} {stray.Pid} has computed without a break for {StrayAge(busyFor)}",
-            $"{stray.Reason}.\n{Describe(row, endable ? "End it on this card if it should not be computing, or dismiss the card if it should (it is not raised again for a day)." : "The node does not end this one: end it by hand if it should not be computing.")}",
+            self ? $"The node itself has computed without a break for {StrayAge(busyFor)}" : $"{name} {stray.Pid} has computed without a break for {StrayAge(busyFor)}",
+            $"{stray.Reason}.\n{Describe(row, what)}",
             endable ? [new CardChoice { Label = $"End process {stray.Pid}", Verb = Verbs.EndStray, Target = key }] : [],
-            summary: $"Process {stray.Pid} ({stray.Name}) of {stray.Owner} {stray.Reason}",
+            summary: self ? $"The node itself ({stray.Name} {stray.Pid}): {stray.Reason}." : $"Process {stray.Pid} ({stray.Name}), of {stray.Owner}: {stray.Reason}.",
             cause: key);
     }
 

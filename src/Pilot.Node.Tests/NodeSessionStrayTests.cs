@@ -335,6 +335,8 @@ public sealed class NodeSessionStrayTests
         card.Kind.ShouldBe(StraySweep.BusyKind);
         card.Bin.ShouldBe(CardBin.Ring);
         card.Title.ShouldBe("spinner.exe 5000 has computed without a break for 30 min");
+        // One sentence a toast or a phone can show whole (it read "of no job or session of the node's it has used", DE1, 2026-11-26).
+        card.Summary.ShouldBe("Process 5000 (spinner.exe), of no job or session of the node's: it has used 1.0 cores without a break for 30 min, and nothing that waits computes.");
         (card.Detail ?? "").ShouldContain("spinner.exe --wait-for-a-flag");
         (card.Detail ?? "").ShouldContain("Stop-Process -Id 5000 -Force");
         (card.Detail ?? "").ShouldContain("no job or session of the node's");
@@ -406,6 +408,27 @@ public sealed class NodeSessionStrayTests
 
         (result.Error ?? "").ShouldContain("is the node itself");
         _table.Killed.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void The_nodes_own_busy_card_names_the_node_and_asks_for_a_trace_not_a_kill()
+    {
+        // DE1, 2026-11-26: the node spun a core for 4 h and its card read as a stranger's ("of no job or session of the node's"), with a kill command.
+        var pid = Environment.ProcessId;
+        _table.Add(pid, 29784, "pilot-node.exe", Began, "pilot-node.exe --after 68668", TimeSpan.Zero);
+        _sweep.SweepOnce();
+        SweepFor(TimeSpan.FromMinutes(30), pid, 1.0);
+
+        var card = _state.Cards(openOnly: true).ShouldHaveSingleItem();
+        card.Title.ShouldBe("The node itself has computed without a break for 30 min");
+        card.Summary.ShouldBe($"The node itself (pilot-node.exe {pid}): it has used 1.0 cores without a break for 30 min; that is the node's own work, which is a bug in the node.");
+        var detail = card.Detail ?? "";
+        detail.ShouldContain("of the node itself");
+        detail.ShouldContain($"dotnet-trace collect -p {pid}");
+        detail.ShouldContain("Kill command: pilot node restart");
+        detail.ShouldNotContain("Stop-Process");
+        detail.ShouldNotContain("no job or session of the node's");
+        card.Choices.ShouldBeEmpty();
     }
 
     [Fact]

@@ -10,8 +10,20 @@ namespace Pilot.Node.Flights;
 /// stands where a fresh watchtower began, so a client asks for what came after the last index it has, whichever watchtower
 /// said it.
 /// </summary>
-public sealed class WatchtowerChat(Watchtower tower, TranscriptBook transcripts, SendLog? sends = null)
+public sealed class WatchtowerChat(Watchtower tower, TranscriptBook transcripts, SendLog? sends = null, TimeProvider? time = null)
 {
+    /// <summary>
+    /// How long a past watchtower's transcript that was not found is left unlooked-for. Claude Code deletes a transcript after its cleanup
+    /// period, so most past watchtowers have none (119 of 154 sessions on DE1, 2026-11-26), and each look goes through every projects folder:
+    /// asked at every page, they cost a third of a core. The current watchtower's transcript is looked for at every page.
+    /// </summary>
+    public static readonly TimeSpan MissingLookAgain = TimeSpan.FromMinutes(10);
+
+    private readonly TimeProvider _time = time ?? TimeProvider.System;
+
+    // A past watchtower's session id whose transcript was not found, and when it was looked for.
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, DateTimeOffset> _missing = new(StringComparer.Ordinal);
+
     /// <summary>
     /// The entries after <paramref name="after"/> (the feed's last <see cref="TranscriptBook.FirstRead"/> for a negative one, at most
     /// <see cref="TranscriptBook.Page"/> otherwise), whether the watchtower is working, and the question it waits on.
@@ -22,13 +34,29 @@ public sealed class WatchtowerChat(Watchtower tower, TranscriptBook transcripts,
         var segments = new List<Segment>();
         TranscriptBook.TranscriptWindow? latest = null;
         var total = 0;
+        var current = tower.Current()?.SessionId;
+        var now = _time.GetUtcNow();
         foreach (var generation in tower.Generations())
         {
-            if (generation.SessionId is not { } session || segments.Any(s => s.Session == session) || transcripts.Window(session, 0, 0) is not { } window)
+            if (generation.SessionId is not { } session || segments.Any(s => s.Session == session))
             {
                 // (A compaction that kept its session id is one transcript, read once.)
                 continue;
             }
+            var past = !string.Equals(session, current, StringComparison.Ordinal);
+            if (past && _missing.TryGetValue(session, out var lookedAt) && now - lookedAt < MissingLookAgain)
+            {
+                continue;
+            }
+            if (transcripts.Window(session, 0, 0) is not { } window)
+            {
+                if (past)
+                {
+                    _missing[session] = now;
+                }
+                continue;
+            }
+            _missing.TryRemove(session, out _);
             var divider = segments.Count > 0;
             segments.Add(new Segment(generation, session, total, divider, window.Total));
             total += (divider ? 1 : 0) + window.Total;

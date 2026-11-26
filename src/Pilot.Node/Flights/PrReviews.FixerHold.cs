@@ -61,12 +61,15 @@ public sealed partial class PrReviews
         var folder = Path.GetFileName(clone);
         var name = review.Repo[(review.Repo.IndexOf('/') + 1)..];
         // A fixer whose turn ended on a pilot run job of its own reads Ended but is waiting: the job's end wakes it (pilot #1309, tianwen #2474/#2476).
-        return state.Sessions().Where(s => !s.Archived && !s.Gone && (s.State is not (SessionState.Ended or SessionState.Failed) || FixerWaitsOnJob(s))
+        // Whether it is this PR's fixer is asked first: the job wait reads every job, and asked of every ended session for every review row it was
+        // 204 rows x 102 sessions x 8,574 jobs each sweep, a third of a core on DE1 (2026-11-26).
+        return state.Sessions().Where(s => !s.Archived && !s.Gone
             && (review.FixerJob is { } job && string.Equals(s.Id, job, StringComparison.Ordinal)
                 || AdmissionGate.IsFixer(s) && s.Pr == review.Number
                    && (string.Equals(s.Repo, folder, StringComparison.OrdinalIgnoreCase) || string.Equals(s.Repo, name, StringComparison.OrdinalIgnoreCase)
                        || s.Cwd.StartsWith(clone + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)
-                       || s.Cwd.StartsWith(clone + '/', StringComparison.OrdinalIgnoreCase)))).ToList();
+                       || s.Cwd.StartsWith(clone + '/', StringComparison.OrdinalIgnoreCase)))
+            && (s.State is not (SessionState.Ended or SessionState.Failed) || FixerWaitsOnJob(s))).ToList();
     }
 
     /// <summary>
