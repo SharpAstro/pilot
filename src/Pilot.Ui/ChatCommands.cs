@@ -35,6 +35,23 @@ internal static class ChatCommands
     }
 
     /// <summary>
+    /// As <see cref="TellAsync"/> with a picture (PIL1366), uploaded to <paramref name="client"/>'s node through <see cref="Pilot.Commands.TellPicture"/>.
+    /// A picture the node cannot take (an older wire, a failed upload) comes back as the reason, and nothing is told.
+    /// </summary>
+    public static Task<string?> TellWithPictureAsync(NodeClient client, string text, (string Name, byte[] Bytes) picture, string who, CancellationToken cancellationToken) =>
+        TellPictureAsync(client, Verbs.WatchtowerTarget, text, picture, who, cancellationToken);
+
+    /// <summary>As <see cref="TellAboutCardAsync"/> with a picture, as <see cref="TellWithPictureAsync"/>.</summary>
+    public static Task<string?> TellAboutCardWithPictureAsync(NodeClient client, string cardId, string words, (string Name, byte[] Bytes) picture, string who, CancellationToken cancellationToken) =>
+        TellPictureAsync(client, Verbs.CardTarget(cardId), words, picture, who, cancellationToken);
+
+    private static async Task<string?> TellPictureAsync(NodeClient client, string target, string words, (string Name, byte[] Bytes) picture, string who, CancellationToken cancellationToken)
+    {
+        var (result, problem) = await Pilot.Commands.TellPicture.SendAsync(client, target, words, picture.Bytes, Path.GetExtension(picture.Name), who, RequestId(), cancellationToken);
+        return result is { Ok: true } ? null : $"refused: {problem ?? result?.Error}";
+    }
+
+    /// <summary>
     /// Cancels the turn the watchtower is on so the queued message with <paramref name="sendId"/> is answered next (the node's
     /// <c>chat-now</c>, PIL855). Null when the node did it, else its reason for refusing (nothing is running, the send is not queued,
     /// others are ahead of it).

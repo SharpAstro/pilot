@@ -165,8 +165,27 @@ public static partial class PilotCommand
             // the watchtower: tell it, restart it; and the cards it (or anyone) raises
             var tellText = Words("text", "What to tell it");
             var tellCard = new Option<string?>("--card") { Description = "A card's id (c12): tell the watchtower about that card, with its whole context ahead of your words" };
-            var tell = Action(new Command("tell", "Say something to the watchtower, whichever session it is now") { Arguments = { tellText }, Options = { tellCard } },
-                (p, client, ct) => Send(client, Verbs.Tell, p.GetValue(tellCard) is { Length: > 0 } cardId ? Verbs.CardTarget(cardId) : Verbs.WatchtowerTarget, [Join(p, tellText)], who, ct));
+            var tellAttachment = new Option<string?>("--attachment") { Description = "A picture to show the watchtower: the path of an image file (png, jpg, jpeg, gif, webp or bmp, at most 10 MB), uploaded to the node first, or the <id>.<ext> of a copy it holds. The watchtower is told its path on the node, to open with Read" };
+            var tell = Action(new Command("tell", "Say something to the watchtower, whichever session it is now") { Arguments = { tellText }, Options = { tellCard, tellAttachment } },
+                async (p, client, ct) =>
+                {
+                    string? image = null;
+                    if (p.GetValue(tellAttachment) is { Length: > 0 } named)
+                    {
+                        if (TellPicture.WireProblem(await client.GetNodeAsync(ct)) is { } old)
+                        {
+                            await error.WriteLineAsync($"pilot: {old}");
+                            return 2;
+                        }
+                        (image, var problem) = await CardImageAsync(client, named, ct);
+                        if (problem is not null)
+                        {
+                            await error.WriteLineAsync($"pilot: {problem}");
+                            return 2;
+                        }
+                    }
+                    return await Send(client, Verbs.Tell, p.GetValue(tellCard) is { Length: > 0 } cardId ? Verbs.CardTarget(cardId) : Verbs.WatchtowerTarget, [Join(p, tellText)], who, ct, attachment: image);
+                });
             var restartWhy = Words("why", "Why, for its Handled line", required: false);
             var restart = Action(new Command("restart", "Stop the watchtower and start a fresh one, briefed from the node's state") { Arguments = { restartWhy } },
                 (p, client, ct) => Send(client, Verbs.RestartWatchtower, Verbs.WatchtowerTarget, p.GetValue(restartWhy) ?? [], who, ct));

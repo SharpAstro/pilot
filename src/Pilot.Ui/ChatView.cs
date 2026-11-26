@@ -79,7 +79,7 @@ internal sealed partial class ChatView<TSurface>(Renderer<TSurface> renderer) : 
     private TaskCompletionSource _nudge = NewNudge();
 
     private readonly ListScrollController _scroll = new() { Mode = ScrollBarMode.Interactive, Anchor = ScrollAnchor.Bottom };
-    private readonly TranscriptEntryView _entries = new() { PromptLabel = "you", AssistantLabel = "watchtower", AssistantLines = int.MaxValue };
+    private readonly TranscriptEntryView _entries = new() { PromptLabel = "you", AssistantLabel = "watchtower", AssistantLines = int.MaxValue, Gallery = new() };
     // The Held.Epoch _entries' index-keyed caches were last built under: a render clears them first when the list it draws has another.
     private object _rowsEpoch = Held.Empty.Epoch;
     private readonly ChatComposer _composer = new();
@@ -326,6 +326,30 @@ internal sealed partial class ChatView<TSurface>(Renderer<TSurface> renderer) : 
         ? (OnSendOn is { } on ? text => on(node, text) : null)
         : OnSend;
 
+    // The picture-taking send of what the box sends to now (this node's, or the chosen node's); null when that watchtower has none.
+    private Func<string, (string Name, byte[] Bytes)?, Task<string?>>? CurrentPictureSend() => Node is { } node
+        ? (OnSendOnWithPicture is { } on ? (text, picture) => on(node, text, picture) : null)
+        : OnSendWithPicture;
+
+    // The picture send of the target a message would go to now, with the quote resolved as SendAsync resolves it, and that target's name.
+    private (Func<string, (string Name, byte[] Bytes)?, Task<string?>>? Send, string Target) ResolvePictureTarget()
+    {
+        if (Volatile.Read(ref _about) is { } quoted && OnSendAboutCard is not null)
+        {
+            if (quoted.Node is { Here: false } other && Node?.Where != other.Where && CurrentSend() is not null)
+            {
+                // The words name the card and its node, as the plain send's do.
+                var toShown = CurrentPictureSend();
+                var named = quoted.Card;
+                return (toShown is null ? null : (text, picture) => toShown(AboutOtherNodesCard(named, other, text), picture), Node is { } shown ? $"{shown.Name}'s watchtower" : "the fleet chat");
+            }
+            var card = quoted.Card;
+            var cardNode = quoted.Node;
+            return (OnSendAboutCardWithPicture is { } about ? (text, picture) => about(card, cardNode, text, picture) : null, $"card {card.Id}");
+        }
+        return (CurrentPictureSend(), Node is { } on ? $"{on.Name}'s watchtower" : "the fleet chat");
+    }
+
     private Func<string, Task<string?>>? CurrentAnswerNow() => Node is { } node
         ? (OnAnswerNowOn is { } on ? sendId => on(node, sendId) : null)
         : OnAnswerNow;
@@ -389,6 +413,9 @@ internal sealed partial class ChatView<TSurface>(Renderer<TSurface> renderer) : 
 
     // What a sent line says in the chat: a message about a screen shows the About chip and then the words.
     private static string ShownOut(string text) => TryParseScreen(text, out var title, out var words) ? $"> About: {title}\n{words}" : text;
+
+    // An outbox line: its words, and a short marker for a picture that goes with it (held apart from the words) or one its text names; never the path.
+    private static string ShownOut(Out mine) => WithoutPath(ShownOut(mine.Text), mine.Picture is null ? 0 : 1);
 
     /// <summary>Drops the card the next message was about; it is then sent as a plain one.</summary>
     public void Detach()
@@ -518,6 +545,12 @@ internal sealed partial class ChatView<TSurface>(Renderer<TSurface> renderer) : 
     /// </summary>
     public Func<string, (string Name, byte[] Bytes)?, Task<string?>>? OnSendWithPicture { get; set; }
 
+    /// <summary>As <see cref="OnSendWithPicture"/>, to another node's watchtower, given that node. Null: that watchtower takes no picture.</summary>
+    public Func<NodeMark, string, (string Name, byte[] Bytes)?, Task<string?>>? OnSendOnWithPicture { get; set; }
+
+    /// <summary>As <see cref="OnSendAboutCard"/> with a picture: the card, its node (null: this window's), the words and the picture. Null: a card's tell takes no picture.</summary>
+    public Func<CardRow, NodeMark?, string, (string Name, byte[] Bytes)?, Task<string?>>? OnSendAboutCardWithPicture { get; set; }
+
     private ChatPicture? _picture;
 
     /// <summary>The picture waiting to go with the next message, or null.</summary>
@@ -526,7 +559,7 @@ internal sealed partial class ChatView<TSurface>(Renderer<TSurface> renderer) : 
     // Ctrl+V in the box: a picture on the clipboard waits for the next message and the box keeps its text. False when there is none.
     private bool PastePicture()
     {
-        if (OnSendWithPicture is null || GetClipboardImage?.Invoke() is not { } image)
+        if (GetClipboardImage is null || ResolvePictureTarget().Send is null || GetClipboardImage() is not { } image)
         {
             return false;
         }
@@ -722,6 +755,15 @@ internal sealed partial class ChatView<TSurface>(Renderer<TSurface> renderer) : 
         {
             return Task.CompletedTask;
         }
+        // A held picture needs a target that takes one: with none, nothing is sent and the box keeps the words and the picture.
+        var (pictureSend, target) = ResolvePictureTarget();
+        if (PendingPicture is not null && pictureSend is null)
+        {
+            ImmutableInterlocked.Update(ref _notices, notices => notices.Add($"{target} cannot take a picture: Drop sends the words alone") is var more && more.Count > NoticesKept ? more.RemoveAt(0) : more);
+            _scroll.ScrollToEnd();
+            Changed?.Invoke();
+            return Task.CompletedTask;
+        }
         var message = _composer.Message;
         if (Volatile.Read(ref _screen) is { } screen)
         {
@@ -751,14 +793,15 @@ internal sealed partial class ChatView<TSurface>(Renderer<TSurface> renderer) : 
         }
         // A picture pasted before the Enter goes with this message, taken now so a later paste is the next one's.
         var picture = Interlocked.Exchange(ref _picture, null);
-        if (send is null && OnSendWithPicture is { } withPicture)
+        if (picture is not null && pictureSend is { } withPicture)
         {
             // The send holds the picture, so a Retry of a refused message carries it again; the failed line keeps it too, for an Edit to put back in the box.
-            send = words => withPicture(words, picture is null ? null : (picture.Name, picture.Bytes));
+            send = words => withPicture(words, (picture.Name, picture.Bytes));
         }
-        else
+        else if (send is null && Node is null && OnSendWithPicture is { } own)
         {
-            picture = null;
+            // This node's own chat (a design's too) sends through the send that takes a picture, with none.
+            send = words => own(words, null);
         }
         var queued = Enqueue(message, send ?? CurrentSend()!, SendKey, SendKey, about: quoted, picture: picture);
         _composer.Clear();
@@ -1003,7 +1046,14 @@ internal sealed partial class ChatView<TSurface>(Renderer<TSurface> renderer) : 
         Palette.Use(Night);
         BeginFrame();
         NoteHeight(bounds);
-        RenderLayout(Tree(), bounds);
+        RenderLayout(Tree(), bounds, drawFill: Gallery.DrawFill);
+    }
+
+    /// <summary>The window's shared gallery (PIL1366): a person's message with a picture draws its thumbnail through it, and a click opens it window-wide.</summary>
+    public AttachmentGallery Gallery
+    {
+        get => _entries.Gallery!;
+        set => _entries.Gallery = value;
     }
 
     /// <summary>The page as a tree: what <see cref="Render"/> paints, and what pilot-tui arranges in cells.</summary>
@@ -1014,8 +1064,10 @@ internal sealed partial class ChatView<TSurface>(Renderer<TSurface> renderer) : 
         _composer.Input.OnCommit = _ => SendAsync();
         _composer.Input.Placeholder = ScreenTitle is { } aboutScreen ? $"About \"{aboutScreen}\": what should change?" : Embedded ? $"Message the {Who}" : Node is { } to ? $"Message {to.Name}'s watchtower" : "Message the fleet chat";
         // Ctrl+V with a picture on the clipboard keeps it for the next message; with none the paste is the text's.
-        _composer.Input.OnKeyOverride = OnSendWithPicture is null ? null : key => key == TextInputKey.Paste && PastePicture();
+        _composer.Input.OnKeyOverride = GetClipboardImage is null ? null : key => key == TextInputKey.Paste && PastePicture();
         _entries.OpenDivider = OpenDivider;
+        _entries.Cells = Cells;
+        _entries.PictureNode = Node;
         var canSend = CurrentSend() is not null;
         var buttons = new List<Layout.Node>();
         if (!_scroll.IsFollowingEnd)
@@ -1123,7 +1175,7 @@ internal sealed partial class ChatView<TSurface>(Renderer<TSurface> renderer) : 
                     }
                 }
             }
-            rows.Add(Waiting(held.Queued[i], behind, pill, refusal).WStar());
+            rows.Add(Waiting(WithoutPath(held.Queued[i]), behind, pill, refusal).WStar());
         }
         // What the person sent that the feed does not carry yet: once an entry or a queued line carries its id only the feed's copy
         // shows. The words are compared only with the feed's lines that have no id (an older node's).
@@ -1139,10 +1191,10 @@ internal sealed partial class ChatView<TSurface>(Renderer<TSurface> renderer) : 
             var id = mine.Id;
             var row = mine.State switch
             {
-                OutState.Sending => Sent(ShownOut(mine.Text), "you · sending…", null),
-                OutState.Queued => Sent(ShownOut(mine.Text), $"you · queued {++place}", CardsView<TSurface>.Pill("Drop", $"chat:drop:{id:N}", () => Drop(id))),
-                OutState.Failed => FailedLine(ShownOut(mine.Text), mine.Reason ?? "", CardsView<TSurface>.Pill("Retry", $"chat:retry:{id:N}", () => Retry(id)), CardsView<TSurface>.Pill("Edit", $"chat:edit:{id:N}", () => Edit(id))),
-                _ => Sent(ShownOut(mine.Text), "you", null),
+                OutState.Sending => Sent(ShownOut(mine), "you · sending…", null),
+                OutState.Queued => Sent(ShownOut(mine), $"you · queued {++place}", CardsView<TSurface>.Pill("Drop", $"chat:drop:{id:N}", () => Drop(id))),
+                OutState.Failed => FailedLine(ShownOut(mine), mine.Reason ?? "", CardsView<TSurface>.Pill("Retry", $"chat:retry:{id:N}", () => Retry(id)), CardsView<TSurface>.Pill("Edit", $"chat:edit:{id:N}", () => Edit(id))),
+                _ => Sent(ShownOut(mine), "you", null),
             };
             rows.Add(row.WStar());
         }
@@ -1244,6 +1296,18 @@ internal sealed partial class ChatView<TSurface>(Renderer<TSurface> renderer) : 
     /// </summary>
     internal static TranscriptEntry AsQuoted(TranscriptEntry entry)
     {
+        // A tell's picture line follows the words: the card's block is read from the words alone, and the picture lines go back after the quote
+        // (as the bare name, which the row reads the id and extension from), so the row draws the thumbnail and never the path (PIL1366).
+        if (entry is { Kind: TranscriptKind.User, From: null, Note: false } && entry.Text.Contains(TellPictures.Lead, StringComparison.Ordinal)
+            && CrossSessionMessage.Parse(entry.Text) is null)
+        {
+            var (words, pictures) = TellPictures.Split(entry.Text);
+            if (pictures.Count > 0)
+            {
+                var quoted = AsQuoted(entry with { Text = words });
+                return quoted with { Text = quoted.Text + string.Concat(pictures.Select(p => TellPictures.Line($"{p.Id}.{p.Ext}"))) };
+            }
+        }
         if (entry is { Kind: TranscriptKind.User, From: null, Note: true } && CardNotice.TryParse(entry.Text, out var notice))
         {
             return entry with { Text = QuotedNotice(notice) };
@@ -1647,10 +1711,10 @@ internal sealed partial class ChatView<TSurface>(Renderer<TSurface> renderer) : 
             // The picture waits for the next message; one row, the name cut with an ellipsis (whole on hover), Drop beside it.
             var named = $"picture: {picture.Name} ({picture.Bytes.Length / 1024 + 1} KB), sent with the next message";
             rows.Add(Layout.Builder.HStack(
-                WrappedProse.OneLine(named, 12f, Body).WStar().RowH(24f).Whole(named),
-                CardsView<TSurface>.Pill("Drop", "chat:drop-picture", DropPicture).RowH(24f)).WithGap(6f).RowH(24f));
+                WrappedProse.OneLine(named, 12f, Body, vAlign: TextAlign.Center).WStar().RowH(24f).Whole(named),
+                CardsView<TSurface>.Pill("Drop", "chat:drop-picture", DropPicture).RowH(24f).WAuto()).WithGap(6f).RowH(24f));
         }
-        var can = OnSendWithPicture is not null && GetClipboardImage is not null ? " · Ctrl+V pastes a picture" : "";
+        var can = !Cells && GetClipboardImage is not null && ResolvePictureTarget().Send is not null ? " · Ctrl+V pastes a picture" : "";
         var hint = (lines > 1 ? $"{lines} lines · Enter sends · Shift+Enter a new line" : "Enter sends · Shift+Enter a new line") + can;
         rows.Add(WrappedProse.OneLine(hint, 10f, Dim).RowH(16f).Whole(hint));
         return Layout.Builder.VStack([.. rows]).Pad(12f, 6f).Bg(FootBg).WStar().HAuto();

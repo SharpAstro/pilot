@@ -122,9 +122,6 @@ public static partial class PilotCommand
             return (cards, answer, dismiss, ring, flag, handled, investigated);
         }
 
-        /// <summary>The image extensions a card's image may have: the ones the node keeps.</summary>
-        private static readonly string[] CardImageExtensions = ["png", "jpg", "jpeg", "gif", "webp", "bmp"];
-
         /// <summary>
         /// What <c>--attachment</c> names, as the <c>&lt;id&gt;.&lt;ext&gt;</c> the node's raise takes: a file (relative to the working
         /// folder) is checked to be an image of at most <see cref="IdeaImages.MaxBytes"/> and uploaded first; anything else must already be
@@ -136,26 +133,11 @@ public static partial class PilotCommand
             if (!File.Exists(path))
             {
                 var dot = named.LastIndexOf('.');
-                return dot > 0 && named[..dot].All(char.IsAsciiLetterOrDigit) && CardImageExtensions.Contains(named[(dot + 1)..].ToLowerInvariant())
+                return dot > 0 && named[..dot].All(char.IsAsciiLetterOrDigit) && TellPicture.Extensions.Contains(named[(dot + 1)..].ToLowerInvariant())
                     ? (named, null)
                     : (null, $"--attachment {named}: there is no such file, and it is not the <id>.<ext> of an image the node holds");
             }
-            var ext = Path.GetExtension(path).TrimStart('.').ToLowerInvariant();
-            if (!CardImageExtensions.Contains(ext))
-            {
-                return (null, $"--attachment {named} is not an image: use a {string.Join(", ", CardImageExtensions)} file");
-            }
-            var length = new FileInfo(path).Length;
-            if (length is 0 or > IdeaImages.MaxBytes)
-            {
-                return (null, length == 0
-                    ? $"--attachment {named} is empty"
-                    : $"--attachment {named} is {length / (1024 * 1024)} MB: a card's image is at most {IdeaImages.MaxBytes / (1024 * 1024)} MB");
-            }
-            var uploaded = await client.UploadAttachmentAsync(await File.ReadAllBytesAsync(path, ct), ext, ct);
-            return uploaded is { Success: true, Response: { Length: > 0 } id }
-                ? ($"{id}.{ext}", null)
-                : (null, $"could not upload {named}: {uploaded.Error}");
+            return await TellPicture.UploadFileAsync(client, path, $"--attachment {named}", ct);
         }
     }
 }

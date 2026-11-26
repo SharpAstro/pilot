@@ -180,7 +180,7 @@ internal sealed class PilotChrome<TSurface>
         Spend = new SpendView<TSurface>(renderer);
         Designs = new DesignsView<TSurface>(renderer);
         Cards = new CardsView<TSurface>(renderer) { Gallery = sessions.Gallery };
-        Chat = new ChatView<TSurface>(renderer);
+        Chat = new ChatView<TSurface>(renderer) { Gallery = sessions.Gallery };
         // A card's in-app link (the watchtower card's Fleet link) opens that page, in either host.
         Cards.OnGoTo = link => { if (link == InAppLinks.Fleet) { Show(PilotPage.Fleet); } };
         Cards.OnIdeaLink = link =>
