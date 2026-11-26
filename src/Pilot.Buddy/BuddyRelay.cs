@@ -51,7 +51,12 @@ public sealed class BuddyRelay(BuddyModel model, BuddyFeed feed, TimeProvider ti
     public object Gate { get; } = new();
 
     /// <summary>The window is hidden (the settings' "hide the cat"); reported by buddy_state, and the words still queue.</summary>
-    public bool Hidden { get; set; }
+    public bool Hidden
+    {
+        get => !feed.WindowVisible;
+        // One source: the feed says whether the buddy shows the cards (visible and not snoozed) from the same flag.
+        set => feed.WindowVisible = !value;
+    }
 
     /// <summary>The last words the watchtower had the cat say, and when.</summary>
     public string? LastSaid { get; private set; }

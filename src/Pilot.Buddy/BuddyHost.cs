@@ -273,6 +273,8 @@ internal sealed class BuddyHost : IBuddyWindow, IDisposable
             case EventType.Quit:
             case EventType.WindowCloseRequested:
                 _running = false;
+                // Closing: the buddy no longer shows the cards, so the node's toasts come back at once (the node forgets it with the stream too).
+                _feed.WindowVisible = false;
                 break;
             case EventType.MouseMotion:
                 _desk.PointerMoved(evt.Motion.X * _density, evt.Motion.Y * _density);

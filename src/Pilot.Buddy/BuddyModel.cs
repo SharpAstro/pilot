@@ -55,6 +55,7 @@ public sealed class BuddyModel(TimeProvider time)
     private readonly List<BuddyNotice> _waiting = [];
     private readonly HashSet<string> _openFailures = new(StringComparer.Ordinal);
     private readonly DateTimeOffset _born = time.GetUtcNow();
+    private readonly HashSet<string> _badged = new(StringComparer.Ordinal);
     private BuddyNotice? _current;
     private DateTimeOffset _shownAt;
     private bool _hover;
@@ -84,8 +85,27 @@ public sealed class BuddyModel(TimeProvider time)
         NoticeKind.Ask => BuddyMood.Attention,
         NoticeKind.Trouble => BuddyMood.Trouble,
         NoticeKind.GoodNews => BuddyMood.GoodNews,
-        _ => _hover ? BuddyMood.OneEyeOpen : BuddyMood.Asleep,
+        // A badged card (another client shows the cards, #1357) wakes the cat to one eye open too, with no bubble.
+        _ => _hover || _badged.Count > 0 ? BuddyMood.OneEyeOpen : BuddyMood.Asleep,
     };
+
+    /// <summary>True while the pointer is over the cat: only then is the one-line summary shown, never for a badge alone.</summary>
+    public bool Hovering => _hover;
+
+    /// <summary>How many normal cards are held as a count badge instead of a bubble (a GUI shows the cards and has them).</summary>
+    public int BadgeCount => _badged.Count;
+
+    /// <summary>
+    /// A normal card that another client shows: the cat wakes to one eye open with a count badge, and no bubble or toast comes of it. The same id
+    /// badged twice counts once; <see cref="Clear"/> or <see cref="Unbadge"/> takes it off.
+    /// </summary>
+    public void Badge(string id) => _badged.Add(id);
+
+    /// <summary>Takes a card off the badge (it shows as a bubble now, or is gone); true when it was on it.</summary>
+    public bool Unbadge(string id) => _badged.Remove(id);
+
+    /// <summary>True when <paramref name="id"/> is held as a badge.</summary>
+    public bool IsBadged(string id) => _badged.Contains(id);
 
     /// <summary>The breathing pose, 0 or 1: a step on a timer of <see cref="BreathStep"/>, not a frame loop.</summary>
     public int BreathPose => (int)((time.GetUtcNow() - _born).Ticks / BreathStep.Ticks % 2);
@@ -144,6 +164,7 @@ public sealed class BuddyModel(TimeProvider time)
     {
         Advance();
         _openFailures.Remove(id);
+        _badged.Remove(id);
         _waiting.RemoveAll(w => w.Id == id);
         if (_current?.Id == id)
         {

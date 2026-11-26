@@ -3,7 +3,7 @@ using DIR.Lib;
 namespace Pilot.Buddy;
 
 /// <summary>What the scene draws now: the cat's face and breath, and the bubble's notice or the hover summary. Derived from the model by <see cref="BuddyScene.ViewOf"/>.</summary>
-public sealed record BuddyView(GrumpFace Face, int Breath, BuddyNotice? Notice, string? Summary);
+public sealed record BuddyView(GrumpFace Face, int Breath, BuddyNotice? Notice, string? Summary, int Badge = 0);
 
 /// <summary>
 /// Where the scene put the cat, its bubble and the open card (device pixels), for a test or the window's hit testing. <paramref name="Scale"/> is the
@@ -20,6 +20,17 @@ public static class BuddyScene
     /// <summary>The distance from the screen's corner to the cushion and the bubble's right edge, and the gap between the bubble and the cat's ears.</summary>
     public const float Margin = 24, BubbleGap = 10;
 
+    /// <summary>
+    /// The count of normal cards another client (the GUI) shows, as a round badge at the cat's top right where the "!" of an alert goes: amber with dark ink in
+    /// bright mode and dark, both well above 4.5:1. "9+" past nine.
+    /// </summary>
+    private static void DrawBadge<TSurface>(Pen<TSurface> catPen, BuddyPalette palette, int count)
+    {
+        var label = count > 9 ? "9+" : count.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        catPen.Oval(164, 4, 34, 34, palette.Alert, GrumpCat.Ink, 2);
+        catPen.Text(label, 164, 4, 34, 34, label.Length > 1 ? 18 : 22, palette.Dark ? GrumpCat.Ink : GrumpCat.White, TextAlign.Center, TextAlign.Center);
+    }
+
     /// <summary>The face the model's mood asks for: a failure open keeps the grumpy face while the cat sleeps.</summary>
     public static BuddyView ViewOf(BuddyModel model, string? summary = null)
     {
@@ -32,7 +43,8 @@ public static class BuddyScene
             BuddyMood.OneEyeOpen => GrumpFace.OneEyeOpen,
             _ => model.GrumpyFace ? GrumpFace.GrumpyAsleep : GrumpFace.Asleep,
         };
-        return new BuddyView(face, model.BreathPose, model.Current, mood == BuddyMood.OneEyeOpen ? summary : null);
+        // The summary is the hover's; a badge alone wakes the cat without a bubble.
+        return new BuddyView(face, model.BreathPose, model.Current, mood == BuddyMood.OneEyeOpen && model.Hovering ? summary : null, model.Current is null ? model.BadgeCount : 0);
     }
 
     /// <summary>
@@ -57,6 +69,10 @@ public static class BuddyScene
         var catY = top ? Margin * scale : renderer.Height - (Margin + catBottom) * scale;
         var catPen = new Pen<TSurface>(renderer, fontPath, catX, catY, scale);
         GrumpCat.Draw(catPen, view.Face, palette, view.Breath);
+        if (view.Badge > 0)
+        {
+            DrawBadge(catPen, palette, view.Badge);
+        }
 
         float PlaceX(float width) => left ? (Margin + 4) * scale : renderer.Width - (Margin + 4 + width) * scale;
         float PlaceY(float height) => top ? catY + (catBottom + BubbleGap) * scale : catY - (BubbleGap + height) * scale;

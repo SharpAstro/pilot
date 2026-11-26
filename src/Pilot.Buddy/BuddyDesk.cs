@@ -171,7 +171,7 @@ public sealed class BuddyDesk(
         DeskCard.Peek => feed.Peek() is { } peek ? "peek|" + peek.Header + "|" + string.Join('|', peek.Rows.Select(r => $"{r.State},{r.Node},{r.What},{r.Status}")) : "peek",
         DeskCard.Chat => $"chat|{chat.Input}|{chat.Answer}|{chat.Refused}|{chat.DisabledReason}|{chat.Working}|{chat.PendingAsk?.Question}",
         DeskCard.Settings => "settings|" + settings(),
-        _ => model.Mood == BuddyMood.OneEyeOpen ? "summary|" + feed.Summary : string.Empty,
+        _ => model.Hovering && model.Mood == BuddyMood.OneEyeOpen ? "summary|" + feed.Summary : string.Empty,
     };
 
     private void Changed() => Interlocked.Increment(ref _version);

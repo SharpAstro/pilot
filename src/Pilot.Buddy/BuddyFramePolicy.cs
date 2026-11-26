@@ -10,7 +10,7 @@ namespace Pilot.Buddy;
 /// </summary>
 public sealed class BuddyFramePolicy(BuddyModel model, Func<long> version, Func<string> contentKey, Func<DateTimeOffset?> otherWake, TimeProvider time)
 {
-    private (BuddyNotice? Notice, int Waiting, bool Grumpy, BuddyMood Mood, int Breath, long Version, string Key)? _drawn;
+    private (BuddyNotice? Notice, int Waiting, bool Grumpy, BuddyMood Mood, int Breath, long Version, string Key, int Badge)? _drawn;
     private long _frames;
     private long _drawTicks;
     private long _asks;
@@ -22,8 +22,8 @@ public sealed class BuddyFramePolicy(BuddyModel model, Func<long> version, Func<
     /// <summary>How many times the host asked, so the log says how few asks became frames.</summary>
     public long Asks => Interlocked.Read(ref _asks);
 
-    private (BuddyNotice? Notice, int Waiting, bool Grumpy, BuddyMood Mood, int Breath, long Version, string Key) Now() =>
-        (model.Current, model.Waiting.Count, model.GrumpyFace, model.Mood, model.BreathPose, version(), contentKey());
+    private (BuddyNotice? Notice, int Waiting, bool Grumpy, BuddyMood Mood, int Breath, long Version, string Key, int Badge) Now() =>
+        (model.Current, model.Waiting.Count, model.GrumpyFace, model.Mood, model.BreathPose, version(), contentKey(), model.BadgeCount);
 
     /// <summary>Whether what the scene shows differs from the last drawn frame. The first ask is yes: nothing was drawn.</summary>
     public bool NeedsFrame()

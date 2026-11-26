@@ -44,6 +44,9 @@ public sealed class BuddyFeed(BuddyModel model, TimeProvider time, Func<BuddySet
     private readonly HashSet<string> _merged = new(StringComparer.Ordinal);
     private bool _primed;
     private string? _down;
+    private bool _othersShowCards;
+    private bool _windowVisible = true;
+    private bool? _saidShowsCards;
 
     /// <summary>The copy of the node's state the feed reads.</summary>
     public NodeMirror Mirror => _mirror;
@@ -54,16 +57,71 @@ public sealed class BuddyFeed(BuddyModel model, TimeProvider time, Func<BuddySet
     /// <summary>How many nodes the peek header counts: this one, plus the peers the host reads.</summary>
     public int NodeCount { get; set; } = 1;
 
+    /// <summary>
+    /// True while another client (a GUI) shows the cards, as the node said on the stream (an <see cref="OthersShowCardsEvent"/>, from its PageViews): a
+    /// normal card is then a count badge on the cat, not a bubble (#1357's notification rule). The buddy never guesses it.
+    /// </summary>
+    public bool OthersShowCards => _othersShowCards;
+
+    /// <summary>
+    /// False while the window is hidden or closing. With the snooze it decides <see cref="ShowsCards"/>. Set by the host; the feed says the change
+    /// through <see cref="ShowsCardsChanged"/>.
+    /// </summary>
+    public bool WindowVisible
+    {
+        get => _windowVisible;
+        set
+        {
+            _windowVisible = value;
+            SayShowsCards();
+        }
+    }
+
+    /// <summary>
+    /// Whether the buddy shows the cards to the person: its window is visible and not snoozed. It is what the buddy says to the node (as Pilot.Gui does), so
+    /// the node's Toaster mutes a normal card for it and toasts an urgent one regardless.
+    /// </summary>
+    public bool ShowsCards => _windowVisible && !settings().IsSnoozed(time.GetUtcNow());
+
+    /// <summary>Called, with the gate held, when <see cref="ShowsCards"/> changes (and for the first time it is known): the node link says it over the stream.</summary>
+    public Action<bool>? ShowsCardsChanged { get; set; }
+
+    /// <summary>Says <see cref="ShowsCards"/> again through <see cref="ShowsCardsChanged"/>: the stream is new, and a node forgets what a client said with its stream.</summary>
+    public void ShowsCardsAgain()
+    {
+        _saidShowsCards = null;
+        SayShowsCards();
+    }
+
+    private void SayShowsCards()
+    {
+        var shows = ShowsCards;
+        if (_saidShowsCards != shows)
+        {
+            _saidShowsCards = shows;
+            ShowsCardsChanged?.Invoke(shows);
+        }
+    }
+
     /// <summary>Folds one event of the stream in, then updates the model from what the state now says.</summary>
     public void Apply(NodeEvent nodeEvent)
     {
         _down = null;
         _mirror.Apply(nodeEvent);
+        if (nodeEvent is OthersShowCardsEvent others)
+        {
+            _othersShowCards = others.Shown;
+        }
         Refresh();
     }
 
-    /// <summary>The stream broke: the chat input is disabled with <paramref name="reason"/> until an event arrives again.</summary>
-    public void NodeUnreachable(string reason) => _down = reason;
+    /// <summary>The stream broke: the chat input is disabled with <paramref name="reason"/> until an event arrives again. What others show is unknown until the node says it again.</summary>
+    public void NodeUnreachable(string reason)
+    {
+        _down = reason;
+        _othersShowCards = false;
+        Refresh();
+    }
 
     /// <summary>Re-reads the state against the settings (after a settings change or a snooze that ended), without a new event.</summary>
     public void Refresh()
@@ -73,6 +131,7 @@ public sealed class BuddyFeed(BuddyModel model, TimeProvider time, Func<BuddySet
         FoldCards(s, snoozed);
         FoldGoodNews(s, snoozed);
         _primed = true;
+        SayShowsCards();
     }
 
     /// <summary>
@@ -82,7 +141,7 @@ public sealed class BuddyFeed(BuddyModel model, TimeProvider time, Func<BuddySet
     public void Spoke(string cardId, string words)
     {
         _words[cardId] = words;
-        if (_told.ContainsKey(cardId) && _mirror.Cards.TryGetValue(cardId, out var card) && card.State == CardState.Open)
+        if (_told.ContainsKey(cardId) && !model.IsBadged(CardNoticeId(cardId)) && _mirror.Cards.TryGetValue(cardId, out var card) && card.State == CardState.Open)
         {
             model.Tell(NoticeOf(card));
         }
@@ -112,11 +171,26 @@ public sealed class BuddyFeed(BuddyModel model, TimeProvider time, Func<BuddySet
                 }
                 continue;
             }
-            if (snoozed || (_told.TryGetValue(card.Id, out var rung) && rung == card.RungAt))
+            if (snoozed)
+            {
+                continue;
+            }
+            // #1357: while another client shows the cards, a normal card is the cat's count badge, no bubble (it reaches the person there, once). An urgent
+            // card is the cat's alert as ever. A badge turns into the bubble when no other client shows the cards any more.
+            var badge = !urgent && _othersShowCards;
+            var rung = _told.TryGetValue(card.Id, out var rungAt) && rungAt == card.RungAt;
+            var badged = model.IsBadged(id);
+            if (rung && !(badged && !badge))
             {
                 continue;
             }
             _told[card.Id] = card.RungAt;
+            if (badge)
+            {
+                model.Badge(id);
+                continue;
+            }
+            model.Unbadge(id);
             model.Tell(NoticeOf(card));
         }
         // A card the mirror no longer holds at all.
