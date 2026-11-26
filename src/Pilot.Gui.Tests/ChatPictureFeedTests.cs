@@ -60,11 +60,14 @@ public sealed class ChatPictureFeedTests
         public System.Collections.Immutable.ImmutableArray<Layout.ArrangedNode<float>> Arranged(int width, int height, float dpi = 1f) =>
             Layout.Engine.Arrange(Chat.Tree(), new Rect<float>(0, 0, width, height), new PixelMeasureContext<RgbaImage>(Renderer, SessionsCapture.FontPath, dpi));
 
-        public string Texts(int width = 1280, int height = 900) => string.Join('\n', Arranged(width, height)
-            .Select(a => a.Node).OfType<Layout.Node.Leaf>().Select(l => l.Content).OfType<Layout.Content.Text>().Select(t => t.Value));
+        public string Texts(int width = 1280, int height = 900) => Flat(string.Join('\n', Arranged(width, height)
+            .Select(a => a.Node).OfType<Layout.Node.Leaf>().Select(l => l.Content).OfType<Layout.Content.Text>().Select(t => t.Value)));
 
         public void Dispose() => Renderer.Dispose();
     }
+
+    /// <summary>Prose is drawn one word to a leaf, so a phrase is asked for with the whitespace between leaves collapsed.</summary>
+    internal static string Flat(string texts) => System.Text.RegularExpressions.Regex.Replace(texts, @"\s+", " ");
 
     internal static TranscriptEntry Tell(int index, string words, string? path = Path) =>
         new() { Index = index, Kind = TranscriptKind.User, Text = path is null ? words : words + TellPictures.Line(path), At = At };
@@ -201,7 +204,7 @@ public sealed class ChatPictureFeedTests
         held.Chat.GetClipboardImage = () => ([1], "png");
         held.Chat.OnSendWithPicture = (_, _) => Task.FromResult<string?>(null);
         var arranged = Layout.Engine.Arrange(held.Chat.Tree(), new Rect<int>(0, 0, 160, 60), CellMeasureContext.PixelAuthored);
-        var texts = string.Join('\n', arranged.Select(a => a.Node).OfType<Layout.Node.Leaf>().Select(l => l.Content).OfType<Layout.Content.Text>().Select(t => t.Value));
+        var texts = Flat(string.Join('\n', arranged.Select(a => a.Node).OfType<Layout.Node.Leaf>().Select(l => l.Content).OfType<Layout.Content.Text>().Select(t => t.Value)));
 
         texts.ShouldContain("what is this streak?");
         texts.ShouldContain("[picture, PNG: shown in the window]");
