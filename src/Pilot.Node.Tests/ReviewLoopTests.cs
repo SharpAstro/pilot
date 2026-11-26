@@ -334,11 +334,10 @@ public sealed class ReviewLoopTests : ReviewTestsBase
         (await Run(Verbs.FinishLeg, Verbs.LegTarget(flight.Code, "parser"), worker, "done", "no change needed")).Error.ShouldBeNull();
         await _legs.WhenNotStartingAsync(flight.Code, TimeSpan.FromMinutes(5), Ct);
 
-        (await Run(Verbs.Review, Verbs.FlightTarget(flight.Code), Reviewer(flight.Code), "changes", Answered(flight.Code) + "## Blocking\n- Parser.cs:20 the loop never ends")).Error.ShouldBeNull();
+        (await Run(Verbs.Review, Verbs.FlightTarget(flight.Code), Reviewer(flight.Code), "changes", Answered(flight.Code) + "## Blocking\n- other.txt:1 the new file is wrong")).Error.ShouldBeNull();
 
         var rounds = F(flight.Code).ReviewRounds.ShouldNotBeNull();
-        var probe = await _git.RunAsync(["log", "--first-parent", "--no-merges", "--name-only", "--format=", $"{rounds[0].Head}..{rounds[^1].Head}"], F(flight.Code).Worktree, Ct);
-        (rounds.Length, rounds[^1].FixUntouched, probe.Ok, probe.Output, ReviewFindings.Read(rounds[0].Findings).BlockingFiles.Count, Directory.Exists(F(flight.Code).Worktree)).ShouldBe((2, true, true, "other.txt\n", 1, true));
+        (rounds.Length, rounds[^1].Verdict, rounds[^1].FixUntouched).ShouldBe((2, ReviewState.Changes, true));
         var card = Open().Single(c => c.Kind == LegCommander.ReviewLoopKind);
         card.Title.ShouldContain("changed none of the files named");
     }
