@@ -193,6 +193,7 @@ internal static class CardKindCatalog
         new("busy-process", "Ring", ["Flights/StraySweep.cs"], "NodeSessionStrayTests.A_process_that_computes_without_a_break_for_half_an_hour_rings_with_its_kill_command", "the process table shows the process used at least 0.8 of a core in every interval between sweeps for 30 minutes, and it is no running job's", [nameof(Verbs.EndStray)]),
         new("node-down", "ForYou", ["NodeExitRecord.cs"], "NodeExitRecordTests.AStartThatFindsNoExitReasonRaisesOneCardNamingTheMinutesAndTheLastLine"),
         new("node-in-job", "ForYou", ["NodeExitRecord.cs"], "NodeExitRecordTests.ANodeInAKillOnCloseJobRaisesOneCardNamingItsParent"),
+        new("node-restart-loop", "ForYou", ["NodeExitRecord.cs"], "NodeWatchdogTests.ANodeStartedAfterFastDeathsRaisesOneCardNamingThem", "the node starts and the watchdog says three or more nodes died within five minutes", [nameof(Verbs.Dismiss)]),
         new("stray-killed", "Handled", ["Flights/StraySweep.cs"], "StraySweepTests.AProcessOfAnEndedJobTheNodeLaunchedIsKilledThroughTheTableAndNothingElseIs"),
         new("plane-left", "Handled", [Move, FlightCommanderLand], "RemovalQueueTests.ALandedFlightWhosePlaneFolderIsHeldSaysSoOnAHandledLineAndQueuesIt"),
         new("branch-kept", "ForYou|Handled", [FlightCommanderLand, "Flights/LandedBranchSweep.cs"], "LandingBranchTests.ALandedFlightWhoseLocalBranchIsOneCommitPastTheMergedHeadKeepsItAndRaisesOneCardNamingTheCommit"),

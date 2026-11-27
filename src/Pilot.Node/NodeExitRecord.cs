@@ -44,6 +44,7 @@ internal sealed class NodeExitRecord(string dataFolder, TimeProvider time)
 
     private readonly object _gate = new();
     private NodeRunRecord? _own;
+    private string? _watchdogSaid;
 
     public NodeRunRecord? Own => _own;
 
@@ -61,6 +62,14 @@ internal sealed class NodeExitRecord(string dataFolder, TimeProvider time)
                 [new CardChoice { Label = "I have seen it", Verb = Verbs.Dismiss, Target = "" }],
                 cause: $"node-down:{end.Previous.Pid}:{end.Previous.StartedAt:O}");
         }
+        if (NodeWatchdog.Decode(_watchdogSaid) is { FastDeaths: >= NodeWatchdog.FastDeathLimit } loop)
+        {
+            say($"pilot-node: restarted by the watchdog after {loop.SecondsDown} s; {loop.FastDeaths} nodes died within {(int)NodeWatchdog.FastWindow.TotalMinutes} min");
+            state?.RaiseCard(CardBin.ForYou, NodeLifecycleLog.RestartLoopKind, Verbs.NodeTarget, "The node keeps dying and the watchdog keeps restarting it",
+                $"{loop.FastDeaths} nodes died within {(int)NodeWatchdog.FastWindow.TotalMinutes} min (the last one's exit code: {loop.PreviousExit?.ToString(CultureInfo.InvariantCulture) ?? "unknown"}), so the watchdog waited {(int)NodeWatchdog.Backoff.TotalMinutes} min before this start. Look at the node's log and the crash dumps for what ends it.",
+                [new CardChoice { Label = "I have seen it", Verb = Verbs.Dismiss, Target = "" }],
+                cause: $"node-restart-loop:{_own?.Pid}:{_own?.StartedAt:O}");
+        }
         if (_own is { Job: { } job } && job.Contains("kills", StringComparison.Ordinal))
         {
             say($"pilot-node: this node runs {job}; parent {_own.Parent ?? "unknown"}");
@@ -70,6 +79,9 @@ internal sealed class NodeExitRecord(string dataFolder, TimeProvider time)
                 cause: $"node-in-job:{_own.Pid}:{_own.StartedAt:O}");
         }
     }
+
+    /// <summary>What the watchdog told this node about how it was started (<see cref="NodeWatchdog.Variable"/>); a test replaces it.</summary>
+    public Func<string?> WatchdogValue { get; init; } = () => Environment.GetEnvironmentVariable(NodeWatchdog.Variable);
 
     public string Path { get; } = System.IO.Path.Combine(dataFolder, FileName);
 
@@ -109,6 +121,9 @@ internal sealed class NodeExitRecord(string dataFolder, TimeProvider time)
                 Unclean = new UncleanEnd(previous, line, since, minutes);
             }
             _own = facts.ToRecord();
+            // Read once and cleared, so a successor this node starts (a restart, an update) does not inherit the watchdog's word about how this one began.
+            _watchdogSaid = WatchdogValue();
+            Environment.SetEnvironmentVariable(NodeWatchdog.Variable, null);
             Write(_own);
             Current = this;
             return Unclean;

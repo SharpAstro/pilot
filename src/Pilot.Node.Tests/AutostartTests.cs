@@ -24,10 +24,63 @@ public sealed class AutostartTests
     public void AnArgumentIsQuotedAsWindowsReadsItBack(string arg, string quoted) => Autostart.Quote(arg).ShouldBe(quoted);
 
     [Fact]
-    public void TheRunEntryStartsTheNodeWindowlessWithItsOptions()
+    public void TheRunEntryStartsTheWatchdogWindowlessWithTheNodesOptions()
     {
         Autostart.WindowsCommand(@"C:\Users\ada\AppData\Local\pilot2\bin\pilot-node.exe", ["--lan", "--repo-root", @"C:\src\sharp astro"], @"C:\Windows\System32")
-            .ShouldBe(@"C:\Windows\System32\conhost.exe --headless C:\Users\ada\AppData\Local\pilot2\bin\pilot-node.exe --lan --repo-root ""C:\src\sharp astro""");
+            .ShouldBe(@"C:\Windows\System32\conhost.exe --headless C:\Users\ada\AppData\Local\pilot2\bin\pilot-node.exe watchdog -- --lan --repo-root ""C:\src\sharp astro""");
+    }
+
+    [Fact]
+    public void TheRunEntryReadsBackToTheNodePathAndOptionsItWasMadeFrom()
+    {
+        var command = Autostart.WindowsCommand(@"C:\Program Files\pilot\pilot-node.exe", ["--lan", "--repo-root", @"C:\src\sharp astro"], @"C:\Windows\System32");
+
+        var parsed = Autostart.ParseWindowsCommand(command).ShouldNotBeNull();
+
+        parsed.NodePath.ShouldBe(@"C:\Program Files\pilot\pilot-node.exe");
+        parsed.Args.ShouldBe(["--lan", "--repo-root", @"C:\src\sharp astro"]);
+        Autostart.RunEntryIsCurrent(command).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void AnOlderRunEntryThatStartsTheNodeWithNoWatchdogIsOutOfDateAndKeepsItsOptionsWhenRewritten()
+    {
+        const string Older = @"C:\Windows\System32\conhost.exe --headless C:\Users\ada\AppData\Local\pilot2\bin\pilot-node.exe --lan";
+
+        Autostart.RunEntryIsCurrent(Older).ShouldBeFalse();
+        var parsed = Autostart.ParseWindowsCommand(Older).ShouldNotBeNull();
+        parsed.Args.ShouldBe(["--lan"]);
+        var runs = new FakeRuns();
+        runs.Write(Autostart.Name, Older);
+        Autostart.EntryIsCurrent(runs, runKey: true).ShouldBeFalse();
+        runs.Write(Autostart.Name, Autostart.WindowsCommand(parsed.NodePath, parsed.Args, @"C:\Windows\System32"));
+        Autostart.EntryIsCurrent(runs, runKey: true).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void WithNoRunEntryNothingIsOutOfDate()
+    {
+        Autostart.EntryIsCurrent(new FakeRuns(), runKey: true).ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task InstallingWritesTheWatchdogCommandAsTheRunValue()
+    {
+        var runs = new FakeRuns();
+
+        var exit = await Autostart.InstallAsync(@"C:\bin\pilot-node.exe", ["--lan"], Path.Combine(Path.GetTempPath(), "none.sock"), TextWriter.Null, TextWriter.Null, Ct, runs, runKey: true, startNow: false);
+
+        exit.ShouldBe(0);
+        runs.Values[Autostart.Name].ShouldContain(" watchdog -- --lan");
+    }
+
+    [Fact]
+    public void TheSystemdUnitNeedsNoWatchdogAndStillRestartsAlways()
+    {
+        var unit = Autostart.SystemdUnit("/usr/bin/pilot-node", ["--lan"]);
+
+        unit.ShouldContain("Restart=always");
+        unit.ShouldNotContain("watchdog");
     }
 
     [Fact]

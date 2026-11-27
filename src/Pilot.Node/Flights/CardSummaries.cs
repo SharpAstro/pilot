@@ -256,6 +256,7 @@ public static partial class CardSummaries
             NodeLan.AskedKind => "A node on the LAN asks to fly flights here. Allow lets it run any command here until revoked; Refuse turns it away.",
             NodeLifecycleLog.DownKind => "The node ended with nothing logged (it was killed from outside, or its console or job closed) and was down for the minutes in the title. The card names the last line it logged. Nothing to do unless it repeats.",
             NodeLifecycleLog.JobKind => "The node was started inside a job object that ends it when the job closes, so whatever owns that job ending takes the node down. Start it from the GUI's autostart or a task instead.",
+            NodeLifecycleLog.RestartLoopKind => "The node died three times within five minutes, and the watchdog waited before it started it again. The card says how often and with which exit code; the node's log and the crash dumps say why. Nothing to do unless it repeats.",
             "restart" => "The node restarted at someone's word. Nothing to do.",
             "peer-away" => "A peer node has been silent for longer than stale-unreachable-hours, so every read, admission, the PR stream and a recheck skip it without asking. A probe asks it every 10 minutes. Nothing to do.",
             "peer-back" => "A peer node that was away answered the probe and is a peer again. Nothing to do.",

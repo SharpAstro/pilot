@@ -473,6 +473,7 @@ internal sealed class NodeLifecycleLog(NodeOptions options, RollingLog log, ISer
 {
     public const string DownKind = "node-down";
     public const string JobKind = "node-in-job";
+    public const string RestartLoopKind = "node-restart-loop";
 
     public Task StartAsync(CancellationToken cancellationToken)
     {

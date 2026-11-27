@@ -103,6 +103,10 @@ internal static class NodeEnds
         {
             parts.Add($"successor of pid {args[after + 1]} (restart or update)");
         }
+        if (NodeWatchdog.Said(NodeWatchdog.Decode(Environment.GetEnvironmentVariable(NodeWatchdog.Variable))) is { } watched)
+        {
+            parts.Add(watched);
+        }
         if (!string.IsNullOrEmpty(Environment.GetEnvironmentVariable("INVOCATION_ID")))
         {
             parts.Add("systemd environment");

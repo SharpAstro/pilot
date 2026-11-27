@@ -117,6 +117,22 @@ curl --unix-socket <path> http://localhost/api/v1/node
   swap, stray kill or exception at those times, so the cause is not proven from them. Ruled out: an update swap and a plain
   stop (both log). Open: a kill-on-close job or a closed console, which the next silent exit names through the record, the
   signal lines and the start-up job check.
+- **The watchdog (#1377):** on Windows the logon Run entry is `conhost --headless pilot-node watchdog -- <node options>`, so a node
+  that dies outside an update or a restart is back within a minute, as systemd's `Restart=always` does on Linux (a unit needs
+  no watchdog). The watchdog keeps no state: it finds the node by what answers on the socket, waits on that process's exit
+  handle (never a poll of the node; a one-minute timer only looks at whether the Run entry is still there, so `autostart
+  remove` ends it), and when the node ends gives a successor (an update, a restart, `--after`) 30 s to answer on the socket.
+  If none does it starts the node again, outside its own job and process group (`CREATE_BREAKAWAY_FROM_JOB`; a job that
+  forbids breakaway gets a plain start), and logs the exit code seen in `node-start.log`. Exit codes 3 (another node holds the
+  socket) and 4 (the store is a newer node's) are not retried and end the watchdog. Three deaths within 5 min wait 5 min
+  before the next start. The restarted node reads `PILOT_WATCHDOG` (`down=<s>;exit=<code>;fast=<n>`, cleared at start so
+  its own successors do not inherit it): its run record says "restarted by the watchdog after N s", the "node was down N
+  min" card names the gap, and `fast=3` or more rings "The node keeps dying and the watchdog keeps restarting it". A Run
+  entry that starts the node with no watchdog is out of date: the setup check says so and Rewrite keeps its options.
+  `pilot-node setup` also lists, under what is left, the `reg add` commands that make WER write a dump of `pilot-node.exe`
+  to `<data>\crash-dumps` (`HKLM\...\LocalDumps\pilot-node.exe`, `DumpType` 1); HKLM needs an administrator, so setup never
+  writes it. `NodeWatchdogTests` prove it on fakes; its one Integration test kills a sleeping stand-in and sees a new one
+  within a minute. The live run (kill pilot-node by hand, see it back and the card) is the controller's.
 
 ### Stored records
 
