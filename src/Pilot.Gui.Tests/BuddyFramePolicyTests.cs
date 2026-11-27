@@ -325,10 +325,11 @@ public sealed class BuddyFramePolicyTests
     public async Task TheHoverListShowsTheBadgedCardsAndARowHandsOffThatCardsLink()
     {
         var rig = new Rig();
-        rig.Feed.Apply(new OthersShowCardsEvent { Seq = 0, At = rig.Clock.GetUtcNow(), Shown = true });
+        rig.Feed.Apply(new SnapshotEvent { Seq = 0, At = rig.Clock.GetUtcNow(), Stream = "s", Sessions = [], Notes = [], Cards = [], Flights = [] });
+        rig.Feed.Apply(new OthersShowCardsEvent { Seq = 1, At = rig.Clock.GetUtcNow(), Shown = true });
         rig.Feed.Apply(new SnapshotEvent
         {
-            Seq = 1, At = rig.Clock.GetUtcNow(), Stream = "s", Sessions = [], Notes = [], Flights = [],
+            Seq = 2, At = rig.Clock.GetUtcNow(), Stream = "s", Sessions = [], Notes = [], Flights = [],
             Cards =
             [
                 new CardRow { Id = "c19375", Bin = CardBin.Ring, Kind = "session-waiting", Subject = "flight/PIL1377/watchdog", Title = "PIL1377's watchdog worker asks you", At = rig.Clock.GetUtcNow() - TimeSpan.FromMinutes(5), State = CardState.Open },

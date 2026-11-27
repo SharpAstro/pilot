@@ -34,7 +34,10 @@ public sealed class BuddyHoverTests
     private (BuddyModel Model, BuddyFeed Feed) Make()
     {
         var model = new BuddyModel(_clock);
-        return (model, new BuddyFeed(model, _clock, () => new BuddySettings()));
+        var feed = new BuddyFeed(model, _clock, () => new BuddySettings());
+        // A delta needs a snapshot before it: the stream always opens with one.
+        feed.Apply(Snapshot());
+        return (model, feed);
     }
 
     private CardRow Card(string id, string subject = "flight/PIL1377/watchdog", string kind = "session-waiting", CardState state = CardState.Open, TimeSpan? age = null) => new()
