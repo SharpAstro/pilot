@@ -103,7 +103,8 @@ public sealed class BenchRunRemovalTests : JobTestsBase, IAsyncDisposable
         var queued = _queue.Entries().ShouldHaveSingleItem();
         queued.OwnerKind.ShouldBe(RemovalQueue.BenchKind);
         queued.Path.ShouldBe(Path.GetFullPath(left.Worktree), StringCompareShould.IgnoreCase);
-        var card = _state.Cards().Single(c => c.Title.Contains("left 1 worktree"));
+        var card = _state.Cards().Single(c => c.Kind == BenchRun.LeftBehindKind);
+        card.Title.ShouldContain("left 1 worktree");
         card.Detail.ShouldNotBeNull().ShouldContain(left.Worktree);
         card.Detail.ShouldContain(answer);
     }
