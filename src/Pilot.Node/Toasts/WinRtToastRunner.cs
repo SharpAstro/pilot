@@ -134,7 +134,10 @@ public sealed unsafe class WinRtToastRunner : IToastRunner
 
     private static string ReadString(Refs refs, nint obj, int slot, string call)
     {
-        var h = Call(refs, call, (o) => ((delegate* unmanaged<nint, nint*, int>)Slot(obj, slot))(obj, o));
+        // An HSTRING, not a COM object: it is freed with WindowsDeleteString, never released through a vtable.
+        nint h;
+        Check(((delegate* unmanaged<nint, nint*, int>)Slot(obj, slot))(obj, &h), call);
+        refs.OwnString(h);
         uint length;
         var raw = Native.WindowsGetStringRawBuffer(h, &length);
         return new string(raw, 0, (int)length);
@@ -170,6 +173,11 @@ public sealed unsafe class WinRtToastRunner : IToastRunner
         public void Own(nint pointer)
         {
             if (pointer != 0) _owned.Add((pointer, false));
+        }
+
+        public void OwnString(nint hstring)
+        {
+            if (hstring != 0) _owned.Add((hstring, true));
         }
 
         public nint HString(string text)
