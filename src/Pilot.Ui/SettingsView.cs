@@ -535,22 +535,26 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
 
     /// <summary>
     /// The page's own keys, ahead of a focused field (the chrome asks first): Ctrl+F focuses the search box, Escape clears it.
-    /// Escape with the box empty is left to the router. True for a key taken.
+    /// Escape is the search box's only while the box has the keyboard, or while nothing else would take it: no other field being edited and
+    /// nothing open above the page (<paramref name="overlayOpen"/>, a menu the chrome shows). Otherwise, and with the box empty, it is left to
+    /// the router. True for a key taken.
     /// </summary>
-    internal bool HandleSearchKey(InputEvent evt)
+    internal bool HandleSearchKey(InputEvent evt, bool overlayOpen = false)
     {
         switch (evt)
         {
             case InputEvent.KeyDown { Key: InputKey.F, Modifiers: InputModifier.Ctrl }:
                 FocusSearch();
                 return true;
-            case InputEvent.KeyDown { Key: InputKey.Escape } when Search.Text.Length > 0:
+            case InputEvent.KeyDown { Key: InputKey.Escape } when Search.Text.Length > 0 && EscapeIsTheSearchs(overlayOpen):
                 ClearSearch();
                 return true;
             default:
                 return false;
         }
     }
+
+    private bool EscapeIsTheSearchs(bool overlayOpen) => Ui.Focus.Current is not { } field ? !overlayOpen : ReferenceEquals(field, Search);
 
     private Layout.Node SearchRow() =>
         Layout.Builder.HStack(Layout.Builder.TextInput(Search, 13f, Palette.Input).Bg(FieldBg).WStar(1f, SearchFloor, SearchWidth).HFixed(AboutCard.HeaderButton))

@@ -398,6 +398,8 @@ internal sealed class BuddyHost : IBuddyWindow, IDisposable
     {
         var cornerMoved = changed.CornerIndex != _settings.CornerIndex;
         _settings = changed;
+        // A file read the watcher handed over before this save is older than it: dropped, so TakeFromDisk never puts it back over the card's choice.
+        Interlocked.Exchange(ref _fromDisk, null);
         _watcher?.Remember(changed);
         if (!changed.Save(_settingsPath))
         {

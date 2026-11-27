@@ -90,14 +90,24 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
     /// <summary>Opens a window for a person (the trust prompt); false when it did not open. A test replaces it.</summary>
     public Func<string, string, bool> OpenWindow { get; init; } = OpenConsoleWindow;
 
-    /// <summary>What starts the node at logon, as <see cref="Autostart.Entry"/> says; a test's seam.</summary>
-    public Func<string?> AutostartEntry { get; init; } = Autostart.Entry;
+    /// <summary>What starts the node at logon; null reads it as <see cref="Autostart.Entry(Autostart.IRunValues, bool)"/> says, from <see cref="Runs"/>. A test's seam.</summary>
+    public Func<string?>? AutostartEntry { get; init; }
 
-    /// <summary>The Run values the cat's start at logon reads and writes; a test gives a fake, so no registry is touched.</summary>
-    public Autostart.IRunValues BuddyRuns { get; init; } = Autostart.Registry;
+    /// <summary>
+    /// The user's Run values, the node's (<c>pilot-node</c>) and the cat's (<c>pilot-buddy</c>): read and written by both setup keys, the
+    /// node's install and remove included. The real registry; a test gives a fake, so no registry is touched.
+    /// </summary>
+    public Autostart.IRunValues Runs { get; init; } = Autostart.RealRuns;
 
-    /// <summary>Whether the cat's start at logon applies here: Windows only (a Run value). A test replaces it.</summary>
-    public bool BuddyAutostartApplies { get; init; } = OperatingSystem.IsWindows();
+    /// <summary>Whether the start at logon is a Run value: Windows only. The cat's start at logon applies only there. A test replaces it.</summary>
+    public bool RunKeyApplies { get; init; } = OperatingSystem.IsWindows();
+
+    /// <summary>Whether a fix of the node's start at logon also starts the node now when none answers; a test that proves only the entry turns it off.</summary>
+    public bool StartsNodeNow { get; init; } = true;
+
+    private string? NodeEntry() => AutostartEntry is { } seam ? seam() : Autostart.Entry(Runs, RunKeyApplies);
+
+    private string? BuddyPath() => BuddyBesideNode is { } seam ? seam() : Autostart.BuddyBeside(nodePath);
 
     /// <summary>The cat's binary beside the node, or null when there is none; a test's seam.</summary>
     public Func<string?>? BuddyBesideNode { get; init; }
@@ -120,7 +130,7 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
     public IReadOnlyList<SetupCheck> Checks()
     {
         var checks = new List<SetupCheck>();
-        var entry = AutostartEntry();
+        var entry = NodeEntry();
         checks.Add(entry is null
             ? new SetupCheck { Key = AutostartKey, Title = "Starts at logon", Ok = false, Line = "nothing starts the node at logon: the fleet loses this machine until someone opens pilot", Fix = "Start at logon" }
             : UnitText() is { } unitText && !Autostart.UnitIsCurrent(unitText)
@@ -222,33 +232,33 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
                 var path = nodePath;
                 // A stale unit is rewritten from its own ExecStart, so the options it carries (--data, --release-feed, ...)
                 // survive; only the missing entry is made from this node's path.
-                if (AutostartEntry() is not null && UnitText() is { } unitText && Autostart.ExecOf(unitText) is { } own)
+                if (NodeEntry() is not null && UnitText() is { } unitText && Autostart.ExecOf(unitText) is { } own)
                 {
                     (path, args) = own;
                 }
                 var output = new StringWriter();
-                var existed = AutostartEntry() is not null;
-                var exit = await Autostart.InstallAsync(path, args, options.SocketPath, output, output, cancellationToken);
+                var existed = NodeEntry() is not null;
+                var exit = await Autostart.InstallAsync(path, args, options.SocketPath, output, output, cancellationToken, Runs, RunKeyApplies, StartsNodeNow);
                 if (exit == 0)
                 {
-                    await Autostart.InstallFreshBuddyAsync(existed, nodePath, BuddyRuns, output);
+                    await Autostart.InstallFreshBuddyAsync(existed, BuddyPath(), Runs, output, RunKeyApplies);
                 }
                 return exit == 0 ? null : output.ToString().Trim();
             }
             case NoAutostartKey:
-                return await Autostart.RemoveAsync(TextWriter.Null, cancellationToken) == 0 ? null : "the logon entry could not be taken out";
+                return await Autostart.RemoveAsync(TextWriter.Null, cancellationToken, Runs, RunKeyApplies) == 0 ? null : "the logon entry could not be taken out";
             case BuddyAutostartKey:
-                if (!BuddyAutostartApplies)
+                if (!RunKeyApplies)
                 {
                     return "the desktop cat starts at logon on Windows only";
                 }
-                return Autostart.InstallBuddy(nodePath, BuddyRuns, out var buddyLine) ? null : buddyLine;
+                return Autostart.InstallBuddyAt(BuddyPath(), Runs, out var buddyLine) ? null : buddyLine;
             case NoBuddyAutostartKey:
-                if (!BuddyAutostartApplies)
+                if (!RunKeyApplies)
                 {
                     return "the desktop cat starts at logon on Windows only";
                 }
-                Autostart.RemoveBuddy(BuddyRuns);
+                Autostart.RemoveBuddy(Runs);
                 return null;
             case HooksKey:
             {
@@ -375,17 +385,16 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
     public SetupCheck BuddyAutostartCheck()
     {
         const string Title = "Desktop cat starts at logon";
-        if (!BuddyAutostartApplies)
+        if (!RunKeyApplies)
         {
             return new SetupCheck { Key = BuddyAutostartKey, Title = Title, Ok = false, Optional = true, Line = "does not apply here: the desktop cat starts at logon on Windows only" };
         }
-        var entry = Autostart.BuddyEntry(BuddyRuns);
+        var entry = Autostart.BuddyEntry(Runs);
         if (entry is not null)
         {
             return new SetupCheck { Key = BuddyAutostartKey, Title = Title, Ok = true, Optional = true, Line = entry };
         }
-        var beside = BuddyBesideNode is { } seam ? seam() : Autostart.BuddyBeside(nodePath);
-        return beside is null
+        return BuddyPath() is null
             ? new SetupCheck { Key = BuddyAutostartKey, Title = Title, Ok = false, Optional = true, Line = "no pilot-buddy beside the node, so there is no desktop cat to start at logon" }
             : new SetupCheck { Key = BuddyAutostartKey, Title = Title, Ok = false, Optional = true, Line = "the desktop cat is not started at logon; the node still is", Fix = "Start at logon" };
     }

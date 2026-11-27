@@ -23,6 +23,7 @@ internal sealed class AboutCard
         ("Ctrl+S", "the say bar, to the selected session"),
         ("Enter, double-click", "a session's transcript"),
         ("Right-click", "a row's menu"),
+        ("Ctrl+F", "the Settings search box, on the Settings page"),
         ("Up, Down", "the selection, or a wizard's highlight"),
         ("Escape", "up a level: from a transcript or a flight's page to its list; also out of a wizard step or a menu"),
         ("Alt+Left, Alt+Right", "back and forward through the places the window has been (the mouse's back and forward buttons too)"),

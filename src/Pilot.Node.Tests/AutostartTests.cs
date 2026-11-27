@@ -137,26 +137,19 @@ public sealed class AutostartTests
     [Fact]
     public async Task AFreshSetupStartsTheCatToo_ButANodeAlreadySetUpKeepsTheChoice()
     {
-        if (!OperatingSystem.IsWindows())
-        {
-            // The cat's Run value is Windows only: elsewhere a fresh setup writes none.
-            var none = new FakeRuns();
-            await Autostart.InstallFreshBuddyAsync(false, "/opt/pilot-node", none, TextWriter.Null);
-            none.Values.ShouldBeEmpty();
-            return;
-        }
         var fresh = new FakeRuns();
         var kept = new FakeRuns();
-        WithNodeAndCatAsync(async node =>
-        {
-            await Autostart.InstallFreshBuddyAsync(false, node, fresh, TextWriter.Null);
-            await Autostart.InstallFreshBuddyAsync(true, node, kept, TextWriter.Null);
-        });
+        var offWindows = new FakeRuns();
+
+        await Autostart.InstallFreshBuddyAsync(false, "/opt/pilot-buddy", fresh, TextWriter.Null, runKey: true);
+        await Autostart.InstallFreshBuddyAsync(true, "/opt/pilot-buddy", kept, TextWriter.Null, runKey: true);
+        // The cat's Run value is Windows only: elsewhere a fresh setup writes none.
+        await Autostart.InstallFreshBuddyAsync(false, "/opt/pilot-buddy", offWindows, TextWriter.Null, runKey: false);
+
         fresh.Values.ShouldContainKey(Autostart.BuddyName);
         kept.Values.ShouldBeEmpty();
+        offWindows.Values.ShouldBeEmpty();
     }
-
-    private static void WithNodeAndCatAsync(Func<string, Task> body) => WithNodeAndCat(node => body(node).GetAwaiter().GetResult());
 
     [Fact]
     public void TheCatsSetupCheckReadsItsOwnRunValueAndOffersStartAtLogonWhenItIsMissing()
@@ -166,8 +159,8 @@ public sealed class AutostartTests
         NodeSetup Setup() => new(new NodeOptions("/tmp/n.sock", root), "/opt/pilot-node", Path.Combine(root, ".claude"))
         {
             AutostartEntry = () => "node command",
-            BuddyRuns = runs,
-            BuddyAutostartApplies = true,
+            Runs = runs,
+            RunKeyApplies = true,
             BuddyBesideNode = () => "/opt/pilot-buddy",
         };
 
@@ -189,8 +182,8 @@ public sealed class AutostartTests
         var runs = new FakeRuns();
         var setup = new NodeSetup(new NodeOptions("/tmp/n.sock", root), "/opt/pilot-node", Path.Combine(root, ".claude"))
         {
-            BuddyRuns = runs,
-            BuddyAutostartApplies = true,
+            Runs = runs,
+            RunKeyApplies = true,
         };
         runs.Write(Autostart.Name, "node command");
         runs.Write(Autostart.BuddyName, "/opt/pilot-buddy");
@@ -202,11 +195,90 @@ public sealed class AutostartTests
         (await setup.FixAsync("nonsense", Ct)).ShouldNotBeNull().ShouldContain(NodeSetup.BuddyAutostartKey);
     }
 
+    // A setup whose Run values are a fake, on the Run key whatever this system is, that starts no node: nothing here touches the registry or a process.
+    private static NodeSetup OnFakeRuns(FakeRuns runs, string? buddy = "/opt/pilot-buddy")
+    {
+        var root = Path.Combine(Path.GetTempPath(), "pilot-setup-" + Guid.NewGuid().ToString("N"));
+        return new NodeSetup(new NodeOptions("/tmp/n.sock", root), "/opt/pilot-node", Path.Combine(root, ".claude"))
+        {
+            Runs = runs,
+            RunKeyApplies = true,
+            StartsNodeNow = false,
+            UnitText = () => null,
+            BuddyBesideNode = () => buddy,
+        };
+    }
+
+    [Fact]
+    public async Task TheCatsSetupVerbTurnsItOnThroughTheSeamAndTheCheckThenReadsOn()
+    {
+        var runs = new FakeRuns();
+        runs.Write(Autostart.Name, "node command");
+        var setup = OnFakeRuns(runs);
+        setup.BuddyAutostartCheck().Ok.ShouldBeFalse();
+
+        (await setup.FixAsync(NodeSetup.BuddyAutostartKey, Ct)).ShouldBeNull();
+
+        runs.Values[Autostart.BuddyName].ShouldBe(Autostart.BuddyCommand("/opt/pilot-buddy"));
+        runs.Values[Autostart.Name].ShouldBe("node command");
+        setup.BuddyAutostartCheck().Ok.ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task TheCatsSetupVerbSaysWhyWhenNoCatIsBesideTheNode()
+    {
+        var runs = new FakeRuns();
+        var setup = OnFakeRuns(runs, buddy: null);
+
+        (await setup.FixAsync(NodeSetup.BuddyAutostartKey, Ct)).ShouldNotBeNull().ShouldContain("no pilot-buddy beside the node");
+        runs.Values.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task NoAutostartTakesTheNodesEntryOutAndKeepsTheCats()
+    {
+        var runs = new FakeRuns();
+        runs.Write(Autostart.Name, "node command");
+        runs.Write(Autostart.BuddyName, "/opt/pilot-buddy");
+
+        (await OnFakeRuns(runs).FixAsync(NodeSetup.NoAutostartKey, Ct)).ShouldBeNull();
+
+        runs.Values.ShouldNotContainKey(Autostart.Name);
+        runs.Values[Autostart.BuddyName].ShouldBe("/opt/pilot-buddy");
+    }
+
+    [Fact]
+    public async Task RewritingTheNodesEntryDoesNotTurnTheCatBackOn()
+    {
+        var runs = new FakeRuns();
+        runs.Write(Autostart.Name, "an older node command");
+        var setup = OnFakeRuns(runs);
+
+        (await setup.FixAsync(NodeSetup.AutostartKey, Ct)).ShouldBeNull();
+
+        runs.Values[Autostart.Name].ShouldNotBe("an older node command");
+        runs.Values[Autostart.Name].ShouldContain("pilot-node");
+        runs.Values.ShouldNotContainKey(Autostart.BuddyName);
+        setup.BuddyAutostartCheck().Ok.ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task AFreshNodeSetupTurnsTheCatOnWhenItIsBesideTheNode()
+    {
+        var runs = new FakeRuns();
+        var setup = OnFakeRuns(runs);
+
+        (await setup.FixAsync(NodeSetup.AutostartKey, Ct)).ShouldBeNull();
+
+        runs.Values.ShouldContainKey(Autostart.Name);
+        runs.Values[Autostart.BuddyName].ShouldBe(Autostart.BuddyCommand("/opt/pilot-buddy"));
+    }
+
     [Fact]
     public async Task TheCatsVerbsRefuseOffWindows()
     {
         var root = Path.Combine(Path.GetTempPath(), "pilot-setup-" + Guid.NewGuid().ToString("N"));
-        var setup = new NodeSetup(new NodeOptions("/tmp/n.sock", root), "/opt/pilot-node", Path.Combine(root, ".claude")) { BuddyRuns = new FakeRuns(), BuddyAutostartApplies = false };
+        var setup = new NodeSetup(new NodeOptions("/tmp/n.sock", root), "/opt/pilot-node", Path.Combine(root, ".claude")) { Runs = new FakeRuns(), RunKeyApplies = false };
 
         (await setup.FixAsync(NodeSetup.BuddyAutostartKey, Ct)).ShouldNotBeNull().ShouldContain("Windows only");
         setup.BuddyAutostartCheck().Line.ShouldContain("Windows only");

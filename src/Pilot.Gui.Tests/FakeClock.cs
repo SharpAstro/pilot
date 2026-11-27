@@ -18,10 +18,13 @@ internal sealed class FakeClock : TimeProvider
 
     public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
     {
-        var timer = new FakeTimer(callback, state) { Due = _now + dueTime };
+        var timer = new FakeTimer(this, callback, state) { Due = DueAt(dueTime) };
         _timers.Add(timer);
         return timer;
     }
+
+    // An infinite due time is a timer not armed, as with a real one.
+    private DateTimeOffset? DueAt(TimeSpan dueTime) => dueTime == Timeout.InfiniteTimeSpan ? null : _now + dueTime;
 
     /// <summary>Moves the clock on, firing each armed timer that comes due on the way, earliest first.</summary>
     public void Advance(TimeSpan by)
@@ -46,13 +49,18 @@ internal sealed class FakeClock : TimeProvider
         }
     }
 
-    private sealed class FakeTimer(TimerCallback callback, object? state) : ITimer
+    private sealed class FakeTimer(FakeClock clock, TimerCallback callback, object? state) : ITimer
     {
         public DateTimeOffset? Due { get; set; }
 
         public void Fire() => callback(state);
 
-        public bool Change(TimeSpan dueTime, TimeSpan period) => throw new NotSupportedException();
+        // Re-arms from the clock's now (a debounce restarting its quiet period); the period is not modelled, as no user here repeats.
+        public bool Change(TimeSpan dueTime, TimeSpan period)
+        {
+            Due = clock.DueAt(dueTime);
+            return true;
+        }
 
         public void Dispose() => Due = null;
 

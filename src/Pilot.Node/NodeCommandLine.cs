@@ -141,7 +141,7 @@ public static class NodeCommandLine
             var exit = await Autostart.InstallAsync(nodePath, given, NodeSocket.Resolve(socketGiven), output, error, ct);
             if (exit == 0)
             {
-                await Autostart.InstallFreshBuddyAsync(existed, nodePath, Autostart.Registry, output);
+                await Autostart.InstallFreshBuddyAsync(existed, Autostart.BuddyBeside(nodePath), Autostart.RealRuns, output);
             }
             return exit;
         });

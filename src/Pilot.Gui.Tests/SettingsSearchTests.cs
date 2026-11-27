@@ -174,6 +174,29 @@ public sealed class SettingsSearchTests
     }
 
     [Fact]
+    public async Task EscapeWhileAnotherFieldHasTheKeyboardLeavesTheSearchAlone()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 900);
+        var chrome = await LoadedAsync(renderer, 1280, 900);
+        Type(chrome, "lan");
+        // A setting's own field being edited: its Escape is the field's, not the search box's.
+        var other = new TextInputState();
+        chrome.Settings.Ui.Focus.Focus(other);
+        chrome.Settings.HandleSearchKey(new InputEvent.KeyDown(InputKey.Escape)).ShouldBeFalse();
+        chrome.Settings.Search.Text.ShouldBe("lan");
+
+        // Nothing focused, but a menu open above the page: the Escape is the menu's.
+        chrome.Settings.Ui.Focus.Blur();
+        chrome.Settings.HandleSearchKey(new InputEvent.KeyDown(InputKey.Escape), overlayOpen: true).ShouldBeFalse();
+        chrome.Settings.Search.Text.ShouldBe("lan");
+
+        // The box itself has the keyboard: Escape clears it, whatever else is open.
+        chrome.Settings.FocusSearch();
+        chrome.Settings.HandleSearchKey(new InputEvent.KeyDown(InputKey.Escape), overlayOpen: true).ShouldBeTrue();
+        chrome.Settings.Search.Text.ShouldBe("");
+    }
+
+    [Fact]
     public async Task CtrlFFocusesTheBox()
     {
         using var renderer = new RgbaImageRenderer(1280, 900);

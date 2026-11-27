@@ -28,9 +28,13 @@ internal sealed class GuiCatDesk : Pilot.Ui.ICatDesk
         {
             return "pilot-buddy is not beside pilot-gui";
         }
-        if (await IsRunningAsync(cancellationToken).ConfigureAwait(false) is not false)
+        switch (await IsRunningAsync(cancellationToken).ConfigureAwait(false))
         {
-            return null;
+            case true:
+                return null;
+            case null:
+                // Nothing was started, so this is no success: the cat's start is probed through its gate's pipe, which only Windows has.
+                return "the desktop cat's start is probed on Windows only";
         }
         try
         {

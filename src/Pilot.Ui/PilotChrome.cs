@@ -952,8 +952,9 @@ internal sealed class PilotChrome<TSurface>
             return true;
         }
 
-        // The Settings search box: Ctrl+F focuses it, Escape clears it (also while it has the keyboard, which the router would not hand to the page).
-        if (Page == PilotPage.Settings && Settings.HandleSearchKey(evt))
+        // The Settings search box: Ctrl+F focuses it, Escape clears it while it has the keyboard (which the router would not hand to the page), or while
+        // nothing else would take the Escape: another field being edited, or the rail's open More menu, keeps it.
+        if (Page == PilotPage.Settings && Settings.HandleSearchKey(evt, overlayOpen: More.Menu.IsOpen))
         {
             return true;
         }

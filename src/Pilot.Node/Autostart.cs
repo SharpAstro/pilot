@@ -81,13 +81,16 @@ public static class Autostart
         }
     }
 
-    /// <summary>The Run values the node's install and remove use; the real registry unless a test swaps it.</summary>
-    public static IRunValues Registry { get; set; } = new RegistryRunValues();
+    /// <summary>The real Run values (HKCU). Read only: a caller that wants another (a test's fake) passes its own, as NodeSetup.Runs does.</summary>
+    public static IRunValues RealRuns { get; } = new RegistryRunValues();
 
     /// <summary>Makes the cat's Run value for the binary beside <paramref name="nodePath"/>; false (and says why in <paramref name="line"/>) when there is none. Its own entry: the node's is not touched.</summary>
-    public static bool InstallBuddy(string nodePath, IRunValues runs, out string line)
+    public static bool InstallBuddy(string nodePath, IRunValues runs, out string line) => InstallBuddyAt(BuddyBeside(nodePath), runs, out line);
+
+    /// <summary>Makes the cat's Run value for <paramref name="buddy"/>, the cat's binary as the caller found it; false (and says why in <paramref name="line"/>) when it is null.</summary>
+    public static bool InstallBuddyAt(string? buddy, IRunValues runs, out string line)
     {
-        if (BuddyBeside(nodePath) is not { } buddy)
+        if (buddy is null)
         {
             line = "autostart: no pilot-buddy beside the node, so no desktop cat is started at logon";
             return false;
@@ -101,13 +104,18 @@ public static class Autostart
     /// A fresh setup (no node entry before this install) starts the cat at logon too, when pilot-buddy sits beside the node: the
     /// cat is on by default. A node already set up keeps whatever the person chose for the cat, so a rewrite never turns it back on.
     /// </summary>
-    public static async Task InstallFreshBuddyAsync(bool nodeEntryExisted, string nodePath, IRunValues runs, TextWriter output)
+    /// <param name="nodeEntryExisted">Whether the node's entry was there before this install.</param>
+    /// <param name="buddy">The cat's binary beside the node, or null when there is none.</param>
+    /// <param name="runs">The Run values written.</param>
+    /// <param name="output">Where the line saying what was done goes.</param>
+    /// <param name="runKey">Whether the Run key applies here (Windows); null asks the system.</param>
+    public static async Task InstallFreshBuddyAsync(bool nodeEntryExisted, string? buddy, IRunValues runs, TextWriter output, bool? runKey = null)
     {
-        if (nodeEntryExisted || !OperatingSystem.IsWindows())
+        if (nodeEntryExisted || !(runKey ?? OperatingSystem.IsWindows()))
         {
             return;
         }
-        InstallBuddy(nodePath, runs, out var line);
+        InstallBuddyAt(buddy, runs, out var line);
         await output.WriteLineAsync(line);
     }
 
@@ -272,14 +280,21 @@ public static class Autostart
     private static string SystemdQuote(string arg) =>
         arg.Length > 0 && !arg.Any(c => char.IsWhiteSpace(c) || c is '"' or '\'' or '\\' or '%' or '$') ? arg : "\"" + arg.Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("%", "%%").Replace("$", "$$") + "\"";
 
-    /// <summary>Installs the entry for <paramref name="nodePath"/> with <paramref name="nodeArgs"/>, and starts the node now when none answers.</summary>
-    public static async Task<int> InstallAsync(string nodePath, IReadOnlyList<string> nodeArgs, string socketPath, TextWriter output, TextWriter error, CancellationToken cancellationToken)
+    /// <summary>
+    /// Installs the entry for <paramref name="nodePath"/> with <paramref name="nodeArgs"/>, and starts the node now when none answers. Only the
+    /// node's own entry: the cat's Run value is its own setup key's (<see cref="InstallBuddy"/>), so a rewrite never turns the cat back on.
+    /// <paramref name="runs"/> are the Run values written on Windows (null is the real registry; NodeSetup passes its own, a test's fake included),
+    /// <paramref name="runKey"/> whether the entry is a Run value (null asks the system), and <paramref name="startNow"/> whether the node is
+    /// started now when none answers (a test that proves only the entry passes false).
+    /// </summary>
+    public static async Task<int> InstallAsync(string nodePath, IReadOnlyList<string> nodeArgs, string socketPath, TextWriter output, TextWriter error, CancellationToken cancellationToken,
+        IRunValues? runs = null, bool? runKey = null, bool startNow = true)
     {
         string where;
-        if (OperatingSystem.IsWindows())
+        if (runKey ?? OperatingSystem.IsWindows())
         {
             var command = WindowsCommand(nodePath, nodeArgs);
-            Registry.Write(Name, command);
+            (runs ?? RealRuns).Write(Name, command);
             where = $@"HKCU\{RunKey}\{Name}";
             await output.WriteLineAsync($"autostart: {where} = {command}");
         }
@@ -300,6 +315,11 @@ public static class Autostart
         {
             await error.WriteLineAsync("autostart: only Windows (a Run entry) and Linux (a systemd user unit) for now; start pilot-node from a LaunchAgent on macOS");
             return NodeExitCodes.InvalidArguments;
+        }
+
+        if (!startNow)
+        {
+            return 0;
         }
 
         // Started now too, so the machine joins the fleet without a logon: unless a node already answers, which this
@@ -332,12 +352,15 @@ public static class Autostart
         return false;
     }
 
-    /// <summary>Takes the entry out; the node running now runs on.</summary>
-    public static async Task<int> RemoveAsync(TextWriter output, CancellationToken cancellationToken)
+    /// <summary>
+    /// Takes the node's entry out, and only it (the cat's Run value stays its own setup key's); the node running now runs on.
+    /// <paramref name="runs"/> are the Run values on Windows (null is the real registry), <paramref name="runKey"/> whether the entry is one (null asks the system).
+    /// </summary>
+    public static async Task<int> RemoveAsync(TextWriter output, CancellationToken cancellationToken, IRunValues? runs = null, bool? runKey = null)
     {
-        if (OperatingSystem.IsWindows())
+        if (runKey ?? OperatingSystem.IsWindows())
         {
-            await output.WriteLineAsync(Registry.Delete(Name) ? $@"autostart: removed HKCU\{RunKey}\{Name}" : "autostart: there was none");
+            await output.WriteLineAsync((runs ?? RealRuns).Delete(Name) ? $@"autostart: removed HKCU\{RunKey}\{Name}" : "autostart: there was none");
             return 0;
         }
         if (OperatingSystem.IsLinux())
@@ -359,7 +382,10 @@ public static class Autostart
     }
 
     /// <summary>What starts the node at logon, in a line, or null when nothing does.</summary>
-    public static string? Entry() => OperatingSystem.IsWindows() ? Registry.Read(Name)
+    public static string? Entry() => Entry(RealRuns, OperatingSystem.IsWindows());
+
+    /// <summary>What starts the node at logon, read from <paramref name="runs"/> where the Run key applies (<paramref name="runKey"/>), else from the unit.</summary>
+    public static string? Entry(IRunValues runs, bool runKey) => runKey ? runs.Read(Name)
         : OperatingSystem.IsLinux() && File.Exists(UnitPath()) ? $"{UnitPath()}: {File.ReadAllLines(UnitPath()).FirstOrDefault(l => l.StartsWith("ExecStart=", StringComparison.Ordinal))?["ExecStart=".Length..]}"
         : null;
 
