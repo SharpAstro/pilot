@@ -53,6 +53,48 @@ public static class BuddyPlacement
         return (x, y);
     }
 
+    /// <summary>
+    /// The window's top left for a stored free position: the fractions are of the distance the window can travel (the work area less the window), so any
+    /// resolution keeps the cat on screen. A window bigger than the area sits at the area's top left.
+    /// </summary>
+    public static (int X, int Y) FromFraction(DisplayArea area, int windowWidth, int windowHeight, double fx, double fy)
+    {
+        var travelX = Math.Max(0, area.Width - windowWidth);
+        var travelY = Math.Max(0, area.Height - windowHeight);
+        return (area.X + (int)Math.Round(Math.Clamp(fx, 0, 1) * travelX), area.Y + (int)Math.Round(Math.Clamp(fy, 0, 1) * travelY));
+    }
+
+    /// <summary>The stored fraction for a window dropped with its top left at (<paramref name="x"/>, <paramref name="y"/>): clamped, so a drop part off screen is stored as the nearest place on it.</summary>
+    public static (double X, double Y) ToFraction(DisplayArea area, int windowWidth, int windowHeight, int x, int y)
+    {
+        var travelX = area.Width - windowWidth;
+        var travelY = area.Height - windowHeight;
+        return (travelX > 0 ? Math.Clamp((double)(x - area.X) / travelX, 0, 1) : 0, travelY > 0 ? Math.Clamp((double)(y - area.Y) / travelY, 0, 1) : 0);
+    }
+
+    /// <summary>Where the window goes for <paramref name="settings"/> on <paramref name="area"/>: the stored free position in Free placement (the corner until one is stored), else the chosen corner.</summary>
+    public static (int X, int Y) Resolve(BuddySettings settings, DisplayArea area, int windowWidth, int windowHeight) =>
+        settings.IsFree && settings.FreeAt(area.Name) is var (fx, fy) ? FromFraction(area, windowWidth, windowHeight, fx, fy) : Corner(area, windowWidth, windowHeight, settings.CornerIndex);
+
+    /// <summary>
+    /// A drop with the window's top left at (<paramref name="x"/>, <paramref name="y"/>): the display it is on becomes the cat's monitor, and in Free placement
+    /// the clamped position is stored for it; in Corner placement nothing more is stored (the window snaps to the corner). Null with no display.
+    /// </summary>
+    public static (BuddySettings Settings, DisplayArea Area)? Drop(BuddySettings settings, IReadOnlyList<DisplayArea> displays, int x, int y, int windowWidth, int windowHeight)
+    {
+        if (Under(displays, x, y, windowWidth, windowHeight) is not { } area)
+        {
+            return null;
+        }
+        var moved = settings with { Monitor = area.Name };
+        if (settings.IsFree)
+        {
+            var (fx, fy) = ToFraction(area, windowWidth, windowHeight, x, y);
+            moved = moved.WithFreeAt(area.Name, fx, fy);
+        }
+        return (moved, area);
+    }
+
     /// <summary>The display the window's centre is on; the nearest when it is between them or off all; null with none.</summary>
     public static DisplayArea? Under(IReadOnlyList<DisplayArea> displays, int x, int y, int width, int height)
     {

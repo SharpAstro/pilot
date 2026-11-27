@@ -695,9 +695,19 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
             ["Wake for merges", "a PR merged or a flight landed", "buddy-wake-merged", "landings", "Wakes for"]);
         add(Part.Row, CatRow("Wake for failures", "CI failed or a session got stuck", [CatSwitch("buddy-wake-failed", cat.WakesForFailed, (s, v) => s with { WakeFailed = v })]),
             ["Wake for failures", "CI failed or a session got stuck", "buddy-wake-failed", "CI failures and stuck sessions", "Wakes for"]);
-        add(Part.Row, CatRow("Corner", "which corner of the screen the cat sits in",
-                CatSegments("buddy-corner", BuddySettings.CornerChoices, cat.CornerIndex, i => source.Update(s => s with { Corner = i }))),
-            ["Corner", "which corner of the screen the cat sits in", "buddy-corner"]);
+        add(Part.Row, CatRow("Placement", "snap to a corner when dropped, or stay where you drop it (remembered per monitor)",
+                CatSegments("buddy-placement", BuddySettings.PlacementChoices, cat.PlacementIndex, i => source.Update(s => s with { Placement = i }))),
+            ["Placement", "snap to a corner when dropped, or stay where you drop it (remembered per monitor)", "buddy-placement"]);
+        // The corner means something only while the cat snaps to one: in Free the row is not shown, so no control is dead.
+        if (!cat.IsFree)
+        {
+            add(Part.Row, CatRow("Corner", "which corner of the screen the cat sits in",
+                    CatSegments("buddy-corner", BuddySettings.CornerChoices, cat.CornerIndex, i => source.Update(s => s with { Corner = i }))),
+                ["Corner", "which corner of the screen the cat sits in", "buddy-corner"]);
+        }
+        add(Part.Row, CatRow("Size", "how big the cat is; the text in its bubble keeps the system text size",
+                CatSegments("buddy-size", BuddySettings.SizeChoices, cat.SizeIndex, i => source.Update(s => s with { Size = i }))),
+            ["Size", "how big the cat is; the text in its bubble keeps the system text size", "buddy-size"]);
         add(Part.Row, CatRow("Click-through", "clicks pass through to the window below while the cat sleeps", [CatSwitch("buddy-click-through", cat.ClicksPassThrough, (s, v) => s with { ClickThrough = v })]),
             ["Click-through", "clicks pass through to the window below while the cat sleeps", "buddy-click-through"]);
         add(Part.Row, CatRow("Snooze for", "nothing wakes the cat until the snooze ends",

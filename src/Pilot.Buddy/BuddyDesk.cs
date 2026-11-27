@@ -65,14 +65,16 @@ public sealed class BuddyGeometry(SceneLayout layout)
 
     private float S => Layout.Scale;
 
+    private float C => Layout.CatDevice;
+
     /// <summary>The cat's body: its box down to the cushion.</summary>
-    public (float X, float Y, float W, float H) CatBody => (Layout.CatX, Layout.CatY, GrumpCat.Width * S, GrumpCat.CushionY * S);
+    public (float X, float Y, float W, float H) CatBody => (Layout.CatX, Layout.CatY, GrumpCat.Width * C, GrumpCat.CushionY * C);
 
     /// <summary>The cushion under the cat.</summary>
-    public (float X, float Y, float W, float H) Cushion => (Layout.CatX + 5 * S, Layout.CatY + GrumpCat.CushionY * S, GrumpCat.CushionWidth * S, GrumpCat.CushionHeight * S);
+    public (float X, float Y, float W, float H) Cushion => (Layout.CatX + 5 * C, Layout.CatY + GrumpCat.CushionY * C, GrumpCat.CushionWidth * C, GrumpCat.CushionHeight * C);
 
     /// <summary>The "z Z" over a sleeping cat.</summary>
-    public (float X, float Y, float W, float H) Zzz => (Layout.CatX + ZzzX * S, Layout.CatY + ZzzY * S, ZzzWidth * S, ZzzHeight * S);
+    public (float X, float Y, float W, float H) Zzz => (Layout.CatX + ZzzX * C, Layout.CatY + ZzzY * C, ZzzWidth * C, ZzzHeight * C);
 
     /// <summary>The bubble's rectangle, or null when none shows.</summary>
     public (float X, float Y, float W, float H)? Bubble => Layout.Bubble is { } b ? (Layout.BubbleX, Layout.BubbleY, b.Width * S, b.Height * S) : null;

@@ -13,8 +13,8 @@ public static class BuddyWindowSize
 {
     private const string LongWord = "Pilot.Gui.Tests.BuddyCatCaptureTests.SomeVeryLongTestNameThatHasNoSpacesAtAllAndWouldRunOutOfTheCard";
 
-    /// <summary>The window's width and height in design pixels.</summary>
-    public static (float Width, float Height) Measure(string fontPath)
+    /// <summary>The window's width and height in design pixels, for the cat at <paramref name="catSize"/> (the card and bubble text stay at the system scale).</summary>
+    public static (float Width, float Height) Measure(string fontPath, float catSize = 1f)
     {
         using var renderer = new RgbaImageRenderer(4, 4);
         var pen = new Pen<RgbaImage>(renderer, fontPath, 0, 0, 1f);
@@ -64,8 +64,8 @@ public static class BuddyWindowSize
             Take(bubble.Width, bubble.Height);
         }
 
-        var w = MathF.Max(BuddyScene.Margin + GrumpCat.Width + 4 + BuddyScene.Margin, BuddyScene.Margin + 4 + width + BuddyScene.Margin);
-        var h = BuddyScene.Margin + GrumpCat.CushionY + GrumpCat.CushionHeight + BuddyScene.BubbleGap + height + BuddyScene.Margin;
+        var w = MathF.Max(BuddyScene.Margin + (GrumpCat.Width + 4) * catSize + BuddyScene.Margin, BuddyScene.Margin + 4 + width + BuddyScene.Margin);
+        var h = BuddyScene.Margin + (GrumpCat.CushionY + GrumpCat.CushionHeight) * catSize + BuddyScene.BubbleGap + height + BuddyScene.Margin;
         return (MathF.Ceiling(w), MathF.Ceiling(h));
     }
 

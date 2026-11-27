@@ -22,9 +22,6 @@ public enum GrumpFace
 
     /// <summary>Asleep, but with the lids' frown: the face kept while a failure is open.</summary>
     GrumpyAsleep,
-
-    /// <summary>Both lids half down, a "?": the cats screen's reference face.</summary>
-    SideEye,
 }
 
 /// <summary>
@@ -130,18 +127,7 @@ public static class GrumpCat
                 HalfLidEye(pen, 114, 64 + b, 0.5f);
                 Nose_(pen, 90 + b);
                 FlatMouth(pen, b);
-                break;
 
-            case GrumpFace.SideEye:
-                HalfLidEye(pen, 58, 64 + b, 0.5f);
-                HalfLidEye(pen, 112, 64 + b, 0.5f);
-                Nose_(pen, 90 + b);
-                FlatMouth(pen, b);
-                if (withText)
-                {
-                    pen.Text("?", 168, 2, 24, 34, 28, palette.Alert, TextAlign.Center);
-                }
-                break;
 
             case GrumpFace.Alert:
                 for (var i = 0; i < 2; i++)

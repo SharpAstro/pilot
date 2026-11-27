@@ -137,6 +137,25 @@ public sealed class DesktopCatSectionTests : IDisposable
     }
 
     [Fact]
+    public async Task PlacementAndSizeAreSegmentsThatWriteTheFileAndFreeHidesTheCornerRow()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 1400);
+        var source = Source();
+        var chrome = await LoadedAsync(renderer, source, 1280, 1400);
+        Texts(chrome, renderer).ShouldContain("Corner");
+        Texts(chrome, renderer).ShouldContain("Size");
+
+        Click(chrome, "settings:buddy-size:2");
+        BuddySettings.Load(FilePath).SizeIndex.ShouldBe(2);
+        Click(chrome, "settings:buddy-placement:1");
+        var free = BuddySettings.Load(FilePath);
+        free.IsFree.ShouldBeTrue();
+        free.SizeIndex.ShouldBe(2, "the other settings stay as they were written");
+        Texts(chrome, renderer).ShouldNotContain("Corner");
+        Texts(chrome, renderer).ShouldContain("Placement");
+    }
+
+    [Fact]
     public async Task WakeNowClearsTheSnooze()
     {
         using var renderer = new RgbaImageRenderer(1280, 1400);

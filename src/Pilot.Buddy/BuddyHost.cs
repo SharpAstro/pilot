@@ -107,7 +107,9 @@ internal sealed class BuddyHost : IBuddyWindow, IDisposable
         _plain = _app.CreateWindow("pilot-buddy device", 320, 200, maximized: false, hidden: true);
         _plainContext = VulkanContext.CreateForSharedDevice(_app.DeviceFor(_plain), _plain.Surface, 320, 200);
 
-        var (designWidth, designHeight) = BuddyWindowSize.Measure(_font);
+        // The window is measured from the cat at the size chosen now; a larger choice later needs a restart (the swapchain is not recreated), a smaller one draws at once.
+        _measuredCatSize = _settings.SizeScale;
+        var (designWidth, designHeight) = BuddyWindowSize.Measure(_font, _measuredCatSize);
         _window = _app.CreateTransparentWindow("pilot-buddy", (int)designWidth, (int)designHeight, borderless: true, alwaysOnTop: true, focusable: true, hidden: true);
         // The design is drawn at the display's scale: the window is asked for that many pixels, and the scale is what it got.
         var wanted = Math.Max(_window.DisplayScale, 1f);
@@ -156,6 +158,8 @@ internal sealed class BuddyHost : IBuddyWindow, IDisposable
         return exit;
     }
 
+    private float _measuredCatSize = 1f;
+
     private byte[]? _backdrop;
 
     /// <summary>The screen under the window now, RGBA, or null.</summary>
@@ -190,10 +194,10 @@ internal sealed class BuddyHost : IBuddyWindow, IDisposable
         var cornerX = layout.CatX < _pixelWidth / 2f ? _pixelWidth - 16 : 2;
         var cornerY = layout.CatY < _pixelHeight / 2f ? _pixelHeight - 16 : 2;
         var corner = MeanDifference(after, _backdrop, cornerX, cornerY, 14, 14);
-        var body = MeanDifference(after, _backdrop, (int)(layout.CatX + 80 * _scale), (int)(layout.CatY + 70 * _scale), (int)(40 * _scale), (int)(20 * _scale));
+        var body = MeanDifference(after, _backdrop, (int)(layout.CatX + 80 * layout.CatDevice), (int)(layout.CatY + 70 * layout.CatDevice), (int)(40 * layout.CatDevice), (int)(20 * layout.CatDevice));
         // Where a click at the cat's body would go, as the desktop says: this window (caught) or another (through).
         _window!.GetPosition(out var wx, out var wy);
-        var at = WindowsShell.WindowAt((int)(wx * _density + layout.CatX + 100 * _scale), (int)(wy * _density + layout.CatY + 80 * _scale));
+        var at = WindowsShell.WindowAt((int)(wx * _density + layout.CatX + 100 * layout.CatDevice), (int)(wy * _density + layout.CatY + 80 * layout.CatDevice));
         var clicks = at == 0 ? "unknown" : at == _window.GetNativeWindowHandle() ? "caught by the cat" : "passing through to the window below";
         _log($"pilot-buddy: capture {path} (backdrop alone: {backdropPath}); AlphaPresentation {_context!.AlphaPresentation}; "
             + $"mean difference from the backdrop per channel: corner {corner} (0 means transparent), cat's body {body} (more than 20 means drawn); a click on the cat's body is {clicks} (click-through is {(_clickThrough ? "on" : "off")}); "
@@ -333,13 +337,14 @@ internal sealed class BuddyHost : IBuddyWindow, IDisposable
     {
         var palette = BuddyTheme.PaletteFor(_theme);
         var view = BuddyScene.ViewOf(_model, _feed.Summary);
-        var corner = _settings.CornerIndex;
+        var corner = _settings.SceneCorner;
+        var catSize = MathF.Min(_settings.SizeScale, _measuredCatSize);
         _policy.Time(() =>
         {
             SceneLayout layout;
             using (var cpu = new RgbaImageRenderer((uint)_pixelWidth, (uint)_pixelHeight))
             {
-                layout = BuddyScene.Draw(cpu, _font, palette, view, _scale, false, corner, _desk.CardFactory<RgbaImage>());
+                layout = BuddyScene.Draw(cpu, _font, palette, view, _scale, false, corner, _desk.CardFactory<RgbaImage>(), catSize);
                 var geometry = new BuddyGeometry(layout);
                 _desk.Geometry = geometry;
                 SetShape(BuddySilhouette.Of(cpu.Surface));
@@ -347,7 +352,7 @@ internal sealed class BuddyHost : IBuddyWindow, IDisposable
             }
             if (_renderer!.BeginFrame(new RGBAColor32(0, 0, 0, 0)))
             {
-                BuddyScene.Draw(_renderer, _font, palette, view, _scale, false, corner, _desk.CardFactory<VulkanContext>());
+                BuddyScene.Draw(_renderer, _font, palette, view, _scale, false, corner, _desk.CardFactory<VulkanContext>(), catSize);
                 _renderer.EndFrame();
             }
         });
@@ -385,7 +390,7 @@ internal sealed class BuddyHost : IBuddyWindow, IDisposable
         {
             return;
         }
-        var cornerMoved = changed.CornerIndex != _settings.CornerIndex;
+        var cornerMoved = Moves(changed);
         _settings = changed;
         _feed.Refresh();
         if (cornerMoved)
@@ -396,7 +401,7 @@ internal sealed class BuddyHost : IBuddyWindow, IDisposable
 
     private void Apply(BuddySettings changed)
     {
-        var cornerMoved = changed.CornerIndex != _settings.CornerIndex;
+        var cornerMoved = Moves(changed);
         _settings = changed;
         // A file read the watcher handed over before this save is older than it: dropped, so TakeFromDisk never puts it back over the card's choice.
         Interlocked.Exchange(ref _fromDisk, null);
@@ -411,6 +416,11 @@ internal sealed class BuddyHost : IBuddyWindow, IDisposable
             Place();
         }
     }
+
+    /// <summary>Whether <paramref name="changed"/> puts the window somewhere else: another corner or placement, or (in Free) another stored position for this monitor.</summary>
+    private bool Moves(BuddySettings changed) =>
+        changed.CornerIndex != _settings.CornerIndex || changed.PlacementIndex != _settings.PlacementIndex
+        || (changed.IsFree && changed.Monitor is { } m && changed.FreeAt(m) != _settings.FreeAt(m));
 
     private List<DisplayArea> Displays()
     {
@@ -431,7 +441,7 @@ internal sealed class BuddyHost : IBuddyWindow, IDisposable
     {
         if (BuddyPlacement.Chosen(Displays(), _settings.Monitor) is { } area)
         {
-            var (x, y) = BuddyPlacement.Corner(area, _unitWidth, _unitHeight, _settings.CornerIndex);
+            var (x, y) = BuddyPlacement.Resolve(_settings, area, _unitWidth, _unitHeight);
             _window!.SetPosition(x, y);
         }
     }
@@ -447,10 +457,10 @@ internal sealed class BuddyHost : IBuddyWindow, IDisposable
     public void Dropped()
     {
         _window!.GetPosition(out var x, out var y);
-        if (BuddyPlacement.Under(Displays(), x, y, _unitWidth, _unitHeight) is { } area)
+        if (BuddyPlacement.Drop(_settings, Displays(), x, y, _unitWidth, _unitHeight) is { } dropped)
         {
-            // The chosen corner of the monitor it was dropped on is where it returns, and is remembered for it.
-            Apply(_settings with { Monitor = area.Name });
+            // Corner: the chosen corner of the monitor it was dropped on is where it returns. Free: where it was dropped, clamped onto the work area, is remembered for that monitor.
+            Apply(dropped.Settings);
             Place();
         }
     }

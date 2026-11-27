@@ -13,6 +13,15 @@ public sealed record BuddySettings
     /// <summary>The "Sit in corner" choices.</summary>
     public static readonly IReadOnlyList<string> CornerChoices = ["Bottom right", "Bottom left", "Top right"];
 
+    /// <summary>The "Placement" choices: the cat snaps to a corner when dropped, or stays where it is dropped.</summary>
+    public static readonly IReadOnlyList<string> PlacementChoices = ["Corner", "Free"];
+
+    /// <summary>The "Size" choices.</summary>
+    public static readonly IReadOnlyList<string> SizeChoices = ["Small", "Medium", "Large"];
+
+    /// <summary>The cat's scale per <see cref="SizeChoices"/>, against the first cat (1.0): Medium is about two thirds of it, Small and Large either side.</summary>
+    public static readonly IReadOnlyList<float> SizeScales = [0.5f, 0.67f, 0.85f];
+
     /// <summary>The "Snooze" choices.</summary>
     public static readonly IReadOnlyList<string> SnoozeChoices = ["Off", "1 hour", "Until tomorrow"];
 
@@ -37,6 +46,15 @@ public sealed record BuddySettings
     /// <summary>The name of the monitor the cat sits on (SDL's display name), so a drag to another monitor is where it returns; null is the primary one.</summary>
     public string? Monitor { get; init; }
 
+    /// <summary>Index into <see cref="PlacementChoices"/>; null is Corner.</summary>
+    public int? Placement { get; init; }
+
+    /// <summary>Index into <see cref="SizeChoices"/>; null is Medium.</summary>
+    public int? Size { get; init; }
+
+    /// <summary>Where the cat was dropped in Free placement, per monitor name (SDL's display name); null is none yet.</summary>
+    public Dictionary<string, FreePosition>? FreePositions { get; init; }
+
     /// <summary>The moment the snooze ends; null or past is awake.</summary>
     public DateTimeOffset? SnoozedUntil { get; init; }
 
@@ -51,6 +69,29 @@ public sealed record BuddySettings
 
     /// <summary>See <see cref="Corner"/>.</summary>
     [JsonIgnore] public int CornerIndex => Math.Clamp(Corner ?? 0, 0, CornerChoices.Count - 1);
+
+    /// <summary>See <see cref="Placement"/>.</summary>
+    [JsonIgnore] public int PlacementIndex => Math.Clamp(Placement ?? 0, 0, PlacementChoices.Count - 1);
+
+    /// <summary>Whether the cat stays where it is dropped (Free) instead of snapping to a corner.</summary>
+    [JsonIgnore] public bool IsFree => PlacementIndex == 1;
+
+    /// <summary>See <see cref="Size"/>.</summary>
+    [JsonIgnore] public int SizeIndex => Math.Clamp(Size ?? 1, 0, SizeChoices.Count - 1);
+
+    /// <summary>The cat's scale at the chosen size.</summary>
+    [JsonIgnore] public float SizeScale => SizeScales[SizeIndex];
+
+    /// <summary>The corner the scene draws the cat in: the chosen one, and the bottom right in Free (the window is then moved, not the cat in it).</summary>
+    [JsonIgnore] public int SceneCorner => IsFree ? 0 : CornerIndex;
+
+    /// <summary>The stored free position for the monitor <paramref name="name"/>, or null when none (or an incomplete one).</summary>
+    public (double X, double Y)? FreeAt(string name) =>
+        FreePositions is { } map && map.TryGetValue(name, out var p) && p.X is { } x && p.Y is { } y ? (x, y) : null;
+
+    /// <summary>The settings with the free position of monitor <paramref name="name"/> set; the other monitors keep theirs.</summary>
+    public BuddySettings WithFreeAt(string name, double x, double y) =>
+        this with { FreePositions = new Dictionary<string, FreePosition>(FreePositions ?? []) { [name] = new FreePosition { X = x, Y = y } } };
 
     /// <summary>See <see cref="ClickThrough"/>.</summary>
     [JsonIgnore] public bool ClicksPassThrough => ClickThrough ?? false;
@@ -117,6 +158,17 @@ public sealed record BuddySettings
     }
 }
 
+/// <summary>Where the window sits on a monitor in Free placement, as fractions (0 to 1) of the distance the window can travel across the work area. Members are nullable (stored-records rule).</summary>
+public sealed record FreePosition
+{
+    /// <summary>Across: 0 is the work area's left edge, 1 its right.</summary>
+    public double? X { get; init; }
+
+    /// <summary>Down: 0 is the work area's top edge, 1 its bottom.</summary>
+    public double? Y { get; init; }
+}
+
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase, WriteIndented = true, DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
 [JsonSerializable(typeof(BuddySettings))]
+[JsonSerializable(typeof(FreePosition))]
 internal sealed partial class BuddyJson : JsonSerializerContext;

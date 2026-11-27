@@ -10,7 +10,11 @@ public sealed record BuddyView(GrumpFace Face, int Breath, BuddyNotice? Notice, 
 /// Where the scene put the cat, its bubble and the open card (device pixels), for a test or the window's hit testing. <paramref name="Scale"/> is the
 /// device pixels per design pixel the scene drew at; <paramref name="Card"/> is the card drawn in the bubble's place, if one was asked for.
 /// </summary>
-public sealed record SceneLayout(SpeechBubble? Bubble, float BubbleX, float BubbleY, float CatX, float CatY, BuddyCard? Card = null, float CardX = 0, float CardY = 0, float Scale = 1f);
+public sealed record SceneLayout(SpeechBubble? Bubble, float BubbleX, float BubbleY, float CatX, float CatY, BuddyCard? Card = null, float CardX = 0, float CardY = 0, float Scale = 1f, float CatScale = 0f)
+{
+    /// <summary>The device pixels per cat design pixel: the scene scale times the size setting (the card and bubble text stay at <see cref="Scale"/>). Zero in a hand-made layout means the scene scale.</summary>
+    public float CatDevice => CatScale > 0 ? CatScale : Scale;
+}
 
 /// <summary>
 /// The buddy's scene as the transparent window draws it: the cat on its cushion in the bottom-right corner, the bubble above it, right aligned
@@ -55,7 +59,7 @@ public static class BuddyScene
     /// builds the peek, settings or chat card, measured with a pen of the same scale, and draws it in the bubble's place.
     /// </summary>
     public static SceneLayout Draw<TSurface>(Renderer<TSurface> renderer, string fontPath, BuddyPalette palette, BuddyView view, float scale = 1f, bool paintDesktop = false,
-        int corner = 0, Func<Pen<TSurface>, BuddyCard>? cardFactory = null)
+        int corner = 0, Func<Pen<TSurface>, BuddyCard>? cardFactory = null, float catSize = 1f)
     {
         if (paintDesktop)
         {
@@ -66,9 +70,10 @@ public static class BuddyScene
         var top = corner == 2;
         var catBottom = GrumpCat.CushionY + GrumpCat.CushionHeight;
         // The cushion's bottom sits Margin from the edge it is in the corner of, the cat's box Margin in from the side.
-        var catX = left ? Margin * scale : renderer.Width - (Margin + GrumpCat.Width + 4) * scale;
-        var catY = top ? Margin * scale : renderer.Height - (Margin + catBottom) * scale;
-        var catPen = new Pen<TSurface>(renderer, fontPath, catX, catY, scale);
+        var cs = scale * catSize;
+        var catX = left ? Margin * scale : renderer.Width - Margin * scale - (GrumpCat.Width + 4) * cs;
+        var catY = top ? Margin * scale : renderer.Height - Margin * scale - catBottom * cs;
+        var catPen = new Pen<TSurface>(renderer, fontPath, catX, catY, cs);
         GrumpCat.Draw(catPen, view.Face, palette, view.Breath);
         if (view.Badge > 0)
         {
@@ -76,7 +81,7 @@ public static class BuddyScene
         }
 
         float PlaceX(float width) => left ? (Margin + 4) * scale : renderer.Width - (Margin + 4 + width) * scale;
-        float PlaceY(float height) => top ? catY + (catBottom + BubbleGap) * scale : catY - (BubbleGap + height) * scale;
+        float PlaceY(float height) => top ? catY + catBottom * cs + BubbleGap * scale : catY - (BubbleGap + height) * scale;
 
         var measure = new Pen<TSurface>(renderer, fontPath, 0, 0, scale);
         if (cardFactory is not null)
@@ -85,7 +90,7 @@ public static class BuddyScene
             var cardX = PlaceX(card.Width);
             var cardY = PlaceY(card.Height);
             card.Draw(new Pen<TSurface>(renderer, fontPath, cardX, cardY, scale), palette);
-            return new SceneLayout(null, 0, 0, catX, catY, card, cardX, cardY, scale);
+            return new SceneLayout(null, 0, 0, catX, catY, card, cardX, cardY, scale, cs);
         }
 
         SpeechBubble? bubble = null;
@@ -105,6 +110,6 @@ public static class BuddyScene
             bubbleY = PlaceY(bubble.Height);
             bubble.Draw(new Pen<TSurface>(renderer, fontPath, bubbleX, bubbleY, scale), palette);
         }
-        return new SceneLayout(bubble, bubbleX, bubbleY, catX, catY, Scale: scale);
+        return new SceneLayout(bubble, bubbleX, bubbleY, catX, catY, Scale: scale, CatScale: cs);
     }
 }
