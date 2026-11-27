@@ -550,6 +550,55 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
         Layout.Builder.HStack(Layout.Builder.TextInput(Search, 13f, Palette.Input).Bg(FieldBg).WStar(1f, SearchFloor, SearchWidth).HFixed(AboutCard.HeaderButton), Layout.Builder.Spacer().WStar(1f, 0f))
             .WithGap(8f).CrossCenter().Pad(Gutter, 4f).RowH(SearchRowHeight);
 
+    /// <summary>The Desktop cat's settings, as the file says them (the cat's own card writes the same file); null leaves the section out (a host with no buddy settings path).</summary>
+    public BuddySettingsSource? Buddy { get; set; }
+
+    // One row of the Desktop cat section: the title and its control on one line, the one-line description under it.
+    private static Layout.Node CatRow(string title, string hint, IEnumerable<Layout.Node> controls) =>
+        Layout.Builder.VStack(
+                Layout.Builder.HStack([Layout.Builder.Text(title, 13f, Body).Selectable().WFixed(CatTitleWidth), .. controls]).WithGap(8f).CrossCenter().RowH(30f),
+                WrappedProse.OneLine(hint, 12f, Faint).RowH(20f))
+            .Pad(Gutter, 4f).RowH(62f);
+
+    private const float CatTitleWidth = 130f;
+
+    // A switch: one pill that reads On (chosen) or Off, which turns the other way; what it shows is the file's state after the save.
+    private Layout.Node CatSwitch(string key, bool on, Func<BuddySettings, bool, BuddySettings> set) =>
+        Pill(on ? "On" : "Off", $"settings:{key}", () => Buddy?.Update(s => set(s, !on)), on).WFixed(CatSwitchWidth).HFixed(ControlH);
+
+    private const float CatSwitchWidth = 56f;
+
+    private IEnumerable<Layout.Node> CatSegments(string key, IReadOnlyList<string> choices, int chosen, Action<int> pick) =>
+        choices.Select((label, i) => Pill(label, $"settings:{key}:{i}", () => pick(i), chosen == i).HFixed(ControlH));
+
+    private void CatPieces(Action<Part, Layout.Node, string?[]> add, DateTimeOffset now)
+    {
+        var source = Buddy!;
+        var cat = source.Current;
+        add(Part.Section, Section("Desktop cat", "what wakes the cat, where it sits and how long it sleeps; the cat's own card changes the same file"), []);
+        add(Part.Row, CatRow("Wake for asks", "a session asks you something", [CatSwitch("buddy-wake-ask", cat.WakesForAsk, (s, v) => s with { WakeAsk = v })]),
+            ["Wake for asks", "a session asks you something", "buddy-wake-ask", "Wakes for"]);
+        add(Part.Row, CatRow("Wake for merges", "a PR merged or a flight landed", [CatSwitch("buddy-wake-merged", cat.WakesForMerged, (s, v) => s with { WakeMerged = v })]),
+            ["Wake for merges", "a PR merged or a flight landed", "buddy-wake-merged", "landings", "Wakes for"]);
+        add(Part.Row, CatRow("Wake for failures", "CI failed or a session got stuck", [CatSwitch("buddy-wake-failed", cat.WakesForFailed, (s, v) => s with { WakeFailed = v })]),
+            ["Wake for failures", "CI failed or a session got stuck", "buddy-wake-failed", "CI failures and stuck sessions", "Wakes for"]);
+        add(Part.Row, CatRow("Corner", "which corner of the screen the cat sits in",
+                CatSegments("buddy-corner", BuddySettings.CornerChoices, cat.CornerIndex, i => source.Update(s => s with { Corner = i }))),
+            ["Corner", "which corner of the screen the cat sits in", "buddy-corner"]);
+        add(Part.Row, CatRow("Click-through", "clicks pass through to the window below while the cat sleeps", [CatSwitch("buddy-click-through", cat.ClicksPassThrough, (s, v) => s with { ClickThrough = v })]),
+            ["Click-through", "clicks pass through to the window below while the cat sleeps", "buddy-click-through"]);
+        add(Part.Row, CatRow("Snooze for", "nothing wakes the cat until the snooze ends",
+                CatSegments("buddy-snooze", BuddySettings.SnoozeChoices, cat.SnoozeIndex, i => source.Update(s => s.WithSnooze(i, source.Time.GetUtcNow(), source.Zone)))),
+            ["Snooze for", "nothing wakes the cat until the snooze ends", "buddy-snooze"]);
+        if (cat.IsSnoozed(now))
+        {
+            var until = TimeZoneInfo.ConvertTime(cat.SnoozedUntil!.Value, source.Zone).ToString("ddd HH:mm", System.Globalization.CultureInfo.CurrentCulture);
+            add(Part.Row, CatRow("Snoozed until", "the cat is asleep to everything until then",
+                    [Layout.Builder.Text(until, 13f, Bright).Selectable().WAuto(), Pill("Wake now", "settings:buddy-wake-now", () => source.Update(s => s.WithSnooze(0, now, source.Zone))).HFixed(ControlH)]),
+                ["Snoozed until", "the cat is asleep to everything until then", "buddy-snoozed-until", "Wake now"]);
+        }
+    }
+
     private Layout.Node Main(SettingsPage page, Seen read, DateTimeOffset now)
     {
         var lead = new List<Layout.Node>(OtherNodesRow());
@@ -577,6 +626,10 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
         {
             var setting = page.Settings[i];
             Add(Part.Row, SettingRowNode(setting, i), setting.Label, setting.Detail, setting.Key);
+        }
+        if (Buddy is not null)
+        {
+            CatPieces((part, node, texts) => Add(part, node, texts), now);
         }
         if (Notifications is { } bar)
         {
