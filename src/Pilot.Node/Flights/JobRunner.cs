@@ -2941,6 +2941,8 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
             SlotFreed?.Invoke(job.Id);
         }
         // A stale NuGet HTTP cache (#1064): the slot is free, so the feed lookup holds nothing; the rerun's end is what the owner hears.
+        // PIL1382: a held early notice is for a job that is running on; this one ended, so it is dropped whichever way it is told.
+        await SupersedeEarlyNoticeAsync(ended.Id);
         if (!await RerunStaleAsync(ended, last))
         {
             await TellAsync(ended, CancellationToken.None, last);
@@ -3133,6 +3135,17 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
             JobState.Cancelled => job.Error ?? "was cancelled",
             _ => $"failed: {job.Error}",
         };
+        // The first build error or failed test is named here too: the early notice that this tell supersedes said it, and the
+        // last 12 lines of a real run (a test summary, many errors) need not hold it.
+        var firstRow = state.Jobs().FirstOrDefault(j => j.Id == job.Id) ?? job;
+        if (firstRow.FirstBuildError is { Length: > 0 } firstError)
+        {
+            how += $" (first build error: {firstError})";
+        }
+        if (firstRow.FirstTestFailed is { Length: > 0 } firstTest)
+        {
+            how += $" (first failed test: {firstTest})";
+        }
         var lines = last is { Length: > 0 } ? "\nIts last lines:\n" + string.Join('\n', last.TakeLast(12)) : "";
         var rerun = _rerunNotes.TryGetValue(job.Id, out var note) ? $" ({note})" : "";
         var text = $"Your job {job.Id} (`{job.Command}`, in {job.Cwd}) {how}{rerun}, after {Took(took)}.{lines}\nThe whole output is in {job.LogPath}. Carry on from here.";

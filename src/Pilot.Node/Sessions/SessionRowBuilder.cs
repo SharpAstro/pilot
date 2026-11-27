@@ -105,7 +105,7 @@ public static class SessionRowBuilder
         // A resumed worker whose turn ended (its Stop hook fired after its last start, held or let through) and whose process then
         // exited with Claude Code's job record reading failed ended its turn; it did not crash (SE1 2026-11-27, a9d21c70). A real
         // crash has no Stop since the resume, or an API error.
-        var turnEndedThenFailed = agent.Pid is null && state == SessionState.Failed && transcripts.Stop?.Error is null
+        var turnEndedThenFailed = agent.Pid is null && agent.Kind == "background" && state == SessionState.Failed && transcripts.Stop?.Error is null
             && hook is { Event: "Stop", State: SessionState.Idle, ApiError: null } stop && stop.At >= (agent.StartedAt ?? DateTimeOffset.MinValue);
         if (turnEndedThenFailed)
         {

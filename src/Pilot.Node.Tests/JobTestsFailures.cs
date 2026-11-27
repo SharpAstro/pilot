@@ -142,7 +142,7 @@ public sealed class JobTestsFailures : JobTestsBase
     private const string BuildLine = "/w/App.cs(3,5): error CS1656: Cannot assign to 'x' because it is a method group [/w/App.csproj]";
 
     // PIL1382: a runner on a clock the test moves (timers virtual), a recording Say, and a job that has read a build error and runs on.
-    private (JobRunner Jobs, Clock Clock, FakeJobLauncher Launcher, string Id) RunsOnWithABuildError()
+    private (JobRunner Jobs, Clock Clock, FakeJobLauncher Launcher, string Id) RunsOnWithABuildError(int linesAfter = 0)
     {
         UseFake();
         var (jobs, clock, _, _) = Idle();
@@ -152,7 +152,7 @@ public sealed class JobTestsFailures : JobTestsBase
             _said.Enqueue(command);
             return Task.FromResult(_state.Complete(command, null));
         };
-        Fake!.On(_ => true, FakeScript.Holds(BuildLine));
+        Fake!.On(_ => true, FakeScript.Holds([BuildLine, .. Enumerable.Range(1, linesAfter).Select(n => $"Restore step {n} done")]));
         return (jobs, clock, Fake, Hand(jobs, "dotnet build"));
     }
 
@@ -180,6 +180,20 @@ public sealed class JobTestsFailures : JobTestsBase
         said.ShouldContain($"Your job {id}");
         said.ShouldNotContain("runs on");
         _state.Jobs().Single(j => j.Id == id).FailureTold.ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task TheEndTellNamesTheFirstBuildErrorWhenItFellOutOfTheLastLines()
+    {
+        var (_, clock, launcher, id) = RunsOnWithABuildError(linesAfter: 15);
+        await Until(id, j => j.BuildErrors == 1);
+
+        await EndsAndIsTold(clock, launcher, id);
+
+        var said = _said.Select(s => s.Args[0]).ToList().ShouldHaveSingleItem();
+        said.ShouldContain("first build error: ");
+        said.ShouldContain("CS1656");
+        said.ShouldNotContain("runs on");
     }
 
     [Fact]
