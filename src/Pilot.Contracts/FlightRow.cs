@@ -175,7 +175,7 @@ public sealed record FlightRow
     /// <summary>Every round of its review so far, oldest first; kept when a fresh review replaces <see cref="Review"/>. Null before the first verdict.</summary>
     public ReviewRound[]? ReviewRounds { get; init; }
 
-    /// <summary>How many review rounds the watchtower (or the person) has allowed in all, past the third at which a loop is held; null until one is allowed.</summary>
+    /// <summary>How many review rounds the watchtower (or the person) has allowed in all, past the one at which a loop was held; null until one is allowed.</summary>
     public int? ReviewRoundsAllowed { get; init; }
 
     /// <summary>

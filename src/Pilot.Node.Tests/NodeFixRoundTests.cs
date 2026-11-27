@@ -102,7 +102,11 @@ public sealed class NodeFixRoundTests : ReviewTestsBase
         var flight = await Reviewing("5");
         for (var round = 1; round <= 3; round++)
         {
-            (await Verdict(flight.Code, Answered(flight.Code) + $"## Blocking\n- finding of round {round}")).Error.ShouldBeNull();
+            // Every earlier point is still not addressed: a point raised two rounds back that stays open holds the loop at round 3.
+            var open = ReviewPoints.Number(F(flight.Code).ReviewRounds ?? []) is { Count: > 0 } points
+                ? "## Earlier points\n" + string.Join("\n", points.Select(p => $"| {p.Id} | not addressed | still open |")) + "\n\n"
+                : "";
+            (await Verdict(flight.Code, open + $"## Blocking\n- finding of round {round}")).Error.ShouldBeNull();
             if (round == 3)
             {
                 break;

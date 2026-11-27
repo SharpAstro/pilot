@@ -56,8 +56,8 @@ public sealed class RefusedEffects(NodeState state, Func<PrRef, CancellationToke
         {
             case Verbs.AllowRound:
                 return LegCommander.ReviewLoopHeld(flight)
-                    ? new EffectSeen(false, $"{label}'s review is still held at its {Ordinal(LegCommander.ChangesRounds(flight))} round")
-                    : new EffectSeen(true, $"{label}'s review is no longer held at its round limit");
+                    ? new EffectSeen(false, $"{label}'s review is still held: {LegCommander.ReviewLoopHold(flight)?.Detail}")
+                    : new EffectSeen(true, $"{label}'s review is no longer held");
             case Verbs.Land:
                 return flight.State == FlightState.Landed
                     ? new EffectSeen(true, $"{label} has landed")
@@ -141,14 +141,4 @@ public sealed class RefusedEffects(NodeState state, Func<PrRef, CancellationToke
             ? new EffectSeen(true, $"session {id} has ended")
             : new EffectSeen(false, $"session {id} is still {row.State.ToString().ToLowerInvariant()}");
     }
-
-    private static string Ordinal(int n) => n switch
-    {
-        1 => "first",
-        2 => "second",
-        3 => "third",
-        4 => "fourth",
-        5 => "fifth",
-        _ => $"{n}th",
-    };
 }

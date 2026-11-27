@@ -509,8 +509,8 @@ public static class Verbs
     public const string StartReview = "start-review";
 
     /// <summary>
-    /// <c>allow-round flight/&lt;code&gt; &lt;why…&gt;</c>: the watchtower's word (or the person's) that a flight's review loop, held at its
-    /// third round with changes, may have exactly one more round: a go-around or a reviewer start.
+    /// <c>allow-round flight/&lt;code&gt; &lt;why…&gt;</c>: the watchtower's word (or the person's) that a flight's review loop, held for making no progress (a point back,
+    /// a blocking point stuck, a fix that touched nothing, or the 8-round guard), may have exactly one more round: a go-around or a reviewer start.
     /// </summary>
     public const string AllowRound = "allow-round";
 

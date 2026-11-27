@@ -69,9 +69,11 @@ public sealed record LegRow
 
     /// <summary>
     /// How many <see cref="ReviewGoArounds"/> the watchtower may send before the card is the person's: here, so the node
-    /// (LegCommander) and the flight page read one number and cannot drift.
+    /// (LegCommander) and the flight page read one number and cannot drift. It is the review loop's runaway guard (pilot #1371:
+    /// a fix round is not a review round): a converging review goes on past three rounds, and what stops one that does not is
+    /// the loop's hold on no progress, not this count, which only backs the guard.
     /// </summary>
-    public const int MaxReviewGoArounds = 3;
+    public const int MaxReviewGoArounds = 8;
 
     /// <summary>What the last <c>finish-leg</c> or check said: the worker's report, or why the check failed.</summary>
     public string? Report { get; init; }

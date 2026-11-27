@@ -47,7 +47,7 @@ public sealed partial class LegCommander
         {
             throw new FlightException(refused.Why);
         }
-        // A review loop held at its round limit starts no reviewer for the node or the watchtower: that round is the watchtower's word or the person's.
+        // A review loop held starts no reviewer for the node or the watchtower: that round is the watchtower's word or the person's.
         var loopHeld = ReviewLoopHeld(flight);
         if (loopHeld && !IsPerson(flight, who))
         {
@@ -355,6 +355,7 @@ public sealed partial class LegCommander
         }
 
         var now = time.GetUtcNow();
+        var fixUntouched = verdict == "changes" ? await FixUntouchedAsync(flight, cancellationToken) : null;
         var kept = fromReviewer ? report : $"{report}{ReviewPoints.Tail(command.Who)}{review.Report})";
         Record(flight.Code, f => f with
         {
@@ -367,7 +368,7 @@ public sealed partial class LegCommander
                 ? [.. f.ReviewRounds ?? [], new ReviewRound
                 {
                     Round = (f.ReviewRounds?.Length ?? 0) + 1, Head = judged.ReviewedHead, Verdict = verdict == "pass" ? ReviewState.Passed : ReviewState.Changes,
-                    Findings = kept, PassedBy = fromReviewer ? null : command.Who, Answers = answers, LeftPoints = left, Depth = judged.Depth, Model = judged.Model ?? Models.ReviewerModel(judged.Depth ?? ReviewDepth.Standard),
+                    Findings = kept, PassedBy = fromReviewer ? null : command.Who, Answers = answers, LeftPoints = left, FixUntouched = fixUntouched, Depth = judged.Depth, Model = judged.Model ?? Models.ReviewerModel(judged.Depth ?? ReviewDepth.Standard),
                 }]
                 : f.ReviewRounds,
         });
@@ -745,25 +746,23 @@ public sealed partial class LegCommander
     /// <summary>The card kind of a pass with notes, for the watchtower to make the small ones.</summary>
     public const string ReviewNotesKind = "review-notes";
 
-    /// <summary>The card kind of a review loop held at its round limit, for the watchtower to settle.</summary>
+    /// <summary>The card kind of a review loop held for making no progress, for the watchtower to settle.</summary>
     public const string ReviewLoopKind = "review-loop";
 
-    /// <summary>The round at which a review that still asks for changes is held for the watchtower: the third.</summary>
-    public const int ReviewLoopRound = 3;
-
-    private static int RoundsAllowed(FlightRow flight) => Math.Max(ReviewLoopRound, flight.ReviewRoundsAllowed ?? 0);
-
     /// <summary>The rounds whose verdict asked for changes: a pass spends none of the rounds a loop may take.</summary>
-    internal static int ChangesRounds(FlightRow flight) => flight.ReviewRounds?.Count(r => r.Verdict == ReviewState.Changes) ?? 0;
+    internal static int ChangesRounds(FlightRow flight) => ReviewConvergence.ChangesRounds(flight.ReviewRounds);
 
     /// <summary>
-    /// Whether a flight's review has used the rounds with changes it may have without the watchtower's word, and the reviewer's own
-    /// latest verdict still asks for changes. A review the node turned back to Changes after a pass (a red check, a merge taken back)
-    /// ends on a passed round and is not held.
+    /// Why a flight's review loop is held (pilot #1371), or null: <see cref="ReviewConvergence"/> over the stored rounds, and the
+    /// reviewer's own latest verdict still asks for changes. A review the node turned back to Changes after a pass (a red check, a
+    /// merge taken back) ends on a passed round and is not held.
     /// </summary>
-    internal static bool ReviewLoopHeld(FlightRow flight) =>
-        flight.Review is { State: ReviewState.Changes } && flight.ReviewRounds is [.., { Verdict: ReviewState.Changes }]
-        && ChangesRounds(flight) >= RoundsAllowed(flight);
+    internal static ReviewConvergence.Hold? ReviewLoopHold(FlightRow flight) =>
+        flight.Review is { State: ReviewState.Changes } && flight.ReviewRounds is [.., { Verdict: ReviewState.Changes } last]
+            ? ReviewConvergence.Decide(flight.ReviewRounds, flight.ReviewRoundsAllowed, last.FixUntouched)
+            : null;
+
+    internal static bool ReviewLoopHeld(FlightRow flight) => ReviewLoopHold(flight) is not null;
 
     /// <summary>
     /// Whether a sender may start a held round or allow one: the person, as the node, the lookout of legs, the watchtower and the
@@ -783,7 +782,7 @@ public sealed partial class LegCommander
     }
 
     private static string RoundRefusal(FlightRow flight) =>
-        $"{flight.Code}'s review has had {ChangesRounds(flight)} rounds with changes: another round is the watchtower's call (`allow-round`), or the person's";
+        $"{flight.Code}'s review loop is held ({ReviewLoopHold(flight)?.Detail ?? "it makes no progress"}): another round is the watchtower's call (`allow-round`), or the person's";
 
     /// <summary>
     /// The watchtower's word, or the person's, that a held review loop may have exactly one more round. The person's word sends the
@@ -801,7 +800,7 @@ public sealed partial class LegCommander
         }
         if (!ReviewLoopHeld(flight))
         {
-            throw new FlightException($"{flight.Code}'s review is not held at its round limit: nothing to allow");
+            throw new FlightException($"{flight.Code}'s review is not held: nothing to allow");
         }
         var rounds = ChangesRounds(flight);
         Record(flight.Code, f => f with { ReviewRoundsAllowed = rounds + 1 });
@@ -818,13 +817,18 @@ public sealed partial class LegCommander
     }
 
     /// <summary>
-    /// A review that still asks for changes at its third round: the node sends no leg round and starts no reviewer. The watchtower
+    /// A review that still asks for changes and makes no progress (<see cref="ReviewConvergence"/>): the node sends no leg round and starts no reviewer. The watchtower
     /// gets each round's findings, and passes with notes, settles the disagreement in the plane, rings the person, or allows one more round.
     /// </summary>
     private void RaiseReviewLoop(FlightRow flight)
     {
         var rounds = flight.ReviewRounds ?? [];
+        var hold = ReviewLoopHold(flight);
         var detail = new System.Text.StringBuilder();
+        if (hold is not null)
+        {
+            detail.AppendLine($"Held because {hold.Detail}.").AppendLine();
+        }
         foreach (var round in rounds)
         {
             detail.AppendLine($"Round {round.Round} ({round.Verdict.ToString().ToLowerInvariant()}{(round.Head is { Length: > 0 } head ? $", head {CommitRefs.Short(head)}" : "")}):");
@@ -835,12 +839,12 @@ public sealed partial class LegCommander
         // The rounds the PR has had in all, and every point in three groups (pilot #1107), read from the stored answers.
         detail.AppendLine().AppendLine($"Points after {ReviewRing.Rounds(rounds)}:").Append(ReviewRing.Points(rounds));
         // Rings the person at once (PIL1229): Pass with notes is an override, theirs; the watchtower may only allow one more round.
-        state.RaiseCard(CardBin.Ring, ReviewLoopKind, target, $"{flight.Code}'s review is in a loop: {ReviewRing.Rounds(rounds)} in all, {rounds.Count(r => r.Verdict == ReviewState.Changes)} with changes",
+        state.RaiseCard(CardBin.Ring, ReviewLoopKind, target, $"{flight.Code} review held: {hold?.Title ?? "no progress"}",
             detail.ToString().TrimEnd(),
             [
                 new CardChoice { Label = "Pass with notes", Verb = Verbs.Review, Target = target, Args = ["pass", "passed with the findings noted: repeated or not blocking"] },
                 new CardChoice { Label = "Allow one more round", Verb = Verbs.AllowRound, Target = target, Args = ["the watchtower allowed it"] },
             ], link: flight.PullRequestUrl,
-            summary: $"The review of {flight.Code} (PR #{flight.PullRequest}) has had {ReviewRing.Rounds(rounds)} in all. Points: {ReviewRing.Counts(rounds)}. No round starts until it is passed with notes or one more is allowed. Passing it over the findings is the person's; the watchtower may give it a further round when the points left are small, saying so in the press.");
+            summary: $"The review of {flight.Code} (PR #{flight.PullRequest}) is held because {hold?.Detail ?? "it makes no progress"}. It has had {ReviewRing.Rounds(rounds)} in all. Points: {ReviewRing.Counts(rounds)}. No round starts until it is passed with notes or one more is allowed. Passing it over the findings is the person's; the watchtower may give it a further round when the points left are small, saying so in the press.");
     }
 }

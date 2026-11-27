@@ -30,7 +30,7 @@ public sealed class RefusedEffectTests
     private static FlightRow Held(FlightRow f, int allowed = 0) => f with
     {
         Review = new ReviewRow { State = ReviewState.Changes, Reviewer = "r", StartedAt = Began, FinishedAt = Began },
-        ReviewRounds = [.. Enumerable.Range(1, 3).Select(n => new ReviewRound { Round = n, Verdict = ReviewState.Changes, Findings = "f" })],
+        ReviewRounds = [.. Enumerable.Range(1, ReviewConvergence.RunawayRounds).Select(n => new ReviewRound { Round = n, Verdict = ReviewState.Changes, Findings = "f" })],
         ReviewRoundsAllowed = allowed,
     };
 
@@ -38,14 +38,14 @@ public sealed class RefusedEffectTests
         Effects().SeeAsync(new PressedCommand(verb, target, args, null), CancellationToken.None);
 
     [Fact]
-    public async Task AllowRoundIsThereOnceTheReviewLoopIsNoLongerHeldAtItsCap()
+    public async Task AllowRoundIsThereOnceTheReviewLoopIsNoLongerHeld()
     {
         Put(change: f => Held(f));
         var not = await SeeAsync(Verbs.AllowRound, "flight/PIL1", "why");
         not.There.ShouldBe(false);
-        not.Seen.ShouldBe("PIL1's review is still held at its third round");
+        not.Seen.ShouldNotBeNull().ShouldContain("still held: it has had 8 rounds with changes");
 
-        Put(change: f => Held(f, allowed: 4));
+        Put(change: f => Held(f, allowed: 9));
         var there = await SeeAsync(Verbs.AllowRound, "flight/PIL1", "why");
         there.There.ShouldBe(true);
         there.Seen.ShouldContain("no longer held");

@@ -391,7 +391,7 @@ public sealed class FlightDesignDecideTests : FlightDesignTestsBase
         var started = 0;
         var flight = await AskedDesign(DecidableDesign.OneReaches, f =>
         {
-            ReviewRound[] rounds = [.. Enumerable.Range(1, LegCommander.ReviewLoopRound).Select(n => new ReviewRound { Round = n, Verdict = ReviewState.Changes, Findings = $"finding of round {n}" })];
+            ReviewRound[] rounds = [.. Enumerable.Range(1, ReviewConvergence.RunawayRounds).Select(n => new ReviewRound { Round = n, Verdict = ReviewState.Changes, Findings = $"finding of round {n}" })];
             _state.PutFlight(F(f.Code) with
             {
                 Review = new ReviewRow { State = ReviewState.Changes, Reviewer = "du1-tia1-review", StartedAt = DateTimeOffset.UtcNow },

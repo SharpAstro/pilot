@@ -50,8 +50,8 @@ public sealed partial class PrReviews
     /// <summary>The Handled notice of a merged PR's fixer commits that are already on the base, or on the follow-up branch, so no PR was opened (pilot #1327).</summary>
     public const string FixFollowUpSettledKind = "pr-fix-follow-up-settled";
 
-    /// <summary>How many rounds of fixes a PR gets before the person is rung, the same cap as a flight's review go-arounds (#249).</summary>
-    public const int MaxFixRounds = LegCommander.MaxReviewGoArounds;
+    /// <summary>How many rounds of fixes a PR gets before the person is rung (#249): its own cap of 3, not a flight review loop's (which holds on no progress, #1371).</summary>
+    public const int MaxFixRounds = 3;
 
     /// <summary>
     /// Looks at a PR a fixer is on (#290): merged or closed, the fixer ends; a head past the reviewed one means it pushed, so it
