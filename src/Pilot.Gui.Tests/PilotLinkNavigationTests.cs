@@ -114,13 +114,13 @@ public sealed class PilotLinkNavigationTests
         chrome.OpenLink(Parse("pilot://flight/TIA1611?node=DE1")).ShouldBeNull();
         Draw(chrome);
         chrome.Page.ShouldBe(PilotPage.Flights);
-        chrome.Nodes.Picked.ShouldBe(["de1:47731"], "that node alone is shown");
+        chrome.Nodes.Picked.ToArray().ShouldBe(["de1:47731"], "that node alone is shown");
         chrome.Flights.IsDetailOpen.ShouldBeTrue();
 
         chrome.OpenLink(Parse("pilot://session/bbbb0002?node=SE1")).ShouldBeNull();
         Draw(chrome);
         chrome.Page.ShouldBe(PilotPage.Sessions);
-        chrome.Nodes.Picked.ShouldBe(["se1"]);
+        chrome.Nodes.Picked.ToArray().ShouldBe(["se1"]);
     }
 
     [Fact]
