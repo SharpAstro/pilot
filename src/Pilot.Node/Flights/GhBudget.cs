@@ -27,8 +27,11 @@ public sealed class GhBudget(TimeProvider time)
     /// <summary>How long a refusal holds when GitHub's reset is not known (a secondary limit gives none).</summary>
     public static readonly TimeSpan UnknownReset = TimeSpan.FromMinutes(5);
 
-    /// <summary>What GitHub last said: points left of the limit, when they come back, when it was read; and a refusal's end.</summary>
-    public sealed record Snapshot(int? Remaining, int? Limit, DateTimeOffset? ResetAt, DateTimeOffset? ReadAt, DateTimeOffset? RefusedUntil);
+    /// <summary>
+    /// What GitHub last said: points left of the limit, when they come back, when it was read; and a refusal's end, with whether it was the
+    /// secondary limit (a short pause that leaves the hourly points alone, so a read of points left neither ends nor lengthens it).
+    /// </summary>
+    public sealed record Snapshot(int? Remaining, int? Limit, DateTimeOffset? ResetAt, DateTimeOffset? ReadAt, DateTimeOffset? RefusedUntil, bool Secondary = false);
 
     private Snapshot _now = new(null, null, null, null, null);
 
@@ -45,21 +48,32 @@ public sealed class GhBudget(TimeProvider time)
             Limit = limit ?? s.Limit,
             ResetAt = resetAt ?? s.ResetAt,
             ReadAt = at,
-            // None left is a refusal to come; some left ends one GitHub has lifted.
-            RefusedUntil = remaining <= 0 ? resetAt ?? s.RefusedUntil ?? at + UnknownReset : null,
+            // A secondary hold is a pause of its own: points left say nothing of it. Of the hourly points, none left is a refusal to come and
+            // some left ends one GitHub has lifted.
+            RefusedUntil = s.Secondary && s.RefusedUntil is { } pause && pause > at ? pause
+                : remaining <= 0 ? resetAt ?? s.RefusedUntil ?? at + UnknownReset : null,
+            Secondary = s.Secondary && s.RefusedUntil is { } still && still > at,
         });
     }
 
-    /// <summary>GitHub refused a call: nothing that spends points starts again until <paramref name="resetAt"/> (or <see cref="UnknownReset"/> from now).</summary>
-    public void Refused(DateTimeOffset? resetAt)
+    /// <summary>
+    /// GitHub refused a call: nothing that spends points starts again until <paramref name="resetAt"/>, or the hourly reset GitHub last gave,
+    /// or <see cref="UnknownReset"/> from now. A <paramref name="secondary"/> refusal holds <see cref="UnknownReset"/> from now, whatever the hour says.
+    /// </summary>
+    public void Refused(DateTimeOffset? resetAt, bool secondary = false)
     {
         var at = time.GetUtcNow();
-        Swap(s => s with
-        {
-            Remaining = 0,
-            RefusedUntil = resetAt is { } reset && reset > at ? reset : s.ResetAt is { } known && known > at ? known : at + UnknownReset,
-        });
+        Swap(s => secondary
+            ? s with { RefusedUntil = Later(s.Secondary ? s.RefusedUntil : null, at + UnknownReset), Secondary = true }
+            : s with
+            {
+                Remaining = 0,
+                RefusedUntil = resetAt is { } reset && reset > at ? reset : s.ResetAt is { } known && known > at ? known : at + UnknownReset,
+                Secondary = false,
+            });
     }
+
+    private static DateTimeOffset Later(DateTimeOffset? a, DateTimeOffset b) => a is { } x && x > b ? x : b;
 
     /// <summary>Until when no call that spends points is started; null when calls may go.</summary>
     public DateTimeOffset? HeldUntil()
@@ -98,7 +112,9 @@ public sealed class GhBudget(TimeProvider time)
     /// </summary>
     public string? Holds(IReadOnlyList<string> args) =>
         Spends(args) && HeldUntil() is { } until
-            ? string.Create(CultureInfo.InvariantCulture, $"GraphQL: API rate limit already exceeded; pilot asks GitHub nothing more until {until:HH:mm}Z")
+            ? Current.Secondary
+                ? string.Create(CultureInfo.InvariantCulture, $"GraphQL: secondary rate limit; pilot asks GitHub nothing more until {until:HH:mm}Z")
+                : string.Create(CultureInfo.InvariantCulture, $"GraphQL: API rate limit already exceeded; pilot asks GitHub nothing more until {until:HH:mm}Z")
             : null;
 
     /// <summary>Reads what a finished gh call said: a refusal of the primary or secondary limit holds the calls that spend points.</summary>
@@ -109,7 +125,7 @@ public sealed class GhBudget(TimeProvider time)
         {
             return false;
         }
-        Refused(null);
+        Refused(null, secondary: error.Contains("secondary", StringComparison.OrdinalIgnoreCase));
         return true;
     }
 

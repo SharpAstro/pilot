@@ -221,9 +221,10 @@ public sealed class GhCallLog(GhCallCounter counter, Action<string> write, TimeP
                         write(said);
                     }
                 }
-                catch (Exception ex) when (ex is not OperationCanceledException)
+                catch (Exception) when (!stopping.IsCancellationRequested)
                 {
-                    // GitHub's word is a check on the count, never a reason to stop counting.
+                    // GitHub's word is a check on the count, never a reason to stop counting (a gh that timed out included: a fault here
+                    // would stop the host).
                 }
             }
         }

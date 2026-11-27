@@ -89,9 +89,23 @@ public sealed partial class GhCli
         {
             return new Dictionary<int, IssuePriority>(kept.Levels);
         }
-        var read = await ReadOpenPrioritiesAsync(repoPath, cancellationToken);
-        PrioritiesRead[repoPath] = (now, read);
+        var dropsBefore = PrioritiesDrops.GetValueOrDefault(repoPath);
+        var (read, whole) = await ReadOpenPrioritiesAsync(repoPath, cancellationToken);
+        // Only a whole read is kept (a failed or held one is asked again), and only when no priority was set while it ran.
+        if (whole && PrioritiesDrops.GetValueOrDefault(repoPath) == dropsBefore)
+        {
+            PrioritiesRead[repoPath] = (now, read);
+        }
         return new Dictionary<int, IssuePriority>(read);
+    }
+
+    // How many times each repo's read was dropped by a priority set: a read that began before a drop is not kept.
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, long> PrioritiesDrops = new(StringComparer.OrdinalIgnoreCase);
+
+    private static void DropPriorities(string repoPath)
+    {
+        PrioritiesDrops.AddOrUpdate(repoPath, 1, (_, n) => n + 1);
+        PrioritiesRead.TryRemove(repoPath, out _);
     }
 
     /// <summary>How long a repo's read of its open issues' priorities serves the next ask.</summary>
@@ -100,7 +114,7 @@ public sealed partial class GhCli
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, (DateTimeOffset At, Dictionary<int, IssuePriority> Levels)> PrioritiesRead =
         new(StringComparer.OrdinalIgnoreCase);
 
-    private async Task<Dictionary<int, IssuePriority>> ReadOpenPrioritiesAsync(string repoPath, CancellationToken cancellationToken)
+    private async Task<(Dictionary<int, IssuePriority> Levels, bool Whole)> ReadOpenPrioritiesAsync(string repoPath, CancellationToken cancellationToken)
     {
         var found = new Dictionary<int, IssuePriority>();
         string? after = null;
@@ -114,7 +128,7 @@ public sealed partial class GhCli
             var (exit, output, _) = await RunAsync([.. args], repoPath, cancellationToken);
             if (exit != 0)
             {
-                return found;
+                return (found, false);
             }
             try
             {
@@ -122,7 +136,7 @@ public sealed partial class GhCli
                 if (!doc.RootElement.TryGetProperty("data", out var data) || !data.TryGetProperty("repository", out var repo) || repo.ValueKind != JsonValueKind.Object
                     || !repo.TryGetProperty("issues", out var issues) || issues.ValueKind != JsonValueKind.Object)
                 {
-                    return found;
+                    return (found, false);
                 }
                 foreach (var issue in issues.GetProperty("nodes").EnumerateArray().Where(n => n.ValueKind == JsonValueKind.Object))
                 {
@@ -143,16 +157,16 @@ public sealed partial class GhCli
                 var info = issues.GetProperty("pageInfo");
                 if (!info.TryGetProperty("hasNextPage", out var more) || more.ValueKind != JsonValueKind.True || TextOf(info, "endCursor") is not { } cursor)
                 {
-                    return found;
+                    return (found, true);
                 }
                 after = cursor;
             }
             catch (Exception ex) when (ex is JsonException or KeyNotFoundException or InvalidOperationException)
             {
-                return found;
+                return (found, false);
             }
         }
-        return found;
+        return (found, true);
     }
 
     /// <summary><paramref name="issues"/> with the Priority each open one has on GitHub.</summary>
@@ -175,7 +189,18 @@ public sealed partial class GhCli
 
     public async Task SetIssuePriorityAsync(string repoPath, int number, IssuePriority? level, CancellationToken cancellationToken)
     {
-        PrioritiesRead.TryRemove(repoPath, out _);
+        try
+        {
+            await SetIssuePriorityCoreAsync(repoPath, number, level, cancellationToken);
+        }
+        finally
+        {
+            DropPriorities(repoPath);
+        }
+    }
+
+    private async Task SetIssuePriorityCoreAsync(string repoPath, int number, IssuePriority? level, CancellationToken cancellationToken)
+    {
         var shape = await ReadPriorityShapeAsync(repoPath, number, cancellationToken);
         if (shape is not { FieldId: { } fieldId } || shape.IssueId.Length == 0)
         {

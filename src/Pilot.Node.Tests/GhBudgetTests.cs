@@ -62,6 +62,38 @@ public sealed class GhBudgetTests
     }
 
     [Fact]
+    public void ASecondaryHoldOutlivesAReadOfPointsLeftAndEndsAfterItsOwnPauseNotTheHour()
+    {
+        var clock = new Clock(T0);
+        var budget = new GhBudget(clock);
+        budget.Observe(4500, 5000, T0.AddMinutes(40));
+
+        budget.Saw(["api", "graphql"], 1, "You have exceeded a secondary rate limit").ShouldBeTrue();
+        // What RunAsync does next: GitHub's points are untouched by a secondary limit, and saying so ends nothing.
+        budget.Observe(4000, 5000, T0.AddMinutes(40));
+
+        budget.HeldUntil().ShouldBe(T0 + GhBudget.UnknownReset, "a secondary limit is a short pause, not the hour");
+        budget.Holds(["pr", "view", "1"]).ShouldNotBeNull().ShouldContain("secondary");
+
+        clock.Now = T0 + GhBudget.UnknownReset + TimeSpan.FromSeconds(1);
+        budget.HeldUntil().ShouldBeNull();
+        budget.Observe(3990, 5000, T0.AddMinutes(40));
+        budget.HeldUntil().ShouldBeNull();
+    }
+
+    [Fact]
+    public void APrimaryHoldEndsWhenGitHubSaysPointsAreBack()
+    {
+        var clock = new Clock(T0);
+        var budget = new GhBudget(clock);
+        budget.Saw(["pr", "view", "1"], 1, "GraphQL: API rate limit already exceeded for user ID 1.").ShouldBeTrue();
+        budget.HeldUntil().ShouldNotBeNull();
+
+        budget.Observe(5000, 5000, T0.AddMinutes(60));
+        budget.HeldUntil().ShouldBeNull();
+    }
+
+    [Fact]
     public void ALowBudgetStretchesThePeriodicReadersAndAFullOneDoesNot()
     {
         var clock = new Clock(T0);

@@ -391,7 +391,6 @@ public sealed partial class LegCommander
         return now;
     }
 
-    /// <summary>Reads the Priority field of the flight's issue at a start, and its <c>pilot: priority</c> label where the repo has no field (its PR's is on the row): taking it off puts the flight back under the rules.</summary>
     /// <summary>
     /// How long the minute sweep takes a flight's last read of its issue (priority and labels) as fresh (#1403). The sweep asked again every
     /// minute for each flight a gate held, nine at once on SE1 (2026-11-27), about 1,100 GraphQL points an hour for an answer that had not
@@ -402,6 +401,7 @@ public sealed partial class LegCommander
     // When each flight's issue was last read by PrimeAsync, on the node's clock.
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, DateTimeOffset> _primed = new(StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>Reads the Priority field of the flight's issue at a start, and its <c>pilot: priority</c> label where the repo has no field (its PR's is on the row): taking it off puts the flight back under the rules.</summary>
     /// <param name="fresh">A read younger than this is kept and nothing is asked; null reads every time.</param>
     internal async Task PrimeAsync(FlightRow flight, CancellationToken cancellationToken, TimeSpan? fresh = null)
     {
@@ -426,7 +426,11 @@ public sealed partial class LegCommander
             {
                 var read = await tracker.PriorityAsync(flight.RepoPath, flight.Issue, cancellationToken);
                 var labels = await tracker.LabelsAsync(flight.RepoPath, flight.Issue, cancellationToken);
-                _primed[flight.Code] = time.GetUtcNow();
+                // A read made while GitHub refused answered nothing real (no field, no labels): not taken as fresh, so the next sweep reads again.
+                if (NodeTraffic.Shared.GhBudget.HeldUntil() is null)
+                {
+                    _primed[flight.Code] = time.GetUtcNow();
+                }
                 // A hold put on GitHub while this node was down (or from another node) is read here, before the start is gated: the same hold
                 // row the repo sweep writes, so a held flight starts nothing on a wake before the sweep's first read has got to its repo.
                 // Only a label seen holds: a read that failed answers no labels, and a hold is never released from it.
