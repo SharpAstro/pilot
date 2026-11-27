@@ -127,7 +127,7 @@ public sealed class LiveTextCheckTests
         var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath, DpiScale = 1f };
         var clock = new Clock();
         chrome.TextCheck.Time = clock;
-        // The real time: the page reads its node only while it was drawn lately.
+        // The page's read liveness is stamped on the wall clock whatever `now` is passed, so a pinned `now` would not silence the read; the real time is only a habit here.
         var now = DateTimeOffset.UtcNow;
         chrome.Settings.Load = _ => Task.FromResult(new SettingsPage { File = "settings.json", Settings = [] });
         chrome.Settings.LoadChecks = (_, _) => Task.FromResult(new SetupChecks

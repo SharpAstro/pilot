@@ -94,7 +94,7 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
             return state.Complete(command, null, setting: Row(key, updated), way: $"{key} saved as {value}; the node runs with it already");
         }
         // A role's range is read when a session of it starts: in force for the next one, no restart.
-        if (NodeSettings.IsLayeredKey(key) || key is NodeSettings.MergeMethodKey or NodeSettings.ToastsKey or NodeSettings.StartLimitKey or NodeSettings.PriorityStartLimitKey or NodeSettings.PriorityReposKey or NodeSettings.WeekLimitKey or NodeSettings.WeekPaceKey or NodeSettings.SpendAlertKey or NodeSettings.WatchtowerCompactShareKey or NodeSettings.WatchtowerChatMessagesKey or NodeSettings.WatchtowerCompactIdleKey or NodeSettings.WatchtowerCompactAboveKey
+        if (NodeSettings.IsLayeredKey(key) || key is NodeSettings.MergeMethodKey or NodeSettings.ToastsKey or NodeSettings.McpTransportKey or NodeSettings.StartLimitKey or NodeSettings.PriorityStartLimitKey or NodeSettings.PriorityReposKey or NodeSettings.WeekLimitKey or NodeSettings.WeekPaceKey or NodeSettings.SpendAlertKey or NodeSettings.WatchtowerCompactShareKey or NodeSettings.WatchtowerChatMessagesKey or NodeSettings.WatchtowerCompactIdleKey or NodeSettings.WatchtowerCompactAboveKey
             or NodeSettings.MaintenanceKey or NodeSettings.AcceptFleetFlightsKey or NodeSettings.AutopilotKey or NodeSettings.ReviewDeepFirstKey or NodeSettings.DeleteLandedBranchesKey or NodeSettings.RepoTrackersKey or NodeSettings.NoAutoMergeReposKey or NodeSettings.SubTaskReposKey or NodeSettings.MergeBatchKey or NodeSettings.WorkerLadderKey or NodeSettings.OpusCapKey or NodeSettings.ReviewLimitKey or NodeSettings.OneFlightPerRepoKey or NodeSettings.PrWatchIdleKey or NodeSettings.AdoptAfterKey or NodeSettings.ArchiveLandedAfterKey or NodeSettings.MaintenanceEveryKey or NodeSettings.MaintenanceIdleKey or NodeSettings.PackageAgeDaysKey or NodeSettings.GitPruneDaysKey or NodeSettings.MaintenancePruneHoursKey or NodeSettings.MaxGoAroundsKey or NodeSettings.ScratchDaysKey or NodeSettings.DesignerKeepKey or NodeSettings.DiskAlertGbKey or NodeSettings.FlightCiBudgetKey or NodeSettings.AutopilotCiGrantsKey or NodeSettings.AutopilotStallMinutesKey or NodeSettings.AutopilotInvestigationsKey || NodeSettings.StaleKeys.Contains(key))
         {
             roles.Apply(updated);
@@ -295,6 +295,7 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         NodeSettings.JobMemoryKey => (jobs.MinFreeMemory / (double)(1L << 30)).ToString(CultureInfo.InvariantCulture),
         NodeSettings.MergeMethodKey => roles.MergeMethod,
         NodeSettings.ToastsKey => roles.Toasts,
+        NodeSettings.McpTransportKey => roles.McpTransport,
         NodeSettings.PrWatchIdleKey => NodeSettings.DurationText(roles.PrWatchIdle),
         NodeSettings.AdoptAfterKey => NodeSettings.DurationText(roles.AdoptAfter),
         NodeSettings.MaintenanceEveryKey => roles.MaintenanceEvery is { } every ? NodeSettings.ArchiveDurationText(every) : "off",
@@ -335,7 +336,7 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
     /// <summary>Whether a setting is in force as soon as it is saved, with no restart: a role's range, the merge
     /// method, the start limits, the priority repos, the job limits, maintenance and whether fleet flights are accepted.</summary>
     private static bool Live(string key) => NodeSettings.IsLayeredKey(key)
-        || key is NodeSettings.MergeMethodKey or NodeSettings.ToastsKey or NodeSettings.StartLimitKey or NodeSettings.PriorityStartLimitKey or NodeSettings.PriorityReposKey or NodeSettings.WeekLimitKey or NodeSettings.WeekPaceKey or NodeSettings.SpendAlertKey or NodeSettings.WatchtowerCompactShareKey or NodeSettings.WatchtowerChatMessagesKey or NodeSettings.WatchtowerCompactIdleKey or NodeSettings.WatchtowerCompactAboveKey or NodeSettings.RepoTrackersKey or NodeSettings.NoAutoMergeReposKey or NodeSettings.SubTaskReposKey
+        || key is NodeSettings.MergeMethodKey or NodeSettings.ToastsKey or NodeSettings.McpTransportKey or NodeSettings.StartLimitKey or NodeSettings.PriorityStartLimitKey or NodeSettings.PriorityReposKey or NodeSettings.WeekLimitKey or NodeSettings.WeekPaceKey or NodeSettings.SpendAlertKey or NodeSettings.WatchtowerCompactShareKey or NodeSettings.WatchtowerChatMessagesKey or NodeSettings.WatchtowerCompactIdleKey or NodeSettings.WatchtowerCompactAboveKey or NodeSettings.RepoTrackersKey or NodeSettings.NoAutoMergeReposKey or NodeSettings.SubTaskReposKey
             or NodeSettings.MaxJobsKey or NodeSettings.JobsPerRepoKey or NodeSettings.JobMemoryKey or NodeSettings.JobPriorityKey or NodeSettings.JobPlaneOutputKey or NodeSettings.JobBuildCacheKey or NodeSettings.MaintenanceKey or NodeSettings.AcceptFleetFlightsKey or NodeSettings.AutopilotKey or NodeSettings.ReviewDeepFirstKey or NodeSettings.DeleteLandedBranchesKey or NodeSettings.UserSkillsKey or NodeSettings.ShortcutTokenKey or NodeSettings.MergeBatchKey or NodeSettings.OpusCapKey or NodeSettings.ReviewLimitKey or NodeSettings.OneFlightPerRepoKey or NodeSettings.PrWatchIdleKey or NodeSettings.AdoptAfterKey or NodeSettings.ArchiveLandedAfterKey or NodeSettings.MaintenanceEveryKey or NodeSettings.MaintenanceIdleKey or NodeSettings.PackageAgeDaysKey or NodeSettings.GitPruneDaysKey or NodeSettings.MaintenancePruneHoursKey or NodeSettings.MaxGoAroundsKey or NodeSettings.ScratchDaysKey or NodeSettings.DesignerKeepKey or NodeSettings.DiskAlertGbKey or NodeSettings.FlightCiBudgetKey or NodeSettings.AutopilotCiGrantsKey or NodeSettings.AutopilotStallMinutesKey or NodeSettings.AutopilotInvestigationsKey || NodeSettings.StaleKeys.Contains(key) || NodeSettings.IsBenchKey(key);
 
     // A value as a row carries it: a list's items a line each (a folder may hold a space), else the one value.
@@ -379,6 +380,7 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         NodeSettings.JobBuildCacheKey => NodeSettings.JobBuildCacheDefault ? "on" : "off",
         NodeSettings.MergeMethodKey => "rebase",
         NodeSettings.ToastsKey => NodeSettings.ToastModes[0],
+        NodeSettings.McpTransportKey => NodeSettings.McpTransports[0],
         NodeSettings.StartLimitKey => "90",
         NodeSettings.PriorityStartLimitKey => "98",
         NodeSettings.WeekLimitKey => "90",
@@ -489,6 +491,7 @@ public sealed class NodeSettingsCommands(NodeOptions options, NodeState state, N
         NodeSettings.WatchtowerCompactAboveKey => ("Watchtower idle compaction context", "Thousands of tokens of context the idle watchtower must hold for the idle compaction to be worth its turn", ["50", "100", "150"]),
         NodeSettings.MergeMethodKey => ("Merge method", "How a flight's PR is merged: rebase keeps every commit's subject (docs may cite them), squash makes one commit", [.. NodeSettings.MergeMethods]),
         NodeSettings.ToastsKey => ("Desktop toasts", "Which Ring cards show a Windows toast: all of them, only the urgent ones (burning, losing work, pilot blind), or none. While the desktop cat (or the GUI) shows the cards, normal toasts are skipped and the cat shows them; urgent ones still toast. A sleeping or hidden cat shows nothing, so toasts come back", [.. NodeSettings.ToastModes]),
+        NodeSettings.McpTransportKey => ("MCP transport", "How the sessions the node starts reach pilot's tools: stdio starts a pilot mcp process for each session; http has them call the node's own loopback endpoint (no process per session). Read when a session starts, so a session already running keeps what it had", [.. NodeSettings.McpTransports]),
         NodeSettings.SummaryModelKey => ("Summary model", $"The model of the one call that writes the summary (pilot summary, the Summary card), read at each call. Sonnet, opus or haiku, or a full model id; set for the fleet with --fleet, and this node's own value wins. Built in: {RoleModels.BuiltInSummaryModel}, {RoleModels.SummaryModelWhy}", ["sonnet", "opus", "haiku"]),
         _ when RoleOf(key) is { } role => ($"{Title(role)} range", RangeDetail(role), [.. RoleRange.Line]),
         _ => (key, "", []),

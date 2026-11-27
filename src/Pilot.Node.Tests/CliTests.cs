@@ -447,6 +447,27 @@ public sealed class CliTests : IAsyncLifetime
         (await Pilot(_root, "job", job.Id)).Output.ShouldContain($"in {chess}");
     }
 
+    /// <summary>The node's own endpoint runs commands in the node process: the session to wake is the given session id (the row's), never the process environment's.</summary>
+    [Fact]
+    public async Task PilotRunOwnsTheJobBySessionIdTheHostGaveNotByTheProcessEnvironment()
+    {
+        var runner = _node.App.Services.GetRequiredService<Pilot.Node.Flights.JobRunner>();
+        FakeJobs(runner);
+        await runner.Recovered.WaitAsync(TimeSpan.FromSeconds(10), Ct);
+        _node.State.PutSession(new SessionRow
+        {
+            Id = "c3d4e5f6", SessionId = "c3d4e5f6-0000-4000-8000-000000000000", Name = "hosted", Kind = SessionKind.Background, Cwd = _root,
+            Role = SessionRole.AdHoc, ContextTokens = 0, ContextWindow = 200_000, State = SessionState.Idle, SpendWeighted = 0, StartedAt = DateTimeOffset.UtcNow,
+        });
+        var output = new StringWriter();
+
+        var exit = await PilotCommand.RunAsync(["--node-socket", _node.SocketPath, "run", "--", "echo hosted"], _root, output, new StringWriter(), Ct, sessionId: "c3d4e5f6-0000-4000-8000-000000000000");
+
+        exit.ShouldBe(0, output.ToString());
+        var job = await TheJobUntil(j => j.EndedAt is not null, "the job did not end");
+        job.Owner.ShouldBe("c3d4e5f6");
+    }
+
     [Fact]
     public async Task PilotRunCwdOfAMissingFolderIsRefusedNamingTheResolvedPathAndQueuesNothing()
     {

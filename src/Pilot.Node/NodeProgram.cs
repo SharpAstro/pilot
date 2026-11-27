@@ -25,12 +25,21 @@ public static class NodeProgram
 
         if (!NodeLock.TryAcquire(options.SocketPath, out var held, out var refusal))
         {
-            Say($"pilot-node {FileJournal.RunningVersion}: {await NodeHolder.DescribeAsync(options.SocketPath, refusal, cancellationToken)}");
+            var holder = await NodeHolder.DescribeAsync(options.SocketPath, refusal, cancellationToken);
+            Say($"pilot-node {FileJournal.RunningVersion}: {holder}");
+            // This process never took the lock, so the run record is the holder's and stays untouched; the refusal is kept in the start log.
+            AppendStartLog(options, $"pilot-node {FileJournal.RunningVersion} exited, already running: {holder}");
             return NodeExitCodes.AlreadyRunning;
         }
 
         using (held)
         {
+            // Before anything else is logged: the previous run's record is read (no exit reason = it vanished) and this run's is written (#1377).
+            var exit = NodeExitRecord.For(options.DataFolder);
+            using var ends = NodeEnds.Register(Say, exit);
+            var facts = NodeEnds.Facts(FileJournal.RunningVersion);
+            exit.Begin(facts, log.Path);
+            Say($"pilot-node: started as pid {facts.Pid}, parent {facts.Parent ?? "unknown"}; how: {facts.StartedHow}; job: {facts.Job ?? "none"}");
             // The skills this release carries, kept current at every start (an update restarts the node), unless the person
             // turned user-skills off; a hand edit is kept. Never a reason to stop the start.
             if (options.Saved?.UserSkills ?? true)
@@ -85,6 +94,7 @@ public static class NodeProgram
             catch (StoreTooNewException refused)
             {
                 trial?.Forgive();
+                NodeExitRecord.For(options.DataFolder).Planned($"refused to start: {refused.Message}");
                 say($"pilot-node: {refused.Message}");
                 LogRefusal(options, refused);
                 return NodeExitCodes.StoreTooNew;
@@ -137,6 +147,7 @@ public static class NodeProgram
     private static int? GoBack(NodeOptions options, Action<string> say, UpdateRollback rollback, UpdateTrial trial)
     {
         var restore = rollback.Restore(trial.Record);
+        NodeExitRecord.For(options.DataFolder).Planned($"update rolled back: {restore.Message}");
         say($"pilot-node: update: {restore.Message}");
         AppendStartLog(options, $"pilot-node {FileJournal.RunningVersion} update: {restore.Message}{ErrorOf(trial)}");
         return restore.Restored ? NodeExitCodes.Stopped : null;

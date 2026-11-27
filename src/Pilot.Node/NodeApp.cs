@@ -23,9 +23,19 @@ public static partial class NodeApp
 
         // No args: the command line is the node's own (NodeOptions), not configuration for the host to read.
         var builder = WebApplication.CreateSlimBuilder(new WebApplicationOptions { Args = [], ContentRootPath = AppContext.BaseDirectory });
+        // pilot's MCP server over loopback HTTP (#1385), on its own port: checked first, as a port another program holds would
+        // fail the whole host; then the sessions stay on stdio.
+        string? mcpTaken = null;
+        // A local-only node binds nothing, so it has no port to name as taken either.
+        var mcpWanted = options.McpPort > 0 && !options.LocalOnly;
+        var mcpBound = mcpWanted && McpHttp.TryBind(options.McpPort, out mcpTaken);
         builder.WebHost.ConfigureKestrel(kestrel =>
         {
             kestrel.ListenOnNodeSocket(held);
+            if (mcpBound)
+            {
+                kestrel.Listen(System.Net.IPAddress.Loopback, options.McpPort);
+            }
             if (options.Lan)
             {
                 // Every address, as a LAN client may come by any of this machine's: what it may do there is NodeLan's.
@@ -71,9 +81,20 @@ public static partial class NodeApp
         AddUpdates(builder, options);
         AddSettings(builder, options);
         AddSessions(builder, options, logWriter);
+        builder.Services.AddSingleton<McpHttp>();
         configure?.Invoke(builder);
 
         var app = builder.Build();
+        var mcp = app.Services.GetRequiredService<McpHttp>();
+        mcp.Serving = mcpBound;
+        if (mcpWanted && !mcpBound)
+        {
+            app.Services.GetRequiredService<ILogger<McpHttp>>().LogWarning("{Message}", McpHttp.TakenMessage(options.McpPort, mcpTaken));
+        }
+        if (mcpBound)
+        {
+            app.Services.GetRequiredService<ILogger<McpHttp>>().LogInformation("mcp: serving pilot's MCP server on {Url}", mcp.Url);
+        }
         app.UseWebSockets();
         app.RestrictNodeSocketToItsOwner(held);
         app.UseNodeAccessGate(LanPolicy);
@@ -94,22 +115,8 @@ public static partial class NodeApp
     /// </summary>
     private static readonly NodeAccessPolicy LanPolicy = new NodeAccessPolicy
     {
-        Classify = context =>
-        {
-            var path = context.Request.Path.Value ?? "";
-            var get = HttpMethods.IsGet(context.Request.Method);
-            var post = HttpMethods.IsPost(context.Request.Method);
-            var watching = get && (path is NodeWire.NodeRoute or NodeWire.SessionsRoute or NodeWire.EventsRoute || path.StartsWith(NodeWire.GrantsRoute + "/", StringComparison.Ordinal));
-            // The repos and their issues name this machine's folders, and a transcript is a session's words: read for a
-            // grant, as a command is made with one.
-            var granted = get && (path is NodeWire.ReposRoute or NodeWire.RepoStatusRoute or NodeWire.IssuesRoute or NodeWire.ChatRoute
-                || path.StartsWith(NodeWire.SessionsRoute + "/", StringComparison.Ordinal) && path.EndsWith("/transcript", StringComparison.Ordinal)
-                || path.StartsWith(NodeWire.AttachmentsRoute + "/", StringComparison.Ordinal)
-                || path.StartsWith(NodeWire.JobsRoute + "/", StringComparison.Ordinal) && (path.EndsWith("/log", StringComparison.Ordinal) || path.Contains("/artifacts/", StringComparison.Ordinal)));
-            return watching || (post && path == NodeWire.GrantsRoute) ? NodeRouteAccess.Open
-                : (post && path is NodeWire.CommandsRoute or NodeWire.AttachmentsRoute) || granted ? NodeRouteAccess.Command
-                : NodeRouteAccess.ThisMachineOnly;
-        },
+        Classify = context => Classify(context.Request.Path.Value ?? "", context.Request.Method, context.Connection.LocalPort, context.Connection.RemoteIpAddress,
+            context.RequestServices.GetRequiredService<NodeOptions>().McpPort),
         MayCommand = async context =>
         {
             if (await context.RequestServices.GetRequiredService<NodeLan>().VerifyAsync(context) is not { } grant)
@@ -128,11 +135,40 @@ public static partial class NodeApp
         },
     };
 
+    /// <summary>
+    /// What a request may do, by its path and where it came in. The MCP loopback port (#1385) carries <c>/mcp</c> and nothing
+    /// else: there <c>/mcp</c> from loopback is open (the route checks the session's token itself) and every other path is this
+    /// machine's only, which a TCP request never is. Off that port <c>/mcp</c> is this machine's only too.
+    /// </summary>
+    internal static NodeRouteAccess Classify(string path, string method, int localPort, System.Net.IPAddress? remote, int mcpPort)
+    {
+        if (mcpPort > 0 && localPort == mcpPort)
+        {
+            return path == NodeWire.McpRoute && remote is not null && System.Net.IPAddress.IsLoopback(remote) ? NodeRouteAccess.Open : NodeRouteAccess.ThisMachineOnly;
+        }
+        var get = HttpMethods.IsGet(method);
+        var post = HttpMethods.IsPost(method);
+        var watching = get && (path is NodeWire.NodeRoute or NodeWire.SessionsRoute or NodeWire.EventsRoute || path.StartsWith(NodeWire.GrantsRoute + "/", StringComparison.Ordinal));
+        // The repos and their issues name this machine's folders, and a transcript is a session's words: read for a
+        // grant, as a command is made with one.
+        var granted = get && (path is NodeWire.ReposRoute or NodeWire.RepoStatusRoute or NodeWire.IssuesRoute or NodeWire.ChatRoute
+            || path.StartsWith(NodeWire.SessionsRoute + "/", StringComparison.Ordinal) && path.EndsWith("/transcript", StringComparison.Ordinal)
+            || path.StartsWith(NodeWire.AttachmentsRoute + "/", StringComparison.Ordinal)
+            || path.StartsWith(NodeWire.JobsRoute + "/", StringComparison.Ordinal) && (path.EndsWith("/log", StringComparison.Ordinal) || path.Contains("/artifacts/", StringComparison.Ordinal)));
+        return watching || (post && path == NodeWire.GrantsRoute) ? NodeRouteAccess.Open
+            : (post && path is NodeWire.CommandsRoute or NodeWire.AttachmentsRoute) || granted ? NodeRouteAccess.Command
+            : NodeRouteAccess.ThisMachineOnly;
+    }
+
     /// <summary>How long <c>GET /api/v1/sessions</c> waits for the tracker's first poll.</summary>
     private static readonly TimeSpan FirstPollBudget = TimeSpan.FromSeconds(10);
 
     private static void MapRoutes(WebApplication app)
     {
+        // pilot's MCP server for the sessions the node starts (#1385): one JSON-RPC message a POST; no GET stream, so a GET is 405.
+        app.MapPost(NodeWire.McpRoute, (HttpContext context, McpHttp mcp) => mcp.AnswerAsync(context, context.RequestAborted));
+        app.MapGet(NodeWire.McpRoute, (HttpContext context) => McpHttp.NoStream(context));
+
         // A hook's stdin, forwarded by `pilot-node hook`: the session it names takes the hook's state, and the tracker
         // looks again now. 204, so a hook never learns anything worth failing over; but a Stop in a plane with files
         // not committed is answered with the decision that sends the session back to commit them (StopGate), and a permission
@@ -468,21 +504,34 @@ public static partial class NodeApp
         Results.Json(ResponseEnvelope<CommandResult>.Fail(error), PilotJsonContext.Default.ResponseEnvelopeCommandResult, statusCode: 400);
 }
 
-/// <summary>Says the node's start (version, socket, data folder, LAN port) and its stop in <c>logs/node.log</c> (pilot #416).</summary>
-internal sealed class NodeLifecycleLog(NodeOptions options, RollingLog log) : IHostedService
+/// <summary>Says the node's start (version, socket, data folder, LAN port) and its stop in <c>logs/node.log</c> (pilot #416), and keeps the run record (#1377).</summary>
+internal sealed class NodeLifecycleLog(NodeOptions options, RollingLog log, IServiceProvider services) : IHostedService
 {
+    public const string DownKind = "node-down";
+    public const string JobKind = "node-in-job";
+    public const string RestartLoopKind = "node-restart-loop";
+
     public Task StartAsync(CancellationToken cancellationToken)
     {
+        var exit = NodeExitRecord.For(options.DataFolder);
+        if (!exit.Begun)
+        {
+            // A host a test builds, or any start that did not come through NodeProgram: the record starts here.
+            exit.Begin(NodeEnds.Facts(FileJournal.RunningVersion), log.Path);
+        }
         if (ClaudeWorkerLauncher.SweepBriefs(ClaudeWorkerLauncher.BriefFolderIn(options.DataFolder), ClaudeWorkerLauncher.BriefFileLife, DateTime.UtcNow) is > 0 and var swept)
         {
             log.Write($"pilot-node: removed {swept} brief file(s) older than {ClaudeWorkerLauncher.BriefFileLife.TotalDays:0} days");
         }
         log.Write($"pilot-node: start, version {FileJournal.RunningVersion}, socket {options.SocketPath}, data folder {options.DataFolder}, LAN {(options.Lan ? $"port {options.LanPort}" : "off")}");
+        exit.RaiseCards(services.GetService<NodeState>(), line => log.Write(line));
         return Task.CompletedTask;
     }
 
     public Task StopAsync(CancellationToken cancellationToken)
     {
+        // The reason a restart, an update or a signal gave stays; a plain stop says so.
+        NodeExitRecord.For(options.DataFolder).Planned("stop");
         log.Write("pilot-node: stop");
         return Task.CompletedTask;
     }
