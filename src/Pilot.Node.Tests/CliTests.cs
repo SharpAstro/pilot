@@ -523,30 +523,28 @@ public sealed class CliTests : IAsyncLifetime
         await Ok(Repo, "flight", "create", "1611", "Planets", "on", "the", "GPU");
         await _node.PlannedAsync();
 
-        await Ok(_root, "bench", "tianwen", "--ref", "HEAD", "--", "echo", "benched");
-        await BenchesEnded(1);
-        await Ok(_root, "bench", "tianwen", "--ref", "HEAD", "--local", "--", "echo", "benched");
-        await BenchesEnded(2);
+        var benchRun = _node.App.Services.GetRequiredService<Pilot.Node.Flights.BenchRun>();
+        var first = await BenchRemoved(benchRun, [], "--ref", "HEAD", "--", "echo", "benched");
+        await BenchRemoved(benchRun, [first], "--ref", "HEAD", "--local", "--", "echo", "benched");
 
         var benches = _node.State.Jobs().Where(j => j.Kind == JobKind.Bench).OrderBy(j => j.StartedAt).ToArray();
         benches.Select(j => j.Local).ShouldBe([false, true]);
         // The worktrees go after the card: the folder is not left behind for the next test.
-        for (var i = 0; Directory.Exists(Path.Combine(Repo, ".claude", "worktrees", "b1")) || Directory.Exists(Path.Combine(Repo, ".claude", "worktrees", "b2")); i++)
-        {
-            i.ShouldBeLessThan(1500, "the bench worktrees are still there");
-            await Task.Delay(20, Ct);
-        }
+        Directory.Exists(Path.Combine(Repo, ".claude", "worktrees", "b1")).ShouldBeFalse("bench worktree b1 is still there");
+        Directory.Exists(Path.Combine(Repo, ".claude", "worktrees", "b2")).ShouldBeFalse("bench worktree b2 is still there");
     }
 
-    // The jobs, not the cards: a second bench of the same repo raises no card of its own while the first one's is open.
-    // The wait is generous because a bench is a git worktree and a shell on a machine that may be busy.
-    private async Task BenchesEnded(int count)
+    // Queues a bench and awaits the node's own signal that it ended and its worktrees are removed (no folder or job-state poll);
+    // a worktree still there fails the test with the reason the node gives. The wait is generous because a bench is a git
+    // worktree and a shell on a machine that may be busy.
+    private async Task<string> BenchRemoved(Pilot.Node.Flights.BenchRun benchRun, string[] known, params string[] args)
     {
-        for (var i = 0; _node.State.Jobs().Count(j => j.Kind == JobKind.Bench && j.State == JobState.Succeeded) < count; i++)
-        {
-            i.ShouldBeLessThan(4500, "the benches did not end");
-            await Task.Delay(20, Ct);
-        }
+        await Ok(_root, ["bench", "tianwen", .. args]);
+        var jobId = _node.State.Jobs().Single(j => j.Kind == JobKind.Bench && !known.Contains(j.Id)).Id;
+        var removals = await benchRun.WorktreesRemoved(jobId).WaitAsync(TimeSpan.FromSeconds(90), Ct);
+        var held = removals.Where(r => r.Why is not null).Select(r => $"{r.Worktree}: {r.Why}").ToArray();
+        held.ShouldBeEmpty($"bench {jobId} left worktrees behind: {string.Join("; ", held)}");
+        return jobId;
     }
 
     [Theory]
