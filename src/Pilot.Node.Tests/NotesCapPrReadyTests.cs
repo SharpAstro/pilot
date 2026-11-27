@@ -53,7 +53,7 @@ public sealed class NotesCapPrReadyTests : ReviewTestsBase
 
         (await Run(Verbs.Review, Verbs.FlightTarget(flight.Code), Reviewer(flight.Code), "pass", Notes)).Error.ShouldBeNull();
         _github.Pr = _github.Pr! with { Head = F(flight.Code).Review!.ReviewedHead! };
-        _github.Merge = new MergeState(MergeKinds.Ready);
+        _github.Merge = GhAnswers.MergeState(MergeKinds.Ready);
         await Checks().LookAsync(Ct);
 
         PrReadyCards(flight.Code).ShouldBeEmpty();
@@ -100,7 +100,7 @@ public sealed class NotesCapPrReadyTests : ReviewTestsBase
         // A card an earlier release raised, still in the store after the update.
         _state.RaiseCard(CardBin.ForYou, LegCommander.PrReady, subject, $"{flight.Code} is holding for its review notes", "Holding.",
             [new CardChoice { Label = "Merge", Verb = Verbs.Merge, Target = subject, Args = [reviewed, "squash"] }]);
-        _github.Merge = new MergeState(MergeKinds.Ready);
+        _github.Merge = GhAnswers.MergeState(MergeKinds.Ready);
 
         await Checks().LookAsync(Ct);
 
