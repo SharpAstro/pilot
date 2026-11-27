@@ -77,9 +77,9 @@ public sealed class DesktopCatSectionTests : IDisposable
     private static void Render(PilotChrome<RgbaImage> chrome, int width, int height) =>
         chrome.Render(new SessionsScreen([], "test", Live.At), new RectF32(0, 0, width, height));
 
-    private static void Click(PilotChrome<RgbaImage> chrome, string action)
+    private static void Click(PilotChrome<RgbaImage> chrome, string action, int height = 1400)
     {
-        Render(chrome, 1280, 1400);
+        Render(chrome, 1280, height);
         var regions = new List<ClickableRegion>();
         chrome.Settings.CollectPaintedRegions(regions);
         var at = regions.FindIndex(r => r.Result is HitResult.ButtonHit b && b.Action == action);
@@ -160,17 +160,17 @@ public sealed class DesktopCatSectionTests : IDisposable
     [Fact]
     public async Task WakeNowClearsTheSnooze()
     {
-        using var renderer = new RgbaImageRenderer(1280, 1400);
+        using var renderer = new RgbaImageRenderer(1280, 2400);
         var source = Source(new BuddySettings().WithSnooze(1, Now, TimeZoneInfo.Utc));
-        var chrome = await LoadedAsync(renderer, source, 1280, 1400);
-        // The section's rows alone (every key holds "buddy"): with Placement and Size it no longer ends inside the page's first screen.
+        var chrome = await LoadedAsync(renderer, source, 1280, 2400);
+        // The section's rows alone (every key holds "buddy"): the page is taller than the first screen, so the capture is taller too.
         chrome.Settings.Search.Text = "buddy";
         chrome.Settings.Search.CursorPos = 5;
         var texts = Texts(chrome, renderer);
         texts.ShouldContain("Snoozed until");
         texts.ShouldContain("Wake now");
 
-        Click(chrome, "settings:buddy-wake-now");
+        Click(chrome, "settings:buddy-wake-now", 2400);
         BuddySettings.Load(FilePath).SnoozedUntil.ShouldBeNull();
         var after = Texts(chrome, renderer);
         after.ShouldNotContain("Snoozed until");
