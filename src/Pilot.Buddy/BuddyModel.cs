@@ -101,6 +101,9 @@ public sealed class BuddyModel(TimeProvider time)
     /// </summary>
     public void Badge(string id) => _badged.Add(id);
 
+    /// <summary>The ids held as a badge, a copy: the feed rebuilds the set from the mirror at each fold.</summary>
+    public IReadOnlyList<string> BadgedIds => [.. _badged];
+
     /// <summary>Takes a card off the badge (it shows as a bubble now, or is gone); true when it was on it.</summary>
     public bool Unbadge(string id) => _badged.Remove(id);
 

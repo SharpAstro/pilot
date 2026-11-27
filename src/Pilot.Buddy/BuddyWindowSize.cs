@@ -30,6 +30,11 @@ public static class BuddyWindowSize
             .Select(i => new PeekRow(i % 3 == 0 ? PeekState.Asking : PeekState.Working, "SE1", "review of PR #1351 in SharpAstro/pilot " + LongWord, "working 12 h 30 min", null)).ToList();
         var peek = PeekCard.Build(pen, new PeekView(3, rows.Count, rows));
         Take(peek.Width, peek.Height);
+        // The hover list at its worst: the most rows, each with a long title and a long place (#1381 section 10: the bubble is never cut by the window).
+        var hoverRows = Enumerable.Range(0, HoverCard.MaxRows + 2)
+            .Select(i => new HoverRow("CI failed on the parser leg and the watchtower asks you " + LongWord, "flight DIR330 leg " + LongWord, "since 12 h 30 min", null)).ToList();
+        var hover = HoverCard.Build(pen, new HoverView("9 need you " + LongWord, "12 sessions working on 3 nodes. " + LongWord, hoverRows));
+        Take(hover.Width, hover.Height);
         var settings = SettingsCard.Build(pen, new BuddySettings());
         Take(settings.Width, settings.Height);
 

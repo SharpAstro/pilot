@@ -17,6 +17,9 @@ public sealed class ChatCard : BuddyCard
     /// <summary>The most lines of a question, an answer and a refusal.</summary>
     public const int MaxQuestionLines = 3, MaxAnswerLines = 6, MaxRefusalLines = 2;
 
+    /// <summary>The hit id of the link that opens the peek card.</summary>
+    public const string SessionsId = "sessions";
+
     private bool _ask;
 
     private ChatCard()
@@ -85,6 +88,9 @@ public sealed class ChatCard : BuddyCard
             y += 6;
             y = card.Link(pen, BuddyChat.WhatsGoingOn, "whatsgoing", y, inner, arrow: false);
         }
+        // The peek card is one link away now that a click on the cat opens the chat.
+        y += 6;
+        y = card.Link(pen, "Sessions", SessionsId, y, inner, arrow: false);
         card.Height = y + Padding;
         return card;
     }

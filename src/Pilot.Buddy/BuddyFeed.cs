@@ -19,6 +19,19 @@ public enum PeekState
 /// <summary>One row of the peek card: which node, what it does, and how it stands. <paramref name="Link"/> is what a press hands the GUI.</summary>
 public sealed record PeekRow(PeekState State, string Node, string What, string Status, string? Link);
 
+/// <summary>One row of the hover list: an open card the badge counts. <paramref name="Link"/> is what a press hands the GUI.</summary>
+public sealed record HoverRow(string Title, string Where, string Age, string? Link);
+
+/// <summary>
+/// What the hover says: <paramref name="Headline"/> ("2 need you" or "Nothing needs you right now"), <paramref name="Detail"/> (the working line, and Grump's
+/// "Go away." with nothing open) and the <paramref name="Rows"/> the badge counts.
+/// </summary>
+public sealed record HoverView(string Headline, string Detail, IReadOnlyList<HoverRow> Rows)
+{
+    /// <summary>The whole hover as one string: the headline, a colon and the rows when there are some, else the headline and the detail.</summary>
+    public string Text => Rows.Count == 0 ? $"{Headline}. {Detail}" : $"{Headline}: {string.Join("; ", Rows.Select(r => r.Title))}. {Detail}";
+}
+
 /// <summary>The peek card's content: the header's counts and the rows, asking first.</summary>
 public sealed record PeekView(int Nodes, int Sessions, IReadOnlyList<PeekRow> Rows)
 {
@@ -209,6 +222,17 @@ public sealed class BuddyFeed(BuddyModel model, TimeProvider time, Func<BuddySet
             _told.Remove(gone);
             model.Clear(CardNoticeId(gone));
         }
+        // #1381 section 10: the badge is what the mirror's open Ring cards say now, rebuilt at each fold (and so on a reconnect snapshot), never only grown:
+        // a badge for a card that is not open in the mirror (closed while disconnected, its wake switched off) is taken off.
+        foreach (var id in model.BadgedIds)
+        {
+            var cardId = id.StartsWith("card:", StringComparison.Ordinal) ? id["card:".Length..] : id;
+            if (!_mirror.Cards.TryGetValue(cardId, out var held) || held.Bin != CardBin.Ring || held.State != CardState.Open)
+            {
+                _told.Remove(cardId);
+                model.Unbadge(id);
+            }
+        }
     }
 
     private BuddyNotice NoticeOf(CardRow card)
@@ -237,14 +261,45 @@ public sealed class BuddyFeed(BuddyModel model, TimeProvider time, Func<BuddySet
         }
     }
 
-    /// <summary>The one-line summary the hover shows: the first line of the fleet summary the watchtower keeps, or null before it has one.</summary>
-    public string? Summary
+    /// <summary>What the hover says when nothing is open, and Grump's line after it.</summary>
+    public const string NothingOpen = "Nothing needs you right now", GoAway = "Go away.";
+
+    /// <summary>
+    /// The hover's text, built from the cat's own state (the open Ring cards the feed folds and the sessions it mirrors), never from the first line of the
+    /// watchtower's summary (that is the heading "## Needs you", #1381 section 9). Never a bare heading.
+    /// </summary>
+    public string Summary => Hover().Text;
+
+    /// <summary>
+    /// The hover view: the headline and the list of what the count badge counts, one row per open Ring card (title, flight or leg, age), newest first.
+    /// With none open it is "Nothing needs you right now", the working line and "Go away.".
+    /// </summary>
+    public HoverView Hover()
     {
-        get
+        var now = time.GetUtcNow();
+        var open = _mirror.Cards.Values.Where(c => c.Bin == CardBin.Ring && c.State == CardState.Open).OrderByDescending(c => c.RungAt).ToList();
+        var working = Peek().Rows.Count(r => r.State == PeekState.Working);
+        var working1 = working == 0 ? "No sessions are working" : $"{working} {(working == 1 ? "session" : "sessions")} working on {NodeCount} {(NodeCount == 1 ? "node" : "nodes")}";
+        if (open.Count == 0)
         {
-            var row = _mirror.Summaries.TryGetValue(SummaryRow.FleetScope, out var fleet) ? fleet : _mirror.Summaries.Values.FirstOrDefault();
-            return row?.Markdown.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).FirstOrDefault()?.TrimStart('#', ' ', '*', '-');
+            return new HoverView(NothingOpen, working1 + ". " + GoAway, []);
         }
+        var rows = open.Select(c => new HoverRow(c.Title, WhereOf(c.Subject), "since " + Duration(now - c.RungAt), CardLink(c.Id))).ToList();
+        var headline = $"{open.Count} {(open.Count == 1 ? "needs" : "need")} you";
+        return new HoverView(headline, working1 + ".", rows);
+    }
+
+    /// <summary>"flight TIA1611 leg parser" for a card's subject target (<c>flight/TIA1611/parser</c>); a session or other subject says its own kind.</summary>
+    private static string WhereOf(string subject)
+    {
+        var parts = subject.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        return parts.Length switch
+        {
+            0 => string.Empty,
+            1 => parts[0],
+            2 => $"{parts[0]} {parts[1]}",
+            _ => parts[0] == "flight" ? $"flight {parts[1]} leg {parts[2]}" : string.Join(' ', parts),
+        };
     }
 
     /// <summary>

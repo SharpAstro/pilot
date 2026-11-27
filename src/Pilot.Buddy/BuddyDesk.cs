@@ -165,8 +165,12 @@ public sealed class BuddyDesk(
         DeskCard.Peek => pen => PeekCard.Build(pen, feed.Peek()),
         DeskCard.Settings => pen => SettingsCard.Build(pen, settings()),
         DeskCard.Chat => pen => ChatCard.Build(pen, chat),
+        _ when HoverShows => pen => HoverCard.Build(pen, feed.Hover()),
         _ => null,
     };
+
+    /// <summary>True while the hover list shows in the card's place: the pointer is on the cat (or the list), it sleeps with one eye open and no card is open.</summary>
+    private bool HoverShows => Card == DeskCard.None && model.Hovering && model.Mood == BuddyMood.OneEyeOpen;
 
     /// <summary>
     /// What the open card (or the hover summary) would draw, as one string: the frame policy compares it with the last frame's, so a session that began
@@ -177,7 +181,7 @@ public sealed class BuddyDesk(
         DeskCard.Peek => feed.Peek() is { } peek ? "peek|" + peek.Header + "|" + string.Join('|', peek.Rows.Select(r => $"{r.State},{r.Node},{r.What},{r.Status}")) : "peek",
         DeskCard.Chat => $"chat|{chat.Input}|{chat.Answer}|{chat.Refused}|{chat.DisabledReason}|{chat.Working}|{chat.PendingAsk?.Question}",
         DeskCard.Settings => "settings|" + settings(),
-        _ => model.Hovering && model.Mood == BuddyMood.OneEyeOpen ? "summary|" + feed.Summary : string.Empty,
+        _ => HoverShows ? "hover|" + feed.Hover().Text : string.Empty,
     };
 
     private void Changed() => Interlocked.Increment(ref _version);
@@ -199,8 +203,19 @@ public sealed class BuddyDesk(
             window.MoveBy((int)MathF.Round(x - grab.X), (int)MathF.Round(y - grab.Y));
             return;
         }
-        var over = TargetAt(x, y).Kind is TargetKind.Cat or TargetKind.Zzz or TargetKind.Cushion;
+        var over = TargetAt(x, y).Kind is TargetKind.Cat or TargetKind.Zzz or TargetKind.Cushion || OnHoverList(x, y);
         SetHover(over);
+    }
+
+    // The hover list stays while the pointer travels to it from the cat, over the gap between them, so a row can be pressed.
+    private bool OnHoverList(float x, float y)
+    {
+        if (!HoverShows || Geometry?.Card is not { } box)
+        {
+            return false;
+        }
+        var gap = BuddyScene.BubbleGap * Geometry.Layout.Scale;
+        return x >= box.X - gap && x < box.X + box.W + gap && y >= box.Y - gap && y < box.Y + box.H + gap;
     }
 
     /// <summary>The pointer left the window.</summary>
@@ -259,7 +274,8 @@ public sealed class BuddyDesk(
             case TargetKind.Cat:
             case TargetKind.Zzz:
             case TargetKind.Cushion:
-                Open(Card != DeskCard.None ? DeskCard.None : model.Current is { Kind: NoticeKind.Ask or NoticeKind.Trouble } ? DeskCard.Chat : DeskCard.Peek);
+                // #1381 section 5: the chat is always reachable, from a sleeping or idle cat too (the input focused); the peek card is one link away.
+                Open(Card != DeskCard.None ? DeskCard.None : DeskCard.Chat);
                 break;
             case TargetKind.BubbleButton:
                 PressBubbleButton(up.Id!);
@@ -346,6 +362,20 @@ public sealed class BuddyDesk(
                     changeSettings(changed);
                     Changed();
                 }
+                break;
+            case DeskCard.None when HoverShows && id.StartsWith("row:", StringComparison.Ordinal) && int.TryParse(id.AsSpan(4), out var hoverRow):
+                // A row of the hover list hands the GUI that card's link.
+                var hoverRows = feed.Hover().Rows;
+                if (hoverRow >= 0 && hoverRow < hoverRows.Count)
+                {
+                    HandOff(hoverRows[hoverRow].Link ?? string.Empty, null);
+                }
+                break;
+            case DeskCard.Peek when id == PeekCard.TalkId:
+                Open(DeskCard.Chat);
+                break;
+            case DeskCard.Chat when id == ChatCard.SessionsId:
+                Open(DeskCard.Peek);
                 break;
             case DeskCard.Peek when id.StartsWith("row:", StringComparison.Ordinal) && int.TryParse(id.AsSpan(4), out var row):
                 var rows = feed.Peek().Rows;

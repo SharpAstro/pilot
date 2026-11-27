@@ -336,7 +336,7 @@ internal sealed class BuddyHost : IBuddyWindow, IDisposable
     private void DrawFrame()
     {
         var palette = BuddyTheme.PaletteFor(_theme);
-        var view = BuddyScene.ViewOf(_model, _feed.Summary);
+        var view = BuddyScene.ViewOf(_model);
         var corner = _settings.SceneCorner;
         var catSize = MathF.Min(_settings.SizeScale, _measuredCatSize);
         _policy.Time(() =>

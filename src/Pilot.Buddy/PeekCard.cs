@@ -16,6 +16,12 @@ public sealed class PeekCard : BuddyCard
     /// <summary>The icon's size, and the gap after it.</summary>
     public const float IconSize = 14, IconGap = 6, RowGap = 6;
 
+    /// <summary>The Talk button: its hit id, its label and its height.</summary>
+    public const string TalkId = "talk", TalkLabel = "Talk";
+
+    /// <summary>The Talk button's height.</summary>
+    public const float TalkHeight = 28;
+
     /// <summary>What the card says with no session at all.</summary>
     public const string Empty = "No sessions are running.";
 
@@ -63,6 +69,17 @@ public sealed class PeekCard : BuddyCard
             card.AddLine(pen, $"+ {view.Rows.Count - shown} more in the GUI", Padding, y, inner, 13, CardTone.Muted);
             y += rowH + RowGap;
         }
+        // The Talk button opens the chat (#1381 section 5); it is always there, even with no session.
+        y += 2;
+        card.Items.Add(new CardItem(CardItemKind.Box, Padding, y, inner, TalkHeight));
+        var lineH = LineHeight(pen, 13);
+        var talkW = pen.Measure(TalkLabel, 13).Width;
+        var talkX = Padding + (inner - talkW) / 2;
+        var talkY = y + (TalkHeight - lineH) / 2;
+        card.Items.Add(new CardItem(CardItemKind.Text, talkX, talkY, talkW + 1, lineH, TalkLabel, 13, CardTone.Button));
+        card.Lines.Add(new CardLine(TalkLabel, talkX, talkY, talkW + 1, lineH, 13));
+        card.Hits.Add(new CardHit(TalkId, Padding, y, inner, TalkHeight));
+        y += TalkHeight + RowGap;
         card.Height = y - RowGap + Padding;
         return card;
     }
