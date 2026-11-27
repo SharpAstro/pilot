@@ -58,7 +58,7 @@ internal sealed class NodeExitRecord(string dataFolder, TimeProvider time)
             say($"pilot-node: {end.Said}");
             state?.RaiseCard(CardBin.ForYou, NodeLifecycleLog.DownKind, Verbs.NodeTarget, end.Title,
                 $"{char.ToUpperInvariant(end.Said[0])}{end.Said[1..]}. Nothing in the log or the run record says why: it was ended from outside (TerminateProcess, a process-tree kill) or its console or job closed.",
-                [new CardChoice { Label = "Noted", Verb = Verbs.Dismiss, Target = "" }],
+                [new CardChoice { Label = "I have seen it", Verb = Verbs.Dismiss, Target = "" }],
                 cause: $"node-down:{end.Previous.Pid}:{end.Previous.StartedAt:O}");
         }
         if (_own is { Job: { } job } && job.Contains("kills", StringComparison.Ordinal))
@@ -66,7 +66,7 @@ internal sealed class NodeExitRecord(string dataFolder, TimeProvider time)
             say($"pilot-node: this node runs {job}; parent {_own.Parent ?? "unknown"}");
             state?.RaiseCard(CardBin.ForYou, NodeLifecycleLog.JobKind, Verbs.NodeTarget, "The node runs inside a job that ends it when the job closes",
                 $"Started by {_own.Parent ?? "an unknown parent"} ({_own.StartedHow}), the node is {job}. When whatever owns that job ends (a Claude Code session, a console), the node ends with it. Start it from the GUI's autostart or a task instead.",
-                [new CardChoice { Label = "Noted", Verb = Verbs.Dismiss, Target = "" }],
+                [new CardChoice { Label = "I have seen it", Verb = Verbs.Dismiss, Target = "" }],
                 cause: $"node-in-job:{_own.Pid}:{_own.StartedAt:O}");
         }
     }
