@@ -41,8 +41,12 @@ public sealed partial class RepoCatalog(NodeState state, NodeOptions options)
             {
                 continue;
             }
-            foreach (var folder in folders)
+            foreach (var linked in folders)
             {
+                // A junction or symbolic link to a clone is that clone, listed once at the folder it points to. The sebgod root's
+                // DIR.Lib, Console.Lib and four more are junctions to the sharpastro clones: listed under both names, each was a
+                // second tracked repo read on GitHub again, the moment a flight made sebgod a root.
+                var folder = RealFolder(linked);
                 // A clone's .git is a folder; a worktree's or a submodule's is a file, and neither is a repo to fly in.
                 var git = Path.Combine(folder, ".git");
                 if (!Directory.Exists(git) || repos.ContainsKey(folder))
@@ -78,6 +82,21 @@ public sealed partial class RepoCatalog(NodeState state, NodeOptions options)
         var withIdeas = new HashSet<string>(state.Ideas().Select(i => i.Repo), StringComparer.OrdinalIgnoreCase);
         return [.. Repos().Where(r => r.GitHub is { } gitHub
             && (worked.Contains(gitHub) || withIdeas.Contains(r.Name) || File.Exists(Path.Combine(r.Path, MarkerFile))))];
+    }
+
+    /// <summary>The folder a junction or symbolic link finally points to; the folder itself when it is neither, or the link cannot be read.</summary>
+    internal static string RealFolder(string folder)
+    {
+        try
+        {
+            return new DirectoryInfo(folder).ResolveLinkTarget(returnFinalTarget: true) is { } target
+                ? Path.TrimEndingDirectorySeparator(Path.GetFullPath(target.FullName))
+                : folder;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return folder;
+        }
     }
 
     /// <summary>The repo's GitHub <c>owner/name</c>, from its origin's URL; null for one not on GitHub.</summary>
