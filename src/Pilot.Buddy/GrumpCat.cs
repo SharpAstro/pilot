@@ -127,7 +127,7 @@ public static class GrumpCat
                 HalfLidEye(pen, 114, 64 + b, 0.5f);
                 Nose_(pen, 90 + b);
                 FlatMouth(pen, b);
-
+                break;
 
             case GrumpFace.Alert:
                 for (var i = 0; i < 2; i++)
