@@ -802,6 +802,8 @@ public static partial class NodeApp
             services.GetRequiredService<SessionTrackerOptions>().Profile.Root)
         {
             ShortcutToken = () => Flights.ShortcutTracker.TokenFrom(services.GetRequiredService<RoleModels>().ShortcutToken),
+            ToastHealth = services.GetService<Pilot.Node.Toasts.ToastHealth>(),
+            Toaster = services.GetService<Pilot.Node.Toasts.Toaster>(),
         });
         builder.Services.AddSingleton<NodeSettingsCommands>();
     }

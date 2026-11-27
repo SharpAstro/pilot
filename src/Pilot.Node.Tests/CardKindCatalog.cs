@@ -185,6 +185,7 @@ internal static class CardKindCatalog
         new("disk-swept", "Handled", ["Flights/DiskSweep.cs"], "DiskSweepTests.ASweepThatFreedSomethingRaisesOneHandledLineNamingTheCountsAndTheUniqueBytes"),
         new("worktree-removed", "Handled", ["Flights/DiskSweep.cs"], "DiskSweepTests.AHandMadeWorktreeWhosePrMergedAndIsCleanIsRemovedWithAHandledLine"),
         new("worktree-dirty", "Handled", ["Flights/DiskSweep.cs"], "DiskSweepTests.ADirtyHandMadeWorktreeIsKeptWithOneHandledLineAndNoSecondOnTheNextSweep"),
+        new("toasts-broken", "ForYou", ["Toasts/Toaster.cs"], "ToastHealthTests.FailingToastsOverSeveralCardsRaiseOneForYouCardAndALaterSuccessClosesIt"),
         new("disk-low", "ForYou", ["Flights/DiskSweep.cs"], "DiskSweepTests.FreeSpaceBelowTheThresholdRaisesOneRingNamingTheLargestItemsAndClosesWhenSpaceIsBack"),
         new("stray-process", "ForYou", ["Flights/StraySweep.cs"], "StraySweepTests.OneCardPerStrayNamesTheProcessItsOwnerAndTheKillCommand", NodePressed: true),
         new("poller-caller", "Ring", ["Flights/PollerSweep.cs"], "PollerSweepTests.AFakeCallerAt300AnHourFor3HoursRingsExactlyOneCardNamingIt", "the node's own per-caller request tally shows a process that is none of a job's, a session's or pilot's own over 200 requests an hour for 2 full hours", [nameof(Verbs.EndPoller)]),
