@@ -59,7 +59,7 @@ public sealed class DesktopCatSectionTests : IDisposable
 
     private static async Task<PilotChrome<RgbaImage>> LoadedAsync(RgbaImageRenderer renderer, BuddySettingsSource source, int width, int height)
     {
-        var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
+        var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath, Clock = () => Now };
         chrome.Settings.Load = _ => Task.FromResult(Sample);
         chrome.Settings.LoadGrants = _ => Task.FromResult<GrantInfo[]>([]);
         chrome.Settings.Buddy = source;
