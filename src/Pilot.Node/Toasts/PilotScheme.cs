@@ -98,69 +98,51 @@ public sealed class SchemeRegistrar(ISchemeRegistry registry, string nodePath, F
     public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 }
 
-/// <summary>
-/// Pilot's own AppUserModelID, registered per user so the shell shows the toasts the node raises under the name <c>pilot</c> and its icon
-/// (#1376): an unregistered AUMID is dropped silently. <see cref="Values"/> is the pure builder; <see cref="Register"/> writes what differs.
-/// </summary>
-public static class PilotAumid
+/// <summary>The seam over AppShell's <c>AppIdentity.Register</c>: a test fakes it, so a test node never writes HKCU.</summary>
+public interface IToastIdentity
 {
-    /// <summary>The AUMID the toasts are shown under.</summary>
-    public const string Id = "SharpAstro.Pilot";
+    /// <summary>Registers <paramref name="appId"/> with <paramref name="displayName"/> and the image at <paramref name="iconPath"/> (null for none); null on success, else the failure.</summary>
+    string? Register(string appId, string displayName, string? iconPath);
+}
 
-    /// <summary>The AUMID's key under HKCU.</summary>
-    public const string Key = @"Software\Classes\AppUserModelId\" + Id;
-
-    /// <summary>
-    /// The image the toasts carry as pilot's icon: the GUI's own <c>Resources/pilot-256.png</c>, shipped beside the node's binary. The shell
-    /// reads <c>IconUri</c> as an image file (a .png or .ico), so an executable there would leave the default icon.
-    /// </summary>
-    public static string IconPathBeside(string nodePath) =>
-        Path.Combine(Path.GetDirectoryName(nodePath) ?? "", "Resources", "pilot-256.png");
-
-    /// <summary>What the key holds: (key, value name, value); the icon only when <paramref name="iconPath"/>, an image file, is known.</summary>
-    public static IReadOnlyList<(string SubKey, string Name, string Value)> Values(string? iconPath)
+/// <summary>AppShell's <c>AppIdentity.Register</c> (Windows only): writes the AUMID key the toasts are shown under.</summary>
+[System.Runtime.Versioning.SupportedOSPlatform("windows")]
+public sealed class AppShellToastIdentity : IToastIdentity
+{
+    /// <inheritdoc />
+    public string? Register(string appId, string displayName, string? iconPath)
     {
-        var values = new List<(string, string, string)> { (Key, "DisplayName", "pilot") };
-        if (!string.IsNullOrEmpty(iconPath))
-        {
-            values.Add((Key, "IconUri", iconPath));
-        }
-        return values;
-    }
-
-    /// <summary>Writes what is missing or differs; true when anything was written.</summary>
-    public static bool Register(ISchemeRegistry registry, string? iconPath)
-    {
-        var wrote = false;
-        foreach (var (subKey, name, value) in Values(iconPath))
-        {
-            if (registry.Read(subKey, name) != value)
-            {
-                registry.Write(subKey, name, value);
-                wrote = true;
-            }
-        }
-        return wrote;
+        var result = SharpAstro.AppShell.AppIdentity.Register(appId, displayName, iconPath);
+        return result == SharpAstro.AppShell.AppUserModelRegistration.Failed ? "the registry refused the app id key" : null;
     }
 }
 
-/// <summary>Registers pilot's AUMID once when the node starts, with the GUI's PNG as its icon when one sits beside the node's (no icon otherwise); a failure is logged, never fatal.</summary>
-public sealed class AumidRegistrar(ISchemeRegistry registry, string nodePath, Func<string, bool> exists, ILogger logger) : IHostedService
+/// <summary>
+/// Registers pilot's toast identity once when the node starts, before the <see cref="Toaster"/>: <see cref="AppShellToastRunner.AppId"/>
+/// named <c>pilot</c>, with the GUI's <c>Resources/pilot-256.png</c> beside the node as its icon when that file exists (an image, never an
+/// executable) and no icon otherwise. A failure is logged, never fatal.
+/// </summary>
+public sealed class ToastIdentityRegistrar(IToastIdentity identity, string nodePath, Func<string, bool> exists, ILogger logger) : IHostedService
 {
+    /// <summary>The image the toasts carry as pilot's icon, shipped beside the node's binary.</summary>
+    public static string IconPathBeside(string nodePath) =>
+        Path.Combine(Path.GetDirectoryName(nodePath) ?? "", "Resources", "pilot-256.png");
+
     /// <inheritdoc />
     public Task StartAsync(CancellationToken cancellationToken)
     {
         try
         {
-            var icon = PilotAumid.IconPathBeside(nodePath);
-            if (PilotAumid.Register(registry, exists(icon) ? icon : null))
+            var icon = IconPathBeside(nodePath);
+            var failure = identity.Register(AppShellToastRunner.AppId, "pilot", exists(icon) ? icon : null);
+            if (failure is not null)
             {
-                logger.LogInformation("registered the toast AUMID {Aumid}", PilotAumid.Id);
+                logger.LogWarning("could not register the toast app id {AppId}: {Failure}", AppShellToastRunner.AppId, failure);
             }
         }
         catch (Exception e) when (e is UnauthorizedAccessException or System.Security.SecurityException or IOException)
         {
-            logger.LogWarning(e, "could not register the toast AUMID {Aumid}", PilotAumid.Id);
+            logger.LogWarning(e, "could not register the toast app id {AppId}", AppShellToastRunner.AppId);
         }
         return Task.CompletedTask;
     }

@@ -47,6 +47,50 @@ public sealed class PilotSchemeTests
         registry.Writes.ShouldBe(4, "only the command moved");
     }
 
+    // The identity seam: like AppShell's AppIdentity.Register, it writes only what differs, so a second start writes nothing.
+    private sealed class FakeIdentity : IToastIdentity
+    {
+        private (string, string?)? _last;
+        public int Writes { get; private set; }
+        public (string AppId, string Name, string? Icon)? Last { get; private set; }
+        public string? Register(string appId, string displayName, string? iconPath)
+        {
+            Last = (appId, displayName, iconPath);
+            if (_last != (displayName, iconPath)) { _last = (displayName, iconPath); Writes++; }
+            return null;
+        }
+    }
+
+    [Fact]
+    public async Task TheIdentityCarriesThePngBesideTheNodeOnlyWhenItIsThere()
+    {
+        var icon = ToastIdentityRegistrar.IconPathBeside(Path.Combine("bin", "pilot-node.exe"));
+        icon.ShouldEndWith("pilot-256.png");
+        Path.GetExtension(icon).ShouldBe(".png", "an image, never an executable");
+
+        var without = new FakeIdentity();
+        await new ToastIdentityRegistrar(without, @"C:\bin\pilot-node.exe", _ => false, NullLogger.Instance).StartAsync(TestContext.Current.CancellationToken);
+        without.Last.ShouldBe(("SharpAstro.Pilot", "pilot", null));
+
+        var with = new FakeIdentity();
+        await new ToastIdentityRegistrar(with, @"C:\bin\pilot-node.exe", _ => true, NullLogger.Instance).StartAsync(TestContext.Current.CancellationToken);
+        with.Last!.Value.Icon.ShouldEndWith("pilot-256.png");
+    }
+
+    [Fact]
+    public async Task ASecondStartWritesNothingAndAFailureIsNeverFatal()
+    {
+        var identity = new FakeIdentity();
+        var registrar = new ToastIdentityRegistrar(identity, @"C:\bin\pilot-node.exe", _ => true, NullLogger.Instance);
+        await registrar.StartAsync(TestContext.Current.CancellationToken);
+        await registrar.StartAsync(TestContext.Current.CancellationToken);
+        identity.Writes.ShouldBe(1);
+
+        var failing = new RecordingToastIdentity { Failure = "the registry refused the app id key" };
+        await new ToastIdentityRegistrar(failing, @"C:\bin\pilot-node.exe", _ => false, NullLogger.Instance).StartAsync(TestContext.Current.CancellationToken);
+        failing.Registered.Count.ShouldBe(1);
+    }
+
     [Fact]
     public async Task TheRegistrarWritesOnlyWhenTheGuiSitsBesideTheNode()
     {

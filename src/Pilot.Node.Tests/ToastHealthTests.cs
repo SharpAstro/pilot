@@ -13,17 +13,17 @@ public sealed class ToastHealthTests : IAsyncDisposable
     private sealed class Runner : IToastRunner
     {
         public bool Throws { get; set; }
-        public List<(string Tag, string Xml)> Shown { get; } = [];
+        public List<ToastRequest> Shown { get; } = [];
 
-        public Task Show(string tag, string xml, CancellationToken cancel = default)
+        public Task<string?> Show(ToastRequest request, CancellationToken cancel = default)
         {
-            if (Throws) throw new InvalidOperationException("0x80131047 no projection");
-            Shown.Add((tag, xml));
-            return Task.CompletedTask;
+            if (Throws) return Task.FromResult<string?>("Failed: 0x80131047 no projection");
+            Shown.Add(request);
+            return Task.FromResult<string?>(null);
         }
 
-        public Task Remove(string tag, CancellationToken cancel = default)
-            => Throws ? throw new InvalidOperationException("0x80131047 no projection") : Task.CompletedTask;
+        public Task<string?> Withdraw(string tag, CancellationToken cancel = default)
+            => Task.FromResult<string?>(Throws ? "Failed: 0x80131047 no projection" : null);
     }
 
     private sealed class Clock(DateTimeOffset start) : TimeProvider
@@ -119,9 +119,11 @@ public sealed class ToastHealthTests : IAsyncDisposable
     public async Task TheFixShowsATestToastOrReportsTheError()
     {
         (await Setup().FixAsync(NodeSetup.ToastsKey, Ct)).ShouldBeNull();
-        var (tag, xml) = _runner.Shown.ShouldHaveSingleItem();
-        tag.ShouldBe(ToastXml.TestTag);
-        xml.ShouldContain("pilot test toast");
+        var request = _runner.Shown.ShouldHaveSingleItem();
+        request.Tag.ShouldBe(ToastText.TestTag);
+        request.Title.ShouldBe("pilot test toast");
+        request.Tier.ShouldBe(ToastTier.Normal);
+        request.Payload.ShouldBe(ToastLink.CardsPayload);
 
         _runner.Throws = true;
         (await Setup().FixAsync(NodeSetup.ToastsKey, Ct)).ShouldNotBeNull().ShouldContain("0x80131047");

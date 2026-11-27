@@ -9,7 +9,7 @@ namespace Pilot.Ui;
 /// <param name="CardId">The card the link opens; null for the bare cards link.</param>
 public sealed record PilotLink(string? CardId)
 {
-    /// <summary>The scheme, the one <c>ToastXml</c> writes.</summary>
+    /// <summary>The scheme, the one the node registers and the toasts launch (<c>ToastLink.Scheme</c>).</summary>
     public const string Scheme = "pilot";
 
     /// <summary>Reads <paramref name="text"/> as a link; false for anything else (another scheme, another host, an empty id, junk).</summary>

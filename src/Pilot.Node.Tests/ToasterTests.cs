@@ -12,19 +12,19 @@ public sealed class ToasterTests : IAsyncDisposable
 
     private sealed class FakeRunner : IToastRunner
     {
-        public List<(string Tag, string Xml)> Shown { get; } = [];
+        public List<ToastRequest> Shown { get; } = [];
         public List<string> Removed { get; } = [];
 
-        public Task Show(string tag, string xml, CancellationToken cancel = default)
+        public Task<string?> Show(ToastRequest request, CancellationToken cancel = default)
         {
-            Shown.Add((tag, xml));
-            return Task.CompletedTask;
+            Shown.Add(request);
+            return Task.FromResult<string?>(null);
         }
 
-        public Task Remove(string tag, CancellationToken cancel = default)
+        public Task<string?> Withdraw(string tag, CancellationToken cancel = default)
         {
             Removed.Add(tag);
-            return Task.CompletedTask;
+            return Task.FromResult<string?>(null);
         }
     }
 
@@ -64,7 +64,7 @@ public sealed class ToasterTests : IAsyncDisposable
         await _toaster.Sync(cancel: Ct);
         _runner.Shown.Count.ShouldBe(1);
         _runner.Shown[0].Tag.ShouldBe("flight/A");
-        _runner.Shown[0].Xml.ShouldContain("needs you");
+        _runner.Shown[0].Title.ShouldContain("needs you");
         await _toaster.Sync(cancel: Ct);
         _runner.Shown.Count.ShouldBe(1, "a card already toasted is not toasted again");
 
@@ -124,19 +124,19 @@ public sealed class ToasterTests : IAsyncDisposable
 
         Ring(Normal, "flight/N4");
         await _toaster.Sync(cancel: Ct);
-        _runner.Shown[^1].Tag.ShouldBe(ToastXml.BurstTag);
-        _runner.Shown[^1].Xml.ShouldContain("4 cards need you");
+        _runner.Shown[^1].Tag.ShouldBe(ToastText.BurstTag);
+        _runner.Shown[^1].Title.ShouldBe("4 cards need you");
         _runner.Removed.ShouldBe(["flight/N1", "flight/N2", "flight/N3"], "the singles the burst stands for are withdrawn");
 
         Ring(Normal, "flight/N5");
         await _toaster.Sync(cancel: Ct);
-        _runner.Shown[^1].Tag.ShouldBe(ToastXml.BurstTag, "the burst toast is replaced as more come");
-        _runner.Shown[^1].Xml.ShouldContain("5 cards need you");
+        _runner.Shown[^1].Tag.ShouldBe(ToastText.BurstTag, "the burst toast is replaced as more come");
+        _runner.Shown[^1].Title.ShouldBe("5 cards need you");
 
         Ring(Urgent, "flight/U1");
         await _toaster.Sync(cancel: Ct);
         _runner.Shown[^1].Tag.ShouldBe("flight/U1");
-        _runner.Shown[^1].Xml.ShouldContain("scenario=\"urgent\"");
+        _runner.Shown[^1].Tier.ShouldBe(ToastTier.Urgent);
     }
 
     [Fact]
@@ -205,14 +205,14 @@ public sealed class ToasterTests : IAsyncDisposable
     {
         public List<string> Tags { get; } = [];
 
-        public Task Show(string tag, string xml, CancellationToken cancel = default)
+        public Task<string?> Show(ToastRequest request, CancellationToken cancel = default)
         {
-            Tags.Add(tag);
+            Tags.Add(request.Tag);
             shown.TrySetResult();
-            return Task.CompletedTask;
+            return Task.FromResult<string?>(null);
         }
 
-        public Task Remove(string tag, CancellationToken cancel = default) => Task.CompletedTask;
+        public Task<string?> Withdraw(string tag, CancellationToken cancel = default) => Task.FromResult<string?>(null);
     }
 
     [Fact]
@@ -293,7 +293,7 @@ public sealed class ToasterTests : IAsyncDisposable
 
         _state.RingAgain(n1.Id, "again").ShouldBeTrue();
         await _toaster.Sync(cancel: Ct);
-        _runner.Shown[^1].Tag.ShouldBe(ToastXml.BurstTag);
+        _runner.Shown[^1].Tag.ShouldBe(ToastText.BurstTag);
         _runner.Removed.ShouldBe(["flight/N2", "flight/N3", "flight/N4", "flight/N1"], "the card's own earlier single toast goes when it joins the burst");
 
         _state.CloseCard(n1.Id, "done", "tests").ShouldBeTrue();
@@ -311,7 +311,7 @@ public sealed class ToasterTests : IAsyncDisposable
         _state.CloseCard(card.Id, "done", "tests").ShouldBeTrue();
         await _toaster.Sync(cancel: Ct);
         // The burst toast a run before may have left up goes too, once the cards found at start are all gone.
-        _runner.Removed.ShouldBe(["flight/Q1", ToastXml.BurstTag]);
+        _runner.Removed.ShouldBe(["flight/Q1", ToastText.BurstTag]);
         await _toaster.Sync(cancel: Ct);
         _runner.Removed.Count.ShouldBe(2, "withdrawn once");
     }
@@ -322,7 +322,7 @@ public sealed class ToasterTests : IAsyncDisposable
         await _toaster.Sync(quiet: true, cancel: Ct);
         _runner.Removed.ShouldBeEmpty("the start sync only notes: no process runs inside the host's start");
         await _toaster.Sync(cancel: Ct);
-        _runner.Removed.ShouldBe([ToastXml.BurstTag]);
+        _runner.Removed.ShouldBe([ToastText.BurstTag]);
         await _toaster.Sync(cancel: Ct);
         _runner.Removed.Count.ShouldBe(1, "withdrawn once");
     }
@@ -337,7 +337,7 @@ public sealed class ToasterTests : IAsyncDisposable
         try { toaster.Start(); }
         finally { RemovedRunner.InsideStart = false; }
         await removed.Task.WaitAsync(TimeSpan.FromSeconds(10), Ct);
-        runner.Tags.ShouldBe([ToastXml.BurstTag]);
+        runner.Tags.ShouldBe([ToastText.BurstTag]);
         runner.RemovedInsideStart.ShouldBeFalse("Start() returns before any withdraw runs; the consumer does it");
     }
 
@@ -346,13 +346,13 @@ public sealed class ToasterTests : IAsyncDisposable
         [ThreadStatic] public static bool InsideStart;
         public List<string> Tags { get; } = [];
         public bool RemovedInsideStart { get; private set; }
-        public Task Show(string tag, string xml, CancellationToken cancel = default) => Task.CompletedTask;
-        public Task Remove(string tag, CancellationToken cancel = default)
+        public Task<string?> Show(ToastRequest request, CancellationToken cancel = default) => Task.FromResult<string?>(null);
+        public Task<string?> Withdraw(string tag, CancellationToken cancel = default)
         {
             if (InsideStart) RemovedInsideStart = true;
             Tags.Add(tag);
             removed.TrySetResult();
-            return Task.CompletedTask;
+            return Task.FromResult<string?>(null);
         }
     }
 
@@ -364,34 +364,26 @@ public sealed class ToasterTests : IAsyncDisposable
         _runner.Removed.ShouldBeEmpty("a card found at start may still stand in the old burst");
         for (var i = 1; i <= 4; i++) Ring(Normal, $"flight/B{i}");
         await _toaster.Sync(cancel: Ct);
-        _runner.Shown[^1].Tag.ShouldBe(ToastXml.BurstTag);
+        _runner.Shown[^1].Tag.ShouldBe(ToastText.BurstTag);
 
         _state.CloseCard(old.Id, "done", "tests").ShouldBeTrue();
         await _toaster.Sync(cancel: Ct);
-        _runner.Removed.ShouldNotContain(ToastXml.BurstTag, "the burst up now is this run's, for open cards");
+        _runner.Removed.ShouldNotContain(ToastText.BurstTag, "the burst up now is this run's, for open cards");
     }
 
     [Fact]
-    public async Task ALongSubjectIsShownAndWithdrawnUnderOneShortTag()
+    public async Task ALongSubjectIsShownAndWithdrawnUnderTheSubjectAsTheTag()
     {
-        var subject = @"repo/C:\Users\SebastianGodelet\source\repos\sharpastro\openphd2-multiscope-with-a-long-name-" + new string('x', 40);
+        // AppShell maps a tag over 64 characters to s: and 40 hex of its SHA-256, in the show and in the withdraw alike.
+        var subject = "repo/openphd2-multiscope-with-a-long-name-" + new string('x', 60);
         var card = Ring(Urgent, subject);
         await _toaster.Sync(cancel: Ct);
-        var tag = _runner.Shown.Single().Tag;
-        tag.Length.ShouldBeLessThanOrEqualTo(ToastXml.TagLimit);
-        tag.ShouldBe(ToastXml.TagOf(subject));
-        _toaster.Tags.ShouldBe([tag]);
+        _runner.Shown.Single().Tag.ShouldBe(subject);
+        _toaster.Tags.ShouldBe([subject]);
 
         _state.CloseCard(card.Id, "done", "tests").ShouldBeTrue();
         await _toaster.Sync(cancel: Ct);
-        _runner.Removed.ShouldBe([tag], "the withdraw names the same tag as the show");
-
-        var hundred = Ring(Urgent, new string('s', 100));
-        await _toaster.Sync(cancel: Ct);
-        _runner.Shown[^1].Tag.Length.ShouldBeLessThanOrEqualTo(ToastXml.TagLimit);
-        _state.CloseCard(hundred.Id, "done", "tests").ShouldBeTrue();
-        await _toaster.Sync(cancel: Ct);
-        _runner.Removed[^1].ShouldBe(_runner.Shown[^1].Tag);
+        _runner.Removed.ShouldBe([subject], "the withdraw names the same tag as the show");
     }
 
     [Fact]
@@ -406,8 +398,8 @@ public sealed class ToasterTests : IAsyncDisposable
         // Both were tried: the first one failing did not stop the second.
         runner.Tags.Order().ToArray().ShouldBe(["flight/F1", "flight/F2"]);
         log.Lines.Order().ToArray().ShouldBe([
-            "Warning toast flight/F1 was not shown: the toast script exited 1: boom",
-            "Warning toast flight/F2 was not shown: the toast script exited 1: boom",
+            "Warning toast flight/F1 was not shown: Failed: boom: ",
+            "Warning toast flight/F2 was not shown: Failed: boom: ",
         ]);
     }
 
@@ -430,12 +422,12 @@ public sealed class ToasterTests : IAsyncDisposable
     {
         public List<string> Tags { get; } = [];
 
-        public Task Show(string tag, string xml, CancellationToken cancel = default)
+        public Task<string?> Show(ToastRequest request, CancellationToken cancel = default)
         {
-            Tags.Add(tag);
-            throw new InvalidOperationException("the toast script exited 1: boom");
+            Tags.Add(request.Tag);
+            return Task.FromResult<string?>("Failed: boom");
         }
 
-        public Task Remove(string tag, CancellationToken cancel = default) => Task.CompletedTask;
+        public Task<string?> Withdraw(string tag, CancellationToken cancel = default) => Task.FromResult<string?>(null);
     }
 }
