@@ -47,7 +47,7 @@ public sealed class NodeWatchdogTests
     }
 
     // The machine: who answers on the socket is a script, a process ends as scripted, and a start hands out the next pid.
-    private sealed class FakeHost(FakeTime time, CancellationTokenSource stop) : IWatchdogHost
+    private sealed class FakeHost(CancellationTokenSource stop) : IWatchdogHost
     {
         public Func<int?> Answering { get; set; } = () => null;
 
@@ -99,7 +99,7 @@ public sealed class NodeWatchdogTests
     private readonly FakeTime _time = new();
     private readonly CancellationTokenSource _stop = new();
 
-    private FakeHost Host() => new(_time, _stop);
+    private FakeHost Host() => new(_stop);
 
     private Task<int> Run(FakeHost host) => new NodeWatchdog(host, _time).RunAsync(_stop.Token);
 
