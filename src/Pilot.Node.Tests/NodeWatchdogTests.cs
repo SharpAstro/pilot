@@ -66,6 +66,9 @@ public sealed class NodeWatchdogTests
 
         public int AnswerCalls { get; private set; }
 
+        /// <summary>How many times the socket had been asked when each start was made.</summary>
+        public List<int> AnswerCallsAtStarts { get; } = [];
+
         public int NextPid { get; set; } = 100;
 
         public int?[] StartResults { get; set; } = [];
@@ -94,6 +97,7 @@ public sealed class NodeWatchdogTests
         public int? StartNode(WatchdogStart how)
         {
             Starts.Add(how);
+            AnswerCallsAtStarts.Add(AnswerCalls);
             return Starts.Count <= StartResults.Length ? StartResults[Starts.Count - 1] : NextPid++;
         }
 
@@ -186,6 +190,36 @@ public sealed class NodeWatchdogTests
         var first = host.Starts[0];
         (first.SecondsDown, first.PreviousExit, first.FastDeaths).ShouldBe((0, null, 0));
         NodeWatchdog.Encode(first).ShouldBeNull("a first start tells the node nothing");
+    }
+
+    [Fact]
+    public async Task AFirstStartAsksTheSocketOnceAndARestartAsksNothingPastTheGrace()
+    {
+        var host = Host();
+        // Nobody answers ever; the first node dies once, its successor never comes, and the second node runs until the owner ends.
+        host.Exits.Enqueue(new WatchdogExit(1));
+
+        await Run(host);
+
+        host.AnswerCallsAtStarts.Count.ShouldBe(2);
+        host.AnswerCallsAtStarts[0].ShouldBe(1, "the ask that found no node is the only one before the first start");
+        var graceAsks = (int)(NodeWatchdog.Grace / NodeWatchdog.GraceStep) + 1;
+        (host.AnswerCallsAtStarts[1] - host.AnswerCallsAtStarts[0]).ShouldBe(graceAsks, "the grace's own asks, then the start, with no second ask in between");
+    }
+
+    [Fact]
+    public async Task ANodeAPersonStartedDuringTheRetryDelayIsFollowedAndNoSecondIsStarted()
+    {
+        var host = Host();
+        host.StartResults = [null];
+        // Nobody answers until the retry delay after the failed start has been waited; then a node does (pid 55).
+        host.Answering = () => _time.Delays.Contains(NodeWatchdog.RetryAfterFailedStart) ? 55 : null;
+
+        await Run(host);
+
+        host.Starts.Count.ShouldBe(1, "the retry asks the socket again after its wait and follows pid 55");
+        host.Waited.ShouldBe([55]);
+        host.Said.ShouldContain(l => l.Contains("a node answers as pid 55"));
     }
 
     [Theory]

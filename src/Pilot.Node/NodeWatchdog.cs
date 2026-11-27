@@ -79,6 +79,8 @@ internal sealed class NodeWatchdog(IWatchdogHost host, TimeProvider time)
         int? current = await host.AnsweringPidAsync(cancellationToken);
         DateTimeOffset? downSince = null;
         int? lastExit = null;
+        // Whether the socket was asked with no wait since: then the start does not ask again (with no time passed, a second ask only repeats the first).
+        var askedJustNow = true;
         try
         {
             while (!cancellationToken.IsCancellationRequested)
@@ -90,8 +92,10 @@ internal sealed class NodeWatchdog(IWatchdogHost host, TimeProvider time)
                 }
                 if (current is null)
                 {
-                    if (await StartAsync(downSince, lastExit, cancellationToken) is not { } started)
+                    if (await StartAsync(downSince, lastExit, askedJustNow, cancellationToken) is not { } started)
                     {
+                        // A start that returns nothing waited first (the back-off or the retry delay), so the next one asks again.
+                        askedJustNow = false;
                         continue;
                     }
                     current = started;
@@ -120,6 +124,8 @@ internal sealed class NodeWatchdog(IWatchdogHost host, TimeProvider time)
                 downSince = diedAt;
                 _deaths.Add(diedAt);
                 current = null;
+                // The grace asked up to its deadline and nothing answered: the start goes on from that ask.
+                askedJustNow = true;
             }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -164,20 +170,24 @@ internal sealed class NodeWatchdog(IWatchdogHost host, TimeProvider time)
     }
 
     // Starts the node (after the back-off when it keeps dying); its pid, or null when it did not start and the next try is waited for.
-    private async Task<int?> StartAsync(DateTimeOffset? downSince, int? lastExit, CancellationToken cancellationToken)
+    // askedJustNow: the caller asked the socket with no wait since and nothing answered, so only a wait here makes a new ask worth its cost.
+    private async Task<int?> StartAsync(DateTimeOffset? downSince, int? lastExit, bool askedJustNow, CancellationToken cancellationToken)
     {
         _deaths.RemoveAll(d => time.GetUtcNow() - d > FastWindow);
+        var waited = false;
         if (_deaths.Count >= FastDeathLimit)
         {
             host.Say($"watchdog: {_deaths.Count} nodes died within {(int)FastWindow.TotalMinutes} min; waiting {(int)Backoff.TotalMinutes} min before starting it again");
             await Task.Delay(Backoff, time, cancellationToken);
+            waited = true;
             if (!host.StillWanted())
             {
                 return null;
             }
         }
-        // A node a person started during the wait answers by now: follow it rather than start a second, which would exit with AlreadyRunning and end the watchdog.
-        if (await host.AnsweringPidAsync(cancellationToken) is { } already)
+        // A node a person started during a wait (the back-off here, or the retry delay after a start that did not happen) answers by now:
+        // follow it rather than start a second, which would exit with AlreadyRunning and end the watchdog. Right after an ask, nothing has changed.
+        if ((waited || !askedJustNow) && await host.AnsweringPidAsync(cancellationToken) is { } already)
         {
             host.Say($"watchdog: a node answers as pid {already}; following it");
             return already;
