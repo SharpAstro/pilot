@@ -580,6 +580,25 @@ internal sealed class BuddyHost : IBuddyWindow, IDisposable
     }
 
     /// <inheritdoc />
+    public void TextInput(bool on)
+    {
+        if (_window is null)
+        {
+            return;
+        }
+        if (on)
+        {
+            // A click on the cat need not have given the always-on-top window the keyboard: it is raised to take it.
+            RaiseWindow(_window.Handle);
+            StartTextInput(_window.Handle);
+        }
+        else
+        {
+            StopTextInput(_window.Handle);
+        }
+    }
+
+    /// <inheritdoc />
     public void MoveBy(int dx, int dy)
     {
         _window!.GetPosition(out var x, out var y);
