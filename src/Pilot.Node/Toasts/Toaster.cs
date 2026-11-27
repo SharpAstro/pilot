@@ -279,7 +279,9 @@ public sealed class Toaster : IAsyncDisposable, Microsoft.Extensions.Hosting.IHo
         _health.Failed(_time.GetUtcNow(), ex.Message);
         if (_state.Cards(openOnly: true).Any(c => c.Kind == ToastHealth.BrokenKind && c.Subject == Verbs.NodeTarget)) return;
         _state.RaiseCard(CardBin.ForYou, ToastHealth.BrokenKind, Verbs.NodeTarget, "Desktop toasts are not working on this machine",
-            $"{ex.Message}. Open Settings, Setup, Desktop toasts, and send a test toast. The card closes when a toast shows.");
+            $"{ex.Message}. Open Settings, Setup, Desktop toasts, and send a test toast. The card closes when a toast shows.",
+            // The one thing the node does on the person's word: stop trying. Sending a test toast is the setup check's fix.
+            [new CardChoice { Label = "Turn toasts off", Verb = Verbs.Set, Target = Verbs.NodeTarget, Args = [NodeSettings.ToastsKey, "off"] }]);
     }
 
     /// <inheritdoc />

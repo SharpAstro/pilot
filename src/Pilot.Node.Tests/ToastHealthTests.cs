@@ -67,6 +67,7 @@ public sealed class ToastHealthTests : IAsyncDisposable
         await _toaster.Sync(cancel: Ct);
 
         var card = Broken().ShouldHaveSingleItem();
+        card.Kind.ShouldBe(ToastHealth.BrokenKind);
         card.Bin.ShouldBe(CardBin.ForYou);
         card.Subject.ShouldBe(Verbs.NodeTarget);
         card.Detail.ShouldNotBeNull().ShouldContain("0x80131047");
