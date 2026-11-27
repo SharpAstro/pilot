@@ -185,7 +185,85 @@ public sealed class McpHttpTests : IDisposable
         status.ShouldBe(StatusCodes.Status200OK);
         using var called = JsonDocument.Parse(body);
         called.RootElement.GetProperty("result").GetProperty("isError").GetBoolean().ShouldBeTrue();
+        // The refusal names the socket the endpoint was given, which an unknown failure would not.
+        called.RootElement.GetProperty("result").GetProperty("content")[0].GetProperty("text").GetString().ShouldNotBeNull().ShouldContain("node.sock");
     }
+
+    [Fact]
+    public async Task AGetOnTheEndpointIs405BecauseThereIsNoStreamBack()
+    {
+        var context = new DefaultHttpContext { RequestServices = new ServiceCollection().AddLogging().BuildServiceProvider() };
+        context.Response.Body = new MemoryStream();
+
+        await McpHttp.NoStream().ExecuteAsync(context);
+
+        context.Response.StatusCode.ShouldBe(StatusCodes.Status405MethodNotAllowed);
+    }
+
+    [Fact]
+    public async Task ASubscribeIsRefusedOverHttpAsThereIsNothingToSendNoticesOn()
+    {
+        var (_, body) = await AnswerAsync(Request("""{"jsonrpc":"2.0","id":4,"method":"resources/subscribe","params":{"uri":"pilot://designs"}}""", _http.TokenFor("se1-x")));
+
+        using var reply = JsonDocument.Parse(body);
+        reply.RootElement.GetProperty("error").GetProperty("code").GetInt32().ShouldBe(-32601);
+        var (_, initialized) = await AnswerAsync(Request(Initialize, _http.TokenFor("se1-x")));
+        initialized.ShouldNotContain("resources/subscribe on any");
+    }
+
+    [Fact]
+    public async Task TheCallsOfASessionAreMadeInItsFolderAndAsItsIdAndANameWithNoRowGetsTheDataFolderAndNoId()
+    {
+        _state.PutSession(Row("ab000000", "se1-has-row", "/work/plane"));
+        var seen = new List<(string Cwd, string? Id)>();
+        foreach (var name in new[] { "se1-has-row", "se1-no-row" })
+        {
+            _http.SessionFor(name).Invoker = (_, cwd, id, _, _) => { seen.Add((cwd, id)); return Task.FromResult(0); };
+            var (_, body) = await AnswerAsync(Request("""{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"status","arguments":{}}}""", _http.TokenFor(name)));
+            body.ShouldContain("result");
+        }
+
+        seen.ShouldBe([("/work/plane", "ab000000-0000-4000-8000-000000000000"), (_folder.FullName, "")]);
+        _http.SessionFor("se1-has-row").Cwd.ShouldBe("/work/plane");
+        _http.SessionFor("se1-has-row").SessionId.ShouldBe("ab000000-0000-4000-8000-000000000000");
+    }
+
+    [Fact]
+    public void ASessionWhoseRowWasRemovedLeavesNoServerAndTheOthersKeepTheirs()
+    {
+        _state.PutSession(Row("ab000000", "se1-a", "/work/a"));
+        _state.PutSession(Row("cd000000", "se1-b", "/work/b"));
+        var a = _http.SessionFor("se1-a");
+        var b = _http.SessionFor("se1-b");
+
+        _state.RemoveSession("ab000000");
+
+        _http.SessionFor("se1-b").ShouldBeSameAs(b);
+        // A new server is made for the name now: the old one was dropped, and with no row it has the data folder.
+        var again = _http.SessionFor("se1-a");
+        again.ShouldNotBeSameAs(a);
+        again.Cwd.ShouldBe(_folder.FullName);
+    }
+
+    [Fact]
+    public void TheSecretAndASessionConfigAreOwnerOnlyOnUnix()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+        var token = _http.TokenFor("se1-x");
+        var config = SessionMcpConfig.Ensure(_folder.FullName, "pilot", null, _folder.FullName, http: new McpHttpEntry(_http.Url, "se1-x", token));
+
+        File.GetUnixFileMode(Path.Combine(_folder.FullName, McpHttp.SecretFile)).ShouldBe(UnixFileMode.UserRead | UnixFileMode.UserWrite);
+        File.GetUnixFileMode(config).ShouldBe(UnixFileMode.UserRead | UnixFileMode.UserWrite);
+    }
+
+    private static SessionRow Row(string id, string name, string cwd) => new()
+    {
+        Id = id, SessionId = id + "-0000-4000-8000-000000000000", Name = name, Kind = SessionKind.Background, Cwd = cwd,
+        Role = SessionRole.AdHoc, ContextTokens = 0, ContextWindow = 200_000, State = SessionState.Idle, SpendWeighted = 0, StartedAt = DateTimeOffset.UnixEpoch,
+    };
 
     private const string Initialize = """{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"claude-code","version":"test"}}}""";
 

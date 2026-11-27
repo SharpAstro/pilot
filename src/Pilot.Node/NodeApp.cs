@@ -26,7 +26,7 @@ public static partial class NodeApp
         // pilot's MCP server over loopback HTTP (#1385), on its own port: checked first, as a port another program holds would
         // fail the whole host; then the sessions stay on stdio.
         string? mcpTaken = null;
-        var mcpBound = options.McpPort > 0 && McpHttp.TryBind(options.McpPort, out mcpTaken);
+        var mcpBound = options.McpPort > 0 && !options.LocalOnly && McpHttp.TryBind(options.McpPort, out mcpTaken);
         builder.WebHost.ConfigureKestrel(kestrel =>
         {
             kestrel.ListenOnNodeSocket(held);
@@ -165,7 +165,7 @@ public static partial class NodeApp
     {
         // pilot's MCP server for the sessions the node starts (#1385): one JSON-RPC message a POST; no GET stream, so a GET is 405.
         app.MapPost(NodeWire.McpRoute, (HttpContext context, McpHttp mcp) => mcp.AnswerAsync(context, context.RequestAborted));
-        app.MapGet(NodeWire.McpRoute, () => Results.StatusCode(StatusCodes.Status405MethodNotAllowed));
+        app.MapGet(NodeWire.McpRoute, () => McpHttp.NoStream());
 
         // A hook's stdin, forwarded by `pilot-node hook`: the session it names takes the hook's state, and the tracker
         // looks again now. 204, so a hook never learns anything worth failing over; but a Stop in a plane with files

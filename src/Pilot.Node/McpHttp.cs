@@ -94,9 +94,14 @@ public sealed class McpHttp(NodeOptions options, NodeState state, ILogger<McpHtt
             // A batch: the protocol versions pilot speaks after 2025-03-26 have none, and the client sends one message a POST.
             return Results.BadRequest("one JSON-RPC message per request");
         }
+        // Counted under the session's name (UseCommandCallers sees only the socket or the address), so the hourly line names who calls.
+        context.RequestServices.GetService<CommandCallers>()?.CountLan($"mcp {name}");
         var reply = await SessionFor(name).AnswerAsync(message, cancellationToken);
         return reply is null ? Results.StatusCode(StatusCodes.Status202Accepted) : Results.Text(reply, "application/json", Encoding.UTF8);
     }
+
+    /// <summary>The answer to a GET: there is no stream back to the client, so 405.</summary>
+    internal static IResult NoStream() => Results.StatusCode(StatusCodes.Status405MethodNotAllowed);
 
     /// <summary>
     /// The server for the session named <paramref name="name"/>, in its folder and as its id, as the node knows them now. A token
