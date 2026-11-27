@@ -142,7 +142,7 @@ public sealed class BuddyHoverTests
         model.BadgeCount.ShouldBe(2);
 
         feed.NodeUnreachable("the node went away");
-        model.BadgeCount.ShouldBe(2, "nothing is known while it is down");
+        model.BadgeCount.ShouldBe(0, "what others show is unknown while it is down: the cards are the cat's own bubbles");
         feed.Apply(Snapshot(cards: [Card("c1"), Card("c2", state: CardState.Closed)], stream: "s2"));
         // The node's OthersShowCards is said again on the new stream.
         OthersShow(feed, true);

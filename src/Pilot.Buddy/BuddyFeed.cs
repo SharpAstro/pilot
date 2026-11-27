@@ -203,13 +203,16 @@ public sealed class BuddyFeed(BuddyModel model, TimeProvider time, Func<BuddySet
             var badge = !urgent && _othersShowCards;
             var rung = _told.TryGetValue(card.Id, out var rungAt) && rungAt == card.RungAt;
             var badged = model.IsBadged(id);
-            if (rung && !(badged && !badge))
+            // Already shown the way it should be (a badge when others show it, else the notice): nothing to do. A badge that must be a bubble, or a bubble
+            // that must be a badge again (the stream came back and the GUI shows the cards), is redone from the mirror.
+            if (rung && badged == badge)
             {
                 continue;
             }
             _told[card.Id] = card.RungAt;
             if (badge)
             {
+                model.Clear(id);
                 model.Badge(id);
                 continue;
             }
