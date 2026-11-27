@@ -67,7 +67,6 @@ public sealed class PilotLinkTests
     [InlineData("other:card%2Fc1")]
     [InlineData("pilot:card%2F")]
     [InlineData("pilot:card%2F%20")]
-    [InlineData("pilot:card%2Fa%2Fb")]
     [InlineData("pilot:card%ZZ")]
     [InlineData("pilot:")]
     [InlineData("pilot:cards%2Fx")]

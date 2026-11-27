@@ -19,7 +19,7 @@ public static class ToastLink
 
     /// <summary>
     /// Reads an unescaped payload. True for <c>cards</c> (<paramref name="cardId"/> null) and for <c>card/&lt;id&gt;</c> with a non-blank
-    /// id holding no further slash; false for anything else.
+    /// id (everything after <c>card/</c>, so an id may hold a slash and round-trips); false for anything else.
     /// </summary>
     public static bool TryReadPayload(string? payload, out string? cardId)
     {
@@ -35,7 +35,7 @@ public static class ToastLink
         if (payload.StartsWith(CardPrefix, StringComparison.OrdinalIgnoreCase))
         {
             var id = payload[CardPrefix.Length..];
-            if (!string.IsNullOrWhiteSpace(id) && !id.Contains('/'))
+            if (!string.IsNullOrWhiteSpace(id))
             {
                 cardId = id;
                 return true;
