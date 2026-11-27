@@ -142,7 +142,7 @@ public sealed class DesktopCatSectionTests : IDisposable
         using var renderer = new RgbaImageRenderer(1280, 1400);
         var source = Source();
         var chrome = await LoadedAsync(renderer, source, 1280, 1400);
-        Texts(chrome, renderer).ShouldContain("Corner");
+        Texts(chrome, renderer).ShouldContain("Bottom right");
         Texts(chrome, renderer).ShouldContain("Size");
 
         Click(chrome, "settings:buddy-size:2");
@@ -151,7 +151,7 @@ public sealed class DesktopCatSectionTests : IDisposable
         var free = BuddySettings.Load(FilePath);
         free.IsFree.ShouldBeTrue();
         free.SizeIndex.ShouldBe(2, "the other settings stay as they were written");
-        Texts(chrome, renderer).ShouldNotContain("Corner");
+        Texts(chrome, renderer).ShouldNotContain("Bottom right");
         Texts(chrome, renderer).ShouldContain("Placement");
     }
 
@@ -161,6 +161,9 @@ public sealed class DesktopCatSectionTests : IDisposable
         using var renderer = new RgbaImageRenderer(1280, 1400);
         var source = Source(new BuddySettings().WithSnooze(1, Now, TimeZoneInfo.Utc));
         var chrome = await LoadedAsync(renderer, source, 1280, 1400);
+        // The section's rows alone (every key holds "buddy"): with Placement and Size it no longer ends inside the page's first screen.
+        chrome.Settings.Search.Text = "buddy";
+        chrome.Settings.Search.CursorPos = 5;
         var texts = Texts(chrome, renderer);
         texts.ShouldContain("Snoozed until");
         texts.ShouldContain("Wake now");

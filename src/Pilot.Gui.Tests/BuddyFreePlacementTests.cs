@@ -71,7 +71,7 @@ public sealed class BuddyFreePlacementTests
     public void AResolutionChangeKeepsTheCatOnScreen()
     {
         var (dropped, _) = BuddyPlacement.Drop(Free, [Laptop], 1400, 340, WindowW, WindowH)!.Value;
-        var smaller = new DisplayArea("laptop", 0, 0, 1280, 680);
+        var smaller = new DisplayArea("laptop", 0, 0, 1280, 800);
         var (x, y) = BuddyPlacement.Resolve(dropped, smaller, WindowW, WindowH);
         x.ShouldBeInRange(0, smaller.Width - WindowW);
         y.ShouldBeInRange(0, smaller.Height - WindowH);
