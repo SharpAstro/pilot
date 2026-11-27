@@ -377,7 +377,7 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
         const string Title = "Desktop cat starts at logon";
         if (!BuddyAutostartApplies)
         {
-            return new SetupCheck { Key = BuddyAutostartKey, Title = Title, Ok = true, Optional = true, Line = "does not apply here: the desktop cat starts at logon on Windows only" };
+            return new SetupCheck { Key = BuddyAutostartKey, Title = Title, Ok = false, Optional = true, Line = "does not apply here: the desktop cat starts at logon on Windows only" };
         }
         var entry = Autostart.BuddyEntry(BuddyRuns);
         if (entry is not null)

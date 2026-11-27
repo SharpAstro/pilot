@@ -193,6 +193,11 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
             var reading = _readingChecks = new CancellationTokenSource();
             _ = LoopAsync(token => ReadChecksAsync(refresh: false, waited: Checks is null, token), ChecksEvery, reading, () => _readingChecks = null);
         }
+        if (_readingCat is null && CatDesk is { } desk && Buddy is not null)
+        {
+            var reading = _readingCat = new CancellationTokenSource();
+            _ = LoopAsync(token => ReadCatAsync(desk, token), CatEvery, reading, () => _readingCat = null);
+        }
         if (_readingRepos is null && LoadRepos is { } loadRepos)
         {
             var reading = _readingRepos = new CancellationTokenSource();
@@ -553,6 +558,102 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
     /// <summary>The Desktop cat's settings, as the file says them (the cat's own card writes the same file); null leaves the section out (a host with no buddy settings path).</summary>
     public BuddySettingsSource? Buddy { get; set; }
 
+    /// <summary>Whether the cat runs on this desktop, and a launcher for it; null leaves the Running row out (a host that cannot start the cat).</summary>
+    public ICatDesk? CatDesk { get; set; }
+
+    private static readonly TimeSpan CatEvery = TimeSpan.FromSeconds(3);
+
+    /// <summary>The node's setup keys for the cat's start at logon (NodeSetup.BuddyAutostartKey and NoBuddyAutostartKey): the check's key, and the verb that turns it on or off.</summary>
+    internal const string BuddyAutostartKey = "buddy-autostart";
+
+    internal const string NoBuddyAutostartKey = "no-buddy-autostart";
+
+    // -1 until the probe first answers, then 0 or 1: what the cat's gate said last, never what a click expected.
+    private int _catRunning = -1;
+    private CancellationTokenSource? _readingCat;
+
+    private async Task ReadCatAsync(ICatDesk desk, CancellationToken cancellationToken)
+    {
+        int now;
+        try
+        {
+            now = await desk.IsRunningAsync(cancellationToken).ConfigureAwait(false) ? 1 : 0;
+        }
+        catch (Exception ex) when (ex is IOException or InvalidOperationException or UnauthorizedAccessException)
+        {
+            // The row keeps its last answer: a probe that failed is not "not running".
+            return;
+        }
+        if (Interlocked.Exchange(ref _catRunning, now) != now)
+        {
+            Changed?.Invoke();
+        }
+    }
+
+    private void StartCat()
+    {
+        if (CatDesk is not { } desk)
+        {
+            return;
+        }
+        // Working at once; the row shows the probe's answer once the cat has had its moment to take its gate, not the click.
+        _ = Presses.PressAsync(CatStartAction, CatStartAction, async ct =>
+        {
+            var why = await Task.Run(() => desk.StartAsync(ct), ct).ConfigureAwait(false);
+            await ReadCatAsync(desk, ct).ConfigureAwait(false);
+            return why;
+        });
+    }
+
+    private const string CatStartAction = "settings:buddy-start";
+
+    // The Running row: what the probe last said, and Start while it says the cat is not there. Before the first answer it says so.
+    private Layout.Node CatRunningRow()
+    {
+        var running = Volatile.Read(ref _catRunning);
+        var hint = "whether the cat runs on this desktop now; one per desktop, a second start is refused";
+        var word = running switch { 1 => "Running", 0 => "Not running", _ => "checking…" };
+        var color = running switch { 1 => Ok, 0 => Todo, _ => Dim };
+        var controls = new List<Layout.Node> { Layout.Builder.Text(word, 13f, color).Selectable().WAuto() };
+        if (running != 1 && CatDesk is not null)
+        {
+            controls.Add(Presses.Button(CatStartAction, CatStartAction,
+                () => Pill("Start", CatStartAction, StartCat).HFixed(ControlH),
+                _ => Pill("Start", CatStartAction, StartCat, working: true).HFixed(ControlH), doneMark: false));
+        }
+        return CatRow("Running", hint, controls);
+    }
+
+    // The setup check beside autostart: the cat's own start at logon, shown here (and only here, when this section is on the page) as a switch.
+    private Layout.Node CatLogonRow(SetupCheck? check)
+    {
+        const string hint = "the cat starts when you log in, apart from the node's own start at logon";
+        if (check is null)
+        {
+            return CatRow("Start at logon", hint, [Layout.Builder.Text("checking…", 13f, Dim).WAuto()]);
+        }
+        if (!check.Ok && check.Fix is null)
+        {
+            // Nothing to switch: no cat beside the node, or not Windows. The check's own line says which, whole on hover.
+            return CatRow("Start at logon", hint, [Layout.Builder.Text("unavailable", 13f, Dim).WAuto(), WrappedProse.OneLine(check.Line, 12f, Faint)]);
+        }
+        var action = $"settings:fix:{BuddyAutostartKey}";
+        var on = check.Ok;
+        var key = on ? NoBuddyAutostartKey : BuddyAutostartKey;
+        var pill = Send is null
+            ? Layout.Builder.Text(on ? "On" : "Off", 12f, Body, TextAlign.Center).Pad(10f, 4f)
+            : NodePill(on ? "On" : "Off", action, () => Act(Verbs.Setup, [key], $"Desktop cat at logon: {(on ? "turning off" : "turning on")}…", action), on, doneMark: false);
+        return CatRow("Start at logon", hint, [pill.WFixed(CatSwitchWidth).HFixed(ControlH)]);
+    }
+
+    // The toasts row: what the node's toasts setting does while the cat shows the cards (#1357), with the setting's own value read from its row.
+    private Layout.Node CatToastsRow(SettingsPage page)
+    {
+        var value = page.Settings.FirstOrDefault(s => s.Key == "toasts")?.Value;
+        return CatRow("Toasts", "while the cat shows the cards, normal toasts wait for it; urgent ones still toast",
+            [Layout.Builder.Text(value is null ? "see Desktop toasts" : $"Desktop toasts: {value}", 13f, Bright).Selectable().WAuto()]);
+    }
+
     // One row of the Desktop cat section: the title and its control on one line, the one-line description under it.
     private static Layout.Node CatRow(string title, string hint, IEnumerable<Layout.Node> controls) =>
         Layout.Builder.VStack(
@@ -571,11 +672,16 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
     private IEnumerable<Layout.Node> CatSegments(string key, IReadOnlyList<string> choices, int chosen, Action<int> pick) =>
         choices.Select((label, i) => Pill(label, $"settings:{key}:{i}", () => pick(i), chosen == i).HFixed(ControlH));
 
-    private void CatPieces(Action<Part, Layout.Node, string?[]> add, DateTimeOffset now)
+    private void CatPieces(Action<Part, Layout.Node, string?[]> add, DateTimeOffset now, SetupCheck? logon, SettingsPage page)
     {
         var source = Buddy!;
         var cat = source.Current;
         add(Part.Section, Section("Desktop cat", "what wakes the cat, where it sits and how long it sleeps; the cat's own card changes the same file"), []);
+        if (CatDesk is not null)
+        {
+            add(Part.Row, CatRunningRow(), ["Running", "whether the cat runs on this desktop now", "buddy-running", "Start", "Not running"]);
+        }
+        add(Part.Row, CatLogonRow(logon), ["Start at logon", "the cat starts when you log in, apart from the node's own start at logon", BuddyAutostartKey, "autostart"]);
         add(Part.Row, CatRow("Wake for asks", "a session asks you something", [CatSwitch("buddy-wake-ask", cat.WakesForAsk, (s, v) => s with { WakeAsk = v })]),
             ["Wake for asks", "a session asks you something", "buddy-wake-ask", "Wakes for"]);
         add(Part.Row, CatRow("Wake for merges", "a PR merged or a flight landed", [CatSwitch("buddy-wake-merged", cat.WakesForMerged, (s, v) => s with { WakeMerged = v })]),
@@ -590,6 +696,7 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
         add(Part.Row, CatRow("Snooze for", "nothing wakes the cat until the snooze ends",
                 CatSegments("buddy-snooze", BuddySettings.SnoozeChoices, cat.SnoozeIndex, i => source.Update(s => s.WithSnooze(i, source.Time.GetUtcNow(), source.Zone)))),
             ["Snooze for", "nothing wakes the cat until the snooze ends", "buddy-snooze"]);
+        add(Part.Row, CatToastsRow(page), ["Toasts", "while the cat shows the cards, normal toasts wait for it; urgent ones still toast", "buddy-toasts", "desktop toasts"]);
         if (cat.IsSnoozed(now))
         {
             var until = TimeZoneInfo.ConvertTime(cat.SnoozedUntil!.Value, source.Zone).ToString("ddd HH:mm", System.Globalization.CultureInfo.CurrentCulture);
@@ -617,6 +724,11 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
                 for (var i = 0; i < measured.Checks.Length; i++)
                 {
                     var check = measured.Checks[i];
+                    if (check.Key == BuddyAutostartKey && Buddy is not null)
+                    {
+                        // Shown once: as the Desktop cat section's Start at logon switch.
+                        continue;
+                    }
                     Add(Part.Row, CheckRow(check, i, measured.CheckedAt, now, read.Checking), check.Title, check.Line, check.Key);
                 }
             }
@@ -629,7 +741,7 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
         }
         if (Buddy is not null)
         {
-            CatPieces((part, node, texts) => Add(part, node, texts), now);
+            CatPieces((part, node, texts) => Add(part, node, texts), now, read.Checks?.Checks.FirstOrDefault(c => c.Key == BuddyAutostartKey), page);
         }
         if (Notifications is { } bar)
         {

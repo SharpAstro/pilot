@@ -324,6 +324,8 @@ chrome.Flights.Changed = loop.RequestRedraw;
 // The Desktop cat section reads buddy-settings.json through the shared watcher, so a change on the cat's own card shows with no page restart.
 using var catSettings = new BuddySettingsSource { Changed = loop.RequestRedraw };
 chrome.Settings.Buddy = catSettings;
+// The Running row asks the cat's gate without claiming it, and Start launches the pilot-buddy beside this window.
+chrome.Settings.CatDesk = new GuiCatDesk();
 // The caret blinks through the loop: it owns the phase on the window's shared settings and wakes at each change while a
 // field has the keyboard (SharpAstro/.github#13), so no widget and no redraw check here knows of it.
 loop.Ui = view.Ui;
