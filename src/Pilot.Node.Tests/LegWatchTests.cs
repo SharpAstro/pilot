@@ -1525,6 +1525,62 @@ public sealed class LegWatchTests
         SummaryMatchesChoices(idle);
     }
 
+    // ---- the plane's state on a worker's card (PIL1382) ----
+
+    private async Task<CardRow> FailedCardAsync(int? commits, int ticked)
+    {
+        _watch.PlaneCommits = (_, _, _) => Task.FromResult(commits);
+        _state.PutLeg(_state.Legs().Single() with
+        {
+            StartHead = "abc123",
+            Checklist = [.. Enumerable.Range(0, 6).Select(i => new CheckItem { Text = $"step {i}", Done = i < ticked })],
+        });
+        Worker(SessionState.Failed);
+        await _watch.LookAsync(Ct);
+        return Open().Single(c => c.Kind == LegWatch.Failed);
+    }
+
+    [Fact]
+    public async Task TheFailedCardSaysNothingWasCommittedWhenThePlaneHoldsNoNewCommit()
+    {
+        var card = await FailedCardAsync(0, 0);
+        card.Title.ShouldContain("nothing committed since the leg started, 0 of 6 steps ticked");
+        card.Detail.ShouldNotBeNull().ShouldContain("nothing committed since the leg started, 0 of 6 steps ticked");
+    }
+
+    [Fact]
+    public async Task TheFailedCardNamesTheCommitsAndTheOpenStepsAndNeverSaysNoWork()
+    {
+        var card = await FailedCardAsync(3, 0);
+        card.Title.ShouldContain("3 commits since the leg started, 0 of 6 steps ticked");
+        card.Detail.ShouldNotBeNull().ShouldContain("3 commits since the leg started, 0 of 6 steps ticked");
+        (card.Title + card.Detail).ShouldNotContain("no work");
+    }
+
+    [Fact]
+    public async Task TheFailedCardNamesTheCommitsAndEverySteppedTickWhenAllAreTicked()
+    {
+        var card = await FailedCardAsync(4, 6);
+        card.Title.ShouldContain("4 commits since the leg started, 6 of 6 steps ticked");
+        card.Detail.ShouldNotBeNull().ShouldContain("4 commits since the leg started, 6 of 6 steps ticked");
+    }
+
+    [Fact]
+    public async Task AnUnreadCommitCountIsSaidAsUnknownNeverAsNone()
+    {
+        var card = await FailedCardAsync(null, 1);
+        card.Title.ShouldContain("unknown");
+        card.Title.ShouldNotContain("nothing committed");
+    }
+
+    [Fact]
+    public void TheRingJudgesRewordingPromptTellsTheBrainToKeepTheCountsAndNeverSayNoWork()
+    {
+        var prompt = RingJudge.WordingRequest("t", "3 commits since the leg started, 0 of 6 steps ticked", "nudge");
+        prompt.ShouldContain("Keep the commit and step counts of the card exactly as given");
+        prompt.ShouldContain("Never say a worker did no work");
+    }
+
     // ---- the first-turn ladder for workers, validators and reviewers (PIL530) ----
 
     private readonly List<string> _restartedWorkers = [];

@@ -35,6 +35,9 @@ public sealed class RingJudge(NodeState state, Func<IBrain?> brain)
     /// <summary>The JSON object the brain answers a wording request with.</summary>
     public const string WordingShape = """{"title": "<one plain sentence, under 100 characters>", "summary": "<at most two short plain sentences>"}""";
 
+    /// <summary>The rewording's rule on a card's counts: the plane's state is the node's reading, not the brain's to restate.</summary>
+    public const string KeepCounts = "Keep the commit and step counts of the card exactly as given. Never say a worker did no work, or crashed before doing any, when the card names commits.";
+
     /// <summary>What the detail of a card the brain judged quiet starts its reason with.</summary>
     public const string QuietPrefix = "Not a ring: ";
 
@@ -205,6 +208,15 @@ public sealed class RingJudge(NodeState state, Func<IBrain?> brain)
         state.UpdateCard(now.Id, now.Title, QuietPrefix + why + (string.IsNullOrWhiteSpace(now.Detail) ? "" : "\n\n" + now.Detail), now.Choices, now.Link, bin: CardBin.ForYou);
     }
 
+    internal static string WordingRequest(string title, string? detail, string action) => $"""
+        A card now rings the person. Reword it in plain words for someone who has not followed the work: what happened and what to do, no jargon, no ids or hashes unless the person needs them to act.
+        {KeepCounts}
+        Title now: {title}
+        Detail: {Clip(detail ?? "", DetailLength)}
+        The one action: {(action.Length > 0 ? action : "not stated")}
+        Answer as this JSON object: {WordingShape}
+        """;
+
     private async Task RewordAsync(IBrain b, CardRow card, string action, CancellationToken cancellationToken)
     {
         if (Open(card.Id) is not { } now)
@@ -213,13 +225,7 @@ public sealed class RingJudge(NodeState state, Func<IBrain?> brain)
         }
         try
         {
-            var request = $"""
-                A card now rings the person. Reword it in plain words for someone who has not followed the work: what happened and what to do, no jargon, no ids or hashes unless the person needs them to act.
-                Title now: {now.Title}
-                Detail: {Clip(card.Detail ?? "", DetailLength)}
-                The one action: {(action.Length > 0 ? action : "not stated")}
-                Answer as this JSON object: {WordingShape}
-                """;
+            var request = WordingRequest(now.Title, card.Detail, action);
             var reply = await b.AskAsync("wording", request, WordingTimeout, cancellationToken);
             var title = Text(reply.Answer, "title", TitleLength);
             var summary = Text(reply.Answer, "summary", 600);
