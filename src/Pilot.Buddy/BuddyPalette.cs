@@ -4,7 +4,7 @@ namespace Pilot.Buddy;
 
 /// <summary>
 /// The buddy's colours, one set for a bright desktop and one for a dark one, designed together (DSN-2 v5). The cats are characters and keep their own
-/// colours in both; what changes is the bubble, the text drawn straight on the desktop (zZz, "!", "#@!", "...fine.") and the cats screen's cards.
+/// colours in both; what changes is the bubble, the text drawn straight on the desktop (zZz, "!", "#@!", "...fine.") and the cards.
 /// Every text colour here reads at 4.5:1 against what it is drawn on, and every border at 3:1 (<c>BuddyCatCaptureTests</c> checks both).
 /// The accent comes from the desktop (its ramp's pick, passed in) where the design uses one: the good-news bubble's border and the picked cat's card.
 /// </summary>
@@ -52,7 +52,7 @@ public sealed record BuddyPalette
     /// <summary>The yellow "!" over an alert cat.</summary>
     public required RGBAColor32 Alert { get; init; }
 
-    /// <summary>A card's outline on the cats screen.</summary>
+    /// <summary>A card's outline.</summary>
     public required RGBAColor32 CardBorder { get; init; }
 
     /// <summary>Whether this is the dark set.</summary>

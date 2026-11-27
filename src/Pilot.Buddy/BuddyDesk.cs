@@ -35,6 +35,9 @@ public enum TargetKind
     /// <summary>The cushion the cat sits on.</summary>
     Cushion,
 
+    /// <summary>The paw badge a gone cat leaves at the edge: hover or click brings the cat back.</summary>
+    Badge,
+
     /// <summary>The bubble, off its buttons.</summary>
     Bubble,
 
@@ -65,14 +68,19 @@ public sealed class BuddyGeometry(SceneLayout layout)
 
     private float S => Layout.Scale;
 
+    private float C => Layout.CatDevice;
+
     /// <summary>The cat's body: its box down to the cushion.</summary>
-    public (float X, float Y, float W, float H) CatBody => (Layout.CatX, Layout.CatY, GrumpCat.Width * S, GrumpCat.CushionY * S);
+    public (float X, float Y, float W, float H) CatBody => (Layout.CatX, Layout.CatY, GrumpCat.Width * C, GrumpCat.CushionY * C);
 
     /// <summary>The cushion under the cat.</summary>
-    public (float X, float Y, float W, float H) Cushion => (Layout.CatX + 5 * S, Layout.CatY + GrumpCat.CushionY * S, GrumpCat.CushionWidth * S, GrumpCat.CushionHeight * S);
+    public (float X, float Y, float W, float H) Cushion => (Layout.CatX + 5 * C, Layout.CatY + GrumpCat.CushionY * C, GrumpCat.CushionWidth * C, GrumpCat.CushionHeight * C);
 
     /// <summary>The "z Z" over a sleeping cat.</summary>
-    public (float X, float Y, float W, float H) Zzz => (Layout.CatX + ZzzX * S, Layout.CatY + ZzzY * S, ZzzWidth * S, ZzzHeight * S);
+    public (float X, float Y, float W, float H) Zzz => (Layout.CatX + ZzzX * C, Layout.CatY + ZzzY * C, ZzzWidth * C, ZzzHeight * C);
+
+    /// <summary>The paw badge of a cat that went away, or null when none shows.</summary>
+    public (float X, float Y, float W, float H)? Badge => Layout.BadgeW > 0 ? (Layout.BadgeX, Layout.BadgeY, Layout.BadgeW, Layout.BadgeH) : null;
 
     /// <summary>The bubble's rectangle, or null when none shows.</summary>
     public (float X, float Y, float W, float H)? Bubble => Layout.Bubble is { } b ? (Layout.BubbleX, Layout.BubbleY, b.Width * S, b.Height * S) : null;
@@ -85,6 +93,15 @@ public sealed class BuddyGeometry(SceneLayout layout)
     /// <summary>What is at (<paramref name="x"/>, <paramref name="y"/>), the topmost first: a button or a hit, then the bubble or the card, then the cat.</summary>
     public Target At(float x, float y, bool asleep)
     {
+        if (Badge is { } badge && In(badge, x, y))
+        {
+            return new Target(TargetKind.Badge);
+        }
+        if (Layout.GoneAway)
+        {
+            // Only the badge is there: everything else is the desktop's.
+            return default;
+        }
         if (Layout.Card is { } card && Card is { } cardBox && In(cardBox, x, y))
         {
             return card.HitAt((x - cardBox.X) / S, (y - cardBox.Y) / S) is { } hit ? new Target(TargetKind.CardHit, hit.Id) : new Target(TargetKind.Card);
@@ -145,6 +162,12 @@ public sealed class BuddyDesk(
     private bool _dragging;
     private bool _inputFocus;
 
+    /// <summary>The peek row's hit id (<c>row:N</c>) under the pointer, or null: it gets the highlight, the hand cursor and, when cut, its whole text.</summary>
+    public string? HoveredHit { get; private set; }
+
+    /// <summary>True while the pointer is on a pressable peek row: the host shows the hand cursor.</summary>
+    public bool OverRow => HoveredHit is not null;
+
     /// <summary>The card open now.</summary>
     public DeskCard Card { get; private set; }
 
@@ -160,11 +183,15 @@ public sealed class BuddyDesk(
     /// <summary>The scene's card, built with the pen it is measured with, or null while none is open.</summary>
     public Func<Pen<TSurface>, BuddyCard>? CardFactory<TSurface>() => Card switch
     {
-        DeskCard.Peek => pen => PeekCard.Build(pen, feed.Peek()),
+        DeskCard.Peek => pen => PeekCard.Build(pen, feed.Peek(), HoveredHit),
         DeskCard.Settings => pen => SettingsCard.Build(pen, settings()),
         DeskCard.Chat => pen => ChatCard.Build(pen, chat),
+        _ when HoverShows => pen => HoverCard.Build(pen, feed.Hover()),
         _ => null,
     };
+
+    /// <summary>True while the hover list shows in the card's place: the pointer is on the cat (or the list), it sleeps with one eye open and no card is open.</summary>
+    private bool HoverShows => Card == DeskCard.None && model.Hovering && model.Mood == BuddyMood.OneEyeOpen;
 
     /// <summary>
     /// What the open card (or the hover summary) would draw, as one string: the frame policy compares it with the last frame's, so a session that began
@@ -172,10 +199,10 @@ public sealed class BuddyDesk(
     /// </summary>
     public string ContentKey() => Card switch
     {
-        DeskCard.Peek => feed.Peek() is { } peek ? "peek|" + peek.Header + "|" + string.Join('|', peek.Rows.Select(r => $"{r.State},{r.Node},{r.What},{r.Status}")) : "peek",
+        DeskCard.Peek => feed.Peek() is { } peek ? "peek|" + peek.Header + "|" + string.Join('|', peek.Rows.Select(r => $"{r.State},{r.Node},{r.What},{r.Status}")) + "|" + HoveredHit : "peek",
         DeskCard.Chat => $"chat|{chat.Input}|{chat.Answer}|{chat.Refused}|{chat.DisabledReason}|{chat.Working}|{chat.PendingAsk?.Question}",
         DeskCard.Settings => "settings|" + settings(),
-        _ => model.Hovering && model.Mood == BuddyMood.OneEyeOpen ? "summary|" + feed.Summary : string.Empty,
+        _ => HoverShows ? "hover|" + feed.Hover().Text : string.Empty,
     };
 
     private void Changed() => Interlocked.Increment(ref _version);
@@ -197,12 +224,38 @@ public sealed class BuddyDesk(
             window.MoveBy((int)MathF.Round(x - grab.X), (int)MathF.Round(y - grab.Y));
             return;
         }
-        var over = TargetAt(x, y).Kind is TargetKind.Cat or TargetKind.Zzz or TargetKind.Cushion;
+        TrackRow(TargetAt(x, y));
+        var over = TargetAt(x, y).Kind is TargetKind.Cat or TargetKind.Zzz or TargetKind.Cushion or TargetKind.Badge || OnHoverList(x, y);
         SetHover(over);
     }
 
+    // The hover list stays while the pointer travels to it from the cat, over the gap between them, so a row can be pressed.
+    private bool OnHoverList(float x, float y)
+    {
+        if (!HoverShows || Geometry?.Card is not { } box)
+        {
+            return false;
+        }
+        var gap = BuddyScene.BubbleGap * Geometry.Layout.Scale;
+        return x >= box.X - gap && x < box.X + box.W + gap && y >= box.Y - gap && y < box.Y + box.H + gap;
+    }
+
+    private void TrackRow(Target target)
+    {
+        var id = Card == DeskCard.Peek && target is { Kind: TargetKind.CardHit, Id: { } hit } && hit.StartsWith("row:", StringComparison.Ordinal) ? hit : null;
+        if (id != HoveredHit)
+        {
+            HoveredHit = id;
+            Changed();
+        }
+    }
+
     /// <summary>The pointer left the window.</summary>
-    public void PointerLeft() => SetHover(false);
+    public void PointerLeft()
+    {
+        TrackRow(default);
+        SetHover(false);
+    }
 
     private void SetHover(bool over)
     {
@@ -254,10 +307,16 @@ public sealed class BuddyDesk(
         }
         switch (up.Kind)
         {
+            case TargetKind.Badge:
+                // A click on the badge brings the cat back (a hover did already; this is for a pointer that came in with a press).
+                model.Return();
+                Changed();
+                break;
             case TargetKind.Cat:
             case TargetKind.Zzz:
             case TargetKind.Cushion:
-                Open(Card != DeskCard.None ? DeskCard.None : model.Current is { Kind: NoticeKind.Ask or NoticeKind.Trouble } ? DeskCard.Chat : DeskCard.Peek);
+                // #1381 section 5: the chat is always reachable, from a sleeping or idle cat too (the input focused); the peek card is one link away.
+                Open(Card != DeskCard.None ? DeskCard.None : DeskCard.Chat);
                 break;
             case TargetKind.BubbleButton:
                 PressBubbleButton(up.Id!);
@@ -295,7 +354,9 @@ public sealed class BuddyDesk(
             return;
         }
         Card = card;
+        HoveredHit = null;
         _inputFocus = card == DeskCard.Chat;
+        model.Engaged(card != DeskCard.None);
         chat.CardOpen = card == DeskCard.Chat;
         model.Hover(false);
         if (card == DeskCard.Chat)
@@ -344,6 +405,20 @@ public sealed class BuddyDesk(
                     changeSettings(changed);
                     Changed();
                 }
+                break;
+            case DeskCard.None when HoverShows && id.StartsWith("row:", StringComparison.Ordinal) && int.TryParse(id.AsSpan(4), out var hoverRow):
+                // A row of the hover list hands the GUI that card's link.
+                var hoverRows = feed.Hover().Rows;
+                if (hoverRow >= 0 && hoverRow < hoverRows.Count)
+                {
+                    HandOff(hoverRows[hoverRow].Link ?? string.Empty, null);
+                }
+                break;
+            case DeskCard.Peek when id == PeekCard.TalkId:
+                Open(DeskCard.Chat);
+                break;
+            case DeskCard.Chat when id == ChatCard.SessionsId:
+                Open(DeskCard.Peek);
                 break;
             case DeskCard.Peek when id.StartsWith("row:", StringComparison.Ordinal) && int.TryParse(id.AsSpan(4), out var row):
                 var rows = feed.Peek().Rows;

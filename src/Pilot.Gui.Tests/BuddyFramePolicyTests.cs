@@ -161,7 +161,7 @@ public sealed class BuddyFramePolicyTests
         public SceneLayout Draw()
         {
             using var renderer = new RgbaImageRenderer(480, 720);
-            var layout = BuddyScene.Draw(renderer, Font, BuddyPalette.For(false), BuddyScene.ViewOf(Model, Feed.Summary), 1f, false, Settings.CornerIndex, Desk.CardFactory<RgbaImage>());
+            var layout = BuddyScene.Draw(renderer, Font, BuddyPalette.For(false), BuddyScene.ViewOf(Model), 1f, false, Settings.CornerIndex, Desk.CardFactory<RgbaImage>());
             Desk.Geometry = new BuddyGeometry(layout);
             Policy.Drawn(TimeSpan.Zero);
             return layout;
@@ -273,17 +273,86 @@ public sealed class BuddyFramePolicyTests
     }
 
     [Fact]
-    public void AClickPeeksAndAnotherClosesIt()
+    public async Task AClickOnTheSleepingCatOpensTheChatWithTheInputFocusedAndAnotherClosesIt()
     {
         var rig = new Rig();
         rig.Click(1, rig.CatBody);
-        rig.Desk.Card.ShouldBe(DeskCard.Peek);
+        rig.Desk.Card.ShouldBe(DeskCard.Chat, "the chat is always reachable (#1381 section 5)");
         rig.Policy.NeedsFrame().ShouldBeTrue();
+        // Opening the chat refreshes it on the pool, and that run wakes the window once.
+        await rig.AfterHandOff();
         rig.Draw();
-        rig.Desk.Geometry!.Layout.Card.ShouldBeOfType<PeekCard>();
+        var card = rig.Desk.Geometry!.Layout.Card.ShouldBeOfType<ChatCard>();
+        card.Lines.ShouldContain(l => l.Text == BuddyChat.Placeholder);
+        BuddyChat.Placeholder.ShouldBe("Ask the watchtower…");
+
+        // The input has the focus without a click on it: typing lands in it.
+        rig.Desk.TextTyped("hi");
+        rig.Draw();
+        rig.Desk.Geometry!.Layout.Card.ShouldBeOfType<ChatCard>().Lines.ShouldContain(l => l.Text == "hi");
 
         rig.Click(1, rig.CatBody);
         rig.Desk.Card.ShouldBe(DeskCard.None);
+    }
+
+    [Fact]
+    public async Task TheTalkButtonOfThePeekCardOpensTheChatAndTheChatLinksBackToThePeek()
+    {
+        var rig = new Rig();
+        rig.Click(1, rig.CatBody);
+        await rig.AfterHandOff();
+        rig.Draw();
+        var chat = rig.Desk.Geometry!.Layout.Card.ShouldBeOfType<ChatCard>();
+        var sessions = chat.Hits.Single(h => h.Id == ChatCard.SessionsId);
+        var layout = rig.Desk.Geometry.Layout;
+        rig.Click(1, (layout.CardX + sessions.X + 4, layout.CardY + sessions.Y + 4));
+        rig.Desk.Card.ShouldBe(DeskCard.Peek);
+        rig.Draw();
+        var peek = rig.Desk.Geometry!.Layout.Card.ShouldBeOfType<PeekCard>();
+
+        var talk = peek.Hits.Single(h => h.Id == PeekCard.TalkId);
+        layout = rig.Desk.Geometry.Layout;
+        rig.Click(1, (layout.CardX + talk.X + 4, layout.CardY + talk.Y + 4));
+        rig.Desk.Card.ShouldBe(DeskCard.Chat);
+        await rig.AfterHandOff();
+        rig.Draw();
+        rig.Desk.TextTyped("x");
+        rig.Draw();
+        rig.Desk.Geometry!.Layout.Card.ShouldBeOfType<ChatCard>().Lines.ShouldContain(l => l.Text == "x", "the input is focused after Talk too");
+    }
+
+    [Fact]
+    public async Task TheHoverListShowsTheBadgedCardsAndARowHandsOffThatCardsLink()
+    {
+        var rig = new Rig();
+        rig.Feed.Apply(new SnapshotEvent { Seq = 0, At = rig.Clock.GetUtcNow(), Stream = "s", Sessions = [], Notes = [], Cards = [], Flights = [] });
+        rig.Feed.Apply(new OthersShowCardsEvent { Seq = 1, At = rig.Clock.GetUtcNow(), Shown = true });
+        rig.Feed.Apply(new SnapshotEvent
+        {
+            Seq = 2, At = rig.Clock.GetUtcNow(), Stream = "s", Sessions = [], Notes = [], Flights = [],
+            Cards =
+            [
+                new CardRow { Id = "c19375", Bin = CardBin.Ring, Kind = "session-waiting", Subject = "flight/PIL1377/watchdog", Title = "PIL1377's watchdog worker asks you", At = rig.Clock.GetUtcNow() - TimeSpan.FromMinutes(5), State = CardState.Open },
+                new CardRow { Id = "c19378", Bin = CardBin.Ring, Kind = "session-waiting", Subject = "flight/TIA2553", Title = "TIA2553 worker crashed", At = rig.Clock.GetUtcNow() - TimeSpan.FromMinutes(1), State = CardState.Open },
+            ],
+        });
+        rig.Model.BadgeCount.ShouldBe(2);
+        rig.Desk.PointerMoved(rig.CatBody.X, rig.CatBody.Y);
+        var layout = rig.Draw();
+        var hover = layout.Card.ShouldBeOfType<HoverCard>();
+        hover.Lines.Select(l => l.Text).ShouldContain("2 need you");
+        hover.Lines.Select(l => l.Text).ShouldContain("PIL1377's watchdog worker asks you");
+        hover.Lines.ShouldContain(l => l.Text.StartsWith("flight PIL1377 leg watchdog", StringComparison.Ordinal));
+
+        // The pointer travels from the cat to a row over the gap: the list stays, and a press hands off the card's link.
+        var row = hover.Hits.Single(h => h.Id == "row:1");
+        var at = (X: layout.CardX + row.X + 20, Y: layout.CardY + row.Y + 6);
+        rig.Desk.PointerMoved(at.X, at.Y);
+        rig.Model.Hovering.ShouldBeTrue();
+        rig.Click(1, at);
+        await rig.Gui.Done.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
+        rig.Gui.Links.ShouldBe([BuddyFeed.CardLink("c19375")], "the rows are newest first: row 1 is the older card");
+        await rig.AfterHandOff();
     }
 
     [Fact]

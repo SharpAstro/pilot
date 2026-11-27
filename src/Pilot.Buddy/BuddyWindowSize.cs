@@ -13,8 +13,8 @@ public static class BuddyWindowSize
 {
     private const string LongWord = "Pilot.Gui.Tests.BuddyCatCaptureTests.SomeVeryLongTestNameThatHasNoSpacesAtAllAndWouldRunOutOfTheCard";
 
-    /// <summary>The window's width and height in design pixels.</summary>
-    public static (float Width, float Height) Measure(string fontPath)
+    /// <summary>The window's width and height in design pixels, for the cat at <paramref name="catSize"/> (the card and bubble text stay at the system scale).</summary>
+    public static (float Width, float Height) Measure(string fontPath, float catSize = 1f)
     {
         using var renderer = new RgbaImageRenderer(4, 4);
         var pen = new Pen<RgbaImage>(renderer, fontPath, 0, 0, 1f);
@@ -30,6 +30,11 @@ public static class BuddyWindowSize
             .Select(i => new PeekRow(i % 3 == 0 ? PeekState.Asking : PeekState.Working, "SE1", "review of PR #1351 in SharpAstro/pilot " + LongWord, "working 12 h 30 min", null)).ToList();
         var peek = PeekCard.Build(pen, new PeekView(3, rows.Count, rows));
         Take(peek.Width, peek.Height);
+        // The hover list at its worst: the most rows, each with a long title and a long place (#1381 section 10: the bubble is never cut by the window).
+        var hoverRows = Enumerable.Range(0, HoverCard.MaxRows + 2)
+            .Select(i => new HoverRow("CI failed on the parser leg and the watchtower asks you " + LongWord, "flight DIR330 leg " + LongWord, "since 12 h 30 min", null)).ToList();
+        var hover = HoverCard.Build(pen, new HoverView("9 need you " + LongWord, "12 sessions working on 3 nodes. " + LongWord, hoverRows));
+        Take(hover.Width, hover.Height);
         var settings = SettingsCard.Build(pen, new BuddySettings());
         Take(settings.Width, settings.Height);
 
@@ -64,8 +69,8 @@ public static class BuddyWindowSize
             Take(bubble.Width, bubble.Height);
         }
 
-        var w = MathF.Max(BuddyScene.Margin + GrumpCat.Width + 4 + BuddyScene.Margin, BuddyScene.Margin + 4 + width + BuddyScene.Margin);
-        var h = BuddyScene.Margin + GrumpCat.CushionY + GrumpCat.CushionHeight + BuddyScene.BubbleGap + height + BuddyScene.Margin;
+        var w = MathF.Max(BuddyScene.Margin + (GrumpCat.Width + 4) * catSize + BuddyScene.Margin, BuddyScene.Margin + 4 + width + BuddyScene.Margin);
+        var h = BuddyScene.Margin + (GrumpCat.CushionY + GrumpCat.CushionHeight) * catSize + BuddyScene.BubbleGap + height + BuddyScene.Margin;
         return (MathF.Ceiling(w), MathF.Ceiling(h));
     }
 

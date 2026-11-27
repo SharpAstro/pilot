@@ -35,6 +35,22 @@ public enum BuddyMood
     Trouble,
 }
 
+/// <summary>Whether the cat is here, walking off, away (only a badge at the edge) or walking back (#1381 section 2).</summary>
+public enum AwayPhase
+{
+    /// <summary>On its cushion as ever.</summary>
+    Present,
+
+    /// <summary>The one-off leaving animation, after the long quiet sleep.</summary>
+    Leaving,
+
+    /// <summary>Away: the window shows only the clickable badge, and no frame is asked for.</summary>
+    Gone,
+
+    /// <summary>The one-off return animation, after a wake.</summary>
+    Returning,
+}
+
 /// <summary>
 /// The buddy's state, pure and driven by a <see cref="TimeProvider"/>: no thread, no timer, no frame loop. The host asks <see cref="Mood"/> and
 /// the other reads whenever it draws, and sleeps until <see cref="NextWake"/> (the end of good news, the next breath) rather than ticking.
@@ -59,6 +75,134 @@ public sealed class BuddyModel(TimeProvider time)
     private BuddyNotice? _current;
     private DateTimeOffset _shownAt;
     private bool _hover;
+    private bool _engaged;
+    private AwayPhase _phase;
+    private DateTimeOffset _phaseAt;
+    private DateTimeOffset? _quietSince;
+    private TimeSpan? _longSleep;
+
+    /// <summary>How long the leaving animation plays, and the return: each a second or two of frames, once.</summary>
+    public static readonly TimeSpan LeaveFor = TimeSpan.FromSeconds(1.6), ReturnFor = TimeSpan.FromSeconds(1.2);
+
+    /// <summary>One step of the leave and return animations: a frame each, and none between them.</summary>
+    public static readonly TimeSpan AnimStep = TimeSpan.FromMilliseconds(100);
+
+    /// <summary>The longest a gone cat's wake time is ahead: a deadline for the host's wait, not a poll (it draws nothing when it comes).</summary>
+    public static readonly TimeSpan LongestIdle = TimeSpan.FromMinutes(1);
+
+    /// <summary>The quiet sleep after which the cat goes away; null is never. The host sets it from the settings.</summary>
+    public TimeSpan? LongSleep
+    {
+        get => _longSleep;
+        set
+        {
+            _longSleep = value;
+            // Never while the cat is leaving or gone: nothing would ever bring it back by itself, so it returns now.
+            if (value is null && _phase is AwayPhase.Leaving or AwayPhase.Gone)
+            {
+                Wake();
+            }
+            Settle();
+        }
+    }
+
+    /// <summary>Where the cat is now: here, leaving, gone or returning. Reading it lets a finished animation or an elapsed long sleep take effect.</summary>
+    public AwayPhase Phase
+    {
+        get
+        {
+            Settle();
+            return _phase;
+        }
+    }
+
+    /// <summary>How far the animation of <see cref="Phase"/> is, 0 to 1 (Leaving: 0 on its cushion, 1 away; Returning: 0 away, 1 back). 0 for Present, 1 for Gone.</summary>
+    public float AwayProgress
+    {
+        get
+        {
+            Settle();
+            var spent = (time.GetUtcNow() - _phaseAt).TotalSeconds;
+            return _phase switch
+            {
+                AwayPhase.Leaving => (float)Math.Clamp(spent / LeaveFor.TotalSeconds, 0, 1),
+                AwayPhase.Returning => (float)Math.Clamp(spent / ReturnFor.TotalSeconds, 0, 1),
+                AwayPhase.Gone => 1f,
+                _ => 0f,
+            };
+        }
+    }
+
+    /// <summary>The animation's frame, one per <see cref="AnimStep"/> while leaving or returning and 0 otherwise: what the frame policy compares.</summary>
+    public int AnimFrame
+    {
+        get
+        {
+            Settle();
+            return _phase is AwayPhase.Leaving or AwayPhase.Returning ? (int)((time.GetUtcNow() - _phaseAt).Ticks / AnimStep.Ticks) : 0;
+        }
+    }
+
+    /// <summary>A card (the peek, the settings, the chat) is open: the cat is not quietly asleep then, so it does not go away.</summary>
+    public void Engaged(bool engaged)
+    {
+        _engaged = engaged;
+        Settle();
+    }
+
+    /// <summary>Brings the cat back (a click on the badge): the return animation, then asleep or speaking. A no-op when it is here.</summary>
+    public void Return() => Wake();
+
+    private void Wake()
+    {
+        Settle();
+        if (_phase is AwayPhase.Leaving or AwayPhase.Gone)
+        {
+            // A wake while still leaving walks back from where the cat is (the smoothstep is symmetric: leave progress p is the return's 1 - p), never from out of the window.
+            var from = _phase == AwayPhase.Leaving ? 1 - Math.Clamp((time.GetUtcNow() - _phaseAt).TotalSeconds / LeaveFor.TotalSeconds, 0, 1) : 0;
+            _phase = AwayPhase.Returning;
+            _phaseAt = time.GetUtcNow() - TimeSpan.FromSeconds(from * ReturnFor.TotalSeconds);
+        }
+        _quietSince = null;
+        Settle();
+    }
+
+    private bool Quiet => _current is null && _badged.Count == 0 && !_hover && !_engaged;
+
+    // Moves the away lifecycle on to now: quiet long enough leads to leaving and on to gone, a finished return to present. Called on every read and write,
+    // so the model needs no timer; the host sleeps until NextWake.
+    private void Settle()
+    {
+        Advance();
+        var now = time.GetUtcNow();
+        if (_phase == AwayPhase.Returning && now - _phaseAt >= ReturnFor)
+        {
+            _phase = AwayPhase.Present;
+            _quietSince = _phaseAt + ReturnFor;
+        }
+        if (_phase == AwayPhase.Present)
+        {
+            if (!Quiet)
+            {
+                _quietSince = null;
+            }
+            else
+            {
+                _quietSince ??= now;
+                if (_longSleep is { } sleep && now - _quietSince >= sleep)
+                {
+                    _phase = AwayPhase.Leaving;
+                    _phaseAt = _quietSince.Value + sleep;
+                    _quietSince = null;
+                }
+            }
+        }
+        if (_phase == AwayPhase.Leaving && now - _phaseAt >= LeaveFor)
+        {
+            _phase = AwayPhase.Gone;
+            _phaseAt += LeaveFor;
+        }
+    }
 
     /// <summary>The notice whose bubble shows now, or null. Reading it first lets a finished good news go.</summary>
     public BuddyNotice? Current
@@ -99,19 +243,43 @@ public sealed class BuddyModel(TimeProvider time)
     /// A normal card that another client shows: the cat wakes to one eye open with a count badge, and no bubble or toast comes of it. The same id
     /// badged twice counts once; <see cref="Clear"/> or <see cref="Unbadge"/> takes it off.
     /// </summary>
-    public void Badge(string id) => _badged.Add(id);
+    public void Badge(string id)
+    {
+        _badged.Add(id);
+        Wake();
+    }
+
+    /// <summary>The ids held as a badge, a copy: the feed rebuilds the set from the mirror at each fold.</summary>
+    public IReadOnlyList<string> BadgedIds => [.. _badged];
 
     /// <summary>Takes a card off the badge (it shows as a bubble now, or is gone); true when it was on it.</summary>
-    public bool Unbadge(string id) => _badged.Remove(id);
+    public bool Unbadge(string id)
+    {
+        var was = _badged.Remove(id);
+        Settle();
+        return was;
+    }
 
     /// <summary>True when <paramref name="id"/> is held as a badge.</summary>
     public bool IsBadged(string id) => _badged.Contains(id);
 
     /// <summary>The breathing pose, 0 or 1: a step on a timer of <see cref="BreathStep"/>, not a frame loop.</summary>
-    public int BreathPose => (int)((time.GetUtcNow() - _born).Ticks / BreathStep.Ticks % 2);
+    public int BreathPose => Phase == AwayPhase.Gone ? 0 : (int)((time.GetUtcNow() - _born).Ticks / BreathStep.Ticks % 2);
 
     /// <summary>The pointer is over the cat. It only matters while the cat sleeps; a showing bubble is not replaced by it.</summary>
-    public void Hover(bool over) => _hover = over;
+    public void Hover(bool over)
+    {
+        _hover = over;
+        if (over)
+        {
+            // The pointer on the badge (the only thing of a gone cat the window holds) brings it back.
+            Wake();
+        }
+        else
+        {
+            Settle();
+        }
+    }
 
     /// <summary>
     /// Tells the cat something. A trouble also opens its failure (until <see cref="Clear"/>). A notice with the id of one already showing or
@@ -120,6 +288,7 @@ public sealed class BuddyModel(TimeProvider time)
     public void Tell(BuddyNotice notice)
     {
         Advance();
+        Wake();
         if (notice.Kind == NoticeKind.Trouble)
         {
             _openFailures.Add(notice.Id);
@@ -161,6 +330,7 @@ public sealed class BuddyModel(TimeProvider time)
             _openFailures.Remove(said.Id);
         }
         ShowNext();
+        Settle();
         return gone;
     }
 
@@ -176,6 +346,7 @@ public sealed class BuddyModel(TimeProvider time)
             _current = null;
             ShowNext();
         }
+        Settle();
     }
 
     /// <summary>When the model next changes by itself (good news ends, the breath turns), for the host to sleep until instead of polling.</summary>
@@ -183,12 +354,30 @@ public sealed class BuddyModel(TimeProvider time)
     {
         get
         {
+            Settle();
             var now = time.GetUtcNow();
+            if (_phase is AwayPhase.Leaving or AwayPhase.Returning)
+            {
+                // The animation: the next step, or its end, whichever comes first.
+                var next = _phaseAt + AnimStep * ((now - _phaseAt).Ticks / AnimStep.Ticks + 1);
+                var end = _phaseAt + (_phase == AwayPhase.Leaving ? LeaveFor : ReturnFor);
+                return next < end ? next : end;
+            }
+            if (_phase == AwayPhase.Gone)
+            {
+                // Nothing changes by itself while gone: the host sleeps to its own deadline until an event (a hover, a click, a card) wakes it.
+                return now + LongestIdle;
+            }
             var breath = _born + BreathStep * ((now - _born).Ticks / BreathStep.Ticks + 1);
             if (_current is { Kind: NoticeKind.GoodNews })
             {
                 var ends = _shownAt + GoodNewsFor;
-                return ends < breath ? ends : breath;
+                breath = ends < breath ? ends : breath;
+            }
+            // The long quiet sleep ends here: the leaving animation starts then, so the host must be awake for it.
+            if (_quietSince is { } since && _longSleep is { } sleep && since + sleep is var leaves && leaves < breath)
+            {
+                breath = leaves;
             }
             return breath;
         }

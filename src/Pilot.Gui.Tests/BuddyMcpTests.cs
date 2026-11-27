@@ -65,13 +65,13 @@ public sealed class BuddyMcpTests
     }
 
     [Fact]
-    public async Task TheServerListsTheFourTools()
+    public async Task TheServerListsTheFiveTools()
     {
         var reply = await _server.HandleAsync("""{"jsonrpc":"2.0","id":1,"method":"tools/list"}""", CancellationToken.None);
 
         using var doc = JsonDocument.Parse(reply!);
         doc.RootElement.GetProperty("result").GetProperty("tools").EnumerateArray().Select(t => t.GetProperty("name").GetString())
-            .ShouldBe(["buddy_say", "buddy_point", "buddy_state", "buddy_sleep"]);
+            .ShouldBe(["buddy_say", "buddy_point", "buddy_state", "buddy_sleep", "buddy_memory"]);
     }
 
     [Fact]
@@ -237,13 +237,13 @@ public sealed class BuddyMcpTests
         var nobody = new NobodyHome();
         var server = new BuddyMcpServer(nobody);
 
-        foreach (var call in new[] { Call("buddy_say", """{"text":"x"}"""), Call("buddy_point", """{"card":"c"}"""), Call("buddy_state"), Call("buddy_sleep") })
+        foreach (var call in new[] { Call("buddy_say", """{"text":"x"}"""), Call("buddy_point", """{"card":"c"}"""), Call("buddy_state"), Call("buddy_sleep"), Call("buddy_memory") })
         {
             var (text, isError) = Reply(await server.HandleAsync(call, CancellationToken.None));
             text.ShouldBe("no buddy on this desktop");
             isError.ShouldBeFalse();
         }
-        nobody.Calls.ShouldBe(4);
+        nobody.Calls.ShouldBe(5);
     }
 
     [Fact]

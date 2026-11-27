@@ -43,6 +43,12 @@ public enum CardItemKind
 
     /// <summary>The text cursor of the input.</summary>
     Cursor,
+
+    /// <summary>The outline and left bar of the row under the pointer, in the accent (3:1 on the panel); the row keeps the panel's fill, so its text keeps its contrast.</summary>
+    RowHover,
+
+    /// <summary>The raised box that carries a cut row's whole text while the pointer is on it; it covers no hit.</summary>
+    TipBox,
 }
 
 /// <summary>Which palette colour a card's text or item takes.</summary>
@@ -155,6 +161,30 @@ public abstract class BuddyCard
         return y + h * wrapped.Lines.Count;
     }
 
+    /// <summary>
+    /// Adds the whole text of a cut row as a raised box over the rows below <paramref name="below"/> (above the row when it would run off the card). It is
+    /// drawn last, adds no hit and does not change the card's height, so nothing moves under the pointer; it is not in <see cref="Lines"/> (it is a
+    /// transient layer over other text, not a row).
+    /// </summary>
+    protected void AddTip<TSurface>(Pen<TSurface> pen, string text, float below)
+    {
+        const float size = 13, pad = 6;
+        var inner = Width - 2 * Padding;
+        var h = LineHeight(pen, size);
+        var wrapped = TextWrap.Lines(t => pen.Measure(t, size).Width, text, inner - 2 * pad, 4);
+        var boxH = wrapped.Lines.Count * h + 2 * pad;
+        var y = below + 2;
+        if (y + boxH > Height - 4)
+        {
+            y = MathF.Max(4, below - 2 * h - boxH);
+        }
+        Items.Add(new CardItem(CardItemKind.TipBox, Padding, y, inner, boxH));
+        for (var i = 0; i < wrapped.Lines.Count; i++)
+        {
+            Items.Add(new CardItem(CardItemKind.Text, Padding + pad, y + pad + i * h, inner - 2 * pad, h, wrapped.Lines[i], size, CardTone.Body));
+        }
+    }
+
     /// <summary>Draws the card with its top left at the pen's origin.</summary>
     public void Draw<TSurface>(Pen<TSurface> pen, BuddyPalette palette)
     {
@@ -224,6 +254,13 @@ public abstract class BuddyCard
             case CardItemKind.Arrow:
                 pen.Line(x, y + h, x + w, y, palette.Accent, 1.4f);
                 pen.Polyline(palette.Accent, 1.4f, (x + w * 0.2f, y), (x + w, y), (x + w, y + h * 0.8f));
+                break;
+            case CardItemKind.RowHover:
+                pen.Box(x, y, w, h, palette.PanelBg, 6, palette.Accent, 1.5f);
+                pen.Box(x + 1, y + 3, 3, h - 6, palette.Accent);
+                break;
+            case CardItemKind.TipBox:
+                pen.Box(x, y, w, h, palette.ButtonBg, 6, palette.CardBorder, 1f);
                 break;
             case CardItemKind.Cursor:
                 pen.Line(x, y, x, y + h, palette.HeaderText, 1.4f);

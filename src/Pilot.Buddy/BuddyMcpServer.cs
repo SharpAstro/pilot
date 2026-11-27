@@ -5,8 +5,8 @@ using System.Text.Json;
 namespace Pilot.Buddy;
 
 /// <summary>
-/// <c>pilot-buddy mcp</c>: a stdio MCP server with four tools, <c>buddy_say(text, urgency)</c>, <c>buddy_point(card)</c>, <c>buddy_state()</c> and
-/// <c>buddy_sleep()</c>, each relayed over an <see cref="IBuddyLink"/> to the buddy on this desktop. It holds none of the node's state; with no buddy
+/// <c>pilot-buddy mcp</c>: a stdio MCP server with five tools, <c>buddy_say(text, urgency)</c>, <c>buddy_point(card)</c>, <c>buddy_state()</c>,
+/// <c>buddy_sleep()</c> and <c>buddy_memory()</c>, each relayed over an <see cref="IBuddyLink"/> to the buddy on this desktop. It holds none of the node's state; with no buddy
 /// every tool answers "no buddy on this desktop" at once. (Pilot.Commands' McpServer is the pilot CLI's proxy to the node and internal to it, with
 /// a tool table made from the command tree; the JSON-RPC framing here is the few lines this server needs, written the same way, by hand.)
 /// </summary>
@@ -89,6 +89,7 @@ public sealed class BuddyMcpServer(IBuddyLink link)
             "buddy_point" => BuddyCall.Point,
             "buddy_state" => BuddyCall.State,
             "buddy_sleep" => BuddyCall.Sleep,
+            "buddy_memory" => BuddyCall.Memory,
             _ => null,
         };
         if (tool is null)
@@ -120,6 +121,7 @@ public sealed class BuddyMcpServer(IBuddyLink link)
         Tool(w, "buddy_point", "Wake the cat and have it point at one card (by its id) in its bubble.", ("card", "The id of the card.", true));
         Tool(w, "buddy_state", "Whether the cat runs, is awake or asleep, is hidden, and what it last said and when.");
         Tool(w, "buddy_sleep", "Settle the cat: what you told it is cleared and it goes back to sleep.");
+        Tool(w, "buddy_memory", "The cat's memory, live: managed heap (GC info), private bytes and working set, the font atlas, the swapchain (size, images) and depth buffer, and what the node mirror holds.");
         w.WriteEndArray();
     }
 
