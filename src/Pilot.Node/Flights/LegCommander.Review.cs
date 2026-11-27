@@ -592,7 +592,7 @@ public sealed partial class LegCommander
                 return false;
             }
             // Any merge card of this head, open or closed, is a person's dismissal or an answered merge, not undone; but not one closed for a leg wait (PIL1294).
-            var waited = state.Cards(openOnly: false).Where(c => c.Subject == subject && c.Kind is PrReady && c.Outcome?.StartsWith(LegWaitOutcome, StringComparison.Ordinal) == true).ToList();
+            var waited = state.Cards(openOnly: false).Where(c => c.Subject == subject && c.Kind is PrReady && IsNodeWaitOutcome(c.Outcome)).ToList();
             if (state.Cards(openOnly: false).Except(waited).Any(c => c.Subject == subject && c.Kind is PrReady or MergeFailed
                 && (c.ClosedAt is null ||c.Choices.Any(ch => ch.Verb == Verbs.Merge && ch.Args.FirstOrDefault() is { } h && string.Equals(h, head, StringComparison.OrdinalIgnoreCase)))))
             {

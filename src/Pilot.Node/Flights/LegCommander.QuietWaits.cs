@@ -20,6 +20,13 @@ public sealed partial class LegCommander
     /// <summary>The outcome a PR-ready card is closed with while legs are not done: the restore sweep does not read it as a person's dismissal.</summary>
     public const string LegWaitOutcome = "waits for legs: ";
 
+    /// <summary>The outcome a PR-ready card is closed with when its flight holds for unmade review notes (#1400): the node's own close, never a person's dismissal.</summary>
+    public const string HoldingCloseOutcome = "holds for review notes: ";
+
+    /// <summary>True for an outcome the node itself closed a PR-ready card with (a leg wait or a hold), which the restore sweep does not read as a dismissal.</summary>
+    internal static bool IsNodeWaitOutcome(string? outcome) =>
+        outcome is not null && (outcome.StartsWith(LegWaitOutcome, StringComparison.Ordinal) || outcome.StartsWith(HoldingCloseOutcome, StringComparison.Ordinal));
+
     /// <summary>The Handled line a restored PR-ready card leaves, unless the card came back after a wait on legs (that has its own line).</summary>
     private void RaiseRestoredLine(string subject, string code, bool afterLegWait)
     {

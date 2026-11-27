@@ -988,7 +988,7 @@ public sealed class PrChecks(NodeState state, IGitHub gitHub, TimeProvider time,
         {
             return flight.Review?.ReviewedHead;
         }
-        return latest?.Outcome?.StartsWith(LegCommander.LegWaitOutcome, StringComparison.Ordinal) == true ? flight.Review?.ReviewedHead : null;
+        return LegCommander.IsNodeWaitOutcome(latest?.Outcome) ? flight.Review?.ReviewedHead : null;
     }
 
     /// <summary>

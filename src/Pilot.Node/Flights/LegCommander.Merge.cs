@@ -570,6 +570,13 @@ public sealed partial class LegCommander
         {
             return;
         }
+        // A flight holding for unmade notes gets no "ready to merge" (#1400): a card still open from before the hold is closed, the
+        // node's own close, and the release raises the one ready card.
+        if (flight is not null && card.Choices.Any(c => c.Verb == Verbs.Merge) && HoldsForNotes(flight))
+        {
+            state.CloseCard(card.Id, HoldingCloseOutcome + "the flight holds until every review note has an end", "node");
+            return;
+        }
         // The PR's page, not the card's link: a card that showed a failed check's page turns back to the PR's.
         var link = flight?.PullRequestUrl ?? card.Link;
         // The card's own words (the review, the head) stay while the Merge only changes its colour; a state that wrote its own
