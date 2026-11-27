@@ -49,7 +49,7 @@
     <PackageVersion Include="Node.Lib.Hosting" Version="1.2.*" />
     <PackageVersion Include="SdlVulkan.Renderer" Version="7.107.5621" />
     <PackageVersion Include="SdlVulkan.Renderer.Debug" Version="7.107.5621" />
-    <PackageVersion Include="SharpAstro.AppShell" Version="1.2.*" />
+    <PackageVersion Include="SharpAstro.AppShell" Version="1.7.*" />
     <PackageVersion Include="SharpAstro.Png" Version="3.41.*" />
     <PackageVersion Include="SharpAstro.Jpeg" Version="3.41.*" />
     <PackageVersion Include="SharpAstro.Webp" Version="3.41.*" />
