@@ -58,7 +58,10 @@ public sealed record PilotLink(string? CardId)
         {
             return false;
         }
-        var path = uri.AbsolutePath.Trim('/');
+        // One leading and one trailing slash are the URI's own; any other empty segment (pilot://flight//leg) makes the link junk.
+        var path = uri.AbsolutePath;
+        path = path.StartsWith('/') ? path[1..] : path;
+        path = path.EndsWith('/') ? path[..^1] : path;
         string? node = null;
         foreach (var pair in uri.Query.TrimStart('?').Split('&', StringSplitOptions.RemoveEmptyEntries))
         {
