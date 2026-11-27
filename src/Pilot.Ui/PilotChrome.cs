@@ -952,6 +952,12 @@ internal sealed class PilotChrome<TSurface>
             return true;
         }
 
+        // The Settings search box: Ctrl+F focuses it, Escape clears it (also while it has the keyboard, which the router would not hand to the page).
+        if (Page == PilotPage.Settings && Settings.HandleSearchKey(evt))
+        {
+            return true;
+        }
+
         // Shift+Enter in the chat's box is a new line: ahead of the router, which would take the Enter as a send.
         if (evt is InputEvent.KeyDown { Key: InputKey.Enter } && Chat.HandleNewLine(evt))
         {

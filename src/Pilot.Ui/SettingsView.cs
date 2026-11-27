@@ -442,63 +442,188 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
         return pending == 0 ? text : $"{text} · {pendingText}";
     }
 
+    /// <summary>The search box above the list: filters every row by title, description and key.</summary>
+    public TextInputState Search { get; } = new() { Placeholder = "Search settings" };
+
+    /// <summary>What a list piece is, so the filter can drop a heading with no row under it.</summary>
+    internal enum Part { Section, Subhead, Row }
+
+    /// <summary>One piece of the list: its kind, the texts a query is matched against (title, description, key) and what is drawn.</summary>
+    internal readonly record struct Piece<T>(Part Part, string[] Texts, T Node);
+
+    /// <summary>Whether <paramref name="query"/> (trimmed, any case) is in one of <paramref name="texts"/>; an empty query matches everything.</summary>
+    internal static bool Matches(string query, params string?[] texts)
+    {
+        var wanted = query.Trim();
+        return wanted.Length == 0 || texts.Any(t => t is not null && t.Contains(wanted, StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>
+    /// The pieces a query keeps: a row stays when one of its texts holds the query, a Subhead when a row under it stays, a Section when
+    /// a row anywhere under it stays. An empty query keeps everything, headings with no row of their own included.
+    /// </summary>
+    internal static List<T> Filter<T>(IReadOnlyList<Piece<T>> pieces, string query)
+    {
+        if (query.Trim().Length == 0)
+        {
+            return [.. pieces.Select(p => p.Node)];
+        }
+        var keep = new bool[pieces.Count];
+        var section = -1;
+        var subhead = -1;
+        for (var i = 0; i < pieces.Count; i++)
+        {
+            switch (pieces[i].Part)
+            {
+                case Part.Section:
+                    section = i;
+                    subhead = -1;
+                    break;
+                case Part.Subhead:
+                    subhead = i;
+                    break;
+                default:
+                    if (Matches(query, pieces[i].Texts))
+                    {
+                        keep[i] = true;
+                        if (section >= 0)
+                        {
+                            keep[section] = true;
+                        }
+                        if (subhead >= 0)
+                        {
+                            keep[subhead] = true;
+                        }
+                    }
+                    break;
+            }
+        }
+        return [.. pieces.Where((_, i) => keep[i]).Select(p => p.Node)];
+    }
+
+    /// <summary>How far the list is scrolled, in pixels.</summary>
+    internal float ScrollOffset => _scroll.Offset;
+
+    private string _searched = "";
+    private const float SearchFloor = 110f;
+    private const float SearchWidth = 360f;
+    private const float SearchRowHeight = 36f;
+
+    /// <summary>Clears the box (the list goes back to the top on the next draw).</summary>
+    internal void ClearSearch()
+    {
+        Search.Text = "";
+        Search.CursorPos = 0;
+        Changed?.Invoke();
+    }
+
+    /// <summary>Puts the keyboard in the search box (Ctrl+F).</summary>
+    internal void FocusSearch()
+    {
+        Ui.Focus.Focus(Search);
+        Changed?.Invoke();
+    }
+
+    /// <summary>
+    /// The page's own keys, ahead of a focused field (the chrome asks first): Ctrl+F focuses the search box, Escape clears it.
+    /// Escape with the box empty is left to the router. True for a key taken.
+    /// </summary>
+    internal bool HandleSearchKey(InputEvent evt)
+    {
+        switch (evt)
+        {
+            case InputEvent.KeyDown { Key: InputKey.F, Modifiers: InputModifier.Ctrl }:
+                FocusSearch();
+                return true;
+            case InputEvent.KeyDown { Key: InputKey.Escape } when Search.Text.Length > 0:
+                ClearSearch();
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    private Layout.Node SearchRow() =>
+        Layout.Builder.HStack(Layout.Builder.TextInput(Search, 13f, Palette.Input).Bg(FieldBg).WStar(1f, SearchFloor, SearchWidth).HFixed(AboutCard.HeaderButton), Layout.Builder.Spacer().WStar(1f, 0f))
+            .WithGap(8f).CrossCenter().Pad(Gutter, 4f).RowH(SearchRowHeight);
+
     private Layout.Node Main(SettingsPage page, Seen read, DateTimeOffset now)
     {
-        var rows = new List<Layout.Node>(OtherNodesRow());
+        var lead = new List<Layout.Node>(OtherNodesRow());
+        var pieces = new List<Piece<Layout.Node>>();
+        void Add(Part part, Layout.Node node, params string?[] texts) => pieces.Add(new Piece<Layout.Node>(part, [.. texts.Where(t => t is not null).Select(t => t!)], node));
         if (LoadChecks is not null)
         {
-            rows.Add(SetupSection(read));
+            Add(Part.Section, SetupSection(read));
             if (read.Checks is not { } measured)
             {
                 // Before the node's first answer the page does not know the rows: one stands for them.
-                rows.Add(PendingChecksRow(read.ChecksProblem));
+                Add(Part.Row, PendingChecksRow(read.ChecksProblem), "Setup checks", read.ChecksProblem ?? "checking…");
             }
             else
             {
                 for (var i = 0; i < measured.Checks.Length; i++)
                 {
-                    rows.Add(CheckRow(measured.Checks[i], i, measured.CheckedAt, now, read.Checking));
+                    var check = measured.Checks[i];
+                    Add(Part.Row, CheckRow(check, i, measured.CheckedAt, now, read.Checking), check.Title, check.Line, check.Key);
                 }
             }
         }
-        rows.Add(Section("Settings", "the node restarts to run with a change at once; its sessions, flights and jobs carry on"));
+        Add(Part.Section, Section("Settings", "the node restarts to run with a change at once; its sessions, flights and jobs carry on"));
         for (var i = 0; i < page.Settings.Length; i++)
         {
-            rows.Add(SettingRowNode(page.Settings[i], i));
+            var setting = page.Settings[i];
+            Add(Part.Row, SettingRowNode(setting, i), setting.Label, setting.Detail, setting.Key);
         }
         if (Notifications is { } bar)
         {
-            rows.Add(Section("Notifications", "how long the Notifications page keeps what happened; what needs you stays until it is answered"));
-            rows.Add(Layout.Builder.HStack([
+            Add(Part.Section, Section("Notifications", "how long the Notifications page keeps what happened; what needs you stays until it is answered"));
+            Add(Part.Row, Layout.Builder.HStack([
                     Layout.Builder.Text("Keep history for", 13f, Body).Selectable().WAuto(),
                     .. NotificationsHost.KeepChoices.Select(c => Pill(c.Label, $"settings:keep:{c.Label}", () => bar.KeepFor = c.Keep, bar.KeepFor == c.Keep))])
-                .WithGap(8f).CrossCenter().Pad(Gutter, 4f).RowH(34f));
+                .WithGap(8f).CrossCenter().Pad(Gutter, 4f).RowH(34f), "Keep history for", "how long the Notifications page keeps what happened", "notifications");
         }
         var given = read.Given;
         var held = read.Held;
         if (LoadGrants is not null || LoadHeld is not null)
         {
-            rows.Add(Section("Grants", "who may command this node, and which nodes you may command"));
-            rows.Add(Subhead("Given by this node"));
+            Add(Part.Section, Section("Grants", "who may command this node, and which nodes you may command"));
+            Add(Part.Subhead, Subhead("Given by this node"));
             if (given.Length == 0)
             {
-                rows.Add(Layout.Builder.Text("no machine on the LAN holds a grant here", 12f, Dim).RowH(26f).Pad(Gutter, 2f));
+                const string none = "no machine on the LAN holds a grant here";
+                Add(Part.Row, Layout.Builder.Text(none, 12f, Dim).RowH(26f).Pad(Gutter, 2f), none);
             }
             for (var i = 0; i < given.Length; i++)
             {
-                rows.Add(GrantRow(given[i], i));
+                Add(Part.Row, GrantRow(given[i], i), given[i].Label, given[i].Id, "may command this node");
             }
-            rows.Add(Subhead("Held by you"));
+            Add(Part.Subhead, Subhead("Held by you"));
             if (held.Length == 0)
             {
-                rows.Add(Layout.Builder.Text("no other node is commanded from here: Connect on its row asks for a grant", 12f, Dim).RowH(26f).Pad(Gutter, 2f));
+                const string none = "no other node is commanded from here: Connect on its row asks for a grant";
+                Add(Part.Row, Layout.Builder.Text(none, 12f, Dim).RowH(26f).Pad(Gutter, 2f), none);
             }
             for (var i = 0; i < held.Length; i++)
             {
-                rows.Add(HeldRow(held[i], i));
+                Add(Part.Row, HeldRow(held[i], i), HeldKey(held[i]), held[i].Address, "you may command it");
             }
         }
-        return Layout.Builder.VStack([.. rows]).WithScroll(_scroll).Pad(Gutter, 8f).Stretch();
+        var query = Search.Text.Trim();
+        if (!string.Equals(query, _searched, StringComparison.Ordinal))
+        {
+            // The list is shorter or longer now: it starts again at the top, so what was found is in view.
+            _searched = query;
+            _scroll.Offset = 0f;
+        }
+        var kept = Filter(pieces, query);
+        // The search row is outside the scroll and always the same height, so nothing under the pointer moves as the list changes.
+        var shown = kept.Count == 0
+            ? Layout.Builder.VStack(Layout.Builder.HStack(
+                    Layout.Builder.Text($"No setting matches '{query}'", 13f, Body).Whole($"No setting matches '{query}'").WStar(),
+                    Pill("Clear", "settings:search:clear", ClearSearch)).WithGap(12f).CrossCenter().Pad(8f, 10f).RowH(38f))
+            : Layout.Builder.VStack([.. lead, .. kept]);
+        return Layout.Builder.VStack(SearchRow(), shown.WithScroll(_scroll).Pad(Gutter, 8f).Stretch()).Stretch();
     }
 
     private static Layout.Node Section(string title, string hint) =>
