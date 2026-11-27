@@ -82,9 +82,9 @@ public sealed class DesktopCatSectionTests : IDisposable
         Render(chrome, 1280, 1400);
         var regions = new List<ClickableRegion>();
         chrome.Settings.CollectPaintedRegions(regions);
-        var hit = regions.FirstOrDefault(r => r.Result is HitResult.ButtonHit b && b.Action == action);
-        hit.ShouldNotBeNull($"no painted '{action}' among: {string.Join(", ", regions.Select(r => (r.Result as HitResult.ButtonHit)?.Action).Where(a => a is not null))}");
-        hit.OnClick!.Invoke(InputModifier.None);
+        var at = regions.FindIndex(r => r.Result is HitResult.ButtonHit b && b.Action == action);
+        (at >= 0).ShouldBeTrue($"no painted '{action}' among: {string.Join(", ", regions.Select(r => (r.Result as HitResult.ButtonHit)?.Action).Where(a => a is not null))}");
+        regions[at].OnClick!.Invoke(InputModifier.None);
     }
 
     private static List<string> Texts(PilotChrome<RgbaImage> chrome, RgbaImageRenderer renderer, float width = 1280, float height = 1400)
