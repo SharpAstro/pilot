@@ -22,6 +22,9 @@ public sealed class BenchRun(NodeState state, NodeOptions options, RepoCatalog r
     /// <summary>The kind of the card a finished benchmark raises.</summary>
     public const string CardKind = "bench-result";
 
+    /// <summary>The kind of the card naming the worktrees a finished benchmark could not remove.</summary>
+    public const string LeftBehindKind = "bench-worktrees-left";
+
     /// <summary>The longest comment body posted: GitHub refuses a comment over 65536 characters.</summary>
     private const int MaxBody = 60000;
 
@@ -234,7 +237,7 @@ public sealed class BenchRun(NodeState state, NodeOptions options, RepoCatalog r
             }
             if (results.Where(r => r.Why is not null).ToList() is { Count: > 0 } left)
             {
-                state.RaiseCard(CardBin.Handled, CardKind, Verbs.RepoTarget(repo.Path), $"The {repo.Name} benchmark left {left.Count} worktree{(left.Count == 1 ? "" : "s")} behind",
+                state.RaiseCard(CardBin.Handled, LeftBehindKind,Verbs.RepoTarget(repo.Path), $"The {repo.Name} benchmark left {left.Count} worktree{(left.Count == 1 ? "" : "s")} behind",
                     $"Job {jobId}: " + string.Join("\n", left.Select(r => $"{r.Worktree}: {r.Why}")) + "\n\nThe node's removal queue tries again at its next start.");
             }
             // The results a VM's bench copied back: on the card now.
