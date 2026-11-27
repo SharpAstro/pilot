@@ -425,9 +425,9 @@ public sealed class NodeWatchdogTests
                 await first.WaitForExitAsync(cts.Token);
             }
 
-            await second.Task.WaitAsync(TimeSpan.FromSeconds(60), cts.Token);
+            await second.Task.WaitAsync(TimeSpan.FromSeconds(60), cts.Token); // budget: the done-when is a new node within a minute, and the real grace is 30 s
 
-            clock.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(60));
+            clock.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(60)); // budget: the same minute, asserted
             started.Count.ShouldBe(2);
             cts.Cancel();
             await watchdog;
