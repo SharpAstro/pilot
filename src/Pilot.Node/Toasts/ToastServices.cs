@@ -20,12 +20,13 @@ public static class ToastServices
             return;
         }
         services.TryAddSingleton<IToastRunner>(new WinRtToastRunner());
+        services.TryAddSingleton<ToastHealth>();
         // Made here, inside the Windows guard (a lambda does not carry the guard to the analyzer).
         services.TryAddSingleton<ISchemeRegistry>(new UserSchemeRegistry());
         services.AddHostedService(sp => new Toaster(
             sp.GetRequiredService<NodeState>(), sp.GetRequiredService<IToastRunner>(), sp.GetRequiredService<TimeProvider>(),
             () => sp.GetRequiredService<RoleModels>().Toasts, () => sp.GetRequiredService<PageViews>().AnyShowsCards,
-            sp.GetRequiredService<ILoggerFactory>().CreateLogger<Toaster>()));
+            sp.GetRequiredService<ILoggerFactory>().CreateLogger<Toaster>(), sp.GetRequiredService<ToastHealth>()));
         services.AddHostedService(sp => new AumidRegistrar(sp.GetRequiredService<ISchemeRegistry>(),
             Environment.ProcessPath ?? "pilot-node", File.Exists, sp.GetRequiredService<ILoggerFactory>().CreateLogger<AumidRegistrar>()));
         services.AddHostedService(sp => new SchemeRegistrar(sp.GetRequiredService<ISchemeRegistry>(),

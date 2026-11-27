@@ -29,6 +29,7 @@ public sealed class Toaster : IAsyncDisposable, Microsoft.Extensions.Hosting.IHo
     private readonly Func<string> _mode;
     private readonly Func<bool> _clientShowsCards;
     private readonly ILogger? _logger;
+    private readonly ToastHealth _health;
     private readonly Channel<bool> _signal = Channel.CreateBounded<bool>(new BoundedChannelOptions(1) { FullMode = BoundedChannelFullMode.DropWrite, SingleReader = true });
     private readonly SemaphoreSlim _sync = new(1, 1);
     private readonly CancellationTokenSource _stop = new();
@@ -54,8 +55,9 @@ public sealed class Toaster : IAsyncDisposable, Microsoft.Extensions.Hosting.IHo
     /// A toaster over <paramref name="state"/>. <paramref name="mode"/> says the <c>toasts</c> setting now (all, urgent or off);
     /// <paramref name="clientShowsCards"/> whether any client shows the cards now.
     /// </summary>
-    public Toaster(NodeState state, IToastRunner runner, TimeProvider time, Func<string> mode, Func<bool> clientShowsCards, ILogger? logger = null)
+    public Toaster(NodeState state, IToastRunner runner, TimeProvider time, Func<string> mode, Func<bool> clientShowsCards, ILogger? logger = null, ToastHealth? health = null)
     {
+        _health = health ?? new ToastHealth();
         _state = state;
         _runner = runner;
         _time = time;
@@ -246,10 +248,14 @@ public sealed class Toaster : IAsyncDisposable, Microsoft.Extensions.Hosting.IHo
         try
         {
             await _runner.Show(tag, xml, cancel).ConfigureAwait(false);
+            _health.Shown(_time.GetUtcNow());
+            // A toast showed, so toasts work again: the card that said they did not goes.
+            _state.CloseCardsAbout(Verbs.NodeTarget, "toasts work again", ToastHealth.BrokenKind);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _logger?.LogWarning(ex, "toast {Tag} was not shown", tag);
+            Broken(ex);
         }
     }
 
@@ -262,7 +268,18 @@ public sealed class Toaster : IAsyncDisposable, Microsoft.Extensions.Hosting.IHo
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _logger?.LogWarning(ex, "toast {Tag} was not withdrawn", tag);
+            Broken(ex);
         }
+    }
+
+    // One card in For you (never Ring: a Ring card would toast and fail again), on a fixed subject, so RaiseCard hands back the open one
+    // however many toasts fail after it; its detail holds the latest error.
+    private void Broken(Exception ex)
+    {
+        _health.Failed(_time.GetUtcNow(), ex.Message);
+        if (_state.Cards(openOnly: true).Any(c => c.Kind == ToastHealth.BrokenKind && c.Subject == Verbs.NodeTarget)) return;
+        _state.RaiseCard(CardBin.ForYou, ToastHealth.BrokenKind, Verbs.NodeTarget, "Desktop toasts are not working on this machine",
+            $"{ex.Message}. Open Settings, Setup, Desktop toasts, and send a test toast. The card closes when a toast shows.");
     }
 
     /// <inheritdoc />

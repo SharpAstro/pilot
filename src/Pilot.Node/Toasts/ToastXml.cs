@@ -55,6 +55,13 @@ public static class ToastXml
     public static string Burst(int count) =>
         Build(CardsLink, ToastTier.Normal, BurstTitle(count), null);
 
+    /// <summary>The tag of the test toast the Desktop toasts setup check sends.</summary>
+    public const string TestTag = "pilot-test";
+
+    /// <summary>The test toast of the setup check: a click opens the cards page.</summary>
+    public static string Test() =>
+        Build(CardsLink, ToastTier.Normal, "pilot test toast", "Desktop toasts work on this machine.");
+
     /// <summary>The burst toast's title: <c>N cards need you</c>.</summary>
     public static string BurstTitle(int count) => string.Create(CultureInfo.InvariantCulture, $"{count} cards need you");
 

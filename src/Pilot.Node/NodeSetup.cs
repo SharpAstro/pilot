@@ -41,6 +41,8 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
     public const string ClaudePermissionsKey = "claude-permissions";
     public const string ShortcutKey = "shortcut";
     public const string UserSkillsKey = "user-skills";
+    /// <summary>The desktop toasts check (#1376): read from the toaster's last outcome, its fix sends a test toast.</summary>
+    public const string ToastsKey = "toasts";
 
     /// <summary>The response file that turns MSBuild node reuse off, as runaway-agent's <c>machine/</c> folder and install.sh name it.</summary>
     public const string BuildRsp = "Directory.Build.rsp";
@@ -104,6 +106,15 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
 
     /// <summary>Whether a fix of the node's start at logon also starts the node now when none answers; a test that proves only the entry turns it off.</summary>
     public bool StartsNodeNow { get; init; } = true;
+
+    /// <summary>The toaster's last outcome; the node gives the live one, a test its own. Null reads as no attempt yet.</summary>
+    public Toasts.ToastHealth? ToastHealth { get; init; }
+
+    /// <summary>The runner the test toast goes through; null (a node with no toasts) makes the fix refuse.</summary>
+    public Toasts.IToastRunner? ToastRunner { get; init; }
+
+    /// <summary>Whether desktop toasts apply here: Windows only. A test replaces it.</summary>
+    public bool ToastsApply { get; init; } = OperatingSystem.IsWindows();
 
     private string? NodeEntry() => AutostartEntry is { } seam ? seam() : Autostart.Entry(Runs, RunKeyApplies);
 
@@ -179,6 +190,11 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
         if (DefenderApplies)
         {
             checks.Add(DefenderCheck());
+        }
+
+        if (ToastsApply)
+        {
+            checks.Add(ToastsCheck());
         }
 
         var trusted = Trusted(options.WatchtowerFolder);
@@ -325,8 +341,10 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
                 return OpenWindow(options.WatchtowerFolder, "pilot: trust the watchtower folder")
                     ? null
                     : $"no window opened: run claude in {options.WatchtowerFolder} and accept its trust prompt";
+            case ToastsKey:
+                return await SendTestToastAsync(cancellationToken);
             default:
-                return $"setup takes {string.Join(", ", new[] { AutostartKey, NoAutostartKey, BuddyAutostartKey, NoBuddyAutostartKey, HooksKey, MergeGuardKey, ClaudePermissionsKey, GuardHooksKey, BuildRspKey, UserSkillsKey, LanKey, FirewallKey, FirewallLeftoversKey, DefenderKey, TrustKey })}, not {key}";
+                return $"setup takes {string.Join(", ", new[] { AutostartKey, NoAutostartKey, BuddyAutostartKey, NoBuddyAutostartKey, HooksKey, MergeGuardKey, ClaudePermissionsKey, GuardHooksKey, BuildRspKey, UserSkillsKey, LanKey, FirewallKey, FirewallLeftoversKey, DefenderKey, TrustKey, ToastsKey })}, not {key}";
         }
     }
 
@@ -375,6 +393,34 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             return new SetupCheck { Key = UserSkillsKey, Title = Title, Ok = false, Optional = true, Line = $"{SkillsFolder}: {ex.Message}" };
+        }
+    }
+
+    /// <summary>
+    /// Whether the node's desktop toasts work (#1376), as the toaster last saw: no attempt yet, shown at a time, or failed with the error.
+    /// Optional: the node runs without toasts. Its fix sends a test toast.
+    /// </summary>
+    public SetupCheck ToastsCheck()
+    {
+        var health = ToastHealth ?? new Toasts.ToastHealth();
+        return new SetupCheck { Key = ToastsKey, Title = "Desktop toasts", Ok = health.Working, Optional = true, Line = health.Line(), Fix = "Send a test toast" };
+    }
+
+    /// <summary>Shows a test toast under <see cref="Toasts.ToastXml.TestTag"/>; null when it showed, else the runner's error.</summary>
+    private async Task<string?> SendTestToastAsync(CancellationToken cancellationToken)
+    {
+        if (!ToastsApply || ToastRunner is not { } runner)
+        {
+            return "desktop toasts are on Windows only";
+        }
+        try
+        {
+            await runner.Show(Toasts.ToastXml.TestTag, Toasts.ToastXml.Test(), cancellationToken).ConfigureAwait(false);
+            return null;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return $"the test toast was not shown: {ex.Message}";
         }
     }
 
