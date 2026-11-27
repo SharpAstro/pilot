@@ -109,6 +109,7 @@ public sealed class HoldingPrReadyTests : ReviewTestsBase
 
         // A later round passes with the first note answered and one new note: the node plans the next leg, and nothing asks the person.
         var again = Made + "\n## Not blocking\n- an unused `c2` could be a discard";
+        _state.UpdateFlight(flight.Code, f => f with { Review = f.Review! with { State = ReviewState.Reviewing } });
         (await Run(Verbs.Review, Verbs.FlightTarget(flight.Code), Reviewer(flight.Code), "pass", again)).Error.ShouldBeNull();
         await Checks().LookAsync(Ct);
 
