@@ -171,9 +171,9 @@ public sealed class AutostartTests
             BuddyBesideNode = () => "/opt/pilot-buddy",
         };
 
-        var off = Setup().Checks().Single(c => c.Key == NodeSetup.BuddyAutostartKey);
+        var off = Setup().BuddyAutostartCheck();
         runs.Write(Autostart.BuddyName, "/opt/pilot-buddy");
-        var on = Setup().Checks().Single(c => c.Key == NodeSetup.BuddyAutostartKey);
+        var on = Setup().BuddyAutostartCheck();
 
         off.Ok.ShouldBeFalse();
         off.Optional.ShouldBeTrue();
@@ -209,7 +209,7 @@ public sealed class AutostartTests
         var setup = new NodeSetup(new NodeOptions("/tmp/n.sock", root), "/opt/pilot-node", Path.Combine(root, ".claude")) { BuddyRuns = new FakeRuns(), BuddyAutostartApplies = false };
 
         (await setup.FixAsync(NodeSetup.BuddyAutostartKey, Ct)).ShouldNotBeNull().ShouldContain("Windows only");
-        setup.Checks().Single(c => c.Key == NodeSetup.BuddyAutostartKey).Line.ShouldContain("Windows only");
+        setup.BuddyAutostartCheck().Line.ShouldContain("Windows only");
     }
 
     [Fact]

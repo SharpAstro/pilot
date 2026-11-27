@@ -372,7 +372,7 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
     /// Whether the desktop cat starts at logon: its own Run value (HKCU Run pilot-buddy), read apart from the node's. Optional: the
     /// node runs without the cat. Windows only; elsewhere it says so. With no pilot-buddy beside the node there is nothing to start.
     /// </summary>
-    private SetupCheck BuddyAutostartCheck()
+    public SetupCheck BuddyAutostartCheck()
     {
         const string Title = "Desktop cat starts at logon";
         if (!BuddyAutostartApplies)
