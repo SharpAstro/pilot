@@ -34,7 +34,7 @@ void Note(string line)
 
 AppDomain.CurrentDomain.UnhandledException += (_, e) => LogLine($"pilot-gui: unhandled exception: {e.ExceptionObject}");
 
-// A toast's click starts the GUI with its link as the one argument (pilot://card/<id>, registered per user by the node, #1356): taken
+// A toast's click starts the GUI with its link as the one argument (AppShell's pilot:card%2F<id> or pilot:cards, or the older pilot://card/<id> and pilot://cards; registered per user by the node, #1356, #1384): taken
 // out here, so the options never see it.
 var linkArgument = args.FirstOrDefault(a => a.StartsWith(Pilot.Ui.PilotLink.Scheme + ":", StringComparison.OrdinalIgnoreCase));
 if (linkArgument is not null)
