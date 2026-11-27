@@ -7,7 +7,7 @@ namespace Pilot.Node.Toasts;
 /// <summary>
 /// Shows a desktop toast for every open Ring card (#1356): one per subject (the tag), replaced when the card is raised again, withdrawn when
 /// the card closes or leaves the Ring. More than <see cref="BurstAbove"/> normal toasts within <see cref="BurstWindow"/> become one
-/// "N cards need you" toast (<see cref="ToastXml.BurstTag"/>), urgent ones always singly. Normal toasts are skipped while a client shows the
+/// "N cards need you" toast (<see cref="ToastText.BurstTag"/>), urgent ones always singly. Normal toasts are skipped while a client shows the
 /// cards (<see cref="PageViews.AnyShowsCards"/>), and the <c>toasts</c> setting (all, urgent, off) is read at each card.
 /// </summary>
 /// <remarks>
@@ -136,14 +136,14 @@ public sealed class Toaster : IAsyncDisposable, Microsoft.Extensions.Hosting.IHo
             if (quiet)
             {
                 _skipped[card.Id] = signature;
-                _quietTags[card.Id] = ToastXml.TagOf(card.Subject);
+                _quietTags[card.Id] = card.Subject;
                 continue;
             }
             await Raise(card, signature, cancel).ConfigureAwait(false);
         }
         if (quiet)
         {
-            // The start sync runs inside the host's start: it only notes, and the withdrawal (a real PowerShell process) is the consumer's first sync.
+            // The start sync runs inside the host's start: it only notes, and the withdrawal (a call into Windows) is the consumer's first sync.
             _quietBurst = true;
             return;
         }
@@ -156,7 +156,7 @@ public sealed class Toaster : IAsyncDisposable, Microsoft.Extensions.Hosting.IHo
     {
         if (!_quietBurst || _quietTags.Count > 0) return;
         _quietBurst = false;
-        if (_burst.Count == 0) await RemoveTag(ToastXml.BurstTag, cancel).ConfigureAwait(false);
+        if (_burst.Count == 0) await RemoveTag(ToastText.BurstTag, cancel).ConfigureAwait(false);
     }
 
     private static string SignatureOf(CardRow card) => $"{card.RungAt.UtcTicks}|{card.Title}|{card.Summary}|{card.Detail}";
@@ -180,7 +180,7 @@ public sealed class Toaster : IAsyncDisposable, Microsoft.Extensions.Hosting.IHo
             // A tag another card of the subject still holds stays; the burst toast goes with its last card.
             if (shown.InBurst)
             {
-                if (_burst.Count == 0) await RemoveTag(ToastXml.BurstTag, cancel).ConfigureAwait(false);
+                if (_burst.Count == 0) await RemoveTag(ToastText.BurstTag, cancel).ConfigureAwait(false);
             }
             else if (!_shown.Values.Any(s => !s.InBurst && s.Tag == shown.Tag))
             {
@@ -203,7 +203,7 @@ public sealed class Toaster : IAsyncDisposable, Microsoft.Extensions.Hosting.IHo
         _skipped.Remove(card.Id);
         _quietTags.Remove(card.Id);
 
-        var tag = ToastXml.TagOf(card.Subject);
+        var tag = card.Subject;
         if (tier == ToastTier.Normal)
         {
             var now = _time.GetUtcNow();
@@ -220,10 +220,10 @@ public sealed class Toaster : IAsyncDisposable, Microsoft.Extensions.Hosting.IHo
         if (_shown.TryGetValue(card.Id, out var before) && before.InBurst)
         {
             _burst.Remove(card.Id);
-            if (_burst.Count == 0) await RemoveTag(ToastXml.BurstTag, cancel).ConfigureAwait(false);
+            if (_burst.Count == 0) await RemoveTag(ToastText.BurstTag, cancel).ConfigureAwait(false);
         }
         _shown[card.Id] = new Shown(tag, signature, InBurst: false);
-        await ShowRecorded(tag, ToastXml.ForCard(card.Id, card.Title, card.Summary ?? card.Detail, tier), cancel).ConfigureAwait(false);
+        await ShowRecorded(ToastText.ForCard(card.Subject, card.Id, card.Title, card.Summary ?? card.Detail, tier), cancel).ConfigureAwait(false);
     }
 
     // The window holds more than BurstAbove normal rings: they are one toast now, the singles shown in it withdrawn.
@@ -238,17 +238,24 @@ public sealed class Toaster : IAsyncDisposable, Microsoft.Extensions.Hosting.IHo
         }
         // The card itself may have a single toast up from its earlier ring: it is replaced by the burst, so that goes too (the loop above did it,
         // since the card is in _recent). A card not yet in _shown has nothing to withdraw.
-        _shown[card.Id] = new Shown(ToastXml.TagOf(card.Subject), signature, InBurst: true);
+        _shown[card.Id] = new Shown(card.Subject, signature, InBurst: true);
         _burst.Add(card.Id);
-        await ShowRecorded(ToastXml.BurstTag, ToastXml.Burst(_burst.Count), cancel).ConfigureAwait(false);
+        await ShowRecorded(ToastText.Burst(_burst.Count), cancel).ConfigureAwait(false);
     }
 
     /// <summary>Shows one toast and records the outcome; null when it showed, else the error. The one path every toast takes, the setup check's test toast included.</summary>
-    private async Task<string?> ShowRecorded(string tag, string xml, CancellationToken cancel)
+    private async Task<string?> ShowRecorded(ToastRequest request, CancellationToken cancel)
     {
+        var tag = request.Tag;
         try
         {
-            await _runner.Show(tag, xml, cancel).ConfigureAwait(false);
+            var failure = await _runner.Show(request, cancel).ConfigureAwait(false);
+            if (failure is not null)
+            {
+                _logger?.LogWarning("toast {Tag} was not shown: {Failure}", tag, failure);
+                Broken(failure);
+                return failure;
+            }
             _health.Shown(_time.GetUtcNow());
             // A toast showed, so toasts work again: the card that said they did not goes.
             _state.CloseCardsAbout(Verbs.NodeTarget, "toasts work again", ToastHealth.BrokenKind);
@@ -257,8 +264,9 @@ public sealed class Toaster : IAsyncDisposable, Microsoft.Extensions.Hosting.IHo
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _logger?.LogWarning(ex, "toast {Tag} was not shown", tag);
-            Broken(ex);
-            return ex.Message;
+            var reason = $"{ex.GetType().Name}: {ex.Message}";
+            Broken(reason);
+            return reason;
         }
     }
 
@@ -268,7 +276,7 @@ public sealed class Toaster : IAsyncDisposable, Microsoft.Extensions.Hosting.IHo
     /// </summary>
     public async Task<string?> SendTest(CancellationToken cancel = default)
     {
-        var error = await ShowRecorded(ToastXml.TestTag, ToastXml.Test(), cancel).ConfigureAwait(false);
+        var error = await ShowRecorded(ToastText.Test(), cancel).ConfigureAwait(false);
         return error is null ? null : $"the test toast was not shown: {error}";
     }
 
@@ -276,23 +284,28 @@ public sealed class Toaster : IAsyncDisposable, Microsoft.Extensions.Hosting.IHo
     {
         try
         {
-            await _runner.Remove(tag, cancel).ConfigureAwait(false);
+            var failure = await _runner.Withdraw(tag, cancel).ConfigureAwait(false);
+            if (failure is not null)
+            {
+                _logger?.LogWarning("toast {Tag} was not withdrawn: {Failure}", tag, failure);
+                Broken(failure);
+            }
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _logger?.LogWarning(ex, "toast {Tag} was not withdrawn", tag);
-            Broken(ex);
+            Broken($"{ex.GetType().Name}: {ex.Message}");
         }
     }
 
     // One card in For you (never Ring: a Ring card would toast and fail again), on a fixed subject. While one is open nothing is raised
     // again, however many toasts fail after it, so its detail keeps the first error; ToastHealth.Line holds the latest one.
-    private void Broken(Exception ex)
+    private void Broken(string reason)
     {
-        _health.Failed(_time.GetUtcNow(), ex.Message);
+        _health.Failed(_time.GetUtcNow(), reason);
         if (_state.Cards(openOnly: true).Any(c => c.Kind == ToastHealth.BrokenKind && c.Subject == Verbs.NodeTarget)) return;
         _state.RaiseCard(CardBin.ForYou, ToastHealth.BrokenKind, Verbs.NodeTarget, "Desktop toasts are not working on this machine",
-            $"{ex.Message.TrimEnd('.', ' ')}. Open Settings, Setup, Desktop toasts, and send a test toast. The card closes when a toast shows.",
+            $"{reason.TrimEnd('.', ' ')}. Open Settings, Setup, Desktop toasts, and send a test toast. The card closes when a toast shows.",
             // The one thing the node does on the person's word: stop trying. Sending a test toast is the setup check's fix.
             [new CardChoice { Label = "Turn toasts off", Verb = Verbs.Set, Target = Verbs.NodeTarget, Args = [NodeSettings.ToastsKey, "off"] }]);
     }

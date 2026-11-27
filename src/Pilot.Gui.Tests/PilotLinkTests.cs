@@ -25,6 +25,60 @@ public sealed class PilotLinkTests
         link.CardId.ShouldBe(id);
     }
 
+    [Theory]
+    [InlineData("pilot:card%2Fc1", "c1")]
+    [InlineData("PILOT:card%2Fc1", "c1")]
+    [InlineData("pilot:card%2Fcard-42%20x%26y", "card-42 x&y")]
+    [InlineData("pilot:card%2Fc1/", "c1")]
+    [InlineData("  pilot:card%2Fc1  ", "c1")]
+    [InlineData("pilot:card%2Fa%2F", "a/")]
+    // A bad escape inside the id is read as the literal text, not refused (Uri.UnescapeDataString leaves it as it is).
+    [InlineData("pilot:card%2Fx%ZZ", "x%ZZ")]
+    public void AnAppShellCardLinkParsesToItsId(string text, string id)
+    {
+        Pilot.Ui.PilotLink.TryParse(text, out var link).ShouldBeTrue();
+        link.CardId.ShouldBe(id);
+    }
+
+    [Theory]
+    [InlineData("pilot:cards")]
+    [InlineData("pilot:cards/")]
+    [InlineData("pilot://cards")]
+    public void BothCardsFormsParseWithNoCard(string text)
+    {
+        Pilot.Ui.PilotLink.TryParse(text, out var link).ShouldBeTrue();
+        link.CardId.ShouldBeNull();
+    }
+
+    [Theory]
+    [InlineData("c1")]
+    [InlineData("card 42/x&y?z#w")]
+    [InlineData("é ids")]
+    public void AppShellsOwnLinkRoundTripsForACard(string id)
+    {
+        var text = SharpAstro.AppShell.LaunchScheme.Link(ToastLink.Scheme, ToastLink.CardPayload(id));
+        Pilot.Ui.PilotLink.TryParse(text, out var link).ShouldBeTrue(text);
+        link.CardId.ShouldBe(id);
+    }
+
+    [Fact]
+    public void AppShellsOwnLinkRoundTripsForTheCardsPage()
+    {
+        var text = SharpAstro.AppShell.LaunchScheme.Link(ToastLink.Scheme, ToastLink.CardsPayload);
+        Pilot.Ui.PilotLink.TryParse(text, out var link).ShouldBeTrue(text);
+        link.CardId.ShouldBeNull();
+    }
+
+    [Theory]
+    [InlineData("other:card%2Fc1")]
+    [InlineData("pilot:card%2F")]
+    [InlineData("pilot:card%2F%20")]
+    [InlineData("pilot:card%ZZ")]
+    [InlineData("pilot:")]
+    [InlineData("pilot:cards%2Fx")]
+    [InlineData("pilot:junk")]
+    public void AppShellFormRefusals(string text) => Pilot.Ui.PilotLink.TryParse(text, out _).ShouldBeFalse();
+
     [Fact]
     public void TheBareCardsLinkParsesWithNoCard()
     {
