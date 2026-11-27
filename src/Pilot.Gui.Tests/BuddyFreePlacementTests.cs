@@ -23,8 +23,8 @@ public sealed class BuddyFreePlacementTests
     private static readonly DisplayArea Side = new("side", 1920, 0, 2560, 1400);
     private const int WindowW = 420, WindowH = 700;
 
-    // The cat's own box at Medium (0.67) at scale 1: (190 + 4) x 170 design px, 24 from the window's edge.
-    private static readonly BuddyPlacement.CatBox Cat = new(130, 114, 24);
+    // The cat's own box at Medium (0.67) at scale 1: (200 + 4) x 170 design px times 0.67, rounded as the host does, 24 from the window's edge.
+    private static readonly BuddyPlacement.CatBox Cat = new(137, 114, 24);
 
     private static BuddySettings Free => new() { Placement = 1 };
 
