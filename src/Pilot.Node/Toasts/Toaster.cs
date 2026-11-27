@@ -223,7 +223,7 @@ public sealed class Toaster : IAsyncDisposable, Microsoft.Extensions.Hosting.IHo
             if (_burst.Count == 0) await RemoveTag(ToastXml.BurstTag, cancel).ConfigureAwait(false);
         }
         _shown[card.Id] = new Shown(tag, signature, InBurst: false);
-        await ShowTag(tag, ToastXml.ForCard(card.Id, card.Title, card.Summary ?? card.Detail, tier), cancel).ConfigureAwait(false);
+        await ShowRecorded(tag, ToastXml.ForCard(card.Id, card.Title, card.Summary ?? card.Detail, tier), cancel).ConfigureAwait(false);
     }
 
     // The window holds more than BurstAbove normal rings: they are one toast now, the singles shown in it withdrawn.
@@ -240,12 +240,7 @@ public sealed class Toaster : IAsyncDisposable, Microsoft.Extensions.Hosting.IHo
         // since the card is in _recent). A card not yet in _shown has nothing to withdraw.
         _shown[card.Id] = new Shown(ToastXml.TagOf(card.Subject), signature, InBurst: true);
         _burst.Add(card.Id);
-        await ShowTag(ToastXml.BurstTag, ToastXml.Burst(_burst.Count), cancel).ConfigureAwait(false);
-    }
-
-    private async Task ShowTag(string tag, string xml, CancellationToken cancel)
-    {
-        await ShowRecorded(tag, xml, cancel).ConfigureAwait(false);
+        await ShowRecorded(ToastXml.BurstTag, ToastXml.Burst(_burst.Count), cancel).ConfigureAwait(false);
     }
 
     /// <summary>Shows one toast and records the outcome; null when it showed, else the error. The one path every toast takes, the setup check's test toast included.</summary>

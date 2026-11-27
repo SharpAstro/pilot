@@ -50,8 +50,11 @@ public sealed unsafe class WinRtToastRunner : IToastRunner
     public Task Remove(string tag, CancellationToken cancel = default) =>
         OperatingSystem.IsWindows() ? Task.Run(() => RemoveCore(tag), cancel) : Task.CompletedTask;
 
+    // Each entry point enters the apartment before its refs and leaves it after them: a using releases in reverse order, so every pointer
+    // is released while the thread is still initialised.
     private static void ShowCore(string tag, string xml)
     {
+        using var apartment = Apartment.Enter();
         using var refs = new Refs();
         var toast = Build(refs, tag, xml);
         var statics = Factory(refs, ManagerClass, IidManagerStatics);
@@ -65,6 +68,7 @@ public sealed unsafe class WinRtToastRunner : IToastRunner
 
     private static void RemoveCore(string tag)
     {
+        using var apartment = Apartment.Enter();
         using var refs = new Refs();
         var statics2 = Factory(refs, ManagerClass, IidManagerStatics2);
         var history = Call(refs, "IToastNotificationManagerStatics2.get_History", (o) =>
@@ -82,6 +86,7 @@ public sealed unsafe class WinRtToastRunner : IToastRunner
     /// </summary>
     internal static (string Tag, string Group) BuildAndReadBack(string tag, string xml)
     {
+        using var apartment = Apartment.Enter();
         using var refs = new Refs();
         var toast = Build(refs, tag, xml);
         var toast2 = Qi(refs, toast, IidToastNotification2, "IToastNotification.QueryInterface(IToastNotification2)");
@@ -90,7 +95,6 @@ public sealed unsafe class WinRtToastRunner : IToastRunner
 
     private static nint Build(Refs refs, string tag, string xml)
     {
-        Initialize();
         var instance = Call(refs, "RoActivateInstance(XmlDocument)", (o) =>
             Native.RoActivateInstance(refs.HString(XmlDocumentClass), o));
         var io = Qi(refs, instance, IidXmlDocumentIO, "XmlDocument.QueryInterface(IXmlDocumentIO)");
@@ -107,14 +111,31 @@ public sealed unsafe class WinRtToastRunner : IToastRunner
         return toast;
     }
 
-    // The MTA; a pool thread usually has it already (S_FALSE), and a thread that chose its own apartment (RPC_E_CHANGED_MODE) still can call WinRT.
-    private static void Initialize()
+    /// <summary>
+    /// The thread's place in the MTA for one call, balanced: every successful <c>RoInitialize</c> (S_OK, or S_FALSE when a pool thread is
+    /// already in the MTA, which still counts once) is matched by one <c>RoUninitialize</c> on dispose, so the apartment count does not
+    /// climb with each toast. A thread that chose its own apartment (RPC_E_CHANGED_MODE) can still call WinRT and needs no balance.
+    /// </summary>
+    private readonly struct Apartment : IDisposable
     {
-        const int MtaType = 1;
-        var hr = Native.RoInitialize(MtaType);
-        if (hr < 0 && hr != RpcEChangedMode)
+        private readonly bool _entered;
+
+        private Apartment(bool entered) => _entered = entered;
+
+        public static Apartment Enter()
         {
-            Check(hr, "RoInitialize");
+            const int MtaType = 1;
+            var hr = Native.RoInitialize(MtaType);
+            if (hr < 0 && hr != RpcEChangedMode)
+            {
+                Check(hr, "RoInitialize");
+            }
+            return new Apartment(hr >= 0);
+        }
+
+        public void Dispose()
+        {
+            if (_entered) Native.RoUninitialize();
         }
     }
 
@@ -208,6 +229,9 @@ public sealed unsafe class WinRtToastRunner : IToastRunner
     {
         [DllImport("combase.dll")]
         public static extern int RoInitialize(int initType);
+
+        [DllImport("combase.dll")]
+        public static extern void RoUninitialize();
 
         [DllImport("combase.dll")]
         public static extern int RoActivateInstance(nint activatableClassId, nint* instance);

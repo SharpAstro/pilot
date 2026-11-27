@@ -27,8 +27,16 @@ public sealed class WinRtToastRunnerTests
     {
         PilotAumid.Key.ShouldBe(@"Software\Classes\AppUserModelId\SharpAstro.Pilot");
         PilotAumid.Values(null).ShouldBe([(PilotAumid.Key, "DisplayName", "pilot")]);
-        PilotAumid.Values(@"C:\bin\pilot-gui.exe").ShouldBe(
-            [(PilotAumid.Key, "DisplayName", "pilot"), (PilotAumid.Key, "IconUri", @"C:\bin\pilot-gui.exe")]);
+        PilotAumid.Values(@"C:\bin\Resources\pilot-256.png").ShouldBe(
+            [(PilotAumid.Key, "DisplayName", "pilot"), (PilotAumid.Key, "IconUri", @"C:\bin\Resources\pilot-256.png")]);
+    }
+
+    [Fact]
+    public void TheIconIsTheGuisPngBesideTheNodeNeverAnExecutable()
+    {
+        var icon = PilotAumid.IconPathBeside(Path.Combine("bin", "pilot-node.exe"));
+        icon.ShouldBe(Path.Combine("bin", "Resources", "pilot-256.png"));
+        Path.GetExtension(icon).ShouldBe(".png");
     }
 
     [Fact]
@@ -44,7 +52,7 @@ public sealed class WinRtToastRunnerTests
     }
 
     [Fact]
-    public async Task TheRegistrarWritesTheAumidWithoutAGuiAndWithTheIconWhenOneSitsBesideTheNode()
+    public async Task TheRegistrarWritesTheAumidWithoutAnIconAndWithTheGuisPngWhenOneSitsBesideTheNode()
     {
         var registry = new FakeRegistry();
         await new AumidRegistrar(registry, @"C:\bin\pilot-node.exe", _ => false, Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance)
@@ -54,7 +62,7 @@ public sealed class WinRtToastRunnerTests
         await new AumidRegistrar(registry, @"C:\bin\pilot-node.exe", _ => true, Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance)
             .StartAsync(TestContext.Current.CancellationToken);
         registry.Writes.ShouldBe(2);
-        registry.Values[(PilotAumid.Key, "IconUri")].ShouldEndWith("pilot-gui.exe");
+        registry.Values[(PilotAumid.Key, "IconUri")].ShouldEndWith("pilot-256.png");
     }
 
     [Fact]

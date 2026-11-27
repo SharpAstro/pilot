@@ -110,7 +110,14 @@ public static class PilotAumid
     /// <summary>The AUMID's key under HKCU.</summary>
     public const string Key = @"Software\Classes\AppUserModelId\" + Id;
 
-    /// <summary>What the key holds: (key, value name, value); the icon only when <paramref name="iconPath"/> is known.</summary>
+    /// <summary>
+    /// The image the toasts carry as pilot's icon: the GUI's own <c>Resources/pilot-256.png</c>, shipped beside the node's binary. The shell
+    /// reads <c>IconUri</c> as an image file (a .png or .ico), so an executable there would leave the default icon.
+    /// </summary>
+    public static string IconPathBeside(string nodePath) =>
+        Path.Combine(Path.GetDirectoryName(nodePath) ?? "", "Resources", "pilot-256.png");
+
+    /// <summary>What the key holds: (key, value name, value); the icon only when <paramref name="iconPath"/>, an image file, is known.</summary>
     public static IReadOnlyList<(string SubKey, string Name, string Value)> Values(string? iconPath)
     {
         var values = new List<(string, string, string)> { (Key, "DisplayName", "pilot") };
@@ -137,7 +144,7 @@ public static class PilotAumid
     }
 }
 
-/// <summary>Registers pilot's AUMID once when the node starts, with the GUI's exe as its icon when one sits beside the node's; a failure is logged, never fatal.</summary>
+/// <summary>Registers pilot's AUMID once when the node starts, with the GUI's PNG as its icon when one sits beside the node's (no icon otherwise); a failure is logged, never fatal.</summary>
 public sealed class AumidRegistrar(ISchemeRegistry registry, string nodePath, Func<string, bool> exists, ILogger logger) : IHostedService
 {
     /// <inheritdoc />
@@ -145,8 +152,8 @@ public sealed class AumidRegistrar(ISchemeRegistry registry, string nodePath, Fu
     {
         try
         {
-            var gui = PilotScheme.GuiPathBeside(nodePath);
-            if (PilotAumid.Register(registry, exists(gui) ? gui : null))
+            var icon = PilotAumid.IconPathBeside(nodePath);
+            if (PilotAumid.Register(registry, exists(icon) ? icon : null))
             {
                 logger.LogInformation("registered the toast AUMID {Aumid}", PilotAumid.Id);
             }
