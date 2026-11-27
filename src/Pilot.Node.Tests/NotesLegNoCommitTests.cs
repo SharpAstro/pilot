@@ -50,9 +50,8 @@ public sealed class NotesLegNoCommitTests : ReviewTestsBase
         _state.PutFlight(F(flight.Code) with { Review = F(flight.Code).Review! with { ReviewedHead = head } });
         reviewed = head;
         _github.Pr = _github.Pr! with { Head = head };
-        // The PR-ready card the review pass raised still asks to merge the head it read; the card, ReviewedHead, the plane and the PR agree on one head.
-        var card = Open().Single(c => c.Kind == LegCommander.PrReady);
-        _state.UpdateCard(card.Id, card.Title, card.Detail, card.Choices.Select(c => c.Verb == Verbs.Merge ? c with { Args = [head, .. (c.Args ?? []).Skip(1)] } : c).ToList(), card.Link);
+        // A holding flight has no PR-ready card to patch (#1400): the release raises the one, at the reviewed head the plane and the PR agree on.
+        _state.Cards(openOnly: false).ShouldNotContain(c => c.Kind == LegCommander.PrReady);
         (await Run(Verbs.FinishLeg, Verbs.LegTarget(flight.Code, "retake-captures"), worker, "done", Made)).Error.ShouldBeNull();
 
         var now = F(flight.Code);
@@ -60,8 +59,10 @@ public sealed class NotesLegNoCommitTests : ReviewTestsBase
         now.Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Passed);
         now.Review.ReviewedHead.ShouldBe(reviewed);
         _state.Cards(openOnly: false).ShouldContain(c => c.Kind == LegCommander.HoldingClearedKind);
-        var ready = Open().Single(c => c.Kind == LegCommander.PrReady);
+        var ready = _state.Cards(openOnly: false).Single(c => c.Kind == LegCommander.PrReady);
+        ready.Title.ShouldContain("ready to merge");
         ready.Title.ShouldNotContain("holding");
+        ready.Choices.Single(c => c.Verb == Verbs.Merge).Args[0].ShouldBe(head);
         (ready.Detail ?? "").ShouldNotContain("merge is held");
         await Checks().LookAsync(Ct);
         // The node asks for the merge itself at the reviewed head (the plane's own, which the fake PR carries) and nothing refuses it: no hold,
