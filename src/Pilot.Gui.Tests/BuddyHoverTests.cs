@@ -221,7 +221,7 @@ public sealed class BuddyHoverTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public void ChatFromASleepingCatWithAnAnswerAndTheHoverListAtTheLeftScreenEdgeAreCaptured(bool dark)
+    public async Task ChatFromASleepingCatWithAnAnswerAndTheHoverListAtTheLeftScreenEdgeAreCaptured(bool dark)
     {
         var palette = BuddyPalette.For(dark);
         var (w, h) = BuddyWindowSize.Measure(Font);
@@ -234,7 +234,7 @@ public sealed class BuddyHoverTests
             Total = 1,
         };
         var chat = new BuddyChat(new FixedNode(page), new NoGui(), () => null);
-        chat.RefreshAsync(CancellationToken.None).GetAwaiter().GetResult();
+        await chat.RefreshAsync(TestContext.Current.CancellationToken);
         using (var renderer = new RgbaImageRenderer((uint)w, (uint)h))
         {
             var layout = BuddyScene.Draw(renderer, Font, palette, BuddyScene.ViewOf(new BuddyModel(_clock)), 1f, true, 0, pen => ChatCard.Build(pen, chat));
