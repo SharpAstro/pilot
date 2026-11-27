@@ -2047,8 +2047,8 @@ older client draws the button as it did and is refused with the reason.
 
 ### Desktop toasts (#1356)
 
-On Windows the node shows a toast for every open Ring card (`Toasts/Toaster.cs`), through one windowless Windows PowerShell 5.1 process per
-toast (`PowerShellToastRunner`). The tag is the card's subject, so a card raised again replaces its toast, and the toast is withdrawn when
+On Windows the node shows a toast for every open Ring card (`Toasts/Toaster.cs`), in process through the WinRT toast API (`WinRtToastRunner`, raw
+ABI by vtable function pointers, under pilot's own AUMID `SharpAstro.Pilot` registered per user at start; #1376). The tag is the card's subject, so a card raised again replaces its toast, and the toast is withdrawn when
 the card closes or leaves the Ring; a card moved into the Ring by the ring judge or the investigator toasts then, not when first filed. A
 click opens `pilot://card/<id>`. `ToastTier.Of(kind)` (in Pilot.Contracts, shared with pilot-buddy) is the one table of tiers: **urgent** (burning the machine or money, work about to be
 lost, pilot unable to watch itself) stays on screen until dismissed (`scenario="urgent"`), everything else is **normal**. More than 3 normal

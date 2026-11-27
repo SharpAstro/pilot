@@ -7,7 +7,7 @@ using Xunit;
 
 namespace Pilot.Node.Tests;
 
-/// <summary>The toast XML of a card, the burst toast and the scripts that show and withdraw one (#1356); a fake runner, no process.</summary>
+/// <summary>The toast XML of a card, and the burst toast (#1356); a fake runner, no process.</summary>
 public sealed class ToastXmlTests
 {
     private sealed class FakeToastRunner : IToastRunner
@@ -117,46 +117,8 @@ public sealed class ToastXmlTests
         ToastXml.BurstTag.ShouldBe("pilot-burst");
     }
 
-    [Fact]
-    public void TheShowScriptCarriesTheTagGroupAumidAndTheXml()
-    {
-        var xml = ToastXml.ForCard("c1", "it's", "b", ToastTier.Urgent);
-        var script = PowerShellToastRunner.ShowScript("card:c1", xml);
-        script.ShouldContain("Windows.UI.Notifications.ToastNotificationManager");
-        script.ShouldContain("Windows.Data.Xml.Dom.XmlDocument");
-        script.ShouldContain($"$toast.Tag = {PowerShellToastRunner.Decoded("card:c1")}");
-        script.ShouldContain("$toast.Group = 'pilot'");
-        script.ShouldContain(@"CreateToastNotifier('{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powershell.exe').Show($toast)");
-        script.ShouldContain(PowerShellToastRunner.Decoded(xml), Case.Sensitive);
-        PowerShellToastRunner.Quote("it's").ShouldBe("'it''s'");
-        script.ShouldNotContain("while");
-    }
-
     // The four curly quotes PowerShell reads as single quotes, written as escapes so no source line starts with one.
     private static readonly string[] CurlyQuotes = ["\u2018", "\u2019", "\u201A", "\u201B"];
-
-    [Fact]
-    public void CardTextNeverReachesTheScriptAsText()
-    {
-        foreach (var quote in CurlyQuotes)
-        {
-            var text = $"Don{quote}t'; calc.exe; {quote}'";
-            var xml = ToastXml.ForCard("c1", text, text, ToastTier.Normal);
-            var script = PowerShellToastRunner.ShowScript(text, xml);
-            script.ShouldNotContain(quote, Case.Sensitive, "no card text, so no quote of any kind, is written into the script");
-            script.ShouldNotContain("calc.exe");
-            PowerShellToastRunner.RemoveScript(text).ShouldNotContain(quote);
-            // What the script decodes is exactly the card's own text.
-            PowerShellToastRunner.Decoded(text).ShouldContain(Convert.ToBase64String(Encoding.UTF8.GetBytes(text)));
-        }
-    }
-
-    [Fact]
-    public void QuoteDoublesEveryCharacterPowerShellTakesForASingleQuote()
-    {
-        foreach (var quote in CurlyQuotes.Append("'"))
-            PowerShellToastRunner.Quote($"a{quote}b").ShouldBe($"'a{quote}{quote}b'");
-    }
 
     [Fact]
     public void ACurlyQuoteInTheTitleBodyAndTagKeepsTheXmlWellFormed()
@@ -188,45 +150,6 @@ public sealed class ToastXmlTests
         ToastXml.TagOf(new string('a', 100)).Length.ShouldBeLessThanOrEqualTo(ToastXml.TagLimit);
         ToastXml.TagOf("flight/PIL1356").ShouldBe("flight/PIL1356");
         ToastXml.TagOf(new string('a', ToastXml.TagLimit)).ShouldBe(new string('a', ToastXml.TagLimit));
-    }
-
-    [Fact]
-    public void BothScriptsCatchTheirErrorAndWriteItAsPlainText()
-    {
-        foreach (var script in new[] { PowerShellToastRunner.ShowScript("t", "<toast/>"), PowerShellToastRunner.RemoveScript("t") })
-        {
-            script.ShouldContain("try {");
-            script.ShouldEndWith("} catch { [Console]::Error.WriteLine($_.Exception.Message); exit 1 }\r\n");
-        }
-    }
-
-    [Fact]
-    public void AFailedScriptSaysItsExitAndItsFirstPlainErrorLine()
-    {
-        PowerShellToastRunner.FailureOf(0, "anything").ShouldBeNull();
-        PowerShellToastRunner.FailureOf(1, "Element not found.\r\nmore\r\n").ShouldBe("the toast script exited 1: Element not found.");
-        PowerShellToastRunner.FailureOf(1, "#< CLIXML\r\n<Objs Version=\"1.1.0.1\"><S S=\"Error\">boom</S></Objs>\r\nthe cause\r\n")
-            .ShouldBe("the toast script exited 1: the cause");
-        PowerShellToastRunner.FailureOf(2, "").ShouldBe("the toast script exited 2: no error text");
-    }
-
-    [Fact]
-    public void TheWithdrawScriptRemovesTheTagFromTheHistory()
-    {
-        var script = PowerShellToastRunner.RemoveScript("card:c1");
-        script.ShouldContain(@"History.Remove(" + PowerShellToastRunner.Decoded("card:c1") + @", 'pilot', '{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powershell.exe')");
-        script.ShouldNotContain("Show(");
-    }
-
-    [Fact]
-    public void TheProcessIsWindowlessWindowsPowerShellWithTheScriptEncoded()
-    {
-        var script = PowerShellToastRunner.RemoveScript("t");
-        var start = PowerShellToastRunner.StartOf(script);
-        start.FileName.ShouldBe("powershell.exe");
-        start.CreateNoWindow.ShouldBeTrue();
-        start.ArgumentList.ShouldBe(["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-EncodedCommand", PowerShellToastRunner.Encode(script)]);
-        Encoding.Unicode.GetString(Convert.FromBase64String(start.ArgumentList[^1])).ShouldBe(script);
     }
 
     [Fact]
