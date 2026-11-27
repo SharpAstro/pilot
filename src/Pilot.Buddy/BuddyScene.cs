@@ -4,13 +4,14 @@ using DIR.Lib;
 namespace Pilot.Buddy;
 
 /// <summary>What the scene draws now: the cat's face and breath, and the bubble's notice or the hover summary. Derived from the model by <see cref="BuddyScene.ViewOf"/>.</summary>
-public sealed record BuddyView(GrumpFace Face, int Breath, BuddyNotice? Notice, string? Summary, int Badge = 0);
+public sealed record BuddyView(GrumpFace Face, int Breath, BuddyNotice? Notice, string? Summary, int Badge = 0, AwayPhase Away = AwayPhase.Present, float AwayProgress = 0f);
 
 /// <summary>
 /// Where the scene put the cat, its bubble and the open card (device pixels), for a test or the window's hit testing. <paramref name="Scale"/> is the
 /// device pixels per design pixel the scene drew at; <paramref name="Card"/> is the card drawn in the bubble's place, if one was asked for.
 /// </summary>
-public sealed record SceneLayout(SpeechBubble? Bubble, float BubbleX, float BubbleY, float CatX, float CatY, BuddyCard? Card = null, float CardX = 0, float CardY = 0, float Scale = 1f, float CatScale = 0f)
+public sealed record SceneLayout(SpeechBubble? Bubble, float BubbleX, float BubbleY, float CatX, float CatY, BuddyCard? Card = null, float CardX = 0, float CardY = 0, float Scale = 1f, float CatScale = 0f,
+    float BadgeX = 0, float BadgeY = 0, float BadgeW = 0, float BadgeH = 0, bool GoneAway = false)
 {
     /// <summary>The device pixels per cat design pixel: the scene scale times the size setting (the card and bubble text stay at <see cref="Scale"/>). Zero in a hand-made layout means the scene scale.</summary>
     public float CatDevice => CatScale > 0 ? CatScale : Scale;
@@ -48,8 +49,11 @@ public static class BuddyScene
             BuddyMood.OneEyeOpen => GrumpFace.OneEyeOpen,
             _ => model.GrumpyFace ? GrumpFace.GrumpyAsleep : GrumpFace.Asleep,
         };
-        // The summary is the hover's; a badge alone wakes the cat without a bubble.
-        return new BuddyView(face, model.BreathPose, model.Current, mood == BuddyMood.OneEyeOpen && model.Hovering ? summary : null, model.Current is null ? model.BadgeCount : 0);
+        // The summary is the hover's; a badge alone wakes the cat without a bubble. While the cat walks off, is away or walks back there is no bubble: the notice shows once it is back.
+        var away = model.Phase;
+        var here = away == AwayPhase.Present;
+        return new BuddyView(face, model.BreathPose, here ? model.Current : null, here && mood == BuddyMood.OneEyeOpen && model.Hovering ? summary : null,
+            here && model.Current is null ? model.BadgeCount : 0, away, model.AwayProgress);
     }
 
     /// <summary>
@@ -73,6 +77,10 @@ public static class BuddyScene
         var cs = scale * catSize;
         var catX = left ? Margin * scale : renderer.Width - Margin * scale - (GrumpCat.Width + 4) * cs;
         var catY = top ? Margin * scale : renderer.Height - Margin * scale - catBottom * cs;
+        if (view.Away != AwayPhase.Present)
+        {
+            return DrawAway(renderer, fontPath, palette, view, scale, cs, catX, catY, left);
+        }
         var catPen = new Pen<TSurface>(renderer, fontPath, catX, catY, cs);
         GrumpCat.Draw(catPen, view.Face, palette, view.Breath);
         if (view.Badge > 0)
@@ -111,5 +119,42 @@ public static class BuddyScene
             bubble.Draw(new Pen<TSurface>(renderer, fontPath, bubbleX, bubbleY, scale), palette);
         }
         return new SceneLayout(bubble, bubbleX, bubbleY, catX, catY, Scale: scale, CatScale: cs);
+    }
+
+    /// <summary>How far the cat has walked off the edge for <paramref name="progress"/> of an animation: 0 is on its cushion, 1 is out of the window (smoothstep, so it starts and ends gently).</summary>
+    public static float WalkedOff(AwayPhase phase, float progress)
+    {
+        var e = progress * progress * (3 - 2 * progress);
+        return phase switch
+        {
+            AwayPhase.Leaving => e,
+            AwayPhase.Returning => 1 - e,
+            AwayPhase.Gone => 1,
+            _ => 0,
+        };
+    }
+
+    // The cat away: walking off the nearest edge (one eye open, then out of the window), only its paw badge there while gone, and walking back in.
+    private static SceneLayout DrawAway<TSurface>(Renderer<TSurface> renderer, string fontPath, BuddyPalette palette, BuddyView view, float scale, float cs, float catX, float catY, bool left)
+    {
+        var off = WalkedOff(view.Away, view.AwayProgress);
+        var dir = left ? -1f : 1f;
+        var gone = view.Away == AwayPhase.Gone;
+        if (!gone)
+        {
+            var distance = (GrumpCat.Width + 4) * cs + Margin * scale;
+            var catPen = new Pen<TSurface>(renderer, fontPath, catX + dir * off * distance, catY, cs);
+            GrumpCat.Draw(catPen, GrumpFace.OneEyeOpen, palette, 0, withText: false);
+        }
+        // The badge shows once the cat is mostly out (leaving) or until it is mostly in (returning), and all the time while gone.
+        var showBadge = gone || off > 0.7f;
+        var (bw, bh) = (GrumpCat.BadgeWidth * scale, GrumpCat.BadgeHeight * scale);
+        var bx = left ? 0f : renderer.Width - bw;
+        var by = MathF.Min(catY + (GrumpCat.CushionY * cs - bh) / 2 + GrumpCat.CushionY * cs / 2, renderer.Height - bh);
+        if (showBadge)
+        {
+            GrumpCat.DrawPawBadge(new Pen<TSurface>(renderer, fontPath, bx, by, scale), palette, left);
+        }
+        return new SceneLayout(null, 0, 0, catX, catY, Scale: scale, CatScale: cs, BadgeX: showBadge ? bx : 0, BadgeY: showBadge ? by : 0, BadgeW: showBadge ? bw : 0, BadgeH: showBadge ? bh : 0, GoneAway: gone);
     }
 }

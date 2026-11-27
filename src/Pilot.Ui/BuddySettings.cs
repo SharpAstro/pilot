@@ -58,6 +58,52 @@ public sealed record BuddySettings
     /// <summary>The moment the snooze ends; null or past is awake.</summary>
     public DateTimeOffset? SnoozedUntil { get; init; }
 
+    /// <summary>How many minutes of quiet sleep before the cat goes away and leaves a badge at the edge (0 is never); null is <see cref="DefaultLongSleepMinutes"/>.</summary>
+    public int? LongSleepMinutes { get; init; }
+
+    /// <summary>Whether the cat shows inside a remote desktop session; null is off (it stays hidden there and the node's toasts carry on).</summary>
+    public bool? ShowInRemoteSessions { get; init; }
+
+    /// <summary>The default long sleep, in minutes.</summary>
+    public const int DefaultLongSleepMinutes = 30;
+
+    /// <summary>The "Go away after" choices, in minutes (0 is never): the first is the label's own words in <see cref="LongSleepLabels"/>.</summary>
+    public static readonly IReadOnlyList<int> LongSleepChoices = [15, 30, 60, 120, 0];
+
+    /// <summary>The words for <see cref="LongSleepChoices"/>.</summary>
+    public static readonly IReadOnlyList<string> LongSleepLabels = ["15 min", "30 min", "1 hour", "2 hours", "Never"];
+
+    /// <summary>See <see cref="LongSleepMinutes"/>.</summary>
+    [JsonIgnore] public int LongSleepMinutesOrDefault => Math.Max(0, LongSleepMinutes ?? DefaultLongSleepMinutes);
+
+    /// <summary>The long sleep as a span, or null for never.</summary>
+    [JsonIgnore] public TimeSpan? LongSleep => LongSleepMinutesOrDefault is > 0 and var m ? TimeSpan.FromMinutes(m) : null;
+
+    /// <summary>The index into <see cref="LongSleepChoices"/> of the chosen minutes, or the nearest choice at or below it.</summary>
+    [JsonIgnore] public int LongSleepIndex
+    {
+        get
+        {
+            var minutes = LongSleepMinutesOrDefault;
+            var best = 0;
+            for (var i = 0; i < LongSleepChoices.Count; i++)
+            {
+                if (LongSleepChoices[i] == minutes)
+                {
+                    return i;
+                }
+                if (LongSleepChoices[i] > 0 && LongSleepChoices[i] <= minutes && (LongSleepChoices[best] == 0 || LongSleepChoices[i] > LongSleepChoices[best]))
+                {
+                    best = i;
+                }
+            }
+            return best;
+        }
+    }
+
+    /// <summary>See <see cref="ShowInRemoteSessions"/>.</summary>
+    [JsonIgnore] public bool ShowsInRemoteSessions => ShowInRemoteSessions ?? false;
+
     /// <summary>See <see cref="WakeAsk"/>.</summary>
     [JsonIgnore] public bool WakesForAsk => WakeAsk ?? true;
 

@@ -47,6 +47,27 @@ public static class GrumpCat
 
     private const float Line = 4, Thin = 3;
 
+    /// <summary>The paw badge a gone cat leaves at the edge, in scene design pixels (the scene scale, not the cat's size): big enough to hover and click.</summary>
+    public const float BadgeWidth = 64, BadgeHeight = 56;
+
+    /// <summary>
+    /// The badge a cat that went away leaves at the edge of the screen: a grey paw reaching in from the side (<paramref name="left"/> says which), three pink toes
+    /// and a pad. Ink outline and grey fill read on a bright and on a dark desktop alike.
+    /// </summary>
+    public static void DrawPawBadge<TSurface>(Pen<TSurface> pen, BuddyPalette palette, bool left)
+    {
+        // The arm runs off the edge it came in from; the paw is the rounded end, toes towards the middle of the screen.
+        var armX = left ? -20f : 24f;
+        pen.Box(armX, 14, 60, 28, Fur, 14, Ink, Line);
+        var pawX = left ? 22f : 0f;
+        pen.Box(pawX, 4, 42, 48, Fur, 20, Ink, Line);
+        var toe = left ? 40f : 5f;
+        pen.Oval(toe, 12, 9, 9, Pink, Ink, 2);
+        pen.Oval(toe, 23, 9, 9, Pink, Ink, 2);
+        pen.Oval(toe, 34, 9, 9, Pink, Ink, 2);
+        pen.Oval(left ? 26f : 22f, 22, 14, 14, Nose, Ink, 2);
+    }
+
     /// <summary>Draws the cat on its cushion with <paramref name="face"/>. <paramref name="breath"/> is the model's pose, 0 or 1: the body and head grow two pixels for a step.</summary>
     public static void Draw<TSurface>(Pen<TSurface> pen, GrumpFace face, BuddyPalette palette, int breath = 0, bool withText = true)
     {

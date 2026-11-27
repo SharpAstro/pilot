@@ -44,6 +44,7 @@ public sealed class SettingsCard : BuddyCard
         }
         y += card.Row(pen, "Size", y, inner, 13, CardTone.Muted) + RowGap;
         y += card.Segments(pen, "size", BuddySettings.SizeChoices, settings.SizeIndex, y, inner) + RowGap;
+        y += card.Dropdown(pen, "longSleep", "Go away after", BuddySettings.LongSleepLabels[settings.LongSleepIndex], y, inner) + RowGap;
 
         // The switch: the track and its knob, then the label.
         var switchRow = MathF.Max(SwitchHeight, LineHeight(pen, 13));
@@ -51,6 +52,8 @@ public sealed class SettingsCard : BuddyCard
         card.AddLine(pen, "Clicks pass through while asleep", CardPadding + SwitchWidth + 8, y, inner - SwitchWidth - 8, 13, CardTone.Body, "clickThrough");
         card.Hits.Add(new CardHit("clickThrough", CardPadding, y, inner, switchRow));
         y += switchRow + RowGap;
+
+        y += card.SwitchRow(pen, "remote", "Show in remote desktop sessions", settings.ShowsInRemoteSessions, y, inner) + RowGap;
 
         y += card.Dropdown(pen, "snooze", "Snooze", BuddySettings.SnoozeChoices[settings.SnoozeIndex], y, inner) + RowGap;
 
@@ -94,6 +97,15 @@ public sealed class SettingsCard : BuddyCard
         var top = y + (h - lineH) / 2;
         Items.Add(new CardItem(CardItemKind.Text, left, top, textW + 1, lineH, fit, size, tone));
         Lines.Add(new CardLine(fit, left, top, textW + 1, lineH, size));
+    }
+
+    private float SwitchRow<TSurface>(Pen<TSurface> pen, string id, string label, bool on, float y, float width)
+    {
+        var row = MathF.Max(SwitchHeight, LineHeight(pen, 13));
+        Items.Add(new CardItem(CardItemKind.Switch, CardPadding, y + (row - SwitchHeight) / 2, SwitchWidth, SwitchHeight, On: on));
+        AddLine(pen, label, CardPadding + SwitchWidth + 8, y, width - SwitchWidth - 8, 13, CardTone.Body, id);
+        Hits.Add(new CardHit(id, CardPadding, y, width, row));
+        return row;
     }
 
     private float Dropdown<TSurface>(Pen<TSurface> pen, string id, string label, string value, float y, float width)
@@ -143,6 +155,8 @@ public sealed class SettingsCard : BuddyCard
             "wakeMerged" => settings with { WakeMerged = !settings.WakesForMerged },
             "wakeFailed" => settings with { WakeFailed = !settings.WakesForFailed },
             "clickThrough" => settings with { ClickThrough = !settings.ClicksPassThrough },
+            "remote" => settings with { ShowInRemoteSessions = !settings.ShowsInRemoteSessions },
+            "longSleep" => settings with { LongSleepMinutes = BuddySettings.LongSleepChoices[(settings.LongSleepIndex + 1) % BuddySettings.LongSleepChoices.Count] },
             "snooze" => settings.WithSnooze((settings.SnoozeIndex + 1) % BuddySettings.SnoozeChoices.Count, now, zone),
             _ => null,
         };

@@ -35,6 +35,9 @@ public enum TargetKind
     /// <summary>The cushion the cat sits on.</summary>
     Cushion,
 
+    /// <summary>The paw badge a gone cat leaves at the edge: hover or click brings the cat back.</summary>
+    Badge,
+
     /// <summary>The bubble, off its buttons.</summary>
     Bubble,
 
@@ -76,6 +79,9 @@ public sealed class BuddyGeometry(SceneLayout layout)
     /// <summary>The "z Z" over a sleeping cat.</summary>
     public (float X, float Y, float W, float H) Zzz => (Layout.CatX + ZzzX * C, Layout.CatY + ZzzY * C, ZzzWidth * C, ZzzHeight * C);
 
+    /// <summary>The paw badge of a cat that went away, or null when none shows.</summary>
+    public (float X, float Y, float W, float H)? Badge => Layout.BadgeW > 0 ? (Layout.BadgeX, Layout.BadgeY, Layout.BadgeW, Layout.BadgeH) : null;
+
     /// <summary>The bubble's rectangle, or null when none shows.</summary>
     public (float X, float Y, float W, float H)? Bubble => Layout.Bubble is { } b ? (Layout.BubbleX, Layout.BubbleY, b.Width * S, b.Height * S) : null;
 
@@ -87,6 +93,15 @@ public sealed class BuddyGeometry(SceneLayout layout)
     /// <summary>What is at (<paramref name="x"/>, <paramref name="y"/>), the topmost first: a button or a hit, then the bubble or the card, then the cat.</summary>
     public Target At(float x, float y, bool asleep)
     {
+        if (Badge is { } badge && In(badge, x, y))
+        {
+            return new Target(TargetKind.Badge);
+        }
+        if (Layout.GoneAway)
+        {
+            // Only the badge is there: everything else is the desktop's.
+            return default;
+        }
         if (Layout.Card is { } card && Card is { } cardBox && In(cardBox, x, y))
         {
             return card.HitAt((x - cardBox.X) / S, (y - cardBox.Y) / S) is { } hit ? new Target(TargetKind.CardHit, hit.Id) : new Target(TargetKind.Card);
@@ -210,7 +225,7 @@ public sealed class BuddyDesk(
             return;
         }
         TrackRow(TargetAt(x, y));
-        var over = TargetAt(x, y).Kind is TargetKind.Cat or TargetKind.Zzz or TargetKind.Cushion || OnHoverList(x, y);
+        var over = TargetAt(x, y).Kind is TargetKind.Cat or TargetKind.Zzz or TargetKind.Cushion or TargetKind.Badge || OnHoverList(x, y);
         SetHover(over);
     }
 
@@ -292,6 +307,11 @@ public sealed class BuddyDesk(
         }
         switch (up.Kind)
         {
+            case TargetKind.Badge:
+                // A click on the badge brings the cat back (a hover did already; this is for a pointer that came in with a press).
+                model.Return();
+                Changed();
+                break;
             case TargetKind.Cat:
             case TargetKind.Zzz:
             case TargetKind.Cushion:
@@ -336,6 +356,7 @@ public sealed class BuddyDesk(
         Card = card;
         HoveredHit = null;
         _inputFocus = card == DeskCard.Chat;
+        model.Engaged(card != DeskCard.None);
         chat.CardOpen = card == DeskCard.Chat;
         model.Hover(false);
         if (card == DeskCard.Chat)

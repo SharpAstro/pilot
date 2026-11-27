@@ -32,7 +32,7 @@ public static class BuddySilhouette
     /// the window's own style (<c>WindowsShell.SetClickThrough</c>), which takes no mouse event at all while it holds.
     /// </summary>
     public static bool PassesClicks(BuddyGeometry geometry, bool asleep, bool setting) =>
-        setting && asleep && geometry.Layout.Bubble is null && geometry.Layout.Card is null;
+        setting && asleep && geometry.Layout.Bubble is null && geometry.Layout.Card is null && !geometry.Layout.GoneAway;
 
     /// <summary>Whether the mask lets a click at (<paramref name="x"/>, <paramref name="y"/>) land on the buddy.</summary>
     public static bool Catches(RgbaImage mask, int x, int y) =>

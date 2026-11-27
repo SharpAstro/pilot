@@ -34,6 +34,9 @@ internal sealed class BuddyHost : IBuddyWindow, IDisposable
     private BuddySettings _settings;
     private BuddyTheme.Reading _theme;
     private bool _snoozeSeen;
+    private readonly WindowsSessionKind _session = new();
+    private readonly BuddyPresence _presence;
+    private int _sessionChanged;
     private BuddySettingsWatcher? _watcher;
     private BuddySettings? _fromDisk;
 
@@ -85,11 +88,38 @@ internal sealed class BuddyHost : IBuddyWindow, IDisposable
         _chat = new BuddyChat(new NodeBuddyClient(client), handOff, () => _feed.ChatDisabledReason, _gate);
         _relay = new BuddyRelay(_model, _feed, _time, _gate);
         _desk = new BuddyDesk(_model, _feed, _chat, handOff, this, () => _settings, Apply, _time, TimeZoneInfo.Local, _gate, Wake, log);
-        _policy = new BuddyFramePolicy(_model, () => _desk.Version, _desk.ContentKey, () => _settings.SnoozedUntil, _time);
+        _presence = new BuddyPresence(_session, _feed, () => _settings, ShowWindow);
+        _policy = new BuddyFramePolicy(_model, () => _desk.Version, _desk.ContentKey, () => _settings.SnoozedUntil, _time, () => _presence.Hidden);
+        _model.LongSleep = _settings.LongSleep;
         Link = new BuddyNodeLink(client, _feed, _chat, _gate, Wake, log, TimeSpan.FromSeconds(5));
         Relay = _relay;
         _relay.Changed = Wake;
         _relay.OpenSettings = _desk.ShowSettings;
+        // A console or remote connect arrives on SDL's message pump: it is noted and the loop woken, never polled.
+        _session.Changed += () =>
+        {
+            Interlocked.Exchange(ref _sessionChanged, 1);
+            Wake();
+        };
+    }
+
+    // Shows or hides the window for the presence rule; a window shown again draws its scene at once.
+    private void ShowWindow(bool shown)
+    {
+        if (_window is null)
+        {
+            return;
+        }
+        if (shown)
+        {
+            _window.Show();
+            _window.SetAlwaysOnTop(true);
+            _policy.Redraw();
+        }
+        else
+        {
+            HideWindow(_window.Handle);
+        }
     }
 
     /// <summary>The reader of the node's stream, started by <see cref="Run"/>.</summary>
@@ -156,8 +186,16 @@ internal sealed class BuddyHost : IBuddyWindow, IDisposable
         }
         // A capture looks at the screen under the window first without it: whatever the desktop shows there is the known backdrop.
         _backdrop = _options.Capture is null ? null : Grab();
-        _window.Show();
-        _window.SetAlwaysOnTop(true);
+        _session.Watch(_window.GetNativeWindowHandle());
+        lock (_gate)
+        {
+            _presence.Update();
+        }
+        if (!_presence.Hidden)
+        {
+            _window.Show();
+            _window.SetAlwaysOnTop(true);
+        }
 
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         _ = Link.RunAsync(linked.Token);
@@ -251,6 +289,10 @@ internal sealed class BuddyHost : IBuddyWindow, IDisposable
             DateTimeOffset wakeAt;
             lock (_gate)
             {
+                if (Interlocked.Exchange(ref _sessionChanged, 0) == 1)
+                {
+                    _presence.Update();
+                }
                 TakeFromDisk();
                 SnoozeEnded();
                 if (_policy.NeedsFrame())
@@ -416,6 +458,8 @@ internal sealed class BuddyHost : IBuddyWindow, IDisposable
         }
         var cornerMoved = Moves(changed);
         _settings = changed;
+        _model.LongSleep = changed.LongSleep;
+        _presence.Update();
         _feed.Refresh();
         if (cornerMoved)
         {
@@ -427,6 +471,8 @@ internal sealed class BuddyHost : IBuddyWindow, IDisposable
     {
         var cornerMoved = Moves(changed);
         _settings = changed;
+        _model.LongSleep = changed.LongSleep;
+        _presence.Update();
         // A file read the watcher handed over before this save is older than it: dropped, so TakeFromDisk never puts it back over the card's choice.
         Interlocked.Exchange(ref _fromDisk, null);
         _watcher?.Remember(changed);
@@ -493,6 +539,7 @@ internal sealed class BuddyHost : IBuddyWindow, IDisposable
     public void Dispose()
     {
         _watcher?.Dispose();
+        _session.Dispose();
         _renderer?.Dispose();
         _context?.Dispose();
         _window?.Dispose();
