@@ -115,8 +115,8 @@ public sealed class BuddySettingsWatchTests
 }
 
 /// <summary>
-/// The watcher on a real file: a <see cref="FileSystemWatcher"/> and a temporary folder, so this is an integration test, out of the default unit
-/// run. It proves only that real saves reach the watcher; the debounce and the echo rule are proved on the fake clock in <see cref="BuddySettingsWatchTests"/>.
+/// The watcher on a real file: a <see cref="FileSystemWatcher"/> and a temporary folder, so this is an integration test (tagged Category=Integration).
+/// Nothing filters that category out of Pilot.Gui.Tests: CI and a check that names the class run it. It proves only that real saves reach the watcher; the debounce and the echo rule are proved on the fake clock in <see cref="BuddySettingsWatchTests"/>.
 /// Every wait is on the change itself, with a deadline; nothing waits out a quiet period.
 /// </summary>
 [Trait("Category", "Integration")]
