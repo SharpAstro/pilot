@@ -128,6 +128,7 @@ public sealed class NodeExitRecordTests : IDisposable
         card.Bin.ShouldBe(CardBin.ForYou);
         card.Detail.ShouldNotBeNull().ShouldContain("session/70b2d8b9");
         card.Detail.ShouldContain("pid 100");
+        card.Detail.ShouldContain("Nothing in the log or the run record says why");
         said.ShouldHaveSingleItem().ShouldContain("ended with nothing said");
         said[0].ShouldContain("down 6 min");
     }
@@ -144,7 +145,9 @@ public sealed class NodeExitRecordTests : IDisposable
 
         second.Begin(Facts(pid: 200), null).ShouldNotBeNull().Signalled.ShouldNotBeNull().ShouldContain("CTRL_CLOSE");
         second.RaiseCards(state, _ => { });
-        state.Cards(openOnly: true).ShouldHaveSingleItem().Detail.ShouldNotBeNull().ShouldContain("was ended by signal CTRL_CLOSE");
+        state.Cards(openOnly: true).ShouldHaveSingleItem().Detail.ShouldNotBeNull().ShouldSatisfyAllConditions(
+            d => d.ShouldContain("was ended by signal CTRL_CLOSE"),
+            d => d.ShouldNotContain("Nothing in the log"));
 
         var third = Record();
         third.Begin(Facts(pid: 300), null);

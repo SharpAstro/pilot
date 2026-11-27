@@ -70,7 +70,9 @@ internal sealed class NodeExitRecord(string dataFolder, TimeProvider time)
         {
             say($"pilot-node: {end.Said}");
             state?.RaiseCard(CardBin.ForYou, NodeLifecycleLog.DownKind, Verbs.NodeTarget, end.Title,
-                $"{char.ToUpperInvariant(end.Said[0])}{end.Said[1..]}. Nothing in the log or the run record says why: it was ended from outside (TerminateProcess, a process-tree kill) or its console or job closed.",
+                $"{char.ToUpperInvariant(end.Said[0])}{end.Said[1..]}." + (end.Signalled is null
+                    ? " Nothing in the log or the run record says why: it was ended from outside (TerminateProcess, a process-tree kill) or its console or job closed."
+                    : ""),
                 [new CardChoice { Label = "I have seen it", Verb = Verbs.Dismiss, Target = "" }],
                 cause: $"node-down:{end.Previous.Pid}:{end.Previous.StartedAt:O}");
         }

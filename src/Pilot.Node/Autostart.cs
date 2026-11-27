@@ -177,8 +177,9 @@ public static class Autostart
         {
             return false;
         }
+        // The folder may be empty: off Windows the system folder is "", so WindowsCommand writes \conhost.exe (a setup test's rewrite on Linux).
         var slash = parsed.Conhost.LastIndexOf('\\');
-        return slash > 0 && string.Equals(command, WindowsCommand(parsed.NodePath, parsed.Args, parsed.Conhost[..slash]), StringComparison.OrdinalIgnoreCase);
+        return slash >= 0 && string.Equals(command, WindowsCommand(parsed.NodePath, parsed.Args, parsed.Conhost[..slash]), StringComparison.OrdinalIgnoreCase);
     }
 
     private static List<string> SplitWindowsCommand(string command)

@@ -2,7 +2,6 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.Globalization;
 using System.Runtime.InteropServices;
-using System.Text;
 using Pilot.Contracts;
 
 namespace Pilot.Node;
@@ -340,52 +339,24 @@ internal class RealWatchdogHost(string nodePath, IReadOnlyList<string> nodeArgs,
 
 /// <summary>
 /// Starts the node with <c>CREATE_BREAKAWAY_FROM_JOB</c> and its own process group, so a kill of the watchdog's job or tree does not take the node
-/// with it (and the other way round). A job that does not allow breakaway refuses it, and the caller starts the node plainly instead.
+/// with it (and the other way round). A job that does not allow breakaway refuses it, and <see cref="Win32ProcessStart.TryStart"/> then starts the node
+/// in its own group without it; only when that fails too does the caller start the node plainly.
 /// </summary>
 internal static class BreakawayStart
 {
-    private const uint NewProcessGroup = 0x00000200;
-    private const uint BreakawayFromJob = 0x01000000;
-    private const uint NoWindow = 0x08000000;
-    private const uint UnicodeEnvironment = 0x00000400;
-
-    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
-    private struct StartupInfo
-    {
-        public int Size;
-        public string? Reserved, Desktop, Title;
-        public int X, Y, XSize, YSize, XCount, YCount, FillAttribute, Flags;
-        public short ShowWindow, Reserved2;
-        public nint Reserved3, StdInput, StdOutput, StdError;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct ProcessInformation
-    {
-        public nint Process, Thread;
-        public uint ProcessId, ThreadId;
-    }
-
-    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool CreateProcessW(string? application, StringBuilder commandLine, nint processAttributes, nint threadAttributes,
-        [MarshalAs(UnmanagedType.Bool)] bool inheritHandles, uint flags, nint environment, string? directory, ref StartupInfo startup, out ProcessInformation information);
-
-    [DllImport("kernel32.dll", SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool CloseHandle(nint handle);
-
     public static bool TryStart(string nodePath, IReadOnlyList<string> nodeArgs, out int pid)
     {
         pid = 0;
-        var line = new StringBuilder(string.Join(' ', new[] { Autostart.Quote(nodePath) }.Concat(nodeArgs.Select(Autostart.Quote))));
-        var startup = new StartupInfo { Size = Marshal.SizeOf<StartupInfo>() };
-        if (!CreateProcessW(null, line, 0, 0, false, NewProcessGroup | BreakawayFromJob | NoWindow | UnicodeEnvironment, 0, Path.GetDirectoryName(nodePath) is { Length: > 0 } folder ? folder : null, ref startup, out var info))
+        var line = string.Join(' ', new[] { Autostart.Quote(nodePath) }.Concat(nodeArgs.Select(Autostart.Quote)));
+        // No attribute list, so the plain STARTUPINFO's size and no EXTENDED_STARTUPINFO_PRESENT. The node inherits no handle.
+        var startup = new Win32ProcessStart.StartupInfoEx { Startup = new Win32ProcessStart.StartupInfo { Size = (uint)Marshal.SizeOf<Win32ProcessStart.StartupInfo>() } };
+        var flags = Win32ProcessStart.NewProcessGroup | Win32ProcessStart.NoWindow | Win32ProcessStart.UnicodeEnvironment;
+        if (!Win32ProcessStart.TryStart(line, false, flags, Path.GetDirectoryName(nodePath) is { Length: > 0 } folder ? folder : null, ref startup, out var info, out _))
         {
             return false;
         }
-        CloseHandle(info.Thread);
-        CloseHandle(info.Process);
+        Win32ProcessStart.CloseHandle(info.Thread);
+        Win32ProcessStart.CloseHandle(info.Process);
         pid = (int)info.ProcessId;
         return true;
     }
