@@ -31,12 +31,15 @@ public sealed class BenchRun(NodeState state, NodeOptions options, RepoCatalog r
     // One at a time, so two benches queued together never pick the same worktree name.
     private static readonly Lock NameGate = new();
 
-    /// <summary>What one ref of a benchmark is: its label in the log and on the card, the ref as given, its commit and its worktree.</summary>
     /// <summary>One worktree of a bench after its removal: null <see cref="Why"/> when it is gone, else why it is still there.</summary>
     public sealed record WorktreeRemoval(string Worktree, string? Why);
 
     // The removals a caller awaits (WorktreesRemoved), by bench job id: completed in PostWhenEndedAsync's finally.
     private readonly ConcurrentDictionary<string, TaskCompletionSource<IReadOnlyList<WorktreeRemoval>>> _removed = new(StringComparer.Ordinal);
+
+    // The ids of the completed entries in `_removed`, oldest first: only the last KeptRemovals stay, so the map does not grow for the node's lifetime.
+    private readonly ConcurrentQueue<string> _completed = new();
+    private const int KeptRemovals = 64;
 
     /// <summary>
     /// Completes once the bench job <paramref name="jobId"/> has ended, its result is posted (or failed to be) and each of its worktrees is
@@ -46,6 +49,7 @@ public sealed class BenchRun(NodeState state, NodeOptions options, RepoCatalog r
     public Task<IReadOnlyList<WorktreeRemoval>> WorktreesRemoved(string jobId) =>
         _removed.TryGetValue(jobId, out var done) ? done.Task : Task.FromResult<IReadOnlyList<WorktreeRemoval>>([]);
 
+    /// <summary>What one ref of a benchmark is: its label in the log and on the card, the ref as given, its commit and its worktree.</summary>
     private sealed record Leg(string Label, string Ref, string Sha, string Worktree);
 
     /// <summary>The words of a bench command, parsed.</summary>
@@ -237,7 +241,7 @@ public sealed class BenchRun(NodeState state, NodeOptions options, RepoCatalog r
             }
             if (results.Where(r => r.Why is not null).ToList() is { Count: > 0 } left)
             {
-                state.RaiseCard(CardBin.Handled, LeftBehindKind,Verbs.RepoTarget(repo.Path), $"The {repo.Name} benchmark left {left.Count} worktree{(left.Count == 1 ? "" : "s")} behind",
+                state.RaiseCard(CardBin.Handled, LeftBehindKind, Verbs.RepoTarget(repo.Path), $"The {repo.Name} benchmark left {left.Count} worktree{(left.Count == 1 ? "" : "s")} behind",
                     $"Job {jobId}: " + string.Join("\n", left.Select(r => $"{r.Worktree}: {r.Why}")) + "\n\nThe node's removal queue tries again at its next start.");
             }
             // The results a VM's bench copied back: on the card now.
@@ -253,6 +257,11 @@ public sealed class BenchRun(NodeState state, NodeOptions options, RepoCatalog r
             if (_removed.TryGetValue(jobId, out var done))
             {
                 done.TrySetResult(results);
+                _completed.Enqueue(jobId);
+                while (_completed.Count > KeptRemovals && _completed.TryDequeue(out var old))
+                {
+                    _removed.TryRemove(old, out _);
+                }
             }
         }
     }

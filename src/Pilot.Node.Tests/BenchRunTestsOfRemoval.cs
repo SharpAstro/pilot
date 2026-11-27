@@ -11,7 +11,7 @@ namespace Pilot.Node.Tests;
 /// signal completes even when the post throws.
 /// </summary>
 [Collection(JobsCollection.Name)]
-public sealed class BenchRunRemovalTests : JobTestsBase, IAsyncDisposable
+public sealed class BenchRunTestsOfRemoval : JobTestsBase, IAsyncDisposable
 {
     private readonly FakeRepoGit _repoGit;
     private readonly HeldGit _git;
@@ -19,7 +19,7 @@ public sealed class BenchRunRemovalTests : JobTestsBase, IAsyncDisposable
     private readonly FakeGitHub _github = new();
     private readonly BenchRun _bench;
 
-    public BenchRunRemovalTests() : base(fakeLauncher: true)
+    public BenchRunTestsOfRemoval() : base(fakeLauncher: true)
     {
         _repoGit = new FakeRepoGit(_root);
         _git = new HeldGit(_repoGit);

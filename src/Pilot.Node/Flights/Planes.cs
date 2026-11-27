@@ -927,6 +927,8 @@ public sealed class Planes(IGit git, RemovalQueue? queue = null)
                 }
                 throw new FlightException(message);
             }
+            // A timer, not a wait on the job tree's exit: BenchRun removes only after the job has ended (its tree is gone),
+            // and what still holds a file then (Defender, git's own children, a build server) is no process the node can await.
             await Backoff(TimeSpan.FromSeconds(1), cancellationToken);
         }
         // git removed the worktree but, on Windows, leaves its folder when a process still sits in it (a session's

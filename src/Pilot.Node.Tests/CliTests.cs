@@ -529,6 +529,7 @@ public sealed class CliTests : IAsyncLifetime
 
         var benches = _node.State.Jobs().Where(j => j.Kind == JobKind.Bench).OrderBy(j => j.StartedAt).ToArray();
         benches.Select(j => j.Local).ShouldBe([false, true]);
+        benches.Select(j => j.State).ShouldBe([JobState.Succeeded, JobState.Succeeded]);
         // The worktrees go after the card: the folder is not left behind for the next test.
         Directory.Exists(Path.Combine(Repo, ".claude", "worktrees", "b1")).ShouldBeFalse("bench worktree b1 is still there");
         Directory.Exists(Path.Combine(Repo, ".claude", "worktrees", "b2")).ShouldBeFalse("bench worktree b2 is still there");
