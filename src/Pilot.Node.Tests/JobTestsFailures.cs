@@ -15,6 +15,8 @@ public sealed class JobTestsFailures : JobTestsBase
     [Trait("Category", "Slow")]
     public async Task AJobWithAFailedTestSaysSoWhileItRunsAndItsOwnerIsToldTheFirstOnceBeforeTheEnd()
     {
+        // A Working owner is told at once; an idle one (the say would resume it) is held, see the PIL1382 tests below.
+        _state.PutSession(_state.Sessions().Single(s => s.Id == "a1b2c3d4") with { State = SessionState.Working });
         var id = Run($"echo '[xUnit.net 00:19:36.27]     {Test} [FAIL]'; echo '  Failed {Test} [11 s]'; sleep 3; echo slept; exit 1").Made.ShouldNotBeNull();
 
         // A cold shell can take a while to start under load; the failure lines come before the job's own wait.
