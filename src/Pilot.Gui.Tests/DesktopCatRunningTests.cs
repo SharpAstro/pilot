@@ -312,7 +312,7 @@ public sealed class DesktopCatRunningTests : IDisposable
         var texts = Texts(chrome, renderer);
         texts.ShouldContain("Toasts");
         texts.ShouldContain("Desktop toasts: all");
-        texts.Any(t => t.Contains("while the cat shows the cards", StringComparison.Ordinal)).ShouldBeTrue();
+        string.Concat(texts).ShouldContain("while the cat shows the cards");
     }
 
     [Theory]

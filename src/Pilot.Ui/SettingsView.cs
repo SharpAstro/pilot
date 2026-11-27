@@ -607,15 +607,17 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
 
     private const string CatStartAction = "settings:buddy-start";
 
+    private const string CatRunningHint = "whether the cat runs on this desktop now; one per desktop, a second start is refused";
+
     // The Running row: what the probe last said, and Start while it says the cat is not there. Before the first answer it says so.
     private Layout.Node CatRunningRow()
     {
         var running = Volatile.Read(ref _catRunning);
-        var hint = "whether the cat runs on this desktop now; one per desktop, a second start is refused";
+        const string hint = CatRunningHint;
         var word = running switch { 1 => "Running", 0 => "Not running", _ => "checking…" };
         var color = running switch { 1 => Ok, 0 => Todo, _ => Dim };
         var controls = new List<Layout.Node> { Layout.Builder.Text(word, 13f, color).Selectable().WAuto() };
-        if (running != 1 && CatDesk is not null)
+        if (running == 0 && CatDesk is not null)
         {
             controls.Add(Presses.Button(CatStartAction, CatStartAction,
                 () => Pill("Start", CatStartAction, StartCat).HFixed(ControlH),
@@ -679,7 +681,7 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
         add(Part.Section, Section("Desktop cat", "what wakes the cat, where it sits and how long it sleeps; the cat's own card changes the same file"), []);
         if (CatDesk is not null)
         {
-            add(Part.Row, CatRunningRow(), ["Running", "whether the cat runs on this desktop now", "buddy-running", "Start", "Not running"]);
+            add(Part.Row, CatRunningRow(), ["Running", CatRunningHint, "buddy-running", "Start", "Not running"]);
         }
         add(Part.Row, CatLogonRow(logon), ["Start at logon", "the cat starts when you log in, apart from the node's own start at logon", BuddyAutostartKey, "autostart"]);
         add(Part.Row, CatRow("Wake for asks", "a session asks you something", [CatSwitch("buddy-wake-ask", cat.WakesForAsk, (s, v) => s with { WakeAsk = v })]),
