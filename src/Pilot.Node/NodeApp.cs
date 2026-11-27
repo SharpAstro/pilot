@@ -487,7 +487,7 @@ internal sealed class NodeLifecycleLog(NodeOptions options, RollingLog log, ISer
             log.Write($"pilot-node: removed {swept} brief file(s) older than {ClaudeWorkerLauncher.BriefFileLife.TotalDays:0} days");
         }
         log.Write($"pilot-node: start, version {FileJournal.RunningVersion}, socket {options.SocketPath}, data folder {options.DataFolder}, LAN {(options.Lan ? $"port {options.LanPort}" : "off")}");
-        exit.RaiseCards(services.GetService<NodeState>(), log.Write);
+        exit.RaiseCards(services.GetService<NodeState>(), line => log.Write(line));
         return Task.CompletedTask;
     }
 
