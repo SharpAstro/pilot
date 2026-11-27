@@ -224,6 +224,8 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
     {
         try
         {
+            // Wall clock on purpose: this is liveness of the poll loop (when was the page last drawn),
+            // not a time the page shows, so the chrome's injected clock does not apply.
             while (!reading.IsCancellationRequested && DateTimeOffset.UtcNow - _drawnAt < Unseen)
             {
                 await step(reading.Token).ConfigureAwait(false);
