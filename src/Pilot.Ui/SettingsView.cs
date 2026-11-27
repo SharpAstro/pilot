@@ -51,7 +51,7 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
     private static RGBAColor32 Chosen => Palette.Current.Chosen;
     private static RGBAColor32 FieldBg => Palette.Current.MenuBg;
 
-    private readonly ListScrollController _scroll = new() { Mode = ScrollBarMode.Interactive };
+    private ListScrollController _scroll = new() { Mode = ScrollBarMode.Interactive };
 
 
     /// <summary>The lists this page scrolls, whose scroll bars <see cref="PilotWidgetBase{TSurface}.WithoutScrollBars"/> takes away.</summary>
@@ -614,7 +614,8 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
         {
             // The list is shorter or longer now: it starts again at the top, so what was found is in view.
             _searched = query;
-            _scroll.Offset = 0f;
+            // The controller has no setter for its offset, so a fresh one (same mode) is the top.
+            _scroll = new ListScrollController { Mode = ScrollBarMode.Interactive };
         }
         var kept = Filter(pieces, query);
         // The search row is outside the scroll and always the same height, so nothing under the pointer moves as the list changes.
