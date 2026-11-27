@@ -1,3 +1,4 @@
+using Pilot.Ui;
 using Pilot.Buddy;
 using Pilot.Contracts;
 using Shouldly;

@@ -1,3 +1,4 @@
+using Pilot.Ui;
 using DIR.Lib;
 using Pilot.Contracts;
 using SdlVulkan.Renderer;
@@ -33,6 +34,8 @@ internal sealed class BuddyHost : IBuddyWindow, IDisposable
     private BuddySettings _settings;
     private BuddyTheme.Reading _theme;
     private bool _snoozeSeen;
+    private BuddySettingsWatcher? _watcher;
+    private BuddySettings? _fromDisk;
 
     private SdlVulkanApp? _app;
     private SdlVulkanWindow? _plain;
@@ -93,6 +96,12 @@ internal sealed class BuddyHost : IBuddyWindow, IDisposable
             return 1;
         }
         _wakeEvent = RegisterEvents(1);
+        // The GUI's Settings pane writes the same file: a different one on disk is taken up by the loop (no polling, the watcher's timer wakes it).
+        _watcher = new BuddySettingsWatcher(_settingsPath, changed =>
+        {
+            Volatile.Write(ref _fromDisk, changed);
+            Wake();
+        });
         _app = SdlVulkanApp.Create(appMetadata: new SdlAppMetadata(Name: "pilot-buddy", Version: null, Identifier: "com.sharpastro.pilot.buddy"));
         // An ordinary hidden window first: it makes the shared device, as the probe does.
         _plain = _app.CreateWindow("pilot-buddy device", 320, 200, maximized: false, hidden: true);
@@ -215,6 +224,7 @@ internal sealed class BuddyHost : IBuddyWindow, IDisposable
             DateTimeOffset wakeAt;
             lock (_gate)
             {
+                TakeFromDisk();
                 SnoozeEnded();
                 if (_policy.NeedsFrame())
                 {
@@ -368,10 +378,29 @@ internal sealed class BuddyHost : IBuddyWindow, IDisposable
         }
     }
 
+    /// <summary>Takes up settings the watcher found on disk: the cat's own save is not one (the watcher is told it, so it stays silent).</summary>
+    private void TakeFromDisk()
+    {
+        if (Interlocked.Exchange(ref _fromDisk, null) is not { } changed)
+        {
+            return;
+        }
+        var cornerMoved = changed.CornerIndex != _settings.CornerIndex;
+        _settings = changed;
+        _feed.Refresh();
+        if (cornerMoved)
+        {
+            Place();
+        }
+    }
+
     private void Apply(BuddySettings changed)
     {
         var cornerMoved = changed.CornerIndex != _settings.CornerIndex;
         _settings = changed;
+        // A file read the watcher handed over before this save is older than it: dropped, so TakeFromDisk never puts it back over the card's choice.
+        Interlocked.Exchange(ref _fromDisk, null);
+        _watcher?.Remember(changed);
         if (!changed.Save(_settingsPath))
         {
             _log($"pilot-buddy: the settings were not saved to {_settingsPath}");
@@ -429,6 +458,7 @@ internal sealed class BuddyHost : IBuddyWindow, IDisposable
     /// <inheritdoc />
     public void Dispose()
     {
+        _watcher?.Dispose();
         _renderer?.Dispose();
         _context?.Dispose();
         _window?.Dispose();
