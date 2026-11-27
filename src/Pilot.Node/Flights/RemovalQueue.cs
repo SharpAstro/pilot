@@ -20,6 +20,7 @@ public sealed class RemovalQueue(string file, TimeProvider time)
     public const string PlaneKind = "plane";
     public const string ReviewKind = "review";
     public const string CacheKind = "cache";
+    public const string BenchKind = "bench";
 
     private readonly object _lock = new();
 
