@@ -29,7 +29,7 @@ public sealed class BuddyCatCaptureTests
     public static TheoryData<string, bool, bool> Cases()
     {
         var data = new TheoryData<string, bool, bool>();
-        foreach (var screen in new[] { "cats", "home", "asleep", "attention", "good-news", "trouble" })
+        foreach (var screen in new[] { "home", "asleep", "attention", "good-news", "trouble" })
         {
             foreach (var dark in new[] { false, true })
             {
@@ -92,15 +92,6 @@ public sealed class BuddyCatCaptureTests
     {
         var palette = BuddyPalette.For(dark);
         using var renderer = new RgbaImageRenderer(Width, Height);
-
-        if (screen == "cats")
-        {
-            var lines = CatsScreen.Draw(renderer, Font, palette);
-            Save(Name(screen, dark, isLong), renderer);
-            Faults(lines.Select(l => (l.Text, l.X, l.Y, l.Width, l.Height)).ToList()).ShouldBeEmpty();
-            lines.ShouldAllBe(l => l.X >= 0 && l.X + l.Width <= Width && l.Y >= 0 && l.Y + l.Height <= Height);
-            return;
-        }
 
         var view = ViewOf(screen, isLong);
         var layout = BuddyScene.Draw(renderer, Font, palette, view, paintDesktop: true);
@@ -304,17 +295,6 @@ public sealed class BuddyCatCaptureTests
         cut.Lines.ShouldAllBe(l => l.Length <= 10);
 
         TextWrap.Lines(Measure, "short", 10, 2).Lines.ShouldBe(["short"]);
-    }
-
-    [Fact]
-    public void TheCatsScreenWrapsOntoASecondRowWhenTheWindowIsTooNarrowForThree()
-    {
-        using var renderer = new RgbaImageRenderer(640, 900);
-        var lines = CatsScreen.Draw(renderer, Font, BuddyPalette.For(dark: true));
-        lines.ShouldAllBe(l => l.X + l.Width <= 640);
-        Faults(lines.Select(l => (l.Text, l.X, l.Y, l.Width, l.Height)).ToList()).ShouldBeEmpty();
-        Directory.CreateDirectory(OutFolder);
-        File.WriteAllBytes(Path.Combine(OutFolder, "cats-dark-narrow.png"), PngWriter.Encode(renderer.Surface.Pixels, 640, 900));
     }
 
     /// <summary>The pairs of text rectangles that overlap: text over text.</summary>

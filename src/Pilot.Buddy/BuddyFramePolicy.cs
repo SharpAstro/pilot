@@ -8,9 +8,9 @@ namespace Pilot.Buddy;
 /// arrives or <see cref="NextWake"/> (the next breath, the end of good news, the end of a snooze), asks <see cref="NeedsFrame"/>, and draws if it says
 /// so. Counts the frames and their draw time for the log (<see cref="Summary"/>), as <c>FrameWatch</c> does for the GUI.
 /// </summary>
-public sealed class BuddyFramePolicy(BuddyModel model, Func<long> version, Func<string> contentKey, Func<DateTimeOffset?> otherWake, TimeProvider time)
+public sealed class BuddyFramePolicy(BuddyModel model, Func<long> version, Func<string> contentKey, Func<DateTimeOffset?> otherWake, TimeProvider time, Func<bool>? hidden = null)
 {
-    private (BuddyNotice? Notice, int Waiting, bool Grumpy, BuddyMood Mood, int Breath, long Version, string Key, int Badge)? _drawn;
+    private (BuddyNotice? Notice, int Waiting, bool Grumpy, BuddyMood Mood, int Breath, long Version, string Key, int Badge, AwayPhase Away, int Anim)? _drawn;
     private long _frames;
     private long _drawTicks;
     private long _asks;
@@ -22,14 +22,40 @@ public sealed class BuddyFramePolicy(BuddyModel model, Func<long> version, Func<
     /// <summary>How many times the host asked, so the log says how few asks became frames.</summary>
     public long Asks => Interlocked.Read(ref _asks);
 
-    private (BuddyNotice? Notice, int Waiting, bool Grumpy, BuddyMood Mood, int Breath, long Version, string Key, int Badge) Now() =>
-        (model.Current, model.Waiting.Count, model.GrumpyFace, model.Mood, model.BreathPose, version(), contentKey(), model.BadgeCount);
+    private (BuddyNotice? Notice, int Waiting, bool Grumpy, BuddyMood Mood, int Breath, long Version, string Key, int Badge, AwayPhase Away, int Anim) Now() =>
+        (model.Current, model.Waiting.Count, model.GrumpyFace, model.Mood, model.BreathPose, version(), contentKey(), model.BadgeCount, model.Phase, model.AnimFrame);
 
     /// <summary>Whether what the scene shows differs from the last drawn frame. The first ask is yes: nothing was drawn.</summary>
     public bool NeedsFrame()
     {
         Interlocked.Increment(ref _asks);
-        return _drawn != Now();
+        // A cat hidden in a remote session draws nothing, whatever changed: the first frame after it shows again compares with the last drawn.
+        return hidden?.Invoke() != true && _drawn != Now();
+    }
+
+    /// <summary>Forgets what was drawn, so the next ask is yes: the window was hidden and is shown again, and must show the scene.</summary>
+    public void Redraw() => _drawn = null;
+
+    private int _atlasRedraws;
+
+    /// <summary>The most extra frames one change may ask of the atlas: a glyph the warm-up missed shows one frame later, never in an endless run.</summary>
+    public const int MostAtlasRedraws = 2;
+
+    /// <summary>
+    /// The backstop of <see cref="BuddyGlyphWarmer"/>: after a frame, the renderer says whether its atlas still had glyphs to upload (they were skipped in
+    /// that frame). Then the same state is drawn again, at most <see cref="MostAtlasRedraws"/> times in a row, so the loop settles and never spins.
+    /// </summary>
+    public void AtlasSettled(bool atlasDirty)
+    {
+        if (!atlasDirty)
+        {
+            _atlasRedraws = 0;
+        }
+        else if (_atlasRedraws < MostAtlasRedraws)
+        {
+            _atlasRedraws++;
+            _drawn = null;
+        }
     }
 
     /// <summary>Records that a frame of the current state was drawn, <paramref name="took"/> of draw time.</summary>

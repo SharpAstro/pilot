@@ -33,6 +33,56 @@ public sealed class PilotLinkTests
     }
 
     [Theory]
+    [InlineData("pilot://flight/PIL1381", "PIL1381", null, null)]
+    [InlineData("pilot://flight/PIL1381/", "PIL1381", null, null)]
+    [InlineData("pilot://flight/PIL1381/peek-links", "PIL1381", "peek-links", null)]
+    [InlineData("pilot://flight/PIL1381/peek-links?node=DE1", "PIL1381", "peek-links", "DE1")]
+    [InlineData("pilot://flight/PIL1381?node=SE1%20box", "PIL1381", null, "SE1 box")]
+    public void AFlightLinkParsesToItsCodeLegAndNode(string text, string code, string? leg, string? node)
+    {
+        Pilot.Ui.PilotLink.TryParse(text, out var link).ShouldBeTrue();
+        link.Kind.ShouldBe(Pilot.Ui.PilotLinkKind.Flight);
+        link.FlightCode.ShouldBe(code);
+        link.Leg.ShouldBe(leg);
+        link.Node.ShouldBe(node);
+        link.CardId.ShouldBeNull();
+    }
+
+    [Theory]
+    [InlineData("pilot://session/abc123", "abc123", null)]
+    [InlineData("pilot://session/abc%2D123?node=DE1", "abc-123", "DE1")]
+    public void ASessionLinkParsesToItsIdAndNode(string text, string id, string? node)
+    {
+        Pilot.Ui.PilotLink.TryParse(text, out var link).ShouldBeTrue();
+        link.Kind.ShouldBe(Pilot.Ui.PilotLinkKind.Session);
+        link.SessionId.ShouldBe(id);
+        link.Node.ShouldBe(node);
+    }
+
+    [Fact]
+    public void CardLinksStayCardLinksAndTakeAnOptionalNode()
+    {
+        Pilot.Ui.PilotLink.TryParse("pilot://card/c1?node=DE1", out var card).ShouldBeTrue();
+        card.Kind.ShouldBe(Pilot.Ui.PilotLinkKind.Card);
+        card.CardId.ShouldBe("c1");
+        card.Node.ShouldBe("DE1");
+        Pilot.Ui.PilotLink.TryParse("pilot://cards", out var bare).ShouldBeTrue();
+        bare.Kind.ShouldBe(Pilot.Ui.PilotLinkKind.Card);
+        bare.Node.ShouldBeNull();
+    }
+
+    [Theory]
+    [InlineData("pilot://flight")]
+    [InlineData("pilot://flight/")]
+    [InlineData("pilot://flight//leg")]
+    [InlineData("pilot://flight/PIL1/leg/extra")]
+    [InlineData("pilot://session")]
+    [InlineData("pilot://session/")]
+    [InlineData("pilot://session/a/b")]
+    [InlineData("https://flight/PIL1")]
+    public void JunkFlightAndSessionLinksAreRefused(string text) => Pilot.Ui.PilotLink.TryParse(text, out _).ShouldBeFalse();
+
+    [Theory]
     [InlineData(null)]
     [InlineData("")]
     [InlineData("   ")]
@@ -40,7 +90,7 @@ public sealed class PilotLinkTests
     [InlineData("pilot://card/")]
     [InlineData("pilot://card/a/b")]
     [InlineData("pilot://cards/c1")]
-    [InlineData("pilot://flight/PIL1")]
+    [InlineData("pilot://flight")]
     [InlineData("https://card/c1")]
     [InlineData("card/c1")]
     [InlineData("--page")]

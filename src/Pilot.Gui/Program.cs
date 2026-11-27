@@ -1335,10 +1335,10 @@ void RenderFrame()
     }
     chrome.Render(screen, flights, cards, jobs, fleet, repos, pullRequests, new RectF32(0, 0, width, height), machines, ideas, spendReads?.Screen ?? fileSpend, designReads?.Screen(screen.Source, screen.AsOf, chrome.Designs.OpenId));
     // A link from a toast's click, once the chrome has the cards: a fresh window waits for its first snapshot to hold the card (up to 10 s).
-    if (pendingLink is { } link && (cards is { Open.Count: > 0 } || cards is { Handled.Count: > 0 } || Environment.TickCount64 - startedAt > 10_000))
+    if (pendingLink is { } link && ((link.Kind != Pilot.Ui.PilotLinkKind.Card && link.Node is null) || cards is { Open.Count: > 0 } || cards is { Handled.Count: > 0 } || Environment.TickCount64 - startedAt > 10_000))
     {
         pendingLink = null;
-        if (chrome.OpenCardLink(link) is { } said)
+        if (chrome.OpenLink(link) is { } said)
         {
             Say($"pilot-gui: {said}");
         }

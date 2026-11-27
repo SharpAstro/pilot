@@ -79,7 +79,7 @@ internal static class Program
 
         Say($"pilot-buddy: start, args [{string.Join(' ', args)}], node {remote ?? NodeSocket.Resolve(options.NodeSocket)}");
         using var client = NodeTargets.Connect(remote, options.NodeSocket, here: remote is null);
-        using var host = new BuddyHost(options, Say, client, new InstanceGateHandOff(remote));
+        using var host = new BuddyHost(options, Say, client, new InstanceGateHandOff(remote), otherNode: remote is not null);
         using var stop = new CancellationTokenSource();
         // The watchtower's end of the pipe: calls from `pilot-buddy mcp` reach the model under the gate the window draws under.
         // A capture is a look, not the cat: it leaves the pipe to the one that is running.
