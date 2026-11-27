@@ -897,6 +897,28 @@ public sealed class LegWatchTests
     }
 
     [Fact]
+    public async Task AWorkerRowThatEndedItsTurnThenFailedGoesTheIdlePathAndRingsNoFailedCard()
+    {
+        // What SessionRowBuilder makes of a failed job whose Stop hook fired after its resume: Ended after its turn.
+        _state.PutSession(new SessionRow
+        {
+            Id = "a1b2c3d4", SessionId = "a1b2c3d4-0000-4000-8000-000000000000", Name = "du1-tia1-parser", Kind = SessionKind.Background,
+            Cwd = "/work/tia1", Role = SessionRole.Worker, Flight = "TIA1", Leg = "parser", ContextWindow = 200_000,
+            State = SessionState.Ended, SpendWeighted = 0, LastResponseAt = Start, StartedAt = Start,
+            EndedBecause = SessionRowBuilder.TurnFinishedEnd + " (failed after its turn ended, stop held: files not committed)",
+        });
+
+        await _watch.LookAsync(Ct);
+
+        Open().ShouldNotContain(c => c.Kind == LegWatch.Failed);
+
+        // A real failure still rings.
+        Worker(SessionState.Failed);
+        await _watch.LookAsync(Ct);
+        Open().ShouldContain(c => c.Kind == LegWatch.Failed);
+    }
+
+    [Fact]
     public async Task AReviewerThatStopsWithoutItsVerdictIsToldThenReviewedAfreshAndOnlyThenRings()
     {
         _state.PutLeg(_state.Legs().Single() with { State = LegState.Done });

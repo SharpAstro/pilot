@@ -33,6 +33,29 @@ public sealed class SessionRowTests : IDisposable
     }
 
     [Fact]
+    public void AFailedJobWhoseTurnEndedBeforeItsProcessWentIsEndedAfterItsTurnNotFailed()
+    {
+        var agent = ClaudeAgentsJson.Parse(AgentRows.List(AgentRows.Background(AgentRows.SessionB, "du1-worker", "failed")))!.Single();
+        var resumed = agent.StartedAt ?? throw new InvalidOperationException("the fixture has a start");
+        var stop = new HookState("Stop", resumed.AddMinutes(5), SessionState.Idle, null, null);
+
+        var row = SessionRowBuilder.Build(agent, TranscriptFacts.None, null, null, SessionRoleInfo.AdHoc, stop);
+        row.State.ShouldBe(SessionState.Ended);
+        row.EndedBecause.ShouldNotBeNull().ShouldStartWith(SessionRowBuilder.TurnFinishedEnd);
+        row.EndedBecause.ShouldNotContain("stop held");
+
+        // The hook held that stop: the row says so.
+        SessionRowBuilder.Build(agent, TranscriptFacts.None, null, null, SessionRoleInfo.AdHoc, stop with { StopHeld = true })
+            .EndedBecause.ShouldNotBeNull().ShouldContain("stop held: files not committed");
+
+        // A real crash: no Stop since the resume, no hook at all, or an API error.
+        SessionRowBuilder.Build(agent, TranscriptFacts.None, null, null, SessionRoleInfo.AdHoc, stop with { At = resumed.AddMinutes(-5) }).State.ShouldBe(SessionState.Failed);
+        SessionRowBuilder.Build(agent, TranscriptFacts.None, null, null, SessionRoleInfo.AdHoc).State.ShouldBe(SessionState.Failed);
+        SessionRowBuilder.Build(agent, TranscriptFacts.None, null, null, SessionRoleInfo.AdHoc, stop with { ApiError = "rate_limit" }).State.ShouldBe(SessionState.Failed);
+        SessionRowBuilder.Build(agent, TranscriptFacts.None, null, null, SessionRoleInfo.AdHoc, stop with { Event = "PostToolUse", State = SessionState.Working }).State.ShouldBe(SessionState.Failed);
+    }
+
+    [Fact]
     public void AnInteractiveRowAndABackgroundRowMakeTheirRows()
     {
         var rows = ClaudeAgentsJson.Parse(AgentRows.List(
