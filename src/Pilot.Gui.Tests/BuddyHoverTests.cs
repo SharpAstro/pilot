@@ -147,7 +147,10 @@ public sealed class BuddyHoverTests
         // The node's OthersShowCards is said again on the new stream.
         OthersShow(feed, true);
 
-        model.BadgeCount.ShouldBe(1);
+        // c2 closed while the node was away: it is gone from the cat, and c1 (already its bubble) stays the one thing that needs the person.
+        model.IsBadged(BuddyFeed.CardNoticeId("c2")).ShouldBeFalse();
+        model.Waiting.ShouldBeEmpty("c2's bubble went with the card");
+        model.Current.ShouldNotBeNull().Id.ShouldBe(BuddyFeed.CardNoticeId("c1"));
         feed.Hover().Headline.ShouldBe("1 needs you");
         feed.ChatDisabledReason.ShouldBeNull();
     }
