@@ -37,7 +37,10 @@ public sealed class HoldingPrReadyTests : ReviewTestsBase
     {
         (await Run(Verbs.StartLeg, Verbs.LegTarget(flight.Code, LegCommander.ReviewNotesLeg), "controller", "anyway")).Error.ShouldBeNull();
         var worker = _state.Legs(flight.Code).Single(l => l.Name == LegCommander.ReviewNotesLeg).Worker!;
-        (await Run(Verbs.Check, Verbs.LegTarget(flight.Code, LegCommander.ReviewNotesLeg), worker, "1")).Ok.ShouldBeTrue();
+        foreach (var step in new[] { "1", "2" })
+        {
+            (await Run(Verbs.Check, Verbs.LegTarget(flight.Code, LegCommander.ReviewNotesLeg), worker, step)).Ok.ShouldBeTrue();
+        }
         return worker;
     }
 

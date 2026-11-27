@@ -570,29 +570,6 @@ public sealed partial class LegCommander
         RaiseMergeCard(flight, pr.Number, pr.Head, pr.Url, review, reviewed);
     }
 
-    /// <summary>
-    /// A flight holding for review notes that have no end gets no PR-ready card (pilot #1400): it had nothing for a person to press (the
-    /// merge is refused until each note has an end) and rang the repeat detector twice a round. The release of the hold raises the one card.
-    /// </summary>
-    private bool HoldsForNotes(FlightRow flight) => flight.Holding is not null && UnmadeNotesOf(flight) is { Count: > 0 };
-
-    /// <summary>The PR-ready card's words: one place for the raise at a verdict and the raise at a hold's release.</summary>
-    private void RaiseMergeCard(FlightRow flight, int number, string head, string? url, string review, string reviewed)
-    {
-        var holding = flight.Holding is not null; var holdReason = flight.Holding?.Reason ?? HoldingReason;
-        var legs = state.Legs(flight.Code);
-        state.RaiseCard(MergeCardBin(flight.Repo), PrReady, Verbs.FlightTarget(flight.Code),
-            holding ? $"{flight.Code}'s PR #{number} is holding: {holdReason}" : $"{flight.Code}'s PR #{number} is ready to merge",
-            $"{flight.Title ?? flight.Item.Noun}: {legs.Length} {(legs.Length == 1 ? "leg" : "legs")} done, head {CommitRefs.Short(head)}. {reviewed}: {review}."
-                + (holding ? HeldDetailTail : ""),
-            [new CardChoice { Label = MergeLabel, Verb = Verbs.Merge, Target = Verbs.FlightTarget(flight.Code), Args = [head] }], link: url,
-            summary: holding
-                ? $"Wait: {flight.Code} passed its review with notes, and a review-notes leg makes them (or the owner clears the hold with a reason). The merge is refused until each note has an end."
-                : $"{flight.Code} is reviewed and its PR #{number} is ready. Merge lands it; dismissing leaves the PR open.",
-            // The title names the PR only: a new head is a new card for a person to see, whatever was dismissed for the one before (#853).
-            cause: $"{(holding ? "holding" : "ready")}:{number}:{head}");
-    }
-
     /// <summary>The Handled card kind that says a passed flight's PR-ready card was restored by the sweep.</summary>
     public const string PrReadyRestoredKind = "pr-ready-restored";
 
