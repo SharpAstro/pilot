@@ -60,7 +60,8 @@ public sealed class RepeatDetectorTests
     [Fact]
     public void AFaultKindTwiceOnOneFlightStillRaisesExactlyOneTask()
     {
-        _state.RaiseCard(CardBin.Ring, "worker-failed", "flight/PIL1", "worker failed");
+        var first = _state.RaiseCard(CardBin.Ring, "worker-failed", "flight/PIL1", "worker failed");
+        _state.CloseCard(first.Id, "pressed", "owner");
         _time.Advance(TimeSpan.FromHours(1));
         _state.RaiseCard(CardBin.Ring, "worker-failed", "flight/PIL1", "worker failed");
 
