@@ -44,7 +44,9 @@ public sealed class BenchRun(NodeState state, NodeOptions options, RepoCatalog r
     /// <summary>
     /// Completes once the bench job <paramref name="jobId"/> has ended, its result is posted (or failed to be) and each of its worktrees is
     /// removed, with per worktree null (gone) or why it is still there (held and queued in the node's removal queue, or git's refusal).
-    /// A job this run did not queue gives an already completed empty list.
+    /// Also complete, with the same per worktree answers, when the post itself failed (a card says so); a worktree a bench left behind is named
+    /// on a <see cref="LeftBehindKind"/> card as well. A job this run did not queue, or one whose entry is older than the last
+    /// <c>KeptRemovals</c> completed removals (the map keeps only those), gives an already completed empty list. A node restart forgets the map.
     /// </summary>
     public Task<IReadOnlyList<WorktreeRemoval>> WorktreesRemoved(string jobId) =>
         _removed.TryGetValue(jobId, out var done) ? done.Task : Task.FromResult<IReadOnlyList<WorktreeRemoval>>([]);
