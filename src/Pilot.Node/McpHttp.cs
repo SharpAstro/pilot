@@ -98,10 +98,23 @@ public sealed class McpHttp(NodeOptions options, NodeState state, ILogger<McpHtt
         return reply is null ? Results.StatusCode(StatusCodes.Status202Accepted) : Results.Text(reply, "application/json", Encoding.UTF8);
     }
 
-    /// <summary>The server for the session named <paramref name="name"/>, in its folder and as its id, as the node knows them now.</summary>
+    /// <summary>
+    /// The server for the session named <paramref name="name"/>, in its folder and as its id, as the node knows them now. A token
+    /// proves a name, not a session: after a rename, or while two sessions share a name, the newest row of the name answers, and a
+    /// name with no row runs from the data folder with no session id (a renamed session loses its plane).
+    /// </summary>
     internal McpEndpointSession SessionFor(string name)
     {
         var session = state.Sessions().Where(s => s.Name == name).OrderBy(s => s.Archived).ThenByDescending(s => s.StartedAt).FirstOrDefault();
+        // A session that ended (its row gone, or another now answering to the name) leaves no server behind.
+        var live = state.Sessions();
+        foreach (var key in _sessions.Keys)
+        {
+            if (!live.Any(s => s.Name == key.Name && s.SessionId == key.Id) && (key.Id is not null || live.Any(s => s.Name == key.Name)))
+            {
+                _sessions.TryRemove(key, out _);
+            }
+        }
         var cwd = session?.Cwd is { Length: > 0 } folder ? folder : options.DataFolder;
         return _sessions.GetOrAdd((name, session?.SessionId), key => new McpEndpointSession(cwd, options.SocketPath, key.Id));
     }
@@ -112,19 +125,35 @@ public sealed class McpHttp(NodeOptions options, NodeState state, ILogger<McpHtt
     /// </summary>
     public static bool CanBind(int port, ILogger? logger)
     {
+        if (TryBind(port, out var reason))
+        {
+            return true;
+        }
+        logger?.LogWarning("{Message}", TakenMessage(port, reason));
+        return false;
+    }
+
+    /// <summary>Whether <paramref name="port"/> can be bound on loopback now; when not, <paramref name="reason"/> says why.</summary>
+    public static bool TryBind(int port, out string? reason)
+    {
         try
         {
             using var probe = new TcpListener(IPAddress.Loopback, port);
             probe.Start();
             probe.Stop();
+            reason = null;
             return true;
         }
         catch (SocketException ex)
         {
-            logger?.LogWarning("mcp: loopback port {Port} is taken ({Reason}): the node serves no MCP endpoint, and its sessions use pilot mcp over stdio", port, ex.Message);
+            reason = ex.Message;
             return false;
         }
     }
+
+    /// <summary>The log line for a port that could not be bound.</summary>
+    public static string TakenMessage(int port, string? reason) =>
+        $"mcp: loopback port {port} is taken ({reason}): the node serves no MCP endpoint, and its sessions use pilot mcp over stdio";
 
     private static byte[] LoadSecret(string dataFolder)
     {
@@ -143,7 +172,7 @@ public sealed class McpHttp(NodeOptions options, NodeState state, ILogger<McpHtt
         try
         {
             Directory.CreateDirectory(dataFolder);
-            File.WriteAllText(path, Convert.ToHexString(made));
+            OwnerOnlyFile.WriteAllText(path, Convert.ToHexString(made));
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {

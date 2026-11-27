@@ -6,6 +6,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Pilot.Contracts;
 using Pilot.Node.Flights;
+using Node.Lib.Hosting;
 using Shouldly;
 using Xunit;
 
@@ -118,6 +119,72 @@ public sealed class McpHttpTests : IDisposable
     {
         NodeSettings.Keys.ShouldContain(NodeSettings.McpTransportKey);
         NodeSettings.McpTransports.ShouldBe(["stdio", "http"]);
+        NodeSettings.With(new NodeSettings(), NodeSettings.McpTransportKey, ["http"]).Settings!.McpTransport.ShouldBe("http");
+        var (settings, error) = NodeSettings.With(new NodeSettings(), NodeSettings.McpTransportKey, ["carrier-pigeon"]);
+        settings.ShouldBeNull();
+        error.ShouldNotBeNull().ShouldContain("mcp-transport takes");
+    }
+
+    [Fact]
+    public void TheGateOpensMcpOnItsLoopbackPortAndNothingElseThereAndRefusesItOffThatPort()
+    {
+        const int port = NodeWire.DefaultMcpPort;
+        NodeApp.Classify(NodeWire.McpRoute, "POST", port, IPAddress.Loopback, port).ShouldBe(NodeRouteAccess.Open);
+        // Every other route on that port is this machine's only, which a TCP request never is.
+        foreach (var path in new[] { NodeWire.NodeRoute, NodeWire.SessionsRoute, NodeWire.EventsRoute, NodeWire.GrantsRoute, NodeWire.CommandsRoute })
+        {
+            NodeApp.Classify(path, "GET", port, IPAddress.Loopback, port).ShouldBe(NodeRouteAccess.ThisMachineOnly, path);
+            NodeApp.Classify(path, "POST", port, IPAddress.Loopback, port).ShouldBe(NodeRouteAccess.ThisMachineOnly, path);
+        }
+        // /mcp from off this machine, and /mcp on another port or with no MCP port at all.
+        NodeApp.Classify(NodeWire.McpRoute, "POST", port, IPAddress.Parse("192.168.1.20"), port).ShouldBe(NodeRouteAccess.ThisMachineOnly);
+        NodeApp.Classify(NodeWire.McpRoute, "POST", 47731, IPAddress.Loopback, port).ShouldBe(NodeRouteAccess.ThisMachineOnly);
+        NodeApp.Classify(NodeWire.McpRoute, "POST", port, IPAddress.Loopback, 0).ShouldBe(NodeRouteAccess.ThisMachineOnly);
+        // The LAN port keeps its own rules.
+        NodeApp.Classify(NodeWire.SessionsRoute, "GET", 47731, IPAddress.Parse("192.168.1.20"), port).ShouldBe(NodeRouteAccess.Open);
+    }
+
+    [Fact]
+    public void ALocalOnlyNodeTakesNoMcpPort()
+    {
+        var confined = NodeCommandLine.Confined(new NodeOptions("s", "d", Lan: true, McpPort: NodeWire.DefaultMcpPort));
+
+        confined.McpPort.ShouldBe(0);
+        confined.Lan.ShouldBeFalse();
+        confined.LocalOnly.ShouldBeTrue();
+    }
+
+    [Fact]
+    public void WorkersGetTheHttpConfigOnlyWhenTheEndpointServesAndTheSettingSaysHttp()
+    {
+        _http.Serving = true;
+        ClaudeWorkerLauncher.HttpFor(_http, "http", "w").ShouldNotBeNull().Session.ShouldBe("w");
+        ClaudeWorkerLauncher.HttpFor(_http, "stdio", "w").ShouldBeNull();
+        ClaudeWorkerLauncher.HttpFor(_http, null, "w").ShouldBeNull();
+        _http.Serving = false;
+        ClaudeWorkerLauncher.HttpFor(_http, "http", "w").ShouldBeNull();
+        ClaudeWorkerLauncher.HttpFor(null, "http", "w").ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task AToolsCallIsServedAndInitializeAdvertisesNoNoticesOverHttp()
+    {
+        var token = _http.TokenFor("se1-x");
+        var (status, body) = await AnswerAsync(Request(Initialize, token));
+        status.ShouldBe(StatusCodes.Status200OK);
+        using (var reply = JsonDocument.Parse(body))
+        {
+            var capabilities = reply.RootElement.GetProperty("result").GetProperty("capabilities");
+            capabilities.GetProperty("resources").GetProperty("subscribe").GetBoolean().ShouldBeFalse();
+            capabilities.GetProperty("resources").GetProperty("listChanged").GetBoolean().ShouldBeFalse();
+            capabilities.GetProperty("tools").GetProperty("listChanged").GetBoolean().ShouldBeFalse();
+        }
+
+        // The node's socket is not there: the call is made, as the CLI makes it, and its refusal comes back as a tool result.
+        (status, body) = await AnswerAsync(Request("""{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"status","arguments":{}}}""", token));
+        status.ShouldBe(StatusCodes.Status200OK);
+        using var called = JsonDocument.Parse(body);
+        called.RootElement.GetProperty("result").GetProperty("isError").GetBoolean().ShouldBeTrue();
     }
 
     private const string Initialize = """{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"claude-code","version":"test"}}}""";

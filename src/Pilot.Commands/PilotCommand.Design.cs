@@ -201,7 +201,7 @@ public static partial class PilotCommand
             var designSay = Action(new Command("say", "Say something in a design's chat: the words are appended to its brief under their time and sent to the designer") { Arguments = { sayId, sayText }, Options = { sayPicture } },
                 (p, client, ct) =>
                 {
-                    var file = p.GetValue(sayPicture);
+                    var file = p.GetValue(sayPicture) is { } named ? Path.GetFullPath(named, cwd) : null;
                     string[] args = file is null ? [Join(p, sayText)] : [Join(p, sayText), Path.GetFileName(file), Convert.ToBase64String(File.ReadAllBytes(file))];
                     return Send(client, Verbs.DesignSay, Verbs.DesignTarget(p.GetValue(sayId)!), args, who, ct);
                 });

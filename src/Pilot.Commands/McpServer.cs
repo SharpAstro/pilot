@@ -51,10 +51,11 @@ namespace Pilot.Commands;
 /// <param name="startChild">Starts the new binary's <c>pilot mcp</c> with these arguments (default: the <c>pilot</c> beside this process); throws when it cannot.</param>
 /// <param name="handedOver">True for a server started by another one's hand-over: it never looks at the installed version nor hands over.</param>
 /// <param name="parentIsMcp">Whether this process's parent is a <c>pilot mcp</c> (default: <see cref="McpParent.IsPilotMcp()"/>); a server whose parent is one counts as a hand-over child too.</param>
+/// <param name="notices">Whether this server can push notices to its client (stdio can; the HTTP endpoint has no stream back), so initialize advertises list-changed and subscribe only then.</param>
 /// <param name="sessionId">The Claude session the calls come from, where the host knows it (the node's HTTP endpoint, #1385); null reads <c>CLAUDE_CODE_SESSION_ID</c> from the environment, as a stdio server started by that session has it.</param>
 internal sealed partial class McpServer(string cwd, string? node, string? socket,
     Func<CancellationToken, Task<string?>>? installed = null, TimeSpan? watch = null, TextWriter? log = null,
-    Func<string[], McpChild>? startChild = null, bool handedOver = false, Func<bool>? parentIsMcp = null, string? sessionId = null)
+    Func<string[], McpChild>? startChild = null, bool handedOver = false, Func<bool>? parentIsMcp = null, string? sessionId = null, bool notices = true)
 {
     /// <summary>The version this process runs as, without the commit after it (2.0.12+3969354 is 2.0.12).</summary>
     internal static string Running { get; } = Plain(typeof(McpServer).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "0.0.0");
@@ -445,7 +446,7 @@ internal sealed partial class McpServer(string cwd, string? node, string? socket
         }
         var protocol = given.ProtocolVersion is { } asked && Protocols.Contains(asked) ? asked : Protocol;
         var version = typeof(McpServer).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "0.0.0";
-        return new InitializeResult(protocol, new ServerCapabilities(new ListCapability(ListChanged: true), new ResourcesCapability(Subscribe: true, ListChanged: true)), new McpImplementation("pilot", version),
+        return new InitializeResult(protocol, new ServerCapabilities(new ListCapability(ListChanged: notices), new ResourcesCapability(Subscribe: notices, ListChanged: notices)), new McpImplementation("pilot", version),
             "pilot v2's node. The tools are pilot's commands, named by their path (flight_create, leg_plan, check, cards, answer), and do what "
             + "the CLI does: a refusal says why. Inside a flight's plane a leg's tools need no leg named. The resources are the node's flights, "
             + "legs, cards and sessions as JSON; the designs are resources too (pilot://designs, and per design its record, DESIGN.md, screen renders as PNG and chat; resources/templates/list has the URIs; resources/subscribe on any of a design's URIs gets notifications/resources/updated when a version is published, the draft changes or its chat gets an entry, and notifications/resources/list_changed when a design is added or removed). Every tool takes an optional node (a name like DE1, a host, or host:port, as the nodes tool lists "

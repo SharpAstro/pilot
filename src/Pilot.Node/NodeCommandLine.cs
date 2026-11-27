@@ -17,6 +17,12 @@ public static class NodeCommandLine
     public const string LocalOnlyVariable = "PILOT_LOCAL_ONLY";
 
     /// <summary>
+    /// The options of a local-only node: no LAN port, and no MCP port either, as it binds nothing but its socket and must not take
+    /// the real node's loopback port while that one is down (an update window, say).
+    /// </summary>
+    internal static NodeOptions Confined(NodeOptions options) => options with { Lan = false, LocalOnly = true, McpPort = 0 };
+
+    /// <summary>
     /// <c>--after &lt;pid&gt;</c>: wait for that process to exit before taking the socket. How a node that installed a
     /// release hands over to the new one (<see cref="NodeUpdater"/>); not for people, so hidden.
     /// </summary>
@@ -256,7 +262,7 @@ public static class NodeCommandLine
             options = NodeSettings.Read(options.SettingsFile).Over(options, given);
             if (!mode.MayBindTheNetwork)
             {
-                options = options with { Lan = false, LocalOnly = true };
+                options = Confined(options);
             }
             if (parseResult.GetValue(after) is { } predecessor)
             {

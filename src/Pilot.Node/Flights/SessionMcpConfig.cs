@@ -153,7 +153,15 @@ public static partial class SessionMcpConfig
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
             if (!File.Exists(path) || File.ReadAllText(path) != text)
             {
-                File.WriteAllText(path, text);
+                // A config with a token is full command access as that session: the owner's alone.
+                if (http is not null)
+                {
+                    OwnerOnlyFile.WriteAllText(path, text);
+                }
+                else
+                {
+                    File.WriteAllText(path, text);
+                }
             }
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)

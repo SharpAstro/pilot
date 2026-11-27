@@ -46,8 +46,11 @@ public sealed partial class ClaudeWorkerLauncher(
     /// The node's own MCP endpoint for <paramref name="name"/> (#1385), when the node serves one and the settings say http
     /// (<see cref="NodeSettings.McpTransportKey"/>); null keeps pilot mcp over stdio.
     /// </summary>
-    private McpHttpEntry? HttpFor(string name) =>
-        mcpHttp is { Serving: true } http && mcpTransport?.Invoke() == "http" ? new McpHttpEntry(http.Url, name, http.TokenFor(name)) : null;
+    private McpHttpEntry? HttpFor(string name) => HttpFor(mcpHttp, mcpTransport?.Invoke(), name);
+
+    /// <summary>The endpoint entry for <paramref name="name"/>: only when the node serves one and the setting says http.</summary>
+    internal static McpHttpEntry? HttpFor(McpHttp? http, string? transport, string name) =>
+        http is { Serving: true } && transport == "http" ? new McpHttpEntry(http.Url, name, http.TokenFor(name)) : null;
 
     /// <summary>The start with its MCP config file written and named (pilot's server, and the repo's declared extras); unchanged when the node has no options (a test's launcher).</summary>
     public WorkerStart WithMcp(WorkerStart start) =>

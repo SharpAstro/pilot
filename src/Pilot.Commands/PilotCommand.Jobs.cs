@@ -116,8 +116,8 @@ public static partial class PilotCommand
                         ? (TryDuration(given, out var span) ? (long)span.TotalSeconds : throw new UsageException($"--timeout takes 90m, 2h or 45s, not {given}"))
                         : 0;
                     // The session to wake: the Claude session running this, by its row on the node; from a terminal, none.
-                    var owner = Environment.GetEnvironmentVariable("CLAUDE_CODE_SESSION_ID") is { Length: > 0 } sessionId
-                        ? (await SnapshotAsync(client, ct)).Sessions.FirstOrDefault(s => string.Equals(s.SessionId, sessionId, StringComparison.OrdinalIgnoreCase))
+                    var owner = sessionId is { Length: > 0 } mine
+                        ? (await SnapshotAsync(client, ct)).Sessions.FirstOrDefault(s => string.Equals(s.SessionId, mine, StringComparison.OrdinalIgnoreCase))
                         : null;
                     var target = owner is null ? Verbs.NodeTarget : Verbs.SessionTarget(owner.Id);
                     var runIn = cwd;
@@ -192,8 +192,8 @@ public static partial class PilotCommand
                     var seconds = p.GetValue(benchTimeout) is { } given
                         ? (TryDuration(given, out var span) ? (long)span.TotalSeconds : throw new UsageException($"--timeout takes 90m, 2h or 45s, not {given}"))
                         : 0;
-                    var owner = Environment.GetEnvironmentVariable("CLAUDE_CODE_SESSION_ID") is { Length: > 0 } sessionId
-                        ? (await SnapshotAsync(client, ct)).Sessions.FirstOrDefault(s => string.Equals(s.SessionId, sessionId, StringComparison.OrdinalIgnoreCase))
+                    var owner = sessionId is { Length: > 0 } mine
+                        ? (await SnapshotAsync(client, ct)).Sessions.FirstOrDefault(s => string.Equals(s.SessionId, mine, StringComparison.OrdinalIgnoreCase))
                         : null;
                     List<string> args = [p.GetValue(benchRepo)!];
                     foreach (var (flag, value) in new[] { ("--ref", @ref), ("--baseline", baseline), ("--candidate", candidate), ("--fetch", p.GetValue(benchFetch)), ("--pr", p.GetValue(benchPr)?.ToString(CultureInfo.InvariantCulture)) })
@@ -420,7 +420,7 @@ public static partial class PilotCommand
                         await output.WriteLineAsync($"refused: no artifact {name} on job {p.GetValue(jobId)} (status {(int)status})");
                         return 1;
                     }
-                    var target = Path.GetFullPath(p.GetValue(artifactOut) ?? name);
+                    var target = Path.GetFullPath(p.GetValue(artifactOut) ?? name, cwd);
                     await File.WriteAllBytesAsync(target, bytes, ct);
                     await output.WriteLineAsync($"wrote {bytes.Length} bytes to {target}");
                     return 0;

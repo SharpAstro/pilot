@@ -25,7 +25,8 @@ public static partial class NodeApp
         var builder = WebApplication.CreateSlimBuilder(new WebApplicationOptions { Args = [], ContentRootPath = AppContext.BaseDirectory });
         // pilot's MCP server over loopback HTTP (#1385), on its own port: checked first, as a port another program holds would
         // fail the whole host; then the sessions stay on stdio.
-        var mcpBound = options.McpPort > 0 && McpHttp.CanBind(options.McpPort, null);
+        string? mcpTaken = null;
+        var mcpBound = options.McpPort > 0 && McpHttp.TryBind(options.McpPort, out mcpTaken);
         builder.WebHost.ConfigureKestrel(kestrel =>
         {
             kestrel.ListenOnNodeSocket(held);
@@ -84,6 +85,10 @@ public static partial class NodeApp
         var app = builder.Build();
         var mcp = app.Services.GetRequiredService<McpHttp>();
         mcp.Serving = mcpBound;
+        if (options.McpPort > 0 && !mcpBound)
+        {
+            app.Services.GetRequiredService<ILogger<McpHttp>>().LogWarning("{Message}", McpHttp.TakenMessage(options.McpPort, mcpTaken));
+        }
         if (mcpBound)
         {
             app.Services.GetRequiredService<ILogger<McpHttp>>().LogInformation("mcp: serving pilot's MCP server on {Url}", mcp.Url);
@@ -108,28 +113,8 @@ public static partial class NodeApp
     /// </summary>
     private static readonly NodeAccessPolicy LanPolicy = new NodeAccessPolicy
     {
-        Classify = context =>
-        {
-            var path = context.Request.Path.Value ?? "";
-            // pilot's MCP endpoint (#1385): on its own loopback port only, where the route checks the session's token itself.
-            if (path == NodeWire.McpRoute && context.RequestServices.GetRequiredService<NodeOptions>().McpPort is > 0 and var mcpPort
-                && context.Connection.LocalPort == mcpPort && context.Connection.RemoteIpAddress is { } from && System.Net.IPAddress.IsLoopback(from))
-            {
-                return NodeRouteAccess.Open;
-            }
-            var get = HttpMethods.IsGet(context.Request.Method);
-            var post = HttpMethods.IsPost(context.Request.Method);
-            var watching = get && (path is NodeWire.NodeRoute or NodeWire.SessionsRoute or NodeWire.EventsRoute || path.StartsWith(NodeWire.GrantsRoute + "/", StringComparison.Ordinal));
-            // The repos and their issues name this machine's folders, and a transcript is a session's words: read for a
-            // grant, as a command is made with one.
-            var granted = get && (path is NodeWire.ReposRoute or NodeWire.RepoStatusRoute or NodeWire.IssuesRoute or NodeWire.ChatRoute
-                || path.StartsWith(NodeWire.SessionsRoute + "/", StringComparison.Ordinal) && path.EndsWith("/transcript", StringComparison.Ordinal)
-                || path.StartsWith(NodeWire.AttachmentsRoute + "/", StringComparison.Ordinal)
-                || path.StartsWith(NodeWire.JobsRoute + "/", StringComparison.Ordinal) && (path.EndsWith("/log", StringComparison.Ordinal) || path.Contains("/artifacts/", StringComparison.Ordinal)));
-            return watching || (post && path == NodeWire.GrantsRoute) ? NodeRouteAccess.Open
-                : (post && path is NodeWire.CommandsRoute or NodeWire.AttachmentsRoute) || granted ? NodeRouteAccess.Command
-                : NodeRouteAccess.ThisMachineOnly;
-        },
+        Classify = context => Classify(context.Request.Path.Value ?? "", context.Request.Method, context.Connection.LocalPort, context.Connection.RemoteIpAddress,
+            context.RequestServices.GetRequiredService<NodeOptions>().McpPort),
         MayCommand = async context =>
         {
             if (await context.RequestServices.GetRequiredService<NodeLan>().VerifyAsync(context) is not { } grant)
@@ -147,6 +132,31 @@ public static partial class NodeApp
             return Results.Json(ResponseEnvelope<CommandResult>.Fail(why, 403), PilotJsonContext.Default.ResponseEnvelopeCommandResult, statusCode: 403).ExecuteAsync(context);
         },
     };
+
+    /// <summary>
+    /// What a request may do, by its path and where it came in. The MCP loopback port (#1385) carries <c>/mcp</c> and nothing
+    /// else: there <c>/mcp</c> from loopback is open (the route checks the session's token itself) and every other path is this
+    /// machine's only, which a TCP request never is. Off that port <c>/mcp</c> is this machine's only too.
+    /// </summary>
+    internal static NodeRouteAccess Classify(string path, string method, int localPort, System.Net.IPAddress? remote, int mcpPort)
+    {
+        if (mcpPort > 0 && localPort == mcpPort)
+        {
+            return path == NodeWire.McpRoute && remote is not null && System.Net.IPAddress.IsLoopback(remote) ? NodeRouteAccess.Open : NodeRouteAccess.ThisMachineOnly;
+        }
+        var get = HttpMethods.IsGet(method);
+        var post = HttpMethods.IsPost(method);
+        var watching = get && (path is NodeWire.NodeRoute or NodeWire.SessionsRoute or NodeWire.EventsRoute || path.StartsWith(NodeWire.GrantsRoute + "/", StringComparison.Ordinal));
+        // The repos and their issues name this machine's folders, and a transcript is a session's words: read for a
+        // grant, as a command is made with one.
+        var granted = get && (path is NodeWire.ReposRoute or NodeWire.RepoStatusRoute or NodeWire.IssuesRoute or NodeWire.ChatRoute
+            || path.StartsWith(NodeWire.SessionsRoute + "/", StringComparison.Ordinal) && path.EndsWith("/transcript", StringComparison.Ordinal)
+            || path.StartsWith(NodeWire.AttachmentsRoute + "/", StringComparison.Ordinal)
+            || path.StartsWith(NodeWire.JobsRoute + "/", StringComparison.Ordinal) && (path.EndsWith("/log", StringComparison.Ordinal) || path.Contains("/artifacts/", StringComparison.Ordinal)));
+        return watching || (post && path == NodeWire.GrantsRoute) ? NodeRouteAccess.Open
+            : (post && path is NodeWire.CommandsRoute or NodeWire.AttachmentsRoute) || granted ? NodeRouteAccess.Command
+            : NodeRouteAccess.ThisMachineOnly;
+    }
 
     /// <summary>How long <c>GET /api/v1/sessions</c> waits for the tracker's first poll.</summary>
     private static readonly TimeSpan FirstPollBudget = TimeSpan.FromSeconds(10);
