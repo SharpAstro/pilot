@@ -111,7 +111,7 @@ public sealed class ToastHealthTests : IAsyncDisposable
         await _toaster.Sync(cancel: Ct);
         var failed = Setup().ToastsCheck();
         failed.Ok.ShouldBeFalse();
-        failed.Line.ShouldContain("failed at 2026-11-27 09:01:00Z: 0x80131047");
+        failed.Line.ShouldContain("failed at 2026-11-27 09:01:00Z: Failed: 0x80131047");
         failed.Fix.ShouldBe("Send a test toast");
     }
 
