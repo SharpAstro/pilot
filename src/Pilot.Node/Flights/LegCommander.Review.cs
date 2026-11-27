@@ -552,6 +552,10 @@ public sealed partial class LegCommander
     /// <summary>Every leg done, reviewed, the PR open: the merge is the controller's, a gate before an irreversible step.</summary>
     private async Task RaisePrReadyAsync(FlightRow flight, string review, string reviewed, CancellationToken cancellationToken)
     {
+        if (HoldsForNotes(flight))
+        {
+            return;
+        }
         // The points the reviews left are filed before the merge is offered (PIL1107). A failure is said, not thrown: the merge itself is held until it is filed.
         try
         {
@@ -562,19 +566,31 @@ public sealed partial class LegCommander
         {
             await Error.WriteLineAsync($"review: {flight.Code}'s follow-up issue was not filed before its PR-ready card: {ex.Message}");
         }
-        var holding = flight.Holding is not null; var holdReason = flight.Holding?.Reason ?? HoldingReason;
         var pr = await OffLockAsync(null, () => github.PullRequestAsync(flight.RepoPath, flight.Branch, cancellationToken)) ?? throw new FlightException($"{flight.Branch} has no PR");
+        RaiseMergeCard(flight, pr.Number, pr.Head, pr.Url, review, reviewed);
+    }
+
+    /// <summary>
+    /// A flight holding for review notes that have no end gets no PR-ready card (pilot #1400): it had nothing for a person to press (the
+    /// merge is refused until each note has an end) and rang the repeat detector twice a round. The release of the hold raises the one card.
+    /// </summary>
+    private bool HoldsForNotes(FlightRow flight) => flight.Holding is not null && UnmadeNotesOf(flight) is { Count: > 0 };
+
+    /// <summary>The PR-ready card's words: one place for the raise at a verdict and the raise at a hold's release.</summary>
+    private void RaiseMergeCard(FlightRow flight, int number, string head, string? url, string review, string reviewed)
+    {
+        var holding = flight.Holding is not null; var holdReason = flight.Holding?.Reason ?? HoldingReason;
         var legs = state.Legs(flight.Code);
         state.RaiseCard(MergeCardBin(flight.Repo), PrReady, Verbs.FlightTarget(flight.Code),
-            holding ? $"{flight.Code}'s PR #{pr.Number} is holding: {holdReason}" : $"{flight.Code}'s PR #{pr.Number} is ready to merge",
-            $"{flight.Title ?? flight.Item.Noun}: {legs.Length} {(legs.Length == 1 ? "leg" : "legs")} done, head {CommitRefs.Short(pr.Head)}. {reviewed}: {review}."
+            holding ? $"{flight.Code}'s PR #{number} is holding: {holdReason}" : $"{flight.Code}'s PR #{number} is ready to merge",
+            $"{flight.Title ?? flight.Item.Noun}: {legs.Length} {(legs.Length == 1 ? "leg" : "legs")} done, head {CommitRefs.Short(head)}. {reviewed}: {review}."
                 + (holding ? HeldDetailTail : ""),
-            [new CardChoice { Label = MergeLabel, Verb = Verbs.Merge, Target = Verbs.FlightTarget(flight.Code), Args = [pr.Head] }], link: pr.Url,
+            [new CardChoice { Label = MergeLabel, Verb = Verbs.Merge, Target = Verbs.FlightTarget(flight.Code), Args = [head] }], link: url,
             summary: holding
                 ? $"Wait: {flight.Code} passed its review with notes, and a review-notes leg makes them (or the owner clears the hold with a reason). The merge is refused until each note has an end."
-                : $"{flight.Code} is reviewed and its PR #{pr.Number} is ready. Merge lands it; dismissing leaves the PR open.",
+                : $"{flight.Code} is reviewed and its PR #{number} is ready. Merge lands it; dismissing leaves the PR open.",
             // The title names the PR only: a new head is a new card for a person to see, whatever was dismissed for the one before (#853).
-            cause: $"{(holding ? "holding" : "ready")}:{pr.Number}:{pr.Head}");
+            cause: $"{(holding ? "holding" : "ready")}:{number}:{head}");
     }
 
     /// <summary>The Handled card kind that says a passed flight's PR-ready card was restored by the sweep.</summary>
@@ -608,6 +624,8 @@ public sealed partial class LegCommander
             var report = flight.ReviewRounds is { Length: > 0 } rounds && !string.IsNullOrWhiteSpace(rounds[^1].Findings) ? rounds[^1].Findings : review.Report ?? "passed";
             var notes = flight.Holding is not null ? ReviewFindings.Read(report).NotBlocking : [];
             var phrase = review.Depth is { } depth ? ReviewPlan.Phrase(depth, review.DepthWhy) : "Reviewed";
+            // A holding flight with unmade notes gets no card (#1400): RaisePrReadyAsync raises nothing for it, and no restored line is said.
+            var holds = HoldsForNotes(flight);
             await RaisePrReadyAsync(flight, report, notes.Count > 0 ? $"{phrase}, passed with {notes.Count} {(notes.Count == 1 ? "note" : "notes")}" : phrase, cancellationToken);
             if (flight.Holding is not null && notes.Count > 0 && !state.Cards(openOnly: true).Any(c => c.Subject == subject && c.Kind == ReviewNotesKind))
             {
@@ -617,6 +635,10 @@ public sealed partial class LegCommander
                 {
                     await PlanOrRingForNotesAsync(FlightOf(subject), unmade, "its review passed with notes and the node restarted before they had an end", cancellationToken);
                 }
+            }
+            if (holds)
+            {
+                return false;
             }
             RaiseRestoredLine(subject, code, waited.Count > 0);
             return true;

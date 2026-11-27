@@ -68,7 +68,12 @@ public sealed partial class LegCommander
     {
         if (FlightOf(Verbs.FlightTarget(code)).Holding is { } hold)
         {
-            Record(code, f => f with { Holding = hold with { Reason = reason ?? LegHoldingReason(leg), By = leg } });
+            var held = Record(code, f => f with { Holding = hold with { Reason = reason ?? LegHoldingReason(leg), By = leg } });
+            // A holding flight has no PR-ready card to close for the wait (#1400): a Handled line says the PR merges once the leg lands.
+            if (held is { PullRequest: not null } && state.OpenLegs(code).Count > 0)
+            {
+                RaiseLegWaitLine(held);
+            }
         }
     }
 
@@ -116,6 +121,13 @@ public sealed partial class LegCommander
         {
             state.UpdateCard(ready.Id, $"{code}'s PR #{number} is ready to merge", ready.Detail?.Replace(HeldDetailTail, ""), ready.Choices, ready.Link, PrReady,
                 $"{code} is reviewed and its PR #{number} is ready. Merge lands it; dismissing leaves the PR open.", MergeCardBin(flight.Repo));
+            return;
+        }
+        // A flight holding for notes was given no PR-ready card (#1400): the release raises the one, at the reviewed head, from the stored row.
+        if (FlightOf(subject) is { PullRequest: { } pr, Review: { State: ReviewState.Passed, ReviewedHead: { Length: > 0 } head } review } released)
+        {
+            var report = released.ReviewRounds is { Length: > 0 } rounds && !string.IsNullOrWhiteSpace(rounds[^1].Findings) ? rounds[^1].Findings : review.Report ?? "passed";
+            RaiseMergeCard(released, pr, head, released.PullRequestUrl, report, review.Depth is { } depth ? ReviewPlan.Phrase(depth, review.DepthWhy) : "Reviewed");
         }
     }
 

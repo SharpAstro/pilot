@@ -70,14 +70,28 @@ public sealed partial class LegCommander
         {
             return false;
         }
+        var waitTitle = RaiseLegWaitLine(flight, card.Link);
+        state.CloseCard(card.Id, LegWaitOutcome + waitTitle, "node");
+        return true;
+    }
+
+    /// <summary>
+    /// The Handled line that says a reviewed flight's PR merges once its open legs land: one per wait (the same title is not said again),
+    /// never a For-you card. A holding flight has no PR-ready card to close (#1400), so the hold's own wait on a review-notes leg says it
+    /// too. Returns the line's title.
+    /// </summary>
+    private string RaiseLegWaitLine(FlightRow flight, string? cardLink = null)
+    {
+        var code = flight.Code;
+        var subject = Verbs.FlightTarget(code);
+        var open = state.OpenLegs(code);
         var legs = state.Legs(code);
         var waitTitle = $"{code}'s PR #{flight.PullRequest} merges once {string.Join(", ", open)} {(open.Count == 1 ? "lands" : "land")}";
         var waitWhy = $"The {string.Join(", ", open)} {(open.Count == 1 ? "leg makes" : "legs make")} the review's fixes (legs {legs.Length - open.Count}/{legs.Length} done); the node merges the PR once {(open.Count == 1 ? "it lands" : "they land")}. Nothing to press.";
-        state.CloseCard(card.Id, LegWaitOutcome + waitTitle, "node");
-        if (state.Cards(openOnly: false).Where(c => c.Subject == card.Subject && c.Kind == LegWaitKind).OrderByDescending(c => c.At).FirstOrDefault()?.Title != waitTitle)
+        if (state.Cards(openOnly: false).Where(c => c.Subject == subject && c.Kind == LegWaitKind).OrderByDescending(c => c.At).FirstOrDefault()?.Title != waitTitle)
         {
-            state.RaiseCard(CardBin.Handled, LegWaitKind, card.Subject, waitTitle, waitWhy, link: flight.PullRequestUrl ?? card.Link);
+            state.RaiseCard(CardBin.Handled, LegWaitKind, subject, waitTitle, waitWhy, link: flight.PullRequestUrl ?? cardLink);
         }
-        return true;
+        return waitTitle;
     }
 }
