@@ -84,16 +84,26 @@ public static partial class SessionMcpConfig
         }
     }
 
-    /// <summary>The config's text: pilot's server, then the declared extras the repo's <c>.mcp.json</c> defines.</summary>
-    public static string Build(string pilotExe, string? socket, string repoPath, string? buddyExe = null)
+    /// <summary>
+    /// The config's text: pilot's server, then the declared extras the repo's <c>.mcp.json</c> defines. Pilot's server is
+    /// <c>pilot mcp</c> over stdio, or with <paramref name="http"/> the node's own endpoint (#1385) and the session's token.
+    /// </summary>
+    public static string Build(string pilotExe, string? socket, string repoPath, string? buddyExe = null, McpHttpEntry? http = null)
     {
         var servers = new JsonObject
         {
-            [ServerName] = new JsonObject
-            {
-                ["command"] = pilotExe,
-                ["args"] = new JsonArray([.. (socket is null ? [] : new[] { "--node-socket", socket }).Append("mcp").Select(a => (JsonNode)JsonValue.Create(a))]),
-            },
+            [ServerName] = http is { } endpoint
+                ? new JsonObject
+                {
+                    ["type"] = "http",
+                    ["url"] = endpoint.Url,
+                    ["headers"] = new JsonObject { ["Authorization"] = $"Bearer {endpoint.Token}" },
+                }
+                : new JsonObject
+                {
+                    ["command"] = pilotExe,
+                    ["args"] = new JsonArray([.. (socket is null ? [] : new[] { "--node-socket", socket }).Append("mcp").Select(a => (JsonNode)JsonValue.Create(a))]),
+                },
         };
         if (buddyExe is { Length: > 0 })
         {
@@ -128,17 +138,19 @@ public static partial class SessionMcpConfig
     /// <c>mcp.json</c>, or <c>mcp-&lt;repo&gt;.json</c> when the repo declares extras) and returns its path. An unchanged
     /// file is left as it is; a file that cannot be written is still named, so claude says why.
     /// </summary>
-    public static string Ensure(string folder, string pilotExe, string? socket, string repoPath, string? buddyExe = null)
+    public static string Ensure(string folder, string pilotExe, string? socket, string repoPath, string? buddyExe = null, McpHttpEntry? http = null)
     {
-        var text = Build(pilotExe, socket, repoPath, buddyExe);
+        var text = Build(pilotExe, socket, repoPath, buddyExe, http);
         var extras = Declared(repoPath).Count > 0;
-        var repo = new string([.. Path.GetFileName(repoPath.TrimEnd('/', '\\')).Select(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_' ? c : '-')]);
+        var repo = Safe(Path.GetFileName(repoPath.TrimEnd('/', '\\')));
         var name = extras && repo.Length > 0 ? $"mcp-{repo}" : "mcp";
-        // The watchtower's file (with the buddy) is its own, so it never overwrites the file the workers load.
-        var path = Path.Combine(folder, buddyExe is { Length: > 0 } ? $"{name}-buddy.json" : $"{name}.json");
+        // The watchtower's file (with the buddy) is its own, so it never overwrites the file the workers load. A file with a
+        // session's token (#1385) is that session's alone, under mcp-sessions/, as no other session may call as it.
+        var file = buddyExe is { Length: > 0 } ? $"{name}-buddy.json" : $"{name}.json";
+        var path = http is { } endpoint ? Path.Combine(folder, SessionsFolder, $"{Safe(endpoint.Session)}-{file}") : Path.Combine(folder, file);
         try
         {
-            Directory.CreateDirectory(folder);
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
             if (!File.Exists(path) || File.ReadAllText(path) != text)
             {
                 File.WriteAllText(path, text);
@@ -149,4 +161,12 @@ public static partial class SessionMcpConfig
         }
         return path;
     }
+
+    /// <summary>The folder, under the node's data folder, of the configs that hold a session's token.</summary>
+    public const string SessionsFolder = "mcp-sessions";
+
+    private static string Safe(string name) => new([.. name.Select(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_' ? c : '-')]);
 }
+
+/// <summary>Pilot's MCP server as the node serves it over HTTP (#1385), for one session: the URL, the session's name and its token.</summary>
+public sealed record McpHttpEntry(string Url, string Session, string Token);

@@ -20,12 +20,13 @@ namespace Pilot.Node;
 /// <param name="Saved">The settings file as it was read at the start (<see cref="NodeSettings"/>); the values above already include it.</param>
 /// <param name="CommandLineKeys">The settings (<see cref="NodeSettings.Keys"/>) the command line or the environment gave, which win over the file.</param>
 /// <param name="LocalOnly">Whether the node was started to bind nothing but its socket, whatever the settings say about the LAN.</param>
+/// <param name="McpPort">The loopback TCP port it serves pilot's MCP server on over HTTP (#1385); 0 serves none (a test node). A port another program holds is skipped, said in the log, and the sessions stay on stdio.</param>
 /// <param name="LanLoopbackOnly">For tests: the LAN port binds on loopback only, which stands in for the LAN, and a loopback listener never asks the firewall.</param>
 public sealed record NodeOptions(
     string SocketPath, string DataFolder, int RetainedDeltas = NodeState.DefaultRetainedDeltas, string? MachinePrefix = null, bool Watchtower = true, string? WatchtowerFolderGiven = null,
     bool Lan = false, int LanPort = NodeWire.DefaultLanPort, bool LanAnnounce = true, int MaxJobs = 1, double JobMemoryGigabytes = 0, Pilot.Node.Flights.JobPriority JobPriority = Pilot.Node.Flights.JobPriority.BelowNormal,
     UpdatePolicy UpdatePolicy = UpdatePolicy.Off, string? ReleaseFeed = null, IReadOnlyList<string>? RepoRootsGiven = null,
-    UpdateChannel UpdateChannel = UpdateChannel.Stable, NodeSettings? Saved = null, IReadOnlySet<string>? CommandLineKeys = null, bool LocalOnly = false, bool LanLoopbackOnly = false, bool MachineSampling = true)
+    UpdateChannel UpdateChannel = UpdateChannel.Stable, NodeSettings? Saved = null, IReadOnlySet<string>? CommandLineKeys = null, bool LocalOnly = false, bool LanLoopbackOnly = false, bool MachineSampling = true, int McpPort = 0)
 {
     /// <summary>The settings file this node reads and the Settings page writes.</summary>
     public string SettingsFile => NodeSettings.PathIn(DataFolder);

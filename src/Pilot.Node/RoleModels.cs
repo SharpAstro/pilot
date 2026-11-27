@@ -249,6 +249,18 @@ public sealed partial class RoleModels
         }
     }
 
+    /// <summary>How the next session the node starts reaches pilot's MCP server (<see cref="NodeSettings.McpTransportKey"/>, #1385): stdio unless the settings say http.</summary>
+    public string McpTransport
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _settings.McpTransport is { } transport && NodeSettings.McpTransports.Contains(transport) ? transport : NodeSettings.McpTransports[0];
+            }
+        }
+    }
+
     /// <summary>Whether a flight goes on by itself once a leg is done (its next leg, or its PR and review): always on a
     /// node; a test's commander does not, as it never did.</summary>
     public bool Advances => _defaults;

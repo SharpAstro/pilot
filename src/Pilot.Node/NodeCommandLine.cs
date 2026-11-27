@@ -225,7 +225,7 @@ public static class NodeCommandLine
             var lanIgnored = wantsLan && !mode.MayBindTheNetwork && parseResult.GetResult(lan) is { Implicit: false };
             var options = new NodeOptions(socketPath, Path.GetFullPath(parseResult.GetValue(data) ?? NodeSocket.DefaultDataFolder), MachinePrefix: parseResult.GetValue(machine),
                 Watchtower: !parseResult.GetValue(noWatchtower), WatchtowerFolderGiven: parseResult.GetValue(watchtowerFolder),
-                Lan: wantsLan, LanPort: parseResult.GetValue(lanPort),
+                Lan: wantsLan, LanPort: parseResult.GetValue(lanPort), McpPort: NodeWire.DefaultMcpPort,
                 MaxJobs: parseResult.GetValue(maxJobs), JobMemoryGigabytes: parseResult.GetValue(jobMemory),
                 UpdatePolicy: UpdatePolicies.Parse(parseResult.GetValue(updatePolicy)) ?? UpdatePolicy.Auto,
                 UpdateChannel: UpdateChannels.Parse(parseResult.GetValue(updateChannel)) ?? UpdateChannel.Stable,

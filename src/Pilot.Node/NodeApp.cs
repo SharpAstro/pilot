@@ -23,9 +23,16 @@ public static partial class NodeApp
 
         // No args: the command line is the node's own (NodeOptions), not configuration for the host to read.
         var builder = WebApplication.CreateSlimBuilder(new WebApplicationOptions { Args = [], ContentRootPath = AppContext.BaseDirectory });
+        // pilot's MCP server over loopback HTTP (#1385), on its own port: checked first, as a port another program holds would
+        // fail the whole host; then the sessions stay on stdio.
+        var mcpBound = options.McpPort > 0 && McpHttp.CanBind(options.McpPort, null);
         builder.WebHost.ConfigureKestrel(kestrel =>
         {
             kestrel.ListenOnNodeSocket(held);
+            if (mcpBound)
+            {
+                kestrel.Listen(System.Net.IPAddress.Loopback, options.McpPort);
+            }
             if (options.Lan)
             {
                 // Every address, as a LAN client may come by any of this machine's: what it may do there is NodeLan's.
@@ -71,9 +78,16 @@ public static partial class NodeApp
         AddUpdates(builder, options);
         AddSettings(builder, options);
         AddSessions(builder, options, logWriter);
+        builder.Services.AddSingleton<McpHttp>();
         configure?.Invoke(builder);
 
         var app = builder.Build();
+        var mcp = app.Services.GetRequiredService<McpHttp>();
+        mcp.Serving = mcpBound;
+        if (mcpBound)
+        {
+            app.Services.GetRequiredService<ILogger<McpHttp>>().LogInformation("mcp: serving pilot's MCP server on {Url}", mcp.Url);
+        }
         app.UseWebSockets();
         app.RestrictNodeSocketToItsOwner(held);
         app.UseNodeAccessGate(LanPolicy);
@@ -97,6 +111,12 @@ public static partial class NodeApp
         Classify = context =>
         {
             var path = context.Request.Path.Value ?? "";
+            // pilot's MCP endpoint (#1385): on its own loopback port only, where the route checks the session's token itself.
+            if (path == NodeWire.McpRoute && context.RequestServices.GetRequiredService<NodeOptions>().McpPort is > 0 and var mcpPort
+                && context.Connection.LocalPort == mcpPort && context.Connection.RemoteIpAddress is { } from && System.Net.IPAddress.IsLoopback(from))
+            {
+                return NodeRouteAccess.Open;
+            }
             var get = HttpMethods.IsGet(context.Request.Method);
             var post = HttpMethods.IsPost(context.Request.Method);
             var watching = get && (path is NodeWire.NodeRoute or NodeWire.SessionsRoute or NodeWire.EventsRoute || path.StartsWith(NodeWire.GrantsRoute + "/", StringComparison.Ordinal));
@@ -133,6 +153,10 @@ public static partial class NodeApp
 
     private static void MapRoutes(WebApplication app)
     {
+        // pilot's MCP server for the sessions the node starts (#1385): one JSON-RPC message a POST; no GET stream, so a GET is 405.
+        app.MapPost(NodeWire.McpRoute, (HttpContext context, McpHttp mcp) => mcp.AnswerAsync(context, context.RequestAborted));
+        app.MapGet(NodeWire.McpRoute, () => Results.StatusCode(StatusCodes.Status405MethodNotAllowed));
+
         // A hook's stdin, forwarded by `pilot-node hook`: the session it names takes the hook's state, and the tracker
         // looks again now. 204, so a hook never learns anything worth failing over; but a Stop in a plane with files
         // not committed is answered with the decision that sends the session back to commit them (StopGate), and a permission

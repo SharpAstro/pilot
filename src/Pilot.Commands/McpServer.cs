@@ -51,9 +51,10 @@ namespace Pilot.Commands;
 /// <param name="startChild">Starts the new binary's <c>pilot mcp</c> with these arguments (default: the <c>pilot</c> beside this process); throws when it cannot.</param>
 /// <param name="handedOver">True for a server started by another one's hand-over: it never looks at the installed version nor hands over.</param>
 /// <param name="parentIsMcp">Whether this process's parent is a <c>pilot mcp</c> (default: <see cref="McpParent.IsPilotMcp()"/>); a server whose parent is one counts as a hand-over child too.</param>
+/// <param name="sessionId">The Claude session the calls come from, where the host knows it (the node's HTTP endpoint, #1385); null reads <c>CLAUDE_CODE_SESSION_ID</c> from the environment, as a stdio server started by that session has it.</param>
 internal sealed partial class McpServer(string cwd, string? node, string? socket,
     Func<CancellationToken, Task<string?>>? installed = null, TimeSpan? watch = null, TextWriter? log = null,
-    Func<string[], McpChild>? startChild = null, bool handedOver = false, Func<bool>? parentIsMcp = null)
+    Func<string[], McpChild>? startChild = null, bool handedOver = false, Func<bool>? parentIsMcp = null, string? sessionId = null)
 {
     /// <summary>The version this process runs as, without the commit after it (2.0.12+3969354 is 2.0.12).</summary>
     internal static string Running { get; } = Plain(typeof(McpServer).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "0.0.0");
@@ -492,7 +493,7 @@ internal sealed partial class McpServer(string cwd, string? node, string? socket
         // Pictures a command hands over (design renders) travel as image items: the bytes come from the node asked, a path on
         // another machine would be no use to this session.
         List<(byte[] Bytes, string Mime, string Line)> pictures = [];
-        var exit = await PilotCommand.InvokeAsync([.. NodeArgs(target, here), .. args], cwd, output, error, Who, bySession: true, console: false, cancellationToken, agent: true,
+        var exit = await PilotCommand.InvokeAsync([.. NodeArgs(target, here), .. args], cwd, output, error, Who, bySession: true, console: false, cancellationToken, agent: true, sessionId: sessionId,
             pictures: (mime, bytes, line) => { pictures.Add((bytes, mime, line)); return Task.CompletedTask; });
         var said = (output.ToString() + error.ToString()).TrimEnd();
         if (exit == 3)

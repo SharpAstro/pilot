@@ -40,8 +40,15 @@ public interface IWorkerLauncher
 /// </remarks>
 public sealed partial class ClaudeWorkerLauncher(
     ClaudeTrust trust, StartOptionsBook? starts = null, SessionLedger? ledger = null, NodeOptions? options = null, SendTimings? timings = null, string? briefFolder = null,
-    ClaudeJobRemoval? removal = null) : IWorkerLauncher
+    ClaudeJobRemoval? removal = null, McpHttp? mcpHttp = null, Func<string>? mcpTransport = null) : IWorkerLauncher
 {
+    /// <summary>
+    /// The node's own MCP endpoint for <paramref name="name"/> (#1385), when the node serves one and the settings say http
+    /// (<see cref="NodeSettings.McpTransportKey"/>); null keeps pilot mcp over stdio.
+    /// </summary>
+    private McpHttpEntry? HttpFor(string name) =>
+        mcpHttp is { Serving: true } http && mcpTransport?.Invoke() == "http" ? new McpHttpEntry(http.Url, name, http.TokenFor(name)) : null;
+
     /// <summary>The start with its MCP config file written and named (pilot's server, and the repo's declared extras); unchanged when the node has no options (a test's launcher).</summary>
     public WorkerStart WithMcp(WorkerStart start) =>
         options is null
@@ -50,7 +57,8 @@ public sealed partial class ClaudeWorkerLauncher(
             {
                 McpConfig = SessionMcpConfig.Ensure(options.DataFolder, Path.Combine(AppContext.BaseDirectory, OperatingSystem.IsWindows() ? "pilot.exe" : "pilot"), options.SocketPath, start.RepoPath,
                     // The cat speaks for the watchtower alone: a worker's config never holds the buddy.
-                    buddyExe: start.Reason is SessionStartReasons.WatchtowerStart or SessionStartReasons.WatchtowerRestart ? SessionMcpConfig.BuddyBeside(AppContext.BaseDirectory) : null),
+                    buddyExe: start.Reason is SessionStartReasons.WatchtowerStart or SessionStartReasons.WatchtowerRestart ? SessionMcpConfig.BuddyBeside(AppContext.BaseDirectory) : null,
+                    http: HttpFor(start.Name)),
             };
 
     private static readonly TimeSpan Timeout = TimeSpan.FromMinutes(2);
