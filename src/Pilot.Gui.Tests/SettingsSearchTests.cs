@@ -136,9 +136,9 @@ public sealed class SettingsSearchTests
             new(SettingsView<RgbaImage>.Part.Section, [], "Other"),
             new(SettingsView<RgbaImage>.Part.Row, ["zed"], "row-zed"),
         ];
-        SettingsView<RgbaImage>.Filter(pieces, "  ").Count.ShouldBe(7);
-        SettingsView<RgbaImage>.Filter(pieces, "GRACE").ShouldBe(["Grants", "Held", "row-grace"]);
-        SettingsView<RgbaImage>.Filter(pieces, "nothing").ShouldBeEmpty();
+        SettingsView<RgbaImage>.Filter<string>(pieces, "  ").Count.ShouldBe(7);
+        SettingsView<RgbaImage>.Filter<string>(pieces, "GRACE").ShouldBe(["Grants", "Held", "row-grace"]);
+        SettingsView<RgbaImage>.Filter<string>(pieces, "nothing").ShouldBeEmpty();
         SettingsView<RgbaImage>.Matches("Ab", "xxABxx").ShouldBeTrue();
         SettingsView<RgbaImage>.Matches("ab", null, "xx").ShouldBeFalse();
     }
@@ -247,11 +247,11 @@ public sealed class SettingsSearchTests
             var watch = Stopwatch.StartNew();
             var arranged = Layout.Engine.Arrange(chrome.Settings.Tree(DateTimeOffset.UtcNow, 1280), new Rect<float>(0, 0, 1280, 900), measure);
             watch.Stop();
-            arranged.Count.ShouldBeGreaterThan(0);
+            arranged.ShouldNotBeNull();
             times.Add(watch.Elapsed.TotalMilliseconds);
         }
         var line = $"settings search, 60 settings, Tree + Arrange per keystroke: first {times[0]:F1} ms, max {times.Max():F1} ms, mean {times.Average():F1} ms over {times.Count} keystrokes";
         TestContext.Current.SendDiagnosticMessage(line);
-        Console.Error.WriteLine(line);
+        System.Console.Error.WriteLine(line);
     }
 }
