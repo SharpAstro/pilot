@@ -208,7 +208,7 @@ public sealed class SettingsSearchTests
     [InlineData(1280, true)]
     public async Task CapturesUnfilteredOneRowAndNoMatch(int width, bool night)
     {
-        if (Environment.GetEnvironmentVariable("PILOT_TEST_CAPTURE_DIR") is not { Length: > 0 } dir)
+        if ((Environment.GetEnvironmentVariable("PILOT_TEST_CAPTURE_DIR") is { Length: > 0 } given ? given : Environment.GetEnvironmentVariable("PILOT_JOB_ARTIFACTS")) is not { Length: > 0 } dir)
         {
             return;
         }
