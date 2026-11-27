@@ -8,9 +8,9 @@ namespace Pilot.Node.Toasts;
 public static class ToastServices
 {
     /// <summary>
-    /// Through Windows PowerShell on Windows, nowhere else. The runner (<see cref="IToastRunner"/>) and the registry of the scheme
+    /// In process through the WinRT toast API on Windows (#1376), nowhere else. The runner (<see cref="IToastRunner"/>) and the registry of the scheme
     /// (<see cref="ISchemeRegistry"/>) are services, added only when none is registered yet, so a test node registers a recording runner and a
-    /// fake registry first and never starts a process or writes HKCU. The scheme is per user (HKCU) and written only when the GUI sits beside
+    /// fake registry first and never calls WinRT or writes HKCU. The scheme and pilot's AUMID are is per user (HKCU) and written only when the GUI sits beside
     /// this node.
     /// </summary>
     public static void AddToasts(this IServiceCollection services)
@@ -19,13 +19,15 @@ public static class ToastServices
         {
             return;
         }
-        services.TryAddSingleton<IToastRunner>(new PowerShellToastRunner());
+        services.TryAddSingleton<IToastRunner>(new WinRtToastRunner());
         // Made here, inside the Windows guard (a lambda does not carry the guard to the analyzer).
         services.TryAddSingleton<ISchemeRegistry>(new UserSchemeRegistry());
         services.AddHostedService(sp => new Toaster(
             sp.GetRequiredService<NodeState>(), sp.GetRequiredService<IToastRunner>(), sp.GetRequiredService<TimeProvider>(),
             () => sp.GetRequiredService<RoleModels>().Toasts, () => sp.GetRequiredService<PageViews>().AnyShowsCards,
             sp.GetRequiredService<ILoggerFactory>().CreateLogger<Toaster>()));
+        services.AddHostedService(sp => new AumidRegistrar(sp.GetRequiredService<ISchemeRegistry>(),
+            Environment.ProcessPath ?? "pilot-node", File.Exists, sp.GetRequiredService<ILoggerFactory>().CreateLogger<AumidRegistrar>()));
         services.AddHostedService(sp => new SchemeRegistrar(sp.GetRequiredService<ISchemeRegistry>(),
             Environment.ProcessPath ?? "pilot-node", File.Exists, sp.GetRequiredService<ILoggerFactory>().CreateLogger<SchemeRegistrar>()));
     }
