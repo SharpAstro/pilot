@@ -1,4 +1,3 @@
-using System.Runtime.Versioning;
 using Pilot.Contracts;
 using SharpAstro.AppShell;
 
@@ -26,7 +25,6 @@ public interface IToastRunner
 /// The node's toasts through AppShell's <see cref="DesktopNotification"/> (#1384), under the app id <see cref="AppId"/> that
 /// <see cref="AppIdentity.Register"/> writes. The calls are synchronous, so they run off the caller's thread.
 /// </summary>
-[SupportedOSPlatform("windows")]
 public sealed class AppShellToastRunner : IToastRunner
 {
     /// <summary>The group every toast of the node is in, so a tag stands for one card.</summary>

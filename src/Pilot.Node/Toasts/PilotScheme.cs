@@ -106,7 +106,6 @@ public interface IToastIdentity
 }
 
 /// <summary>AppShell's <c>AppIdentity.Register</c> (Windows only): writes the AUMID key the toasts are shown under.</summary>
-[System.Runtime.Versioning.SupportedOSPlatform("windows")]
 public sealed class AppShellToastIdentity : IToastIdentity
 {
     /// <inheritdoc />
