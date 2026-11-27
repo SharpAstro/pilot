@@ -234,6 +234,76 @@ public sealed class StopGateTests : IDisposable
         (await Decide(Plane)).ShouldBeNull();
     }
 
+    private const string OtherJob = "b2c3d4e5";
+
+    private static SessionRow Row(string sessionId, SessionState state) => new()
+    {
+        Id = sessionId[..8], SessionId = sessionId, Name = "se1-tia7-x", Kind = SessionKind.Background, Cwd = "x", Role = SessionRole.Worker,
+        ContextTokens = 0, ContextWindow = 0, State = state, SpendWeighted = 0, StartedAt = DateTimeOffset.UnixEpoch, Flight = "TIA7",
+    };
+
+    private void FlyWithWorker(string? worker, SessionState? workerState)
+    {
+        _state.PutLeg(new LegRow { Flight = "TIA7", Name = "parser", Order = 1, Goal = "parse", DoneWhen = "it parses", State = LegState.Flying, WorkerJob = worker });
+        if (workerState is { } s) _state.PutSession(Row(AgentRows.SessionB, s));
+        // The stopping session (SessionA) belongs to an earlier, Done leg.
+        _state.PutSession(Row(AgentRows.SessionA, SessionState.Idle));
+    }
+
+    [Fact]
+    public async Task ADoneLegsWorkerStoppingWhileTheFlyingWorkerIsLiveIsLetThroughSilently()
+    {
+        FlyWithWorker(OtherJob, SessionState.Working);
+        File.WriteAllText(Path.Combine(Plane, "stray.txt"), "the live leg's
+");
+
+        (await Decide(Plane)).ShouldBeNull();
+        (await Decide(Plane, active: true)).ShouldBeNull();
+        Rings().ShouldBeEmpty();
+    }
+
+    [Theory]
+    [InlineData(JobState.Queued)]
+    [InlineData(JobState.Running)]
+    public async Task ANonCurrentSessionIsLetThroughWhileAJobOfTheFlyingLegIsQueuedOrRunning(JobState job)
+    {
+        FlyWithWorker(OtherJob, SessionState.Ended);
+        _state.PutJob(new JobRow { Id = "j1", Command = "dotnet test", Cwd = Plane, State = job, LogPath = "l", Timeout = TimeSpan.FromMinutes(1), StartedAt = DateTimeOffset.UnixEpoch, Flight = "TIA7", Leg = "parser" });
+        File.WriteAllText(Path.Combine(Plane, "stray.txt"), "left
+");
+
+        (await Decide(Plane)).ShouldBeNull();
+        (await Decide(Plane, active: true)).ShouldBeNull();
+        Rings().ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task TheFlyingLegsOwnWorkerIsStillToldToCommitAndRingsOnItsSecondStop()
+    {
+        _state.PutLeg(new LegRow { Flight = "TIA7", Name = "parser", Order = 1, Goal = "parse", DoneWhen = "it parses", State = LegState.Flying, WorkerJob = AgentRows.SessionA[..8] });
+        _state.PutSession(Row(AgentRows.SessionA, SessionState.Working));
+        File.WriteAllText(Path.Combine(Plane, "stray.txt"), "left
+");
+
+        (await Decide(Plane)).ShouldNotBeNull().ShouldContain("stray.txt");
+        (await Decide(Plane, active: true)).ShouldBeNull();
+        Rings().ShouldHaveSingleItem();
+    }
+
+    [Fact]
+    public async Task ANonCurrentSessionWithNoLiveWorkerAndNoJobOfTheFlyingLegKeepsTodaysBehaviour()
+    {
+        FlyWithWorker(OtherJob, SessionState.Ended);
+        // A job of another leg does not count.
+        _state.PutJob(new JobRow { Id = "j2", Command = "x", Cwd = Plane, State = JobState.Running, LogPath = "l", Timeout = TimeSpan.FromMinutes(1), StartedAt = DateTimeOffset.UnixEpoch, Flight = "TIA7", Leg = "other" });
+        File.WriteAllText(Path.Combine(Plane, "stray.txt"), "left
+");
+
+        (await Decide(Plane)).ShouldNotBeNull().ShouldContain("stray.txt");
+        (await Decide(Plane, active: true)).ShouldBeNull();
+        Rings().ShouldHaveSingleItem();
+    }
+
     [Fact]
     [Trait("Category", "Slow")] // A real node on a socket and the hook command talking to it, with a 30 s patience: not a unit.
     public async Task TheHookPrintsTheNodesDecisionAndNothingOnceLetThrough()
