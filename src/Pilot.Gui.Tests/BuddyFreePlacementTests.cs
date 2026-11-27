@@ -189,7 +189,7 @@ public sealed class BuddyFreePlacementTests
         layout.CatDevice.ShouldBe(scale * settings.SizeScale, 0.0001f);
         // The cat is inside the window and the bubble sits above it, never over it.
         layout.CatX.ShouldBeGreaterThanOrEqualTo(0);
-        layout.CatX + GrumpCat.Width * layout.CatDevice.ShouldBeLessThanOrEqualTo(renderer.Width);
+        (layout.CatX + GrumpCat.Width * layout.CatDevice).ShouldBeLessThanOrEqualTo(renderer.Width);
         layout.CatY.ShouldBeGreaterThanOrEqualTo(0);
         layout.BubbleY.ShouldBeGreaterThanOrEqualTo(0);
         (layout.BubbleY + layout.Bubble!.Height * scale).ShouldBeLessThanOrEqualTo(layout.CatY, "the bubble ends above the cat");
