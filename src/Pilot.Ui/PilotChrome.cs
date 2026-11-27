@@ -1667,7 +1667,7 @@ internal sealed class PilotChrome<TSurface>
                     NotificationsPage.Render(rect, screen.Source, screen.AsOf);
                     break;
                 case PageKey when Page == PilotPage.Settings:
-                    Settings.Render(DateTimeOffset.UtcNow, rect);
+                    Settings.Render(Clock?.Invoke() ?? DateTimeOffset.UtcNow, rect);
                     break;
                 case PageKey when Page == PilotPage.Fleet:
                     Fleet.Render(fleet ?? new FleetScreen([], screen.AsOf), rect);
