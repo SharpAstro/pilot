@@ -23,7 +23,13 @@ public sealed class NodeWatchdogTests
 
         public override DateTimeOffset GetUtcNow() => Now;
 
-        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period) => new Timer(this, callback, state);
+        // Task.Delay(.., TimeProvider, ..) hands its due time to CreateTimer and never calls Change, so the timer fires from either.
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+        {
+            var timer = new Timer(this, callback, state);
+            timer.Change(dueTime, period);
+            return timer;
+        }
 
         private sealed class Timer(FakeTime clock, TimerCallback callback, object? state) : ITimer
         {
@@ -101,7 +107,8 @@ public sealed class NodeWatchdogTests
 
     private FakeHost Host() => new(_stop);
 
-    private Task<int> Run(FakeHost host) => new NodeWatchdog(host, _time).RunAsync(_stop.Token);
+    // A deadline so a watchdog stuck on a fake fails the test in seconds instead of holding the run.
+    private Task<int> Run(FakeHost host) => new NodeWatchdog(host, _time).RunAsync(_stop.Token).WaitAsync(TimeSpan.FromSeconds(10));
 
     [Fact]
     public async Task ItWaitsOnTheNodesExitAndDoesNotAskTheSocketWhileItRuns()
