@@ -135,6 +135,27 @@ public sealed class BuddyGoneAwayTests
     }
 
     [Fact]
+    public void AWakeMidLeaveWalksBackFromWhereTheCatIsAndAWakeFromGoneStartsAtTheEdge()
+    {
+        var (clock, model) = Sleeping();
+        clock.Advance(LongSleep + BuddyModel.LeaveFor * 0.5);
+        model.Phase.ShouldBe(AwayPhase.Leaving);
+        var walkedWhenWoken = BuddyScene.WalkedOff(AwayPhase.Leaving, model.AwayProgress);
+        walkedWhenWoken.ShouldBeGreaterThan(0.1f);
+
+        model.Tell(Ask());
+        model.Phase.ShouldBe(AwayPhase.Returning);
+        model.AwayProgress.ShouldBeGreaterThan(0f, "a return from mid-leave does not start at the edge");
+        BuddyScene.WalkedOff(AwayPhase.Returning, model.AwayProgress).ShouldBe(walkedWhenWoken, 0.02f);
+
+        var (c2, gone) = Gone();
+        gone.Hover(true);
+        gone.Phase.ShouldBe(AwayPhase.Returning);
+        gone.AwayProgress.ShouldBe(0f, 0.001f);
+        BuddyScene.WalkedOff(AwayPhase.Returning, gone.AwayProgress).ShouldBe(1f, 0.001f);
+    }
+
+    [Fact]
     public void AHoverOnTheBadgeAClickAndABadgeEachBringItBackThenAsleep()
     {
         foreach (var wake in new Action<BuddyModel>[] { m => m.Hover(true), m => m.Return(), m => m.Badge("card:other") })

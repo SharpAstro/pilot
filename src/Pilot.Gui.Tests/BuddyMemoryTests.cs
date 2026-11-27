@@ -34,6 +34,9 @@ public sealed class BuddyMemoryTests
         heap.GetProperty("heapSizeBytes").GetInt64().ShouldBeGreaterThanOrEqualTo(0);
         heap.GetProperty("committedBytes").GetInt64().ShouldBeGreaterThanOrEqualTo(0);
         heap.TryGetProperty("fragmentedBytes", out _).ShouldBeTrue();
+        heap.GetProperty("liveBytes").GetInt64().ShouldBeGreaterThan(0);
+        heap.GetProperty("serverGc").ValueKind.ShouldBeOneOf(JsonValueKind.True, JsonValueKind.False);
+        heap.GetProperty("latencyMode").GetString().ShouldBe(System.Runtime.GCSettings.LatencyMode.ToString());
         var gpu = root.GetProperty("gpu");
         gpu.GetProperty("fontAtlas").GetProperty("bytes").GetInt64().ShouldBe(1024L * 1024 + 512L * 512 * 4);
         gpu.GetProperty("fontAtlas").GetProperty("glyphsDrawn").GetInt32().ShouldBe(61);
