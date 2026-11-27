@@ -15,11 +15,11 @@ internal sealed class GuiCatDesk : Pilot.Ui.ICatDesk
 
     private static string Channel => InstanceGate.ChannelFor("pilot-v2-buddy", string.Empty);
 
-    // "Not certainly absent" is "held, or cannot tell": the page says running then, and the cat's own gate refuses a second one either way.
+    // Off Windows the answer is null ("cannot tell"): the page says so and offers no Start, rather than a false "Not running".
     // AppShell's IsKnownAbsent is not public in the pinned package (follow-up filed), so this is the same check by hand: Windows publishes the
     // pipe namespace as a filesystem, so the gate's pipe exists exactly while the cat holds it. Elsewhere the gate is a lock file and is not probed here.
-    public Task<bool> IsRunningAsync(CancellationToken cancellationToken) =>
-        Task.FromResult(OperatingSystem.IsWindows() && File.Exists(@"\\.\pipe\" + Channel));
+    public Task<bool?> IsRunningAsync(CancellationToken cancellationToken) =>
+        Task.FromResult<bool?>(OperatingSystem.IsWindows() ? File.Exists(@"\\.\pipe\" + Channel) : null);
 
     public async Task<string?> StartAsync(CancellationToken cancellationToken)
     {
@@ -28,7 +28,7 @@ internal sealed class GuiCatDesk : Pilot.Ui.ICatDesk
         {
             return "pilot-buddy is not beside pilot-gui";
         }
-        if (await IsRunningAsync(cancellationToken).ConfigureAwait(false))
+        if (await IsRunningAsync(cancellationToken).ConfigureAwait(false) is not false)
         {
             return null;
         }
@@ -39,7 +39,7 @@ internal sealed class GuiCatDesk : Pilot.Ui.ICatDesk
             var until = DateTimeOffset.UtcNow + ReadyBudget;
             while (DateTimeOffset.UtcNow < until && !cancellationToken.IsCancellationRequested)
             {
-                if (await IsRunningAsync(cancellationToken).ConfigureAwait(false))
+                if (await IsRunningAsync(cancellationToken).ConfigureAwait(false) is not false)
                 {
                     return null;
                 }

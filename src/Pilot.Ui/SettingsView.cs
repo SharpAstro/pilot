@@ -514,7 +514,8 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
 
     private string _searched = "";
     private const float SearchFloor = 110f;
-    private const float SearchWidth = 360f;
+    // Wide enough that the box takes the row's width at any window size; a long query stays inside it.
+    private const float SearchWidth = 4000f;
     private const float SearchRowHeight = 36f;
 
     /// <summary>Clears the box (the list goes back to the top on the next draw).</summary>
@@ -552,7 +553,7 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
     }
 
     private Layout.Node SearchRow() =>
-        Layout.Builder.HStack(Layout.Builder.TextInput(Search, 13f, Palette.Input).Bg(FieldBg).WStar(1f, SearchFloor, SearchWidth).HFixed(AboutCard.HeaderButton), Layout.Builder.Spacer().WStar(1f, 0f))
+        Layout.Builder.HStack(Layout.Builder.TextInput(Search, 13f, Palette.Input).Bg(FieldBg).WStar(1f, SearchFloor, SearchWidth).HFixed(AboutCard.HeaderButton))
             .WithGap(8f).CrossCenter().Pad(Gutter, 4f).RowH(SearchRowHeight);
 
     /// <summary>The Desktop cat's settings, as the file says them (the cat's own card writes the same file); null leaves the section out (a host with no buddy settings path).</summary>
@@ -568,7 +569,7 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
 
     internal const string NoBuddyAutostartKey = "no-buddy-autostart";
 
-    // -1 until the probe first answers, then 0 or 1: what the cat's gate said last, never what a click expected.
+    // -1 until the probe first answers, then 0, 1 or 2 (the host cannot tell): what the cat's gate said last, never what a click expected.
     private int _catRunning = -1;
     private CancellationTokenSource? _readingCat;
 
@@ -577,7 +578,7 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
         int now;
         try
         {
-            now = await desk.IsRunningAsync(cancellationToken).ConfigureAwait(false) ? 1 : 0;
+            now = await desk.IsRunningAsync(cancellationToken).ConfigureAwait(false) switch { true => 1, false => 0, null => 2 };
         }
         catch (Exception ex) when (ex is IOException or InvalidOperationException or UnauthorizedAccessException)
         {
@@ -614,7 +615,7 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
     {
         var running = Volatile.Read(ref _catRunning);
         const string hint = CatRunningHint;
-        var word = running switch { 1 => "Running", 0 => "Not running", _ => "checking…" };
+        var word = running switch { 1 => "Running", 0 => "Not running", 2 => "Cannot tell here", _ => "checking…" };
         var color = running switch { 1 => Ok, 0 => Todo, _ => Dim };
         var controls = new List<Layout.Node> { Layout.Builder.Text(word, 13f, color).Selectable().WAuto() };
         if (running == 0 && CatDesk is not null)

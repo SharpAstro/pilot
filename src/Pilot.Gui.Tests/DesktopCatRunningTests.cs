@@ -45,10 +45,10 @@ public sealed class DesktopCatRunningTests : IDisposable
         public int Starts;
         public int Probes;
 
-        public Task<bool> IsRunningAsync(CancellationToken cancellationToken)
+        public Task<bool?> IsRunningAsync(CancellationToken cancellationToken)
         {
             Interlocked.Increment(ref Probes);
-            return Task.FromResult(Running);
+            return Task.FromResult<bool?>(Running);
         }
 
         public Task<string?> StartAsync(CancellationToken cancellationToken)
@@ -234,9 +234,27 @@ public sealed class DesktopCatRunningTests : IDisposable
         HasButton(chrome, "settings:buddy-start").ShouldBeFalse("no Start before the probe has said the cat is not there");
     }
 
+    private sealed class CannotTell : ICatDesk
+    {
+        public Task<bool?> IsRunningAsync(CancellationToken cancellationToken) => Task.FromResult<bool?>(null);
+
+        public Task<string?> StartAsync(CancellationToken cancellationToken) => Task.FromResult<string?>(null);
+    }
+
+    [Fact]
+    public async Task AHostThatCannotTellSaysSoAndOffersNoStart()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 1400);
+        var chrome = await LoadedAsync(renderer, new CannotTell(), null);
+        await WaitAsync(() => Texts(chrome, renderer).Contains("Cannot tell here"), chrome, 1280, 1400);
+
+        Texts(chrome, renderer).ShouldNotContain("Not running");
+        HasButton(chrome, "settings:buddy-start").ShouldBeFalse();
+    }
+
     private sealed class NeverAnswers : ICatDesk
     {
-        public Task<bool> IsRunningAsync(CancellationToken cancellationToken) => new TaskCompletionSource<bool>().Task.WaitAsync(cancellationToken);
+        public Task<bool?> IsRunningAsync(CancellationToken cancellationToken) => new TaskCompletionSource<bool?>().Task.WaitAsync(cancellationToken);
 
         public Task<string?> StartAsync(CancellationToken cancellationToken) => Task.FromResult<string?>(null);
     }

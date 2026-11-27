@@ -6,8 +6,8 @@ namespace Pilot.Ui;
 /// </summary>
 public interface ICatDesk
 {
-    /// <summary>Whether the cat runs on this desktop now. Read on the page's own loop, never in a spin.</summary>
-    Task<bool> IsRunningAsync(CancellationToken cancellationToken);
+    /// <summary>Whether the cat runs on this desktop now; null when this host cannot tell (the page says so and offers no Start). Read on the page's own loop, never in a spin.</summary>
+    Task<bool?> IsRunningAsync(CancellationToken cancellationToken);
 
     /// <summary>Starts the cat beside pilot-gui; null when it was started, else why not. The page shows the next probe's answer, not this one's.</summary>
     Task<string?> StartAsync(CancellationToken cancellationToken);
