@@ -170,7 +170,7 @@ public sealed class JobTestsFailures : JobTestsBase
 
         await EndsAndIsTold(clock, launcher, id);
         // Past the hold: a dropped notice is never said later.
-        await AdvanceUntil(clock, Task.Run(() => clock.Advance(JobRunner.EarlyNoticeHold * 2), Ct), TimeSpan.FromSeconds(1));
+        clock.Advance(JobRunner.EarlyNoticeHold * 2);
 
         var said = _said.Select(s => s.Args[0]).ToList().ShouldHaveSingleItem();
         said.ShouldContain("CS1656");
