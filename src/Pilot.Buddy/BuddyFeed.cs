@@ -284,7 +284,7 @@ public sealed class BuddyFeed(BuddyModel model, TimeProvider time, Func<BuddySet
         {
             return new HoverView(NothingOpen, working1 + ". " + GoAway, []);
         }
-        var rows = open.Select(c => new HoverRow(c.Title, WhereOf(c.Subject), "since " + Duration(now - c.RungAt), CardLink(c.Id))).ToList();
+        var rows = open.Select(c => new HoverRow(c.Title, WhereOf(c.Subject), "since " + Duration(now - c.RungAt), WithNode(CardLink(c.Id)))).ToList();
         var headline = $"{open.Count} {(open.Count == 1 ? "needs" : "need")} you";
         return new HoverView(headline, working1 + ".", rows);
     }
@@ -355,6 +355,10 @@ public sealed class BuddyFeed(BuddyModel model, TimeProvider time, Func<BuddySet
     /// <summary>True when the buddy follows a node other than the machine's own, so a row's link carries <c>?node=</c> and the GUI shows that node first.</summary>
     public bool OtherNode { get; init; }
 
+    /// <summary>The link with <c>?node=</c> added when the buddy follows another node, so the GUI shows that node first.</summary>
+    private string WithNode(string link) =>
+        OtherNode && NodeName is { Length: > 0 } node ? link + "?node=" + Uri.EscapeDataString(node) : link;
+
     private string? LinkOf(SessionRow session)
     {
         // The open Ring card about this session is what a toast would have opened.
@@ -362,7 +366,7 @@ public sealed class BuddyFeed(BuddyModel model, TimeProvider time, Func<BuddySet
         var node = OtherNode ? NodeName : null;
         if (card is not null)
         {
-            return CardLink(card.Id) + (node is { Length: > 0 } ? "?node=" + Uri.EscapeDataString(node) : string.Empty);
+            return WithNode(CardLink(card.Id));
         }
         // Else its flight (and leg), else the session itself.
         return session.Flight is { Length: > 0 } flight

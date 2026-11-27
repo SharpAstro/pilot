@@ -186,6 +186,16 @@ public sealed class BuddyPeekLinkTests
         }
     }
 
+    [Fact]
+    public void AnotherNodesHoverRowsCarryItsNodeToo()
+    {
+        var other = new Rig(true, "DE1 box", Four());
+        var own = new Rig(false, "SE1", Four());
+
+        other.Feed.Hover().Rows.Select(r => r.Link).ShouldBe(["pilot://card/card-1?node=DE1%20box"]);
+        own.Feed.Hover().Rows.Select(r => r.Link).ShouldBe(["pilot://card/card-1"]);
+    }
+
     [Theory]
     [InlineData("pilot://card/card-1")]
     [InlineData("pilot://flight/PIL1381")]

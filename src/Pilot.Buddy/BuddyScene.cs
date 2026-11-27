@@ -58,7 +58,7 @@ public static class BuddyScene
 
     /// <summary>
     /// Draws the scene into a surface the renderer draws on at <paramref name="scale"/> (device pixels per design pixel). <paramref name="corner"/> is the
-    /// settings' index into <see cref="BuddySettings.CornerChoices"/>: the cat sits in that corner of the surface and what it says opens towards the
+    /// settings' index into <see cref="BuddySettings.CornerChoices"/> (or 3, the top left, which Free placement picks when the cat sits there): the cat sits in that corner of the surface and what it says opens towards the
     /// middle (above a bottom corner, below the top one, right aligned on the right and left aligned on the left). <paramref name="cardFactory"/>
     /// builds the peek, settings or chat card, measured with a pen of the same scale, and draws it in the bubble's place.
     /// </summary>
@@ -70,8 +70,8 @@ public static class BuddyScene
             renderer.FillRectangle(new RectInt(new PointInt((int)renderer.Width, (int)renderer.Height), new PointInt(0, 0)), palette.Desktop);
         }
 
-        var left = corner == 1;
-        var top = corner == 2;
+        var left = corner is 1 or 3;
+        var top = corner is 2 or 3;
         var catBottom = GrumpCat.CushionY + GrumpCat.CushionHeight;
         // The cushion's bottom sits Margin from the edge it is in the corner of, the cat's box Margin in from the side.
         var cs = scale * catSize;

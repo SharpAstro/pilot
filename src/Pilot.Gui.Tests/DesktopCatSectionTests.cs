@@ -139,6 +139,24 @@ public sealed class DesktopCatSectionTests : IDisposable
     }
 
     [Fact]
+    public async Task GoAwayAfterAndRemoteSessionsAreRowsThatWriteTheFileAndShowTheFilesAnswer()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 1400);
+        var source = Source();
+        var chrome = await LoadedAsync(renderer, source, 1280, 1400);
+        var texts = Texts(chrome, renderer);
+        texts.ShouldContain("Go away after");
+        texts.ShouldContain("30 min");
+        texts.ShouldContain("In remote sessions");
+
+        Click(chrome, "settings:buddy-long-sleep:2");
+        BuddySettings.Load(FilePath).LongSleepMinutes.ShouldBe(60);
+        Click(chrome, "settings:buddy-remote");
+        BuddySettings.Load(FilePath).ShowsInRemoteSessions.ShouldBeTrue();
+        BuddySettings.Load(FilePath).LongSleepMinutes.ShouldBe(60, "the other setting stays as written");
+    }
+
+    [Fact]
     public async Task PlacementAndSizeAreSegmentsThatWriteTheFileAndFreeHidesTheCornerRow()
     {
         using var renderer = new RgbaImageRenderer(1280, 1400);

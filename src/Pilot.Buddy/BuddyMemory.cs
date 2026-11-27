@@ -50,6 +50,10 @@ public sealed class BuddyMemory(Func<BuddyGpuFacts?> gpu, Func<BuddyMirrorCounts
             w.WriteNumber("heapSizeBytes", info.HeapSizeBytes);
             w.WriteNumber("committedBytes", info.TotalCommittedBytes);
             w.WriteNumber("fragmentedBytes", info.FragmentedBytes);
+            // The live heap now (the figures above describe the last GC), and the settings the runtime really runs with, so the baked ones can be seen to have taken.
+            w.WriteNumber("liveBytes", GC.GetTotalMemory(false));
+            w.WriteBoolean("serverGc", System.Runtime.GCSettings.IsServerGC);
+            w.WriteString("latencyMode", System.Runtime.GCSettings.LatencyMode.ToString());
             w.WriteNumber("collectionsGen0", GC.CollectionCount(0));
             w.WriteNumber("collectionsGen2", GC.CollectionCount(2));
             w.WriteEndObject();

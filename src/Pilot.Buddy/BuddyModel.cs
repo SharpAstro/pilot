@@ -153,8 +153,10 @@ public sealed class BuddyModel(TimeProvider time)
         Settle();
         if (_phase is AwayPhase.Leaving or AwayPhase.Gone)
         {
+            // A wake while still leaving walks back from where the cat is (the smoothstep is symmetric: leave progress p is the return's 1 - p), never from out of the window.
+            var from = _phase == AwayPhase.Leaving ? 1 - Math.Clamp((time.GetUtcNow() - _phaseAt).TotalSeconds / LeaveFor.TotalSeconds, 0, 1) : 0;
             _phase = AwayPhase.Returning;
-            _phaseAt = time.GetUtcNow();
+            _phaseAt = time.GetUtcNow() - TimeSpan.FromSeconds(from * ReturnFor.TotalSeconds);
         }
         _quietSince = null;
         Settle();

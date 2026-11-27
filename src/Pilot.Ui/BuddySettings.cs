@@ -128,7 +128,7 @@ public sealed record BuddySettings
     /// <summary>The cat's scale at the chosen size.</summary>
     [JsonIgnore] public float SizeScale => SizeScales[SizeIndex];
 
-    /// <summary>The corner the scene draws the cat in: the chosen one, and the bottom right in Free (the window is then moved, not the cat in it).</summary>
+    /// <summary>The corner the scene draws the cat in for Corner placement: the chosen one. In Free the host works it out from where the cat sits (BuddyPlacement.FreeCorner), so the bubble and cards open towards the room there; this is then only the start.</summary>
     [JsonIgnore] public int SceneCorner => IsFree ? 0 : CornerIndex;
 
     /// <summary>The stored free position for the monitor <paramref name="name"/>, or null when none (or an incomplete one).</summary>

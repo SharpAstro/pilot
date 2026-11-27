@@ -1,3 +1,4 @@
+using System.Drawing;
 using Pilot.Ui;
 using DIR.Lib;
 using Pilot.Buddy;
@@ -22,7 +23,20 @@ public sealed class BuddyFreePlacementTests
     private static readonly DisplayArea Side = new("side", 1920, 0, 2560, 1400);
     private const int WindowW = 420, WindowH = 700;
 
+    // The cat's own box at Medium (0.67) at scale 1: (190 + 4) x 170 design px, 24 from the window's edge.
+    private static readonly BuddyPlacement.CatBox Cat = new(130, 114, 24);
+
     private static BuddySettings Free => new() { Placement = 1 };
+
+    /// <summary>Drops the cat's box at (<paramref name="catX"/>, <paramref name="catY"/>) as the host does (the window is where that puts it in the bottom right corner) and returns where the window and corner resolve to.</summary>
+    private static (BuddySettings Settings, int X, int Y, int Corner) DropCatAt(BuddySettings settings, IReadOnlyList<DisplayArea> displays, DisplayArea on, int catX, int catY, int fromCorner = 0)
+    {
+        var (wx, wy) = BuddyPlacement.WindowFor(catX, catY, WindowW, WindowH, Cat, fromCorner);
+        var (dropped, area) = BuddyPlacement.Drop(settings, displays, wx, wy, WindowW, WindowH, Cat, fromCorner)!.Value;
+        area.ShouldBe(on);
+        var (x, y, corner) = BuddyPlacement.Resolve(dropped, area, WindowW, WindowH, Cat);
+        return (dropped, x, y, corner);
+    }
 
     [Fact]
     public void ADefaultFileIsCornerAndMediumAndNothingStored()
@@ -40,62 +54,171 @@ public sealed class BuddyFreePlacementTests
     public void AFreeDropIsRememberedPerMonitorAndRestoredWhereItWasDropped()
     {
         var displays = new[] { Laptop, Side };
-        var (onLaptop, area) = BuddyPlacement.Drop(Free, displays, 300, 200, WindowW, WindowH)!.Value;
-        area.ShouldBe(Laptop);
+        var (onLaptop, x, y, corner) = DropCatAt(Free, displays, Laptop, 300, 200);
         onLaptop.Monitor.ShouldBe("laptop");
-        BuddyPlacement.Resolve(onLaptop, Laptop, WindowW, WindowH).ShouldBe((300, 200));
+        BuddyPlacement.CatOf(x, y, WindowW, WindowH, Cat, corner).ShouldBe((300, 200));
 
         // A drop on the other monitor stores its own position and leaves the first one's alone.
-        var (both, side) = BuddyPlacement.Drop(onLaptop, displays, 2500, 400, WindowW, WindowH)!.Value;
-        side.ShouldBe(Side);
-        BuddyPlacement.Resolve(both, Side, WindowW, WindowH).ShouldBe((2500, 400));
-        BuddyPlacement.Resolve(both, Laptop, WindowW, WindowH).ShouldBe((300, 200));
+        var (both, sx, sy, sc) = DropCatAt(onLaptop, displays, Side, 2500, 400);
+        BuddyPlacement.CatOf(sx, sy, WindowW, WindowH, Cat, sc).ShouldBe((2500, 400));
+        var (lx, ly, lc) = BuddyPlacement.Resolve(both, Laptop, WindowW, WindowH, Cat);
+        BuddyPlacement.CatOf(lx, ly, WindowW, WindowH, Cat, lc).ShouldBe((300, 200));
+    }
+
+    /// <summary>The scene drawn in a window at the resolved place, with a bubble or a hover list: the rectangles it shows, in screen pixels.</summary>
+    private static (RectangleF Cat, RectangleF Shown) Shown(DisplayArea area, int wx, int wy, int corner, bool card)
+    {
+        var notice = new BuddyNotice("n", NoticeKind.Ask, "DSN-2 designer asks you", "Publish v5 of Desktop cat buddy, or change the bubble first?");
+        var view = new BuddyView(GrumpFace.Alert, 0, notice, null);
+        using var renderer = new RgbaImageRenderer(WindowW, WindowH);
+        var rows = Enumerable.Range(0, 3).Select(i => new HoverRow("CI failed on the parser leg", "flight DIR330 leg " + i, "since 3 min", null)).ToList();
+        Func<Pen<RgbaImage>, BuddyCard>? factory = card ? pen => HoverCard.Build(pen, new HoverView("3 need you", "5 sessions working", rows)) : null;
+        var layout = BuddyScene.Draw(renderer, Font, BuddyPalette.For(false), card ? new BuddyView(GrumpFace.OneEyeOpen, 0, null, null) : view, 1f, false, corner, factory, 0.67f);
+        var cat = new RectangleF(wx + layout.CatX, wy + layout.CatY, Cat.Width, Cat.Height);
+        var shown = card
+            ? new RectangleF(wx + layout.CardX, wy + layout.CardY, layout.Card!.Width, layout.Card.Height)
+            : new RectangleF(wx + layout.BubbleX, wy + layout.BubbleY, layout.Bubble!.Width, layout.Bubble.Height);
+        return (cat, shown);
+    }
+
+    private static void ShouldBeInside(RectangleF r, DisplayArea area)
+    {
+        r.Left.ShouldBeGreaterThanOrEqualTo(area.X - 1);
+        r.Top.ShouldBeGreaterThanOrEqualTo(area.Y - 1);
+        r.Right.ShouldBeLessThanOrEqualTo(area.X + area.Width + 1);
+        r.Bottom.ShouldBeLessThanOrEqualTo(area.Y + area.Height + 1);
+    }
+
+    [Theory]
+    [InlineData(10, 10, 3)]
+    [InlineData(1700, 10, 2)]
+    [InlineData(10, 900, 1)]
+    [InlineData(900, 480, -1)]
+    [InlineData(1700, 900, 0)]
+    public void AFreeDropAnywhereStaysWhereDroppedWithItsBubbleAndCardOnTheWorkArea(int catX, int catY, int expectedCorner)
+    {
+        var (_, x, y, corner) = DropCatAt(Free, [Laptop], Laptop, catX, catY);
+        // The cat is exactly where it was dropped, not moved onto the area by the window's size.
+        BuddyPlacement.CatOf(x, y, WindowW, WindowH, Cat, corner).ShouldBe((catX, catY));
+        if (expectedCorner >= 0)
+        {
+            corner.ShouldBe(expectedCorner, "the scene draws towards the room: a cat at the top left has its bubble below and to the right");
+        }
+        foreach (var card in new[] { false, true })
+        {
+            var (catRect, shown) = Shown(Laptop, x, y, corner, card);
+            catRect.X.ShouldBe(catX, 1);
+            catRect.Y.ShouldBe(catY, 1);
+            ShouldBeInside(catRect, Laptop);
+            ShouldBeInside(shown, Laptop);
+            shown.IntersectsWith(catRect).ShouldBeFalse("what the cat says never covers the cat");
+        }
     }
 
     [Fact]
-    public void ADropHalfOffScreenIsClampedOntoTheWorkArea()
+    public void ADropPartlyOffScreenIsClampedSoTheCatStaysFullyOnTheWorkArea()
     {
-        var displays = new[] { Laptop };
-        foreach (var (x, y) in new[] { (Laptop.Width - WindowW / 2, 100), (-WindowW / 2, 100), (100, Laptop.Height - WindowH / 2), (100, -WindowH / 2) })
+        foreach (var (cx, cy) in new[] { (Laptop.Width - Cat.Width / 2, 100), (-Cat.Width / 2, 100), (100, Laptop.Height - Cat.Height / 2), (100, -Cat.Height / 2) })
         {
-            var (dropped, _) = BuddyPlacement.Drop(Free, displays, x, y, WindowW, WindowH)!.Value;
-            var (rx, ry) = BuddyPlacement.Resolve(dropped, Laptop, WindowW, WindowH);
-            rx.ShouldBeInRange(Laptop.X, Laptop.X + Laptop.Width - WindowW);
-            ry.ShouldBeInRange(Laptop.Y, Laptop.Y + Laptop.Height - WindowH);
+            var (_, x, y, corner) = DropCatAt(Free, [Laptop], Laptop, cx, cy);
+            var (rx, ry) = BuddyPlacement.CatOf(x, y, WindowW, WindowH, Cat, corner);
+            rx.ShouldBeInRange(Laptop.X, Laptop.X + Laptop.Width - Cat.Width);
+            ry.ShouldBeInRange(Laptop.Y, Laptop.Y + Laptop.Height - Cat.Height);
         }
-        var (right, _) = BuddyPlacement.Drop(Free, displays, Laptop.Width - WindowW / 2, 100, WindowW, WindowH)!.Value;
-        BuddyPlacement.Resolve(right, Laptop, WindowW, WindowH).X.ShouldBe(Laptop.Width - WindowW, "flush with the right edge, not past it");
+        var (_, ex, ey, ec) = DropCatAt(Free, [Laptop], Laptop, Laptop.Width - Cat.Width / 2, 100);
+        BuddyPlacement.CatOf(ex, ey, WindowW, WindowH, Cat, ec).X.ShouldBe(Laptop.Width - Cat.Width, "flush with the right edge, not past it");
     }
 
     [Fact]
     public void AResolutionChangeKeepsTheCatOnScreen()
     {
-        var (dropped, _) = BuddyPlacement.Drop(Free, [Laptop], 1400, 340, WindowW, WindowH)!.Value;
+        var (dropped, _, _, _) = DropCatAt(Free, [Laptop], Laptop, 1400, 340);
         var smaller = new DisplayArea("laptop", 0, 0, 1280, 800);
-        var (x, y) = BuddyPlacement.Resolve(dropped, smaller, WindowW, WindowH);
-        x.ShouldBeInRange(0, smaller.Width - WindowW);
-        y.ShouldBeInRange(0, smaller.Height - WindowH);
+        var (x, y, corner) = BuddyPlacement.Resolve(dropped, smaller, WindowW, WindowH, Cat);
+        var (cx, cy) = BuddyPlacement.CatOf(x, y, WindowW, WindowH, Cat, corner);
+        cx.ShouldBeInRange(0, smaller.Width - Cat.Width);
+        cy.ShouldBeInRange(0, smaller.Height - Cat.Height);
         // The same fractions on the old area give the old place.
-        BuddyPlacement.Resolve(dropped, Laptop, WindowW, WindowH).ShouldBe((1400, 340));
-        // A window larger than the work area sits at its top left rather than off it.
-        BuddyPlacement.Resolve(dropped, new DisplayArea("laptop", 0, 0, 300, 500), WindowW, WindowH).ShouldBe((0, 0));
+        var (ox, oy, oc) = BuddyPlacement.Resolve(dropped, Laptop, WindowW, WindowH, Cat);
+        BuddyPlacement.CatOf(ox, oy, WindowW, WindowH, Cat, oc).ShouldBe((1400, 340));
+        // An area smaller than the cat puts it at the top left rather than off it.
+        var (tx, ty, tc) = BuddyPlacement.Resolve(dropped, new DisplayArea("laptop", 0, 0, 100, 100), WindowW, WindowH, Cat);
+        BuddyPlacement.CatOf(tx, ty, WindowW, WindowH, Cat, tc).ShouldBe((0, 0));
     }
 
     [Fact]
     public void ADropInCornerModeSnapsToTheCornerAndStoresNoPosition()
     {
-        var (dropped, area) = BuddyPlacement.Drop(new BuddySettings { Corner = 1 }, [Laptop, Side], 2300, 300, WindowW, WindowH)!.Value;
+        var (dropped, area) = BuddyPlacement.Drop(new BuddySettings { Corner = 1 }, [Laptop, Side], 2300, 300, WindowW, WindowH, Cat, 1)!.Value;
         area.ShouldBe(Side);
         dropped.Monitor.ShouldBe("side");
         dropped.FreePositions.ShouldBeNull();
-        BuddyPlacement.Resolve(dropped, Side, WindowW, WindowH).ShouldBe(BuddyPlacement.Corner(Side, WindowW, WindowH, 1));
-        BuddyPlacement.Drop(Free, [], 0, 0, WindowW, WindowH).ShouldBeNull();
+        var (x, y, corner) = BuddyPlacement.Resolve(dropped, Side, WindowW, WindowH, Cat);
+        (x, y).ShouldBe(BuddyPlacement.Corner(Side, WindowW, WindowH, 1));
+        corner.ShouldBe(1);
+        BuddyPlacement.Drop(Free, [], 0, 0, WindowW, WindowH, Cat, 0).ShouldBeNull();
     }
 
     [Fact]
     public void FreeWithNothingStoredYetSitsInTheCorner()
     {
-        BuddyPlacement.Resolve(Free, Laptop, WindowW, WindowH).ShouldBe(BuddyPlacement.Corner(Laptop, WindowW, WindowH, 0));
+        var (x, y, corner) = BuddyPlacement.Resolve(Free, Laptop, WindowW, WindowH, Cat);
+        (x, y).ShouldBe(BuddyPlacement.Corner(Laptop, WindowW, WindowH, 0));
+        corner.ShouldBe(0);
+    }
+
+    [Theory]
+    [InlineData(900, 480)]
+    [InlineData(300, 700)]
+    [InlineData(1700, 100)]
+    public void AGoneCatInFreeLeavesItsPawFlushWithTheNearestScreenEdgeAndTheReturnRestoresTheDroppedPlace(int catX, int catY)
+    {
+        var (dropped, px, py, pc) = DropCatAt(Free, [Laptop], Laptop, catX, catY);
+        var (gx, gy, gc) = BuddyPlacement.Resolve(dropped, Laptop, WindowW, WindowH, Cat, AwayPhase.Gone);
+        var left = catX + Cat.Width / 2 < Laptop.Width / 2;
+        (gc is 1 or 3).ShouldBe(left, "the paw is on the nearest side");
+
+        using var renderer = new RgbaImageRenderer(WindowW, WindowH);
+        var layout = BuddyScene.Draw(renderer, Font, BuddyPalette.For(false), new BuddyView(GrumpFace.OneEyeOpen, 0, null, null, 0, AwayPhase.Gone, 1f), 1f, false, gc, null, 0.67f);
+        layout.GoneAway.ShouldBeTrue();
+        layout.BadgeW.ShouldBeGreaterThan(0);
+        if (left)
+        {
+            (gx + layout.BadgeX).ShouldBe(Laptop.X, 1, "the badge is flush with the left screen edge");
+        }
+        else
+        {
+            (gx + layout.BadgeX + layout.BadgeW).ShouldBe(Laptop.X + Laptop.Width, 1, "the badge is flush with the right screen edge");
+        }
+        // Hoverable and clickable: the badge is inside the window and on the work area.
+        ShouldBeInside(new RectangleF(gx + layout.BadgeX, gy + layout.BadgeY, layout.BadgeW, layout.BadgeH), Laptop);
+
+        // The return puts the window back where the cat was dropped.
+        BuddyPlacement.Resolve(dropped, Laptop, WindowW, WindowH, Cat).ShouldBe((px, py, pc));
+        // While it walks off (leaving or returning) the cat stays where it is and the scene draws towards the nearest side.
+        var (lx, ly, lc) = BuddyPlacement.Resolve(dropped, Laptop, WindowW, WindowH, Cat, AwayPhase.Leaving);
+        BuddyPlacement.CatOf(lx, ly, WindowW, WindowH, Cat, lc).ShouldBe((catX, catY));
+        (lc is 1 or 3).ShouldBe(left);
+    }
+
+    [Fact]
+    public void ALargerSizeThanTheCatStartedWithDrawsAtThatSizeInsideTheWindow()
+    {
+        // The window is measured at the largest size whatever is chosen (BuddyHost), so a cat started at Small and set to Large draws at Large at once.
+        var (w, h) = BuddyWindowSize.Measure(Font, BuddySettings.SizeScales.Max());
+        var (sw, sh) = BuddyWindowSize.Measure(Font, BuddySettings.SizeScales.Min());
+        w.ShouldBeGreaterThanOrEqualTo(sw);
+        h.ShouldBeGreaterThan(sh);
+        foreach (var size in new[] { 0, 2 })
+        {
+            var scale = BuddySettings.SizeScales[size];
+            using var renderer = new RgbaImageRenderer((uint)w, (uint)h);
+            var layout = BuddyScene.Draw(renderer, Font, BuddyPalette.For(false), new BuddyView(GrumpFace.Asleep, 0, null, null), 1f, false, 0, null, scale);
+            layout.CatDevice.ShouldBe(scale, 0.0001f);
+            layout.CatX.ShouldBeGreaterThanOrEqualTo(0);
+            (layout.CatX + (GrumpCat.Width + 4) * layout.CatDevice).ShouldBeLessThanOrEqualTo(renderer.Width);
+            layout.CatY.ShouldBeGreaterThanOrEqualTo(0);
+        }
     }
 
     [Fact]

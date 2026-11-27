@@ -101,6 +101,29 @@ public sealed class PilotLinkNavigationTests
     }
 
     [Fact]
+    public void ALinkForAKnownNodeShowsThatNodeFirstThenOpensTheFlightAndTheSession()
+    {
+        using var renderer = new RgbaImageRenderer(900, 700);
+        var chrome = Window(renderer);
+        chrome.Clock = () => Now;
+        var here = new NodeMark("se1", "se1", "SE1", Here: true);
+        var far = new NodeMark("de1:47731", "de1:47731", "DE1", Here: false);
+        chrome.Nodes.Choices = [here, far];
+        Draw(chrome);
+
+        chrome.OpenLink(Parse("pilot://flight/TIA1611?node=DE1")).ShouldBeNull();
+        Draw(chrome);
+        chrome.Page.ShouldBe(PilotPage.Flights);
+        chrome.Nodes.Picked.ShouldBe(["de1:47731"], "that node alone is shown");
+        chrome.Flights.IsDetailOpen.ShouldBeTrue();
+
+        chrome.OpenLink(Parse("pilot://session/bbbb0002?node=SE1")).ShouldBeNull();
+        Draw(chrome);
+        chrome.Page.ShouldBe(PilotPage.Sessions);
+        chrome.Nodes.Picked.ShouldBe(["se1"]);
+    }
+
+    [Fact]
     public void ALinkForANodeTheWindowDoesNotKnowSaysSoAndOpensNothing()
     {
         using var renderer = new RgbaImageRenderer(900, 700);

@@ -158,9 +158,9 @@ internal sealed class BuddyHost : IBuddyWindow, IDisposable
         // No ordinary hidden window first (the probe makes one): CreateTransparentWindow makes the shared device from its own surface, so the extra window,
         // its swapchain and its context are memory the cat never needed (#1381 section 11).
 
-        // The window is measured from the cat at the size chosen now; a larger choice later needs a restart (the swapchain is not recreated), a smaller one draws at once.
-        _measuredCatSize = _settings.SizeScale;
-        var (designWidth, designHeight) = BuddyWindowSize.Measure(_font, _measuredCatSize);
+        // The window is measured from the cat at the largest size, whatever is chosen now (the swapchain is not recreated): Large is only about 30 design px taller
+        // than Medium, so a later choice of any size draws at once and the window never has to follow it.
+        var (designWidth, designHeight) = BuddyWindowSize.Measure(_font, BuddySettings.SizeScales.Max());
         _window = _app.CreateTransparentWindow("pilot-buddy", (int)designWidth, (int)designHeight, borderless: true, alwaysOnTop: true, focusable: true, hidden: true);
         // The design is drawn at the display's scale: the window is asked for that many pixels, and the scale is what it got.
         var wanted = Math.Max(_window.DisplayScale, 1f);
@@ -220,7 +220,17 @@ internal sealed class BuddyHost : IBuddyWindow, IDisposable
         return exit;
     }
 
-    private float _measuredCatSize = 1f;
+    // The corner the scene draws the cat in now: the chosen one in Corner placement, and in Free the one with room for the bubble and the cards where the cat was dropped.
+    private int _sceneCorner;
+    private AwayPhase _placedPhase = AwayPhase.Present;
+
+    /// <summary>The cat's own box in window units, at the size chosen now: what Free placement keeps on the work area.</summary>
+    private BuddyPlacement.CatBox CatBox()
+    {
+        var unit = _scale / _density;
+        var cs = _settings.SizeScale;
+        return new BuddyPlacement.CatBox((int)MathF.Round((GrumpCat.Width + 4) * cs * unit), (int)MathF.Round((GrumpCat.CushionY + GrumpCat.CushionHeight) * cs * unit), (int)MathF.Round(BuddyScene.Margin * unit));
+    }
 
     /// <summary>The side of the first SDF atlas page: 1024 squared holds the cat's glyphs (the printable ASCII of the card and bubble text) with room to spare.</summary>
     private const int AtlasPageDim = 1024;
@@ -323,6 +333,11 @@ internal sealed class BuddyHost : IBuddyWindow, IDisposable
                 }
                 TakeFromDisk();
                 SnoozeEnded();
+                // In Free the cat walks off the nearest side and its paw badge sits on that screen edge: the window follows the phase (the dropped place comes back with the cat).
+                if (_settings.IsFree && _model.Phase != _placedPhase)
+                {
+                    Place();
+                }
                 if (_policy.NeedsFrame())
                 {
                     DrawFrame();
@@ -431,8 +446,8 @@ internal sealed class BuddyHost : IBuddyWindow, IDisposable
     {
         var palette = BuddyTheme.PaletteFor(_theme);
         var view = BuddyScene.ViewOf(_model);
-        var corner = _settings.SceneCorner;
-        var catSize = MathF.Min(_settings.SizeScale, _measuredCatSize);
+        var corner = _sceneCorner;
+        var catSize = _settings.SizeScale;
         _policy.Time(() =>
         {
             SceneLayout layout;
@@ -530,7 +545,7 @@ internal sealed class BuddyHost : IBuddyWindow, IDisposable
 
     /// <summary>Whether <paramref name="changed"/> puts the window somewhere else: another corner or placement, or (in Free) another stored position for this monitor.</summary>
     private bool Moves(BuddySettings changed) =>
-        changed.CornerIndex != _settings.CornerIndex || changed.PlacementIndex != _settings.PlacementIndex
+        changed.CornerIndex != _settings.CornerIndex || changed.PlacementIndex != _settings.PlacementIndex || (changed.IsFree && changed.SizeIndex != _settings.SizeIndex)
         || (changed.IsFree && changed.Monitor is { } m && changed.FreeAt(m) != _settings.FreeAt(m));
 
     private List<DisplayArea> Displays()
@@ -552,8 +567,15 @@ internal sealed class BuddyHost : IBuddyWindow, IDisposable
     {
         if (BuddyPlacement.Chosen(Displays(), _settings.Monitor) is { } area)
         {
-            var (x, y) = BuddyPlacement.Resolve(_settings, area, _unitWidth, _unitHeight);
+            var phase = _settings.IsFree ? _model.Phase : AwayPhase.Present;
+            var (x, y, corner) = BuddyPlacement.Resolve(_settings, area, _unitWidth, _unitHeight, CatBox(), phase);
             _window!.SetPosition(x, y);
+            if (corner != _sceneCorner || phase != _placedPhase)
+            {
+                _policy.Redraw();
+            }
+            _sceneCorner = corner;
+            _placedPhase = phase;
         }
     }
 
@@ -568,7 +590,7 @@ internal sealed class BuddyHost : IBuddyWindow, IDisposable
     public void Dropped()
     {
         _window!.GetPosition(out var x, out var y);
-        if (BuddyPlacement.Drop(_settings, Displays(), x, y, _unitWidth, _unitHeight) is { } dropped)
+        if (BuddyPlacement.Drop(_settings, Displays(), x, y, _unitWidth, _unitHeight, CatBox(), _sceneCorner) is { } dropped)
         {
             // Corner: the chosen corner of the monitor it was dropped on is where it returns. Free: where it was dropped, clamped onto the work area, is remembered for that monitor.
             Apply(dropped.Settings);

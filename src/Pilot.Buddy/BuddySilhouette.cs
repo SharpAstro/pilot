@@ -53,49 +53,115 @@ public static class BuddyPlacement
         return (x, y);
     }
 
-    /// <summary>
-    /// The window's top left for a stored free position: the fractions are of the distance the window can travel (the work area less the window), so any
-    /// resolution keeps the cat on screen. A window bigger than the area sits at the area's top left.
-    /// </summary>
-    public static (int X, int Y) FromFraction(DisplayArea area, int windowWidth, int windowHeight, double fx, double fy)
+    /// <summary>The cat's own box on the screen, in window units: its size, and how far it sits from the window's edge it is in the corner of (the scene's margin).</summary>
+    public readonly record struct CatBox(int Width, int Height, int Margin);
+
+    /// <summary>A scene corner index: the three the person can choose (0 bottom right, 1 bottom left, 2 top right) and the top left (3), which only Free placement uses.</summary>
+    public static int SceneCornerOf(bool left, bool top) => left ? (top ? 3 : 1) : (top ? 2 : 0);
+
+    /// <summary>The cat's top left on the screen for a stored fraction: the fractions are of the distance the cat's own box can travel, so any resolution keeps the cat on screen.</summary>
+    public static (int X, int Y) CatAt(DisplayArea area, CatBox cat, double fx, double fy) =>
+        (area.X + (int)Math.Round(Math.Clamp(fx, 0, 1) * Math.Max(0, area.Width - cat.Width)),
+         area.Y + (int)Math.Round(Math.Clamp(fy, 0, 1) * Math.Max(0, area.Height - cat.Height)));
+
+    /// <summary>The window's top left that puts the cat's box at (<paramref name="catX"/>, <paramref name="catY"/>) when the scene draws it in <paramref name="corner"/>.</summary>
+    public static (int X, int Y) WindowFor(int catX, int catY, int windowWidth, int windowHeight, CatBox cat, int corner)
     {
-        var travelX = Math.Max(0, area.Width - windowWidth);
-        var travelY = Math.Max(0, area.Height - windowHeight);
-        return (area.X + (int)Math.Round(Math.Clamp(fx, 0, 1) * travelX), area.Y + (int)Math.Round(Math.Clamp(fy, 0, 1) * travelY));
+        var left = corner is 1 or 3;
+        var top = corner is 2 or 3;
+        return (left ? catX - cat.Margin : catX + cat.Width + cat.Margin - windowWidth, top ? catY - cat.Margin : catY + cat.Height + cat.Margin - windowHeight);
     }
 
-    /// <summary>The stored fraction for a window dropped with its top left at (<paramref name="x"/>, <paramref name="y"/>): clamped, so a drop part off screen is stored as the nearest place on it.</summary>
-    public static (double X, double Y) ToFraction(DisplayArea area, int windowWidth, int windowHeight, int x, int y)
+    /// <summary>The cat's box top left on the screen for a window at (<paramref name="x"/>, <paramref name="y"/>) drawing it in <paramref name="corner"/> (the inverse of <see cref="WindowFor"/>).</summary>
+    public static (int X, int Y) CatOf(int x, int y, int windowWidth, int windowHeight, CatBox cat, int corner)
     {
-        var travelX = area.Width - windowWidth;
-        var travelY = area.Height - windowHeight;
-        return (travelX > 0 ? Math.Clamp((double)(x - area.X) / travelX, 0, 1) : 0, travelY > 0 ? Math.Clamp((double)(y - area.Y) / travelY, 0, 1) : 0);
+        var left = corner is 1 or 3;
+        var top = corner is 2 or 3;
+        return (left ? x + cat.Margin : x + windowWidth - cat.Margin - cat.Width, top ? y + cat.Margin : y + windowHeight - cat.Margin - cat.Height);
     }
 
-    /// <summary>Where the window goes for <paramref name="settings"/> on <paramref name="area"/>: the stored free position in Free placement (the corner until one is stored), else the chosen corner.</summary>
-    public static (int X, int Y) Resolve(BuddySettings settings, DisplayArea area, int windowWidth, int windowHeight) =>
-        settings.IsFree && settings.FreeAt(area.Name) is var (fx, fy) ? FromFraction(area, windowWidth, windowHeight, fx, fy) : Corner(area, windowWidth, windowHeight, settings.CornerIndex);
+    /// <summary>
+    /// Which corner of the window the scene draws the cat in when it sits at (<paramref name="catX"/>, <paramref name="catY"/>): the one whose opposite side has the room
+    /// for what the cat says (the bubble and the cards open towards the middle of the window), the bottom right when both fit. Where neither side fits, the one with more room.
+    /// </summary>
+    public static int FreeCorner(DisplayArea area, CatBox cat, int windowWidth, int windowHeight, int catX, int catY)
+    {
+        // The cat in the window's right (bottom) corner: the window spreads left (up) from the cat.
+        var roomLeft = catX + cat.Width + cat.Margin - area.X;
+        var roomRight = area.X + area.Width - (catX - cat.Margin);
+        var roomUp = catY + cat.Height + cat.Margin - area.Y;
+        var roomDown = area.Y + area.Height - (catY - cat.Margin);
+        var left = roomLeft >= windowWidth ? false : roomRight >= windowWidth ? true : roomRight > roomLeft;
+        var top = roomUp >= windowHeight ? false : roomDown >= windowHeight ? true : roomDown > roomUp;
+        return SceneCornerOf(left, top);
+    }
+
+    /// <summary>Whether the cat's box is nearer the left side of the work area than the right: where the cat walks off to and its paw badge sits.</summary>
+    public static bool NearestIsLeft(DisplayArea area, CatBox cat, int catX) => catX + cat.Width / 2 < area.X + area.Width / 2;
 
     /// <summary>
-    /// A drop with the window's top left at (<paramref name="x"/>, <paramref name="y"/>): the display it is on becomes the cat's monitor, and in Free placement
-    /// the clamped position is stored for it; in Corner placement nothing more is stored (the window snaps to the corner). Null with no display.
+    /// Where the window goes for a cat at the stored fraction (<paramref name="fx"/>, <paramref name="fy"/>) of <paramref name="area"/>, and the scene corner it draws in.
+    /// Present: the cat is exactly where it was dropped and the corner follows the room. Leaving or returning (<paramref name="away"/>): the cat walks off the nearest side,
+    /// so the scene draws towards it, the cat staying where it is. Gone: the window sits flush with that screen edge, so the paw badge is on the edge itself.
     /// </summary>
-    public static (BuddySettings Settings, DisplayArea Area)? Drop(BuddySettings settings, IReadOnlyList<DisplayArea> displays, int x, int y, int windowWidth, int windowHeight)
+    public static (int X, int Y, int Corner) FreeWindow(DisplayArea area, int windowWidth, int windowHeight, CatBox cat, double fx, double fy, AwayPhase away = AwayPhase.Present)
     {
-        if (Under(displays, x, y, windowWidth, windowHeight) is not { } area)
+        var (catX, catY) = CatAt(area, cat, fx, fy);
+        var corner = FreeCorner(area, cat, windowWidth, windowHeight, catX, catY);
+        if (away != AwayPhase.Present)
+        {
+            corner = SceneCornerOf(NearestIsLeft(area, cat, catX), corner is 2 or 3);
+        }
+        var (x, y) = WindowFor(catX, catY, windowWidth, windowHeight, cat, corner);
+        if (away == AwayPhase.Gone)
+        {
+            x = corner is 1 or 3 ? area.X : area.X + area.Width - windowWidth;
+        }
+        return (x, y, corner);
+    }
+
+    /// <summary>The stored fraction for a cat dropped with its box at (<paramref name="catX"/>, <paramref name="catY"/>): clamped, so a drop partly off screen is stored as the nearest place that is fully on it.</summary>
+    public static (double X, double Y) ToFraction(DisplayArea area, CatBox cat, int catX, int catY)
+    {
+        var travelX = area.Width - cat.Width;
+        var travelY = area.Height - cat.Height;
+        return (travelX > 0 ? Math.Clamp((double)(catX - area.X) / travelX, 0, 1) : 0, travelY > 0 ? Math.Clamp((double)(catY - area.Y) / travelY, 0, 1) : 0);
+    }
+
+    /// <summary>Where the window goes for <paramref name="settings"/> on <paramref name="area"/>: the stored free position in Free placement (the bottom right corner until one is stored), else the chosen corner. The corner the scene draws in comes with it.</summary>
+    public static (int X, int Y, int Corner) Resolve(BuddySettings settings, DisplayArea area, int windowWidth, int windowHeight, CatBox cat, AwayPhase away = AwayPhase.Present)
+    {
+        if (settings.IsFree && settings.FreeAt(area.Name) is var (fx, fy))
+        {
+            return FreeWindow(area, windowWidth, windowHeight, cat, fx, fy, away);
+        }
+        var corner = settings.IsFree ? 0 : settings.CornerIndex;
+        var (x, y) = Corner(area, windowWidth, windowHeight, corner);
+        return (x, y, corner);
+    }
+
+    /// <summary>
+    /// A drop with the window's top left at (<paramref name="x"/>, <paramref name="y"/>) while the scene draws in <paramref name="sceneCorner"/>: the display the cat is on becomes
+    /// its monitor, and in Free placement the cat's own box, clamped onto that work area, is stored for it; in Corner placement nothing more is stored (the window snaps to
+    /// the corner). Null with no display.
+    /// </summary>
+    public static (BuddySettings Settings, DisplayArea Area)? Drop(BuddySettings settings, IReadOnlyList<DisplayArea> displays, int x, int y, int windowWidth, int windowHeight, CatBox cat, int sceneCorner)
+    {
+        var (catX, catY) = CatOf(x, y, windowWidth, windowHeight, cat, sceneCorner);
+        if (Under(displays, catX, catY, cat.Width, cat.Height) is not { } area)
         {
             return null;
         }
         var moved = settings with { Monitor = area.Name };
         if (settings.IsFree)
         {
-            var (fx, fy) = ToFraction(area, windowWidth, windowHeight, x, y);
+            var (fx, fy) = ToFraction(area, cat, catX, catY);
             moved = moved.WithFreeAt(area.Name, fx, fy);
         }
         return (moved, area);
     }
 
-    /// <summary>The display the window's centre is on; the nearest when it is between them or off all; null with none.</summary>
+    /// <summary>The display the box's centre is on; the nearest when it is between them or off all; null with none.</summary>
     public static DisplayArea? Under(IReadOnlyList<DisplayArea> displays, int x, int y, int width, int height)
     {
         if (displays.Count == 0)
