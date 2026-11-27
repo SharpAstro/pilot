@@ -148,7 +148,7 @@ internal static class CardKindCatalog
         new("rebase-only", "Handled", ["Flights/LegCommander.RebaseOnly.cs"], "RebaseBlockedTests.WithALegFlyingNothingIsPushedAndTheFlightAndAHandledCardSayItLandsSquashedUntilTheLegEndsThenItReshapes"),
         new("lay-failed", "ForYou", [Shape], "RebaseLayFlightTests.AMergeThatIsNotCleanPushesNothingAndRingsOnce"),
         new("drop-unexplained", "Handled|Ring", [Lay], "RebaseLayFlightTests.ADroppedPrWhoseCauseIsNotFoundRingsOnceAndIsNeverQueuedAgain", "a PR the base dropped has no cause the node can find on GitHub", [nameof(Verbs.Merge)]),
-        new("pr-ready", "Ring", [LegReview, Lay, LegMerge], "PrFlightReviewTests.AnApproveAtTheFlightsHeadPassesItsReviewAndMarksItsPrReady", "the PR's state on GitHub is open, the review passed at its current head, and its checks are read", [nameof(Verbs.Merge)]),
+        new("pr-ready", "Ring", [LegReviewHold, Lay, LegMerge], "PrFlightReviewTests.AnApproveAtTheFlightsHeadPassesItsReviewAndMarksItsPrReady", "the PR's state on GitHub is open, the review passed at its current head, and its checks are read", [nameof(Verbs.Merge)]),
         new("pr-checks-failed", "Ring", [Checks, Recheck], "NodeCardTests.ThePrCheckAndConflictSummariesNoLongerSendSomeoneToTheFlightPage", "the PR's checks on GitHub failed at its current head", [nameof(Verbs.FixPr), nameof(Verbs.Merge)]),
         new("outside-review-unavailable", "Handled", ["Flights/LegCommander.OutsideReview.cs"], "NoModelReviewTests.TheCardKindIsPinnedAsAHandledCardTitledWithTheFlightTheCheckAndTheResetTime"),
         new("merge-taken-back", "Handled", [LegMerge, LegQueuedPush], "MergeTakeBackTests.PlanLegOnAQueuedMergeDequeuesAndTheCardSaysSo"),
