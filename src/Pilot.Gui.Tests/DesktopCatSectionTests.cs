@@ -160,17 +160,15 @@ public sealed class DesktopCatSectionTests : IDisposable
     [Fact]
     public async Task WakeNowClearsTheSnooze()
     {
-        using var renderer = new RgbaImageRenderer(1280, 2400);
-        var source = Source(new BuddySettings().WithSnooze(1, Now, TimeZoneInfo.Utc));
-        var chrome = await LoadedAsync(renderer, source, 1280, 2400);
-        // The section's rows alone (every key holds "buddy"): the page is taller than the first screen, so the capture is taller too.
-        chrome.Settings.Search.Text = "buddy";
-        chrome.Settings.Search.CursorPos = 5;
+        using var renderer = new RgbaImageRenderer(1280, 1400);
+        // The page paints against the real clock (Settings.Render takes UtcNow), so the snooze is set from it: a fixed past date would be over by the time the test runs.
+        var source = Source(new BuddySettings().WithSnooze(1, DateTimeOffset.UtcNow, TimeZoneInfo.Utc));
+        var chrome = await LoadedAsync(renderer, source, 1280, 1400);
         var texts = Texts(chrome, renderer);
         texts.ShouldContain("Snoozed until");
         texts.ShouldContain("Wake now");
 
-        Click(chrome, "settings:buddy-wake-now", 2400);
+        Click(chrome, "settings:buddy-wake-now");
         BuddySettings.Load(FilePath).SnoozedUntil.ShouldBeNull();
         var after = Texts(chrome, renderer);
         after.ShouldNotContain("Snoozed until");
