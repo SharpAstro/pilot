@@ -36,6 +36,28 @@ public sealed class BuddyFramePolicy(BuddyModel model, Func<long> version, Func<
     /// <summary>Forgets what was drawn, so the next ask is yes: the window was hidden and is shown again, and must show the scene.</summary>
     public void Redraw() => _drawn = null;
 
+    private int _atlasRedraws;
+
+    /// <summary>The most extra frames one change may ask of the atlas: a glyph the warm-up missed shows one frame later, never in an endless run.</summary>
+    public const int MostAtlasRedraws = 2;
+
+    /// <summary>
+    /// The backstop of <see cref="BuddyGlyphWarmer"/>: after a frame, the renderer says whether its atlas still had glyphs to upload (they were skipped in
+    /// that frame). Then the same state is drawn again, at most <see cref="MostAtlasRedraws"/> times in a row, so the loop settles and never spins.
+    /// </summary>
+    public void AtlasSettled(bool atlasDirty)
+    {
+        if (!atlasDirty)
+        {
+            _atlasRedraws = 0;
+        }
+        else if (_atlasRedraws < MostAtlasRedraws)
+        {
+            _atlasRedraws++;
+            _drawn = null;
+        }
+    }
+
     /// <summary>Records that a frame of the current state was drawn, <paramref name="took"/> of draw time.</summary>
     public void Drawn(TimeSpan took)
     {

@@ -9,7 +9,19 @@
     <PublishAot>true</PublishAot>
     <InvariantGlobalization>true</InvariantGlobalization>
     <DebugType Condition="'$(Configuration)' == 'Release'">none</DebugType>
+    <!--
+      GC settings for a tiny app that sleeps (#1381 section 11). Workstation, non-concurrent: no background GC thread and no second heap per core.
+      Both are compiled into a Native AOT binary (ConcurrentGarbageCollection and ServerGarbageCollector are honoured by the AOT runtime's GC).
+      Not set because they do nothing under AOT: TieredCompilation and TieredPGO (there is no JIT), ReadyToRun. System.GC.ConserveMemory makes the GC
+      compact more eagerly to keep the heap small; it is a runtimeconfig knob that the AOT build bakes in.
+    -->
+    <ServerGarbageCollector>false</ServerGarbageCollector>
+    <ConcurrentGarbageCollection>false</ConcurrentGarbageCollection>
   </PropertyGroup>
+
+  <ItemGroup>
+    <RuntimeHostConfigurationOption Include="System.GC.ConserveMemory" Value="5" />
+  </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\Pilot.Contracts\Pilot.Contracts.csproj" />

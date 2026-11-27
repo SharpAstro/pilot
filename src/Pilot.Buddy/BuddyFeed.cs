@@ -51,7 +51,7 @@ public sealed class BuddyFeed(BuddyModel model, TimeProvider time, Func<BuddySet
     /// <summary>The notice id of the card <paramref name="cardId"/>; the model clears by it.</summary>
     public static string CardNoticeId(string cardId) => "card:" + cardId;
 
-    private readonly NodeMirror _mirror = new();
+    private readonly NodeMirror _mirror = new() { Slim = true };
     private readonly Dictionary<string, DateTimeOffset> _told = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> _words = new(StringComparer.Ordinal);
     private readonly HashSet<string> _landed = new(StringComparer.Ordinal);

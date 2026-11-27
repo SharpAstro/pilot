@@ -41,8 +41,6 @@ internal sealed class BuddyHost : IBuddyWindow, IDisposable
     private BuddySettings? _fromDisk;
 
     private SdlVulkanApp? _app;
-    private SdlVulkanWindow? _plain;
-    private VulkanContext? _plainContext;
     private SdlVulkanWindow? _window;
     private VulkanContext? _context;
     private VkRenderer? _renderer;
@@ -94,6 +92,7 @@ internal sealed class BuddyHost : IBuddyWindow, IDisposable
         Link = new BuddyNodeLink(client, _feed, _chat, _gate, Wake, log, TimeSpan.FromSeconds(5));
         Relay = _relay;
         _relay.Changed = Wake;
+        _relay.MemoryReport = MemoryReport;
         _relay.OpenSettings = _desk.ShowSettings;
         // A console or remote connect arrives on SDL's message pump: it is noted and the loop woken, never polled.
         _session.Changed += () =>
@@ -156,9 +155,8 @@ internal sealed class BuddyHost : IBuddyWindow, IDisposable
             Wake();
         });
         _app = SdlVulkanApp.Create(appMetadata: new SdlAppMetadata(Name: "pilot-buddy", Version: null, Identifier: "com.sharpastro.pilot.buddy"));
-        // An ordinary hidden window first: it makes the shared device, as the probe does.
-        _plain = _app.CreateWindow("pilot-buddy device", 320, 200, maximized: false, hidden: true);
-        _plainContext = VulkanContext.CreateForSharedDevice(_app.DeviceFor(_plain), _plain.Surface, 320, 200);
+        // No ordinary hidden window first (the probe makes one): CreateTransparentWindow makes the shared device from its own surface, so the extra window,
+        // its swapchain and its context are memory the cat never needed (#1381 section 11).
 
         // The window is measured from the cat at the size chosen now; a larger choice later needs a restart (the swapchain is not recreated), a smaller one draws at once.
         _measuredCatSize = _settings.SizeScale;
@@ -173,7 +171,10 @@ internal sealed class BuddyHost : IBuddyWindow, IDisposable
         _scale = _pixelWidth / designWidth;
 
         _context = VulkanContext.CreateTransparentForSharedDevice(_app.DeviceFor(_window), _window, (uint)_pixelWidth, (uint)_pixelHeight);
-        _renderer = new VkRenderer(_context, (uint)_pixelWidth, (uint)_pixelHeight);
+        // One SDF atlas page of AtlasPageDim squared (the renderer's default is 2048, 4 MB of R8 and its upload ring): the cat draws a few dozen glyphs, and a
+        // page appends when one fills, so a small first page costs nothing later.
+        _renderer = new VkRenderer(_context, (uint)_pixelWidth, (uint)_pixelHeight, sdfInitialAtlasDim: AtlasPageDim);
+        _warmer = new BuddyGlyphWarmer(new RendererAtlas(_renderer, _font));
         _log($"pilot-buddy: window {_pixelWidth}x{_pixelHeight} px at scale {_scale:0.##}, IsTransparent {_window.IsTransparent}, AlphaPresentation {_context.AlphaPresentation}, "
             + $"theme {(_theme.Dark ? "dark" : "bright")}{(_theme.Reason is { } reason ? $" ({reason})" : string.Empty)}");
 
@@ -220,6 +221,33 @@ internal sealed class BuddyHost : IBuddyWindow, IDisposable
     }
 
     private float _measuredCatSize = 1f;
+
+    /// <summary>The side of the first SDF atlas page: 1024 squared holds the cat's glyphs (the printable ASCII of the card and bubble text) with room to spare.</summary>
+    private const int AtlasPageDim = 1024;
+
+    private BuddyGlyphWarmer? _warmer;
+
+    // The renderer's atlas as the warmer sees it; an SDF glyph is rasterised at one size and scaled, so the size passed is only the key's.
+    private sealed class RendererAtlas(VkRenderer renderer, string font) : IBuddyAtlas
+    {
+        public void PreWarm(System.Text.Rune glyph) => renderer.PreWarmSdfGlyph(font, 14, glyph);
+    }
+
+    /// <summary>The memory report the cat's MCP tool serves (read under the gate, so the window and the mirror are not changing).</summary>
+    private string MemoryReport()
+    {
+        lock (_gate)
+        {
+            return new BuddyMemory(
+                () => _context is null ? null : new BuddyGpuFacts(
+                    (int)_context.SwapchainWidth, (int)_context.SwapchainHeight, null, _context.MainTargetHasDepth, AtlasPageDim, _warmer?.Warmed ?? 0, _context.AlphaPresentation.ToString()),
+                () =>
+                {
+                    var m = _feed.Mirror;
+                    return new BuddyMirrorCounts(m.Cards.Count, m.Sessions.Count, m.Flights.Count, m.Legs.Count, m.Merges.Count, m.Jobs.Count, m.Issues.Count);
+                }).Report();
+        }
+    }
 
     private byte[]? _backdrop;
 
@@ -410,7 +438,18 @@ internal sealed class BuddyHost : IBuddyWindow, IDisposable
             SceneLayout layout;
             using (var cpu = new RgbaImageRenderer((uint)_pixelWidth, (uint)_pixelHeight))
             {
-                layout = BuddyScene.Draw(cpu, _font, palette, view, _scale, false, corner, _desk.CardFactory<RgbaImage>(), catSize);
+                // The CPU pass names every text the scene draws: the glyphs new to the atlas are rasterised before the GPU frame begins, so that
+                // frame's flush uploads them and its draw finds them (BuddyGlyphWarmer says why the first frame used to be empty).
+                Pen<RgbaImage>.TextSeen = _warmer!.Collect;
+                try
+                {
+                    layout = BuddyScene.Draw(cpu, _font, palette, view, _scale, false, corner, _desk.CardFactory<RgbaImage>(), catSize);
+                }
+                finally
+                {
+                    Pen<RgbaImage>.TextSeen = null;
+                }
+                _warmer.Warm();
                 var geometry = new BuddyGeometry(layout);
                 _desk.Geometry = geometry;
                 SetShape(BuddySilhouette.Of(cpu.Surface));
@@ -422,6 +461,8 @@ internal sealed class BuddyHost : IBuddyWindow, IDisposable
                 _renderer.EndFrame();
             }
         });
+        // Anything the warm-up missed was skipped this frame and the atlas says so: draw the same state again, a bounded number of times.
+        _policy.AtlasSettled(_renderer!.FontAtlasDirty);
     }
 
     private bool _clickThrough;
@@ -543,8 +584,6 @@ internal sealed class BuddyHost : IBuddyWindow, IDisposable
         _renderer?.Dispose();
         _context?.Dispose();
         _window?.Dispose();
-        _plainContext?.Dispose();
-        _plain?.Dispose();
         _app?.Dispose();
     }
 }
