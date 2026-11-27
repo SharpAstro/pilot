@@ -156,9 +156,9 @@ public sealed class JobTestsFailures : JobTestsBase
         return (jobs, clock, Fake, Hand(jobs, "dotnet build"));
     }
 
-    private async Task EndsAndIsTold(Clock clock, FakeJobLauncher launcher, string id)
+    private async Task EndsAndIsTold(Clock clock, FakeJobLauncher launcher, string id, int exit = 1)
     {
-        launcher.Exit(id, 1);
+        launcher.Exit(id, exit);
         var ended = _state.Jobs().Single(j => j.Id == id);
         await AdvanceUntil(clock, When(() => _state.Jobs().Single(j => j.Id == id) is { EndedAt: not null, Told: true }, "the job never ended told"), TimeSpan.FromSeconds(1));
         ended = _state.Jobs().Single(j => j.Id == id);
@@ -194,6 +194,21 @@ public sealed class JobTestsFailures : JobTestsBase
         said.ShouldContain("first build error: ");
         said.ShouldContain("CS1656");
         said.ShouldNotContain("runs on");
+    }
+
+    // PIL1382 review note: a check that prints an error line on purpose and exits 0 did not fail.
+    [Fact]
+    public async Task ASucceededJobThatPrintedAnErrorLineSaysItPrintedOneAndExitedZero()
+    {
+        var (_, clock, launcher, id) = RunsOnWithABuildError();
+        await Until(id, j => j.BuildErrors == 1);
+
+        await EndsAndIsTold(clock, launcher, id, exit: 0);
+
+        var said = _said.Select(s => s.Args[0]).ToList().ShouldHaveSingleItem();
+        said.ShouldContain("succeeded (it printed an error line, the first: ");
+        said.ShouldContain("the exit code was 0");
+        said.ShouldNotContain("first build error");
     }
 
     [Fact]

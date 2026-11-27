@@ -2999,7 +2999,15 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
     {
         if (_earlyHolds.TryRemove(jobId, out var hold))
         {
-            hold.Cancel();
+            try
+            {
+                hold.Cancel();
+            }
+            catch (ObjectDisposedException)
+            {
+                // The notice left its hold (and disposed it) between our removal and this cancel: it is past the hold, and the
+                // waiting below for its say is what keeps it from racing the end tell.
+            }
         }
         if (_earlySays.TryRemove(jobId, out var said))
         {
@@ -3138,13 +3146,16 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
         // The first build error or failed test is named here too: the early notice that this tell supersedes said it, and the
         // last 12 lines of a real run (a test summary, many errors) need not hold it.
         var firstRow = state.Jobs().FirstOrDefault(j => j.Id == job.Id) ?? job;
+        // A job that succeeded and still printed an error line (a check that does it on purpose) says it as a line it printed, not as
+        // a failure it had.
+        var printed = job.State == JobState.Succeeded;
         if (firstRow.FirstBuildError is { Length: > 0 } firstError)
         {
-            how += $" (first build error: {firstError})";
+            how += printed ? $" (it printed an error line, the first: {firstError}; the exit code was 0)" : $" (first build error: {firstError})";
         }
         if (firstRow.FirstTestFailed is { Length: > 0 } firstTest)
         {
-            how += $" (first failed test: {firstTest})";
+            how += printed ? $" (it printed a failed-test line, the first: {firstTest}; the exit code was 0)" : $" (first failed test: {firstTest})";
         }
         var lines = last is { Length: > 0 } ? "\nIts last lines:\n" + string.Join('\n', last.TakeLast(12)) : "";
         var rerun = _rerunNotes.TryGetValue(job.Id, out var note) ? $" ({note})" : "";

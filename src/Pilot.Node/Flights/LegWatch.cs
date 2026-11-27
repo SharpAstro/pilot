@@ -318,7 +318,7 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
                         break;
                     }
                     // A real question keeps its own words; a permission prompt is said by the call it asks leave for, when that is known.
-                    await NotePlaneAsync(leg, cancellationToken);
+                    await NotePlaneAsync(leg, cancellationToken, Waiting);
                     if (WantedCall(leg, worker) is { } wants)
                     {
                         Ring(leg, Waiting, $"{Name(leg)}'s worker wants to {wants}",
@@ -331,7 +331,7 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
                         $"{asks}; the worker cannot go on until it is answered in its own session ({PlaneState(leg)})", worker);
                     break;
                 case SessionState.Failed:
-                    await NotePlaneAsync(leg, cancellationToken);
+                    await NotePlaneAsync(leg, cancellationToken, Failed);
                     Ring(leg, Failed, worker.ApiError is { } why ? $"{Name(leg)}'s worker failed: the API said {why}" : $"{Name(leg)}'s worker failed with {PlaneState(leg)}",
                         $"its session is in a failed state and the leg is not finished ({PlaneState(leg)}), which the node cannot cure by itself", worker);
                     break;
@@ -599,7 +599,7 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
         var job = leg.WorkerJob!;
         if (worker.ApiErrorResetsAt is not { } resets)
         {
-            await NotePlaneAsync(leg, cancellationToken);
+            await NotePlaneAsync(leg, cancellationToken, Stopped);
             Ring(leg, Stopped, $"{Name(leg)}'s worker was stopped by the API: {error}", $"the API gave no time the stop clears, so the node cannot resume it by itself ({PlaneState(leg)})", worker);
             return;
         }
@@ -717,7 +717,7 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
             // the go-around's reason (TIA1241's domain-instruments, SE1 2026-10-25: rung as nudged to no avail while it
             // answered each nudge, under the last worker's stall).
             // Each nudge counted as answered when a turn ended after it and before the next: the last one by the response now.
-            await NotePlaneAsync(leg, cancellationToken);
+            await NotePlaneAsync(leg, cancellationToken, Idle);
             var answered = _answered.GetValueOrDefault(job) + (_nudgedAt.TryGetValue(job, out var nudgedAt) && worker.LastResponseAt > nudgedAt ? 1 : 0);
             var report = leg.Report is { Length: > 0 } r && !r.StartsWith("go-around:", StringComparison.Ordinal) ? $"; leg's report: {r.Split('\n')[0]}" : "";
             Ring(leg, Idle, $"{leg.Flight} is stuck: its worker stopped working",
@@ -1108,7 +1108,7 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
         if (_replacedFull.TryGetValue(subject, out var older) && older != job)
         {
             // The fresh worker filled and stalled too: another one would do the same, so a person decides.
-            await NotePlaneAsync(leg, cancellationToken);
+            await NotePlaneAsync(leg, cancellationToken, Idle);
             Ring(leg, Idle, $"{leg.Flight} is stuck: its worker's memory is full again",
                 $"context full: the last worker's context was full and the node sent the leg round; this one is at {share} of its window and idle {Ago(now, since)} with {PlaneState(leg)}, so the node nudges and replaces no more",
                 worker);
@@ -2128,8 +2128,19 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
     };
 
     /// <summary>Reads the plane's state for the cards that follow in this look; a leg's entry is replaced each time, so none is stale.</summary>
-    private async Task NotePlaneAsync(LegRow leg, CancellationToken cancellationToken) =>
+    private async Task NotePlaneAsync(LegRow leg, CancellationToken cancellationToken, string? ringKind = null)
+    {
+        // A read is for a card about to be raised: none for a leg of a landed flight (Ring raises nothing there), and none while a
+        // card of the kind the look is about to ring is still open (Ring raises that card again as the same one).
+        if (ringKind is not null
+            && (state.Flights().Any(f => f.State == FlightState.Landed && f.Code == leg.Flight)
+                || state.CardsOf(ringKind, Subject(leg)).Any(c => c.State == CardState.Open)))
+        {
+            _planeStates.TryRemove(Subject(leg), out _);
+            return;
+        }
         _planeStates[Subject(leg)] = await PlaneStateAsync(leg, cancellationToken);
+    }
 
     private string PlaneState(LegRow leg) => _planeStates.TryGetValue(Subject(leg), out var text) ? text : Steps(leg);
 

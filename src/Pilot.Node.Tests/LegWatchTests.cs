@@ -1573,6 +1573,37 @@ public sealed class LegWatchTests
         card.Title.ShouldNotContain("nothing committed");
     }
 
+    // PIL1382 review notes: a read is for a card about to be raised.
+    [Fact]
+    public async Task ThePlaneIsReadOncePerCardNotOnEveryLookOfAWorkerWhoseCardIsAlreadyOpen()
+    {
+        var reads = 0;
+        _watch.PlaneCommits = (_, _, _) => { reads++; return Task.FromResult<int?>(2); };
+        _state.PutLeg(_state.Legs().Single() with { StartHead = "abc123" });
+        Worker(SessionState.Failed);
+        await _watch.LookAsync(Ct);
+        Open().Single(c => c.Kind == LegWatch.Failed);
+        reads.ShouldBe(1);
+
+        await _watch.LookAsync(Ct);
+        await _watch.LookAsync(Ct);
+        reads.ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task ThePlaneIsNotReadForALegOfALandedFlightWhichRaisesNoCard()
+    {
+        var reads = 0;
+        _watch.PlaneCommits = (_, _, _) => { reads++; return Task.FromResult<int?>(2); };
+        _state.PutLeg(_state.Legs().Single() with { StartHead = "abc123" });
+        Flight(FlightState.Landed);
+        Worker(SessionState.Failed);
+        await _watch.LookAsync(Ct);
+
+        reads.ShouldBe(0);
+        Open().Where(c => c.Kind == LegWatch.Failed).ShouldBeEmpty();
+    }
+
     [Fact]
     public void TheRingJudgesRewordingPromptTellsTheBrainToKeepTheCountsAndNeverSayNoWork()
     {
