@@ -903,7 +903,7 @@ public sealed class LegWatchTests
         _state.PutSession(new SessionRow
         {
             Id = "a1b2c3d4", SessionId = "a1b2c3d4-0000-4000-8000-000000000000", Name = "du1-tia1-parser", Kind = SessionKind.Background,
-            Cwd = "/work/tia1", Role = SessionRole.Worker, Flight = "TIA1", Leg = "parser", ContextWindow = 200_000,
+            Cwd = "/work/tia1", Role = SessionRole.Worker, Flight = "TIA1", Leg = "parser", ContextTokens = 0, ContextWindow = 200_000,
             State = SessionState.Ended, SpendWeighted = 0, LastResponseAt = Start, StartedAt = Start,
             EndedBecause = SessionRowBuilder.TurnFinishedEnd + " (failed after its turn ended, stop held: files not committed)",
         });
