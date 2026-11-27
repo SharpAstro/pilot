@@ -29,6 +29,9 @@ public sealed class PilotLinkTests
     [InlineData("pilot:card%2Fc1", "c1")]
     [InlineData("PILOT:card%2Fc1", "c1")]
     [InlineData("pilot:card%2Fcard-42%20x%26y", "card-42 x&y")]
+    [InlineData("pilot:card%2Fc1/", "c1")]
+    [InlineData("  pilot:card%2Fc1  ", "c1")]
+    [InlineData("pilot:card%2Fa%2F", "a/")]
     public void AnAppShellCardLinkParsesToItsId(string text, string id)
     {
         Pilot.Ui.PilotLink.TryParse(text, out var link).ShouldBeTrue();
@@ -37,6 +40,7 @@ public sealed class PilotLinkTests
 
     [Theory]
     [InlineData("pilot:cards")]
+    [InlineData("pilot:cards/")]
     [InlineData("pilot://cards")]
     public void BothCardsFormsParseWithNoCard(string text)
     {

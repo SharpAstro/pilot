@@ -51,6 +51,24 @@ public sealed class ToastTextTests
     }
 
     [Fact]
+    public void ANormalToastIsNeitherAReminderNorUrgentSoItHasNoDismissButton()
+    {
+        // AppShell gives only the reminder and urgent scenarios the system's Dismiss button; pilot asks for neither on a normal card.
+        var options = AppShellToastRunner.OptionsOf(ToastText.ForCard("flight/A", "c1", "t", "b", ToastTier.Normal));
+        options.Urgency.ShouldBe(ToastUrgency.Normal);
+        options.Urgency.ShouldNotBe(ToastUrgency.Reminder);
+        AppShellToastRunner.OptionsOf(ToastText.Burst(4)).Urgency.ShouldBe(ToastUrgency.Normal);
+    }
+
+    [Fact]
+    public void DescribeWordsAFailureAsStatusColonReasonAndASuccessAsNull()
+    {
+        AppShellToastRunner.Describe(new DesktopNotificationResult(DesktopNotificationStatus.Succeeded, null)).ShouldBeNull();
+        AppShellToastRunner.Describe(new DesktopNotificationResult(DesktopNotificationStatus.Disabled, "turned off for pilot")).ShouldBe("Disabled: turned off for pilot");
+        AppShellToastRunner.Describe(new DesktopNotificationResult(DesktopNotificationStatus.Unsupported, "not Windows")).ShouldBe("Unsupported: not Windows");
+    }
+
+    [Fact]
     public void TheOptionsCarryTheGroupAppIdSchemeAndPayload()
     {
         var options = AppShellToastRunner.OptionsOf(ToastText.ForCard("flight/A", "c1", "t", "b", ToastTier.Urgent));

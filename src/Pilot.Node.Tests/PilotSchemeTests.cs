@@ -86,10 +86,34 @@ public sealed class PilotSchemeTests
         await registrar.StartAsync(TestContext.Current.CancellationToken);
         identity.Writes.ShouldBe(1);
 
-        var failing = new RecordingToastIdentity { Failure = "the registry refused the app id key" };
+        var failing = new FailingIdentity();
         await new ToastIdentityRegistrar(failing, @"C:\bin\pilot-node.exe", _ => false, NullLogger.Instance).StartAsync(TestContext.Current.CancellationToken);
-        failing.Registered.Count.ShouldBe(1);
+        failing.Calls.ShouldBe(1, "a refusal is reported, not thrown");
+
+        var throwing = new FailingIdentity { Throw = true };
+        await new ToastIdentityRegistrar(throwing, @"C:\bin\pilot-node.exe", _ => false, NullLogger.Instance).StartAsync(TestContext.Current.CancellationToken);
+        throwing.Calls.ShouldBe(1, "an IO failure is never fatal");
     }
+
+    private sealed class FailingIdentity : IToastIdentity
+    {
+        public int Calls { get; private set; }
+        public bool Throw { get; init; }
+        public string? Register(string appId, string displayName, string? iconPath)
+        {
+            Calls++;
+            return Throw ? throw new IOException("denied") : "the registry refused the app id key";
+        }
+    }
+
+    [Theory]
+    [InlineData(SharpAstro.AppShell.AppUserModelRegistration.Written, null)]
+    [InlineData(SharpAstro.AppShell.AppUserModelRegistration.Present, null)]
+    [InlineData(SharpAstro.AppShell.AppUserModelRegistration.Packaged, null)]
+    [InlineData(SharpAstro.AppShell.AppUserModelRegistration.None, null)]
+    [InlineData(SharpAstro.AppShell.AppUserModelRegistration.Failed, "the registry refused the app id key")]
+    public void OnlyAFailedRegistrationIsAFailure(SharpAstro.AppShell.AppUserModelRegistration result, string? failure) =>
+        AppShellToastIdentity.Describe(result).ShouldBe(failure);
 
     [Fact]
     public async Task TheRegistrarWritesOnlyWhenTheGuiSitsBesideTheNode()

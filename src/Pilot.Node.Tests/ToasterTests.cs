@@ -403,6 +403,39 @@ public sealed class ToasterTests : IAsyncDisposable
         ]);
     }
 
+    [Fact]
+    public async Task ARunnerThatThrowsIsLoggedBrokenAndTheNextCardStillToasts()
+    {
+        var runner = new RaisingRunner();
+        var log = new CaptureLog();
+        var health = new ToastHealth();
+        await using var toaster = new Toaster(_state, runner, _time, () => "all", () => false, log, health);
+        Ring(Urgent, "flight/F1");
+        Ring(Urgent, "flight/F2");
+        await toaster.Sync(cancel: Ct);
+        runner.Tags.Order().ToArray().ShouldBe(["flight/F1", "flight/F2"]);
+        log.Lines.Order().ToArray().ShouldBe([
+            "Warning toast flight/F1 was not shown: boom",
+            "Warning toast flight/F2 was not shown: boom",
+        ]);
+        _state.Cards(openOnly: true).Where(c => c.Kind == ToastHealth.BrokenKind).ShouldHaveSingleItem()
+            .Detail.ShouldNotBeNull().ShouldContain("InvalidOperationException: boom");
+    }
+
+    private sealed class RaisingRunner : IToastRunner
+    {
+        public System.Collections.Concurrent.ConcurrentQueue<string> Seen { get; } = new();
+        public IEnumerable<string> Tags => Seen;
+
+        public Task<string?> Show(ToastRequest request, CancellationToken cancel = default)
+        {
+            Seen.Enqueue(request.Tag);
+            throw new InvalidOperationException("boom");
+        }
+
+        public Task<string?> Withdraw(string tag, CancellationToken cancel = default) => throw new InvalidOperationException("boom");
+    }
+
     private sealed class CaptureLog : Microsoft.Extensions.Logging.ILogger
     {
         private readonly System.Collections.Concurrent.ConcurrentQueue<string> _lines = new();

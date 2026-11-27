@@ -110,10 +110,11 @@ public sealed class AppShellToastIdentity : IToastIdentity
 {
     /// <inheritdoc />
     public string? Register(string appId, string displayName, string? iconPath)
-    {
-        var result = SharpAstro.AppShell.AppIdentity.Register(appId, displayName, iconPath);
-        return result == SharpAstro.AppShell.AppUserModelRegistration.Failed ? "the registry refused the app id key" : null;
-    }
+        => Describe(SharpAstro.AppShell.AppIdentity.Register(appId, displayName, iconPath));
+
+    /// <summary>Null for every outcome but a refusal (written, already there, packaged, not Windows), else the failure.</summary>
+    public static string? Describe(SharpAstro.AppShell.AppUserModelRegistration result) =>
+        result == SharpAstro.AppShell.AppUserModelRegistration.Failed ? "the registry refused the app id key" : null;
 }
 
 /// <summary>

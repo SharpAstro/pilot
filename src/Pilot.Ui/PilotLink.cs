@@ -10,7 +10,7 @@ namespace Pilot.Ui;
 public sealed record PilotLink(string? CardId)
 {
     /// <summary>The scheme, the one the node registers and the toasts launch (<c>ToastLink.Scheme</c>).</summary>
-    public const string Scheme = "pilot";
+    public const string Scheme = Pilot.Contracts.ToastLink.Scheme;
 
     /// <summary>Reads <paramref name="text"/> as a link; false for anything else (another scheme, another host, an empty id, junk).</summary>
     public static bool TryParse(string? text, out PilotLink link)
@@ -47,7 +47,8 @@ public sealed record PilotLink(string? CardId)
         {
             return false;
         }
-        var escaped = t[(Scheme.Length + 1)..];
+        // Lenient about what a shell may add: a trailing slash (a literal one; an id's own slash arrives escaped as %2F, so it is kept).
+        var escaped = t[(Scheme.Length + 1)..].TrimEnd('/');
         if (escaped.StartsWith("//", StringComparison.Ordinal))
         {
             return false;
