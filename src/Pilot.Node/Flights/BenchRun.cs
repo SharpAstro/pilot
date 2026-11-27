@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Globalization;
 using System.Text;
 using Pilot.Contracts;
@@ -28,6 +29,20 @@ public sealed class BenchRun(NodeState state, NodeOptions options, RepoCatalog r
     private static readonly Lock NameGate = new();
 
     /// <summary>What one ref of a benchmark is: its label in the log and on the card, the ref as given, its commit and its worktree.</summary>
+    /// <summary>One worktree of a bench after its removal: null <see cref="Why"/> when it is gone, else why it is still there.</summary>
+    public sealed record WorktreeRemoval(string Worktree, string? Why);
+
+    // The removals a caller awaits (WorktreesRemoved), by bench job id: completed in PostWhenEndedAsync's finally.
+    private readonly ConcurrentDictionary<string, TaskCompletionSource<IReadOnlyList<WorktreeRemoval>>> _removed = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Completes once the bench job <paramref name="jobId"/> has ended, its result is posted (or failed to be) and each of its worktrees is
+    /// removed, with per worktree null (gone) or why it is still there (held and queued in the node's removal queue, or git's refusal).
+    /// A job this run did not queue gives an already completed empty list.
+    /// </summary>
+    public Task<IReadOnlyList<WorktreeRemoval>> WorktreesRemoved(string jobId) =>
+        _removed.TryGetValue(jobId, out var done) ? done.Task : Task.FromResult<IReadOnlyList<WorktreeRemoval>>([]);
+
     private sealed record Leg(string Label, string Ref, string Sha, string Worktree);
 
     /// <summary>The words of a bench command, parsed.</summary>
@@ -118,6 +133,7 @@ public sealed class BenchRun(NodeState state, NodeOptions options, RepoCatalog r
             Command = spec.Command,
         };
         var (jobId, ended) = jobs.QueueBench(line, legs[0].Worktree, timeout, owner, spec.Local, plan);
+        _removed[jobId] = new TaskCompletionSource<IReadOnlyList<WorktreeRemoval>>(TaskCreationOptions.RunContinuationsAsynchronously);
         _ = PostWhenEndedAsync(repo, legs, spec, jobId, ended, script);
         return state.Complete(command, null, made: jobId);
     }
@@ -173,7 +189,7 @@ public sealed class BenchRun(NodeState state, NodeOptions options, RepoCatalog r
         {
             foreach (var leg in made)
             {
-                await RemoveAsync(repoPath, leg.Worktree);
+                await RemoveAsync(repoPath, leg.Worktree, "the bench was refused");
             }
             throw;
         }
@@ -210,9 +226,16 @@ public sealed class BenchRun(NodeState state, NodeOptions options, RepoCatalog r
         }
         finally
         {
+            // Each is said, never dropped: gone (null), held and queued, or refused; the ones left are named on a card.
+            var results = new List<WorktreeRemoval>();
             foreach (var leg in legs)
             {
-                await RemoveAsync(repo.Path, leg.Worktree);
+                results.Add(new WorktreeRemoval(leg.Worktree, await RemoveAsync(repo.Path, leg.Worktree, $"bench job {jobId}")));
+            }
+            if (results.Where(r => r.Why is not null).ToList() is { Count: > 0 } left)
+            {
+                state.RaiseCard(CardBin.Handled, CardKind, Verbs.RepoTarget(repo.Path), $"The {repo.Name} benchmark left {left.Count} worktree{(left.Count == 1 ? "" : "s")} behind",
+                    $"Job {jobId}: " + string.Join("\n", left.Select(r => $"{r.Worktree}: {r.Why}")) + "\n\nThe node's removal queue tries again at its next start.");
             }
             // The results a VM's bench copied back: on the card now.
             TryDelete(JobRunner.CloudTmpOf(options.DataFolder, jobId));
@@ -224,18 +247,28 @@ public sealed class BenchRun(NodeState state, NodeOptions options, RepoCatalog r
             {
                 // Left in the node's jobs folder: harmless.
             }
+            if (_removed.TryGetValue(jobId, out var done))
+            {
+                done.TrySetResult(results);
+            }
         }
     }
 
-    private async Task RemoveAsync(string repoPath, string worktree)
+    /// <summary>Removes a bench worktree; null when it is gone, else why it is still there. A held one goes in the node's removal queue.</summary>
+    private async Task<string?> RemoveAsync(string repoPath, string worktree, string owner)
     {
         try
         {
-            await planes.RemoveAsync(repoPath, worktree, CancellationToken.None, force: true);
+            var held = await planes.RemoveAsync(repoPath, worktree, CancellationToken.None, force: true);
+            if (held is not null)
+            {
+                planes.Queue?.Add(worktree, RemovalQueue.BenchKind, owner, held);
+            }
+            return held;
         }
         catch (Exception ex) when (ex is FlightException or IOException or UnauthorizedAccessException)
         {
-            // Said in the node's log by nobody: the folder is under .claude/worktrees, and the next start's sweep or a person takes it.
+            return ex.Message;
         }
     }
 

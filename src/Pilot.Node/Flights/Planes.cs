@@ -252,6 +252,18 @@ public sealed class Planes(IGit git, RemovalQueue? queue = null)
     /// <summary>The folders waiting for a start to remove them; null where a test or a host keeps none.</summary>
     public RemovalQueue? Queue => queue;
 
+    /// <summary>How the removal of a held worktree waits between its tries: a timer (<see cref="Task.Delay(TimeSpan, CancellationToken)"/>); a test swaps in one that returns at once.</summary>
+    internal Func<TimeSpan, CancellationToken, Task> Backoff { get; init; } = Task.Delay;
+
+    // What git says on Windows for a worktree a just-ended process (a job shell, git, Defender, a build server) still holds: a
+    // file open without sharing ("failed to delete ... Invalid argument"), a folder it sits in ("Directory not empty") or a
+    // refused delete ("Permission denied"). Each lets go within seconds, so each is tried again before it is given up as held.
+    private static bool IsHeld(string why) =>
+        why.Contains("Permission denied", StringComparison.OrdinalIgnoreCase)
+        || why.Contains("failed to delete", StringComparison.OrdinalIgnoreCase)
+        || why.Contains("Invalid argument", StringComparison.OrdinalIgnoreCase)
+        || why.Contains("Directory not empty", StringComparison.OrdinalIgnoreCase);
+
     /// <summary>The git the planes run on, which a landed flight's branch is judged and deleted through (<see cref="LandedBranches"/>).</summary>
     public IGit Git => git;
 
@@ -903,20 +915,19 @@ public sealed class Planes(IGit git, RemovalQueue? queue = null)
                 }
                 return null;
             }
-            // A worker stopped a moment ago can still hold a file open on Windows: give it a few seconds.
-            var held = remove.Why.Contains("Permission denied", StringComparison.OrdinalIgnoreCase);
+            // A worker or a job stopped a moment ago can still hold a file open on Windows: give it a few seconds.
+            var held = IsHeld(remove.Why);
             if (++tries >= 5 || !held)
             {
                 var message = $"git could not remove {worktree}: {remove.Why}";
-                // Still held after the wait (git says "Permission denied" or, for a file held without sharing, "failed to
-                // delete ... Invalid argument"): with a queue it is the queue's to remove at the next start.
-                if (queue is not null && (held || remove.Why.Contains("failed to delete", StringComparison.OrdinalIgnoreCase)))
+                // Still held after the wait: with a queue it is the queue's to remove at the next start.
+                if (queue is not null && held)
                 {
                     return message;
                 }
                 throw new FlightException(message);
             }
-            await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken);
+            await Backoff(TimeSpan.FromSeconds(1), cancellationToken);
         }
         // git removed the worktree but, on Windows, leaves its folder when a process still sits in it (a session's
         // working folder): empty and unregistered, it would stay for good (pil173, pil187, SE1 2026-10-25).
