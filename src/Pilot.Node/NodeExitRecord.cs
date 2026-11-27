@@ -14,13 +14,20 @@ internal sealed record NodeRunRecord(int? Pid, DateTimeOffset? StartedAt, string
     DateTimeOffset? EndedAt, string? ExitReason);
 
 /// <summary>What <see cref="NodeExitRecord.Begin"/> found: the previous node left no exit reason.</summary>
-internal sealed record UncleanEnd(NodeRunRecord Previous, string? LastLine, DateTimeOffset DownSince, int Minutes)
+internal sealed record UncleanEnd(NodeRunRecord Previous, string? LastLine, DateTimeOffset DownSince, int Minutes, int? WatchdogSeconds = null)
 {
-    public string Title => $"The node was down {Minutes} min";
+    /// <summary>The gap a person cares about: the watchdog's own measure from the death to the restart when it restarted the node, else the time since the last log line.</summary>
+    public string Gap => WatchdogSeconds is { } s ? (s < 120 ? $"{s} s" : $"{(int)Math.Round(s / 60.0)} min") : $"{Minutes} min";
+
+    public string Title => $"The node was down {Gap}";
+
+    /// <summary>The previous record's reason when it is a console close or a logoff, which says why and still rings; null for no reason or a plain one.</summary>
+    public string? Signalled => Previous.ExitReason is { } r && NodeExitRecord.RingsOnNextStart(r) ? r : null;
 
     public string Said =>
         $"the previous node (pid {Previous.Pid?.ToString(CultureInfo.InvariantCulture) ?? "?"}, version {Previous.Version ?? "?"}, started at {Previous.StartedAt?.ToString("O", CultureInfo.InvariantCulture) ?? "?"}) " +
-        $"ended with nothing said; its last log line at {DownSince.ToString("O", CultureInfo.InvariantCulture)} was {(LastLine is { Length: > 0 } ? $"\"{LastLine}\"" : "none")}; down {Minutes} min";
+        (Signalled is { } why ? $"was ended by {why}" : "ended with nothing said") +
+        $"; its last log line at {DownSince.ToString("O", CultureInfo.InvariantCulture)} ({Minutes} min before this start) was {(LastLine is { Length: > 0 } ? $"\"{LastLine}\"" : "none")}; down {Gap}";
 }
 
 /// <summary>What the process knows about itself at start, so a test can say it without a real process.</summary>
@@ -34,8 +41,13 @@ internal sealed class NodeExitRecord(string dataFolder, TimeProvider time)
 {
     public const string FileName = "node-run.json";
 
-    /// <summary>The record of the node this process is; null before <see cref="Begin"/>. A restart, an update swap or a rollback ends it through this.</summary>
-    public static NodeExitRecord? Current { get; private set; }
+    /// <summary>
+    /// A reason that is no person's stop: the console window closing (SIGHUP, CTRL_CLOSE) or a logoff or shutdown. Only CTRL_C is a person's stop; the others still
+    /// ring the "down" card at the next start, since a closed console is the open lead for the SE1 exits.
+    /// </summary>
+    internal static bool RingsOnNextStart(string reason) =>
+        reason.StartsWith("signal ", StringComparison.Ordinal)
+        && (reason.Contains("CTRL_CLOSE", StringComparison.Ordinal) || reason.Contains("CTRL_LOGOFF", StringComparison.Ordinal) || reason.Contains("SIGHUP", StringComparison.Ordinal));
 
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, NodeExitRecord> ByFolder = new(StringComparer.OrdinalIgnoreCase);
 
@@ -70,7 +82,7 @@ internal sealed class NodeExitRecord(string dataFolder, TimeProvider time)
                 [new CardChoice { Label = "I have seen it", Verb = Verbs.Dismiss, Target = "" }],
                 cause: $"node-restart-loop:{_own?.Pid}:{_own?.StartedAt:O}");
         }
-        if (_own is { Job: { } job } && job.Contains("kills", StringComparison.Ordinal))
+        if (_own is { Job: { } job } && job == NodeEnds.KillOnCloseText)
         {
             say($"pilot-node: this node runs {job}; parent {_own.Parent ?? "unknown"}");
             state?.RaiseCard(CardBin.ForYou, NodeLifecycleLog.JobKind, Verbs.NodeTarget, "The node runs inside a job that ends it when the job closes",
@@ -111,21 +123,21 @@ internal sealed class NodeExitRecord(string dataFolder, TimeProvider time)
     {
         lock (_gate)
         {
+            try { Directory.CreateDirectory(dataFolder); } catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
             var previous = Read();
             Unclean = null;
-            if (previous is { ExitReason: null, EndedAt: null })
+            // Read once and cleared, so a successor this node starts (a restart, an update) does not inherit the watchdog's word about how this one began.
+            _watchdogSaid = WatchdogValue();
+            if (previous is { ExitReason: null, EndedAt: null } || previous is { ExitReason: { } reason } && RingsOnNextStart(reason))
             {
                 var (line, at) = LastLineBefore(logPath, facts.StartedAt);
                 var since = at ?? previous.StartedAt ?? facts.StartedAt;
                 var minutes = (int)Math.Max(0, Math.Round((time.GetUtcNow() - since).TotalMinutes));
-                Unclean = new UncleanEnd(previous, line, since, minutes);
+                Unclean = new UncleanEnd(previous, line, since, minutes, NodeWatchdog.Decode(_watchdogSaid)?.SecondsDown);
             }
             _own = facts.ToRecord();
-            // Read once and cleared, so a successor this node starts (a restart, an update) does not inherit the watchdog's word about how this one began.
-            _watchdogSaid = WatchdogValue();
             Environment.SetEnvironmentVariable(NodeWatchdog.Variable, null);
             Write(_own);
-            Current = this;
             return Unclean;
         }
     }
@@ -135,6 +147,7 @@ internal sealed class NodeExitRecord(string dataFolder, TimeProvider time)
     {
         lock (_gate)
         {
+            // Only a record that was begun is ended; Planned never creates the data folder (only Begin does).
             if (_own is null || _own.ExitReason is not null)
             {
                 return;
@@ -180,7 +193,6 @@ internal sealed class NodeExitRecord(string dataFolder, TimeProvider time)
     {
         try
         {
-            Directory.CreateDirectory(dataFolder);
             using var stream = new MemoryStream();
             using (var json = new Utf8JsonWriter(stream, new JsonWriterOptions { Indented = true }))
             {

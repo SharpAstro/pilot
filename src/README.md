@@ -111,10 +111,17 @@ curl --unix-socket <path> http://localhost/api/v1/node
   says an unhandled or unobserved exception, a console control event or signal (CTRL_C, CTRL_BREAK, CTRL_CLOSE, LOGOFF or
   SHUTDOWN on Windows) and the process exit code, each flushed before its handler returns, and at start the parent process
   and the job object. A start that finds a record with no reason logs the previous pid, its last log line and the gap and
-  rings one "The node was down N min" card; a clean end rings none. A node in a kill-on-close job rings a card naming its
+  rings one "The node was down N min" card (when the watchdog restarted the node, the title carries the watchdog's own measure from the
+  death to the restart, and the card says how long before it the last line was logged); a clean end rings none, and so does a
+  person's CTRL_C, while a console close (CTRL_CLOSE, SIGHUP) or a logoff reads as ended from outside and still rings.
+  A refused second start (already running) writes no reason to the record, since it never took the lock and the record is the
+  live holder's; its reason is the line in `node-start.log` (and `node.log`). A node in a kill-on-close job rings a card naming its
   parent, since that job's owner ending takes it down. The silent exits on SE1 on 2026-11-27 left no line before the gap in
   `node.log` (a start at 00:31 follows the 19:05 start with no stop line between them either), and the logs hold no update
-  swap, stray kill or exception at those times, so the cause is not proven from them. Ruled out: an update swap and a plain
+  swap, stray kill or exception at those times, so the cause is not proven from them. Evidence that narrows it: `logs/node.1.log` has, at 00:29:13, `watchtower: the stream session 34529b06 exited (-1073741510)`,
+  that is `0xC000013A` (STATUS_CONTROL_C_EXIT), a console control event, 2 minutes before the node's last line and the 00:31:07 start; and for the
+  16:40 to 16:46 exit the Windows Application log (16:38 to 16:48) holds no Application Error or .NET Runtime event for pilot-node, so it was an
+  end from outside, not a crash. That rules a crash out and points at the console or job lead. Ruled out: an update swap and a plain
   stop (both log). Open: a kill-on-close job or a closed console, which the next silent exit names through the record, the
   signal lines and the start-up job check.
 - **The watchdog (#1377):** on Windows the logon Run entry is `conhost --headless pilot-node watchdog -- <node options>`, so a node

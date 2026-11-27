@@ -301,6 +301,25 @@ public sealed class AutostartTests
     }
 
     [Fact]
+    public async Task ASetupCheckFlagsAnOlderRunEntryWithoutTheWatchdogAndTheRewriteKeepsItsNodePathAndOptions()
+    {
+        var runs = new FakeRuns();
+        var older = $"\"{Path.Combine(Environment.SystemDirectory, "conhost.exe")}\" --headless \"C:\\old\\pilot-node.exe\" --data \"D:\\pilot data\" --lan";
+        runs.Write(Autostart.Name, older);
+        var setup = OnFakeRuns(runs);
+
+        var check = setup.Checks().Single(c => c.Key == NodeSetup.AutostartKey);
+        check.Ok.ShouldBeFalse();
+        check.Fix.ShouldBe("Rewrite");
+
+        (await setup.FixAsync(NodeSetup.AutostartKey, Ct)).ShouldBeNull();
+
+        runs.Values[Autostart.Name].ShouldBe(Autostart.WindowsCommand(@"C:\old\pilot-node.exe", ["--data", @"D:\pilot data", "--lan"]));
+        runs.Values[Autostart.Name].ShouldContain(Autostart.WatchdogArgument);
+        setup.Checks().Single(c => c.Key == NodeSetup.AutostartKey).Ok.ShouldBeTrue();
+    }
+
+    [Fact]
     public async Task RewritingTheNodesEntryDoesNotTurnTheCatBackOn()
     {
         var runs = new FakeRuns();

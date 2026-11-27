@@ -177,6 +177,12 @@ internal sealed class NodeWatchdog(IWatchdogHost host, TimeProvider time)
                 return null;
             }
         }
+        // A node a person started during the wait answers by now: follow it rather than start a second, which would exit with AlreadyRunning and end the watchdog.
+        if (await host.AnsweringPidAsync(cancellationToken) is { } already)
+        {
+            host.Say($"watchdog: a node answers as pid {already}; following it");
+            return already;
+        }
         var down = downSince is { } since ? (int)Math.Max(0, (time.GetUtcNow() - since).TotalSeconds) : 0;
         var pid = host.StartNode(new WatchdogStart(down, lastExit, _deaths.Count));
         if (pid is null)

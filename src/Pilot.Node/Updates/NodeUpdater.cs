@@ -49,8 +49,8 @@ public sealed class NodeUpdater(NodeState state, NodeOptions options, IReleaseFe
 
     public string Version { get; init; } = CurrentVersion;
 
-    /// <summary>The run record the update swap gives its reason to; null reads the node's own (<see cref="NodeExitRecord.Current"/>).</summary>
-    internal NodeExitRecord? Exit { get; init; }
+    /// <summary>The run record the update swap gives its reason to; null gives the swap no record (the node registers its own).</summary>
+    internal NodeExitRecord? Exit { get; set; }
 
     /// <summary>Starts the installed node to take over from this one; false if it did not start. A test replaces it.</summary>
     public Func<string, bool> StartSuccessor { get; init; } = NodeRestarter.Start;
@@ -230,7 +230,7 @@ public sealed class NodeUpdater(NodeState state, NodeOptions options, IReleaseFe
             state.CloseCardsAbout(Verbs.NodeTarget, $"pilot {release.Version} installed", Kind);
             state.RaiseCard(CardBin.Handled, Kind, Verbs.NodeTarget, line, null, null, release.Url);
             logger.LogInformation("update: {Line}", line);
-            (Exit ?? NodeExitRecord.Current)?.Planned($"update swap: {line}");
+            Exit?.Planned($"update swap: {line}");
             lifetime.StopApplication();
             return null;
         }

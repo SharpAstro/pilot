@@ -133,6 +133,39 @@ public sealed class NodeExitRecordTests : IDisposable
     }
 
     [Fact]
+    public void AStartAfterAConsoleCloseRaisesTheCardAndNamesTheSignalButACtrlCRaisesNone()
+    {
+        var first = Record();
+        first.Begin(Facts(pid: 100), null);
+        first.Planned("signal CTRL_CLOSE, the console window closing (SIGHUP)");
+        _clock.Now = T0.AddMinutes(3);
+        var second = Record();
+        var state = new NodeState(new InMemoryJournal(), _clock);
+
+        second.Begin(Facts(pid: 200), null).ShouldNotBeNull().Signalled.ShouldNotBeNull().ShouldContain("CTRL_CLOSE");
+        second.RaiseCards(state, _ => { });
+        state.Cards(openOnly: true).ShouldHaveSingleItem().Detail.ShouldNotBeNull().ShouldContain("was ended by signal CTRL_CLOSE");
+
+        var third = Record();
+        third.Begin(Facts(pid: 300), null);
+        third.Planned("signal CTRL_C (SIGINT)");
+        Record().Begin(Facts(pid: 400), null).ShouldBeNull();
+    }
+
+    [Fact]
+    public void AStartTheWatchdogRestartedNamesItsOwnGapNotTheTimeSinceTheLastLine()
+    {
+        Record().Begin(Facts(pid: 100), null);
+        _clock.Now = T0.AddMinutes(125);
+        var second = new NodeExitRecord(_data, _clock) { WatchdogValue = () => "down=30;exit=-1;fast=1" };
+
+        var found = second.Begin(Facts(pid: 200, at: _clock.Now), null).ShouldNotBeNull();
+
+        found.Title.ShouldBe("The node was down 30 s");
+        found.Said.ShouldContain("125 min before this start");
+    }
+
+    [Fact]
     public void AStartAfterACleanExitRaisesNoCard()
     {
         var first = Record();
@@ -182,5 +215,64 @@ public sealed class NodeExitRecordTests : IDisposable
         var read = Record().Read().ShouldNotBeNull();
 
         (read.Pid, read.StartedAt, read.ExitReason).ShouldBe((5, null, null));
+    }
+
+    [Fact]
+    public async Task AHostThatStopsWritesStopAsTheReasonInTheRunRecord()
+    {
+        await using var node = await NodeHarness.StartAsync(TestContext.Current.CancellationToken);
+        var path = Path.Combine(node.Options.DataFolder, NodeExitRecord.FileName);
+        File.Exists(path).ShouldBeTrue();
+
+        await node.App.StopAsync(TestContext.Current.CancellationToken);
+
+        new NodeExitRecord(node.Options.DataFolder, TimeProvider.System).Read().ShouldNotBeNull().ExitReason.ShouldBe("stop");
+    }
+
+    [Fact]
+    public async Task ASecondNodeRefusedAsAlreadyRunningLeavesTheHoldersRecordAsItWasAndKeepsItsRefusalInTheStartLog()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        await using var node = await NodeHarness.StartAsync(ct);
+        var path = Path.Combine(node.Options.DataFolder, NodeExitRecord.FileName);
+        var before = await File.ReadAllBytesAsync(path, ct);
+
+        var exit = await NodeCommandLine.RunAsync(["--node-socket", node.SocketPath, "--data", node.Options.DataFolder], Stream.Null, TextWriter.Null, TextWriter.Null, ct);
+
+        exit.ShouldBe(NodeExitCodes.AlreadyRunning);
+        (await File.ReadAllBytesAsync(path, ct)).ShouldBe(before);
+        File.ReadAllText(Path.Combine(node.Options.DataFolder, NodeProgram.StartLogFile)).ShouldContain("exited, already running");
+    }
+
+    [Fact]
+    public void ARestartBuiltWithNoRecordTouchesNoRecordAndCreatesNoFolder()
+    {
+        var gone = Path.Combine(_data, "never-begun");
+        var restarter = new NodeRestarter(new FakeLifetime(), NullLogger<NodeRestarter>.Instance)
+        {
+            NodePath = "/opt/pilot/pilot-node",
+            RestartedBySystemd = _ => false,
+            StartSuccessor = _ => true,
+        };
+        var other = new NodeExitRecord(gone, _clock);
+        other.Begin(Facts(), null);
+        Directory.Delete(gone, recursive: true);
+
+        restarter.Restart("a saved setting").ShouldBeNull();
+
+        Directory.Exists(gone).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void PlannedOnARecordWhoseFolderIsGoneDoesNotCreateTheFolderAgain()
+    {
+        var gone = Path.Combine(_data, "gone");
+        var record = new NodeExitRecord(gone, _clock);
+        record.Begin(Facts(), null);
+        Directory.Delete(gone, recursive: true);
+
+        record.Planned("stop");
+
+        Directory.Exists(gone).ShouldBeFalse();
     }
 }

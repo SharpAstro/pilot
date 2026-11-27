@@ -428,10 +428,7 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
         return await toaster.SendTest(cancellationToken).ConfigureAwait(false);
     }
 
-    /// <summary>
-    /// Whether the desktop cat starts at logon: its own Run value (HKCU Run pilot-buddy), read apart from the node's. Optional: the
-    /// node runs without the cat. Windows only; elsewhere it says so. With no pilot-buddy beside the node there is nothing to start.
-    /// </summary>
+    /// <summary>The setup check's key for the crash-dump setting.</summary>
     public const string CrashDumpsKey = "crash-dumps";
 
     /// <summary>Whether Windows Error Reporting's LocalDumps applies here: Windows only. A test replaces it.</summary>
@@ -474,6 +471,10 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
             : new SetupCheck { Key = CrashDumpsKey, Title = Title, Ok = false, Optional = true, Line = $"a pilot-node crash leaves no dump; run once as an administrator: {CrashDumpCommand()}" };
     }
 
+    /// <summary>
+    /// Whether the desktop cat starts at logon: its own Run value (HKCU Run pilot-buddy), read apart from the node's. Optional: the
+    /// node runs without the cat. Windows only; elsewhere it says so. With no pilot-buddy beside the node there is nothing to start.
+    /// </summary>
     public SetupCheck BuddyAutostartCheck()
     {
         const string Title = "Desktop cat starts at logon";

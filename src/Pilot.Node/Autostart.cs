@@ -521,12 +521,7 @@ public static class Autostart
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
             };
-            foreach (var arg in nodeArgs)
-            {
-                start.ArgumentList.Add(arg);
-            }
             // The watchdog starts the node (and starts it again), as the Run entry does at logon.
-            start.ArgumentList.Clear();
             foreach (var arg in new[] { WatchdogArgument, "--" }.Concat(nodeArgs))
             {
                 start.ArgumentList.Add(arg);

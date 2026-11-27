@@ -194,6 +194,9 @@ internal static class NodeEnds
     private const int JobObjectExtendedLimitInformation = 9;
     private const uint KillOnJobClose = 0x2000;
 
+    /// <summary>The wording of a kill-on-close job; <see cref="NodeExitRecord"/> compares the record's job text with it instead of matching prose.</summary>
+    internal const string KillOnCloseText = "in a job object that kills its processes when the job closes";
+
     /// <summary>The job object this process sits in and whether it kills on close; null when it is in none or this is not Windows.</summary>
     internal static (string Text, bool KillOnClose)? JobDescription()
     {
@@ -215,7 +218,7 @@ internal static class NodeEnds
                 return ("in a job object (its limits could not be read)", false);
             }
             var kill = (BitConverter.ToUInt32(buffer, 16) & KillOnJobClose) != 0;
-            return (kill ? "in a job object that kills its processes when the job closes" : "in a job object that does not kill on close", kill);
+            return (kill ? KillOnCloseText : "in a job object that does not kill on close", kill);
         }
         catch (Exception e) when (e is DllNotFoundException or EntryPointNotFoundException or InvalidOperationException or System.ComponentModel.Win32Exception)
         {

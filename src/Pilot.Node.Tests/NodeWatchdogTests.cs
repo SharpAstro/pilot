@@ -204,6 +204,25 @@ public sealed class NodeWatchdogTests
     }
 
     [Fact]
+    public async Task ANodeAPersonStartedDuringTheBackoffIsFollowedAndNoSecondIsStarted()
+    {
+        var host = Host();
+        // Nobody answers until the back-off has been waited; then a node does (pid 77), and it later exits for good.
+        host.Answering = () => _time.Delays.Contains(NodeWatchdog.Backoff) ? 77 : null;
+        for (var i = 0; i < 3; i++)
+        {
+            host.Exits.Enqueue(new WatchdogExit(1));
+        }
+        host.Exits.Enqueue(new WatchdogExit(NodeExitCodes.AlreadyRunning));
+
+        await Run(host);
+
+        host.Starts.Count.ShouldBe(3, "the fourth start never happens: pid 77 answered after the back-off");
+        host.Waited.ShouldContain(77);
+        host.Said.ShouldContain(l => l.Contains("a node answers as pid 77"));
+    }
+
+    [Fact]
     public async Task RepeatedFastDeathsWaitTheBackoffBeforeTheStartAndTellTheNode()
     {
         var host = Host();
@@ -415,16 +434,14 @@ public sealed class NodeWatchdogTests
     {
         var data = Directory.CreateTempSubdirectory("p2x-wd-").FullName;
         var started = new System.Collections.Concurrent.ConcurrentQueue<int>();
+        var firstStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var second = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(90));
-        var host = new StandInHost("pwsh", ["-NoProfile", "-NonInteractive", "-Command", "Start-Sleep -Seconds 300"], data, started, second);
+        var host = new StandInHost("pwsh", ["-NoProfile", "-NonInteractive", "-Command", "Start-Sleep -Seconds 300"], data, started, firstStarted, second);
         try
         {
             var watchdog = new NodeWatchdog(host, TimeProvider.System).RunAsync(cts.Token);
-            while (started.IsEmpty)
-            {
-                await Task.Delay(100, cts.Token);
-            }
+            await firstStarted.Task.WaitAsync(TimeSpan.FromSeconds(30), cts.Token); // budget: a pwsh stand-in starts in about a second
             var clock = Stopwatch.StartNew();
             using (var first = Process.GetProcessById(started.First()))
             {
@@ -441,6 +458,8 @@ public sealed class NodeWatchdogTests
         }
         finally
         {
+            // The host set it in this process's environment for the node it starts; nothing else in the test host may inherit it.
+            Environment.SetEnvironmentVariable(NodeWatchdog.Variable, null);
             foreach (var pid in started)
             {
                 try
@@ -457,7 +476,7 @@ public sealed class NodeWatchdogTests
         }
     }
 
-    private sealed class StandInHost(string path, IReadOnlyList<string> args, string data, System.Collections.Concurrent.ConcurrentQueue<int> started, TaskCompletionSource second)
+    private sealed class StandInHost(string path, IReadOnlyList<string> args, string data, System.Collections.Concurrent.ConcurrentQueue<int> started, TaskCompletionSource firstStarted, TaskCompletionSource second)
         : RealWatchdogHost(path, args, Path.Combine(data, "none.sock"), data, () => true)
     {
         // No node socket in the stand-in's world: nothing ever answers, so the grace runs out and the node is started again.
@@ -469,6 +488,10 @@ public sealed class NodeWatchdogTests
             if (pid is { } p)
             {
                 started.Enqueue(p);
+                if (started.Count == 1)
+                {
+                    firstStarted.TrySetResult();
+                }
                 if (started.Count == 2)
                 {
                     second.TrySetResult();
