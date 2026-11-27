@@ -8,9 +8,9 @@ namespace Pilot.Node.Toasts;
 public static class ToastServices
 {
     /// <summary>
-    /// In process through the WinRT toast API on Windows (#1376), nowhere else. The runner (<see cref="IToastRunner"/>) and the registry of the scheme
-    /// (<see cref="ISchemeRegistry"/>) are services, added only when none is registered yet, so a test node registers a recording runner and a
-    /// fake registry first and never calls WinRT or writes HKCU. The scheme and pilot's AUMID are per user (HKCU) and written only when the GUI sits beside
+    /// Through AppShell's DesktopNotification on Windows (#1384), nowhere else. The runner (<see cref="IToastRunner"/>), the identity (<see cref="IToastIdentity"/>)
+    /// and the registry of the scheme (<see cref="ISchemeRegistry"/>) are services, added only when none is registered yet, so a test node registers a
+    /// recording runner and fakes first and never shows a toast or writes HKCU. The scheme is per user (HKCU) and written only when the GUI sits beside
     /// this node.
     /// </summary>
     public static void AddToasts(this IServiceCollection services)
@@ -19,13 +19,14 @@ public static class ToastServices
         {
             return;
         }
-        services.TryAddSingleton<IToastRunner>(new WinRtToastRunner());
+        services.TryAddSingleton<IToastRunner>(new AppShellToastRunner());
         services.TryAddSingleton<ToastHealth>();
         // Made here, inside the Windows guard (a lambda does not carry the guard to the analyzer).
         services.TryAddSingleton<ISchemeRegistry>(new UserSchemeRegistry());
         // Registered before the Toaster starts: a toast under an AUMID not yet registered is dropped by the shell with no error.
-        services.AddHostedService(sp => new AumidRegistrar(sp.GetRequiredService<ISchemeRegistry>(),
-            Environment.ProcessPath ?? "pilot-node", File.Exists, sp.GetRequiredService<ILoggerFactory>().CreateLogger<AumidRegistrar>()));
+        services.TryAddSingleton<IToastIdentity>(new AppShellToastIdentity());
+        services.AddHostedService(sp => new ToastIdentityRegistrar(sp.GetRequiredService<IToastIdentity>(),
+            Environment.ProcessPath ?? "pilot-node", File.Exists, sp.GetRequiredService<ILoggerFactory>().CreateLogger<ToastIdentityRegistrar>()));
         services.AddSingleton(sp => new Toaster(
             sp.GetRequiredService<NodeState>(), sp.GetRequiredService<IToastRunner>(), sp.GetRequiredService<TimeProvider>(),
             () => sp.GetRequiredService<RoleModels>().Toasts, () => sp.GetRequiredService<PageViews>().AnyShowsCards,

@@ -2074,22 +2074,23 @@ older client draws the button as it did and is refused with the reason.
 
 ### Desktop toasts (#1356)
 
-On Windows the node shows a toast for every open Ring card (`Toasts/Toaster.cs`), in process through the WinRT toast API (`WinRtToastRunner`, raw
-ABI by vtable function pointers, under pilot's own AUMID `SharpAstro.Pilot` registered per user at start; #1376). The tag is the card's subject, so a card raised again replaces its toast, and the toast is withdrawn when
-the card closes or leaves the Ring; a card moved into the Ring by the ring judge or the investigator toasts then, not when first filed. A
-click opens `pilot://card/<id>`. `ToastTier.Of(kind)` (in Pilot.Contracts, shared with pilot-buddy) is the one table of tiers: **urgent** (burning the machine or money, work about to be
-lost, pilot unable to watch itself) stays on screen until dismissed (`scenario="urgent"`), everything else is **normal**. More than 3 normal
+On Windows the node shows a toast for every open Ring card (`Toasts/Toaster.cs`), through AppShell's `DesktopNotification` (SharpAstro.AppShell 1.7;
+#1384), under the AppUserModelId `SharpAstro.Pilot` that `AppIdentity.Register` writes per user at start (named `pilot`, with the GUI's
+`Resources/pilot-256.png` as icon when it sits beside the node; a failed registration is logged, never fatal). Pilot keeps only what is its own: which card
+toasts at what tier, the words (`ToastText`), the `pilot:` scheme registration and the one toasts-broken card. `IToastRunner` takes a `ToastRequest` (tag, title,
+body, tier, payload) and returns null or the failure as `<Status>: <Reason>` of AppShell's result. The tag is the card's subject, so a card raised again replaces its toast, and the toast is withdrawn when
+the card closes or leaves the Ring; AppShell maps a tag over 64 characters to `s:` and 40 hex characters of its SHA-256, for show and withdraw alike. A card moved into the Ring by the ring judge or the investigator toasts then, not when first filed. A
+click opens `pilot:card%2F<id>` (AppShell's `LaunchScheme.Link`, the payload from `ToastLink` in Pilot.Contracts); the GUI still reads `pilot://card/<id>` too. `ToastTier.Of(kind)` (in Pilot.Contracts, shared with pilot-buddy) is the one table of tiers: **urgent** (burning the machine or money, work about to be
+lost, pilot unable to watch itself) stays on screen until dismissed (`ToastUrgency.Urgent`), everything else is **normal**; a normal toast has no Dismiss button (AppShell gives only reminder and urgent toasts the system's). More than 3 normal
 toasts within a minute become one "N cards need you" toast (tag `pilot-burst`, replaced as more come); urgent ones always show singly. Normal
 toasts are skipped while any client shows the cards (the GUI or TUI says it with its page, as `ClientPage.ShowsCards`, while its For you bar or
 the Notifications page is open; urgent ones toast anyway), and cards already open when the node starts are not toasted again. The `toasts`
 setting is `all` (the default, also when the stored member is null), `urgent` or `off`, in force at once. The Toaster waits on a signal from
 the state's event stream and never loops on the CPU; its tests run on a fake runner and clock. A card that was toasted and is muted when raised
-again (the setting, a client showing the cards) keeps its old toast as it was. The tag is the subject when it fits Windows' 64 characters, else
-`s:` and 40 hex characters of its SHA-256 (`ToastXml.TagOf`, the one function for show and withdraw). A toast up from before a node restart is
-withdrawn when its card closes. Card text is never written into the PowerShell script: the tag and the XML go as base64 and are decoded inside
-it (the four curly single quotes are quotes to PowerShell); a script that exits non-zero is logged with its first error line. `IToastRunner` and
-`ISchemeRegistry` are services, and the test harness registers a recording runner and an in-memory registry, so a test node never starts
-PowerShell or writes HKCU. A click on a toast whose card is closed or unknown says so in the window, as a fading notice.
+again (the setting, a client showing the cards) keeps its old toast as it was. A toast up from before a node restart is
+withdrawn when its card closes. A failed call records AppShell's reason in `ToastHealth` and raises the one toasts-broken card with it. `IToastRunner`, `IToastIdentity` and
+`ISchemeRegistry` are services, and the test harness registers a recording runner, a recording identity and an in-memory registry, so a test node never shows a toast
+or writes HKCU. `NoOwnToastCodeTests` keeps WinRT toast code, PowerShell and a `-windows` target out of the node. A click on a toast whose card is closed or unknown says so in the window, as a fading notice.
 
 ## Hooks
 
