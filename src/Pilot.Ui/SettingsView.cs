@@ -160,7 +160,9 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
     internal Layout.Node Tree(DateTimeOffset now, float? width = null)
     {
         Palette.Use(Night);
-        _drawnAt = now;
+        // The wall clock, not `now`: _drawnAt only feeds the poll loop's liveness check against DateTimeOffset.UtcNow,
+        // so an injected (pinned) clock in the past must not make the page look unseen and stop reading.
+        _drawnAt = DateTimeOffset.UtcNow;
         _measured = null;
         // A host with no render of its own (pilot-tui) hands the room's width in design units, as PullRequests.Tree takes it.
         PageWidth = width ?? PageWidth;
@@ -224,6 +226,8 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
     {
         try
         {
+            // Wall clock on purpose: this is liveness of the poll loop (when was the page last drawn),
+            // not a time the page shows, so the chrome's injected clock does not apply.
             while (!reading.IsCancellationRequested && DateTimeOffset.UtcNow - _drawnAt < Unseen)
             {
                 await step(reading.Token).ConfigureAwait(false);

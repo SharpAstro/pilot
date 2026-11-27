@@ -153,7 +153,7 @@ public static class TerminalWireframeSweepTests
                         loaded.TrySetResult();
                     }
                 };
-                // The read goes on only while the page is drawn "now" (SettingsView.Unseen), so this first draw is at the real time.
+                // SettingsView.Tree stamps the read's liveness (Unseen) on the wall clock whatever `now` is passed, so a pinned `now` would not stop the read; this first draw at the real time is only a habit.
                 chrome.Settings.Tree(DateTimeOffset.UtcNow, width);
                 await loaded.Task.WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
                 tree = chrome.Settings.Tree(PageData.Now, width);
