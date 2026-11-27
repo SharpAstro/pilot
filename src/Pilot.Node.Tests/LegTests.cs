@@ -1546,8 +1546,15 @@ internal sealed class FakeGitHub : IGitHub
     /// <summary>When set, CommentIssueAsync fails with it, as a GitHub that refused the comment.</summary>
     public string? CommentFails { get; set; }
 
+    /// <summary>When set, CommentIssueAsync throws it (an exception the caller does not expect, as a GitHub client that broke).</summary>
+    public Exception? CommentThrows { get; set; }
+
     public Task CommentIssueAsync(string repoPath, int number, string body, CancellationToken cancellationToken)
     {
+        if (CommentThrows is { } broke)
+        {
+            return Task.FromException(broke);
+        }
         if (CommentFails is { } why)
         {
             return Task.FromException(new FlightException(why));
