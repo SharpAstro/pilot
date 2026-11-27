@@ -137,7 +137,13 @@ public static class NodeCommandLine
                 return NodeExitCodes.InvalidArguments;
             }
             var socketGiven = given.SkipWhile(a => a != "--node-socket").Skip(1).FirstOrDefault() ?? parseResult.GetValue(socket);
-            return await Autostart.InstallAsync(nodePath, given, NodeSocket.Resolve(socketGiven), output, error, ct);
+            var existed = Autostart.Entry() is not null;
+            var exit = await Autostart.InstallAsync(nodePath, given, NodeSocket.Resolve(socketGiven), output, error, ct);
+            if (exit == 0)
+            {
+                await Autostart.InstallFreshBuddyAsync(existed, nodePath, Autostart.Registry, output);
+            }
+            return exit;
         });
         var removeAutostart = new Command("remove", "Stop starting this node at logon; the node running now runs on");
         removeAutostart.SetAction((_, ct) => Autostart.RemoveAsync(output, ct));

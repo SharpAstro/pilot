@@ -29,6 +29,94 @@ public static class Autostart
 
     private const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
 
+    /// <summary>The user's Run values by name: the registry on Windows. A seam, so a test proves the node's and the cat's entries on a fake and writes no registry.</summary>
+    public interface IRunValues
+    {
+        /// <summary>The command of the value <paramref name="name"/>, or null when there is none.</summary>
+        string? Read(string name);
+
+        /// <summary>Sets the value <paramref name="name"/> to <paramref name="command"/>.</summary>
+        void Write(string name, string command);
+
+        /// <summary>Removes the value <paramref name="name"/>; false when there was none.</summary>
+        bool Delete(string name);
+    }
+
+    /// <summary>The real Run key, HKCU. Windows only; elsewhere it reads nothing and writes nothing.</summary>
+    public sealed class RegistryRunValues : IRunValues
+    {
+        public string? Read(string name)
+        {
+            if (!OperatingSystem.IsWindows())
+            {
+                return null;
+            }
+            using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(RunKey);
+            return key?.GetValue(name) as string;
+        }
+
+        public void Write(string name, string command)
+        {
+            if (!OperatingSystem.IsWindows())
+            {
+                return;
+            }
+            using var key = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(RunKey, writable: true);
+            key.SetValue(name, command, Microsoft.Win32.RegistryValueKind.String);
+        }
+
+        public bool Delete(string name)
+        {
+            if (!OperatingSystem.IsWindows())
+            {
+                return false;
+            }
+            using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(RunKey, writable: true);
+            if (key?.GetValue(name) is null)
+            {
+                return false;
+            }
+            key.DeleteValue(name);
+            return true;
+        }
+    }
+
+    /// <summary>The Run values the node's install and remove use; the real registry unless a test swaps it.</summary>
+    public static IRunValues Registry { get; set; } = new RegistryRunValues();
+
+    /// <summary>Makes the cat's Run value for the binary beside <paramref name="nodePath"/>; false (and says why in <paramref name="line"/>) when there is none. Its own entry: the node's is not touched.</summary>
+    public static bool InstallBuddy(string nodePath, IRunValues runs, out string line)
+    {
+        if (BuddyBeside(nodePath) is not { } buddy)
+        {
+            line = "autostart: no pilot-buddy beside the node, so no desktop cat is started at logon";
+            return false;
+        }
+        runs.Write(BuddyName, BuddyCommand(buddy));
+        line = $@"autostart: HKCU\{RunKey}\{BuddyName} = {BuddyCommand(buddy)} (the desktop cat, at logon)";
+        return true;
+    }
+
+    /// <summary>
+    /// A fresh setup (no node entry before this install) starts the cat at logon too, when pilot-buddy sits beside the node: the
+    /// cat is on by default. A node already set up keeps whatever the person chose for the cat, so a rewrite never turns it back on.
+    /// </summary>
+    public static async Task InstallFreshBuddyAsync(bool nodeEntryExisted, string nodePath, IRunValues runs, TextWriter output)
+    {
+        if (nodeEntryExisted || !OperatingSystem.IsWindows())
+        {
+            return;
+        }
+        InstallBuddy(nodePath, runs, out var line);
+        await output.WriteLineAsync(line);
+    }
+
+    /// <summary>Takes the cat's Run value out and leaves the node's; false when there was none.</summary>
+    public static bool RemoveBuddy(IRunValues runs) => runs.Delete(BuddyName);
+
+    /// <summary>The cat's Run command, or null when the cat does not start at logon.</summary>
+    public static string? BuddyEntry(IRunValues runs) => runs.Read(BuddyName);
+
     /// <summary>The desktop cat's binary beside <paramref name="nodePath"/>, or null when there is none (the cat ships with the other binaries, so a node installed alone has no cat).</summary>
     public static string? BuddyBeside(string nodePath)
     {
@@ -191,19 +279,9 @@ public static class Autostart
         if (OperatingSystem.IsWindows())
         {
             var command = WindowsCommand(nodePath, nodeArgs);
-            WriteRun(command);
+            Registry.Write(Name, command);
             where = $@"HKCU\{RunKey}\{Name}";
             await output.WriteLineAsync($"autostart: {where} = {command}");
-            // The desktop cat starts at logon too, when pilot-buddy sits beside the node.
-            if (BuddyBeside(nodePath) is { } buddy)
-            {
-                WriteRun(BuddyCommand(buddy), BuddyName);
-                await output.WriteLineAsync($@"autostart: HKCU\{RunKey}\{BuddyName} = {BuddyCommand(buddy)} (the desktop cat, at logon)");
-            }
-            else
-            {
-                await output.WriteLineAsync("autostart: no pilot-buddy beside the node, so no desktop cat is started at logon");
-            }
         }
         else if (OperatingSystem.IsLinux())
         {
@@ -259,11 +337,7 @@ public static class Autostart
     {
         if (OperatingSystem.IsWindows())
         {
-            await output.WriteLineAsync(DeleteRun(Name) ? $@"autostart: removed HKCU\{RunKey}\{Name}" : "autostart: there was none");
-            if (DeleteRun(BuddyName))
-            {
-                await output.WriteLineAsync($@"autostart: removed HKCU\{RunKey}\{BuddyName}");
-            }
+            await output.WriteLineAsync(Registry.Delete(Name) ? $@"autostart: removed HKCU\{RunKey}\{Name}" : "autostart: there was none");
             return 0;
         }
         if (OperatingSystem.IsLinux())
@@ -285,7 +359,7 @@ public static class Autostart
     }
 
     /// <summary>What starts the node at logon, in a line, or null when nothing does.</summary>
-    public static string? Entry() => OperatingSystem.IsWindows() ? ReadRun()
+    public static string? Entry() => OperatingSystem.IsWindows() ? Registry.Read(Name)
         : OperatingSystem.IsLinux() && File.Exists(UnitPath()) ? $"{UnitPath()}: {File.ReadAllLines(UnitPath()).FirstOrDefault(l => l.StartsWith("ExecStart=", StringComparison.Ordinal))?["ExecStart=".Length..]}"
         : null;
 
@@ -295,32 +369,6 @@ public static class Autostart
         var entry = Entry();
         await output.WriteLineAsync(entry is null ? "autostart: none; pilot-node autostart install -- --lan starts the node at logon" : $"autostart: {entry}");
         return 0;
-    }
-
-    [SupportedOSPlatform("windows")]
-    private static void WriteRun(string command, string? name = null)
-    {
-        using var key = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(RunKey, writable: true);
-        key.SetValue(name ?? Name, command, Microsoft.Win32.RegistryValueKind.String);
-    }
-
-    [SupportedOSPlatform("windows")]
-    private static bool DeleteRun(string name)
-    {
-        using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(RunKey, writable: true);
-        if (key?.GetValue(name) is null)
-        {
-            return false;
-        }
-        key.DeleteValue(name);
-        return true;
-    }
-
-    [SupportedOSPlatform("windows")]
-    private static string? ReadRun()
-    {
-        using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(RunKey);
-        return key?.GetValue(Name) as string;
     }
 
     // Started directly, windowless (CreateNoWindow gives it a hidden console of its own), on standard handles that are

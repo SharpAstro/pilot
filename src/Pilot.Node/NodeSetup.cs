@@ -24,6 +24,9 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
 {
     public const string AutostartKey = "autostart";
     public const string NoAutostartKey = "no-autostart";
+    /// <summary>The desktop cat's start at logon: its own Run value, beside the node's, so the cat can be off while the node still starts.</summary>
+    public const string BuddyAutostartKey = "buddy-autostart";
+    public const string NoBuddyAutostartKey = "no-buddy-autostart";
     public const string HooksKey = "hooks";
     public const string LanKey = "lan";
     public const string FirewallKey = "firewall";
@@ -90,6 +93,15 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
     /// <summary>What starts the node at logon, as <see cref="Autostart.Entry"/> says; a test's seam.</summary>
     public Func<string?> AutostartEntry { get; init; } = Autostart.Entry;
 
+    /// <summary>The Run values the cat's start at logon reads and writes; a test gives a fake, so no registry is touched.</summary>
+    public Autostart.IRunValues BuddyRuns { get; init; } = Autostart.Registry;
+
+    /// <summary>Whether the cat's start at logon applies here: Windows only (a Run value). A test replaces it.</summary>
+    public bool BuddyAutostartApplies { get; init; } = OperatingSystem.IsWindows();
+
+    /// <summary>The cat's binary beside the node, or null when there is none; a test's seam.</summary>
+    public Func<string?>? BuddyBesideNode { get; init; }
+
     /// <summary>The systemd unit's text, null when there is none (always, off Linux); a test's seam.</summary>
     public Func<string?> UnitText { get; init; } = Autostart.UnitText;
 
@@ -114,6 +126,8 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
             : UnitText() is { } unitText && !Autostart.UnitIsCurrent(unitText)
                 ? new SetupCheck { Key = AutostartKey, Title = "Starts at logon", Ok = false, Line = $"the unit is out of date (it differs from the one this node writes, so a restart may take jobs down): {entry}", Fix = "Rewrite" }
                 : new SetupCheck { Key = AutostartKey, Title = "Starts at logon", Ok = true, Line = entry, Fix = null });
+
+        checks.Add(BuddyAutostartCheck());
 
         var hooks = HooksInstalled();
         checks.Add(new SetupCheck
@@ -213,11 +227,29 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
                     (path, args) = own;
                 }
                 var output = new StringWriter();
+                var existed = AutostartEntry() is not null;
                 var exit = await Autostart.InstallAsync(path, args, options.SocketPath, output, output, cancellationToken);
+                if (exit == 0)
+                {
+                    await Autostart.InstallFreshBuddyAsync(existed, nodePath, BuddyRuns, output);
+                }
                 return exit == 0 ? null : output.ToString().Trim();
             }
             case NoAutostartKey:
                 return await Autostart.RemoveAsync(TextWriter.Null, cancellationToken) == 0 ? null : "the logon entry could not be taken out";
+            case BuddyAutostartKey:
+                if (!BuddyAutostartApplies)
+                {
+                    return "the desktop cat starts at logon on Windows only";
+                }
+                return Autostart.InstallBuddy(nodePath, BuddyRuns, out var buddyLine) ? null : buddyLine;
+            case NoBuddyAutostartKey:
+                if (!BuddyAutostartApplies)
+                {
+                    return "the desktop cat starts at logon on Windows only";
+                }
+                Autostart.RemoveBuddy(BuddyRuns);
+                return null;
             case HooksKey:
             {
                 var output = new StringWriter();
@@ -284,7 +316,7 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
                     ? null
                     : $"no window opened: run claude in {options.WatchtowerFolder} and accept its trust prompt";
             default:
-                return $"setup takes {string.Join(", ", new[] { AutostartKey, NoAutostartKey, HooksKey, MergeGuardKey, ClaudePermissionsKey, GuardHooksKey, BuildRspKey, UserSkillsKey, LanKey, FirewallKey, FirewallLeftoversKey, DefenderKey, TrustKey })}, not {key}";
+                return $"setup takes {string.Join(", ", new[] { AutostartKey, NoAutostartKey, BuddyAutostartKey, NoBuddyAutostartKey, HooksKey, MergeGuardKey, ClaudePermissionsKey, GuardHooksKey, BuildRspKey, UserSkillsKey, LanKey, FirewallKey, FirewallLeftoversKey, DefenderKey, TrustKey })}, not {key}";
         }
     }
 
@@ -334,6 +366,28 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
         {
             return new SetupCheck { Key = UserSkillsKey, Title = Title, Ok = false, Optional = true, Line = $"{SkillsFolder}: {ex.Message}" };
         }
+    }
+
+    /// <summary>
+    /// Whether the desktop cat starts at logon: its own Run value (HKCU Run pilot-buddy), read apart from the node's. Optional: the
+    /// node runs without the cat. Windows only; elsewhere it says so. With no pilot-buddy beside the node there is nothing to start.
+    /// </summary>
+    private SetupCheck BuddyAutostartCheck()
+    {
+        const string Title = "Desktop cat starts at logon";
+        if (!BuddyAutostartApplies)
+        {
+            return new SetupCheck { Key = BuddyAutostartKey, Title = Title, Ok = true, Optional = true, Line = "does not apply here: the desktop cat starts at logon on Windows only" };
+        }
+        var entry = Autostart.BuddyEntry(BuddyRuns);
+        if (entry is not null)
+        {
+            return new SetupCheck { Key = BuddyAutostartKey, Title = Title, Ok = true, Optional = true, Line = entry };
+        }
+        var beside = BuddyBesideNode is { } seam ? seam() : Autostart.BuddyBeside(nodePath);
+        return beside is null
+            ? new SetupCheck { Key = BuddyAutostartKey, Title = Title, Ok = false, Optional = true, Line = "no pilot-buddy beside the node, so there is no desktop cat to start at logon" }
+            : new SetupCheck { Key = BuddyAutostartKey, Title = Title, Ok = false, Optional = true, Line = "the desktop cat is not started at logon; the node still is", Fix = "Start at logon" };
     }
 
     private string? HookSocket() => options.SocketPath == NodeSocket.Resolve(null) ? null : options.SocketPath;
