@@ -66,6 +66,35 @@ public sealed class UpdateRollbackTests : IDisposable
         _started.ShouldBe([Path.Combine(_install, Node)]);
     }
 
+    private static NodeRunFacts Facts() => new(4242, DateTimeOffset.UtcNow, "2.0.1", "pid 1 test", "test", null);
+
+    [Fact]
+    public async Task AnUpdateSwapGivesTheRunRecordItsReason()
+    {
+        Install("2.0.1", Binaries("old"));
+        NodeExitRecord.For(_data).Begin(Facts(), null);
+
+        await Updater(UpdatePolicy.Off, Feed("2.0.2", Binaries("new"))).RunAsync(Command(UpdateArgs.Install), Ct);
+
+        NodeExitRecord.For(_data).Read().ShouldNotBeNull().ExitReason.ShouldNotBeNull().ShouldStartWith("update swap: pilot 2.0.1 -> 2.0.2");
+    }
+
+    [Fact]
+    public async Task AGoBackGivesTheRunRecordItsReason()
+    {
+        Install("2.0.1", Binaries("old"));
+        await Updater(UpdatePolicy.Off, Feed("2.0.2", Binaries("new"))).RunAsync(Command(UpdateArgs.Install), Ct);
+        NodeExitRecord.For(_data).Begin(Facts(), null);
+        var failing = Rollback("2.0.2");
+        failing.Begin().ShouldNotBeNull();
+        failing.Begin().ShouldNotBeNull();
+        using var held = Held();
+
+        await NodeProgram.RunHostAsync(Options, held, _said.Add, failing, (_, _) => throw new InvalidOperationException("not built"), Ct);
+
+        NodeExitRecord.For(_data).Read().ShouldNotBeNull().ExitReason.ShouldNotBeNull().ShouldStartWith("update rolled back");
+    }
+
     [Fact]
     public async Task AGoodStartClearsTheRecordAndPreviousStaysForTheNextInstallToReplace()
     {
@@ -505,6 +534,7 @@ public sealed class UpdateRollbackTests : IDisposable
         {
             InstallFolder = _install,
             Version = version,
+            Exit = NodeExitRecord.For(_data),
             RestartedBySystemd = _ => false,
             StartSuccessor = path =>
             {

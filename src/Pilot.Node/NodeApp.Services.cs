@@ -25,7 +25,7 @@ public static partial class NodeApp
         builder.Services.AddSingleton(log);
         builder.Services.AddSingleton(logWriter);
         // First, so its start line leads and its stop line (hosts stop in reverse) closes the log of this run.
-        builder.Services.AddHostedService(_ => new NodeLifecycleLog(options, log));
+        builder.Services.AddHostedService(services => new NodeLifecycleLog(options, log, services));
         // A reboot made ready (#916): maintenance mode, every live session told to save its state, the node collecting the files.
         builder.Services.AddSingleton(services =>
         {

@@ -190,6 +190,8 @@ internal static class CardKindCatalog
         new("poller-caller", "Ring", ["Flights/PollerSweep.cs"], "PollerSweepTests.AFakeCallerAt300AnHourFor3HoursRingsExactlyOneCardNamingIt", "the node's own per-caller request tally shows a process that is none of a job's, a session's or pilot's own over 200 requests an hour for 2 full hours", [nameof(Verbs.EndPoller)]),
         new("poller-ended", "Handled", ["Flights/PollerSweep.cs"], "PollerSweepTests.PressingEndKillsOnlyWhileTheStartStillMatches"),
         new("busy-process", "Ring", ["Flights/StraySweep.cs"], "NodeSessionStrayTests.A_process_that_computes_without_a_break_for_half_an_hour_rings_with_its_kill_command", "the process table shows the process used at least 0.8 of a core in every interval between sweeps for 30 minutes, and it is no running job's", [nameof(Verbs.EndStray)]),
+        new("node-down", "ForYou", ["NodeExitRecord.cs"], "NodeExitRecordTests.AStartThatFindsNoExitReasonRaisesOneCardNamingTheMinutesAndTheLastLine"),
+        new("node-in-job", "ForYou", ["NodeExitRecord.cs"], "NodeExitRecordTests.ANodeInAKillOnCloseJobRaisesOneCardNamingItsParent"),
         new("stray-killed", "Handled", ["Flights/StraySweep.cs"], "StraySweepTests.AProcessOfAnEndedJobTheNodeLaunchedIsKilledThroughTheTableAndNothingElseIs"),
         new("plane-left", "Handled", [Move, FlightCommanderLand], "RemovalQueueTests.ALandedFlightWhosePlaneFolderIsHeldSaysSoOnAHandledLineAndQueuesIt"),
         new("branch-kept", "ForYou|Handled", [FlightCommanderLand, "Flights/LandedBranchSweep.cs"], "LandingBranchTests.ALandedFlightWhoseLocalBranchIsOneCommitPastTheMergedHeadKeepsItAndRaisesOneCardNamingTheCommit"),
