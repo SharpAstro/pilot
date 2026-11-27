@@ -114,7 +114,7 @@ public sealed class JobTestsFailures : JobTestsBase
         await Until(first, j => j.Error is { } e && e.Contains("rerun once as job"));
         var ended = await Ended(RerunOf(first));
 
-        ended.State.ShouldBe(JobState.Failed);
+        ended.State.ShouldBe(exit == 0 ? JobState.Succeeded : JobState.Failed);
         _said.Select(s => s.Args[0]).ToList().ShouldHaveSingleItem().ShouldContain("failed");
         fake.Starts.Count.ShouldBe(2);
         _state.Jobs().Count(j => j.Kind == JobKind.Run).ShouldBe(2);
@@ -162,7 +162,7 @@ public sealed class JobTestsFailures : JobTestsBase
         var ended = _state.Jobs().Single(j => j.Id == id);
         await AdvanceUntil(clock, When(() => _state.Jobs().Single(j => j.Id == id) is { EndedAt: not null, Told: true }, "the job never ended told"), TimeSpan.FromSeconds(1));
         ended = _state.Jobs().Single(j => j.Id == id);
-        ended.State.ShouldBe(JobState.Failed);
+        ended.State.ShouldBe(exit == 0 ? JobState.Succeeded : JobState.Failed);
     }
 
     [Fact]
