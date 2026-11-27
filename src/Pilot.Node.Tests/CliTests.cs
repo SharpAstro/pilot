@@ -541,6 +541,7 @@ public sealed class CliTests : IAsyncLifetime
     {
         await Ok(_root, ["bench", "tianwen", .. args]);
         var jobId = _node.State.Jobs().Single(j => j.Kind == JobKind.Bench && !known.Contains(j.Id)).Id;
+        // budget: the bench's real pwsh and git run on a loaded machine; 90 s is the bound the old job-state poll had, not a raise.
         var removals = await benchRun.WorktreesRemoved(jobId).WaitAsync(TimeSpan.FromSeconds(90), Ct);
         var held = removals.Where(r => r.Why is not null).Select(r => $"{r.Worktree}: {r.Why}").ToArray();
         held.ShouldBeEmpty($"bench {jobId} left worktrees behind: {string.Join("; ", held)}");
