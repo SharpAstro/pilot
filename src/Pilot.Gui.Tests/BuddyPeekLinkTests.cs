@@ -271,14 +271,10 @@ public sealed class BuddyPeekLinkTests
         hovered.Hits.Count.ShouldBe(peek.Hits.Count, "the box covers no hit");
     }
 
-    // With PILOT_TEST_CAPTURE set, writes the peek with a hovered row, bright and dark, outside the plane.
+    // Writes the peek with a hovered row, bright and dark, to the job's artifacts folder or the temp folder (never the plane), like the other buddy captures.
     [Fact]
     public void CapturesThePeekWithAHoveredRowBrightAndDark()
     {
-        if (Environment.GetEnvironmentVariable("PILOT_TEST_CAPTURE") is not { Length: > 0 })
-        {
-            return;
-        }
         Directory.CreateDirectory(OutFolder);
         foreach (var dark in new[] { false, true })
         {
