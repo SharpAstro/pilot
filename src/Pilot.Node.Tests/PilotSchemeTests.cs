@@ -47,6 +47,65 @@ public sealed class PilotSchemeTests
         registry.Writes.ShouldBe(4, "only the command moved");
     }
 
+    // The identity seam: records what the registrar asks for.
+    private sealed class FakeIdentity : IToastIdentity
+    {
+        public (string AppId, string Name, string? Icon)? Last { get; private set; }
+        public string? Register(string appId, string displayName, string? iconPath)
+        {
+            Last = (appId, displayName, iconPath);
+            return null;
+        }
+    }
+
+    [Fact]
+    public async Task TheIdentityCarriesThePngBesideTheNodeOnlyWhenItIsThere()
+    {
+        var icon = ToastIdentityRegistrar.IconPathBeside(Path.Combine("bin", "pilot-node.exe"));
+        icon.ShouldEndWith("pilot-256.png");
+        Path.GetExtension(icon).ShouldBe(".png", "an image, never an executable");
+
+        var without = new FakeIdentity();
+        await new ToastIdentityRegistrar(without, @"C:\bin\pilot-node.exe", _ => false, NullLogger.Instance).StartAsync(TestContext.Current.CancellationToken);
+        without.Last.ShouldBe(("SharpAstro.Pilot", "pilot", null));
+
+        var with = new FakeIdentity();
+        await new ToastIdentityRegistrar(with, @"C:\bin\pilot-node.exe", _ => true, NullLogger.Instance).StartAsync(TestContext.Current.CancellationToken);
+        with.Last!.Value.Icon.ShouldEndWith("pilot-256.png");
+    }
+
+    [Fact]
+    public async Task AFailureToRegisterTheIdentityIsNeverFatal()
+    {
+        var failing = new FailingIdentity();
+        await new ToastIdentityRegistrar(failing, @"C:\bin\pilot-node.exe", _ => false, NullLogger.Instance).StartAsync(TestContext.Current.CancellationToken);
+        failing.Calls.ShouldBe(1, "a refusal is reported, not thrown");
+
+        var throwing = new FailingIdentity { Throw = true };
+        await new ToastIdentityRegistrar(throwing, @"C:\bin\pilot-node.exe", _ => false, NullLogger.Instance).StartAsync(TestContext.Current.CancellationToken);
+        throwing.Calls.ShouldBe(1, "an IO failure is never fatal");
+    }
+
+    private sealed class FailingIdentity : IToastIdentity
+    {
+        public int Calls { get; private set; }
+        public bool Throw { get; init; }
+        public string? Register(string appId, string displayName, string? iconPath)
+        {
+            Calls++;
+            return Throw ? throw new IOException("denied") : "the registry refused the app id key";
+        }
+    }
+
+    [Theory]
+    [InlineData(SharpAstro.AppShell.AppUserModelRegistration.Written, null)]
+    [InlineData(SharpAstro.AppShell.AppUserModelRegistration.Present, null)]
+    [InlineData(SharpAstro.AppShell.AppUserModelRegistration.Packaged, null)]
+    [InlineData(SharpAstro.AppShell.AppUserModelRegistration.None, null)]
+    [InlineData(SharpAstro.AppShell.AppUserModelRegistration.Failed, "the registry refused the app id key")]
+    public void OnlyAFailedRegistrationIsAFailure(SharpAstro.AppShell.AppUserModelRegistration result, string? failure) =>
+        AppShellToastIdentity.Describe(result).ShouldBe(failure);
+
     [Fact]
     public async Task TheRegistrarWritesOnlyWhenTheGuiSitsBesideTheNode()
     {

@@ -148,7 +148,7 @@ public sealed class BuddyGoneAwayTests
         model.AwayProgress.ShouldBeGreaterThan(0f, "a return from mid-leave does not start at the edge");
         BuddyScene.WalkedOff(AwayPhase.Returning, model.AwayProgress).ShouldBe(walkedWhenWoken, 0.02f);
 
-        var (c2, gone) = Gone();
+        var (_, gone) = Gone();
         gone.Hover(true);
         gone.Phase.ShouldBe(AwayPhase.Returning);
         gone.AwayProgress.ShouldBe(0f, 0.001f);
