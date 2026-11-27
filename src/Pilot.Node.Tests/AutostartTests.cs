@@ -257,6 +257,7 @@ public sealed class AutostartTests
             Runs = runs,
             RunKeyApplies = true,
             StartsNodeNow = false,
+            Run = (_, _, _) => (1, ""),
             UnitText = () => null,
             BuddyBesideNode = () => buddy,
         };

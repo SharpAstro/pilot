@@ -789,12 +789,7 @@ public static partial class NodeApp
         builder.Services.AddSingleton<IReleaseFeed>(_ => options.ReleaseFeed is { } feed
             ? new FolderReleaseFeed(feed, NodeUpdater.Layout.Product)
             : new GhReleaseFeed(NodeUpdater.Repo, channel: options.UpdateChannel));
-        builder.Services.AddSingleton(services =>
-        {
-            var updater = ActivatorUtilities.CreateInstance<NodeUpdater>(services);
-            updater.Exit = NodeExitRecord.For(options.DataFolder);
-            return updater;
-        });
+        builder.Services.AddSingleton(sp => { var x = ActivatorUtilities.CreateInstance<NodeUpdater>(sp); x.Exit = NodeExitRecord.For(options.DataFolder); return x; });
         builder.Services.AddHostedService(services => services.GetRequiredService<NodeUpdater>());
     }
 
@@ -802,12 +797,7 @@ public static partial class NodeApp
     private static void AddSettings(WebApplicationBuilder builder, NodeOptions options)
     {
         // The Settings page: a saved setting restarts the node to run with it, and the setup checklist's fixes.
-        builder.Services.AddSingleton(services =>
-        {
-            var restarter = ActivatorUtilities.CreateInstance<NodeRestarter>(services);
-            restarter.Exit = NodeExitRecord.For(options.DataFolder);
-            return restarter;
-        });
+        builder.Services.AddSingleton(sp => { var x = ActivatorUtilities.CreateInstance<NodeRestarter>(sp); x.Exit = NodeExitRecord.For(options.DataFolder); return x; });
         builder.Services.AddSingleton(services => new NodeSetup(options, Environment.ProcessPath ?? "pilot-node",
             services.GetRequiredService<SessionTrackerOptions>().Profile.Root)
         {
