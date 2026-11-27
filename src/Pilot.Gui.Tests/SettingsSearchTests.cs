@@ -194,7 +194,7 @@ public sealed class SettingsSearchTests
         using var renderer = new RgbaImageRenderer(755, 500);
         var chrome = await LoadedAsync(renderer, 755, 500, many);
         chrome.Render(new SessionsScreen([], "test", Live.At), new RectF32(0, 0, 755, 500));
-        chrome.Settings.HandleInput(new InputEvent.Scroll(-5f, 300f, 300f, InputModifier.None));
+        chrome.Settings.Scroll.HandleInput(new InputEvent.Scroll(-5f, 300f, 300f, InputModifier.None));
         chrome.Settings.ScrollOffset.ShouldBeGreaterThan(0f);
         Type(chrome, "setting 3");
         chrome.Render(new SessionsScreen([], "test", Live.At), new RectF32(0, 0, 755, 500));

@@ -504,6 +504,9 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
     /// <summary>How far the list is scrolled, in pixels.</summary>
     internal float ScrollOffset => _scroll.Offset;
 
+    /// <summary>The list's scroll, for a test to turn the wheel on (the router of the host does it live).</summary>
+    internal ListScrollController Scroll => _scroll;
+
     private string _searched = "";
     private const float SearchFloor = 110f;
     private const float SearchWidth = 360f;
