@@ -63,9 +63,9 @@ public sealed class ToastTextTests
     [Fact]
     public void DescribeWordsAFailureAsStatusColonReasonAndASuccessAsNull()
     {
-        AppShellToastRunner.Describe(new DesktopNotificationResult(DesktopNotificationStatus.Succeeded, null)).ShouldBeNull();
-        AppShellToastRunner.Describe(new DesktopNotificationResult(DesktopNotificationStatus.Disabled, "turned off for pilot")).ShouldBe("Disabled: turned off for pilot");
-        AppShellToastRunner.Describe(new DesktopNotificationResult(DesktopNotificationStatus.Unsupported, "not Windows")).ShouldBe("Unsupported: not Windows");
+        AppShellToastRunner.Describe(DesktopNotificationStatus.Succeeded, null).ShouldBeNull();
+        AppShellToastRunner.Describe(DesktopNotificationStatus.Disabled, "turned off for pilot").ShouldBe("Disabled: turned off for pilot");
+        AppShellToastRunner.Describe(DesktopNotificationStatus.Unsupported, "not Windows").ShouldBe("Unsupported: not Windows");
     }
 
     [Fact]

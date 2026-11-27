@@ -73,7 +73,7 @@ public sealed class ToastHealthTests : IAsyncDisposable
         card.Subject.ShouldBe(Verbs.NodeTarget);
         card.Detail.ShouldNotBeNull().ShouldContain("0x80131047");
         // AppShell's own status and reason, as AppShellToastRunner.Describe words them, are what the card carries.
-        var appShell = AppShellToastRunner.Describe(new DesktopNotificationResult(DesktopNotificationStatus.Failed, "0x80131047 no projection"));
+        var appShell = AppShellToastRunner.Describe(DesktopNotificationStatus.Failed, "0x80131047 no projection");
         appShell.ShouldBe("Failed: 0x80131047 no projection");
         card.Detail.ShouldContain(appShell);
 

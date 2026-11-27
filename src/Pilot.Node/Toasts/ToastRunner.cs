@@ -56,5 +56,9 @@ public sealed class AppShellToastRunner : IToastRunner
     public static ToastUrgency UrgencyOf(ToastTier tier) => tier == ToastTier.Urgent ? ToastUrgency.Urgent : ToastUrgency.Normal;
 
     /// <summary>Null for a success, else <c>&lt;Status&gt;: &lt;Reason&gt;</c>.</summary>
-    public static string? Describe(DesktopNotificationResult result) => result.IsSuccess ? null : $"{result.Status}: {result.Reason}";
+    public static string? Describe(DesktopNotificationResult result) => Describe(result.Status, result.Reason);
+
+    /// <summary>The same from the parts (AppShell's result has no public constructor, so a test goes through this).</summary>
+    public static string? Describe(DesktopNotificationStatus status, string? reason) =>
+        status == DesktopNotificationStatus.Succeeded ? null : $"{status}: {reason}";
 }
