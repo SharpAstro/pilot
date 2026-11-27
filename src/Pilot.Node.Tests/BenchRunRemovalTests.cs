@@ -11,7 +11,7 @@ namespace Pilot.Node.Tests;
 /// signal completes even when the post throws.
 /// </summary>
 [Collection(JobsCollection.Name)]
-public sealed class BenchRunRemovalTests : JobTestsBase
+public sealed class BenchRunRemovalTests : JobTestsBase, IAsyncDisposable
 {
     private readonly FakeRepoGit _repoGit;
     private readonly HeldGit _git;
@@ -31,10 +31,11 @@ public sealed class BenchRunRemovalTests : JobTestsBase
         _bench = new BenchRun(_state, options, new RepoCatalog(_state, options), planes, _git, _github, _jobs);
     }
 
-    public new void Dispose()
+    // The base class's Dispose removes the folder; this lets the fake git go from the static roots (xunit runs both).
+    public ValueTask DisposeAsync()
     {
         _repoGit.Release();
-        base.Dispose();
+        return ValueTask.CompletedTask;
     }
 
     /// <summary>git over the model, answering <c>worktree remove</c> as Windows does for a worktree a process still holds.</summary>
