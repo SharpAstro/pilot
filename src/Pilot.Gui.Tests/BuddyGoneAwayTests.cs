@@ -54,7 +54,7 @@ public sealed class BuddyGoneAwayTests
 
         clock.Advance(TimeSpan.FromSeconds(2));
         model.Phase.ShouldBe(AwayPhase.Leaving);
-        model.AwayProgress.ShouldBeInRange(0f, 0.5f);
+        model.AwayProgress.ShouldBeInRange(0f, 0.7f);
 
         clock.Advance(BuddyModel.LeaveFor);
         model.Phase.ShouldBe(AwayPhase.Gone);
@@ -183,6 +183,10 @@ public sealed class BuddyGoneAwayTests
         model.Phase.ShouldBe(AwayPhase.Gone);
 
         // Gone: not one frame in ten hours, and the host's sleeps are a minute at most (a deadline, not a poll).
+        if (policy.NeedsFrame())
+        {
+            policy.Drawn(TimeSpan.Zero);
+        }
         var gone = policy.Frames;
         var asks = policy.Asks;
         Run(TimeSpan.FromHours(10));

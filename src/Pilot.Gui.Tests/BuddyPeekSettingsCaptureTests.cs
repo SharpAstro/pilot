@@ -187,7 +187,7 @@ public sealed class BuddyPeekSettingsCaptureTests
         peek.HitAt(second.X + 5, second.Y + 5)!.Id.ShouldBe("row:1");
 
         var card = SettingsCard.Build(pen, new BuddySettings());
-        card.Hits.Select(h => h.Id).ShouldBe(["wakeAsk", "wakeMerged", "wakeFailed", "placement:0", "placement:1", "corner:0", "corner:1", "corner:2", "size:0", "size:1", "size:2", "clickThrough", "snooze", "done"]);
+        card.Hits.Select(h => h.Id).ShouldBe(["wakeAsk", "wakeMerged", "wakeFailed", "placement:0", "placement:1", "corner:0", "corner:1", "corner:2", "size:0", "size:1", "size:2", "longSleep", "clickThrough", "remote", "snooze", "done"]);
         var now = new DateTimeOffset(2026, 11, 26, 9, 0, 0, TimeSpan.Zero);
         SettingsCard.Press(new BuddySettings(), "wakeFailed", now, TimeZoneInfo.Utc)!.WakesForFailed.ShouldBeFalse();
         SettingsCard.Press(new BuddySettings(), "corner:2", now, TimeZoneInfo.Utc)!.CornerIndex.ShouldBe(2);

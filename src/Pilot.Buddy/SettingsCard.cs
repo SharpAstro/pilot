@@ -15,7 +15,7 @@ public sealed class SettingsCard : BuddyCard
     public const float ControlHeight = 30, CheckSize = 16, SwitchWidth = 34, SwitchHeight = 18;
 
     /// <summary>The card's own padding (the design's 14) and the gap between rows (10).</summary>
-    public const float CardPadding = 14, RowGap = 10;
+    public const float CardPadding = 14, RowGap = 8;
 
     private SettingsCard()
     {
