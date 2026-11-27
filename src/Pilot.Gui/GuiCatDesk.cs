@@ -1,10 +1,11 @@
+using Node.Lib.Processes;
 using SharpAstro.AppShell;
 
 namespace Pilot.Gui;
 
 /// <summary>
 /// The real <see cref="Pilot.Ui.ICatDesk"/>: the cat is running when something holds its InstanceGate channel (the one pilot-buddy claims), asked
-/// without claiming it (<see cref="InstanceGate.IsKnownAbsent"/>), and it is started from the pilot-buddy beside pilot-gui. One cat per desktop is
+/// without claiming it, and it is started from the pilot-buddy beside pilot-gui. One cat per desktop is
 /// the cat's own rule: a second start finds the gate held and exits.
 /// </summary>
 internal sealed class GuiCatDesk : Pilot.Ui.ICatDesk
@@ -15,7 +16,10 @@ internal sealed class GuiCatDesk : Pilot.Ui.ICatDesk
     private static string Channel => InstanceGate.ChannelFor("pilot-v2-buddy", string.Empty);
 
     // "Not certainly absent" is "held, or cannot tell": the page says running then, and the cat's own gate refuses a second one either way.
-    public Task<bool> IsRunningAsync(CancellationToken cancellationToken) => Task.FromResult(!InstanceGate.IsKnownAbsent(Channel));
+    // AppShell's IsKnownAbsent is not public in the pinned package (follow-up filed), so this is the same check by hand: Windows publishes the
+    // pipe namespace as a filesystem, so the gate's pipe exists exactly while the cat holds it. Elsewhere the gate is a lock file and is not probed here.
+    public Task<bool> IsRunningAsync(CancellationToken cancellationToken) =>
+        Task.FromResult(OperatingSystem.IsWindows() && File.Exists(@"\\.\pipe\" + Channel));
 
     public async Task<string?> StartAsync(CancellationToken cancellationToken)
     {
