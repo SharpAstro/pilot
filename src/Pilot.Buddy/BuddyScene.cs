@@ -4,7 +4,7 @@ using DIR.Lib;
 namespace Pilot.Buddy;
 
 /// <summary>What the scene draws now: the cat's face and breath, and the bubble's notice or the hover summary. Derived from the model by <see cref="BuddyScene.ViewOf"/>.</summary>
-public sealed record BuddyView(GrumpFace Face, int Breath, BuddyNotice? Notice, string? Summary, int Badge = 0, AwayPhase Away = AwayPhase.Present, float AwayProgress = 0f);
+public sealed record BuddyView(GrumpFace Face, int Breath, BuddyNotice? Notice, string? Summary, int Badge = 0, AwayPhase Away = AwayPhase.Present, float AwayProgress = 0f, bool BadgeWhileWalking = true);
 
 /// <summary>
 /// Where the scene put the cat, its bubble and the open card (device pixels), for a test or the window's hit testing. <paramref name="Scale"/> is the
@@ -147,7 +147,8 @@ public static class BuddyScene
             GrumpCat.Draw(catPen, GrumpFace.OneEyeOpen, palette, 0, withText: false);
         }
         // The badge shows once the cat is mostly out (leaving) or until it is mostly in (returning), and all the time while gone.
-        var showBadge = gone || off > 0.7f;
+        // In Free placement the window is still where the cat was dropped until it is gone (then it sits flush with the screen edge), so the badge waits for that: shown earlier it would sit mid-screen and jump (BadgeWhileWalking false).
+        var showBadge = gone || (view.BadgeWhileWalking && off > 0.7f);
         var (bw, bh) = (GrumpCat.BadgeWidth * scale, GrumpCat.BadgeHeight * scale);
         var bx = left ? 0f : renderer.Width - bw;
         var by = MathF.Min(catY + (GrumpCat.CushionY * cs - bh) / 2 + GrumpCat.CushionY * cs / 2, renderer.Height - bh);

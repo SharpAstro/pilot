@@ -237,6 +237,33 @@ public sealed class BuddyGoneAwayTests
     }
 
     [Fact]
+    public void LongSleepSetToNeverWhileGoneBringsTheCatBack()
+    {
+        var (clock, model) = Gone();
+        model.LongSleep = null;
+        model.Phase.ShouldBe(AwayPhase.Returning);
+        clock.Advance(BuddyModel.ReturnFor + TimeSpan.FromSeconds(1));
+        model.Phase.ShouldBe(AwayPhase.Present);
+        clock.Advance(TimeSpan.FromDays(2));
+        model.Phase.ShouldBe(AwayPhase.Present, "with Never it never leaves again");
+    }
+
+    [Fact]
+    public void FreePlacementShowsNoBadgeWhileWalkingOffButTheBadgeOnceGone()
+    {
+        var (clock, model) = Sleeping();
+        clock.Advance(LongSleep + BuddyModel.LeaveFor * 0.9);
+        model.Phase.ShouldBe(AwayPhase.Leaving);
+        var view = BuddyScene.ViewOf(model);
+        using var renderer = new RgbaImageRenderer(480, 360);
+        var size = BuddySettings.SizeScales[1];
+        BuddyScene.Draw(renderer, Font, BuddyPalette.For(false), view with { BadgeWhileWalking = false }, 1f, false, 0, null, size).BadgeW.ShouldBe(0f, "the window is not at the edge yet");
+        BuddyScene.Draw(renderer, Font, BuddyPalette.For(false), view, 1f, false, 0, null, size).BadgeW.ShouldBeGreaterThan(0f);
+        clock.Advance(BuddyModel.LeaveFor);
+        BuddyScene.Draw(renderer, Font, BuddyPalette.For(false), BuddyScene.ViewOf(model) with { BadgeWhileWalking = false }, 1f, false, 0, null, size).BadgeW.ShouldBeGreaterThan(0f);
+    }
+
+    [Fact]
     public void TheBadgeIsAtTheLeftEdgeForTheLeftCorner()
     {
         var (_, model) = Gone();

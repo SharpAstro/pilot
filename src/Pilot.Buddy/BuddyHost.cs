@@ -445,7 +445,7 @@ internal sealed class BuddyHost : IBuddyWindow, IDisposable
     private void DrawFrame()
     {
         var palette = BuddyTheme.PaletteFor(_theme);
-        var view = BuddyScene.ViewOf(_model);
+        var view = BuddyScene.ViewOf(_model) with { BadgeWhileWalking = !_settings.IsFree };
         var corner = _sceneCorner;
         var catSize = _settings.SizeScale;
         _policy.Time(() =>

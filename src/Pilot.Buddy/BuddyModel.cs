@@ -97,6 +97,11 @@ public sealed class BuddyModel(TimeProvider time)
         set
         {
             _longSleep = value;
+            // Never while the cat is leaving or gone: nothing would ever bring it back by itself, so it returns now.
+            if (value is null && _phase is AwayPhase.Leaving or AwayPhase.Gone)
+            {
+                Wake();
+            }
             Settle();
         }
     }

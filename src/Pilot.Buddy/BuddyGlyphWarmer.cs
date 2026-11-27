@@ -17,7 +17,7 @@ public interface IBuddyAtlas
 /// text came in with whichever frame the policy asked for next (a breath, a hover), the glyphs of that frame's own new letters again one frame late.
 /// A first-time effect per glyph, never again for a glyph the atlas holds. The fix is to know the glyphs before presenting: the CPU pass that lays
 /// the scene out also reports every text it draws, and <see cref="Warm"/> has the atlas rasterise the new glyphs before the GPU frame begins, so that
-/// frame's flush uploads them and its draw finds them. <see cref="BuddyFramePolicy.AtlasSettled"/> is the backstop for anything this misses.
+/// frame's flush uploads them and its draw finds them. <see cref="BuddyFramePolicy.AtlasSettled"/> is the backstop for anything this misses (the host makes its renderer, and so its atlas, once and never drops it, so there is nothing to forget and no reset).
 /// </summary>
 public sealed class BuddyGlyphWarmer(IBuddyAtlas atlas)
 {
@@ -49,12 +49,5 @@ public sealed class BuddyGlyphWarmer(IBuddyAtlas atlas)
         }
         _pending.Clear();
         return count;
-    }
-
-    /// <summary>Forgets what was warmed (the atlas was dropped or rebuilt), so the next scene warms its glyphs again.</summary>
-    public void Reset()
-    {
-        _known.Clear();
-        _pending.Clear();
     }
 }
