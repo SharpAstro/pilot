@@ -2,7 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Pilot.Contracts;
 
-namespace Pilot.Buddy;
+namespace Pilot.Ui;
 
 /// <summary>
 /// What the buddy is set to (DSN-2 v5 settings card), kept in <c>buddy-settings.json</c> beside the GUI's <c>gui-settings.json</c>. Every member is nullable
