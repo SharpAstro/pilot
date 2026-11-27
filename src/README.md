@@ -105,6 +105,18 @@ curl --unix-socket <path> http://localhost/api/v1/node
   log cannot take (the log cannot be opened, or the process dies before it can write) goes there. `pilot logs [gui|node]
   [--tail N]` prints the last 50 lines (or N, taking the rest from the rolled file when the current one is short) of
   each, under a heading with its path; it reads the files locally and needs no node.
+- **Every end leaves evidence (#1377):** `node-run.json` in the data folder is the run record: written at start (pid, start,
+  version, parent, how it was started, whether it sits in a kill-on-close job) and given an exit reason by each planned way
+  out (the stop, a restart, an update swap, a rollback, a store too new, a signal, an unhandled exception). `node.log` also
+  says an unhandled or unobserved exception, a console control event or signal (CTRL_C, CTRL_BREAK, CTRL_CLOSE, LOGOFF or
+  SHUTDOWN on Windows) and the process exit code, each flushed before its handler returns, and at start the parent process
+  and the job object. A start that finds a record with no reason logs the previous pid, its last log line and the gap and
+  rings one "The node was down N min" card; a clean end rings none. A node in a kill-on-close job rings a card naming its
+  parent, since that job's owner ending takes it down. The silent exits on SE1 on 2026-11-27 left no line before the gap in
+  `node.log` (a start at 00:31 follows the 19:05 start with no stop line between them either), and the logs hold no update
+  swap, stray kill or exception at those times, so the cause is not proven from them. Ruled out: an update swap and a plain
+  stop (both log). Open: a kill-on-close job or a closed console, which the next silent exit names through the record, the
+  signal lines and the start-up job check.
 
 ### Stored records
 
