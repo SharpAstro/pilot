@@ -803,7 +803,7 @@ public static partial class NodeApp
         {
             ShortcutToken = () => Flights.ShortcutTracker.TokenFrom(services.GetRequiredService<RoleModels>().ShortcutToken),
             ToastHealth = services.GetService<Pilot.Node.Toasts.ToastHealth>(),
-            ToastRunner = services.GetService<Pilot.Node.Toasts.IToastRunner>(),
+            Toaster = services.GetService<Pilot.Node.Toasts.Toaster>(),
         });
         builder.Services.AddSingleton<NodeSettingsCommands>();
     }

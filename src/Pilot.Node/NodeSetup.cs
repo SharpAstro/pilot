@@ -110,8 +110,8 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
     /// <summary>The toaster's last outcome; the node gives the live one, a test its own. Null reads as no attempt yet.</summary>
     public Toasts.ToastHealth? ToastHealth { get; init; }
 
-    /// <summary>The runner the test toast goes through; null (a node with no toasts) makes the fix refuse.</summary>
-    public Toasts.IToastRunner? ToastRunner { get; init; }
+    /// <summary>The toaster the test toast goes through, so its outcome is recorded and the toasts-broken card closes; null (a node with no toasts) makes the fix refuse.</summary>
+    public Toasts.Toaster? Toaster { get; init; }
 
     /// <summary>Whether desktop toasts apply here: Windows only. A test replaces it.</summary>
     public bool ToastsApply { get; init; } = OperatingSystem.IsWindows();
@@ -406,22 +406,14 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
         return new SetupCheck { Key = ToastsKey, Title = "Desktop toasts", Ok = health.Working, Optional = true, Line = health.Line(), Fix = "Send a test toast" };
     }
 
-    /// <summary>Shows a test toast under <see cref="Toasts.ToastXml.TestTag"/>; null when it showed, else the runner's error.</summary>
+    /// <summary>Shows a test toast through the toaster, which records the outcome; null when it showed, else the runner's error.</summary>
     private async Task<string?> SendTestToastAsync(CancellationToken cancellationToken)
     {
-        if (!ToastsApply || ToastRunner is not { } runner)
+        if (!ToastsApply || Toaster is not { } toaster)
         {
             return "desktop toasts are on Windows only";
         }
-        try
-        {
-            await runner.Show(Toasts.ToastXml.TestTag, Toasts.ToastXml.Test(), cancellationToken).ConfigureAwait(false);
-            return null;
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            return $"the test toast was not shown: {ex.Message}";
-        }
+        return await toaster.SendTest(cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>

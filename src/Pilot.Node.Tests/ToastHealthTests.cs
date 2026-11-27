@@ -52,7 +52,7 @@ public sealed class ToastHealthTests : IAsyncDisposable
     private NodeSetup Setup() => new(new NodeOptions("/tmp/n.sock", "/tmp/pilot-toast-health"), "pilot-node", "/tmp/pilot-toast-health")
     {
         ToastHealth = _health,
-        ToastRunner = _runner,
+        Toaster = _toaster,
         ToastsApply = true,
     };
 
@@ -125,6 +125,34 @@ public sealed class ToastHealthTests : IAsyncDisposable
 
         _runner.Throws = true;
         (await Setup().FixAsync(NodeSetup.ToastsKey, Ct)).ShouldNotBeNull().ShouldContain("0x80131047");
+    }
+
+    [Fact]
+    public async Task ASuccessfulTestToastTurnsTheCheckGreenAndClosesTheCard()
+    {
+        _runner.Throws = true;
+        _state.RaiseCard(CardBin.Ring, "worker-waiting", "flight/A", "needs you", "detail");
+        await _toaster.Sync(cancel: Ct);
+        Broken().ShouldHaveSingleItem();
+        Setup().ToastsCheck().Ok.ShouldBeFalse();
+
+        _time.Advance(TimeSpan.FromMinutes(1));
+        _runner.Throws = false;
+        (await Setup().FixAsync(NodeSetup.ToastsKey, Ct)).ShouldBeNull();
+        Setup().ToastsCheck().Ok.ShouldBeTrue();
+        Broken().ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task AFailedTestToastIsRecordedAndLeavesTheCheckFailed()
+    {
+        Setup().ToastsCheck().Line.ShouldContain("no toast has been tried");
+        _runner.Throws = true;
+        (await Setup().FixAsync(NodeSetup.ToastsKey, Ct)).ShouldNotBeNull().ShouldContain("0x80131047");
+        var check = Setup().ToastsCheck();
+        check.Ok.ShouldBeFalse();
+        check.Line.ShouldContain("failed at");
+        Broken().ShouldHaveSingleItem();
     }
 
     [Fact]

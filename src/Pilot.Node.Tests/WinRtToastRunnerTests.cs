@@ -61,7 +61,7 @@ public sealed class WinRtToastRunnerTests
     [System.Runtime.Versioning.SupportedOSPlatform("windows")]
     public void TheNotificationIsBuiltFromTheCardXmlWithItsTagAndGroupAndNothingIsShown()
     {
-        if (!OperatingSystem.IsWindows()) return;
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "WinRT is Windows only");
         var xml = ToastXml.ForCard("c1", "it's \u2019 a \"title\"", "body", ToastTier.Urgent);
         WinRtToastRunner.BuildAndReadBack("card:c1", xml).ShouldBe(("card:c1", "pilot"));
     }
@@ -70,7 +70,7 @@ public sealed class WinRtToastRunnerTests
     [System.Runtime.Versioning.SupportedOSPlatform("windows")]
     public void ABadXmlThrowsAnInvalidOperationNamingLoadXml()
     {
-        if (!OperatingSystem.IsWindows()) return;
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "WinRT is Windows only");
         var failure = Should.Throw<InvalidOperationException>(() => WinRtToastRunner.BuildAndReadBack("t", "<toast><unclosed>"));
         failure.Message.ShouldContain("LoadXml");
         failure.Message.ShouldContain("0x");

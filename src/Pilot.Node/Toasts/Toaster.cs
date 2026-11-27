@@ -245,18 +245,36 @@ public sealed class Toaster : IAsyncDisposable, Microsoft.Extensions.Hosting.IHo
 
     private async Task ShowTag(string tag, string xml, CancellationToken cancel)
     {
+        await ShowRecorded(tag, xml, cancel).ConfigureAwait(false);
+    }
+
+    /// <summary>Shows one toast and records the outcome; null when it showed, else the error. The one path every toast takes, the setup check's test toast included.</summary>
+    private async Task<string?> ShowRecorded(string tag, string xml, CancellationToken cancel)
+    {
         try
         {
             await _runner.Show(tag, xml, cancel).ConfigureAwait(false);
             _health.Shown(_time.GetUtcNow());
             // A toast showed, so toasts work again: the card that said they did not goes.
             _state.CloseCardsAbout(Verbs.NodeTarget, "toasts work again", ToastHealth.BrokenKind);
+            return null;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _logger?.LogWarning(ex, "toast {Tag} was not shown", tag);
             Broken(ex);
+            return ex.Message;
         }
+    }
+
+    /// <summary>
+    /// The setup check's fix (#1376): a test toast through the same path as a card's, so a success turns the check green and closes the
+    /// toasts-broken card, and a failure is recorded and raises it. Null when it showed, else the error.
+    /// </summary>
+    public async Task<string?> SendTest(CancellationToken cancel = default)
+    {
+        var error = await ShowRecorded(ToastXml.TestTag, ToastXml.Test(), cancel).ConfigureAwait(false);
+        return error is null ? null : $"the test toast was not shown: {error}";
     }
 
     private async Task RemoveTag(string tag, CancellationToken cancel)
@@ -272,14 +290,14 @@ public sealed class Toaster : IAsyncDisposable, Microsoft.Extensions.Hosting.IHo
         }
     }
 
-    // One card in For you (never Ring: a Ring card would toast and fail again), on a fixed subject, so RaiseCard hands back the open one
-    // however many toasts fail after it; its detail holds the latest error.
+    // One card in For you (never Ring: a Ring card would toast and fail again), on a fixed subject. While one is open nothing is raised
+    // again, however many toasts fail after it, so its detail keeps the first error; ToastHealth.Line holds the latest one.
     private void Broken(Exception ex)
     {
         _health.Failed(_time.GetUtcNow(), ex.Message);
         if (_state.Cards(openOnly: true).Any(c => c.Kind == ToastHealth.BrokenKind && c.Subject == Verbs.NodeTarget)) return;
         _state.RaiseCard(CardBin.ForYou, ToastHealth.BrokenKind, Verbs.NodeTarget, "Desktop toasts are not working on this machine",
-            $"{ex.Message}. Open Settings, Setup, Desktop toasts, and send a test toast. The card closes when a toast shows.",
+            $"{ex.Message.TrimEnd('.', ' ')}. Open Settings, Setup, Desktop toasts, and send a test toast. The card closes when a toast shows.",
             // The one thing the node does on the person's word: stop trying. Sending a test toast is the setup check's fix.
             [new CardChoice { Label = "Turn toasts off", Verb = Verbs.Set, Target = Verbs.NodeTarget, Args = [NodeSettings.ToastsKey, "off"] }]);
     }
