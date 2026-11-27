@@ -27,6 +27,8 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Pilot.Contracts\Pilot.Contracts.csproj" />
+    <!-- The MCP server the node serves over loopback HTTP (#1385) is pilot mcp's own, so the two cannot drift. -->
+    <ProjectReference Include="..\Pilot.Commands\Pilot.Commands.csproj" />
     <PackageReference Include="System.CommandLine" />
   </ItemGroup>
 

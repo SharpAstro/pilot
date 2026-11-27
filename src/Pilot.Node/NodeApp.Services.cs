@@ -329,7 +329,7 @@ public static partial class NodeApp
         builder.Services.AddSingleton(_ => new SpendLedger(SpendLedger.FileIn(options.DataFolder)) { Error = logWriter });
         builder.Services.AddSingleton(services => new ClaudeWorkerLauncher(services.GetRequiredService<ClaudeTrust>(), services.GetRequiredService<StartOptionsBook>(),
             services.GetRequiredService<SessionLedger>(), options, services.GetRequiredService<SendTimings>(), ClaudeWorkerLauncher.BriefFolderIn(options.DataFolder),
-            services.GetRequiredService<ClaudeJobRemoval>()));
+            services.GetRequiredService<ClaudeJobRemoval>(), services.GetRequiredService<McpHttp>(), () => services.GetRequiredService<RoleModels>().McpTransport));
         builder.Services.AddSingleton(services => new LoggingWorkerLauncher(
             services.GetRequiredService<ClaudeWorkerLauncher>(), logWriter,
             new ClaudeJobState(Path.Combine(services.GetRequiredService<SessionTrackerOptions>().Profile.Root, "jobs")), services.GetRequiredService<TimeProvider>()));

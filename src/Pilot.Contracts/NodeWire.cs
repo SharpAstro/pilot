@@ -134,6 +134,12 @@ public static class NodeWire
 
     /// <summary>The TCP port a node listens on for the LAN (<c>--lan</c>) unless told another.</summary>
     public const int DefaultLanPort = 47731;
+
+    /// <summary>The loopback TCP port the node serves pilot's MCP server on, over HTTP (#1385), beside the LAN port.</summary>
+    public const int DefaultMcpPort = 47732;
+
+    /// <summary>The route of that MCP server: Streamable HTTP, one JSON-RPC message per POST.</summary>
+    public const string McpRoute = "/mcp";
 }
 
 /// <summary>How a node process ends, for whoever started it: a keeper must not restart a node that found another running.</summary>

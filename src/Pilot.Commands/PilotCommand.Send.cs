@@ -192,7 +192,7 @@ public static partial class PilotCommand
                 }
                 if (Array.IndexOf(args, "--out") is var at and >= 0 && at + 1 < args.Length)
                 {
-                    await File.WriteAllTextAsync(args[at + 1], MaintenanceListing.Tsv(maintained), cancellationToken);
+                    await File.WriteAllTextAsync(Path.GetFullPath(args[at + 1], cwd), MaintenanceListing.Tsv(maintained), cancellationToken);
                     await output.WriteLineAsync($"wrote {args[at + 1]}");
                 }
             }

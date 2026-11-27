@@ -40,6 +40,8 @@ public sealed record NodeSettings
     public const string MergeMethodKey = "merge-method";
     /// <summary>Which Ring cards show a desktop toast (#1356): all (the default), urgent or off.</summary>
     public const string ToastsKey = "toasts";
+    /// <summary>How the sessions the node starts reach pilot's MCP server (#1385): <c>stdio</c>, a <c>pilot mcp</c> process each, or <c>http</c>, the node's own loopback endpoint.</summary>
+    public const string McpTransportKey = "mcp-transport";
     public const string StartLimitKey = "start-limit";
     public const string PriorityStartLimitKey = "priority-start-limit";
     public const string PriorityReposKey = "priority-repos";
@@ -235,9 +237,12 @@ public sealed record NodeSettings
     /// <summary>The values of <see cref="ToastsKey"/>; the first is the default.</summary>
     public static IReadOnlyList<string> ToastModes { get; } = ["all", "urgent", "off"];
 
+    /// <summary>The values of <see cref="McpTransportKey"/>; the first is the default.</summary>
+    public static IReadOnlyList<string> McpTransports { get; } = ["stdio", "http"];
+
     /// <summary>Every key, in the order the Settings page shows them: the node's own, then a range per role.</summary>
     public static IReadOnlyList<string> Keys { get; } =
-        [LanKey, MachineKey, RepoRootsKey, UpdateChannelKey, UpdatePolicyKey, MaxJobsKey, JobsPerRepoKey, GuiSlotsKey, JobMemoryKey, JobPriorityKey, JobPlaneOutputKey, JobBuildCacheKey, LanPortKey, StartLimitKey, PriorityReposKey, PriorityStartLimitKey, WeekLimitKey, WeekPaceKey, SpendAlertKey, WatchtowerCompactShareKey, WatchtowerChatMessagesKey, WatchtowerCompactIdleKey, WatchtowerCompactAboveKey, MergeMethodKey, ToastsKey, MaintenanceKey, AcceptFleetFlightsKey, AutopilotKey, ReviewDeepFirstKey, UserSkillsKey, ShortcutTokenKey, RepoTrackersKey, NoAutoMergeReposKey, OpusCapKey, ReviewLimitKey, OneFlightPerRepoKey, SubTaskReposKey, MergeBatchKey, PrWatchIdleKey, AdoptAfterKey, ArchiveLandedAfterKey, MaintenanceEveryKey, MaintenanceIdleKey, PackageAgeDaysKey, GitPruneDaysKey, MaintenancePruneHoursKey, DeleteLandedBranchesKey, MaxGoAroundsKey, ScratchDaysKey, DesignerKeepKey, DiskAlertGbKey, FlightCiBudgetKey, AutopilotCiGrantsKey, AutopilotStallMinutesKey, AutopilotInvestigationsKey, StaleFlightHoursKey, StalePrHoursKey, StaleRecheckHoursKey, StaleCardHoursKey, StaleHoldsKey, StaleUnreachableHoursKey,
+        [LanKey, MachineKey, RepoRootsKey, UpdateChannelKey, UpdatePolicyKey, MaxJobsKey, JobsPerRepoKey, GuiSlotsKey, JobMemoryKey, JobPriorityKey, JobPlaneOutputKey, JobBuildCacheKey, LanPortKey, StartLimitKey, PriorityReposKey, PriorityStartLimitKey, WeekLimitKey, WeekPaceKey, SpendAlertKey, WatchtowerCompactShareKey, WatchtowerChatMessagesKey, WatchtowerCompactIdleKey, WatchtowerCompactAboveKey, MergeMethodKey, ToastsKey, McpTransportKey, MaintenanceKey, AcceptFleetFlightsKey, AutopilotKey, ReviewDeepFirstKey, UserSkillsKey, ShortcutTokenKey, RepoTrackersKey, NoAutoMergeReposKey, OpusCapKey, ReviewLimitKey, OneFlightPerRepoKey, SubTaskReposKey, MergeBatchKey, PrWatchIdleKey, AdoptAfterKey, ArchiveLandedAfterKey, MaintenanceEveryKey, MaintenanceIdleKey, PackageAgeDaysKey, GitPruneDaysKey, MaintenancePruneHoursKey, DeleteLandedBranchesKey, MaxGoAroundsKey, ScratchDaysKey, DesignerKeepKey, DiskAlertGbKey, FlightCiBudgetKey, AutopilotCiGrantsKey, AutopilotStallMinutesKey, AutopilotInvestigationsKey, StaleFlightHoursKey, StalePrHoursKey, StaleRecheckHoursKey, StaleCardHoursKey, StaleHoldsKey, StaleUnreachableHoursKey,
          .. BenchKeys, .. RoleModels.Roles.Select(RoleModels.RangeKey), SummaryModelKey, WorkerLadderKey];
 
     /// <summary>Whether <paramref name="key"/> is a role's range (<see cref="RoleModels"/>).</summary>
@@ -395,6 +400,9 @@ public sealed record NodeSettings
 
     /// <summary>Which Ring cards toast (<see cref="ToastsKey"/>); all unless set, also when the stored member is null.</summary>
     public string? Toasts { get; init; }
+
+    /// <summary>How the node's sessions reach pilot's MCP server (<see cref="McpTransportKey"/>); stdio unless set.</summary>
+    public string? McpTransport { get; init; }
 
     public double? StartLimit { get; init; }
 
@@ -687,6 +695,7 @@ public sealed record NodeSettings
         JobMemoryKey => JobMemoryGigabytes is { } memory ? [memory.ToString(CultureInfo.InvariantCulture)] : null,
         MergeMethodKey => MergeMethod is { } merge ? [merge] : null,
         ToastsKey => Toasts is { } toasts ? [toasts] : null,
+        McpTransportKey => McpTransport is { } transport ? [transport] : null,
         StartLimitKey => StartLimit is { } limit ? [limit.ToString(CultureInfo.InvariantCulture)] : null,
         PriorityStartLimitKey => PriorityStartLimit is { } high ? [high.ToString(CultureInfo.InvariantCulture)] : null,
         WeekLimitKey => WeekLimit is { } week ? [week.ToString(CultureInfo.InvariantCulture)] : null,
@@ -1302,6 +1311,14 @@ public sealed record NodeSettings
                 return One()?.ToLowerInvariant() is { } toasts && ToastModes.Contains(toasts)
                     ? (settings with { Toasts = toasts }, null)
                     : (null, $"toasts takes {string.Join(", ", ToastModes)}");
+            case McpTransportKey:
+                if (clear)
+                {
+                    return (settings with { McpTransport = null }, null);
+                }
+                return One()?.ToLowerInvariant() is { } transport && McpTransports.Contains(transport)
+                    ? (settings with { McpTransport = transport }, null)
+                    : (null, $"mcp-transport takes {string.Join(", ", McpTransports)}");
             case SummaryModelKey:
             {
                 var roles = new Dictionary<string, string>(settings.Roles ?? new Dictionary<string, string>(), StringComparer.Ordinal);

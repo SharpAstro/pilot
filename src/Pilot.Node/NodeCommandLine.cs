@@ -17,6 +17,12 @@ public static class NodeCommandLine
     public const string LocalOnlyVariable = "PILOT_LOCAL_ONLY";
 
     /// <summary>
+    /// The options of a local-only node: no LAN port, and no MCP port either, as it binds nothing but its socket and must not take
+    /// the real node's loopback port while that one is down (an update window, say).
+    /// </summary>
+    internal static NodeOptions Confined(NodeOptions options) => options with { Lan = false, LocalOnly = true, McpPort = 0 };
+
+    /// <summary>
     /// <c>--after &lt;pid&gt;</c>: wait for that process to exit before taking the socket. How a node that installed a
     /// release hands over to the new one (<see cref="NodeUpdater"/>); not for people, so hidden.
     /// </summary>
@@ -242,7 +248,7 @@ public static class NodeCommandLine
             var lanIgnored = wantsLan && !mode.MayBindTheNetwork && parseResult.GetResult(lan) is { Implicit: false };
             var options = new NodeOptions(socketPath, Path.GetFullPath(parseResult.GetValue(data) ?? NodeSocket.DefaultDataFolder), MachinePrefix: parseResult.GetValue(machine),
                 Watchtower: !parseResult.GetValue(noWatchtower), WatchtowerFolderGiven: parseResult.GetValue(watchtowerFolder),
-                Lan: wantsLan, LanPort: parseResult.GetValue(lanPort),
+                Lan: wantsLan, LanPort: parseResult.GetValue(lanPort), McpPort: NodeWire.DefaultMcpPort,
                 MaxJobs: parseResult.GetValue(maxJobs), JobMemoryGigabytes: parseResult.GetValue(jobMemory),
                 UpdatePolicy: UpdatePolicies.Parse(parseResult.GetValue(updatePolicy)) ?? UpdatePolicy.Auto,
                 UpdateChannel: UpdateChannels.Parse(parseResult.GetValue(updateChannel)) ?? UpdateChannel.Stable,
@@ -273,7 +279,7 @@ public static class NodeCommandLine
             options = NodeSettings.Read(options.SettingsFile).Over(options, given);
             if (!mode.MayBindTheNetwork)
             {
-                options = options with { Lan = false, LocalOnly = true };
+                options = Confined(options);
             }
             if (parseResult.GetValue(after) is { } predecessor)
             {

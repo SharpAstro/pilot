@@ -5,6 +5,7 @@ using System.Text;
 using Microsoft.AspNetCore.Connections.Features;
 using Node.Lib.Hosting;
 using Pilot.Node.Flights;
+using Pilot.Contracts;
 
 namespace Pilot.Node;
 
@@ -438,9 +439,18 @@ public static class CommandCallersMiddleware
             try
             {
                 var callers = context.RequestServices.GetRequiredService<CommandCallers>();
-                if (NodeAccessGate.CameOverTheSocket(context))
+                if (context.Request.Path.Value == NodeWire.McpRoute)
                 {
-                    callers.CountPeer(CallerPeer.SocketOf(context) is { } socket ? CallerPeer.PidOf(socket) : null);
+                    // Counted by McpHttp under the session's name, which only it knows.
+                }
+                else if (NodeAccessGate.CameOverTheSocket(context))
+                {
+                    // While the node serves MCP, its own pid is an MCP session's call made back through the node's socket, counted already as the session's.
+                    var pid = CallerPeer.SocketOf(context) is { } socket ? CallerPeer.PidOf(socket) : null;
+                    if (pid != Environment.ProcessId || context.RequestServices.GetService<McpHttp>() is not { Serving: true })
+                    {
+                        callers.CountPeer(pid);
+                    }
                 }
                 else
                 {
