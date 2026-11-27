@@ -332,6 +332,7 @@ internal sealed class BuddyHost : IBuddyWindow, IDisposable
                     _presence.Update();
                 }
                 TakeFromDisk();
+                ApplyTextInput();
                 SnoozeEnded();
                 // In Free the cat walks off the nearest side and its paw badge sits on that screen edge: the window follows the phase (the dropped place comes back with the cat).
                 if (_settings.IsFree && _model.Phase != _placedPhase)
@@ -579,14 +580,26 @@ internal sealed class BuddyHost : IBuddyWindow, IDisposable
         }
     }
 
+    // The text input the chat wants (1 on, 0 off) and the one applied; SDL's calls are main-thread only, so the loop applies it (ApplyTextInput).
+    private int _textInputWanted, _textInputApplied;
+
     /// <inheritdoc />
     public void TextInput(bool on)
     {
-        if (_window is null)
+        Volatile.Write(ref _textInputWanted, on ? 1 : 0);
+        Wake();
+    }
+
+    // On the loop's thread: SDL's text input brought to what the chat wants.
+    private void ApplyTextInput()
+    {
+        var wanted = Volatile.Read(ref _textInputWanted);
+        if (wanted == _textInputApplied || _window is null)
         {
             return;
         }
-        if (on)
+        _textInputApplied = wanted;
+        if (wanted == 1)
         {
             // A click on the cat need not have given the always-on-top window the keyboard: it is raised to take it.
             RaiseWindow(_window.Handle);

@@ -290,6 +290,15 @@ public sealed class BuddyFramePolicyTests
     }
 
     [Fact]
+    public void ASwitchBetweenTheOtherCardsAsksNothingOfTheTextInput()
+    {
+        var rig = new Rig();
+        rig.Desk.ShowSettings();
+        rig.Desk.Escape();
+        rig.Window.TextInputs.ShouldBeEmpty("only the chat opening or closing touches the text input");
+    }
+
+    [Fact]
     public async Task AClickOnTheSleepingCatOpensTheChatWithTheInputFocusedAndAnotherClosesIt()
     {
         var rig = new Rig();
