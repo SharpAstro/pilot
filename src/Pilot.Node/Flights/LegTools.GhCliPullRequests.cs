@@ -96,6 +96,11 @@ public sealed partial class GhCli
             NodeTraffic.Shared.GhCalls.RecordCost("api graphql", "GhCli.OpenPullRequestsInAsync", read.Cost, counted);
             remaining = read.Remaining ?? remaining;
             resetAt = read.ResetAt ?? resetAt;
+            if (read.Remaining is { } left)
+            {
+                // GitHub's own word on what is left, for every gh caller (#1403).
+                NodeTraffic.Shared.GhBudget.Observe(left, null, read.ResetAt);
+            }
             if (read.Next is not { } next)
             {
                 break;

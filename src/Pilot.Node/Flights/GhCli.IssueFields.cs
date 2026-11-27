@@ -82,6 +82,26 @@ public sealed partial class GhCli
     /// </summary>
     internal async Task<Dictionary<int, IssuePriority>> OpenPrioritiesAsync(string repoPath, CancellationToken cancellationToken)
     {
+        // The repo watch reads the open issues twice a pass (with and without their milestones), each wanting the priorities: one read
+        // serves both (#1403). A priority set through the node drops the repo's read, so it never shows the old level.
+        var now = NodeTraffic.Shared.Time.GetUtcNow();
+        if (PrioritiesRead.TryGetValue(repoPath, out var kept) && now - kept.At < PrioritiesFresh)
+        {
+            return new Dictionary<int, IssuePriority>(kept.Levels);
+        }
+        var read = await ReadOpenPrioritiesAsync(repoPath, cancellationToken);
+        PrioritiesRead[repoPath] = (now, read);
+        return new Dictionary<int, IssuePriority>(read);
+    }
+
+    /// <summary>How long a repo's read of its open issues' priorities serves the next ask.</summary>
+    internal static readonly TimeSpan PrioritiesFresh = TimeSpan.FromSeconds(90);
+
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, (DateTimeOffset At, Dictionary<int, IssuePriority> Levels)> PrioritiesRead =
+        new(StringComparer.OrdinalIgnoreCase);
+
+    private async Task<Dictionary<int, IssuePriority>> ReadOpenPrioritiesAsync(string repoPath, CancellationToken cancellationToken)
+    {
         var found = new Dictionary<int, IssuePriority>();
         string? after = null;
         for (var page = 0; page < 10; page++)
@@ -155,6 +175,7 @@ public sealed partial class GhCli
 
     public async Task SetIssuePriorityAsync(string repoPath, int number, IssuePriority? level, CancellationToken cancellationToken)
     {
+        PrioritiesRead.TryRemove(repoPath, out _);
         var shape = await ReadPriorityShapeAsync(repoPath, number, cancellationToken);
         if (shape is not { FieldId: { } fieldId } || shape.IssueId.Length == 0)
         {

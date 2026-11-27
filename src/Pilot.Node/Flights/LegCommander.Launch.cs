@@ -392,7 +392,28 @@ public sealed partial class LegCommander
     }
 
     /// <summary>Reads the Priority field of the flight's issue at a start, and its <c>pilot: priority</c> label where the repo has no field (its PR's is on the row): taking it off puts the flight back under the rules.</summary>
-    private async Task PrimeAsync(FlightRow flight, CancellationToken cancellationToken)
+    /// <summary>
+    /// How long the minute sweep takes a flight's last read of its issue (priority and labels) as fresh (#1403). The sweep asked again every
+    /// minute for each flight a gate held, nine at once on SE1 (2026-11-27), about 1,100 GraphQL points an hour for an answer that had not
+    /// changed. A hold put on GitHub is still seen within the repo watch's pace (its hold sweep), and a command reads afresh.
+    /// </summary>
+    public TimeSpan PrimeFresh { get; init; } = TimeSpan.FromMinutes(10);
+
+    // When each flight's issue was last read by PrimeAsync, on the node's clock.
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, DateTimeOffset> _primed = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <param name="fresh">A read younger than this is kept and nothing is asked; null reads every time.</param>
+    internal async Task PrimeAsync(FlightRow flight, CancellationToken cancellationToken, TimeSpan? fresh = null)
+    {
+        if (fresh is { } young && _primed.TryGetValue(flight.Code, out var last) && time.GetUtcNow() - last < young)
+        {
+            return;
+        }
+        using var scope = GhCallCounter.Scope("LegCommander.Prime");
+        await PrimeCoreAsync(flight, cancellationToken);
+    }
+
+    private async Task PrimeCoreAsync(FlightRow flight, CancellationToken cancellationToken)
     {
         // A flight waiting on a connected flight reads nothing (pilot #1293): no issue fields, no labels, until the release to Flying starts it.
         if ((state.Flights().FirstOrDefault(f => f.Code == flight.Code)?.State ?? flight.State) == FlightState.Held)
@@ -405,6 +426,7 @@ public sealed partial class LegCommander
             {
                 var read = await tracker.PriorityAsync(flight.RepoPath, flight.Issue, cancellationToken);
                 var labels = await tracker.LabelsAsync(flight.RepoPath, flight.Issue, cancellationToken);
+                _primed[flight.Code] = time.GetUtcNow();
                 // A hold put on GitHub while this node was down (or from another node) is read here, before the start is gated: the same hold
                 // row the repo sweep writes, so a held flight starts nothing on a wake before the sweep's first read has got to its repo.
                 // Only a label seen holds: a read that failed answers no labels, and a hold is never released from it.
