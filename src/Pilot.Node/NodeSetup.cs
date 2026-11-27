@@ -146,7 +146,9 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
             ? new SetupCheck { Key = AutostartKey, Title = "Starts at logon", Ok = false, Line = "nothing starts the node at logon: the fleet loses this machine until someone opens pilot", Fix = "Start at logon" }
             : UnitText() is { } unitText && !Autostart.UnitIsCurrent(unitText)
                 ? new SetupCheck { Key = AutostartKey, Title = "Starts at logon", Ok = false, Line = $"the unit is out of date (it differs from the one this node writes, so a restart may take jobs down): {entry}", Fix = "Rewrite" }
-                : new SetupCheck { Key = AutostartKey, Title = "Starts at logon", Ok = true, Line = entry, Fix = null });
+                : RunKeyApplies && Autostart.ParseWindowsCommand(entry) is not null && !Autostart.RunEntryIsCurrent(entry)
+                    ? new SetupCheck { Key = AutostartKey, Title = "Starts at logon", Ok = false, Line = $"the Run entry is out of date (it starts the node with no watchdog, so a node that dies stays down): {entry}", Fix = "Rewrite" }
+                    : new SetupCheck { Key = AutostartKey, Title = "Starts at logon", Ok = true, Line = entry, Fix = null });
 
         checks.Add(BuddyAutostartCheck());
 
@@ -195,6 +197,11 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
         if (ToastsApply)
         {
             checks.Add(ToastsCheck());
+        }
+
+        if (CrashDumpsApply)
+        {
+            checks.Add(CrashDumpsCheck());
         }
 
         var trusted = Trusted(options.WatchtowerFolder);
@@ -251,6 +258,11 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
                 if (NodeEntry() is not null && UnitText() is { } unitText && Autostart.ExecOf(unitText) is { } own)
                 {
                     (path, args) = own;
+                }
+                // A stale Run entry is rewritten from its own node path and options, as a unit is.
+                if (RunKeyApplies && NodeEntry() is { } runEntry && Autostart.ParseWindowsCommand(runEntry) is { } runOwn)
+                {
+                    (path, args) = (runOwn.NodePath, runOwn.Args);
                 }
                 var output = new StringWriter();
                 var existed = NodeEntry() is not null;
@@ -414,6 +426,49 @@ public sealed class NodeSetup(NodeOptions options, string nodePath, string profi
             return "desktop toasts are on Windows only";
         }
         return await toaster.SendTest(cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>The setup check's key for the crash-dump setting.</summary>
+    public const string CrashDumpsKey = "crash-dumps";
+
+    /// <summary>Whether Windows Error Reporting's LocalDumps applies here: Windows only. A test replaces it.</summary>
+    public bool CrashDumpsApply { get; init; } = OperatingSystem.IsWindows();
+
+    /// <summary>The LocalDumps setting for pilot-node.exe as HKLM holds it: its DumpType and DumpFolder, null for each that is not set. A test replaces it; the real one only reads.</summary>
+    public Func<(int? DumpType, string? Folder)> CrashDumpSetting { get; init; } = ReadCrashDumpSetting;
+
+    /// <summary>The registry key WER reads a per-application dump setting from.</summary>
+    public const string LocalDumpsKey = @"SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps\pilot-node.exe";
+
+    private static (int? DumpType, string? Folder) ReadCrashDumpSetting()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return (null, null);
+        }
+        try
+        {
+            using var key = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(LocalDumpsKey);
+            return (key?.GetValue("DumpType") as int?, key?.GetValue("DumpFolder") as string);
+        }
+        catch (Exception e) when (e is System.Security.SecurityException or UnauthorizedAccessException or IOException)
+        {
+            return (null, null);
+        }
+    }
+
+    /// <summary>The reg commands that make WER write a dump of pilot-node.exe when it crashes: HKLM, so an administrator runs them (setup never elevates for it).</summary>
+    public string CrashDumpCommand() =>
+        $"reg add \"HKLM\\{LocalDumpsKey}\" /v DumpFolder /t REG_EXPAND_SZ /d \"{Path.Combine(options.DataFolder, "crash-dumps")}\" /f && reg add \"HKLM\\{LocalDumpsKey}\" /v DumpType /t REG_DWORD /d 1 /f";
+
+    /// <summary>A crash that leaves a dump: WER LocalDumps set for pilot-node.exe. Writing HKLM needs an administrator, so a missing setting lists the commands and has no button.</summary>
+    public SetupCheck CrashDumpsCheck()
+    {
+        const string Title = "Crash dumps";
+        var (type, folder) = CrashDumpSetting();
+        return type is not null && !string.IsNullOrEmpty(folder)
+            ? new SetupCheck { Key = CrashDumpsKey, Title = Title, Ok = true, Optional = true, Line = $"Windows Error Reporting writes a dump (type {type}) of a pilot-node crash to {folder}" }
+            : new SetupCheck { Key = CrashDumpsKey, Title = Title, Ok = false, Optional = true, Line = $"a pilot-node crash leaves no dump; run once as an administrator: {CrashDumpCommand()}" };
     }
 
     /// <summary>

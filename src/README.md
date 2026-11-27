@@ -105,6 +105,41 @@ curl --unix-socket <path> http://localhost/api/v1/node
   log cannot take (the log cannot be opened, or the process dies before it can write) goes there. `pilot logs [gui|node]
   [--tail N]` prints the last 50 lines (or N, taking the rest from the rolled file when the current one is short) of
   each, under a heading with its path; it reads the files locally and needs no node.
+- **Every end leaves evidence (#1377):** `node-run.json` in the data folder is the run record: written at start (pid, start,
+  version, parent, how it was started, whether it sits in a kill-on-close job) and given an exit reason by each planned way
+  out (the stop, a restart, an update swap, a rollback, a store too new, a signal, an unhandled exception). `node.log` also
+  says an unhandled or unobserved exception, a console control event or signal (CTRL_C, CTRL_BREAK, CTRL_CLOSE, LOGOFF or
+  SHUTDOWN on Windows) and the process exit code, each flushed before its handler returns, and at start the parent process
+  and the job object. A start that finds a record with no reason logs the previous pid, its last log line and the gap and
+  rings one "The node was down N min" card (when the watchdog restarted the node, the title carries the watchdog's own measure from the
+  death to the restart, and the card says how long before it the last line was logged); a clean end rings none, and so does a
+  person's CTRL_C, while a console close (CTRL_CLOSE, SIGHUP) or a logoff reads as ended from outside and still rings.
+  A refused second start (already running) writes no reason to the record, since it never took the lock and the record is the
+  live holder's; its reason is the line in `node-start.log` (and `node.log`). A node in a kill-on-close job rings a card naming its
+  parent, since that job's owner ending takes it down. The silent exits on SE1 on 2026-11-27 left no line before the gap in
+  `node.log` (a start at 00:31 follows the 19:05 start with no stop line between them either), and the logs hold no update
+  swap, stray kill or exception at those times, so the cause is not proven from them. Evidence that narrows it: `logs/node.1.log` has, at 00:29:13, `watchtower: the stream session 34529b06 exited (-1073741510)`,
+  that is `0xC000013A` (STATUS_CONTROL_C_EXIT), a console control event, 2 minutes before the node's last line and the 00:31:07 start; and for the
+  16:40 to 16:46 exit the Windows Application log (16:38 to 16:48) holds no Application Error or .NET Runtime event for pilot-node, so it was an
+  end from outside, not a crash. That rules a crash out and points at the console or job lead. Ruled out: an update swap and a plain
+  stop (both log). Open: a kill-on-close job or a closed console, which the next silent exit names through the record, the
+  signal lines and the start-up job check.
+- **The watchdog (#1377):** on Windows the logon Run entry is `conhost --headless pilot-node watchdog -- <node options>`, so a node
+  that dies outside an update or a restart is back within a minute, as systemd's `Restart=always` does on Linux (a unit needs
+  no watchdog). The watchdog keeps no state: it finds the node by what answers on the socket, waits on that process's exit
+  handle (never a poll of the node; a one-minute timer only looks at whether the Run entry is still there, so `autostart
+  remove` ends it), and when the node ends gives a successor (an update, a restart, `--after`) 30 s to answer on the socket.
+  If none does it starts the node again, outside its own job and process group (`CREATE_BREAKAWAY_FROM_JOB`; a job that
+  forbids breakaway gets a plain start), and logs the exit code seen in `node-start.log`. Exit codes 3 (another node holds the
+  socket) and 4 (the store is a newer node's) are not retried and end the watchdog. Three deaths within 5 min wait 5 min
+  before the next start. The restarted node reads `PILOT_WATCHDOG` (`down=<s>;exit=<code>;fast=<n>`, cleared at start so
+  its own successors do not inherit it): its run record says "restarted by the watchdog after N s", the "node was down N
+  min" card names the gap, and `fast=3` or more rings "The node keeps dying and the watchdog keeps restarting it". A Run
+  entry that starts the node with no watchdog is out of date: the setup check says so and Rewrite keeps its options.
+  `pilot-node setup` also lists, under what is left, the `reg add` commands that make WER write a dump of `pilot-node.exe`
+  to `<data>\crash-dumps` (`HKLM\...\LocalDumps\pilot-node.exe`, `DumpType` 1); HKLM needs an administrator, so setup never
+  writes it. `NodeWatchdogTests` prove it on fakes; its one Integration test kills a sleeping stand-in and sees a new one
+  within a minute. The live run (kill pilot-node by hand, see it back and the card) is the controller's.
 
 ### Stored records
 

@@ -154,6 +154,23 @@ public static class NodeCommandLine
             Subcommands = { install, removeAutostart, showAutostart },
         };
 
+        // watchdog: what the Windows Run entry starts (#1377); it starts the node with the options after -- and starts it again when it dies.
+        var watchNodeArgs = new Argument<string[]>("node-options") { Description = "The node's options, after --", Arity = ArgumentArity.ZeroOrMore };
+        var watchdog = new Command("watchdog", "Keep the node running: start it, and start it again within a minute when it dies outside an update or a restart (what the Windows logon entry runs)") { Arguments = { watchNodeArgs } };
+        watchdog.SetAction((parseResult, ct) =>
+        {
+            var given = parseResult.GetValue(watchNodeArgs) ?? [];
+            var check = Build(stdin, output, error, nodePath).Parse(given);
+            if (check.Errors.Count > 0 || check.CommandResult.Command is not RootCommand)
+            {
+                error.WriteLine($"pilot-node: watchdog takes the node's own options, and these are not: {(check.Errors.Count > 0 ? check.Errors[0].Message : string.Join(' ', given))}");
+                return Task.FromResult(NodeExitCodes.InvalidArguments);
+            }
+            var socketGiven = given.SkipWhile(a => a != "--node-socket").Skip(1).FirstOrDefault() ?? parseResult.GetValue(socket);
+            var dataGiven = given.SkipWhile(a => a != "--data").Skip(1).FirstOrDefault();
+            return WatchdogCommand.RunAsync(nodePath, given, NodeSocket.Resolve(socketGiven), Path.GetFullPath(dataGiven ?? NodeSocket.DefaultDataFolder), ct);
+        });
+
         // setup: everything a command line can do to put this machine's node in the fleet, then the checklist.
         var setupMachine = new Option<string?>("--machine") { Description = "The machine's prefix in session names, two letters and a number (DE1); else from its name" };
         setupMachine.Validators.Add(result =>
@@ -208,7 +225,7 @@ public static class NodeCommandLine
         var root = new RootCommand("pilot v2's node: one per machine, the one writer of its flights, legs, cards and sessions")
         {
             Options = { socket, data, machine, noWatchtower, watchtowerFolder, lan, lanPort, localOnly, maxJobs, jobMemory, updatePolicy, updateChannel, releaseFeed, repoRoot, after },
-            Subcommands = { hook, mergeGuard, hooks, autostart, setup, reviewCost },
+            Subcommands = { hook, mergeGuard, hooks, autostart, watchdog, setup, reviewCost },
         };
         root.SetAction(async (parseResult, ct) =>
         {

@@ -12,6 +12,9 @@ namespace Pilot.Node;
 /// </summary>
 public sealed class NodeRestarter(IHostApplicationLifetime lifetime, ILogger<NodeRestarter> logger)
 {
+    /// <summary>The run record a restart gives its reason to; null gives a restart no record (the node registers its own).</summary>
+    internal NodeExitRecord? Exit { get; set; }
+
     /// <summary>The binary a successor is started from: this process's own.</summary>
     public string NodePath { get; init; } = Environment.ProcessPath ?? "";
 
@@ -115,6 +118,7 @@ public sealed class NodeRestarter(IHostApplicationLifetime lifetime, ILogger<Nod
             return notStarted;
         }
         logger.LogInformation("restart: for {Why}", why);
+        Exit?.Planned($"restart: {why}");
         beforeStop?.Invoke();
         lifetime.StopApplication();
         return null;

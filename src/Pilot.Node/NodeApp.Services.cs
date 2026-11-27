@@ -25,7 +25,7 @@ public static partial class NodeApp
         builder.Services.AddSingleton(log);
         builder.Services.AddSingleton(logWriter);
         // First, so its start line leads and its stop line (hosts stop in reverse) closes the log of this run.
-        builder.Services.AddHostedService(_ => new NodeLifecycleLog(options, log));
+        builder.Services.AddHostedService(services => new NodeLifecycleLog(options, log, services));
         // A reboot made ready (#916): maintenance mode, every live session told to save its state, the node collecting the files.
         builder.Services.AddSingleton(services =>
         {
@@ -789,7 +789,7 @@ public static partial class NodeApp
         builder.Services.AddSingleton<IReleaseFeed>(_ => options.ReleaseFeed is { } feed
             ? new FolderReleaseFeed(feed, NodeUpdater.Layout.Product)
             : new GhReleaseFeed(NodeUpdater.Repo, channel: options.UpdateChannel));
-        builder.Services.AddSingleton<NodeUpdater>();
+        builder.Services.AddSingleton(sp => { var x = ActivatorUtilities.CreateInstance<NodeUpdater>(sp); x.Exit = NodeExitRecord.For(options.DataFolder); return x; });
         builder.Services.AddHostedService(services => services.GetRequiredService<NodeUpdater>());
     }
 
@@ -797,7 +797,7 @@ public static partial class NodeApp
     private static void AddSettings(WebApplicationBuilder builder, NodeOptions options)
     {
         // The Settings page: a saved setting restarts the node to run with it, and the setup checklist's fixes.
-        builder.Services.AddSingleton<NodeRestarter>();
+        builder.Services.AddSingleton(sp => { var x = ActivatorUtilities.CreateInstance<NodeRestarter>(sp); x.Exit = NodeExitRecord.For(options.DataFolder); return x; });
         builder.Services.AddSingleton(services => new NodeSetup(options, Environment.ProcessPath ?? "pilot-node",
             services.GetRequiredService<SessionTrackerOptions>().Profile.Root)
         {

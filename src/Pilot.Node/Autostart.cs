@@ -12,8 +12,9 @@ namespace Pilot.Node;
 /// on their Claude profile, and needs no administrator.
 /// </summary>
 /// <remarks>
-/// <para><b>Windows:</b> a value in the user's <c>Run</c> key that starts the node through <c>conhost --headless</c>, so
-/// no console window opens and none is left to close by mistake. A self-update's successor starts windowless already.</para>
+/// <para><b>Windows:</b> a value in the user's <c>Run</c> key that starts the watchdog (<c>pilot-node watchdog -- ...</c>, see
+/// <see cref="NodeWatchdog"/>) through <c>conhost --headless</c>, so no console window opens and none is left to close by mistake;
+/// the watchdog starts the node and starts it again when it dies. A self-update's successor starts windowless already.</para>
 /// <para><b>Linux:</b> a systemd user unit, <c>Restart=always</c>. Jobs run in transient scopes of their own, outside the
 /// unit's cgroup, so they outlive the node. A self-update or a settings restart starts no successor: the node exits and
 /// the unit starts it again on the binaries in place. Exit code 3 (another node holds the socket) is not retried. A unit
@@ -136,12 +137,113 @@ public static class Autostart
     /// <summary>The Run value's command for the cat: its path, quoted. A WinExe has no console, so nothing wraps it.</summary>
     public static string BuddyCommand(string buddyPath) => Quote(buddyPath);
 
-    /// <summary>The command line the Run value holds: the node, windowless, with its options.</summary>
+    /// <summary>The argument that makes <c>pilot-node</c> the watchdog (#1377): the Run entry starts <c>pilot-node watchdog -- &lt;node options&gt;</c>.</summary>
+    public const string WatchdogArgument = "watchdog";
+
+    /// <summary>The command line the Run value holds: the watchdog, windowless, which starts the node with its options and again when it dies.</summary>
     public static string WindowsCommand(string nodePath, IReadOnlyList<string> nodeArgs, string? systemRoot = null)
     {
         // Joined by hand: a Run value is a Windows path, whatever the platform this is built on (Path.Combine joins with /).
         var conhost = (systemRoot ?? Environment.GetFolderPath(Environment.SpecialFolder.System)).TrimEnd('\\') + @"\conhost.exe";
-        return string.Join(' ', new[] { Quote(conhost), "--headless", Quote(nodePath) }.Concat(nodeArgs.Select(Quote)));
+        return string.Join(' ', new[] { Quote(conhost), "--headless", Quote(nodePath), WatchdogArgument, "--" }.Concat(nodeArgs.Select(Quote)));
+    }
+
+    /// <summary>
+    /// The node path and options a Run value holds, whether it is the older one (the node itself) or the watchdog's; null when it does not read
+    /// as <c>conhost --headless &lt;node&gt; ...</c>. The inverse of <see cref="WindowsCommand"/>.
+    /// </summary>
+    public static (string Conhost, string NodePath, IReadOnlyList<string> Args)? ParseWindowsCommand(string command)
+    {
+        var words = SplitWindowsCommand(command);
+        if (words.Count < 3 || !words[1].Equals("--headless", StringComparison.Ordinal))
+        {
+            return null;
+        }
+        var rest = words.Skip(3).ToList();
+        if (rest.Count >= 2 && rest[0] == WatchdogArgument && rest[1] == "--")
+        {
+            rest = rest.Skip(2).ToList();
+        }
+        return (words[0], words[2], rest);
+    }
+
+    /// <summary>
+    /// Whether a Run value is the one <see cref="WindowsCommand"/> writes for its own node path and options: an older entry (the node started
+    /// directly, with no watchdog) is not, and the setup check has it rewritten. Compared the way Windows compares paths.
+    /// </summary>
+    public static bool RunEntryIsCurrent(string command)
+    {
+        if (ParseWindowsCommand(command) is not { } parsed)
+        {
+            return false;
+        }
+        // The folder may be empty: off Windows the system folder is "", so WindowsCommand writes \conhost.exe (a setup test's rewrite on Linux).
+        var slash = parsed.Conhost.LastIndexOf('\\');
+        return slash >= 0 && string.Equals(command, WindowsCommand(parsed.NodePath, parsed.Args, parsed.Conhost[..slash]), StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static List<string> SplitWindowsCommand(string command)
+    {
+        // CommandLineToArgvW's rules, the inverse of Quote.
+        var words = new List<string>();
+        var word = new StringBuilder();
+        var inWord = false;
+        var inQuote = false;
+        for (var i = 0; i < command.Length; i++)
+        {
+            var c = command[i];
+            if (c == '\\')
+            {
+                var slashes = 0;
+                while (i < command.Length && command[i] == '\\')
+                {
+                    slashes++;
+                    i++;
+                }
+                inWord = true;
+                if (i < command.Length && command[i] == '"')
+                {
+                    word.Append('\\', slashes / 2);
+                    if (slashes % 2 == 1)
+                    {
+                        word.Append('"');
+                    }
+                    else
+                    {
+                        inQuote = !inQuote;
+                    }
+                }
+                else
+                {
+                    word.Append('\\', slashes);
+                    i--;
+                }
+            }
+            else if (c == '"')
+            {
+                inWord = true;
+                inQuote = !inQuote;
+            }
+            else if (char.IsWhiteSpace(c) && !inQuote)
+            {
+                if (inWord)
+                {
+                    words.Add(word.ToString());
+                    word.Clear();
+                    inWord = false;
+                }
+            }
+            else
+            {
+                inWord = true;
+                word.Append(c);
+            }
+        }
+        if (inWord)
+        {
+            words.Add(word.ToString());
+        }
+        return words;
     }
 
     /// <summary>The systemd user unit that runs the node with its options.</summary>
@@ -245,8 +347,13 @@ public static class Autostart
             ? ParseExecStart(exec["ExecStart=".Length..])
             : null;
 
-    /// <summary>Whether the entry in place is current: always on Windows, else the unit file against <see cref="SystemdUnit"/>.</summary>
-    public static bool EntryIsCurrent() => !OperatingSystem.IsLinux() || !File.Exists(UnitPath()) || UnitIsCurrent(File.ReadAllText(UnitPath()));
+    /// <summary>Whether the entry in place is current: on Windows the Run value against <see cref="WindowsCommand"/>, on Linux the unit file against <see cref="SystemdUnit"/>.</summary>
+    public static bool EntryIsCurrent() => EntryIsCurrent(RealRuns, OperatingSystem.IsWindows());
+
+    /// <summary>As <see cref="EntryIsCurrent()"/>, reading the Run value from <paramref name="runs"/> where the Run key applies (<paramref name="runKey"/>). No entry is not out of date: it is missing.</summary>
+    public static bool EntryIsCurrent(IRunValues runs, bool runKey) => runKey
+        ? runs.Read(Name) is not { } command || RunEntryIsCurrent(command)
+        : !OperatingSystem.IsLinux() || !File.Exists(UnitPath()) || UnitIsCurrent(File.ReadAllText(UnitPath()));
 
     /// <summary>Where the unit goes: <c>~/.config/systemd/user</c>, or under <c>XDG_CONFIG_HOME</c>.</summary>
     public static string UnitPath() =>
@@ -415,7 +522,8 @@ public static class Autostart
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
             };
-            foreach (var arg in nodeArgs)
+            // The watchdog starts the node (and starts it again), as the Run entry does at logon.
+            foreach (var arg in new[] { WatchdogArgument, "--" }.Concat(nodeArgs))
             {
                 start.ArgumentList.Add(arg);
             }

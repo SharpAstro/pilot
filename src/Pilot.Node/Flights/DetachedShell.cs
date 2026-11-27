@@ -236,43 +236,8 @@ public sealed class DetachedShell : IDisposable
         }
     }
 
-    private const uint CreateNewProcessGroup = 0x200;
-    private const uint CreateBreakawayFromJob = 0x01000000;
-    private const uint CreateNoWindow = 0x08000000;
-    private const uint UseShowWindow = 0x1;
-    private const uint UseStdHandles = 0x100;
-    private const uint CreateSuspended = 0x4;
-    private const uint ExtendedStartupInfoPresent = 0x80000;
     private const nint HandleListAttribute = 0x20002;
     private const uint JobObjectAllAccess = 0x1F001F;
-    private const int ErrorAccessDenied = 5;
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct StartupInfo
-    {
-        public uint Size;
-        public nint Reserved;
-        public nint Desktop;
-        public nint Title;
-        public uint X, Y, XSize, YSize, XCountChars, YCountChars, FillAttribute, Flags;
-        public ushort ShowWindow, Reserved2Size;
-        public nint Reserved2;
-        public nint StdInput, StdOutput, StdError;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct StartupInfoEx
-    {
-        public StartupInfo Startup;
-        public nint AttributeList;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct ProcessInformation
-    {
-        public nint Process, Thread;
-        public uint ProcessId, ThreadId;
-    }
 
     [StructLayout(LayoutKind.Sequential)]
     private struct SecurityAttributes
@@ -283,20 +248,11 @@ public sealed class DetachedShell : IDisposable
     }
 
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool CreateProcessW(string? application, StringBuilder commandLine, nint processAttributes, nint threadAttributes,
-        [MarshalAs(UnmanagedType.Bool)] bool inheritHandles, uint flags, nint environment, string? directory, ref StartupInfoEx startup, out ProcessInformation information);
-
-    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern SafeFileHandle CreateFileW(string name, uint access, uint share, ref SecurityAttributes attributes, uint disposition, uint flags, nint template);
 
     [DllImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool SetHandleInformation(SafeFileHandle handle, uint mask, uint flags);
-
-    [DllImport("kernel32.dll", SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool CloseHandle(nint handle);
 
     [DllImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
@@ -361,7 +317,7 @@ public sealed class DetachedShell : IDisposable
         var job = CreateJobObjectW(0, null!);
         if (job != 0 && !AssignProcessToJobObject(job, process.Handle))
         {
-            CloseHandle(job);
+            Win32ProcessStart.CloseHandle(job);
             return 0;
         }
         return job;
@@ -371,7 +327,7 @@ public sealed class DetachedShell : IDisposable
     internal static long JobOtherTransfer(nint job) =>
         QueryInformationJobObject(job, JobObjectBasicAndIoAccountingInformation, out var info, Marshal.SizeOf<BasicAndIoAccounting>(), 0) ? (long)info.OtherTransferCount : 0;
 
-    internal static void CloseJob(nint job) => CloseHandle(job);
+    internal static void CloseJob(nint job) => Win32ProcessStart.CloseHandle(job);
 
     /// <summary>The job object's name: the job's id and a hash of its log path, so two nodes on one machine that both have a <c>j1</c> never share one.</summary>
     private static string JobName(string jobId, string logPath) =>
@@ -394,7 +350,7 @@ public sealed class DetachedShell : IDisposable
             return;
         }
         TerminateJobObject(job, 1);
-        CloseHandle(job);
+        Win32ProcessStart.CloseHandle(job);
     }
 
     private const uint LimitPriorityClass = 0x20;
@@ -442,12 +398,12 @@ public sealed class DetachedShell : IDisposable
         {
             throw new Win32Exception(Marshal.GetLastWin32Error());
         }
-        var startup = new StartupInfoEx
+        var startup = new Win32ProcessStart.StartupInfoEx
         {
-            Startup = new StartupInfo
+            Startup = new Win32ProcessStart.StartupInfo
             {
-                Size = (uint)Marshal.SizeOf<StartupInfoEx>(),
-                Flags = UseStdHandles | UseShowWindow,
+                Size = (uint)Marshal.SizeOf<Win32ProcessStart.StartupInfoEx>(),
+                Flags = Win32ProcessStart.UseStdHandles | Win32ProcessStart.UseShowWindow,
                 ShowWindow = 0,
                 StdInput = nul.DangerousGetHandle(),
                 StdOutput = log.DangerousGetHandle(),
@@ -480,16 +436,11 @@ public sealed class DetachedShell : IDisposable
             // Outside the node's job object when it allows it, so ending the node ends nothing here; a job object that does
             // not allow breakaway refuses the flag, and the job then starts without it. Suspended until it is in its own
             // named job object, so nothing it starts can be outside it.
-            var flags = CreateNoWindow | CreateNewProcessGroup | CreateSuspended | ExtendedStartupInfoPresent | priority.WindowsClass();
+            var flags = Win32ProcessStart.NoWindow | Win32ProcessStart.NewProcessGroup | Win32ProcessStart.Suspended | Win32ProcessStart.ExtendedStartupInfoPresent | priority.WindowsClass();
             ProcessStarts.Observe("job", new ProcessStartInfo { FileName = line, WorkingDirectory = cwd });
-            var started = CreateProcessW(null, new StringBuilder(line), 0, 0, true, flags | CreateBreakawayFromJob, 0, cwd, ref startup, out var info);
-            if (!started && Marshal.GetLastWin32Error() == ErrorAccessDenied)
+            if (!Win32ProcessStart.TryStart(line, true, flags, cwd, ref startup, out var info, out var startError))
             {
-                started = CreateProcessW(null, new StringBuilder(line), 0, 0, true, flags, 0, cwd, ref startup, out info);
-            }
-            if (!started)
-            {
-                throw new Win32Exception(Marshal.GetLastWin32Error());
+                throw new Win32Exception(startError);
             }
             try
             {
@@ -520,15 +471,15 @@ public sealed class DetachedShell : IDisposable
             }
             finally
             {
-                CloseHandle(info.Thread);
-                CloseHandle(info.Process);
+                Win32ProcessStart.CloseHandle(info.Thread);
+                Win32ProcessStart.CloseHandle(info.Process);
             }
         }
         finally
         {
             if (job != 0)
             {
-                CloseHandle(job);
+                Win32ProcessStart.CloseHandle(job);
             }
             if (listReady)
             {
