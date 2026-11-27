@@ -902,6 +902,76 @@ internal sealed class PilotChrome<TSurface>
         return said;
     }
 
+    /// <summary>
+    /// Opens what any <see cref="PilotLink"/> names (#1381 section 8): a card as <see cref="OpenCardLink"/> does; a flight on the Flights page, its page
+    /// open and the leg's line in view when one is given; a session on the Sessions page, selected. A link with <c>?node=</c> first shows that node (a
+    /// node this window does not know is said in a toast and nothing opens). Null when it opened, else the sentence said.
+    /// </summary>
+    public string? OpenLink(PilotLink link)
+    {
+        NodeMark? node = null;
+        if (link.Node is { Length: > 0 } wanted)
+        {
+            node = Nodes.Choices.FirstOrDefault(c => c.Name.Equals(wanted, StringComparison.OrdinalIgnoreCase)
+                || c.Key.Equals(wanted, StringComparison.OrdinalIgnoreCase)
+                || (c.HeldName?.Equals(wanted, StringComparison.OrdinalIgnoreCase) ?? false));
+            if (node is null)
+            {
+                return LinkMissed(wanted, "That node is not here", $"This window does not know the node {wanted}; it may be off, or not added to this window.");
+            }
+        }
+        switch (link.Kind)
+        {
+            case PilotLinkKind.Flight when link.FlightCode is { } code:
+                Navigate(() =>
+                {
+                    Switch(PilotPage.Flights, _show);
+                    ShowOnly(node);
+                    if (link.Leg is { } leg)
+                    {
+                        Flights.OpenDetail(code, leg);
+                    }
+                    else
+                    {
+                        Flights.OpenDetail(code);
+                    }
+                });
+                return null;
+            case PilotLinkKind.Session when link.SessionId is { } id:
+                Navigate(() =>
+                {
+                    Switch(PilotPage.Sessions, _show);
+                    ShowOnly(node);
+                    Sessions.Transcript.Close();
+                    Sessions.SelectFirst(l => l.Row.Id == id && (node is null || l.Node?.Key == node.Key || (l.Node is null && node.Here)));
+                });
+                return null;
+            default:
+                if (node is not null)
+                {
+                    ShowOnly(node);
+                }
+                return OpenCardLink(link);
+        }
+    }
+
+    // A link's node, shown on its own; none leaves the window's pick as it is.
+    private void ShowOnly(NodeMark? node)
+    {
+        if (node is not null)
+        {
+            Nodes.ShowAll();
+            Nodes.Toggle(node.Key);
+        }
+    }
+
+    private string LinkMissed(string id, string title, string said)
+    {
+        Notifications.Open = false;
+        Notifications.PostEvent(new PilotEvent(PilotEventKind.CardLinkMissed, id, title, said, NotificationSeverity.Warn, null), null, Clock?.Invoke() ?? DateTimeOffset.UtcNow);
+        return said;
+    }
+
     /// <summary>Whether <see cref="Back"/> has a place to return to.</summary>
     public bool CanGoBack => _history.CanGoBack;
 

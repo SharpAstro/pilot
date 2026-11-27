@@ -12,6 +12,9 @@ public sealed record BuddyCall(string Tool, string? Text = null, string? Urgency
     public const string State = "state";
     public const string Sleep = "sleep";
 
+    /// <summary>The memory report (managed heap, private bytes, atlas, swapchain, mirror): offered as <c>buddy_memory</c>.</summary>
+    public const string Memory = "memory";
+
     /// <summary>Opens the settings card: sent by <c>pilot-buddy settings</c>, not offered to the watchtower.</summary>
     public const string Settings = "settings";
 }
@@ -77,6 +80,7 @@ public sealed class BuddyRelay(BuddyModel model, BuddyFeed feed, TimeProvider ti
                 BuddyCall.Point => Point(call),
                 BuddyCall.State => State(),
                 BuddyCall.Sleep => Sleep(),
+                BuddyCall.Memory => MemoryReport is { } report ? new BuddyAnswer(true, report()) : new BuddyAnswer(false, "the buddy has no memory report"),
                 BuddyCall.Settings => OpenSettingsCard(),
                 _ => new BuddyAnswer(false, $"the buddy has no tool '{call.Tool}'"),
             };
@@ -85,6 +89,9 @@ public sealed class BuddyRelay(BuddyModel model, BuddyFeed feed, TimeProvider ti
         Changed?.Invoke();
         return answer;
     }
+
+    /// <summary>The JSON of <see cref="BuddyMemory.Report"/>; set by the host.</summary>
+    public Func<string>? MemoryReport { get; set; }
 
     /// <summary>Opens the settings card on the window; set by the host.</summary>
     public Action? OpenSettings { get; set; }

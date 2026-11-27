@@ -77,12 +77,14 @@ public sealed class DesktopCatSectionTests : IDisposable
     private static void Render(PilotChrome<RgbaImage> chrome, int width, int height) =>
         chrome.Render(new SessionsScreen([], "test", Live.At), new RectF32(0, 0, width, height));
 
-    private static void Click(PilotChrome<RgbaImage> chrome, string action)
+    private static void Click(PilotChrome<RgbaImage> chrome, string action, int height = 1400)
     {
-        Render(chrome, 1280, 1400);
+        Render(chrome, 1280, height);
         var regions = new List<ClickableRegion>();
         chrome.Settings.CollectPaintedRegions(regions);
-        regions.First(r => r.Result is HitResult.ButtonHit b && b.Action == action).OnClick!.Invoke(InputModifier.None);
+        var at = regions.FindIndex(r => r.Result is HitResult.ButtonHit b && b.Action == action);
+        (at >= 0).ShouldBeTrue($"no painted '{action}' among: {string.Join(", ", regions.Select(r => (r.Result as HitResult.ButtonHit)?.Action).Where(a => a is not null))}");
+        regions[at].OnClick!.Invoke(InputModifier.None);
     }
 
     private static List<string> Texts(PilotChrome<RgbaImage> chrome, RgbaImageRenderer renderer, float width = 1280, float height = 1400)
@@ -137,10 +139,48 @@ public sealed class DesktopCatSectionTests : IDisposable
     }
 
     [Fact]
+    public async Task GoAwayAfterAndRemoteSessionsAreRowsThatWriteTheFileAndShowTheFilesAnswer()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 1400);
+        var source = Source();
+        var chrome = await LoadedAsync(renderer, source, 1280, 1400);
+        var texts = Texts(chrome, renderer);
+        texts.ShouldContain("Go away after");
+        texts.ShouldContain("30 min");
+        texts.ShouldContain("In remote sessions");
+
+        Click(chrome, "settings:buddy-long-sleep:2");
+        BuddySettings.Load(FilePath).LongSleepMinutes.ShouldBe(60);
+        Click(chrome, "settings:buddy-remote");
+        BuddySettings.Load(FilePath).ShowsInRemoteSessions.ShouldBeTrue();
+        BuddySettings.Load(FilePath).LongSleepMinutes.ShouldBe(60, "the other setting stays as written");
+    }
+
+    [Fact]
+    public async Task PlacementAndSizeAreSegmentsThatWriteTheFileAndFreeHidesTheCornerRow()
+    {
+        using var renderer = new RgbaImageRenderer(1280, 1400);
+        var source = Source();
+        var chrome = await LoadedAsync(renderer, source, 1280, 1400);
+        Texts(chrome, renderer).ShouldContain("Bottom right");
+        Texts(chrome, renderer).ShouldContain("Size");
+
+        Click(chrome, "settings:buddy-size:2");
+        BuddySettings.Load(FilePath).SizeIndex.ShouldBe(2);
+        Click(chrome, "settings:buddy-placement:1");
+        var free = BuddySettings.Load(FilePath);
+        free.IsFree.ShouldBeTrue();
+        free.SizeIndex.ShouldBe(2, "the other settings stay as they were written");
+        Texts(chrome, renderer).ShouldNotContain("Bottom right");
+        Texts(chrome, renderer).ShouldContain("Placement");
+    }
+
+    [Fact]
     public async Task WakeNowClearsTheSnooze()
     {
         using var renderer = new RgbaImageRenderer(1280, 1400);
-        var source = Source(new BuddySettings().WithSnooze(1, Now, TimeZoneInfo.Utc));
+        // The page paints against the real clock (Settings.Render takes UtcNow), so the snooze is set from it: a fixed past date would be over by the time the test runs.
+        var source = Source(new BuddySettings().WithSnooze(1, DateTimeOffset.UtcNow, TimeZoneInfo.Utc));
         var chrome = await LoadedAsync(renderer, source, 1280, 1400);
         var texts = Texts(chrome, renderer);
         texts.ShouldContain("Snoozed until");

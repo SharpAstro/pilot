@@ -635,10 +635,13 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
         return CatRow("Running", hint, controls);
     }
 
+    // The one-line description of the logon row: when the cat is not allowed in remote sessions it says it stays hidden there.
+    private string LogonHint() => SettingsLogonWording.Hint(Buddy?.Current ?? new BuddySettings());
+
     // The setup check beside autostart: the cat's own start at logon, shown here (and only here, when this section is on the page) as a switch.
     private Layout.Node CatLogonRow(SetupCheck? check)
     {
-        const string hint = "the cat starts when you log in, apart from the node's own start at logon";
+        var hint = LogonHint();
         if (check is null)
         {
             return CatRow("Start at logon", hint, [Layout.Builder.Text("checking…", 13f, Dim).WAuto()]);
@@ -692,16 +695,32 @@ internal sealed class SettingsView<TSurface>(Renderer<TSurface> renderer) : Pilo
         {
             add(Part.Row, CatRunningRow(), ["Running", CatRunningHint, "buddy-running", "Start", "Not running"]);
         }
-        add(Part.Row, CatLogonRow(logon), ["Start at logon", "the cat starts when you log in, apart from the node's own start at logon", BuddyAutostartKey, "autostart"]);
+        add(Part.Row, CatLogonRow(logon), ["Start at logon", LogonHint(), BuddyAutostartKey, "autostart"]);
         add(Part.Row, CatRow("Wake for asks", "a session asks you something", [CatSwitch("buddy-wake-ask", cat.WakesForAsk, (s, v) => s with { WakeAsk = v })]),
             ["Wake for asks", "a session asks you something", "buddy-wake-ask", "Wakes for"]);
         add(Part.Row, CatRow("Wake for merges", "a PR merged or a flight landed", [CatSwitch("buddy-wake-merged", cat.WakesForMerged, (s, v) => s with { WakeMerged = v })]),
             ["Wake for merges", "a PR merged or a flight landed", "buddy-wake-merged", "landings", "Wakes for"]);
         add(Part.Row, CatRow("Wake for failures", "CI failed or a session got stuck", [CatSwitch("buddy-wake-failed", cat.WakesForFailed, (s, v) => s with { WakeFailed = v })]),
             ["Wake for failures", "CI failed or a session got stuck", "buddy-wake-failed", "CI failures and stuck sessions", "Wakes for"]);
-        add(Part.Row, CatRow("Corner", "which corner of the screen the cat sits in",
-                CatSegments("buddy-corner", BuddySettings.CornerChoices, cat.CornerIndex, i => source.Update(s => s with { Corner = i }))),
-            ["Corner", "which corner of the screen the cat sits in", "buddy-corner"]);
+        add(Part.Row, CatRow("Placement", "snap to a corner when dropped, or stay where you drop it (remembered per monitor)",
+                CatSegments("buddy-placement", BuddySettings.PlacementChoices, cat.PlacementIndex, i => source.Update(s => s with { Placement = i }))),
+            ["Placement", "snap to a corner when dropped, or stay where you drop it (remembered per monitor)", "buddy-placement"]);
+        // The corner means something only while the cat snaps to one: in Free the row is not shown, so no control is dead.
+        if (!cat.IsFree)
+        {
+            add(Part.Row, CatRow("Corner", "which corner of the screen the cat sits in",
+                    CatSegments("buddy-corner", BuddySettings.CornerChoices, cat.CornerIndex, i => source.Update(s => s with { Corner = i }))),
+                ["Corner", "which corner of the screen the cat sits in", "buddy-corner"]);
+        }
+        add(Part.Row, CatRow("Size", "how big the cat is; the text in its bubble keeps the system text size",
+                CatSegments("buddy-size", BuddySettings.SizeChoices, cat.SizeIndex, i => source.Update(s => s with { Size = i }))),
+            ["Size", "how big the cat is; the text in its bubble keeps the system text size", "buddy-size"]);
+        add(Part.Row, CatRow("Go away after", "a quiet sleep this long and the cat leaves a paw at the edge; a wake brings it back",
+                CatSegments("buddy-long-sleep", BuddySettings.LongSleepLabels, cat.LongSleepIndex, i => source.Update(s => s with { LongSleepMinutes = BuddySettings.LongSleepChoices[i] }))),
+            ["Go away after", "a quiet sleep this long and the cat leaves a paw at the edge; a wake brings it back", "buddy-long-sleep"]);
+        add(Part.Row, CatRow("In remote sessions", "show the cat inside a remote desktop session; off, it stays hidden there and the node's toasts carry on",
+                [CatSwitch("buddy-remote", cat.ShowsInRemoteSessions, (s, v) => s with { ShowInRemoteSessions = v })]),
+            ["In remote sessions", "show the cat inside a remote desktop session; off, it stays hidden there and the node's toasts carry on", "buddy-remote"]);
         add(Part.Row, CatRow("Click-through", "clicks pass through to the window below while the cat sleeps", [CatSwitch("buddy-click-through", cat.ClicksPassThrough, (s, v) => s with { ClickThrough = v })]),
             ["Click-through", "clicks pass through to the window below while the cat sleeps", "buddy-click-through"]);
         add(Part.Row, CatRow("Snooze for", "nothing wakes the cat until the snooze ends",

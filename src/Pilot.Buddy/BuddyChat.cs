@@ -52,7 +52,7 @@ public sealed class BuddyChat(IBuddyNode node, IGuiHandOff gui, Func<string?> di
     public object Gate => _gate;
 
     /// <summary>What the input says while empty and usable.</summary>
-    public const string Placeholder = "Ask the watchtower";
+    public const string Placeholder = "Ask the watchtower…";
 
     /// <summary>The words that tell a long answer goes on in the GUI.</summary>
     public const string MoreInTheGui = "more in the GUI";

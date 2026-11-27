@@ -7,6 +7,13 @@ namespace Pilot.Contracts;
 /// <remarks>Not thread-safe: one reader applies, as one connection delivers.</remarks>
 public sealed class NodeMirror
 {
+    /// <summary>
+    /// A mirror that keeps only what the desktop cat shows: sessions, flights, legs, cards, merges and the node's own health row, with the stream's
+    /// position. Jobs, PR reviews, ideas, milestones, issues, summaries, notes and the usage, machine, admission, follow-up, pull-request and repo rows
+    /// are read past (their events still move <see cref="Seq"/>, so the stream stays whole) and held nowhere: the cat's memory (#1381 section 11).
+    /// </summary>
+    public bool Slim { get; init; }
+
     private readonly Dictionary<string, SessionRow> _sessions = new Dictionary<string, SessionRow>(StringComparer.Ordinal);
     private readonly List<NodeNote> _notes = [];
     private readonly Dictionary<string, FlightRow> _flights = new Dictionary<string, FlightRow>(StringComparer.Ordinal);
@@ -109,7 +116,10 @@ public sealed class NodeMirror
                 _sessions[row.Id] = row;
             }
             _notes.Clear();
-            _notes.AddRange(snapshot.Notes);
+            if (!Slim)
+            {
+                _notes.AddRange(snapshot.Notes);
+            }
             _flights.Clear();
             foreach (var flight in snapshot.Flights ?? [])
             {
@@ -125,13 +135,25 @@ public sealed class NodeMirror
             {
                 _cards[card.Id] = card;
             }
+            Node = snapshot.Node;
+            if (Slim)
+            {
+                _jobs.Clear();
+                _merges.Clear();
+                foreach (var merge in snapshot.Merges ?? [])
+                {
+                    _merges[merge.Flight] = merge;
+                }
+                Stream = snapshot.Stream;
+                Seq = snapshot.Seq;
+                return;
+            }
             Usage = snapshot.Usage;
             Machine = snapshot.Machine;
             Admission = snapshot.Admission;
             FollowUps = snapshot.FollowUps;
             PullRequests = snapshot.PullRequests;
             Repos = snapshot.Repos;
-            Node = snapshot.Node;
             _jobs.Clear();
             foreach (var job in snapshot.Jobs ?? [])
             {
@@ -173,6 +195,14 @@ public sealed class NodeMirror
         if (nodeEvent.Seq != Seq + 1)
         {
             throw new InvalidOperationException($"Delta {nodeEvent.Seq} arrived after {Seq}: the stream skipped or repeated");
+        }
+
+        if (Slim && nodeEvent is NoteAddedEvent or JobAddedEvent or JobChangedEvent or PrReviewAddedEvent or PrReviewChangedEvent or IdeasChangedEvent or IdeaMovedEvent
+            or MilestonesChangedEvent or IssuesChangedEvent or SummaryChangedEvent or UsageChangedEvent or AdmissionChangedEvent or FollowUpsChangedEvent
+            or MachineChangedEvent or PullRequestsChangedEvent or ReposChangedEvent)
+        {
+            Seq = nodeEvent.Seq;
+            return;
         }
 
         switch (nodeEvent)

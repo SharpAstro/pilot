@@ -164,9 +164,22 @@ public sealed class Pen<TSurface>(Renderer<TSurface> renderer, string fontPath, 
         Renderer.DrawPolyline(device, color, D(width));
     }
 
+    /// <summary>
+    /// Told every text a pen draws on this thread, while set: the window sets it around its CPU pass so the glyphs the scene is about to draw on the GPU are known
+    /// and warmed before that frame is presented (<see cref="BuddyGlyphWarmer"/>). Thread-static, so the host's one draw thread and a parallel test do not meet.
+    /// </summary>
+    [ThreadStatic]
+    public static Action<string>? TextSeen;
+
     /// <summary>Text in the rectangle, from its top left; <paramref name="size"/> is in design pixels.</summary>
     public void Text(string text, float x, float y, float w, float h, float size, RGBAColor32 color, TextAlign align = TextAlign.Near, TextAlign vertical = TextAlign.Near)
-        => Renderer.DrawText(text, FontPath, size * Scale, color, Rect(x, y, w, h), align, vertical);
+        => DrawText(text, size, color, Rect(x, y, w, h), align, vertical);
+
+    private void DrawText(string text, float size, RGBAColor32 color, RectInt rect, TextAlign align, TextAlign vertical)
+    {
+        TextSeen?.Invoke(text);
+        Renderer.DrawText(text, FontPath, size * Scale, color, rect, align, vertical);
+    }
 
     /// <summary>The width and line height of <paramref name="text"/> at <paramref name="size"/>, in design pixels.</summary>
     public (float Width, float Height) Measure(string text, float size)
