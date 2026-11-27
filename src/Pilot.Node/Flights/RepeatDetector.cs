@@ -14,12 +14,27 @@ public sealed record Repeat(string Key, CardRow Task, string Told, string? Secon
 /// and evidence. The same pair never opens a second task, open or closed: the pair is written into the task's detail and read back.
 /// A third occurrence pairs with the second, so it has a task of its own (the first task's cause was not found). A look raises at most
 /// one task per kind and subject (or signature and flight), for the newest pair, so a backlog found at once is one task. The investigator's
-/// own rings are no occurrence of anything. The second occurrence's card is told to the watchtower with the task, once (the node's wakes).
+/// own rings are no occurrence of anything, and neither is a <see cref="RoutineKinds">routine kind</see> (a scheduled card, a PR's
+/// lifecycle card, a wait): those recur by design, so only fault kinds on one subject make a task (#1386). The second occurrence's card is told to the watchtower with the task, once (the node's wakes).
 /// </summary>
 public sealed class RepeatDetector(NodeState state, FailureLedger failures, TimeProvider time)
 {
     /// <summary>How far back an earlier occurrence counts.</summary>
     public TimeSpan Window { get; init; } = TimeSpan.FromHours(24);
+
+    /// <summary>
+    /// Card kinds that recur by design and never count as a repeat (#1386; on 2026-11-27 eight investigators ran, all for these):
+    /// <see cref="Digest.Kind"/> is scheduled twice a day; <see cref="StartGate.WeekKind"/> comes once per 7-day usage window;
+    /// <see cref="LegCommander.PrReady"/> is the lifecycle of one PR, re-raised as checks run, the queue takes it or a review-notes
+    /// leg lands (the re-raise itself is #1400's); <see cref="CardKinds.SessionWaiting"/> is one card per wait of a session.
+    /// </summary>
+    public static IReadOnlySet<string> RoutineKinds { get; } = new HashSet<string>(StringComparer.Ordinal)
+    {
+        Digest.Kind,
+        StartGate.WeekKind,
+        LegCommander.PrReady,
+        CardKinds.SessionWaiting,
+    };
 
     private static string Pair(string first, string second) => $"[pair: {first} + {second}]";
 
@@ -62,7 +77,7 @@ public sealed class RepeatDetector(NodeState state, FailureLedger failures, Time
         var found = new List<Repeat>();
 
         foreach (var group in cards
-            .Where(c => c.Bin != CardBin.Handled && c.Kind != CardKinds.RepeatTask && c.Kind != Watchtower.RaisedKind
+            .Where(c => c.Bin != CardBin.Handled && c.Kind != CardKinds.RepeatTask && c.Kind != Watchtower.RaisedKind && !RoutineKinds.Contains(c.Kind)
                 && c.Kind is not (Investigator.RingKind or Investigator.BoundKind or Investigator.GateKind) && c.At >= since)
             .GroupBy(c => (c.Kind, c.Subject)))
         {

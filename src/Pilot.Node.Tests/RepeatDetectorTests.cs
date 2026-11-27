@@ -27,6 +27,47 @@ public sealed class RepeatDetectorTests
 
     private CardRow Repeats() => _state.Cards().Single(c => c.Kind == CardKinds.RepeatTask);
 
+    [Theory]
+    [InlineData("digest", "flight/PIL1")]
+    [InlineData("usage-week", "node")]
+    [InlineData("session-waiting", "session/s1")]
+    public void TwoCardsOfARoutineKindOnOneSubjectRaiseNoTask(string kind, string subject)
+    {
+        _state.RaiseCard(CardBin.Ring, kind, subject, "first");
+        _time.Advance(TimeSpan.FromHours(2));
+        _state.RaiseCard(CardBin.Ring, kind, subject, "second");
+
+        _detector.Look().ShouldBeEmpty();
+        _state.Cards().ShouldNotContain(c => c.Kind == CardKinds.RepeatTask);
+    }
+
+    [Fact]
+    public void ThePrReadyLifecycleOfOneFlightRaisesNoTask()
+    {
+        _state.RaiseCard(CardBin.Ring, LegCommander.PrReady, "flight/PIL1", "PIL1: checks running");
+        _time.Advance(TimeSpan.FromMinutes(20));
+        _state.RaiseCard(CardBin.Ring, LegCommander.PrReady, "flight/PIL1", "PIL1: queued, ready to merge");
+
+        _detector.Look().ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void ARoutineKindSetNamesTheFourKinds()
+    {
+        RepeatDetector.RoutineKinds.ShouldBe([Digest.Kind, StartGate.WeekKind, LegCommander.PrReady, CardKinds.SessionWaiting], ignoreOrder: true);
+    }
+
+    [Fact]
+    public void AFaultKindTwiceOnOneFlightStillRaisesExactlyOneTask()
+    {
+        _state.RaiseCard(CardBin.Ring, "worker-failed", "flight/PIL1", "worker failed");
+        _time.Advance(TimeSpan.FromHours(1));
+        _state.RaiseCard(CardBin.Ring, "worker-failed", "flight/PIL1", "worker failed");
+
+        _detector.Look().ShouldHaveSingleItem();
+        _state.Cards().Count(c => c.Kind == CardKinds.RepeatTask).ShouldBe(1);
+    }
+
     [Fact]
     public void TheSecondCardOfAKindOnTheSameSubjectOpensOneHandledTaskNamingBothWithTheirEvidence()
     {
