@@ -502,21 +502,34 @@ public static partial class NodeApp
         Results.Json(ResponseEnvelope<CommandResult>.Fail(error), PilotJsonContext.Default.ResponseEnvelopeCommandResult, statusCode: 400);
 }
 
-/// <summary>Says the node's start (version, socket, data folder, LAN port) and its stop in <c>logs/node.log</c> (pilot #416).</summary>
-internal sealed class NodeLifecycleLog(NodeOptions options, RollingLog log) : IHostedService
+/// <summary>Says the node's start (version, socket, data folder, LAN port) and its stop in <c>logs/node.log</c> (pilot #416), and keeps the run record (#1377).</summary>
+internal sealed class NodeLifecycleLog(NodeOptions options, RollingLog log, IServiceProvider services) : IHostedService
 {
+    public const string DownKind = "node-down";
+    public const string JobKind = "node-in-job";
+    public const string RestartLoopKind = "node-restart-loop";
+
     public Task StartAsync(CancellationToken cancellationToken)
     {
+        var exit = NodeExitRecord.For(options.DataFolder);
+        if (!exit.Begun)
+        {
+            // A host a test builds, or any start that did not come through NodeProgram: the record starts here.
+            exit.Begin(NodeEnds.Facts(FileJournal.RunningVersion), log.Path);
+        }
         if (ClaudeWorkerLauncher.SweepBriefs(ClaudeWorkerLauncher.BriefFolderIn(options.DataFolder), ClaudeWorkerLauncher.BriefFileLife, DateTime.UtcNow) is > 0 and var swept)
         {
             log.Write($"pilot-node: removed {swept} brief file(s) older than {ClaudeWorkerLauncher.BriefFileLife.TotalDays:0} days");
         }
         log.Write($"pilot-node: start, version {FileJournal.RunningVersion}, socket {options.SocketPath}, data folder {options.DataFolder}, LAN {(options.Lan ? $"port {options.LanPort}" : "off")}");
+        exit.RaiseCards(services.GetService<NodeState>(), line => log.Write(line));
         return Task.CompletedTask;
     }
 
     public Task StopAsync(CancellationToken cancellationToken)
     {
+        // The reason a restart, an update or a signal gave stays; a plain stop says so.
+        NodeExitRecord.For(options.DataFolder).Planned("stop");
         log.Write("pilot-node: stop");
         return Task.CompletedTask;
     }
