@@ -190,12 +190,31 @@ public sealed class McpHttpTests : IDisposable
     }
 
     [Fact]
+    public async Task ARefusedCallIsCountedAsMcpRefusedAndAnAnsweredOneUnderTheSession()
+    {
+        var callers = new CommandCallers(new FakeProcessTable(), TimeProvider.System);
+        DefaultHttpContext With(DefaultHttpContext context)
+        {
+            context.RequestServices = new ServiceCollection().AddLogging().AddSingleton(callers).BuildServiceProvider();
+            return context;
+        }
+
+        await AnswerAsync(With(Request(Initialize, "not-a-token")));
+        await AnswerAsync(With(Request(Initialize, _http.TokenFor("se1-x"), origin: "https://evil.example")));
+        await AnswerAsync(With(Request(Initialize, _http.TokenFor("se1-x"))));
+
+        var rows = callers.Rows().ToDictionary(r => r.Name, r => r.Count);
+        rows["mcp refused"].ShouldBe(2);
+        rows["mcp se1-x"].ShouldBe(1);
+    }
+
+    [Fact]
     public async Task AGetOnTheEndpointIs405BecauseThereIsNoStreamBack()
     {
         var context = new DefaultHttpContext { RequestServices = new ServiceCollection().AddLogging().BuildServiceProvider() };
         context.Response.Body = new MemoryStream();
 
-        await McpHttp.NoStream().ExecuteAsync(context);
+        await McpHttp.NoStream(context).ExecuteAsync(context);
 
         context.Response.StatusCode.ShouldBe(StatusCodes.Status405MethodNotAllowed);
     }
@@ -218,7 +237,7 @@ public sealed class McpHttpTests : IDisposable
         var seen = new List<(string Cwd, string? Id)>();
         foreach (var name in new[] { "se1-has-row", "se1-no-row" })
         {
-            _http.SessionFor(name).Invoker = (_, cwd, id, _, _) => { seen.Add((cwd, id)); return Task.FromResult(0); };
+            _http.SessionFor(name).Invoker = (_, cwd, _, _, _, _, _, _, _, id, _, _, _, _) => { seen.Add((cwd, id)); return Task.FromResult(0); };
             var (_, body) = await AnswerAsync(Request("""{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"status","arguments":{}}}""", _http.TokenFor(name)));
             body.ShouldContain("result");
         }

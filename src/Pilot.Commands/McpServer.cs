@@ -439,8 +439,8 @@ internal sealed partial class McpServer(string cwd, string? node, string? socket
     /// <summary>What a call or read says when the node is not there: it may be restarting, so the next call may well work.</summary>
     private const string Restarting = "the node is restarting (or not running): try again in a moment";
 
-    /// <summary>A test's stand-in for the command a tool call runs: it gets the folder and session id the call is made as, which are the session's own.</summary>
-    internal delegate Task<int> ToolInvoker(string[] args, string cwd, string? sessionId, TextWriter output, TextWriter error);
+    /// <summary>The command a tool call runs, with the arguments <see cref="PilotCommand.InvokeAsync"/> takes: a test's stand-in sees what the real command would get, the session's own folder and id among them.</summary>
+    internal delegate Task<int> ToolInvoker(string[] args, string cwd, TextWriter output, TextWriter error, string who, bool bySession, bool console, CancellationToken cancellationToken, bool? agent = null, string? sessionId = null, RichOutput? rich = null, string? requestId = null, TimeSpan? commandTimeout = null, PictureSink? pictures = null);
 
     internal ToolInvoker? Invoker { get; set; }
 
@@ -500,10 +500,9 @@ internal sealed partial class McpServer(string cwd, string? node, string? socket
         // Pictures a command hands over (design renders) travel as image items: the bytes come from the node asked, a path on
         // another machine would be no use to this session.
         List<(byte[] Bytes, string Mime, string Line)> pictures = [];
-        var exit = Invoker is { } invoker
-            ? await invoker([.. NodeArgs(target, here), .. args], cwd, sessionId, output, error)
-            : await PilotCommand.InvokeAsync([.. NodeArgs(target, here), .. args], cwd, output, error, Who, bySession: true, console: false, cancellationToken, agent: true, sessionId: sessionId,
-                pictures: (mime, bytes, line) => { pictures.Add((bytes, mime, line)); return Task.CompletedTask; });
+        // One call path, with or without a test's stand-in: the arguments below are the ones the real command gets.
+        var exit = await (Invoker ?? PilotCommand.InvokeAsync)([.. NodeArgs(target, here), .. args], cwd, output, error, Who, bySession: true, console: false, cancellationToken, agent: true, sessionId: sessionId,
+            pictures: (mime, bytes, line) => { pictures.Add((bytes, mime, line)); return Task.CompletedTask; });
         var said = (output.ToString() + error.ToString()).TrimEnd();
         if (exit == 3)
         {

@@ -14,7 +14,6 @@ public sealed class McpEndpointSession(string cwd, string? socket, string? sessi
     // This machine's own name as the node, so a PILOT_NODE in the node process's environment never sends a session's tools to another node.
     private readonly McpServer _server = new(cwd, node: Environment.MachineName, socket, installed: _ => Task.FromResult<string?>(null), handedOver: true, parentIsMcp: () => true, sessionId: sessionId ?? "", notices: false);
 
-    // Calls run one at a time, as the stdio loop runs them: a client that sends two at once waits for the first.
     /// <summary>The folder the calls are made in.</summary>
     internal string Cwd { get; } = cwd;
 
@@ -24,6 +23,7 @@ public sealed class McpEndpointSession(string cwd, string? socket, string? sessi
     /// <summary>A test's stand-in for the command a call runs.</summary>
     internal McpServer.ToolInvoker? Invoker { set => _server.Invoker = value; }
 
+    // Calls run one at a time, as the stdio loop runs them: a client that sends two at once waits for the first.
     private readonly SemaphoreSlim _one = new(1, 1);
 
     /// <summary>The reply to <paramref name="message"/> (one JSON-RPC message), or null for a notification or a response, which get none.</summary>

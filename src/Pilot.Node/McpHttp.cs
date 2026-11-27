@@ -74,7 +74,7 @@ public sealed class McpHttp(NodeOptions options, NodeState state, ILogger<McpHtt
     {
         if (context.Connection.RemoteIpAddress is not { } remote || !IPAddress.IsLoopback(remote) || context.Request.Headers.Origin.Count > 0)
         {
-            return Results.StatusCode(StatusCodes.Status403Forbidden);
+            return Refused(context, Results.StatusCode(StatusCodes.Status403Forbidden));
         }
         var authorization = context.Request.Headers.Authorization.ToString();
         var name = authorization.StartsWith("Bearer ", StringComparison.Ordinal) ? NameOf(authorization["Bearer ".Length..].Trim()) : null;
@@ -82,7 +82,7 @@ public sealed class McpHttp(NodeOptions options, NodeState state, ILogger<McpHtt
         {
             // Said, so a session whose config carries a token from another secret (a data folder wiped) is seen losing its tools.
             logger.LogWarning("mcp: refused a call without a valid session token ({Reason})", authorization.Length == 0 ? "no token" : "a token not signed here");
-            return Results.StatusCode(StatusCodes.Status401Unauthorized);
+            return Refused(context, Results.StatusCode(StatusCodes.Status401Unauthorized));
         }
         string message;
         using (var reader = new StreamReader(context.Request.Body, Encoding.UTF8))
@@ -92,7 +92,7 @@ public sealed class McpHttp(NodeOptions options, NodeState state, ILogger<McpHtt
         if (message.TrimStart().StartsWith('['))
         {
             // A batch: the protocol versions pilot speaks after 2025-03-26 have none, and the client sends one message a POST.
-            return Results.BadRequest("one JSON-RPC message per request");
+            return Refused(context, Results.BadRequest("one JSON-RPC message per request"));
         }
         // Counted under the session's name (UseCommandCallers sees only the socket or the address), so the hourly line names who calls.
         context.RequestServices.GetService<CommandCallers>()?.CountLan($"mcp {name}");
@@ -100,8 +100,15 @@ public sealed class McpHttp(NodeOptions options, NodeState state, ILogger<McpHtt
         return reply is null ? Results.StatusCode(StatusCodes.Status202Accepted) : Results.Text(reply, "application/json", Encoding.UTF8);
     }
 
+    /// <summary>A call refused before it was counted under a session: counted as one label, so a local process looping on a bad token shows in the hourly line, not only in node.log.</summary>
+    private static IResult Refused(HttpContext context, IResult answer)
+    {
+        context.RequestServices.GetService<CommandCallers>()?.CountLan("mcp refused");
+        return answer;
+    }
+
     /// <summary>The answer to a GET: there is no stream back to the client, so 405.</summary>
-    internal static IResult NoStream() => Results.StatusCode(StatusCodes.Status405MethodNotAllowed);
+    internal static IResult NoStream(HttpContext context) => Refused(context, Results.StatusCode(StatusCodes.Status405MethodNotAllowed));
 
     /// <summary>
     /// The server for the session named <paramref name="name"/>, in its folder and as its id, as the node knows them now. A token
