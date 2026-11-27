@@ -50,6 +50,48 @@ public sealed class RepoCatalogTests : IDisposable
         ]);
     }
 
+    // A link at <paramref name="link"/> to the folder <paramref name="target"/>: a junction on Windows, as the sebgod root's are
+    // (one needs no privilege, where a symbolic link needs developer mode), a symbolic link elsewhere.
+    private static void Link(string link, string target)
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            Directory.CreateSymbolicLink(link, target);
+            return;
+        }
+        var start = new System.Diagnostics.ProcessStartInfo("cmd.exe") { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
+        foreach (var arg in new[] { "/c", "mklink", "/J", link, target })
+        {
+            start.ArgumentList.Add(arg);
+        }
+        using var mklink = System.Diagnostics.Process.Start(start) ?? throw new InvalidOperationException("cmd.exe did not start");
+        var said = mklink.StandardOutput.ReadToEnd() + mklink.StandardError.ReadToEnd();
+        mklink.WaitForExit();
+        mklink.ExitCode.ShouldBe(0, said);
+    }
+
+    [Fact]
+    public void AJunctionToACloneUnderAnotherRootIsThatCloneListedOnce()
+    {
+        // sebgod's DIR.Lib is a junction to the sharpastro clone: with both folders roots, the clone is one repo, at its real folder.
+        var sharpastro = Directory.CreateDirectory(Path.Combine(_root, "sharpastro")).FullName;
+        var sebgod = Directory.CreateDirectory(Path.Combine(_root, "sebgod")).FullName;
+        var dirLib = Path.Combine(sharpastro, "DIR.Lib");
+        Directory.CreateDirectory(Path.Combine(dirLib, ".git"));
+        File.WriteAllText(Path.Combine(dirLib, ".git", "config"), "[remote \"origin\"]\n\turl = https://github.com/SharpAstro/DIR.Lib.git\n");
+        Directory.CreateDirectory(Path.Combine(sebgod, "dotcc", ".git"));
+        Link(Path.Combine(sebgod, "DIR.Lib"), dirLib);
+        var state = new NodeState(new InMemoryJournal(), TimeProvider.System);
+
+        // sebgod first, so the link is met before the clone it points to.
+        var repos = new RepoCatalog(state, new NodeOptions("/tmp/n.sock", "/tmp/data", RepoRootsGiven: [sebgod, sharpastro])).Repos();
+
+        repos.Select(r => (r.Name, r.Path, r.GitHub)).ShouldBe([
+            ("DIR.Lib", RepoCatalog.RealFolder(dirLib), "SharpAstro/DIR.Lib"),
+            ("dotcc", Path.Combine(sebgod, "dotcc"), (string?)null),
+        ]);
+    }
+
     [Fact]
     public void APlannersNameIsAPlannerOfItsFlight()
     {
