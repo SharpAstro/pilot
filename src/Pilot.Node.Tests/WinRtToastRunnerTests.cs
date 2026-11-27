@@ -58,6 +58,7 @@ public sealed class WinRtToastRunnerTests
     }
 
     [Fact]
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
     public void TheNotificationIsBuiltFromTheCardXmlWithItsTagAndGroupAndNothingIsShown()
     {
         if (!OperatingSystem.IsWindows()) return;
@@ -66,6 +67,7 @@ public sealed class WinRtToastRunnerTests
     }
 
     [Fact]
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
     public void ABadXmlThrowsAnInvalidOperationNamingLoadXml()
     {
         if (!OperatingSystem.IsWindows()) return;
