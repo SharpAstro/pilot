@@ -352,11 +352,22 @@ public sealed class BuddyFeed(BuddyModel model, TimeProvider time, Func<BuddySet
         return new PeekView(NodeCount, ordered.Count, ordered);
     }
 
+    /// <summary>True when the buddy follows a node other than the machine's own, so a row's link carries <c>?node=</c> and the GUI shows that node first.</summary>
+    public bool OtherNode { get; init; }
+
     private string? LinkOf(SessionRow session)
     {
         // The open Ring card about this session is what a toast would have opened.
         var card = _mirror.Cards.Values.FirstOrDefault(c => c.State == CardState.Open && c.Bin == CardBin.Ring && (c.Subject == session.Id || c.Subject == "session/" + session.Id));
-        return card is null ? null : CardLink(card.Id);
+        var node = OtherNode ? NodeName : null;
+        if (card is not null)
+        {
+            return CardLink(card.Id) + (node is { Length: > 0 } ? "?node=" + Uri.EscapeDataString(node) : string.Empty);
+        }
+        // Else its flight (and leg), else the session itself.
+        return session.Flight is { Length: > 0 } flight
+            ? PilotLink.ForFlight(flight, session.Leg is { Length: > 0 } leg ? leg : null, node)
+            : PilotLink.ForSession(session.Id, node);
     }
 
     /// <summary>The link a #1356 toast carries for a card (<c>pilot://card/&lt;id&gt;</c>).</summary>

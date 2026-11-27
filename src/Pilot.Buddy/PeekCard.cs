@@ -30,8 +30,8 @@ public sealed class PeekCard : BuddyCard
         Width = CardWidth;
     }
 
-    /// <summary>Lays <paramref name="view"/> out.</summary>
-    public static PeekCard Build<TSurface>(Pen<TSurface> pen, PeekView view)
+    /// <summary>Lays <paramref name="view"/> out. <paramref name="hovered"/> is the hit id under the pointer (<c>row:N</c>), which gets the highlight and, when cut, its whole text.</summary>
+    public static PeekCard Build<TSurface>(Pen<TSurface> pen, PeekView view, string? hovered = null)
     {
         var card = new PeekCard();
         var inner = CardWidth - 2 * Padding;
@@ -48,9 +48,17 @@ public sealed class PeekCard : BuddyCard
             y += rowH;
         }
         var shown = Math.Min(MaxRows, view.Rows.Count);
+        var hoverY = -1f;
         for (var i = 0; i < shown; i++)
         {
             var row = view.Rows[i];
+            var id = $"row:{i}";
+            if (id == hovered)
+            {
+                // Drawn before the row's own parts so it sits under them, over the row's hit rectangle, so the highlight is what a press takes.
+                card.Items.Add(new CardItem(CardItemKind.RowHover, 4, y - RowGap / 2 + 1, CardWidth - 8, rowH + RowGap - 2));
+                hoverY = y + rowH + RowGap / 2;
+            }
             var kind = row.State switch { PeekState.Asking => CardItemKind.WarnIcon, PeekState.Working => CardItemKind.InfoIcon, _ => CardItemKind.OkIcon };
             card.Items.Add(new CardItem(kind, Padding, y + (rowH - IconSize) / 2, IconSize, IconSize));
             var textX = Padding + IconSize + IconGap;
@@ -58,7 +66,6 @@ public sealed class PeekCard : BuddyCard
             // The status is never the part that is cut: it gets its width, "node · what" gets the rest.
             var whatW = inner - IconSize - IconGap - statusW - IconGap;
             var what = $"{row.Node} · {row.What}";
-            var id = $"row:{i}";
             var drawn = card.AddLine(pen, what, textX, y, whatW, 13, CardTone.Body, id);
             card.AddLine(pen, row.Status, textX + drawn + IconGap, y, statusW + 1, 13, row.State == PeekState.Asking ? CardTone.Warn : CardTone.Muted);
             card.Hits.Add(new CardHit(id, 0, y - RowGap / 2, CardWidth, rowH + RowGap));
@@ -81,6 +88,10 @@ public sealed class PeekCard : BuddyCard
         card.Hits.Add(new CardHit(TalkId, Padding, y, inner, TalkHeight));
         y += TalkHeight + RowGap;
         card.Height = y - RowGap + Padding;
+        if (hovered is not null && hoverY >= 0 && card.Tooltips.TryGetValue(hovered, out var whole))
+        {
+            card.AddTip(pen, whole, hoverY);
+        }
         return card;
     }
 }

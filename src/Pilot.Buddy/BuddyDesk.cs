@@ -147,6 +147,12 @@ public sealed class BuddyDesk(
     private bool _dragging;
     private bool _inputFocus;
 
+    /// <summary>The peek row's hit id (<c>row:N</c>) under the pointer, or null: it gets the highlight, the hand cursor and, when cut, its whole text.</summary>
+    public string? HoveredHit { get; private set; }
+
+    /// <summary>True while the pointer is on a pressable peek row: the host shows the hand cursor.</summary>
+    public bool OverRow => HoveredHit is not null;
+
     /// <summary>The card open now.</summary>
     public DeskCard Card { get; private set; }
 
@@ -162,7 +168,7 @@ public sealed class BuddyDesk(
     /// <summary>The scene's card, built with the pen it is measured with, or null while none is open.</summary>
     public Func<Pen<TSurface>, BuddyCard>? CardFactory<TSurface>() => Card switch
     {
-        DeskCard.Peek => pen => PeekCard.Build(pen, feed.Peek()),
+        DeskCard.Peek => pen => PeekCard.Build(pen, feed.Peek(), HoveredHit),
         DeskCard.Settings => pen => SettingsCard.Build(pen, settings()),
         DeskCard.Chat => pen => ChatCard.Build(pen, chat),
         _ when HoverShows => pen => HoverCard.Build(pen, feed.Hover()),
@@ -178,7 +184,7 @@ public sealed class BuddyDesk(
     /// </summary>
     public string ContentKey() => Card switch
     {
-        DeskCard.Peek => feed.Peek() is { } peek ? "peek|" + peek.Header + "|" + string.Join('|', peek.Rows.Select(r => $"{r.State},{r.Node},{r.What},{r.Status}")) : "peek",
+        DeskCard.Peek => feed.Peek() is { } peek ? "peek|" + peek.Header + "|" + string.Join('|', peek.Rows.Select(r => $"{r.State},{r.Node},{r.What},{r.Status}")) + "|" + HoveredHit : "peek",
         DeskCard.Chat => $"chat|{chat.Input}|{chat.Answer}|{chat.Refused}|{chat.DisabledReason}|{chat.Working}|{chat.PendingAsk?.Question}",
         DeskCard.Settings => "settings|" + settings(),
         _ => HoverShows ? "hover|" + feed.Hover().Text : string.Empty,
@@ -203,6 +209,7 @@ public sealed class BuddyDesk(
             window.MoveBy((int)MathF.Round(x - grab.X), (int)MathF.Round(y - grab.Y));
             return;
         }
+        TrackRow(TargetAt(x, y));
         var over = TargetAt(x, y).Kind is TargetKind.Cat or TargetKind.Zzz or TargetKind.Cushion || OnHoverList(x, y);
         SetHover(over);
     }
@@ -218,8 +225,22 @@ public sealed class BuddyDesk(
         return x >= box.X - gap && x < box.X + box.W + gap && y >= box.Y - gap && y < box.Y + box.H + gap;
     }
 
+    private void TrackRow(Target target)
+    {
+        var id = Card == DeskCard.Peek && target is { Kind: TargetKind.CardHit, Id: { } hit } && hit.StartsWith("row:", StringComparison.Ordinal) ? hit : null;
+        if (id != HoveredHit)
+        {
+            HoveredHit = id;
+            Changed();
+        }
+    }
+
     /// <summary>The pointer left the window.</summary>
-    public void PointerLeft() => SetHover(false);
+    public void PointerLeft()
+    {
+        TrackRow(default);
+        SetHover(false);
+    }
 
     private void SetHover(bool over)
     {
@@ -313,6 +334,7 @@ public sealed class BuddyDesk(
             return;
         }
         Card = card;
+        HoveredHit = null;
         _inputFocus = card == DeskCard.Chat;
         chat.CardOpen = card == DeskCard.Chat;
         model.Hover(false);

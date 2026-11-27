@@ -51,14 +51,37 @@ internal sealed class BuddyHost : IBuddyWindow, IDisposable
     private int _wakePending;
     private bool _running = true;
 
-    public BuddyHost(BuddyOptions options, Action<string> log, NodeClient client, IGuiHandOff handOff)
+    private nint _handCursor, _arrowCursor;
+    private bool _handShown;
+
+    // The hand over a pressable peek row, the arrow elsewhere; set only when it changes.
+    private void ShowCursor(bool hand)
+    {
+        if (hand == _handShown)
+        {
+            return;
+        }
+        _handShown = hand;
+        if (hand)
+        {
+            _handCursor = _handCursor != 0 ? _handCursor : CreateSystemCursor(SystemCursor.Pointer);
+            SetCursor(_handCursor);
+        }
+        else
+        {
+            _arrowCursor = _arrowCursor != 0 ? _arrowCursor : CreateSystemCursor(SystemCursor.Default);
+            SetCursor(_arrowCursor);
+        }
+    }
+
+    public BuddyHost(BuddyOptions options, Action<string> log, NodeClient client, IGuiHandOff handOff, bool otherNode = false)
     {
         _options = options;
         _log = log;
         _settings = BuddySettings.Load(_settingsPath);
         _theme = BuddyTheme.Read();
         _model = new BuddyModel(_time);
-        _feed = new BuddyFeed(_model, _time, () => _settings);
+        _feed = new BuddyFeed(_model, _time, () => _settings) { OtherNode = otherNode };
         _chat = new BuddyChat(new NodeBuddyClient(client), handOff, () => _feed.ChatDisabledReason, _gate);
         _relay = new BuddyRelay(_model, _feed, _time, _gate);
         _desk = new BuddyDesk(_model, _feed, _chat, handOff, this, () => _settings, Apply, _time, TimeZoneInfo.Local, _gate, Wake, log);
@@ -292,6 +315,7 @@ internal sealed class BuddyHost : IBuddyWindow, IDisposable
                 break;
             case EventType.MouseMotion:
                 _desk.PointerMoved(evt.Motion.X * _density, evt.Motion.Y * _density);
+                ShowCursor(_desk.OverRow);
                 break;
             case EventType.MouseButtonDown:
                 _desk.ButtonDown(evt.Button.Button, evt.Button.X * _density, evt.Button.Y * _density);
