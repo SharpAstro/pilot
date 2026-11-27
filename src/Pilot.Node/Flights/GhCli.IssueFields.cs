@@ -82,37 +82,12 @@ public sealed partial class GhCli
     /// </summary>
     internal async Task<Dictionary<int, IssuePriority>> OpenPrioritiesAsync(string repoPath, CancellationToken cancellationToken)
     {
-        // The repo watch reads the open issues twice a pass (with and without their milestones), each wanting the priorities: one read
-        // serves both (#1403). A priority set through the node drops the repo's read, so it never shows the old level.
         var now = NodeTraffic.Shared.Time.GetUtcNow();
-        if (PrioritiesRead.TryGetValue(repoPath, out var kept) && now - kept.At < PrioritiesFresh)
-        {
-            return new Dictionary<int, IssuePriority>(kept.Levels);
-        }
-        var dropsBefore = PrioritiesDrops.GetValueOrDefault(repoPath);
-        var (read, whole) = await ReadOpenPrioritiesAsync(repoPath, cancellationToken);
-        // Only a whole read is kept (a failed or held one is asked again), and only when no priority was set while it ran.
-        if (whole && PrioritiesDrops.GetValueOrDefault(repoPath) == dropsBefore)
-        {
-            PrioritiesRead[repoPath] = (now, read);
-        }
-        return new Dictionary<int, IssuePriority>(read);
+        return await Priorities.GetAsync(repoPath, now, () => ReadOpenPrioritiesAsync(repoPath, cancellationToken));
     }
 
-    // How many times each repo's read was dropped by a priority set: a read that began before a drop is not kept.
-    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, long> PrioritiesDrops = new(StringComparer.OrdinalIgnoreCase);
-
-    private static void DropPriorities(string repoPath)
-    {
-        PrioritiesDrops.AddOrUpdate(repoPath, 1, (_, n) => n + 1);
-        PrioritiesRead.TryRemove(repoPath, out _);
-    }
-
-    /// <summary>How long a repo's read of its open issues' priorities serves the next ask.</summary>
-    internal static readonly TimeSpan PrioritiesFresh = TimeSpan.FromSeconds(90);
-
-    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, (DateTimeOffset At, Dictionary<int, IssuePriority> Levels)> PrioritiesRead =
-        new(StringComparer.OrdinalIgnoreCase);
+    // The repo watch's two reads a pass share one (#1403); see PriorityReadCache.
+    private static readonly PriorityReadCache Priorities = new(TimeSpan.FromSeconds(90));
 
     private async Task<(Dictionary<int, IssuePriority> Levels, bool Whole)> ReadOpenPrioritiesAsync(string repoPath, CancellationToken cancellationToken)
     {
@@ -195,7 +170,7 @@ public sealed partial class GhCli
         }
         finally
         {
-            DropPriorities(repoPath);
+            Priorities.Drop(repoPath);
         }
     }
 

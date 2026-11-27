@@ -58,13 +58,13 @@ public sealed class GhBudget(TimeProvider time)
 
     /// <summary>
     /// GitHub refused a call: nothing that spends points starts again until <paramref name="resetAt"/>, or the hourly reset GitHub last gave,
-    /// or <see cref="UnknownReset"/> from now. A <paramref name="secondary"/> refusal holds <see cref="UnknownReset"/> from now, whatever the hour says.
+    /// or <see cref="UnknownReset"/> from now. A <paramref name="secondary"/> refusal holds <see cref="UnknownReset"/> from now, whatever the hour says, but never shortens a hold already in force (a call in flight when the points ran out can get the secondary answer).
     /// </summary>
     public void Refused(DateTimeOffset? resetAt, bool secondary = false)
     {
         var at = time.GetUtcNow();
         Swap(s => secondary
-            ? s with { RefusedUntil = Later(s.Secondary ? s.RefusedUntil : null, at + UnknownReset), Secondary = true }
+            ? s with { RefusedUntil = Later(s.RefusedUntil, at + UnknownReset), Secondary = true }
             : s with
             {
                 Remaining = 0,

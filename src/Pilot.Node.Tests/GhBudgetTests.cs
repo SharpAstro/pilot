@@ -82,6 +82,19 @@ public sealed class GhBudgetTests
     }
 
     [Fact]
+    public void ASecondaryRefusalNeverShortensAPrimaryHoldToTheHourlyReset()
+    {
+        var clock = new Clock(T0);
+        var budget = new GhBudget(clock);
+        budget.Observe(0, 5000, T0.AddMinutes(40));
+
+        // A call already in flight when the points ran out gets the secondary answer.
+        budget.Saw(["api", "graphql"], 1, "You have exceeded a secondary rate limit").ShouldBeTrue();
+
+        budget.HeldUntil().ShouldBe(T0.AddMinutes(40));
+    }
+
+    [Fact]
     public void APrimaryHoldEndsWhenGitHubSaysPointsAreBack()
     {
         var clock = new Clock(T0);

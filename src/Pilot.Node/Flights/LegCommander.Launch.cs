@@ -398,6 +398,9 @@ public sealed partial class LegCommander
     /// </summary>
     public TimeSpan PrimeFresh { get; init; } = TimeSpan.FromMinutes(10);
 
+    /// <summary>GitHub's budget the prime asks whether a read was answered or refused; the node's shared one, a test gives its own.</summary>
+    public GhBudget GhBudget { get; set; } = NodeTraffic.Shared.GhBudget;
+
     // When each flight's issue was last read by PrimeAsync, on the node's clock.
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, DateTimeOffset> _primed = new(StringComparer.OrdinalIgnoreCase);
 
@@ -426,11 +429,13 @@ public sealed partial class LegCommander
             {
                 var read = await tracker.PriorityAsync(flight.RepoPath, flight.Issue, cancellationToken);
                 var labels = await tracker.LabelsAsync(flight.RepoPath, flight.Issue, cancellationToken);
-                // A read made while GitHub refused answered nothing real (no field, no labels): not taken as fresh, so the next sweep reads again.
-                if (NodeTraffic.Shared.GhBudget.HeldUntil() is null)
+                // A read made while GitHub refused answered nothing real (no field, no labels): not taken as fresh, so the next sweep reads again,
+                // and the flight's row keeps the last values it had until GitHub answers.
+                if (GhBudget.HeldUntil() is not null)
                 {
-                    _primed[flight.Code] = time.GetUtcNow();
+                    return;
                 }
+                _primed[flight.Code] = time.GetUtcNow();
                 // A hold put on GitHub while this node was down (or from another node) is read here, before the start is gated: the same hold
                 // row the repo sweep writes, so a held flight starts nothing on a wake before the sweep's first read has got to its repo.
                 // Only a label seen holds: a read that failed answers no labels, and a hold is never released from it.
