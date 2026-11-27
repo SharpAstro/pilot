@@ -136,6 +136,83 @@ public sealed class JobTestsFailures : JobTestsBase
         _state.Jobs().Count(j => j.Kind == JobKind.Run).ShouldBe(2);
     }
 
+    private const string BuildLine = "/w/App.cs(3,5): error CS1656: Cannot assign to 'x' because it is a method group [/w/App.csproj]";
+
+    // PIL1382: a runner on a clock the test moves (timers virtual), a recording Say, and a job that has read a build error and runs on.
+    private (JobRunner Jobs, Clock Clock, FakeJobLauncher Launcher, string Id) RunsOnWithABuildError()
+    {
+        UseFake();
+        var (jobs, clock, _, _) = Idle();
+        clock.VirtualTimers = true;
+        jobs.Say = (command, _) =>
+        {
+            _said.Enqueue(command);
+            return Task.FromResult(_state.Complete(command, null));
+        };
+        Fake!.On(_ => true, FakeScript.Holds(BuildLine));
+        return (jobs, clock, Fake, Hand(jobs, "dotnet build"));
+    }
+
+    private async Task EndsAndIsTold(Clock clock, FakeJobLauncher launcher, string id)
+    {
+        launcher.Exit(id, 1);
+        var ended = _state.Jobs().Single(j => j.Id == id);
+        await AdvanceUntil(clock, When(() => _state.Jobs().Single(j => j.Id == id) is { EndedAt: not null, Told: true }, "the job never ended told"), TimeSpan.FromSeconds(1));
+        ended = _state.Jobs().Single(j => j.Id == id);
+        ended.State.ShouldBe(JobState.Failed);
+    }
+
+    [Fact]
+    public async Task AnIdleOwnerWhoseJobEndsInsideTheHoldIsTheEndTellAloneAndNoRunsOnNotice()
+    {
+        var (_, clock, launcher, id) = RunsOnWithABuildError();
+        await Until(id, j => j.BuildErrors == 1);
+
+        await EndsAndIsTold(clock, launcher, id);
+        // Past the hold: a dropped notice is never said later.
+        await AdvanceUntil(clock, Task.Run(() => clock.Advance(JobRunner.EarlyNoticeHold * 2), Ct), TimeSpan.FromSeconds(1));
+
+        var said = _said.Select(s => s.Args[0]).ToList().ShouldHaveSingleItem();
+        said.ShouldContain("CS1656");
+        said.ShouldContain($"Your job {id}");
+        said.ShouldNotContain("runs on");
+        _state.Jobs().Single(j => j.Id == id).FailureTold.ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task AWorkingOwnerIsToldTheEarlyNoticeAtOnceThenTheEnd()
+    {
+        var idle = _state.Sessions().Single(s => s.Id == "a1b2c3d4");
+        _state.PutSession(idle with { State = SessionState.Working });
+        var (_, clock, launcher, id) = RunsOnWithABuildError();
+
+        await When(() => _said.Count == 1, "no early notice came at once");
+        _said.Single().Args[0].ShouldContain("runs on");
+        _said.Single().Args[0].ShouldContain("CS1656");
+
+        await EndsAndIsTold(clock, launcher, id);
+
+        _said.Count.ShouldBe(2);
+        _said.Last().Args[0].ShouldContain("failed: exit 1");
+    }
+
+    [Fact]
+    public async Task AnIdleOwnerWhoseJobRunsOnPastTheHoldIsToldTheEarlyNoticeThenTheEnd()
+    {
+        var (_, clock, launcher, id) = RunsOnWithABuildError();
+        await Until(id, j => j.BuildErrors == 1);
+        _said.ShouldBeEmpty();
+
+        // The hold's timer may not be made yet when the first step lands: each step is taken again until the notice is said.
+        await AdvanceUntil(clock, When(() => _said.Count == 1, "the held notice never came"), JobRunner.EarlyNoticeHold + TimeSpan.FromSeconds(1));
+        _said.Single().Args[0].ShouldContain("runs on");
+
+        await EndsAndIsTold(clock, launcher, id);
+
+        _said.Count.ShouldBe(2);
+        _said.Last().Args[0].ShouldContain("failed: exit 1");
+    }
+
     private async Task<CommandRequest> Said(int count)
     {
         for (var i = 0; i < 100 && _said.Count < count; i++)

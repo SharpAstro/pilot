@@ -2975,7 +2975,40 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
         }
         if (toTell is not null)
         {
-            _ = TellFirstFailureAsync(toTell, failure);
+            _earlySays[toTell.Id] = TellFirstFailureAsync(toTell, failure);
+        }
+    }
+
+    /// <summary>
+    /// PIL1382: how long an early failure notice to an owner the say would resume waits before it is said. A job that ends inside
+    /// it is told by its end tell alone, so an idle owner is woken once, not by two messages a second apart.
+    /// </summary>
+    internal static readonly TimeSpan EarlyNoticeHold = TimeSpan.FromSeconds(15);
+
+    // Per job: the holds of early notices not yet started (cancelled by the job's end), and the early says (awaited by the end tell).
+    private readonly ConcurrentDictionary<string, CancellationTokenSource> _earlyHolds = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, Task> _earlySays = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// The end tell supersedes an early notice still held (dropped, FailureTold stays so it is never said later), and waits for one
+    /// already saying to return rather than racing it at the session's gate.
+    /// </summary>
+    private async Task SupersedeEarlyNoticeAsync(string jobId)
+    {
+        if (_earlyHolds.TryRemove(jobId, out var hold))
+        {
+            hold.Cancel();
+        }
+        if (_earlySays.TryRemove(jobId, out var said))
+        {
+            try
+            {
+                await said.WaitAsync(_stopping);
+            }
+            catch (Exception)
+            {
+                // The early notice's own failure is no reason to hold back the end tell.
+            }
         }
     }
 
@@ -3008,6 +3041,25 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
             }
             var what = failure.IsBuildError ? $"a build error ({failure.Name})" : $"a failed test ({failure.Name})";
             var text = $"{handed}Your job {job.Id} (`{job.Command}`, in {job.Cwd}) has {what} so far, and runs on. You will be told how it ends; the output so far is in {job.LogPath}.";
+            if ((sessions.FirstOrDefault(s => s.Id == target) ?? ownerRow) is { } sayRow && Sessions.SessionMessenger.Choose(sayRow) == SayWays.Resumed)
+            {
+                // An owner the say would resume: hold the notice, so a job that ends inside the window is told by its end tell alone.
+                using var hold = CancellationTokenSource.CreateLinkedTokenSource(_stopping);
+                _earlyHolds[job.Id] = hold;
+                try
+                {
+                    await Task.Delay(EarlyNoticeHold, time, hold.Token);
+                }
+                catch (OperationCanceledException)
+                {
+                    return;
+                }
+                // Taken out of the holds by the end tell first means the end tell owns the delivery.
+                if (!_earlyHolds.TryRemove(job.Id, out _))
+                {
+                    return;
+                }
+            }
             await Say!(new CommandRequest { Verb = Verbs.Say, Target = Verbs.SessionTarget(target), Args = [text], Who = LegWatch.Who }, _stopping);
         }
         catch (Exception)
@@ -3072,6 +3124,8 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
         {
             return;
         }
+        // PIL1382: an early notice still held is dropped, one already saying is waited for: this tell is the one message.
+        await SupersedeEarlyNoticeAsync(job.Id);
         var took = (job.EndedAt ?? time.GetUtcNow()) - job.StartedAt;
         var how = job.State switch
         {
