@@ -114,7 +114,7 @@ public sealed class JobTestsFailures : JobTestsBase
         await Until(first, j => j.Error is { } e && e.Contains("rerun once as job"));
         var ended = await Ended(RerunOf(first));
 
-        ended.State.ShouldBe(exit == 0 ? JobState.Succeeded : JobState.Failed);
+        ended.State.ShouldBe(JobState.Failed);
         _said.Select(s => s.Args[0]).ToList().ShouldHaveSingleItem().ShouldContain("failed");
         fake.Starts.Count.ShouldBe(2);
         _state.Jobs().Count(j => j.Kind == JobKind.Run).ShouldBe(2);
