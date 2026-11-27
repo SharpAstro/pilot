@@ -53,15 +53,9 @@ public sealed record PilotLink(string? CardId)
         {
             return false;
         }
-        string payload;
-        try
-        {
-            payload = Uri.UnescapeDataString(escaped);
-        }
-        catch (UriFormatException)
-        {
-            return false;
-        }
+        // A bad escape is read as the literal text, never refused: Uri.UnescapeDataString leaves "%ZZ" as it is and does not throw,
+        // so pilot:card%2Fx%ZZ opens card "x%ZZ" (pinned by PilotLinkTests).
+        var payload = Uri.UnescapeDataString(escaped);
         if (!Pilot.Contracts.ToastLink.TryReadPayload(payload, out var cardId))
         {
             return false;

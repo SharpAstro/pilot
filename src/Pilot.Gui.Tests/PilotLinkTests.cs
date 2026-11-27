@@ -32,6 +32,8 @@ public sealed class PilotLinkTests
     [InlineData("pilot:card%2Fc1/", "c1")]
     [InlineData("  pilot:card%2Fc1  ", "c1")]
     [InlineData("pilot:card%2Fa%2F", "a/")]
+    // A bad escape inside the id is read as the literal text, not refused (Uri.UnescapeDataString leaves it as it is).
+    [InlineData("pilot:card%2Fx%ZZ", "x%ZZ")]
     public void AnAppShellCardLinkParsesToItsId(string text, string id)
     {
         Pilot.Ui.PilotLink.TryParse(text, out var link).ShouldBeTrue();

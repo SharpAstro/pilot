@@ -389,7 +389,7 @@ public sealed class ToasterTests : IAsyncDisposable
     [Fact]
     public async Task AFailingRunnerIsLoggedAndTheNextCardStillToasts()
     {
-        var runner = new ThrowingRunner();
+        var runner = new FailureStringRunner();
         var log = new CaptureLog();
         await using var toaster = new Toaster(_state, runner, _time, () => "all", () => false, log);
         Ring(Urgent, "flight/F1");
@@ -418,18 +418,41 @@ public sealed class ToasterTests : IAsyncDisposable
             "Warning toast flight/F1 was not shown: boom",
             "Warning toast flight/F2 was not shown: boom",
         ]);
+        health.LastFailure.ShouldNotBeNull().Error.ShouldBe("InvalidOperationException: boom");
+        health.Working.ShouldBeFalse();
+        _state.Cards(openOnly: true).Where(c => c.Kind == ToastHealth.BrokenKind).ShouldHaveSingleItem()
+            .Detail.ShouldNotBeNull().ShouldContain("InvalidOperationException: boom");
+    }
+
+    [Fact]
+    public async Task AWithdrawThatThrowsIsLoggedAndMakesTheBrokenCard()
+    {
+        var runner = new RaisingRunner { ShowSucceeds = true };
+        var log = new CaptureLog();
+        var health = new ToastHealth();
+        await using var toaster = new Toaster(_state, runner, _time, () => "all", () => false, log, health);
+        var card = Ring(Urgent, "flight/F1");
+        await toaster.Sync(cancel: Ct);
+        _state.Cards(openOnly: true).Where(c => c.Kind == ToastHealth.BrokenKind).ShouldBeEmpty("the toast showed");
+
+        _state.CloseCard(card.Id, "done", "tests").ShouldBeTrue();
+        await toaster.Sync(cancel: Ct);
+        log.Lines.ShouldBe(["Warning toast flight/F1 was not withdrawn: boom"]);
+        health.LastFailure.ShouldNotBeNull().Error.ShouldBe("InvalidOperationException: boom");
         _state.Cards(openOnly: true).Where(c => c.Kind == ToastHealth.BrokenKind).ShouldHaveSingleItem()
             .Detail.ShouldNotBeNull().ShouldContain("InvalidOperationException: boom");
     }
 
     private sealed class RaisingRunner : IToastRunner
     {
+        public bool ShowSucceeds { get; init; }
         public System.Collections.Concurrent.ConcurrentQueue<string> Seen { get; } = new();
         public IEnumerable<string> Tags => Seen;
 
         public Task<string?> Show(ToastRequest request, CancellationToken cancel = default)
         {
             Seen.Enqueue(request.Tag);
+            if (ShowSucceeds) return Task.FromResult<string?>(null);
             throw new InvalidOperationException("boom");
         }
 
@@ -451,7 +474,7 @@ public sealed class ToasterTests : IAsyncDisposable
             _lines.Enqueue($"{logLevel} {formatter(state, exception)}: {exception?.Message}");
     }
 
-    private sealed class ThrowingRunner : IToastRunner
+    private sealed class FailureStringRunner : IToastRunner
     {
         public List<string> Tags { get; } = [];
 

@@ -51,7 +51,7 @@ public sealed class ToastTextTests
     }
 
     [Fact]
-    public void ANormalToastIsNeitherAReminderNorUrgentSoItHasNoDismissButton()
+    public void ANormalToastAsksForNeitherReminderNorUrgent()
     {
         // AppShell gives only the reminder and urgent scenarios the system's Dismiss button; pilot asks for neither on a normal card.
         var options = AppShellToastRunner.OptionsOf(ToastText.ForCard("flight/A", "c1", "t", "b", ToastTier.Normal));

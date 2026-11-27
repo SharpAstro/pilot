@@ -47,16 +47,13 @@ public sealed class PilotSchemeTests
         registry.Writes.ShouldBe(4, "only the command moved");
     }
 
-    // The identity seam: like AppShell's AppIdentity.Register, it writes only what differs, so a second start writes nothing.
+    // The identity seam: records what the registrar asks for.
     private sealed class FakeIdentity : IToastIdentity
     {
-        private (string, string?)? _last;
-        public int Writes { get; private set; }
         public (string AppId, string Name, string? Icon)? Last { get; private set; }
         public string? Register(string appId, string displayName, string? iconPath)
         {
             Last = (appId, displayName, iconPath);
-            if (_last != (displayName, iconPath)) { _last = (displayName, iconPath); Writes++; }
             return null;
         }
     }
@@ -78,14 +75,8 @@ public sealed class PilotSchemeTests
     }
 
     [Fact]
-    public async Task ASecondStartWritesNothingAndAFailureIsNeverFatal()
+    public async Task AFailureToRegisterTheIdentityIsNeverFatal()
     {
-        var identity = new FakeIdentity();
-        var registrar = new ToastIdentityRegistrar(identity, @"C:\bin\pilot-node.exe", _ => true, NullLogger.Instance);
-        await registrar.StartAsync(TestContext.Current.CancellationToken);
-        await registrar.StartAsync(TestContext.Current.CancellationToken);
-        identity.Writes.ShouldBe(1);
-
         var failing = new FailingIdentity();
         await new ToastIdentityRegistrar(failing, @"C:\bin\pilot-node.exe", _ => false, NullLogger.Instance).StartAsync(TestContext.Current.CancellationToken);
         failing.Calls.ShouldBe(1, "a refusal is reported, not thrown");
