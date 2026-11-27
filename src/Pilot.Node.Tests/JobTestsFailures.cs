@@ -142,7 +142,7 @@ public sealed class JobTestsFailures : JobTestsBase
     private const string BuildLine = "/w/App.cs(3,5): error CS1656: Cannot assign to 'x' because it is a method group [/w/App.csproj]";
 
     // PIL1382: a runner on a clock the test moves (timers virtual), a recording Say, and a job that has read a build error and runs on.
-    private (JobRunner Jobs, Clock Clock, FakeJobLauncher Launcher, string Id) RunsOnWithABuildError(int linesAfter = 0)
+    private (JobRunner Jobs, Clock Clock, FakeJobLauncher Launcher, string Id) RunsOnWithABuildError(int linesAfter = 0, string? line = null)
     {
         UseFake();
         var (jobs, clock, _, _) = Idle();
@@ -152,7 +152,7 @@ public sealed class JobTestsFailures : JobTestsBase
             _said.Enqueue(command);
             return Task.FromResult(_state.Complete(command, null));
         };
-        Fake!.On(_ => true, FakeScript.Holds([BuildLine, .. Enumerable.Range(1, linesAfter).Select(n => $"Restore step {n} done")]));
+        Fake!.On(_ => true, FakeScript.Holds([line ?? BuildLine, .. Enumerable.Range(1, linesAfter).Select(n => $"Restore step {n} done")]));
         return (jobs, clock, Fake, Hand(jobs, "dotnet build"));
     }
 
@@ -209,6 +209,21 @@ public sealed class JobTestsFailures : JobTestsBase
         said.ShouldContain("succeeded (it printed an error line, the first: ");
         said.ShouldContain("the exit code was 0");
         said.ShouldNotContain("first build error");
+    }
+
+    // PIL1382 review note: the failed-test twin of the error-line wording above.
+    [Fact]
+    public async Task ASucceededJobThatPrintedAFailedTestLineSaysItPrintedOneAndExitedZero()
+    {
+        var (_, clock, launcher, id) = RunsOnWithABuildError(line: "  Failed Some.Class.Method [1 s]");
+        await Until(id, j => j.TestsFailed == 1);
+
+        await EndsAndIsTold(clock, launcher, id, exit: 0);
+
+        var said = _said.Select(s => s.Args[0]).ToList().ShouldHaveSingleItem();
+        said.ShouldContain("it printed a failed-test line, the first: ");
+        said.ShouldContain("the exit code was 0");
+        said.ShouldNotContain("first failed test");
     }
 
     [Fact]

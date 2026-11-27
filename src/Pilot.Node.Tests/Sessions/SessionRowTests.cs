@@ -53,6 +53,12 @@ public sealed class SessionRowTests : IDisposable
         SessionRowBuilder.Build(agent, TranscriptFacts.None, null, null, SessionRoleInfo.AdHoc).State.ShouldBe(SessionState.Failed);
         SessionRowBuilder.Build(agent, TranscriptFacts.None, null, null, SessionRoleInfo.AdHoc, stop with { ApiError = "rate_limit" }).State.ShouldBe(SessionState.Failed);
         SessionRowBuilder.Build(agent, TranscriptFacts.None, null, null, SessionRoleInfo.AdHoc, stop with { Event = "PostToolUse", State = SessionState.Working }).State.ShouldBe(SessionState.Failed);
+
+        // PIL1382 review note: the guard is the background kind; an interactive row (no pid, state failed) with the same Stop is still Failed.
+        var interactive = ClaudeAgentsJson.Parse(AgentRows.List(AgentRows.Background(AgentRows.SessionB, "du1-worker", "failed").Replace("\"kind\":\"background\"", "\"kind\":\"interactive\"")))!.Single();
+        var interactiveRow = SessionRowBuilder.Build(interactive, TranscriptFacts.None, null, null, SessionRoleInfo.AdHoc, stop);
+        interactiveRow.State.ShouldBe(SessionState.Failed);
+        (interactiveRow.EndedBecause ?? "").ShouldNotStartWith(SessionRowBuilder.TurnFinishedEnd);
     }
 
     [Fact]
