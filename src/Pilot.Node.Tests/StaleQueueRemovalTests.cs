@@ -36,11 +36,10 @@ public sealed class StaleQueueRemovalTests() : ReviewTestsBase(realGit: true)
         _state.UpdateFlight(flight.Code, f => f with { Review = f.Review is { } r ? r with { ReviewedHead = b } : null });
         _state.CloseCardsAbout(Verbs.FlightTarget(flight.Code), "test", LegCommander.PrReady);
         _github.Queue = GhAnswers.MergeQueue("dropped", b, removedAt: removedAt, removedReason: reason);
+        // Checks still running: the looks restore a PR-ready card at B but nothing merges it by itself, so the card and the plane stay for the asserts.
+        _github.Merge = GhAnswers.MergeState(MergeKinds.Pending, 1, 3);
         return (F(flight.Code), a, b, removedAt);
     }
-
-    private void Plane(FlightRow flight, string when) =>
-        Directory.Exists(flight.Worktree).ShouldBeTrue($"plane gone {when}; state {F(flight.Code).State}; cards {string.Join(',', _state.Cards().Select(c => c.Kind + ':' + c.Title))}");
 
     private void NothingDoneAt(FlightRow flight, string head, string planeHead)
     {
@@ -57,13 +56,12 @@ public sealed class StaleQueueRemovalTests() : ReviewTestsBase(realGit: true)
     {
         var (flight, _, b, _) = await RemovedThenPushed("MERGE_CONFLICT");
         var checks = Checks();
-        Plane(flight, "before");
         await checks.LookAsync(Ct);
-        Plane(flight, "after look 1");
         await checks.LookAsync(Ct);
         await checks.LookAsync(Ct);
 
         NothingDoneAt(flight, b, b);
+        _github.Merge = GhAnswers.MergeState(MergeKinds.Ready, 3, 3);
         var merge = await Run(Verbs.Merge, Verbs.FlightTarget(flight.Code), "controller", b);
         merge.Error.ShouldBeNull();
         _github.Merged.ShouldHaveSingleItem().Head.ShouldBe(b);
@@ -88,6 +86,7 @@ public sealed class StaleQueueRemovalTests() : ReviewTestsBase(realGit: true)
         _state.Cards().ShouldNotContain(c => c.Kind == PrChecks.QueueDropped);
         restarted.RebaseProbes.ShouldBe(0);
         Git(flight.Worktree, "rev-parse", "HEAD").ShouldBe(b);
+        _github.Merge = GhAnswers.MergeState(MergeKinds.Ready, 3, 3);
         var merge = await Run(Verbs.Merge, Verbs.FlightTarget(flight.Code), "controller", b);
         merge.Error.ShouldBeNull();
         _github.Merged.ShouldHaveSingleItem().Head.ShouldBe(b);
@@ -110,9 +109,7 @@ public sealed class StaleQueueRemovalTests() : ReviewTestsBase(realGit: true)
     {
         var (flight, _, b, _) = await RemovedThenPushed("FAILED_CHECKS");
         var checks = Checks();
-        Plane(flight, "before");
         await checks.LookAsync(Ct);
-        Plane(flight, "after look 1");
         await checks.LookAsync(Ct);
 
         NothingDoneAt(flight, b, b);
