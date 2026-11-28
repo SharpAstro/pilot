@@ -10,7 +10,7 @@ namespace Pilot.Node.Sessions;
 /// permission prompt asks leave for, as <see cref="Pilot.Contracts.SessionRow.Asking"/> says it (<c>Bash: git push origin main</c>), kept from
 /// the PermissionRequest hook's tool name and input so the words exist before the transcript is read.
 /// </summary>
-public sealed record HookState(string Event, DateTimeOffset At, SessionState? State, string? WaitingFor, string? ApiError, string? EndReason = null, string? Asking = null);
+public sealed record HookState(string Event, DateTimeOffset At, SessionState? State, string? WaitingFor, string? ApiError, string? EndReason = null, string? Asking = null, bool? StopHeld = null);
 
 /// <summary>
 /// The hooks Claude Code posts to the node (<c>POST /api/v1/hooks</c>, by <c>pilot-node hook</c>), per session. A hook
@@ -28,6 +28,15 @@ public sealed class HookBook
 
     /// <summary>The sessions' own reports, told of each hook so a blocked one goes once work is taken up again; null tells none.</summary>
     public ReportBook? Reports { get; init; }
+
+    /// <summary>Records that the node held the session's latest Stop (files not committed), so a turn end later read from a failed job says so.</summary>
+    public void MarkStopHeld(string sessionId)
+    {
+        if (_bySession.TryGetValue(sessionId, out var latest) && latest.Event == "Stop")
+        {
+            _bySession[sessionId] = latest with { StopHeld = true };
+        }
+    }
 
     /// <summary>The latest hook state of <paramref name="sessionId"/>, or null when none came.</summary>
     public HookState? Of(string sessionId) => _bySession.GetValueOrDefault(sessionId);
