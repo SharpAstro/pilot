@@ -208,24 +208,19 @@ public sealed class WatchtowerChat(Watchtower tower, TranscriptBook transcripts,
         var used = new HashSet<string>(StringComparer.Ordinal);
         foreach (var segment in segments)
         {
-            if (transcripts.Window(segment.Session, 0, segment.Count) is not { } whole)
+            // The person's messages only, keyed as they were read: not every entry of the transcript copied and keyed again.
+            if (transcripts.PersonLines(segment.Session, segment.Count) is not { } lines)
             {
                 continue;
             }
             var first = segment.Offset + (segment.Divider ? 1 : 0);
-            for (var i = 0; i < whole.Entries.Length; i++)
+            foreach (var line in lines)
             {
-                var entry = whole.Entries[i];
-                if (entry.Kind != TranscriptKind.User || entry.From is not null)
-                {
-                    continue;
-                }
-                var key = TranscriptBook.Reader.Same(entry.Text);
-                var match = free.FirstOrDefault(f => !used.Contains(f.Send.Id) && IsSend(f.Key, key) && (entry.At is not { } at || at >= f.Send.At - Slack));
+                var match = free.FirstOrDefault(f => !used.Contains(f.Send.Id) && IsSend(f.Key, line.Key) && (line.At is not { } at || at >= f.Send.At - Slack));
                 if (match.Send is { } send)
                 {
                     used.Add(send.Id);
-                    taken[first + i] = send.Id;
+                    taken[first + line.Index] = send.Id;
                 }
             }
         }
