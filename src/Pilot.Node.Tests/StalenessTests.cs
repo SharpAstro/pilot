@@ -405,4 +405,70 @@ public class StalenessTests
         item.Idle.ShouldBe(TimeSpan.FromHours(10));
         StaleSection.Line(item).ShouldContain("no progress for 10 h, waiting on ");
     }
+
+    private const string Held = "waiting for the repo dotcc: DOT242 holds it (a leg is flying)";
+
+    [Fact]
+    public void AFlightWaitingItsTurnIsNeitherStaleNorNearing()
+    {
+        var own = Read([Flight(age: TimeSpan.FromHours(20)) with { Queued = Held }]);
+        own.Stale.ShouldBeEmpty();
+        own.Nearing.ShouldBeEmpty();
+
+        var planned = Read([Flight(age: TimeSpan.FromHours(20))], [Leg("DIR178", state: LegState.Planned) with { Queued = Held }]);
+        planned.Stale.ShouldBeEmpty();
+        planned.Nearing.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void AFlightWaitingItsTurnGetsNoPullRequestItemEither()
+    {
+        var reading = Read([Flight(age: TimeSpan.FromHours(2), pr: 12) with { Queued = Held }], [], [], [], Prs(Pr("DIR178", 12, TimeSpan.FromHours(13))));
+        reading.Stale.ShouldBeEmpty();
+        reading.Nearing.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void AFlightWaitingItsTurnWaitsOnAdmissionsOwnWords()
+    {
+        var flight = Flight(age: TimeSpan.FromHours(20)) with { Queued = Held };
+        Staleness.WaitsOn(flight, [], [], [], null).ShouldBe("the repo dotcc: DOT242 holds it (a leg is flying)");
+        Staleness.WaitsItsTurn(flight, []).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void AnAdmittedFlightsClockCountsFromItsAdmission()
+    {
+        var recent = Flight(age: TimeSpan.FromHours(20)) with { AdmittedAt = Now - TimeSpan.FromHours(3) };
+        var reading = Read([recent]);
+        reading.Stale.ShouldBeEmpty();
+        reading.Nearing.ShouldBeEmpty();
+        Staleness.LastMove(recent, [], [], null, TimeZoneInfo.Utc)!.Value.At.ShouldBe(Now - TimeSpan.FromHours(3));
+
+        var nearing = Read([Flight(age: TimeSpan.FromHours(20)) with { AdmittedAt = Now - TimeSpan.FromHours(7) }]);
+        nearing.Stale.ShouldBeEmpty();
+        var item = nearing.Nearing.ShouldHaveSingleItem();
+        item.AgeText.ShouldBe("7 h");
+        item.Cause.ShouldContain("since its turn came");
+    }
+
+    [Fact]
+    public void AFlightAdmittedLongAgoWithNoMoveSinceIsStale()
+    {
+        var reading = Read([Flight(age: TimeSpan.FromHours(20)) with { AdmittedAt = Now - TimeSpan.FromHours(13) }]);
+        reading.Stale.ShouldHaveSingleItem().Kind.ShouldBe(StaleKind.Flight);
+    }
+
+    [Fact]
+    public void ALaterAdmissionWaitThatEndsRestartsTheClockAndCountsAsAMove()
+    {
+        // AdmittedAt is the latest admission: a first wait ended 13 h ago, a second (an Opus-cap wait mid-flight) ended 2 h ago.
+        var flight = Flight(age: TimeSpan.FromHours(20)) with { AdmittedAt = Now - TimeSpan.FromHours(2) };
+        var reading = Read([flight]);
+        reading.Stale.ShouldBeEmpty();
+        reading.Nearing.ShouldBeEmpty();
+        var move = Staleness.LastMove(flight, [], [], null, TimeZoneInfo.Utc)!.Value;
+        move.At.ShouldBe(Now - TimeSpan.FromHours(2));
+        move.Text.ShouldBe("got its turn (admission wait ended)");
+    }
 }

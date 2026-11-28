@@ -71,6 +71,24 @@ public sealed class AutopilotWakeTests : IDisposable
     private List<string> Says() => [.. _said.Where(c => c.Verb == Verbs.Say).Select(c => string.Join(' ', c.Args))];
 
     [Fact]
+    public void AQueuedFlightWakesNothingAndOnceAdmittedStallsFromItsAdmission()
+    {
+        _state.RemoveLeg("TIA9", "parser");
+        _state.PutFlight(_state.Flights().Single(f => f.Code == "TIA9") with { Queued = "waiting for the repo tianwen: TIA1 holds it (a leg is flying)" });
+        _time.Advance(TimeSpan.FromMinutes(120));
+        _wakes.Look();
+        _wakes.Pending.ShouldBeEmpty();
+
+        _state.PutFlight(_state.Flights().Single(f => f.Code == "TIA9") with { Queued = null, AdmittedAt = _time.GetUtcNow() });
+        _time.Advance(TimeSpan.FromMinutes(30));
+        _wakes.Look();
+        _wakes.Pending.ShouldBeEmpty();
+        _time.Advance(TimeSpan.FromMinutes(31));
+        _wakes.Look();
+        _wakes.Pending.ShouldHaveSingleItem();
+    }
+
+    [Fact]
     public async Task AFlightWithNoProgressForTheBoundWakesTheWatchtowerOnceWithTheFlightAndWhatItWaitsOn()
     {
         await RunningTowerAsync();

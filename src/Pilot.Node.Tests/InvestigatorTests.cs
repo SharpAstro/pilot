@@ -156,6 +156,17 @@ public sealed class InvestigatorTests
     }
 
     [Fact]
+    public void AFlightWaitingItsTurnPastTheStaleBoundStartsNoInvestigator()
+    {
+        _state.PutFlight(Flight("PIL1", TimeSpan.FromDays(4)) with { Queued = "waiting for the repo pilot: PIL2 holds it (a leg is flying)" });
+
+        _investigator.Look();
+
+        _workers.Started.ShouldBeEmpty();
+        _investigator.Runs.ShouldBeEmpty();
+    }
+
+    [Fact]
     public void TheDigestStartsOneThatReadsIt()
     {
         var digest = _state.RaiseCard(CardBin.ForYou, Digest.Kind, Verbs.NodeTarget, "Digest: 2 landed", "Landed: PIL1, PIL2\nParked: PIL3 held");
