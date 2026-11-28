@@ -336,6 +336,12 @@ public sealed class PrChecks(NodeState state, IGitHub gitHub, TimeProvider time,
                 legs.EndLeftQueue(flight.Code, $"the node took #{number} out of the merge queue to push new commits");
                 continue;
             }
+            // A removal at or before the node's push of this head belongs to an earlier head (#1407): nothing is done at the new head.
+            if (queue.RemovedAt is { } earlier && legs?.RemovalPredatesHead(flight.Code, queue.Head, earlier) == true)
+            {
+                legs.EndLeftQueue(flight.Code, $"GitHub's removal of #{number} from the merge queue was an earlier head's, not {CommitRefs.Short(queue.Head)}'s", queue.Head);
+                continue;
+            }
             // GitHub's queue let it go unmerged: its merge entry ends, and the repo's later entries move up. Merge asks it again.
             if (queue.RemovedAt is not null && !string.Equals(queue.RemovedReason, "merged", StringComparison.OrdinalIgnoreCase))
             {
@@ -1016,7 +1022,8 @@ public sealed class PrChecks(NodeState state, IGitHub gitHub, TimeProvider time,
                     // A PR the merge queue holds, or let go unmerged, is LookAtQueuesAsync's (queued, or its drop handled): no new merge card.
                     var queue = await github.MergeQueueAsync(flight.RepoPath, flight.PullRequest!.Value, cancellationToken);
                     if (queue is { State: "OPEN" } && (queue.Queued
-                        || (queue.RemovedAt is not null && !string.Equals(queue.RemovedReason, "merged", StringComparison.OrdinalIgnoreCase))))
+                        || (queue.RemovedAt is { } removed && !string.Equals(queue.RemovedReason, "merged", StringComparison.OrdinalIgnoreCase)
+                            && !legs.RemovalPredatesHead(flight.Code, pr.Head, removed))))
                     {
                         // The queue answered, so the restore is no longer failing: a Ring card for it must not linger while the PR is queued (#1338).
                         _restoreFailing.Remove(flight.Code);
