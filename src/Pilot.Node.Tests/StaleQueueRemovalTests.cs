@@ -38,6 +38,7 @@ public sealed class StaleQueueRemovalTests() : ReviewTestsBase(realGit: true)
         _github.Queue = GhAnswers.MergeQueue("dropped", b, removedAt: removedAt, removedReason: reason);
         // Checks still running: the looks restore a PR-ready card at B but nothing merges it by itself, so the card and the plane stay for the asserts.
         _github.Merge = GhAnswers.MergeState(MergeKinds.Pending, 1, 3);
+        _github.Summary = GhAnswers.ChecksOf(ChoiceStatus.Pending, 1, 3);
         return (F(flight.Code), a, b, removedAt);
     }
 
@@ -62,6 +63,7 @@ public sealed class StaleQueueRemovalTests() : ReviewTestsBase(realGit: true)
 
         NothingDoneAt(flight, b, b);
         _github.Merge = GhAnswers.MergeState(MergeKinds.Ready, 3, 3);
+        _github.Summary = GhAnswers.ChecksOf(ChoiceStatus.Passing, 3, 3);
         var merge = await Run(Verbs.Merge, Verbs.FlightTarget(flight.Code), "controller", b);
         merge.Error.ShouldBeNull();
         _github.Merged.ShouldHaveSingleItem().Head.ShouldBe(b);
@@ -87,6 +89,7 @@ public sealed class StaleQueueRemovalTests() : ReviewTestsBase(realGit: true)
         restarted.RebaseProbes.ShouldBe(0);
         Git(flight.Worktree, "rev-parse", "HEAD").ShouldBe(b);
         _github.Merge = GhAnswers.MergeState(MergeKinds.Ready, 3, 3);
+        _github.Summary = GhAnswers.ChecksOf(ChoiceStatus.Passing, 3, 3);
         var merge = await Run(Verbs.Merge, Verbs.FlightTarget(flight.Code), "controller", b);
         merge.Error.ShouldBeNull();
         _github.Merged.ShouldHaveSingleItem().Head.ShouldBe(b);
