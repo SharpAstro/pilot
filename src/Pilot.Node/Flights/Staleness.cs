@@ -156,8 +156,8 @@ public static class Staleness
                 }, TimeSpan.FromHours(bounds.FlightHours));
             }
 
-            // Its PR open with green CI.
-            if (flight.PullRequest is { } number && PullRequestFor(flight, pullRequests) is var pr && IsGreen(pr) && OpenSince(flight, pr, flightCards) is { } opened)
+            // Its PR open with green CI (not while the flight waits its turn: in line, nothing is stuck).
+            if (!WaitsItsTurn(flight, mine) && flight.PullRequest is { } number && PullRequestFor(flight, pullRequests) is var pr && IsGreen(pr) && OpenSince(flight, pr, flightCards) is { } opened)
             {
                 var prAge = now - opened;
                 Add(new StaleItem

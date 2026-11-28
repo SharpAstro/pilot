@@ -421,6 +421,14 @@ public class StalenessTests
     }
 
     [Fact]
+    public void AFlightWaitingItsTurnGetsNoPullRequestItemEither()
+    {
+        var reading = Read([Flight(age: TimeSpan.FromHours(2), pr: 12) with { Queued = Held }], [], [], [], Prs(Pr("DIR178", 12, TimeSpan.FromHours(13))));
+        reading.Stale.ShouldBeEmpty();
+        reading.Nearing.ShouldBeEmpty();
+    }
+
+    [Fact]
     public void AFlightWaitingItsTurnWaitsOnAdmissionsOwnWords()
     {
         var flight = Flight(age: TimeSpan.FromHours(20)) with { Queued = Held };
@@ -449,5 +457,18 @@ public class StalenessTests
     {
         var reading = Read([Flight(age: TimeSpan.FromHours(20)) with { AdmittedAt = Now - TimeSpan.FromHours(13) }]);
         reading.Stale.ShouldHaveSingleItem().Kind.ShouldBe(StaleKind.Flight);
+    }
+
+    [Fact]
+    public void ALaterAdmissionWaitThatEndsRestartsTheClockAndCountsAsAMove()
+    {
+        // AdmittedAt is the latest admission: a first wait ended 13 h ago, a second (an Opus-cap wait mid-flight) ended 2 h ago.
+        var flight = Flight(age: TimeSpan.FromHours(20)) with { AdmittedAt = Now - TimeSpan.FromHours(2) };
+        var reading = Read([flight]);
+        reading.Stale.ShouldBeEmpty();
+        reading.Nearing.ShouldBeEmpty();
+        var move = Staleness.LastMove(flight, [], [], null, TimeZoneInfo.Utc)!.Value;
+        move.At.ShouldBe(Now - TimeSpan.FromHours(2));
+        move.Text.ShouldBe("got its turn (admission wait ended)");
     }
 }
