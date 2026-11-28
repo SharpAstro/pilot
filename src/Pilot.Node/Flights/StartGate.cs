@@ -58,7 +58,7 @@ public sealed class StartGate(NodeState state, TimeProvider time)
     /// </summary>
     public HoldRow? CurrentHold() =>
         Outage is { LimitUntil: { } until, LimitSay: { } say } ? new HoldRow { Kind = TurnOutage.LimitHoldKind, Until = until, Why = say }
-        : Check(StatusLimit) is { } five ? new HoldRow { Kind = GateHoldKind, Until = five.Resets, Why = five.Say } : null;
+        : Check(StatusLimit) is { } five ? new HoldRow { Kind = GateHoldKind, Until = five.Resets, Why = five.Say, Projected = five.Projected ? true : null } : null;
 
     /// <summary>Why a known account limit (<see cref="TurnOutage.OpenLimit"/>) holds every start until its reset, keyed on that reset so it is said once; null when none is open.</summary>
     public StartHeld? CheckLimit() =>

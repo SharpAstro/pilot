@@ -214,7 +214,7 @@ public sealed class Designers(NodeState state, DesignStore store, IWorkerLaunche
         if (gate.HoldBecause($"design-ask {row.Id}", models.StartLimitFor(row.Repo ?? ""), models.WeekLimit, HeldKind, Verbs.DesignTarget(row.Id),
                 $"{row.Id} waits to start its designer", models.WeekPaceFor(row.Repo ?? "")) is { } held)
         {
-            store.Update(row.Id, r => r with { DesignerName = name, DesignerState = DesignerStates.Held, DesignerHeldUntil = held.Resets, DesignerWhy = gate.HeldAnswer(held), DesignerPending = pending, DesignerTyped = [] });
+            store.Update(row.Id, r => r with { DesignerName = name, DesignerState = DesignerStates.Held, DesignerHeldUntil = held.Resets, DesignerHeldProjected = held.Projected ? true : null, DesignerWhy = gate.HeldAnswer(held), DesignerPending = pending, DesignerTyped = [] });
             return;
         }
 
@@ -224,7 +224,7 @@ public sealed class Designers(NodeState state, DesignStore store, IWorkerLaunche
             if (live is null)
             {
                 // Started, and not listed yet: the pieces wait for it, and a sweep delivers them.
-                store.Update(row.Id, r => r with { DesignerState = DesignerStates.Working, DesignerIdleSince = null, DesignerHeldUntil = null, DesignerWhy = null, DesignerPending = pending, DesignerTyped = [] });
+                store.Update(row.Id, r => r with { DesignerState = DesignerStates.Working, DesignerIdleSince = null, DesignerHeldUntil = null, DesignerHeldProjected = null, DesignerWhy = null, DesignerPending = pending, DesignerTyped = [] });
                 return;
             }
             if (pending.Length > 0)
@@ -246,7 +246,7 @@ public sealed class Designers(NodeState state, DesignStore store, IWorkerLaunche
                 }
                 NoteSaid(row.Id);
             }
-            store.Update(row.Id, r => r with { DesignerJob = live.Id, DesignerState = DesignerStates.Working, DesignerIdleSince = null, DesignerHeldUntil = null, DesignerWhy = null, DesignerPending = [], DesignerTyped = [], DesignerSessions = WithSession(r.DesignerSessions, live.SessionId), DesignerPhase = pending.Length > 0 ? DesignerPhases.Drafting : r.DesignerPhase,
+            store.Update(row.Id, r => r with { DesignerJob = live.Id, DesignerState = DesignerStates.Working, DesignerIdleSince = null, DesignerHeldUntil = null, DesignerHeldProjected = null, DesignerWhy = null, DesignerPending = [], DesignerTyped = [], DesignerSessions = WithSession(r.DesignerSessions, live.SessionId), DesignerPhase = pending.Length > 0 ? DesignerPhases.Drafting : r.DesignerPhase,
                 DesignerTurnStartedAt = pending.Length > 0 ? time.GetUtcNow() : r.DesignerTurnStartedAt, DesignerTurnPublished = pending.Length > 0 ? null : r.DesignerTurnPublished });
             return;
         }
@@ -266,7 +266,7 @@ public sealed class Designers(NodeState state, DesignStore store, IWorkerLaunche
         }
         Locks?.Want(row.Id);
         var job = await workers.StartAsync(new WorkerStart(name, store.FolderOf(row.Id), null, brief, models.Model(RoleModels.Designer), models.Effort(RoleModels.Designer), Reason: SessionStartReasons.Designer, Settings: GuardSettings), CancellationToken.None).ConfigureAwait(false);
-        store.Update(row.Id, r => r with { DesignerName = name, DesignerJob = job, DesignerState = DesignerStates.Working, DesignerIdleSince = null, DesignerHeldUntil = null, DesignerWhy = null, DesignerPending = [], DesignerTyped = [], DesignerStartedAt = time.GetUtcNow(), DesignerTurnStartedAt = time.GetUtcNow(), DesignerTurnPublished = null, DesignerPhase = DesignerPhases.Drafting });
+        store.Update(row.Id, r => r with { DesignerName = name, DesignerJob = job, DesignerState = DesignerStates.Working, DesignerIdleSince = null, DesignerHeldUntil = null, DesignerHeldProjected = null, DesignerWhy = null, DesignerPending = [], DesignerTyped = [], DesignerStartedAt = time.GetUtcNow(), DesignerTurnStartedAt = time.GetUtcNow(), DesignerTurnPublished = null, DesignerPhase = DesignerPhases.Drafting });
     }
 
     private static string[] WithSession(string[] have, string? session) =>

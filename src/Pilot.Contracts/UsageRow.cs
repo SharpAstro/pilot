@@ -225,12 +225,16 @@ public sealed record HoldRow
 
     public required string Why { get; init; }
 
-    /// <summary>The line every client shows: <c>held until 13:00: why</c>, ddd HH:mm when not today.</summary>
+    /// <summary>True for a hold on the 5-hour window's recent pace rather than its figure: it lifts as soon as the pace drops. Null from an older node.</summary>
+    public bool? Projected { get; init; }
+
+    /// <summary>The line every client shows: <c>held until 13:00: why</c>, ddd HH:mm when not today; <c>held, at the latest until 13:00: why</c> for a projection hold.</summary>
     public string Line(DateTimeOffset now, TimeZoneInfo zone)
     {
         var at = TimeZoneInfo.ConvertTime(Until, zone);
         var today = at.Date == TimeZoneInfo.ConvertTime(now, zone).Date;
-        return $"held until {at.ToString(today ? "HH:mm" : "ddd HH:mm", System.Globalization.CultureInfo.InvariantCulture)}: {Why}";
+        var when = at.ToString(today ? "HH:mm" : "ddd HH:mm", System.Globalization.CultureInfo.InvariantCulture);
+        return Projected is true ? $"held, at the latest until {when}: {Why}" : $"held until {when}: {Why}";
     }
 }
 
