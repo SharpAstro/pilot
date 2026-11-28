@@ -196,6 +196,64 @@ public sealed class CompactorTests : IDisposable
         row.CompactedBecause.ShouldBe("its context reached 70% of its window");
     }
 
+    // A node restart: a second watchtower and compactor over the same state and data folder, with the in-memory sets gone.
+    private (Compactor Compactor, Watchtower Tower) Restarted(string? keptWhy = null, string? job = null)
+    {
+        if (keptWhy is not null)
+        {
+            Directory.CreateDirectory(_data);
+            File.WriteAllLines(Path.Combine(_data, "watchtower-sessions"), [string.Join('	', job, "", Start.ToString("O", System.Globalization.CultureInfo.InvariantCulture), keptWhy)]);
+        }
+        var tower = new Watchtower(_state, _workers, Run, new NodeOptions("/tmp/n.sock", _data, MachinePrefix: "DU1"), _time);
+        return (new Compactor(_state, tower, Run, _time) { PersonMessages = _ => _persons, Ledger = _ledger }, tower);
+    }
+
+    private async Task<int> CompactThenSettleStillFullAsync(Compactor compactor, Watchtower tower, string id)
+    {
+        Row(id, "du1-watchtower", context: 100_000);
+        tower.StartTokensOf(_state.Sessions().Single(r => r.Id == id)).ShouldBe(100_000);
+        Row(id, "du1-watchtower", context: 800_000);
+        await compactor.LookAsync(Ct);
+        _said.Count(c => c.Verb == Verbs.Compact).ShouldBe(1);
+        _time.Advance(compactor.Settle + TimeSpan.FromMinutes(1));
+        Row(id, "du1-watchtower", context: 750_000, lastResponse: _time.GetUtcNow());
+        await compactor.LookAsync(Ct);
+        return _workers.Started.Count;
+    }
+
+    [Fact]
+    public async Task AfterARestartAReplacementWatchtowerStillFullAfterACompactionRaisesTheCardAndIsNotReplacedAgain()
+    {
+        var (compactor, tower) = Restarted(Compactor.ReplaceWhyPrefix + "still at 75% of its window after a compaction", "t0000002");
+        (await CompactThenSettleStillFullAsync(compactor, tower, "t0000002")).ShouldBe(0);
+        _state.Cards(openOnly: true).ShouldContain(c => c.Kind == Compactor.StuckKind);
+    }
+
+    [Fact]
+    public async Task AfterARestartAnOpenStillFullCardKeepsAFullWatchtowerAloneAndReadingUnderTheShareClosesIt()
+    {
+        _state.RaiseCard(CardBin.ForYou, Compactor.StuckKind, Verbs.WatchtowerTarget, "du1-watchtower is still full after a compaction", "d");
+        var (compactor, tower) = Restarted();
+        Row("t0000003", "du1-watchtower", context: 100_000);
+        tower.StartTokensOf(_state.Sessions().Single(r => r.Id == "t0000003")).ShouldBe(100_000);
+        Row("t0000003", "du1-watchtower", context: 800_000);
+        await compactor.LookAsync(Ct);
+        _said.ShouldBeEmpty();
+        _workers.Started.ShouldBeEmpty();
+        _state.Cards(openOnly: true).ShouldContain(c => c.Kind == Compactor.StuckKind);
+
+        Row("t0000003", "du1-watchtower", context: 250_000);
+        await compactor.LookAsync(Ct);
+        _state.Cards(openOnly: true).ShouldNotContain(c => c.Kind == Compactor.StuckKind);
+    }
+
+    [Fact]
+    public async Task AfterARestartAWatchtowerStartedForAnotherReasonIsStillReplacedOnce()
+    {
+        var (compactor, tower) = Restarted("brief changed", "t0000004");
+        (await CompactThenSettleStillFullAsync(compactor, tower, "t0000004")).ShouldBe(1);
+    }
+
     [Fact]
     public async Task AWatchtowerStillPastTheShareAfterCompactingIsReplacedNotCompactedAgain()
     {

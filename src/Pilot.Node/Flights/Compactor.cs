@@ -195,6 +195,11 @@ public sealed class Compactor(NodeState state, Watchtower watchtower, Func<Comma
                 // The watchtower is full only when it has also grown past where it started by the margin; a worker's test is the share alone.
                 full = row.ContextTokens > start + StartMargin * row.ContextWindow;
             }
+            if (isTower && !_stuck.Contains(key) && state.CardsOf(StuckKind, Verbs.WatchtowerTarget).Any(c => c.State == CardState.Open))
+            {
+                // A node restarted since the card was raised: what it keeps says the watchtower was found still full, so it is left alone as before.
+                _stuck.Add(key);
+            }
             if (_stuck.Contains(key))
             {
                 if (full)
@@ -209,6 +214,10 @@ public sealed class Compactor(NodeState state, Watchtower watchtower, Func<Comma
             {
                 // Under its share: an earlier replacement did its work, and a later episode may be replaced again.
                 _replaced.Remove(key);
+                if (isTower)
+                {
+                    _readUnder.Add(row.Id);
+                }
             }
             if (!isTower && _compactedFull.Contains(key))
             {
@@ -277,8 +286,14 @@ public sealed class Compactor(NodeState state, Watchtower watchtower, Func<Comma
     private async Task ReplaceAsync(SessionRow row, string key, CancellationToken cancellationToken)
     {
         var share = string.Create(CultureInfo.InvariantCulture, $"{100.0 * row.ContextTokens / row.ContextWindow:0}%");
-        var why = $"still at {share} of its window after a compaction";
+        var why = $"{ReplaceWhyPrefix}still at {share} of its window after a compaction";
         _settleUntil[key] = time.GetUtcNow() + Settle;
+        if (!_replaced.ContainsKey(key) && !_readUnder.Contains(row.Id) && watchtower.StartedByWhy(row, ReplaceWhyPrefix))
+        {
+            // After a node restart the in-memory record is gone: the generation's Why, kept in watchtower-sessions, says this watchtower is
+            // already the replacement of a compaction, so it is not replaced again (#1397).
+            _replaced[key] = FreshStarted;
+        }
         if (_replaced.TryGetValue(key, out var came))
         {
             // Asked for a fresh one once already and still full: said once, and left until it reads under its share. The title and the
@@ -299,6 +314,12 @@ public sealed class Compactor(NodeState state, Watchtower watchtower, Func<Comma
         state.RaiseCard(CardBin.Handled, Kind, Verbs.WatchtowerTarget, title, $"{why}{(error is null ? "" : $": {error}")}");
         await Error.WriteLineAsync($"compactor: {title} ({row.Id}): {why}{(error is null ? "" : $": {error}")}");
     }
+
+    /// <summary>What the Why of a watchtower the compactor replaced starts with, so a restarted node can tell such a generation from its kept record.</summary>
+    public const string ReplaceWhyPrefix = "compactor: ";
+
+    // Watchtower rows seen under their share: a later episode of one may be replaced again, so the kept Why no longer counts against it.
+    private readonly HashSet<string> _readUnder = new(StringComparer.Ordinal);
 
     // What a replacement that started a fresh watchtower came to: the one outcome after which the card may say "a replacement".
     private const string FreshStarted = "a fresh one started";

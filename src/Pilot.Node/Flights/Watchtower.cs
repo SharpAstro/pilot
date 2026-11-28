@@ -375,6 +375,14 @@ public sealed partial class Watchtower(
         return latest >= 0 ? all[latest].StartTokens : null;
     }
 
+    /// <summary>Whether the row's current watchtower generation was started with a Why beginning <paramref name="prefix"/>, from what the node keeps (#1397).</summary>
+    public bool StartedByWhy(SessionRow row, string prefix)
+    {
+        var all = Generations();
+        var latest = all.ToList().FindLastIndex(g => g.Job == row.Id);
+        return latest >= 0 && all[latest].Why?.StartsWith(prefix, StringComparison.Ordinal) == true;
+    }
+
     /// <summary>Where the watchtower sessions there have been are kept, in the node's data folder: a line each (<see cref="Generation"/>).</summary>
     public string SessionsFile => Path.Combine(options.DataFolder, "watchtower-sessions");
 
