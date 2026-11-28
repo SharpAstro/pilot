@@ -358,7 +358,7 @@ public sealed partial class LegCommander
                 }
                 var ended = why is null && f.Queued is not null;
                 // QueuedSince is the wait's start: kept while Queued was already set (its text and who it is behind may change between sweeps).
-                var since = why is null ? null : f.Queued is not null ? f.QueuedSince ?? at : at;
+                DateTimeOffset? since = why is null ? null : f.Queued is not null ? f.QueuedSince ?? at : at;
                 return f with { Queued = why, QueuedSince = since, QueuedBehind = why is null ? null : behind, AdmittedAt = ended ? at : f.AdmittedAt };
             });
         }
