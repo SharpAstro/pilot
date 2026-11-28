@@ -15,6 +15,15 @@ public sealed partial class NodeState
         }
     }
 
+    /// <summary>The session row with <paramref name="id"/>, or null: a lookup, with no copy or sort of every row.</summary>
+    public SessionRow? Session(string id)
+    {
+        lock (_gate)
+        {
+            return _sessions.TryGetValue(id, out var row) ? row : null;
+        }
+    }
+
     private SessionRow[]? _sessionsNewestFirst;
 
     private volatile string? _currentWatchtower;
