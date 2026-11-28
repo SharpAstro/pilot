@@ -84,8 +84,15 @@ public sealed class NotesCapPrReadyTests : ReviewTestsBase
 
         F(flight.Code).Holding.ShouldBeNull();
         PrReadyCards(flight.Code).ShouldHaveSingleItem();
-        new RepeatDetector(_state, new FailureLedger(), TimeProvider.System).Look().ShouldBeEmpty();
+        var detector = new RepeatDetector(_state, new FailureLedger(), TimeProvider.System);
+        detector.Look().ShouldBeEmpty();
         _state.Cards(openOnly: false).ShouldNotContain(c => c.Kind == CardKinds.RepeatTask);
+        PrReadyCards(flight.Code).Single().Title.ShouldContain("ready to merge");
+
+        // The control: an empty answer proves nothing unless the detector would have found a second PR-ready card of this flight.
+        var subject = Verbs.FlightTarget(flight.Code);
+        _state.RaiseCard(CardBin.ForYou, LegCommander.PrReady, subject, "a second PR-ready card", "Control.", cause: "control");
+        detector.Look().ShouldNotBeEmpty();
     }
 
     [Fact]

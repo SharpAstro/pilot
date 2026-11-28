@@ -572,7 +572,7 @@ public sealed partial class LegCommander
         }
         // A flight holding for unmade notes gets no "ready to merge" (#1400): a card still open from before the hold is closed, the
         // node's own close, and the release raises the one ready card.
-        if (flight is not null && card.Choices.Any(c => c.Verb == Verbs.Merge) && HoldsForNotes(flight))
+        if (flight is not null && card.Kind == PrReady && card.Choices.Any(c => c.Verb == Verbs.Merge) && HoldsForNotes(flight))
         {
             state.CloseCard(card.Id, HoldingCloseOutcome + "the flight holds until every review note has an end", "node");
             return;

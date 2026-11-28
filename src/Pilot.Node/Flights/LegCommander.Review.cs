@@ -570,13 +570,37 @@ public sealed partial class LegCommander
         RaiseMergeCard(flight, pr.Number, pr.Head, pr.Url, review, reviewed);
     }
 
+    /// <summary>
+    /// The guards a PR-ready card is raised under, for the restore sweep and the release of a hold alike: the flight flies with its PR open,
+    /// the review passed at <paramref name="head"/>, no merge is armed, every leg is done, and no merge card of this head is open or was closed
+    /// as a person's dismissal or an answered merge (one the node closed for a leg wait or a hold is not). <paramref name="waited"/> is those
+    /// node-closed cards.
+    /// </summary>
+    private bool PrReadyWanted(FlightRow flight, string head, out List<CardRow> waited)
+    {
+        waited = [];
+        var code = flight.Code;
+        var subject = Verbs.FlightTarget(code);
+        if (flight is not { State: FlightState.Flying, PullRequest: not null, Review: { State: ReviewState.Passed, ReviewedHead: { } reviewed }, MergeWhenGreen: null }
+            || !string.Equals(reviewed, head, StringComparison.OrdinalIgnoreCase)
+            || state.Legs(code) is not { Length: > 0 } flown || flown.Any(l => l.State != LegState.Done))
+        {
+            return false;
+        }
+        // Any merge card of this head, open or closed, is a person's dismissal or an answered merge, not undone; but not one closed for a leg wait (PIL1294).
+        waited = [.. state.Cards(openOnly: false).Where(c => c.Subject == subject && c.Kind is PrReady && IsNodeWaitOutcome(c.Outcome))];
+        var kept = waited;
+        return !state.Cards(openOnly: false).Except(kept).Any(c => c.Subject == subject && c.Kind is PrReady or MergeFailed
+            && (c.ClosedAt is null || c.Choices.Any(ch => ch.Verb == Verbs.Merge && ch.Args.FirstOrDefault() is { } h && string.Equals(h, head, StringComparison.OrdinalIgnoreCase))));
+    }
+
     /// <summary>The Handled card kind that says a passed flight's PR-ready card was restored by the sweep.</summary>
     public const string PrReadyRestoredKind = "pr-ready-restored";
 
     /// <summary>
     /// A flight whose review passed at <paramref name="head"/>, every leg done and its PR open, but with no merge card (the node
-    /// went away between the stored verdict and the card, PIL682): its PR-ready card is raised as the verdict would have, holding
-    /// flights getting the holding card and their notes card. A flight whose PR-ready card for that head was closed (dismissed,
+    /// went away between the stored verdict and the card, PIL682): its PR-ready card is raised as the verdict would have, and a flight
+    /// holding for unmade notes gets its notes' leg (or ring) and no card (#1400). A flight whose PR-ready card for that head was closed (dismissed,
     /// answered, merged into a queue) is left alone. True when a card was raised.
     /// </summary>
     internal async Task<bool> RestorePrReadyAsync(string code, string head, CancellationToken cancellationToken)
@@ -587,14 +611,7 @@ public sealed partial class LegCommander
             var subject = Verbs.FlightTarget(code);
             if (state.Flights().FirstOrDefault(f => f.Code == code) is not { State: FlightState.Flying, PullRequest: not null, Review: { State: ReviewState.Passed, ReviewedHead: { } reviewed } review, MergeWhenGreen: null } flight
                 || !string.Equals(reviewed, head, StringComparison.OrdinalIgnoreCase)
-                || state.Legs(code) is not { Length: > 0 } flown || flown.Any(l => l.State != LegState.Done))
-            {
-                return false;
-            }
-            // Any merge card of this head, open or closed, is a person's dismissal or an answered merge, not undone; but not one closed for a leg wait (PIL1294).
-            var waited = state.Cards(openOnly: false).Where(c => c.Subject == subject && c.Kind is PrReady && IsNodeWaitOutcome(c.Outcome)).ToList();
-            if (state.Cards(openOnly: false).Except(waited).Any(c => c.Subject == subject && c.Kind is PrReady or MergeFailed
-                && (c.ClosedAt is null ||c.Choices.Any(ch => ch.Verb == Verbs.Merge && ch.Args.FirstOrDefault() is { } h && string.Equals(h, head, StringComparison.OrdinalIgnoreCase)))))
+                || !PrReadyWanted(flight, head, out var waited))
             {
                 return false;
             }
