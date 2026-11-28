@@ -171,6 +171,32 @@ public sealed class JobRetellTests : IDisposable
     }
 
     [Fact]
+    public async Task ALimitEndedByEvidenceDoesNotHoldTheRetellOfARowThatBeganBeforeTheEnd()
+    {
+        await TellNowAsync();
+        StopOnLimit("usage_limit_reached", TimeSpan.FromHours(5));
+        var seen = _clock.GetUtcNow();
+        _outage.OpenLimit(_apiResets!.Value, "usage limit", seen, Verbs.ModelFamily("claude-opus-5-5"));
+        _clock.Advance(TimeSpan.FromMinutes(1));
+
+        // Another session of the same family answered a turn requested after the limit was seen: the limit ends by evidence, and the owner's
+        // stored row, which still carries the error and began before the end, no longer counts.
+        _state.PutSession(new SessionRow
+        {
+            Id = "p0000001", SessionId = "p0000001-0000-4000-8000-000000000000", Name = "de1-retell-proof", Kind = SessionKind.Background, Cwd = _root,
+            Role = SessionRole.AdHoc, ContextTokens = 0, ContextWindow = 200_000, SpendWeighted = 0, State = SessionState.Idle,
+            StartedAt = seen.AddSeconds(5), LastRequestAt = seen.AddSeconds(10), LastResponseAt = seen.AddSeconds(20), Model = "claude-opus-5-5",
+        });
+        _outage.Look(_state.Sessions(), _clock.GetUtcNow());
+        _outage.LimitEvidenceEndedAt.ShouldNotBeNull();
+        _outage.IsOpen.ShouldBeFalse();
+
+        _clock.Advance(After);
+        (await Sweep()).ShouldBeTrue();
+        _said.ShouldHaveSingleItem().ShouldStartWith("Repeat:");
+    }
+
+    [Fact]
     public async Task ALimitOfAnotherAccountDoesNotHoldTheRetell()
     {
         // The owner's row ran under another login than the one the node reads now: its limit is not this account's.
