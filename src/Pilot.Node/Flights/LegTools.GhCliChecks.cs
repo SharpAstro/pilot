@@ -9,12 +9,12 @@ public sealed partial class GhCli
 {
     public async Task<PullRequest?> PullRequestAsync(string repoPath, string branch, CancellationToken cancellationToken)
     {
-        var (exit, output, error) = await RunAsync(["pr", "view", branch, "--json", PullRequestByBranchFields], repoPath, cancellationToken);
+        var (exit, output, error) = await GhAsync(["pr", "view", branch, "--json", PullRequestByBranchFields], repoPath, cancellationToken);
         if (exit != 0)
         {
             return error.Contains("no pull requests found", StringComparison.OrdinalIgnoreCase)
                 ? null
-                : throw new FlightException($"gh could not read {branch}'s PR: {error.Trim()}");
+                : throw await FailedAsync($"gh could not read {branch}'s PR: {error.Trim()}", error, cancellationToken);
         }
         var pr = ParsePullRequestByBranch(output);
         // canBeRebased is GraphQL's alone, so it is asked only where it can matter: an open PR GitHub calls mergeable, on a base that merges by rebase.
