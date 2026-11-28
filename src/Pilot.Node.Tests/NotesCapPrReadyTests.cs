@@ -84,17 +84,11 @@ public sealed class NotesCapPrReadyTests : ReviewTestsBase
 
         F(flight.Code).Holding.ShouldBeNull();
         PrReadyCards(flight.Code).ShouldHaveSingleItem();
-        var detector = new RepeatDetector(_state, new FailureLedger(), TimeProvider.System);
-        detector.Look().ShouldBeEmpty();
-        _state.Cards(openOnly: false).ShouldNotContain(c => c.Kind == CardKinds.RepeatTask);
-        PrReadyCards(flight.Code).Single().Title.ShouldContain("ready to merge");
-
-        // The control: an empty answer proves nothing unless the detector would have found a repeat of PR-ready cards on this flight
-        // (the node's own card may sit in the Handled bin, which the detector skips, so the control raises two For-you ones).
-        var subject = Verbs.FlightTarget(flight.Code);
-        _state.RaiseCard(CardBin.ForYou, LegCommander.PrReady, subject, "a PR-ready card", "Control 1.", cause: "control-1");
-        _state.RaiseCard(CardBin.ForYou, LegCommander.PrReady, subject, "a second PR-ready card", "Control 2.", cause: "control-2");
-        detector.Look().ShouldNotBeEmpty(string.Join(" | ", _state.Cards(openOnly: false).Select(c => $"{c.Id} {c.Kind} {c.Bin} {c.State} {c.Subject} {c.At:O}")));
+        // The detector cannot prove this on its own: RepeatDetector.RoutineKinds exempts the whole pr-ready kind (#1386), so it answers empty
+        // whatever the count. What it would pair if the exemption went is the cards of a kind and subject raised in the window, so that
+        // count is asserted here: the one card of the whole run, counting the closed ones.
+        PrReadyCards(flight.Code).ShouldHaveSingleItem().Title.ShouldContain("ready to merge");
+        new RepeatDetector(_state, new FailureLedger(), TimeProvider.System).Look().ShouldBeEmpty();
     }
 
     [Fact]
