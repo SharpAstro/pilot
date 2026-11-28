@@ -248,9 +248,7 @@ public sealed partial class PrReviews
             var sentUnanswered = Of(pr) is { PostedId: null, PostingAt: not null };
             var card = state.RaiseCard(CardBin.ForYou, ReadyKind, subject,
                 $"{pr}: review ready, {review.Verdict}{(review.Title is { Length: > 0 } title ? $" ({title})" : "")}",
-                (notPosted is { } why ? $"Not posted by the node: {why}
-" : "") + $"The draft: {review.Draft}
-{review.Report}",
+                (notPosted is { } why ? $"Not posted by the node: {why}\n" : "") + $"The draft: {review.Draft}\n{review.Report}",
                 sentUnanswered ? [] : [new CardChoice { Label = PostLabel, Verb = Verbs.PostReview, Target = subject }],
                 link: review.Url);
             state.PutPrReview((Of(pr) ?? current) with { Card = card.Id });
