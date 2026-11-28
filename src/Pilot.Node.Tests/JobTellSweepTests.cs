@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using Pilot.Contracts;
 using Pilot.Node.Flights;
+using Pilot.Node.Sessions;
 using Shouldly;
 using Xunit;
 
