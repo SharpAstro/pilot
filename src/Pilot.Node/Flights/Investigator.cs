@@ -225,11 +225,11 @@ public sealed partial class Investigator(NodeState state, IWorkerLauncher worker
         Recover();
     }
 
+    private static long IdNumber(string id) => long.TryParse(id.AsSpan().TrimStart('c'), out var n) ? n : 0;
+
     private const string StartedOn = " started on ";
 
-    // One helper writes the start line's title and one reads the key back, so the two cannot drift.
-    private static string StartTitle(string key, InvestigationTrigger trigger) => $"An investigator of {key}{StartedOn}{trigger}";
-
+    // Reads back the title Begin writes ("An investigator of {key} started on {trigger}"); keep the two in step.
     private static string? KeyOfStartTitle(string title)
     {
         const string lead = "An investigator of ";
@@ -248,7 +248,7 @@ public sealed partial class Investigator(NodeState state, IWorkerLauncher worker
         {
             return;
         }
-        var cards = state.Cards();
+        var cards = state.Cards().OrderBy(c => c.At).ThenBy(c => IdNumber(c.Id)).ToArray();
         var newest = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         for (var i = 0; i < cards.Length; i++)
         {
@@ -389,7 +389,7 @@ public sealed partial class Investigator(NodeState state, IWorkerLauncher worker
             }
             _runs[key] = run;
             _starts.Add(run.StartedAt);
-            state.RaiseCard(CardBin.Handled, StartKind, target, StartTitle(key, trigger), SeenDetail($"{run.Name} on {string.Join(", ", run.Triggers)}.", seen));
+            state.RaiseCard(CardBin.Handled, StartKind, target, $"An investigator of {key} started on {trigger}", SeenDetail($"{run.Name} on {string.Join(", ", run.Triggers)}.", seen));
         }
         // Started outside the lock: a launcher that fails at once rings the held cards, which goes through the node's state.
         var start = StartAsync(run);
