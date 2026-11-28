@@ -202,6 +202,36 @@ public sealed class StreamSessionTests
         turn.IsError.ShouldBeFalse();
     }
 
+    private const string BigAssistant = """{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"ok"}],"usage":{"input_tokens":352,"cache_creation_input_tokens":0,"cache_read_input_tokens":187000,"output_tokens":5}}}""";
+
+    [Fact]
+    public async Task ACompactBoundaryWithPostTokensIsTheContextReadingAtOnce()
+    {
+        // #1413: the reading after a /compact is the compact_metadata.post_tokens of its boundary line, not the turn before it.
+        await using var rig = new Rig();
+        rig.Process.Emit(BigAssistant);
+        await Until(() => rig.Session.ContextTokens == 187_352, "the context before the compaction");
+
+        rig.Process.Emit("""{"type":"system","subtype":"compact_boundary","session_id":"x","compact_metadata":{"trigger":"manual","pre_tokens":187352,"post_tokens":11836}}""");
+
+        await Until(() => rig.Session.ContextTokens == 11_836, "the compacted reading");
+    }
+
+    [Fact]
+    public async Task ACompactBoundaryWithoutPostTokensLeavesTheReadingAsItWas()
+    {
+        await using var rig = new Rig();
+        rig.Process.Emit(BigAssistant);
+        await Until(() => rig.Session.ContextTokens == 187_352, "the context before the compaction");
+
+        rig.Process.Emit("""{"type":"system","subtype":"compact_boundary","session_id":"x","compact_metadata":{"trigger":"manual","pre_tokens":187352}}""");
+        // The line is read in order: a later line seen proves the boundary was handled.
+        rig.Process.Emit(Delta("after"));
+        await Until(() => rig.Session.PartialText == "after", "the line after the boundary");
+
+        rig.Session.ContextTokens.ShouldBe(187_352);
+    }
+
     [Fact]
     public async Task AToolUseIsWhatItIsDoingInPlainWordsUntilItSpeaksOrTheToolAnswers()
     {
