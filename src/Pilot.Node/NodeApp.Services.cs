@@ -108,6 +108,7 @@ public static partial class NodeApp
         builder.Services.AddSingleton<ReportBook>();
         builder.Services.AddSingleton(services => new HookBook { Reports = services.GetRequiredService<ReportBook>() });
         builder.Services.AddSingleton(services => new TranscriptBook(services.GetRequiredService<SessionTrackerOptions>().Profile));
+        builder.Services.AddSingleton(services => new ClaudeJobState(Path.Combine(services.GetRequiredService<SessionTrackerOptions>().Profile.Root, "jobs")));
     }
 
     /// <summary>Git, the planes (worktrees) and what removes them, the stop gate and the attachments.</summary>
@@ -331,9 +332,8 @@ public static partial class NodeApp
         builder.Services.AddSingleton(services => new ClaudeWorkerLauncher(services.GetRequiredService<ClaudeTrust>(), services.GetRequiredService<StartOptionsBook>(),
             services.GetRequiredService<SessionLedger>(), options, services.GetRequiredService<SendTimings>(), ClaudeWorkerLauncher.BriefFolderIn(options.DataFolder),
             services.GetRequiredService<ClaudeJobRemoval>(), services.GetRequiredService<McpHttp>(), () => services.GetRequiredService<RoleModels>().McpTransport));
-        builder.Services.AddSingleton(services => new LoggingWorkerLauncher(
-            services.GetRequiredService<ClaudeWorkerLauncher>(), logWriter,
-            new ClaudeJobState(Path.Combine(services.GetRequiredService<SessionTrackerOptions>().Profile.Root, "jobs")), services.GetRequiredService<TimeProvider>()));
+        builder.Services.AddSingleton(services => new LoggingWorkerLauncher(services.GetRequiredService<ClaudeWorkerLauncher>(), logWriter,
+            services.GetRequiredService<ClaudeJobState>(), services.GetRequiredService<TimeProvider>()));
         builder.Services.AddSingleton<IWorkerLauncher>(services => services.GetRequiredService<LoggingWorkerLauncher>());
         builder.Services.AddHostedService(services => new StartWatch(services.GetRequiredService<IWorkerLauncher>()));
         builder.Services.AddSingleton<ICheckRunner, JobCheckRunner>();
@@ -521,7 +521,7 @@ public static partial class NodeApp
                 Gate = services.GetRequiredService<StartGate>(),
                 UiConnected = () => services.GetRequiredService<PageViews>().Any,
                 Error = logWriter,
-                JobRecord = new ClaudeJobState(Path.Combine(services.GetRequiredService<SessionTrackerOptions>().Profile.Root, "jobs")).Read,
+                JobRecord = services.GetRequiredService<ClaudeJobState>().Read,
                 Transcripts = services.GetRequiredService<TranscriptBook>(),
                 // The watchtower is one long-lived claude -p stream-json process the node owns (PIL855).
                 Streams = new ClaudeStreamProcessLauncher(),
@@ -814,33 +814,29 @@ public static partial class NodeApp
     private static void AddSessions(WebApplicationBuilder builder, NodeOptions options, LogWriter logWriter)
     {
         var relayFolder = RelayFolder(options);
-        builder.Services.AddSingleton(services =>
+        builder.Services.AddSingleton(services => new SessionTracker(
+            services.GetRequiredService<NodeState>(),
+            services.GetRequiredService<IClaudeAgents>(),
+            services.GetRequiredService<SessionTrackerOptions>(),
+            () => services.GetRequiredService<EventHub>().ClientCount > 0,
+            services.GetRequiredService<TimeProvider>(),
+            services.GetRequiredService<ILogger<SessionTracker>>())
         {
-            // One reader of Claude Code's job folder, for both its record and whether the folder is gone.
-            var jobState = new ClaudeJobState(Path.Combine(services.GetRequiredService<SessionTrackerOptions>().Profile.Root, "jobs"));
-            return new SessionTracker(
-                services.GetRequiredService<NodeState>(),
-                services.GetRequiredService<IClaudeAgents>(),
-                services.GetRequiredService<SessionTrackerOptions>(),
-                () => services.GetRequiredService<EventHub>().ClientCount > 0,
-                services.GetRequiredService<TimeProvider>(),
-                services.GetRequiredService<ILogger<SessionTracker>>())
-            {
-                Hooks = services.GetRequiredService<HookBook>(),
-                Reports = services.GetRequiredService<ReportBook>(),
-                Attachments = services.GetRequiredService<Attachments>(),
-                Starts = services.GetRequiredService<StartOptionsBook>(),
-                Launched = services.GetRequiredService<SessionLedger>(),
-                Ledger = services.GetRequiredService<SpendLedger>(),
-                Error = logWriter,
-                IsWatchtowerId = id => services.GetRequiredService<Watchtower>().KnowsId(id),
-                IsStreamSession = id => services.GetRequiredService<Watchtower>().OwnsSession(id),
-                JobRecord = jobState.Read,
-                JobGone = jobState.IsGone,
-                // A session that ends on its own takes its queued jobs off the queue (#327).
-                DropJobs = (owners, why) => services.GetRequiredService<JobRunner>().DropQueuedOf(owners, why),
-                IsBeingReplaced = id => services.GetRequiredService<LegCommander>().IsBeingReplaced(id),
-            };
+            Hooks = services.GetRequiredService<HookBook>(),
+            Reports = services.GetRequiredService<ReportBook>(),
+            Attachments = services.GetRequiredService<Attachments>(),
+            Starts = services.GetRequiredService<StartOptionsBook>(),
+            Launched = services.GetRequiredService<SessionLedger>(),
+            Ledger = services.GetRequiredService<SpendLedger>(),
+            Error = logWriter,
+            IsWatchtowerId = id => services.GetRequiredService<Watchtower>().KnowsId(id),
+            IsStreamSession = id => services.GetRequiredService<Watchtower>().OwnsSession(id),
+            // One reader of Claude Code's job folder (the node's singleton), for both a job's record and whether its folder is gone.
+            JobRecord = services.GetRequiredService<ClaudeJobState>().Read,
+            JobGone = services.GetRequiredService<ClaudeJobState>().IsGone,
+            // A session that ends on its own takes its queued jobs off the queue (#327).
+            DropJobs = (owners, why) => services.GetRequiredService<JobRunner>().DropQueuedOf(owners, why),
+            IsBeingReplaced = id => services.GetRequiredService<LegCommander>().IsBeingReplaced(id),
         });
         builder.Services.AddHostedService(services => services.GetRequiredService<SessionTracker>());
         // The relay's throwaway session runs in a folder of the node's own, as v1's runs in its state folder.
