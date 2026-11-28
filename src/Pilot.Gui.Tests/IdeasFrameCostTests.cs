@@ -122,5 +122,31 @@ public sealed class IdeasFrameCostTests
         Math.Max(repeat, repeat2).ShouldBeLessThan(1000d, line);
     }
 
+    /// <summary>The cut, counted and not timed (#1406): frames of the same IdeasScreen reuse the board; a new screen builds it again.</summary>
+    [Fact]
+    public void FramesOfTheSameScreenReuseTheBoardAndANewScreenBuildsItAgain()
+    {
+        var ideas = DeSized();
+        using var renderer = new RgbaImageRenderer(1400, 900);
+        var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath };
+        chrome.Show(PilotPage.Ideas);
+        var sessions = new SessionsScreen([], "test", PageData.Now);
+        var bounds = new RectF32(0, 0, 1400, 900);
+        for (var i = 0; i < 5; i++)
+        {
+            chrome.Render(sessions, null, null, null, null, null, null, bounds, null, ideas);
+        }
+        chrome.Ideas.BoardBuilds.ShouldBe(1);
+
+        chrome.Render(sessions, null, null, null, null, null, null, bounds, null, ideas with { AsOf = ideas.AsOf.AddSeconds(1) });
+        chrome.Ideas.BoardBuilds.ShouldBe(2);
+        // The filters work on the kept board without building it again.
+        chrome.Ideas.OnlyNeedsDesign = true;
+        var screen = ideas with { AsOf = ideas.AsOf.AddSeconds(2) };
+        chrome.Render(sessions, null, null, null, null, null, null, bounds, null, screen);
+        chrome.Render(sessions, null, null, null, null, null, null, bounds, null, screen);
+        chrome.Ideas.BoardBuilds.ShouldBe(3);
+    }
+
     private static readonly Lock Gate = new();
 }
