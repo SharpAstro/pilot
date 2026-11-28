@@ -520,6 +520,24 @@ public sealed class WatchtowerStreamTests : IDisposable
     }
 
     [Fact]
+    public async Task ACompactionsBoundaryGivesTheRowTheCompactedContextWhenItsTurnEnds()
+    {
+        // #1413: the row published at the end of the /compact turn read the size before it, so the compactor judged "still full".
+        await _tower.LookAsync(Ct);
+        var first = _launcher.Process(0);
+        first.Emit(Init(_launcher.SessionOf(0)));
+        first.Emit(Assistant(352, 187_000));
+        first.Emit(Result);
+        await Until(() => Row() is { State: SessionState.Idle, ContextTokens: 187_352 }, "it to be idle with its large context");
+
+        (await Compact()).Ok.ShouldBeTrue();
+        first.Emit("""{"type":"system","subtype":"compact_boundary","compact_metadata":{"trigger":"manual","pre_tokens":187352,"post_tokens":11836}}""");
+        first.Emit(Result);
+
+        await Until(() => Row() is { State: SessionState.Idle, ContextTokens: 11_836 }, "the row to read the compacted context");
+    }
+
+    [Fact]
     public async Task ACompactionCancelledBeforeItIsWrittenLeavesNoCompactionUnderWay()
     {
         await UpAndIdleAsync();
