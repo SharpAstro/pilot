@@ -106,6 +106,9 @@ internal sealed partial class IdeasView<TSurface>
         }
     }
 
+    /// <summary>When each readiness answer this view holds itself (a Ready? press) was checked: what a frame watch counts "checked 12s ago" from.</summary>
+    internal IReadOnlyList<DateTimeOffset> ToldAt() => [.. _readiness.Values.Select(r => r.CheckedAt)];
+
     private bool Begin(string busy) => ImmutableInterlocked.Update(ref _busy, set => set.Add(busy));
 
     private void End(string busy)

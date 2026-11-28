@@ -239,15 +239,81 @@ public partial class FrameWatchTests
         FrameWatch.LanLine(LanWatch.Over(() => [new LanNode("10.0.0.9:7313", "SE1")], T0), T0 + TimeSpan.FromSeconds(3)).ShouldBeNull();
     }
 
+    private static long OnIdeas(IdeasScreen ideas, DateTimeOffset now, long version = 1, IReadOnlyList<DateTimeOffset>? told = null) =>
+        FrameWatch.Fingerprint(Busy(T0) with { Ideas = ideas }, new FleetScreen([], T0), now, PilotPage.Ideas, version, told: told);
+
+    private static IdeasScreen Sample(TimeSpan? @checked = null) => PageData.FingerprintIdeas(PageData.Now, @checked);
+
     [Fact]
-    public void The_Ideas_page_turns_over_each_second_as_Settings_does()
+    public void Whole_pages_are_Home_and_Ideas()
     {
-        // An idea's "checked 12s ago" is counted from a readiness the Ideas view holds itself, which the pages do not carry.
+        FrameWatch.Whole(PilotPage.Home).ShouldBeTrue();
+        FrameWatch.Whole(PilotPage.Ideas).ShouldBeTrue();
+        FrameWatch.Whole(PilotPage.Sessions).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void The_same_Ideas_page_a_second_and_a_minute_later_has_the_same_fingerprint()
+    {
+        var days = Sample(TimeSpan.FromDays(3));
+        var at = PageData.Now;
+        OnIdeas(days, at).ShouldBe(OnIdeas(days, at + TimeSpan.FromSeconds(1)));
+        OnIdeas(days, at).ShouldBe(OnIdeas(days, at + TimeSpan.FromMinutes(1)));
+        // No readiness shown at all.
+        var none = days with { Issues = [] };
+        OnIdeas(none, at).ShouldBe(OnIdeas(none, at + TimeSpan.FromMinutes(1)));
+    }
+
+    [Fact]
+    public void A_session_only_change_with_the_feeds_version_moved_leaves_the_Ideas_fingerprint_alone()
+    {
+        // A fresh read of the same feed: equal by value, new arrays and lists, a higher version.
+        OnIdeas(Sample(TimeSpan.FromDays(3)), PageData.Now, version: 1).ShouldBe(OnIdeas(Sample(TimeSpan.FromDays(3)), PageData.Now, version: 2));
+        // The other pages still take the version.
+        long Sessions(long version) => FrameWatch.Fingerprint(Busy(T0), new FleetScreen([], T0), T0, PilotPage.Sessions, version);
+        Sessions(1).ShouldNotBe(Sessions(2));
+    }
+
+    [Fact]
+    public void What_the_Ideas_page_draws_moves_its_fingerprint()
+    {
+        var days = TimeSpan.FromDays(3);
+        long Of(IdeasScreen s) => OnIdeas(s, PageData.Now);
+        var baseline = Of(PageData.FingerprintIdeas(PageData.Now, days));
+        Of(PageData.FingerprintIdeas(PageData.Now, days, title: "Renamed")).ShouldNotBe(baseline, "an idea's title");
+        Of(PageData.FingerprintIdeas(PageData.Now, days, state: IdeaState.Planned)).ShouldNotBe(baseline, "an idea's state");
+        Of(PageData.FingerprintIdeas(PageData.Now, days, milestone: "Ideas")).ShouldNotBe(baseline, "an issue's milestone");
+        Of(PageData.FingerprintIdeas(PageData.Now, TimeSpan.FromDays(4))).ShouldNotBe(baseline, "an issue's readiness");
+        Of(PageData.FingerprintIdeas(PageData.Now, days, ask: "Where to?")).ShouldNotBe(baseline, "an ask card");
+        Of(PageData.FingerprintIdeas(PageData.Now, days, open: 3)).ShouldNotBe(baseline, "a milestone");
+        Of(PageData.FingerprintIdeas(PageData.Now, days, flightIdea: "I382")).ShouldNotBe(baseline, "a flight's FromIdea");
+        Of(PageData.FingerprintIdeas(PageData.Now, days, flight: FlightState.Landed)).ShouldNotBe(baseline, "a flight's state");
+        Of(PageData.FingerprintIdeas(PageData.Now + TimeSpan.FromHours(5), days)).ShouldBe(baseline, "the source's as of is the frame's own");
+    }
+
+    [Fact]
+    public void A_readiness_checked_30_s_ago_turns_over_each_second_and_one_checked_5_min_ago_each_minute()
+    {
+        var at = PageData.Now;
+        var fresh = Sample(TimeSpan.FromSeconds(30));
+        OnIdeas(fresh, at).ShouldNotBe(OnIdeas(fresh, at + TimeSpan.FromSeconds(1)));
+        var minutes = Sample(TimeSpan.FromMinutes(5));
+        OnIdeas(minutes, at).ShouldBe(OnIdeas(minutes, at + TimeSpan.FromSeconds(1)));
+        OnIdeas(minutes, at).ShouldBe(OnIdeas(minutes, at + TimeSpan.FromSeconds(59)));
+        OnIdeas(minutes, at).ShouldNotBe(OnIdeas(minutes, at + TimeSpan.FromSeconds(60)));
+        // A readiness the view holds itself counts the same way.
+        var told = new[] { at - TimeSpan.FromSeconds(30) };
+        var days = Sample(TimeSpan.FromDays(3));
+        OnIdeas(days, at, told: told).ShouldNotBe(OnIdeas(days, at + TimeSpan.FromSeconds(1), told: told));
+    }
+
+    [Fact]
+    public void Settings_turns_over_each_second()
+    {
         var pages = Busy(T0);
         var fleet = new FleetScreen([], T0);
         long At(PilotPage page, int seconds) => FrameWatch.Fingerprint(pages, fleet, T0 + TimeSpan.FromSeconds(seconds), page);
 
-        At(PilotPage.Ideas, 0).ShouldNotBe(At(PilotPage.Ideas, 1));
         At(PilotPage.Settings, 0).ShouldNotBe(At(PilotPage.Settings, 1));
         At(PilotPage.Repos, 0).ShouldBe(At(PilotPage.Repos, 1), "a page with no clock text of its own stays as it was");
     }
@@ -309,6 +375,8 @@ public partial class FrameWatchTests
         Draw("LAN", PilotPage.Flights, PageData.Now, lan: true).Text.ShouldNotBe(Draw("LAN", PilotPage.Flights, PageData.Now + TimeSpan.FromSeconds(1), lan: true).Text);
         // The summary card's "made 3m ago" turns at +40 s, on Home and on a flight's page.
         At(PilotPage.Home, 39).ShouldNotBe(At(PilotPage.Home, 40));
+        // An issue's readiness checked 30 s before Now: "checked 30s ago" turns over each second on Ideas.
+        At(PilotPage.Ideas, 0).ShouldNotBe(At(PilotPage.Ideas, 1));
         Draw("flight page", PilotPage.Flights, PageData.Now + TimeSpan.FromSeconds(39)).Text.ShouldNotBe(Draw("flight page", PilotPage.Flights, PageData.Now + TimeSpan.FromSeconds(40)).Text);
     }
 
@@ -331,7 +399,7 @@ public partial class FrameWatchTests
             [(here.Key, SummaryRow.AllNodesScope)] = new() { Scope = SummaryRow.AllNodesScope, Markdown = "All calm.", MadeAt = made, Tokens = 10 },
             [(here.Key, data.Flights.Lines[0].Code)] = new() { Scope = data.Flights.Lines[0].Code, Markdown = "On its way.", MadeAt = made, Tokens = 10 },
         });
-        var ideas = new IdeasScreen([], [], [], "test", at);
+        var ideas = PageData.FingerprintIdeas(at);
         var pages = new FleetPages(data.Sessions, data.Flights, data.Jobs, [.. data.Jobs.Lines.Select(l => l.Row)], data.Cards, data.Repos, summaries, data.Machines, data.PullRequests, ideas);
 
         using var renderer = new DrawnText(1600, 900);
