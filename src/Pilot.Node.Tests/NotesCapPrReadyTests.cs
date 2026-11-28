@@ -94,7 +94,7 @@ public sealed class NotesCapPrReadyTests : ReviewTestsBase
         var subject = Verbs.FlightTarget(flight.Code);
         _state.RaiseCard(CardBin.ForYou, LegCommander.PrReady, subject, "a PR-ready card", "Control 1.", cause: "control-1");
         _state.RaiseCard(CardBin.ForYou, LegCommander.PrReady, subject, "a second PR-ready card", "Control 2.", cause: "control-2");
-        detector.Look().ShouldNotBeEmpty();
+        detector.Look().ShouldNotBeEmpty(string.Join(" | ", _state.Cards(openOnly: false).Select(c => $"{c.Id} {c.Kind} {c.Bin} {c.State} {c.Subject} {c.At:O}")));
     }
 
     [Fact]
