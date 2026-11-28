@@ -367,13 +367,22 @@ public sealed partial class Watchtower(
         endedBecause is not null && (endedBecause.StartsWith(ReplacedByPrefix, StringComparison.Ordinal)
             || endedBecause.StartsWith(SessionEndReasons.NodeStopped, StringComparison.Ordinal));
 
+    /// <summary>The context the row's current watchtower generation started at (#1397), read through <see cref="Generations"/> so the first reading is stamped and kept; null when none is read yet.</summary>
+    public long? StartTokensOf(SessionRow row)
+    {
+        var all = Generations();
+        var latest = all.ToList().FindLastIndex(g => g.Job == row.Id || g.IsCompaction && g.Job.StartsWith(row.Id + CompactionMark, StringComparison.Ordinal));
+        return latest >= 0 ? all[latest].StartTokens : null;
+    }
+
     /// <summary>Where the watchtower sessions there have been are kept, in the node's data folder: a line each (<see cref="Generation"/>).</summary>
     public string SessionsFile => Path.Combine(options.DataFolder, "watchtower-sessions");
 
     /// <summary>One watchtower the node has had: the row it ran as, its latest Claude session (a say resumes it under a new id that holds the history), when it began and why.
-    /// <c>AfterFinishedTurn</c>: whether its job record read a finished turn when it was first seen ended, which Claude Code does by design; null when not known.</summary>
+    /// <c>AfterFinishedTurn</c>: whether its job record read a finished turn when it was first seen ended, which Claude Code does by design; null when not known.
+    /// <c>StartTokens</c>: the context its first reading showed (brief plus Claude Code's own prompt), what the compactor judges growth against (#1397); null until read.</summary>
     public sealed record Generation(string Job, string? SessionId, DateTimeOffset StartedAt, string? Why,
-        DateTimeOffset? EndedAt = null, DateTimeOffset? LastReplyAt = null, string? EndedBecause = null, bool? AfterFinishedTurn = null, bool Stream = false)
+        DateTimeOffset? EndedAt = null, DateTimeOffset? LastReplyAt = null, string? EndedBecause = null, bool? AfterFinishedTurn = null, bool Stream = false, long? StartTokens = null)
     {
         /// <summary>A compaction of a stream watchtower (<see cref="Compacted"/>) is a generation of its own, so the chat shows a divider, but no fresh start.</summary>
         public bool IsCompaction => Why == Compacted;
@@ -431,6 +440,18 @@ public sealed partial class Watchtower(
                     changed = true;
                 }
             }
+            foreach (var row in state.Sessions().Where(IsWatchtower))
+            {
+                // The row's latest generation (its own, or the last compaction of a stream watchtower) takes the first reading that has one as
+                // its start. A compaction's generation is made while the row still reads the size before it, so it waits for a reply after it.
+                var latest = _generations.FindLastIndex(g => g.Job == row.Id || g.IsCompaction && g.Job.StartsWith(row.Id + CompactionMark, StringComparison.Ordinal));
+                if (latest >= 0 && _generations[latest] is { StartTokens: null } g
+                    && row.ContextTokens > 0 && (!g.IsCompaction || row.LastResponseAt > g.StartedAt))
+                {
+                    _generations[latest] = g with { StartTokens = row.ContextTokens };
+                    changed = true;
+                }
+            }
             if (changed)
             {
                 _generations = [.. _generations.OrderBy(g => g.StartedAt)];
@@ -465,7 +486,8 @@ public sealed partial class Watchtower(
                     found.Add(new Generation(parts[0], parts[1].Length == 0 ? null : parts[1], at, parts.Length > 3 && parts[3].Length > 0 ? parts[3] : null,
                         TimeAt(parts, 4), TimeAt(parts, 5), parts.Length > 6 && parts[6].Length > 0 ? parts[6] : null,
                         parts.Length > 7 && parts[7].Length > 0 ? parts[7] == "1" : null as bool?,
-                        Stream: parts.Length > 8 && parts[8] == "1"));
+                        Stream: parts.Length > 8 && parts[8] == "1",
+                        StartTokens: parts.Length > 9 && long.TryParse(parts[9], System.Globalization.CultureInfo.InvariantCulture, out var start) ? start : null as long?));
                 }
             }
         }
@@ -490,7 +512,7 @@ public sealed partial class Watchtower(
             Directory.CreateDirectory(options.DataFolder);
             File.WriteAllLines(SessionsFile, generations.Select(g =>
                 string.Join('\t', g.Job, g.SessionId ?? "", g.StartedAt.ToString("O", System.Globalization.CultureInfo.InvariantCulture), OneLine(g.Why),
-                Stamp(g.EndedAt), Stamp(g.LastReplyAt), OneLine(g.EndedBecause), g.AfterFinishedTurn is { } finished ? finished ? "1" : "0" : "", g.Stream ? "1" : "")));
+                Stamp(g.EndedAt), Stamp(g.LastReplyAt), OneLine(g.EndedBecause), g.AfterFinishedTurn is { } finished ? finished ? "1" : "0" : "", g.Stream ? "1" : "", g.StartTokens?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "")));
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {

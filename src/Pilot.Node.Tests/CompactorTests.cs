@@ -21,6 +21,7 @@ public sealed class CompactorTests : IDisposable
     private readonly NodeState _state;
     private readonly List<CommandRequest> _said = [];
     private readonly Compactor _compactor;
+    private readonly Watchtower _tower;
     private readonly FakeWorkers _workers = new();
     private int _persons;
     private readonly Pilot.Node.Sessions.SessionLedger _ledger = new();
@@ -29,7 +30,7 @@ public sealed class CompactorTests : IDisposable
     public CompactorTests()
     {
         _state = new NodeState(new InMemoryJournal(), _time);
-        var tower = new Watchtower(_state, _workers, Run, new NodeOptions("/tmp/n.sock", _data, MachinePrefix: "DU1"), _time);
+        var tower = _tower = new Watchtower(_state, _workers, Run, new NodeOptions("/tmp/n.sock", _data, MachinePrefix: "DU1"), _time);
         _compactor = new Compactor(_state, tower, Run, _time) { PersonMessages = _ => _persons, Ledger = _ledger };
         // Something to watch: a flight in the air with a leg flying.
         _state.PutFlight(new FlightRow
@@ -62,6 +63,14 @@ public sealed class CompactorTests : IDisposable
             Role = name.EndsWith("watchtower", StringComparison.Ordinal) ? SessionRole.Watchtower : SessionRole.Worker, Flight = flight, Leg = leg,
             ContextTokens = context, ContextWindow = 1_000_000, State = state, SpendWeighted = 0, LastResponseAt = lastResponse ?? Start, StartedAt = Start,
         });
+
+    // A watchtower is full past its share only once it has also grown past where it started (#1397), and its start is the first reading the node
+    // has of it: these fixtures built a watchtower whose first reading was already past the bare share, so each reads small first.
+    private void Seed(string id)
+    {
+        Row(id, "du1-watchtower", context: 100_000);
+        _tower.StartTokensOf(_state.Sessions().Single(r => r.Id == id)).ShouldBe(100_000);
+    }
 
     private void Job(string owner, JobState state = JobState.Running) => _state.PutJob(new JobRow
     {
@@ -101,6 +110,7 @@ public sealed class CompactorTests : IDisposable
     [Fact]
     public async Task ALiveWatchtowerIdleAt70PercentIsCompactedOnceAndNotAgainUntilItGrowsPastTheShare()
     {
+        Seed("t0000001");
         Row("t0000001", "du1-watchtower", context: 700_000);
         await _compactor.LookAsync(Ct);
         _said.ShouldHaveSingleItem();
@@ -175,6 +185,7 @@ public sealed class CompactorTests : IDisposable
         var log = new StringWriter();
         _compactor.Error = log;
         _ledger.Started("t0000001", "du1-watchtower", Pilot.Node.Sessions.SessionRoles.Resolve("du1-watchtower", background: true), Pilot.Contracts.SessionStartReasons.WatchtowerStart, null);
+        Seed("t0000001");
         Row("t0000001", "du1-watchtower", context: 700_000);
 
         await _compactor.LookAsync(Ct);
@@ -188,6 +199,7 @@ public sealed class CompactorTests : IDisposable
     [Fact]
     public async Task AWatchtowerStillPastTheShareAfterCompactingIsReplacedNotCompactedAgain()
     {
+        Seed("t0000001");
         Row("t0000001", "du1-watchtower", context: 800_000);
         await _compactor.LookAsync(Ct);
         _said.ShouldHaveSingleItem();
@@ -205,6 +217,7 @@ public sealed class CompactorTests : IDisposable
     public async Task AWatchtowerIsCompactedOnceThenLeftToSettleAndAStaleReadingNeverLoopsIt()
     {
         // SE1, 2026-11-10: compacted and "replaced" every 30 s for four minutes, each time on the reading from before the compaction.
+        Seed("t0000001");
         Row("t0000001", "du1-watchtower", context: 800_000);
         await _compactor.LookAsync(Ct);
         _said.Count(c => c.Verb == Verbs.Compact).ShouldBe(1);
@@ -232,12 +245,14 @@ public sealed class CompactorTests : IDisposable
     public async Task AWatchtowerStillFullAfterACompactionAndARestartIsSaidOnceAndLeftAlone()
     {
         var current = "t0000001";
+        Seed(current);
         Row(current, "du1-watchtower", context: 800_000);
         await _compactor.LookAsync(Ct);
         // The replacement comes back as a fresh row of the role, and it too reads past its share.
         _workers.OnStart = _ =>
         {
             current = "t0000002";
+            Seed(current);
             Row(current, "du1-watchtower", context: 800_000, lastResponse: _time.GetUtcNow());
         };
 
@@ -269,6 +284,7 @@ public sealed class CompactorTests : IDisposable
     {
         // The watchtower's own failed start marks the old row replaced and forgets its job, so the row is never looked at again: one
         // compaction, the failure said as it is, and no card (review of #957, round three).
+        Seed("t0000001");
         Row("t0000001", "du1-watchtower", context: 800_000);
         await _compactor.LookAsync(Ct);
         _workers.Fail = new FlightException("the watchtower did not start");
@@ -293,6 +309,7 @@ public sealed class CompactorTests : IDisposable
         // As on SE1: the restart joins a start already in flight (or fails) and the same session stays the watchtower. After the settle
         // the row is compacted once more, then the card says what the restart came to and claims no replacement.
         _compactor.Restart = (_, _) => Task.FromResult<(string?, string?)>((error, error is null ? Watchtower.JoinedWay : null));
+        Seed("t0000001");
         Row("t0000001", "du1-watchtower", context: 800_000);
         await _compactor.LookAsync(Ct);
 
@@ -309,6 +326,70 @@ public sealed class CompactorTests : IDisposable
         stuck.Title.ShouldBe("du1-watchtower is still full after a compaction");
         stuck.Detail.ShouldNotBeNull().ShouldContain(came);
         stuck.Choices.ShouldHaveSingleItem().Args.ShouldHaveSingleItem().ShouldNotContain("replacement");
+    }
+
+    [Fact]
+    public async Task AFreshWatchtowerAt64PercentIsNeitherCompactedForItsSizeNorReplacedLookAfterLook()
+    {
+        // #1397: brief plus Claude Code's own prompt starts a watchtower at 128k of 200k, over the 60% share it is judged against.
+        Row("t0000001", "du1-watchtower", context: 128_000);
+        _state.PutSession(_state.Sessions().Single() with { ContextWindow = 200_000 });
+        for (var look = 0; look < 120; look++)
+        {
+            _time.Advance(TimeSpan.FromSeconds(30));
+            await _compactor.LookAsync(Ct);
+        }
+        _said.ShouldBeEmpty();
+        _workers.Started.ShouldBeEmpty();
+        Handled().ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task AWatchtowerGrownPastItsStartByTheMarginIsCompactedAndOneBackNearItsStartIsNotReplaced()
+    {
+        Row("t0000001", "du1-watchtower", context: 128_000);
+        _state.PutSession(_state.Sessions().Single() with { ContextWindow = 200_000 });
+        await _compactor.LookAsync(Ct);
+        _said.ShouldBeEmpty();
+
+        // Grown past 128k plus 10% of the window (148k): full, so compacted.
+        _time.Advance(TimeSpan.FromMinutes(1));
+        _state.PutSession(_state.Sessions().Single() with { ContextTokens = 150_000, LastResponseAt = _time.GetUtcNow() });
+        await _compactor.LookAsync(Ct);
+        _said.Count(c => c.Verb == Verbs.Compact).ShouldBe(1);
+
+        // The compaction answers and leaves it at 130k, near its start though over the bare share: not replaced.
+        _time.Advance(_compactor.Settle + TimeSpan.FromMinutes(1));
+        _state.PutSession(_state.Sessions().Single() with { ContextTokens = 130_000, LastResponseAt = _time.GetUtcNow() });
+        await _compactor.LookAsync(Ct);
+        _said.Count(c => c.Verb == Verbs.Compact).ShouldBe(1);
+        _workers.Started.ShouldBeEmpty();
+        Handled().ShouldNotContain(t => t.StartsWith("Replaced", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void AGenerationWithNoRecordedStartTakesTheFirstReadingTheNodeHasOfItAsItsStart()
+    {
+        // An older node's line has no start column: the first reading this node sees is the start, kept from then on.
+        Directory.CreateDirectory(_data);
+        File.WriteAllText(_tower.SessionsFile, $"t0000001\tt0000001-0000-4000-8000-000000000000\t{Start:O}\t\t\t\t\t\t\n");
+        var reloaded = new Watchtower(_state, _workers, Run, new NodeOptions("/tmp/n.sock", _data, MachinePrefix: "DU1"), _time);
+        reloaded.Generations().ShouldHaveSingleItem().StartTokens.ShouldBeNull();
+
+        Row("t0000001", "du1-watchtower", context: 90_000);
+        reloaded.Generations().ShouldHaveSingleItem().StartTokens.ShouldBe(90_000);
+        Row("t0000001", "du1-watchtower", context: 400_000);
+        reloaded.Generations().ShouldHaveSingleItem().StartTokens.ShouldBe(90_000);
+    }
+
+    [Fact]
+    public void TheStartSurvivesAReloadOfTheSessionsFile()
+    {
+        Row("t0000001", "du1-watchtower", context: 128_000);
+        _tower.Generations().ShouldHaveSingleItem().StartTokens.ShouldBe(128_000);
+
+        var reloaded = new Watchtower(_state, _workers, Run, new NodeOptions("/tmp/n.sock", _data, MachinePrefix: "DU1"), _time);
+        reloaded.Generations().ShouldHaveSingleItem().StartTokens.ShouldBe(128_000);
     }
 
     [Fact]

@@ -54,6 +54,13 @@ public sealed class Compactor(NodeState state, Watchtower watchtower, Func<Comma
     /// <summary>The share of its window past which an idle session is compacted at once, however long it has been idle.</summary>
     public double WindowShare { get; init; } = 0.7;
 
+    /// <summary>
+    /// How far past its starting size a watchtower must have grown, as a share of its window, to count as full (#1397). A watchtower starts at
+    /// its brief plus Claude Code's own prompt, and after a compaction it is back near that: SE1 watchtowers read 128k to 130k of 200k right
+    /// after a start or a compaction, over the bare 60% share, so judged on the share alone they were compacted and replaced for ever.
+    /// </summary>
+    public double StartMargin { get; init; } = 0.10;
+
     /// <summary>How long after a refused compaction the next one is tried.</summary>
     public TimeSpan RetryAfter { get; init; } = TimeSpan.FromMinutes(10);
 
@@ -182,6 +189,11 @@ public sealed class Compactor(NodeState state, Watchtower watchtower, Func<Comma
             }
             var share = isTower ? Models.WatchtowerCompactShare / 100.0 : WindowShare;
             var full = row.ContextWindow > 0 && row.ContextTokens > share * row.ContextWindow;
+            if (full && isTower && watchtower.StartTokensOf(row) is { } start)
+            {
+                // The watchtower is full only when it has also grown past where it started by the margin (#1397); a worker's test is the share alone.
+                full = row.ContextTokens > start + StartMargin * row.ContextWindow;
+            }
             if (_stuck.Contains(key))
             {
                 if (full)
