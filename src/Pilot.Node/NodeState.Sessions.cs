@@ -10,7 +10,8 @@ public sealed partial class NodeState
     {
         lock (_gate)
         {
-            return [.. _sessions.Values.OrderByDescending(s => s.StartedAt).ThenBy(s => s.Id, StringComparer.Ordinal)];
+            // Sorted once and kept until a session is added, changes or goes, as Jobs() is (pilot #1443, #1365's second point).
+            return _sessionsNewestFirst ??= [.. _sessions.Values.OrderByDescending(s => s.StartedAt).ThenBy(s => s.Id, StringComparer.Ordinal)];
         }
     }
 
@@ -22,6 +23,8 @@ public sealed partial class NodeState
             return _sessions.TryGetValue(id, out var row) ? row : null;
         }
     }
+
+    private SessionRow[]? _sessionsNewestFirst;
 
     private volatile string? _currentWatchtower;
 

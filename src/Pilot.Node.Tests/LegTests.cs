@@ -842,6 +842,9 @@ internal sealed class FakeGitHub : IGitHub
     /// <summary>When set, DisarmAutoMergeAsync fails with it.</summary>
     public string? DisarmFails { get; set; }
 
+    /// <summary>When set, DisarmAutoMergeAsync throws it (a rate limit, say), ahead of <see cref="DisarmFails"/>.</summary>
+    public Exception? DisarmFailure { get; set; }
+
     /// <summary>Every auto-merge armed, as (PR number, head, method).</summary>
     public ConcurrentQueue<(int Number, string Head, string Method)> AutoMergeArmed { get; } = [];
 
@@ -904,6 +907,10 @@ internal sealed class FakeGitHub : IGitHub
 
     public Task DisarmAutoMergeAsync(string repoPath, int number, CancellationToken cancellationToken)
     {
+        if (DisarmFailure is { } failure)
+        {
+            return Task.FromException(failure);
+        }
         if (DisarmFails is { } why)
         {
             return Task.FromException(new FlightException(why));

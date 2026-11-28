@@ -28,8 +28,11 @@ internal sealed record GuiOptions
     /// <summary>Render one frame on the CPU to this PNG (and a sibling <c>.rows.txt</c>), then exit without a window.</summary>
     public string? Capture { get; init; }
 
-    /// <summary>The page a capture shows: home, sessions, flights, repos, prs, jobs, or chat.</summary>
+    /// <summary>The page a capture shows, and the page a window opens on when it is given: home, sessions, flights, repos, prs, jobs, chat, ideas, fleet, settings, spend or designs.</summary>
     public PilotPage Page { get; init; } = PilotPage.Home;
+
+    /// <summary>Whether <c>--page</c> was given: a window opens on <see cref="Page"/> only then, and on Home otherwise.</summary>
+    public bool PageGiven { get; init; }
 
     /// <summary>With <c>--page flights</c>: the flight whose page the capture opens, by code, as Enter on its row does in the window.</summary>
     public string? Flight { get; init; }
@@ -88,8 +91,8 @@ internal sealed record GuiOptions
         var node = new Option<string?>("--node") { Description = "A node on the LAN: host:port, or its name (SE1) or host as pilot nodes lists them (pilot connect gets its grant); else PILOT_NODE" };
         var capture = new Option<string?>("--capture") { Description = "Render one frame on the CPU to this PNG (and a .rows.txt beside it), then exit" };
         var size = new Option<string?>("--size") { Description = "The capture's size, <W>x<H>; 1280x800 by default" };
-        var page = new Option<string?>("--page") { Description = "The page a capture shows: home, sessions, flights, repos, prs, jobs, chat, spend or designs" };
-        page.AcceptOnlyFromAmong("home", "sessions", "flights", "repos", "prs", "jobs", "chat", "spend", "designs");
+        var page = new Option<string?>("--page") { Description = "The page a capture shows, or a window opens on: home, sessions, flights, repos, prs, jobs, chat, ideas, fleet, settings, spend or designs" };
+        page.AcceptOnlyFromAmong("home", "sessions", "flights", "repos", "prs", "jobs", "chat", "ideas", "fleet", "settings", "spend", "designs");
         var flight = new Option<string?>("--flight") { Description = "With --page flights: open this flight's page (its legs, checklists and artifacts) in the capture, by code" };
         var design = new Option<string?>("--design") { Description = "With --page designs: open this design's page, with its chat, in the capture, by id (DSN-1)" };
         var hover = new Option<string?>("--hover") { Description = "With --capture: show this region's hover text as due; a button's id (home:flight:PIL258) or a list row (flights:3)" };
@@ -147,7 +150,8 @@ internal sealed record GuiOptions
             Layers = parsed.GetValue(layers),
             Night = parsed.GetValue(night),
             Fold = parsed.GetValue(fold),
-            Page = parsed.GetValue(page) switch { "flights" => PilotPage.Flights, "repos" => PilotPage.Repos, "prs" => PilotPage.PullRequests, "jobs" => PilotPage.Jobs, "sessions" => PilotPage.Sessions, "chat" => PilotPage.Chat, "spend" => PilotPage.Spend, "designs" => PilotPage.Designs, _ => PilotPage.Home },
+            Page = parsed.GetValue(page) switch { "flights" => PilotPage.Flights, "repos" => PilotPage.Repos, "prs" => PilotPage.PullRequests, "jobs" => PilotPage.Jobs, "sessions" => PilotPage.Sessions, "chat" => PilotPage.Chat, "ideas" => PilotPage.Ideas, "fleet" => PilotPage.Fleet, "settings" => PilotPage.Settings, "spend" => PilotPage.Spend, "designs" => PilotPage.Designs, _ => PilotPage.Home },
+            PageGiven = parsed.GetValue(page) is not null,
         };
         if (parsed.GetValue(accent) is { } accentText)
         {

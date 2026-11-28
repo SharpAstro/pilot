@@ -944,6 +944,7 @@ public sealed class JobRetellTests : IDisposable
         _role = SessionRole.Planner;
         Session(SessionState.Idle, _clock.GetUtcNow().AddHours(-1));
         // A planner's failure is retold (#1147); the replacement is looked for among the rows of its name and role, not every session.
+        // Pins what is retold, not the scan cost: it passes equally on the old `return _all`, since narrowing the candidates is a pure in-memory choice.
         await TellNowAsync();
         _state.PutJob(_state.Jobs().Single() with { State = JobState.Failed, Error = "boom" });
         _endedForGood = true;
@@ -959,6 +960,7 @@ public sealed class JobRetellTests : IDisposable
     {
         _role = SessionRole.Planner;
         Session(SessionState.Idle, _clock.GetUtcNow().AddHours(-1));
+        // Pins what is retold, not the scan cost: it passes equally on the old `return _all`, since narrowing the candidates is a pure in-memory choice.
         await TellNowAsync();
         _state.PutJob(_state.Jobs().Single() with { State = JobState.Failed, Error = "boom" });
         _endedForGood = true;

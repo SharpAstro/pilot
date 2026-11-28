@@ -282,7 +282,10 @@ internal sealed record FleetPages(SessionsScreen Sessions, FlightsScreen Flights
 
         var here = feeds[0].Feed;
         var hereSessions = here.Screen(now);
-        var sessions = SessionLine.Order(shown.SelectMany(f => f.Feed.Screen(now).Lines.Select(l => l with { Node = Mark(f.Mark) })));
+        // One node whose rows go unmarked: its own lines are the page's, already in this order, so they are not copied and sorted
+        // again at every look (5,441 sessions and 8,574 jobs on DE1, pilot #1443). A fleet's are marked with their node and merged.
+        var alone = shown.Count == 1 && Mark(shown[0].Mark) is null;
+        var sessions = alone ? shown[0].Feed.Screen(now).Lines : SessionLine.Order(shown.SelectMany(f => f.Feed.Screen(now).Lines.Select(l => l with { Node = Mark(f.Mark) })));
         // Read once per node, so a node that answers between two reads is not both reachable and not: the panel's held lines and
         // the flights' stale marks below read this one answer, which is the state the Fleet page shows too.
         var reach = shown.Select(f => (f.Mark, f.Feed, f.Feed.Reach)).ToList();
@@ -291,7 +294,7 @@ internal sealed record FleetPages(SessionsScreen Sessions, FlightsScreen Flights
         var flights = FlightLine.Order(reach.SelectMany(f => f.Feed.Flights(now).Lines.Select(l => l with { Node = Mark(f.Mark), Stale = Unreachable(f.Reach) ? f.Mark.Name : null })));
         // A node the window cannot reach shows no rounds: a session's state there may be long out of date.
         var rounds = PrRoundLine.Order(reach.Where(f => !Unreachable(f.Reach)).SelectMany(f => f.Feed.Flights(now).Rounds.Select(r => r with { Node = Mark(f.Mark) })));
-        var jobs = JobLine.Order(shown.SelectMany(f => f.Feed.JobsPage(now).Lines.Select(l => l with { Node = Mark(f.Mark) })));
+        var jobs = alone ? shown[0].Feed.JobsPage(now).Lines : JobLine.Order(shown.SelectMany(f => f.Feed.JobsPage(now).Lines.Select(l => l with { Node = Mark(f.Mark) })));
         // A node the window cannot reach gives the panel none of its cards, which may be long answered and cannot be commanded
         // now (DE1, 2026-10-26: its stale copy stood on the panel and in its counts for hours). One line each says how many it
         // held, and the node's own answer fills the panel again when it is back.
