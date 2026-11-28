@@ -186,7 +186,8 @@ public sealed class Compactor(NodeState state, Watchtower watchtower, Func<Comma
         // A row id gone from the node's sessions is forgotten, as the other guards are.
         _readUnder.IntersectWith(state.Sessions().Select(r => r.Id));
         // A watchtower's compaction is judged on its first fresh reading, whatever the watchtower is doing, not on the first idle look.
-        if (state.Sessions().FirstOrDefault(r => r.Name == watchtower.Name && r.Id == watchtower.Current()?.Id) is { } live
+        var currentId = watchtower.Current()?.Id;
+        if (state.Sessions().FirstOrDefault(r => r.Name == watchtower.Name && r.Id == currentId) is { } live
             && _marks.TryGetValue(live.Id, out var pending) && pending is { Pending: true } && live.ContextTokens != pending.Asked)
         {
             _marks[live.Id] = pending with { Pending = false, Worked = !IsFull(live) };

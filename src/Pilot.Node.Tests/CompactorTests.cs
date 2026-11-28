@@ -300,10 +300,12 @@ public sealed class CompactorTests : IDisposable
         Handled().ShouldNotContain(t => t.StartsWith("Replaced", StringComparison.Ordinal));
     }
 
-    [Fact]
-    public async Task AReadingStillAtTheSizeOfTheCompactionIsNeitherReplacedNorCompactedAgainUntilItChangesOrTheCeilingPasses()
+    [Theory]
+    [InlineData(SessionState.Idle)]
+    [InlineData(SessionState.Working)]
+    public async Task AReadingStillAtTheSizeOfTheCompactionIsNeitherReplacedNorCompactedAgainUntilItChangesOrTheCeilingPasses(SessionState seenWhile)
     {
-        // #961: an unchanged reading is the one from before the compaction.
+        // #961: an unchanged reading is the one from before the compaction, whether the watchtower is idle or working when it is seen.
         Seed("t0000001");
         Row("t0000001", "du1-watchtower", context: 800_000);
         await _compactor.LookAsync(Ct);
@@ -311,7 +313,7 @@ public sealed class CompactorTests : IDisposable
         for (var minutes = 1; minutes < 15; minutes++)
         {
             _time.Advance(TimeSpan.FromMinutes(1));
-            Row("t0000001", "du1-watchtower", context: 800_000, lastResponse: _time.GetUtcNow());
+            Row("t0000001", "du1-watchtower", state: seenWhile, context: 800_000, lastResponse: _time.GetUtcNow());
             await _compactor.LookAsync(Ct);
         }
         _said.Count(c => c.Verb == Verbs.Compact).ShouldBe(1);
