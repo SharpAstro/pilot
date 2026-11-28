@@ -657,6 +657,38 @@ public sealed class InvestigatorTests
     }
 
     [Fact]
+    public async Task AFreshRunIsNotReleasedBecauseAnEarlierRunOfTheSameNameLeftAnEndedRow()
+    {
+        var card = RingBound();
+        await _investigator.SettledAsync();
+        var run = Run();
+        _state.PutSession(Row(run.Name, SessionState.Ended, id: "0e000000"));
+        run.Job.ShouldNotBe("0e000000");
+
+        _investigator.Look();
+
+        _investigator.Runs.ShouldHaveSingleItem();
+        Card(card.Id).Bin.ShouldBe(CardBin.ForYou);
+        _state.Cards().ShouldNotContain(c => c.Kind == Investigator.HandledKind);
+    }
+
+    [Fact]
+    public async Task ARunWhoseOwnRowEndedIsReleasedWithoutAStopWhateverEarlierRowsExist()
+    {
+        var card = RingBound();
+        await _investigator.SettledAsync();
+        var run = Run();
+        _state.PutSession(Row(run.Name, SessionState.Ended, id: "0e000000"));
+        _state.PutSession(Row(run.Name, SessionState.Ended, id: run.Job!));
+
+        _investigator.Look();
+
+        _investigator.Runs.ShouldBeEmpty();
+        Card(card.Id).Bin.ShouldBe(CardBin.Ring);
+        _state.Cards().ShouldContain(c => c.Kind == Investigator.HandledKind);
+    }
+
+    [Fact]
     public async Task AStartLineWithNoLiveSessionIsNotAdoptedAndItsHeldCardRings()
     {
         var cardId = RingBound().Id;

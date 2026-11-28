@@ -561,7 +561,8 @@ public sealed partial class Investigator(NodeState state, IWorkerLauncher worker
         var sessions = state.Sessions();
         foreach (var run in Runs.Where(r => r.Job is not null))
         {
-            if (SessionPick.ByName(sessions.Where(s => s.Role == SessionRole.Investigator), run.Name) is { } row && !SessionPick.IsLive(row))
+            // The run's own row by its job id: the name is reused by every run on the key, so an earlier run's ended row must not count.
+            if (sessions.FirstOrDefault(s => s.Id == run.Job) is { } row && !SessionPick.IsLive(row))
             {
                 Release(run, "its session ended without an outcome", SessionEndReasons.InvestigatorTimedOut, stop: false);
             }
