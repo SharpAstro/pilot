@@ -1506,7 +1506,7 @@ public sealed class PrChecks(NodeState state, IGitHub gitHub, TimeProvider time,
         {
             var (choice, reason) = !result.Ok
                 ? ("Wait", $"{rule}; the merge was refused: {LegCommander.OneLine(result.Error ?? "no reason given")}"
-                    + (retry ? $"; {RetryWords(refusal, flight.Code, asked.Count)} (try {asked.Count} of {PassingTriesBeforeRing})" : ""))
+                    + (retry ? $"; {RetryWords(refusal!, flight.Code, asked.Count)} (try {asked.Count} of {PassingTriesBeforeRing})" : ""))
                 : result.Way switch
                 {
                     MergeWays.Armed => ("Arm the merge", $"{rule}: armed to merge when they pass"),
