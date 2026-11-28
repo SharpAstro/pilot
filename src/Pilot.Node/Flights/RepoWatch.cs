@@ -89,13 +89,17 @@ public sealed partial class RepoWatch(NodeState state, RepoCatalog repos, Planes
             {
                 try
                 {
-                    await RefreshAsync(stopping);
+                    using (GhCallCounter.Scope("RepoWatch"))
+                    {
+                        await RefreshAsync(stopping);
+                    }
                 }
                 catch (Exception ex) when (!stopping.IsCancellationRequested)
                 {
                     await Error.WriteLineAsync($"repo watch: one read failed, reading again: {ex.Message}");
                 }
-                await Task.Delay(Interval, time, stopping);
+                // A quarter of the pace while GitHub's budget is low or refused (#1403): the issue and PR lists are most of what the node spends.
+                await Task.Delay(NodeTraffic.Shared.GhBudget.Stretch(Interval), time, stopping);
             }
         }
         catch (OperationCanceledException) when (stopping.IsCancellationRequested)

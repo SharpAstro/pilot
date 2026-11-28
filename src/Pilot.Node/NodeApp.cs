@@ -241,7 +241,8 @@ public static partial class NodeApp
                 CountedSessions = slots.Publish().Counted,
                 Leases = slots.Fleet.Leases() is { Length: > 0 } leases ? leases : null,
                 Traffic = traffic.LastHourRow(),
-                GhCalls = traffic.GhCalls.Last()?.StatusLine(),
+                // The node's own count, and GitHub's word on what is left of the account's budget (#1403).
+                GhCalls = string.Join("; ", new[] { traffic.GhCalls.Last()?.StatusLine(), traffic.GhBudget.Line() }.OfType<string>()) is { Length: > 0 } gh ? gh : null,
                 SendTimings = timings.Rows(),
                 CommandTimings = commandTimings.Rows(),
                 Heap = heap(),

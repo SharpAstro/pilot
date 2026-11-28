@@ -157,6 +157,95 @@ public sealed class GhCallCounterTests
         lines.Count.ShouldBe(1);
     }
 
+    // The log, started on a clock a test moves, waiting for its first window edge: the readBudget it is given is asked once per window.
+    private async Task<(GhCallLog Log, TimerClock Clock, System.Collections.Concurrent.ConcurrentQueue<string> Lines, SemaphoreSlim Written)> StartedLog(Func<CancellationToken, Task<string?>> readBudget)
+    {
+        var clock = new TimerClock(T0.AddMinutes(3));
+        var counter = new GhCallCounter(clock);
+        var lines = new System.Collections.Concurrent.ConcurrentQueue<string>();
+        var written = new SemaphoreSlim(0);
+        var log = new GhCallLog(counter, line => { lines.Enqueue(line); written.Release(); }, clock, readBudget);
+        counter.Record(["pr", "view"], "PrChecks.LookAsync");
+        await log.StartAsync(Ct);
+        (await clock.TimerSet.WaitAsync(TimeSpan.FromSeconds(5), Ct)).ShouldBeTrue("the log set its wait on the clock");
+        return (log, clock, lines, written);
+    }
+
+    [Fact]
+    public async Task TheLogWritesGitHubsBudgetLineAfterTheWindowLine()
+    {
+        var (log, clock, lines, written) = await StartedLog(_ => Task.FromResult<string?>("github budget: 4000/5000 left"));
+        using var _ = log;
+
+        clock.Advance(TimeSpan.FromMinutes(12) + TimeSpan.FromSeconds(1));
+        (await written.WaitAsync(TimeSpan.FromSeconds(5), Ct)).ShouldBeTrue();
+        (await written.WaitAsync(TimeSpan.FromSeconds(5), Ct)).ShouldBeTrue("the budget line follows the window's");
+        await log.StopAsync(Ct);
+
+        lines.Count.ShouldBe(2);
+        lines.First().ShouldStartWith("gh calls ");
+        lines.Last().ShouldBe("github budget: 4000/5000 left");
+    }
+
+    [Fact]
+    public async Task ABudgetReadThatSaysNothingWritesNoLine()
+    {
+        var asked = new SemaphoreSlim(0);
+        var (log, clock, lines, _) = await StartedLog(_ =>
+        {
+            asked.Release();
+            return Task.FromResult<string?>(null);
+        });
+        using var _ = log;
+
+        clock.Advance(TimeSpan.FromMinutes(12) + TimeSpan.FromSeconds(1));
+        (await asked.WaitAsync(TimeSpan.FromSeconds(5), Ct)).ShouldBeTrue("the budget was asked");
+        await log.StopAsync(Ct);
+
+        lines.ShouldHaveSingleItem().ShouldStartWith("gh calls ");
+    }
+
+    [Fact]
+    public async Task ABudgetReadThatThrowsWhileRunningIsSwallowedAndAskedAgainNextWindow()
+    {
+        var asked = new SemaphoreSlim(0);
+        var (log, clock, _, _) = await StartedLog(_ =>
+        {
+            asked.Release();
+            throw new InvalidOperationException("gh timed out");
+        });
+        using var _ = log;
+
+        clock.Advance(TimeSpan.FromMinutes(12) + TimeSpan.FromSeconds(1));
+        (await asked.WaitAsync(TimeSpan.FromSeconds(5), Ct)).ShouldBeTrue();
+        // The loop went on to wait for the next edge; the log did not fault.
+        (await clock.TimerSet.WaitAsync(TimeSpan.FromSeconds(5), Ct)).ShouldBeTrue("the log waits for the next window");
+        log.ExecuteTask.ShouldNotBeNull().IsCompleted.ShouldBeFalse();
+        clock.Advance(GhCallCounter.Window);
+        (await asked.WaitAsync(TimeSpan.FromSeconds(5), Ct)).ShouldBeTrue("the next window asked again");
+        await log.StopAsync(Ct);
+    }
+
+    [Fact]
+    public async Task AFaultWhileTheNodeIsStoppingPropagatesInsteadOfBeingSwallowed()
+    {
+        var asked = new SemaphoreSlim(0);
+        // Waits on the stop token alone (an event, no spin), so it ends by the stop and nothing else.
+        var (log, clock, _, _) = await StartedLog(async token =>
+        {
+            asked.Release();
+            await Task.Delay(Timeout.InfiniteTimeSpan, token);
+            return null;
+        });
+        using var _ = log;
+
+        clock.Advance(TimeSpan.FromMinutes(12) + TimeSpan.FromSeconds(1));
+        (await asked.WaitAsync(TimeSpan.FromSeconds(5), Ct)).ShouldBeTrue();
+        await log.StopAsync(Ct);
+
+        log.ExecuteTask.ShouldNotBeNull().IsCanceled.ShouldBeTrue("the stop's cancellation ended the loop, it was not swallowed and read again");
+    }
+
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
     // A clock a test moves by hand whose timers fire when it passes their time: the log's wait is on it, never on the wall clock.

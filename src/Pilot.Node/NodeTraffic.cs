@@ -222,6 +222,11 @@ public sealed class NodeTraffic
     /// <summary>Every gh call by kind and caller per 15-minute window (#1293), on the node's clock (<see cref="Time"/>).</summary>
     public GhCallCounter GhCalls => _ghCalls ??= new GhCallCounter(Time);
 
+    private GhBudget? _ghBudget;
+
+    /// <summary>GitHub's GraphQL budget as GitHub last told it, shared by every gh caller (#1403): a refusal holds them all until the reset.</summary>
+    public GhBudget GhBudget => _ghBudget ??= new GhBudget(Time);
+
     private CommandCallers? _callers;
 
     /// <summary>
