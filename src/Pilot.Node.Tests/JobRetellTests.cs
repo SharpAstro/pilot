@@ -22,6 +22,7 @@ public sealed class JobRetellTests : IDisposable
     private readonly JobRunner _jobs;
     private readonly TurnOutage _outage;
     private readonly List<string> _said = [];
+    private readonly StringWriter _log = new();
     private bool _endedForGood;
     private int _forGoodCalls;
     private int _afterTurnCalls;
@@ -33,6 +34,7 @@ public sealed class JobRetellTests : IDisposable
         _jobs = new JobRunner(_state, new NodeOptions(Path.Combine(_root, "n.sock"), Path.Combine(_root, "data")), _clock)
         {
             RetellAfter = After,
+            Log = _log,
             Outage = _outage,
             Say = (command, _) =>
             {
@@ -659,7 +661,7 @@ public sealed class JobRetellTests : IDisposable
         var now = _clock.GetUtcNow();
         var row = new JobRow
         {
-            Id = id, Command = "echo hi", Cwd = _root, Owner = "w0000001", State = JobState.Succeeded, ExitCode = 0,
+            Id = id, Command = "echo " + id, Cwd = _root, Owner = "w0000001", State = JobState.Succeeded, ExitCode = 0,
             LogPath = Path.Combine(_root, id + ".log"), Timeout = TimeSpan.FromMinutes(1), StartedAt = now.AddMinutes(-2), EndedAt = now.AddMinutes(-1),
             Told = toldAt is not null, ToldAt = toldAt, ToldWay = toldAt is null ? null : SayWays.Relayed,
         };
@@ -986,5 +988,85 @@ public sealed class JobRetellTests : IDisposable
         _afterTurnCalls.ShouldBe(0);
         _forGoodCalls.ShouldBe(0);
         _said.ShouldBeEmpty();
+    }
+
+    // #1415 cause 1: a later job of the same command and cwd, handed over after the tell, settles the told one.
+
+    private JobRow Later(string id, TimeSpan after, string command = "echo hi", string? cwd = null, string owner = "w0000001")
+    {
+        var at = _state.Jobs().Single(j => j.Id == "j1").ToldAt!.Value + after;
+        var row = new JobRow
+        {
+            Id = id, Command = command, Cwd = cwd ?? _root, Owner = owner, State = JobState.Succeeded, ExitCode = 0,
+            LogPath = Path.Combine(_root, id + ".log"), Timeout = TimeSpan.FromMinutes(1), StartedAt = at, EndedAt = at.AddSeconds(5),
+        };
+        _state.PutJob(row);
+        return row;
+    }
+
+    [Fact]
+    public async Task AToldJobSupersededInTheBusyTurnItReachedIsSettledWithNoRetellAndNoCard()
+    {
+        await TellNowAsync(whileWorking: true);
+        _state.Jobs().Single().ToldWhileWorking.ShouldBe(true);
+        _clock.Advance(TimeSpan.FromSeconds(31));
+        Later("j2", TimeSpan.FromSeconds(31));
+        // The busy turn ends, then the worker sits idle and silent for two spans.
+        Session(SessionState.Idle, _clock.GetUtcNow());
+        _clock.Advance(After * 2);
+
+        (await Sweep()).ShouldBeFalse();
+
+        _said.ShouldBeEmpty();
+        Cards(JobRunner.UnansweredKind).ShouldBeEmpty();
+        _state.Jobs().Single(j => j.Id == "j1").RetellRung.ShouldBe(true);
+        _jobs.TellBaselines.ShouldBe(0);
+        _log.ToString().Split('
+').Count(l => l.Contains("settled: superseded by j2")).ShouldBe(1);
+        (await Sweep()).ShouldBeFalse();
+        _log.ToString().Split('
+').Count(l => l.Contains("superseded")).ShouldBe(1);
+    }
+
+    [Theory]
+    [InlineData("command")]
+    [InlineData("cwd")]
+    [InlineData("before")]
+    [InlineData("owner")]
+    public async Task AJobThatIsNotASupersedeIsRetoldAsBefore(string kind)
+    {
+        await TellNowAsync();
+        _ = kind switch
+        {
+            "command" => Later("j2", TimeSpan.FromSeconds(30), command: "echo other"),
+            "cwd" => Later("j2", TimeSpan.FromSeconds(30), cwd: Path.Combine(_root, "elsewhere")),
+            "before" => Later("j2", TimeSpan.FromMinutes(-5)),
+            _ => Later("j2", TimeSpan.FromSeconds(30), owner: "w9999999"),
+        };
+        _clock.Advance(After);
+
+        (await Sweep()).ShouldBeTrue();
+
+        _said.ShouldHaveSingleItem().ShouldStartWith("Repeat:");
+        _state.Jobs().Single(j => j.Id == "j1").RetellRung.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task ASupersededRowToldInsideAnOutageWindowIsNotRedoneWhenItEnds()
+    {
+        await TellNowAsync();
+        _outage.AccountChanged(_clock.GetUtcNow());
+        _clock.Advance(TimeSpan.FromMinutes(1));
+        Later("j2", TimeSpan.FromSeconds(30));
+        _clock.Advance(TimeSpan.FromMinutes(1));
+        EndOutage();
+        _clock.Advance(TimeSpan.FromSeconds(1));
+
+        (await TellSweep()).ShouldBeFalse();
+        (await Sweep()).ShouldBeFalse();
+
+        _said.ShouldBeEmpty();
+        _state.Jobs().Single(j => j.Id == "j1").RetellRung.ShouldBe(true);
+        _log.ToString().ShouldContain("settled: superseded by j2");
     }
 }

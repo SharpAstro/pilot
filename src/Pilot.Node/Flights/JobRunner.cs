@@ -423,7 +423,9 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
         // sorting every session under the state lock, a tick cost (told jobs) x (sessions) and a quarter of a core (4,378 x 2,532, DE1, 2026-11-26).
         var sessions = state.Sessions();
         var index = new SessionIndex(sessions);
-        var told = state.Jobs().Where(j => j is { Owner: not null, Told: true, ToldAt: not null, EndedAt: not null, RetellRung: null } && j.Kind != JobKind.Check).ToList();
+        var allJobs = state.Jobs();
+        var told = allJobs.Where(j => j is { Owner: not null, Told: true, ToldAt: not null, EndedAt: not null, RetellRung: null } && j.Kind != JobKind.Check).ToList();
+        var handOvers = told.Count == 0 ? null : new HandOvers(allJobs);
         // Rows told owner-ended or gone are settled: not visited, their baselines forgotten once. A mark goes with its job row, or once it is rung.
         var candidates = new List<JobRow>(told.Count);
         var open = new HashSet<string>(StringComparer.Ordinal);
@@ -478,6 +480,15 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
             // session under the state lock, so a tick cost (told jobs) x (sessions)^2 and held one core and the lock flat out (DE1, 2026-11-25).
             var wakeId = index.WakeTarget(row.Owner!);
             var target = replacement ?? index.ById(wakeId) ?? ownerRow;
+            if (handOvers!.SupersededBy(row, target.Id) is { } later)
+            {
+                // A later job of the same command and cwd was handed over after this tell: the worker moved on, so the tell is settled
+                // with no retell and no card (#1415). RetellRung is the mark of a row settled without one.
+                state.PutJob(row with { RetellRung = true });
+                ForgetTell(row.Id);
+                LogTell(row, target.Id, target, $"settled: superseded by {later}");
+                continue;
+            }
             if (target.State != SessionState.Idle)
             {
                 continue;
@@ -602,6 +613,59 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
     private static bool FailedOfLeggedOwner(JobRow row, SessionRow owner) =>
         row.State == JobState.Failed && owner.Role is SessionRole.Worker or SessionRole.Reviewer or SessionRole.Fixer or SessionRole.Planner or SessionRole.Designer;
 
+    /// <summary>
+    /// The latest hand-over of each (owner, command, cwd), built once per sweep from the job rows, so asking whether a told row was
+    /// superseded costs a lookup, not a scan of every job (#1415, #1365).
+    /// </summary>
+    private sealed class HandOvers
+    {
+        private readonly Dictionary<(string Owner, string Command), List<(string Cwd, DateTimeOffset At, string Id)>> _by = [];
+
+        public HandOvers(IEnumerable<JobRow> jobs)
+        {
+            foreach (var j in jobs)
+            {
+                if (j.Owner is null)
+                {
+                    continue;
+                }
+                var at = j.QueuedAt ?? j.StartedAt;
+                if (!_by.TryGetValue((j.Owner, j.Command), out var list))
+                {
+                    _by[(j.Owner, j.Command)] = list = [];
+                }
+                var i = list.FindIndex(e => FlightCommander.SamePath(e.Cwd, j.Cwd));
+                if (i < 0)
+                {
+                    list.Add((j.Cwd, at, j.Id));
+                }
+                else if (at > list[i].At)
+                {
+                    list[i] = (list[i].Cwd, at, j.Id);
+                }
+            }
+        }
+
+        /// <summary>The id of a later job of the same owner (or the session the retell goes to), command and cwd, handed over after the row was told; null if none.</summary>
+        public string? SupersededBy(JobRow row, string? targetId)
+        {
+            if (row.ToldAt is not { } toldAt)
+            {
+                return null;
+            }
+            foreach (var owner in targetId is not null && !string.Equals(targetId, row.Owner, StringComparison.Ordinal) ? new[] { row.Owner!, targetId } : [row.Owner!])
+            {
+                if (_by.TryGetValue((owner, row.Command), out var list)
+                    && list.FindIndex(e => FlightCommander.SamePath(e.Cwd, row.Cwd)) is var i and >= 0
+                    && list[i].At > toldAt && list[i].Id != row.Id)
+                {
+                    return list[i].Id;
+                }
+            }
+            return null;
+        }
+    }
+
     /// <summary>Drops a job's retell baselines (<see cref="_contextAtTell"/>, <see cref="_busyTurnEnd"/>) once the sweep no longer looks at it.</summary>
     private void ForgetTell(string id)
     {
@@ -677,7 +741,9 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
             _redoWindows.Clear();
         }
         var redone = false;
-        foreach (var row in state.Jobs().Where(j => j is { Owner: not null, Told: true, ToldAt: not null, EndedAt: not null } && j.Kind != JobKind.Check).ToList())
+        var allJobs = state.Jobs();
+        var handOvers = new HandOvers(allJobs);
+        foreach (var row in allJobs.Where(j => j is { Owner: not null, Told: true, ToldAt: not null, EndedAt: not null } && j.Kind != JobKind.Check).ToList())
         {
             // Half-open: a tell stamped at the very moment the outage ended was sent after it, and is not one to redo.
             if (row.ToldWay is "owner-ended" or "gone"
@@ -701,6 +767,11 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
             // session under the state lock, so a tick cost (told jobs) x (sessions)^2 and held one core and the lock flat out (DE1, 2026-11-25).
             var wakeId = WakeTarget(row.Owner!, sessions);
             var target = replacement ?? sessions.FirstOrDefault(s => s.Id == wakeId) ?? ownerRow;
+            if (handOvers.SupersededBy(row, target.Id) is not null)
+            {
+                // Superseded by a later job of the same command and cwd: settled by the retell sweep, not told again (#1415).
+                continue;
+            }
             var window = windows.First(w => InWindow(row.ToldAt!.Value, w) || row.RetoldAt is { } at && InWindow(at, w));
             var how = row.State switch { JobState.Succeeded => "succeeded", JobState.Cancelled => row.Error ?? "was cancelled", _ => $"failed: {row.Error}" };
             var took = row.EndedAt!.Value - row.StartedAt;
