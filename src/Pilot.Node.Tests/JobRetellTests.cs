@@ -173,7 +173,6 @@ public sealed class JobRetellTests : IDisposable
     [Fact]
     public async Task ALimitEndedByEvidenceDoesNotHoldTheRetellOfARowThatBeganBeforeTheEnd()
     {
-        await TellNowAsync();
         StopOnLimit("usage_limit_reached", TimeSpan.FromHours(5));
         var seen = _clock.GetUtcNow();
         _outage.OpenLimit(_apiResets!.Value, "usage limit", seen, Verbs.ModelFamily("claude-opus-5-5"));
@@ -191,10 +190,12 @@ public sealed class JobRetellTests : IDisposable
         _outage.LimitEvidenceEndedAt.ShouldNotBeNull();
         _outage.IsOpen.ShouldBeFalse();
 
+        // Told after the outage closed, so no redo is due (the tell is outside its window) and only the ladder can say it: with the
+        // evidence cut gone the row's own limit would hold the retell and nothing would be said.
+        await TellNowAsync();
         _clock.Advance(After);
         (await Sweep()).ShouldBeTrue();
-        // Said, not held (the outage that opened and closed after the tell makes it a redo, not a repeat).
-        _said.ShouldHaveSingleItem();
+        _said.ShouldHaveSingleItem().ShouldStartWith("Repeat:");
     }
 
     [Fact]

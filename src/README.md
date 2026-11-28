@@ -1596,7 +1596,7 @@ minute (the limit is 98 %); it goes on when the pace drops, or after 23:20`), so
 starts too, and the hold lifts by itself at the next ask once the pace falls (#1416). The rate needs two readings of the
 same window at least 5 minutes apart that rose by at least 2 points (the figure moves in whole percents, so one step is
 no pace), kept in memory only, so a node just started holds only on the current figure until it has 5 minutes of
-readings. A verb held on the pace answers `held, at the latest until 23:20:` rather than `held until`, and the card is
+readings. A verb held on the pace answers `held, at the latest until 23:20:` rather than `held until`, and so do the hold line of `pilot status` and the design chat status, and the card is
 raised again when a hold on the pace becomes a hold at the limit in the same window. The node's sweep (every minute; the watchtower's and compactor's looks too)
 takes the start once the window has reset, with no one asking again. A flight of a repo in `priority-repos` uses
 `priority-start-limit` (98 % unless set) for all of these, a session of no flight (the watchtower) the plain limit. The

@@ -271,6 +271,14 @@ public sealed class DesignChatTests : IDisposable
         _store.Update(id, r => r with { DesignerState = DesignerStates.Held, DesignerHeldUntil = Start.AddHours(2).AddMinutes(30) });
         // In the node's local time, as every other held time pilot says (#1158 R1.5: the chat alone said UTC).
         Status(id).ShouldBe($"held until {Start.AddHours(2).AddMinutes(30).ToLocalTime():HH:mm}");
+
+        // A hold on the window's pace lifts when the pace drops, so it says "at the latest"; the flag goes with the hold.
+        _store.Update(id, r => r with { DesignerHeldProjected = true });
+        Status(id).ShouldBe($"held, at the latest until {Start.AddHours(2).AddMinutes(30).ToLocalTime():HH:mm}");
+        _store.Update(id, r => r with { DesignerState = DesignerStates.Idle, DesignerHeldUntil = null, DesignerHeldProjected = null });
+        Status(id).ShouldBe("published v1");
+        _store.Update(id, r => r with { DesignerState = DesignerStates.Held, DesignerHeldUntil = Start.AddHours(3) });
+        Status(id).ShouldBe($"held until {Start.AddHours(3).ToLocalTime():HH:mm}");
     }
 
     private string? Status(string id) => Run(Verbs.DesignChat, id).DesignChat!.Status;

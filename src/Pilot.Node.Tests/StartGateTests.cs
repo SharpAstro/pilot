@@ -221,6 +221,20 @@ public sealed class StartGateTests : IDisposable
     }
 
     [Fact]
+    public void TheStatusHoldLineReadsAtTheLatestForAProjectionHoldAndUntilForThePlainOne()
+    {
+        Climb(86);
+        var projected = _gate.CurrentHold().ShouldNotBeNull();
+        projected.Projected.ShouldBe(true);
+        projected.Line(_time.GetUtcNow(), TimeZoneInfo.Utc).ShouldStartWith("held, at the latest until ");
+
+        Usage(95);
+        var plain = _gate.CurrentHold().ShouldNotBeNull();
+        plain.Projected.ShouldBeNull();
+        plain.Line(_time.GetUtcNow(), TimeZoneInfo.Utc).ShouldStartWith("held until ");
+    }
+
+    [Fact]
     public void ASpentWindowHoldsAStartAndSaysUntilWhenButNoFiguresOrStaleOnesHoldNothing()
     {
         _gate.Check(90).ShouldBeNull();
