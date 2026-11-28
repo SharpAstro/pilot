@@ -320,8 +320,13 @@ var loop = new SdlEventLoop(window, renderer)
 // the check below), so a raise from another thread (a node event, a read come back, a press answered) also wakes it; on the
 // loop's own thread the wake is one spare pass. Before, the check was asked every display refresh whatever was due: sixty
 // passes a second of an idle window, each locking the font atlas's three queues to ask whether it was dirty (pilot #1443).
-void Redraw()
+// The frame watch, before any change can ask for a frame: it counts every ask (the frame line in gui.log).
+var frameWatch = new FrameWatch(logger);
+void Redraw() => Ask(FrameCause.Change);
+// An ask for a frame, counted by cause for gui.log's frame line, which says what keeps a page drawing.
+void Ask(FrameCause cause)
 {
+    frameWatch.Asked(cause);
     loop.RequestRedraw();
     loop.Wake();
 }
@@ -1097,7 +1102,6 @@ if (feed is not null && client is not null && clients is not null)
 }
 
 var announced = (string?)null;
-var frameWatch = new FrameWatch(logger);
 // The pages as the builder last made them worth a frame (built), and its newest build either way (latest), which any frame
 // picks up, so a frame a hover asks reads a chip's brief as it is now; what the render thread last drew, and the last
 // built it saw; what the render thread wants built.
@@ -1223,7 +1227,7 @@ if (feed is not null)
                     continue;
                 }
                 Volatile.Write(ref built, made);
-                Redraw();
+                Ask(FrameCause.Build);
             }
             catch (OperationCanceledException) when (building.IsCancellationRequested)
             {
@@ -1398,6 +1402,7 @@ loop.CheckNeedsRedraw = () =>
             pendingLink = handedLink;
         }
         Say("pilot-gui: another launch asked for this window; raised it.");
+        frameWatch.Asked(FrameCause.Handoff);
         return true;
     }
 
@@ -1407,12 +1412,14 @@ loop.CheckNeedsRedraw = () =>
         return true;
     }
 
-    var owed = renderer.FontAtlasDirty || router.TooltipNeedsFrame || chrome.Notifications.Animating;
-    if (owed)
+    var cause = renderer.FontAtlasDirty ? FrameCause.Glyphs : router.TooltipNeedsFrame ? FrameCause.Tooltip
+        : chrome.Notifications.Animating ? FrameCause.Fade : (FrameCause?)null;
+    if (cause is { } owed)
     {
+        frameWatch.Asked(owed);
         loop.IdleCheckInterval = TimeSpan.Zero;
     }
-    return owed;
+    return cause is not null;
 };
 #if PILOT_DEBUG_INSPECTOR
 // The live UI inspector (every Debug build: sibling source or the .Debug twin packages): an agent finds this window, reads its regions
