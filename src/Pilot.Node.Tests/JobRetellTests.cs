@@ -124,7 +124,7 @@ public sealed class JobRetellTests : IDisposable
         _clock.Advance(TimeSpan.FromMinutes(59));
         (await Sweep()).ShouldBeFalse();
         _said.ShouldBeEmpty();
-        _state.Cards().ShouldBeEmpty();
+        Cards(JobRunner.UnansweredKind).ShouldBeEmpty();
 
         _clock.Advance(TimeSpan.FromMinutes(1) + After - TimeSpan.FromSeconds(1));
         (await Sweep()).ShouldBeFalse();
@@ -133,7 +133,7 @@ public sealed class JobRetellTests : IDisposable
         _clock.Advance(TimeSpan.FromSeconds(1));
         (await Sweep()).ShouldBeTrue();
         _said.ShouldHaveSingleItem().ShouldStartWith("Repeat:");
-        _state.Cards().ShouldBeEmpty();
+        Cards(JobRunner.UnansweredKind).ShouldBeEmpty();
     }
 
     [Fact]
@@ -208,6 +208,8 @@ public sealed class JobRetellTests : IDisposable
         _outage.AccountChanged(_clock.GetUtcNow());
         _clock.Advance(TimeSpan.FromMinutes(10));
         EndOutage();
+        // Some other session's turn ended the outage; the owner itself stays silent.
+        Session(SessionState.Idle, _clock.GetUtcNow().AddHours(-1));
 
         // Silent for far longer than RetellAfter since the tell, but the window only just ended.
         (await Sweep()).ShouldBeFalse();
