@@ -4,6 +4,7 @@ using System.Globalization;
 using System.Threading.Channels;
 using Node.Lib;
 using Pilot.Contracts;
+using Pilot.Node.Sessions;
 
 namespace Pilot.Node.Flights;
 
@@ -448,6 +449,24 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
             {
                 continue;
             }
+            // A session stopped on a usage or spend limit cannot act: no retell and no ring until its reset. Read from the stored row, so it
+            // holds right after a node restart, before an outage is judged again (#1416). No evidence-end argument: TurnOutage.Look moves
+            // the login-change cut to the same instant whenever evidence ends a limit, so the login cut already drops every row the
+            // evidence cut would (LegWatch keeps passing it to FromRows, and AccountLimitTests pins the parameter itself).
+            var loginChanged = Outage?.LoginChangedAt;
+            var account = state.Usage()?.Account?.Email;
+            if (AccountLimit.ResetOf(target, now, loginChanged, account) is not null)
+            {
+                continue;
+            }
+            var limitReset = AccountLimit.StoppedUntil(target, loginChanged, account);
+            if (row.RetoldAt is { } retoldAt && limitReset is { } spentInto && spentInto > retoldAt)
+            {
+                // A retell spent into the limit is void: the ladder starts again, so the row is retold once RetellAfter after the reset.
+                ForgetTell(row.Id);
+                state.PutJob(row with { RetoldAt = null, RetoldWay = null });
+                continue;
+            }
             var waits = WhatWaits(row, ownerRow);
             if (waits is null && row.RetoldAt is null && !FailedOfLeggedOwner(row, ownerRow))
             {
@@ -470,6 +489,11 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
                     _contextAtTell[row.Id] = target.ContextTokens;
                 }
                 silentSince = _busyTurnEnd[row.Id];
+            }
+            if (limitReset is { } resetAt && resetAt > silentSince)
+            {
+                // The silence clock starts at the reset: before it the session could not act.
+                silentSince = resetAt;
             }
             if (target.LastResponseAt is { } last && last > silentSince)
             {
@@ -3254,7 +3278,20 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
         }
         if (!threw)
         {
-            LogTell(job, target, targetRow, ok ? (replacedTo is null ? way ?? "relayed" : $"{way ?? "relayed"} (replaced-to {replacedTo})") : $"refused: {LegCommander.OneLine(error ?? "no reason given")}");
+            string outcome;
+            if (ok)
+            {
+                outcome = replacedTo is null ? way ?? "relayed" : $"{way ?? "relayed"} (replaced-to {replacedTo})";
+            }
+            else if (SessionMessenger.IsFolderGone(error))
+            {
+                outcome = $"folder gone: {LegCommander.OneLine(error ?? "")}";
+            }
+            else
+            {
+                outcome = $"refused: {LegCommander.OneLine(error ?? "no reason given")}";
+            }
+            LogTell(job, target, targetRow, outcome);
         }
         if (ok)
         {
@@ -3267,6 +3304,13 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
             // The node has no row for the owner and its session refused the say (it is gone): nobody is waiting on this job.
             // Marked told, quietly, so a session long gone is not rung for again on every node start.
             MarkTold(job, "gone");
+        }
+        else if (!threw && SessionMessenger.IsFolderGone(error))
+        {
+            // Nobody can be resumed in a folder that is gone, so this refusal is permanent (#1395); a landed flight's plane
+            // removed is the same case. Final like an owner with no row: marked told quietly, any earlier card closed, no ring.
+            MarkTold(job, "gone");
+            state.CloseCardsAbout(Verbs.JobTarget(job.Id), "owner's folder is gone", UntoldKind);
         }
         else
         {

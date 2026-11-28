@@ -356,13 +356,52 @@ public sealed partial class Watchtower(
         return rows.Where(r => !_replaced.Contains(r.Id) && (!vanished || Live(r))).OrderByDescending(Live).ThenByDescending(r => r.StartedAt).FirstOrDefault();
     }
 
+    /// <summary>How the node words an end it chose itself: a replacement (a compaction or a brief-changed restart, the duplicate sweep).</summary>
+    private const string ReplacedByPrefix = "replaced by";
+
+    /// <summary>
+    /// Whether the node chose this end (#1397): a replacement (<see cref="ReplacedByPrefix"/>) or a stop with the node on an upgrade
+    /// (<see cref="SessionEndReasons.NodeStopped"/>). Such an end says nothing about how long a watchtower lives on its own.
+    /// </summary>
+    public static bool IsNodeMadeEnd(string? endedBecause)
+    {
+        if (endedBecause is null)
+        {
+            return false;
+        }
+        // SessionMessenger stores an end the watchtower asked for as "<by>: <why>", so the replacement wording sits behind that prefix.
+        var asked = SessionEndReasons.Watchtower + ": ";
+        var why = endedBecause.StartsWith(asked, StringComparison.Ordinal) ? endedBecause[asked.Length..] : endedBecause;
+        return why.StartsWith(ReplacedByPrefix, StringComparison.Ordinal)
+            || endedBecause.StartsWith(SessionEndReasons.NodeStopped, StringComparison.Ordinal);
+    }
+
+    /// <summary>The context the row's current watchtower generation started at (#1397), read through <see cref="Generations"/> so the first reading is stamped and kept; null when none is read yet.</summary>
+    public long? StartTokensOf(SessionRow row)
+    {
+        var all = Generations();
+        // Always the fresh start, never a compaction's own: a compaction generation is stamped only after a later reply, so judged on it the
+        // look right after a compaction had no start, and a compaction that hardly shrank would lift its own bar (#1397).
+        var latest = all.ToList().FindLastIndex(g => g.Job == row.Id && !g.IsCompaction);
+        return latest >= 0 ? all[latest].StartTokens : null;
+    }
+
+    /// <summary>Whether the row's current watchtower generation was started with a Why beginning <paramref name="prefix"/>, from what the node keeps (#1397).</summary>
+    public bool StartedByWhy(SessionRow row, string prefix)
+    {
+        var all = Generations();
+        var latest = all.ToList().FindLastIndex(g => g.Job == row.Id);
+        return latest >= 0 && all[latest].Why?.StartsWith(prefix, StringComparison.Ordinal) == true;
+    }
+
     /// <summary>Where the watchtower sessions there have been are kept, in the node's data folder: a line each (<see cref="Generation"/>).</summary>
     public string SessionsFile => Path.Combine(options.DataFolder, "watchtower-sessions");
 
     /// <summary>One watchtower the node has had: the row it ran as, its latest Claude session (a say resumes it under a new id that holds the history), when it began and why.
-    /// <c>AfterFinishedTurn</c>: whether its job record read a finished turn when it was first seen ended, which Claude Code does by design; null when not known.</summary>
+    /// <c>AfterFinishedTurn</c>: whether its job record read a finished turn when it was first seen ended, which Claude Code does by design; null when not known.
+    /// <c>StartTokens</c>: the context its first reading showed (brief plus Claude Code's own prompt), what the compactor judges growth against (#1397); null until read.</summary>
     public sealed record Generation(string Job, string? SessionId, DateTimeOffset StartedAt, string? Why,
-        DateTimeOffset? EndedAt = null, DateTimeOffset? LastReplyAt = null, string? EndedBecause = null, bool? AfterFinishedTurn = null, bool Stream = false)
+        DateTimeOffset? EndedAt = null, DateTimeOffset? LastReplyAt = null, string? EndedBecause = null, bool? AfterFinishedTurn = null, bool Stream = false, long? StartTokens = null)
     {
         /// <summary>A compaction of a stream watchtower (<see cref="Compacted"/>) is a generation of its own, so the chat shows a divider, but no fresh start.</summary>
         public bool IsCompaction => Why == Compacted;
@@ -420,6 +459,17 @@ public sealed partial class Watchtower(
                     changed = true;
                 }
             }
+            foreach (var row in state.Sessions().Where(IsWatchtower))
+            {
+                // The row's own (fresh) generation takes the first reading that has one as its start. A compaction's generation is never
+                // stamped: judged on it, the look right after a compaction had no start, and one that hardly shrank the context would lift its own bar.
+                var latest = _generations.FindLastIndex(g => g.Job == row.Id);
+                if (latest >= 0 && _generations[latest] is { StartTokens: null } g && row.ContextTokens > 0)
+                {
+                    _generations[latest] = g with { StartTokens = row.ContextTokens };
+                    changed = true;
+                }
+            }
             if (changed)
             {
                 _generations = [.. _generations.OrderBy(g => g.StartedAt)];
@@ -454,7 +504,8 @@ public sealed partial class Watchtower(
                     found.Add(new Generation(parts[0], parts[1].Length == 0 ? null : parts[1], at, parts.Length > 3 && parts[3].Length > 0 ? parts[3] : null,
                         TimeAt(parts, 4), TimeAt(parts, 5), parts.Length > 6 && parts[6].Length > 0 ? parts[6] : null,
                         parts.Length > 7 && parts[7].Length > 0 ? parts[7] == "1" : null as bool?,
-                        Stream: parts.Length > 8 && parts[8] == "1"));
+                        Stream: parts.Length > 8 && parts[8] == "1",
+                        StartTokens: parts.Length > 9 && long.TryParse(parts[9], System.Globalization.CultureInfo.InvariantCulture, out var start) ? start : null as long?));
                 }
             }
         }
@@ -479,7 +530,7 @@ public sealed partial class Watchtower(
             Directory.CreateDirectory(options.DataFolder);
             File.WriteAllLines(SessionsFile, generations.Select(g =>
                 string.Join('\t', g.Job, g.SessionId ?? "", g.StartedAt.ToString("O", System.Globalization.CultureInfo.InvariantCulture), OneLine(g.Why),
-                Stamp(g.EndedAt), Stamp(g.LastReplyAt), OneLine(g.EndedBecause), g.AfterFinishedTurn is { } finished ? finished ? "1" : "0" : "", g.Stream ? "1" : "")));
+                Stamp(g.EndedAt), Stamp(g.LastReplyAt), OneLine(g.EndedBecause), g.AfterFinishedTurn is { } finished ? finished ? "1" : "0" : "", g.Stream ? "1" : "", g.StartTokens?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "")));
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
@@ -499,7 +550,8 @@ public sealed partial class Watchtower(
     /// <summary>
     /// How the watchtower is doing, from <see cref="Generations"/> and its row; null when the node keeps none. Churn is fresh starts
     /// per hour and ends with no finished turn: one Claude Code ended after its turn did so by design (PIL815) and is no churn, so it
-    /// counts toward no lifetime either.
+    /// counts toward no lifetime either. So does an end the node made itself (<see cref="IsNodeMadeEnd"/>: a replacement or a stop with the
+    /// node, #1397); a replacement is still a start, so the starts per hour keep counting it.
     /// </summary>
     public WatchtowerHealth? Health()
     {
@@ -514,7 +566,7 @@ public sealed partial class Watchtower(
         var lastHour = all.Count(g => !g.IsCompaction && now - g.StartedAt <= TimeSpan.FromHours(1));
         var last24 = all.Count(g => !g.IsCompaction && now - g.StartedAt <= TimeSpan.FromHours(24));
         var lifetimes = all
-            .Where(g => g.EndedAt is { } end && now - end <= TimeSpan.FromHours(1) && g.LastReplyAt is not null && g.AfterFinishedTurn != true)
+            .Where(g => g.EndedAt is { } end && now - end <= TimeSpan.FromHours(1) && g.LastReplyAt is not null && g.AfterFinishedTurn != true && !IsNodeMadeEnd(g.EndedBecause))
             .Select(g => g.EndedAt!.Value - g.LastReplyAt!.Value)
             .Order()
             .ToList();
@@ -1091,7 +1143,7 @@ public sealed partial class Watchtower(
             _replaced.Add(replacing.Id);
             if (replacing.State != SessionState.Working)
             {
-                await EndOneAsync(replacing, $"replaced by a fresh watchtower: {why}", time.GetUtcNow(), cancellationToken);
+                await EndOneAsync(replacing, $"{ReplacedByPrefix} a fresh watchtower: {why}", time.GetUtcNow(), cancellationToken);
             }
         }
 
@@ -1106,7 +1158,7 @@ public sealed partial class Watchtower(
             .ToList())
         {
             _replaced.Add(other.Id);
-            if (other.State != SessionState.Working && await EndOneAsync(other, $"replaced by a fresh watchtower: {why}", time.GetUtcNow(), cancellationToken))
+            if (other.State != SessionState.Working && await EndOneAsync(other, $"{ReplacedByPrefix} a fresh watchtower: {why}", time.GetUtcNow(), cancellationToken))
             {
                 endedBefore.Add(other);
             }
@@ -1330,7 +1382,7 @@ public sealed partial class Watchtower(
             {
                 continue;
             }
-            var why = replaced ? $"replaced by {keep ?? "a fresh watchtower"}" : $"a second watchtower beside {keep ?? "the current one"}";
+            var why = replaced ? $"{ReplacedByPrefix} {keep ?? "a fresh watchtower"}" : $"a second watchtower beside {keep ?? "the current one"}";
             if (await EndOneAsync(other, why, now, cancellationToken))
             {
                 ended.Add(other);

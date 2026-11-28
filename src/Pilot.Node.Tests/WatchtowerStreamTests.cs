@@ -497,6 +497,29 @@ public sealed class WatchtowerStreamTests : IDisposable
     }
 
     [Fact]
+    public async Task AStreamWatchtowersStartStaysItsFreshStartThroughACompaction()
+    {
+        // #1397: the compaction's generation is stamped only after a later reply, so the look right after one had no start and the bare share
+        // replaced the watchtower. The start is always the fresh generation's, read before the compaction.
+        await _tower.LookAsync(Ct);
+        var first = _launcher.Process(0);
+        first.Emit(Init(_launcher.SessionOf(0)));
+        first.Emit(Assistant(100, 40_000));
+        first.Emit(Result);
+        await Until(() => Row() is { State: SessionState.Idle, ContextTokens: 40_100 }, "it to be idle with its context");
+        _tower.StartTokensOf(Row()).ShouldBe(40_100);
+
+        (await Compact()).Ok.ShouldBeTrue();
+        const string After = "11111111-2222-4333-8444-555555555555";
+        first.Emit(Init(After));
+        first.Emit(Result);
+        await Until(() => _tower.Generations().Count == 2, "the compaction to be a generation");
+
+        _tower.StartTokensOf(Row()).ShouldBe(40_100);
+        _tower.Generations().Single(g => g.IsCompaction).StartTokens.ShouldBeNull();
+    }
+
+    [Fact]
     public async Task ACompactionCancelledBeforeItIsWrittenLeavesNoCompactionUnderWay()
     {
         await UpAndIdleAsync();

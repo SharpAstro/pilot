@@ -137,7 +137,7 @@ public sealed partial class DesignChat(DesignStore store, TranscriptBook transcr
         switch (row.DesignerState)
         {
             case DesignerStates.Held:
-                return row.DesignerHeldUntil is { } until ? $"held until {until.ToLocalTime().ToString("HH:mm", CultureInfo.InvariantCulture)}" : "held";
+                return row.DesignerHeldUntil is { } until ? $"held{(row.DesignerHeldProjected is true ? ", at the latest" : "")} until {until.ToLocalTime().ToString("HH:mm", CultureInfo.InvariantCulture)}" : "held";
             case DesignerStates.Failed:
                 return row.DesignerWhy is { Length: > 0 } why ? $"failed: {why}" : "failed";
             case DesignerStates.Working:

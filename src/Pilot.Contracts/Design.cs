@@ -64,6 +64,9 @@ public sealed record DesignRow
     /// <summary>While <see cref="DesignerState"/> is held: when the hold ends (the usage limit's reset).</summary>
     public DateTimeOffset? DesignerHeldUntil { get; init; }
 
+    /// <summary>While held: true when the hold is on the 5-hour window's pace, which lifts as soon as the pace drops, so the status says "at the latest". Null otherwise and from an older node.</summary>
+    public bool? DesignerHeldProjected { get; init; }
+
     /// <summary>Why the designer is held or failed, in words the design's page shows ("held until 22:00: the 5-hour window is 93 % spent ...").</summary>
     public string? DesignerWhy { get; init; }
 
