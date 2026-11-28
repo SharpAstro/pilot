@@ -195,6 +195,15 @@ public sealed record FlightRow
     public string? GitHubHead { get; init; }
 
     /// <summary>
+    /// The head the node last pushed to the flight's branch (#1407). With <see cref="PushedAt"/> it says that a merge-queue removal at or
+    /// before that time is an earlier head's, not a drop of the PR's current head. Null before the node's first push, and on a store written before it.
+    /// </summary>
+    public string? PushedHead { get; init; }
+
+    /// <summary>The time taken just before the push that <see cref="PushedHead"/> records (#1407); null as that is.</summary>
+    public DateTimeOffset? PushedAt { get; init; }
+
+    /// <summary>
     /// Whether the PR is a draft as GitHub had it at the node's last look at it, which it keeps for a flight with a review (the
     /// pages' PR state: draft, open, queued, merged); null before a look, where the pages say open.
     /// </summary>
