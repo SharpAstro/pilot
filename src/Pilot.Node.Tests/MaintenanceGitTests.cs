@@ -288,8 +288,7 @@ public sealed class MaintenanceGitTests : IDisposable
     private static (int Exit, string Output, string Error) RunGitWithRepoConfig(string folder, params string[] args) => RunGitWithInput(folder, null, args, repoConfigOnly: true);
 
     private static (int Exit, string Output, string Error) RunGitWithInput(string folder, string? input, string[] args, bool repoConfigOnly = false)
-    {
-        HelperGit.Execute(folder, [.. IdentityArgs, .. args], repoConfigOnly ? new Dictionary<string, string> { ["GIT_CONFIG_COUNT"] = "0" } : null, input: input);
+        => HelperGit.Execute(folder, [.. IdentityArgs, .. args], repoConfigOnly ? new Dictionary<string, string> { ["GIT_CONFIG_COUNT"] = "0" } : null, input: input);
 
     private static readonly string[] IdentityArgs = ["-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false"];
 
