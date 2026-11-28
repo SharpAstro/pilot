@@ -254,8 +254,7 @@ public sealed class StopGateTests : IDisposable
     public async Task ADoneLegsWorkerStoppingWhileTheFlyingWorkerIsLiveIsLetThroughSilently()
     {
         FlyWithWorker(OtherJob, SessionState.Working);
-        File.WriteAllText(Path.Combine(Plane, "stray.txt"), "the live leg's
-");
+        File.WriteAllText(Path.Combine(Plane, "stray.txt"), "the live leg's\n");
 
         (await Decide(Plane)).ShouldBeNull();
         (await Decide(Plane, active: true)).ShouldBeNull();
@@ -269,8 +268,7 @@ public sealed class StopGateTests : IDisposable
     {
         FlyWithWorker(OtherJob, SessionState.Ended);
         _state.PutJob(new JobRow { Id = "j1", Command = "dotnet test", Cwd = Plane, State = job, LogPath = "l", Timeout = TimeSpan.FromMinutes(1), StartedAt = DateTimeOffset.UnixEpoch, Flight = "TIA7", Leg = "parser" });
-        File.WriteAllText(Path.Combine(Plane, "stray.txt"), "left
-");
+        File.WriteAllText(Path.Combine(Plane, "stray.txt"), "left\n");
 
         (await Decide(Plane)).ShouldBeNull();
         (await Decide(Plane, active: true)).ShouldBeNull();
@@ -282,8 +280,7 @@ public sealed class StopGateTests : IDisposable
     {
         _state.PutLeg(new LegRow { Flight = "TIA7", Name = "parser", Order = 1, Goal = "parse", DoneWhen = "it parses", State = LegState.Flying, WorkerJob = AgentRows.SessionA[..8] });
         _state.PutSession(Row(AgentRows.SessionA, SessionState.Working));
-        File.WriteAllText(Path.Combine(Plane, "stray.txt"), "left
-");
+        File.WriteAllText(Path.Combine(Plane, "stray.txt"), "left\n");
 
         (await Decide(Plane)).ShouldNotBeNull().ShouldContain("stray.txt");
         (await Decide(Plane, active: true)).ShouldBeNull();
@@ -296,8 +293,7 @@ public sealed class StopGateTests : IDisposable
         FlyWithWorker(OtherJob, SessionState.Ended);
         // A job of another leg does not count.
         _state.PutJob(new JobRow { Id = "j2", Command = "x", Cwd = Plane, State = JobState.Running, LogPath = "l", Timeout = TimeSpan.FromMinutes(1), StartedAt = DateTimeOffset.UnixEpoch, Flight = "TIA7", Leg = "other" });
-        File.WriteAllText(Path.Combine(Plane, "stray.txt"), "left
-");
+        File.WriteAllText(Path.Combine(Plane, "stray.txt"), "left\n");
 
         (await Decide(Plane)).ShouldNotBeNull().ShouldContain("stray.txt");
         (await Decide(Plane, active: true)).ShouldBeNull();
