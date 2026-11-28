@@ -276,6 +276,77 @@ public sealed class CompactorTests : IDisposable
         log.ToString().ShouldNotContain("compactor: still at");
     }
 
+    [Theory]
+    [InlineData(SessionState.Idle)]
+    [InlineData(SessionState.Working)]
+    public async Task ARegrownWatchtowerAfterACompactionThatWorkedIsCompactedAgainNeverReplaced(SessionState smallSeenWhile)
+    {
+        // #1413: the compaction left 60k, a later turn grew it past its share before the first idle look after the settle.
+        Seed("t0000001");
+        Row("t0000001", "du1-watchtower", context: 800_000);
+        await _compactor.LookAsync(Ct);
+        _said.Count(c => c.Verb == Verbs.Compact).ShouldBe(1);
+
+        _time.Advance(TimeSpan.FromSeconds(30));
+        Row("t0000001", "du1-watchtower", state: smallSeenWhile, context: 60_000, lastResponse: _time.GetUtcNow());
+        await _compactor.LookAsync(Ct);
+
+        _time.Advance(_compactor.Settle + TimeSpan.FromMinutes(1));
+        Row("t0000001", "du1-watchtower", context: 700_000, lastResponse: _time.GetUtcNow());
+        await _compactor.LookAsync(Ct);
+
+        _said.Count(c => c.Verb == Verbs.Compact).ShouldBe(2);
+        _workers.Started.ShouldBeEmpty();
+        Handled().ShouldNotContain(t => t.StartsWith("Replaced", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task AReadingStillAtTheSizeOfTheCompactionIsNeitherReplacedNorCompactedAgainUntilItChangesOrTheCeilingPasses()
+    {
+        // #961: an unchanged reading is the one from before the compaction.
+        Seed("t0000001");
+        Row("t0000001", "du1-watchtower", context: 800_000);
+        await _compactor.LookAsync(Ct);
+
+        for (var minutes = 1; minutes < 15; minutes++)
+        {
+            _time.Advance(TimeSpan.FromMinutes(1));
+            Row("t0000001", "du1-watchtower", context: 800_000, lastResponse: _time.GetUtcNow());
+            await _compactor.LookAsync(Ct);
+        }
+        _said.Count(c => c.Verb == Verbs.Compact).ShouldBe(1);
+        _workers.Started.ShouldBeEmpty();
+
+        // Past the ceiling the unchanged, still-full reading is judged as it stands: replaced.
+        _time.Advance(TimeSpan.FromMinutes(1));
+        Row("t0000001", "du1-watchtower", context: 800_000, lastResponse: _time.GetUtcNow());
+        await _compactor.LookAsync(Ct);
+        _said.Count(c => c.Verb == Verbs.Compact).ShouldBe(1);
+        _workers.Started.ShouldHaveSingleItem();
+        Handled().ShouldContain(t => t.StartsWith("Replaced du1-watchtower", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task AFirstFreshReadingStillPastTheShareIsReplacedAtTheNextIdleLookAfterTheSettle()
+    {
+        Seed("t0000001");
+        Row("t0000001", "du1-watchtower", context: 800_000);
+        await _compactor.LookAsync(Ct);
+
+        // Seen only while working, and differing from the 800k: the verdict, but no replacement before the settle has passed.
+        _time.Advance(TimeSpan.FromSeconds(30));
+        Row("t0000001", "du1-watchtower", state: SessionState.Working, context: 750_000, lastResponse: _time.GetUtcNow());
+        await _compactor.LookAsync(Ct);
+        _workers.Started.ShouldBeEmpty();
+
+        _time.Advance(_compactor.Settle + TimeSpan.FromMinutes(1));
+        Row("t0000001", "du1-watchtower", context: 750_000, lastResponse: _time.GetUtcNow());
+        await _compactor.LookAsync(Ct);
+        _said.Count(c => c.Verb == Verbs.Compact).ShouldBe(1);
+        _workers.Started.ShouldHaveSingleItem();
+        Handled().ShouldContain(t => t.StartsWith("Replaced du1-watchtower", StringComparison.Ordinal));
+    }
+
     [Fact]
     public async Task AWatchtowerIsCompactedOnceThenLeftToSettleAndAStaleReadingNeverLoopsIt()
     {

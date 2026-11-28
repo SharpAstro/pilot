@@ -66,11 +66,21 @@ public sealed class Compactor(NodeState state, Watchtower watchtower, Func<Comma
 
     /// <summary>
     /// How long a session is left alone after a compaction or a replacement: the context the node reads is the last turn's, so for a
-    /// while after a <c>/compact</c> it is still the size before it, and a look in that while would judge the old figure. SE1, 2026-11-10:
+    /// while after a <c>/compact</c> it may still be the size before it, and a look in that while would judge the old figure (a
+    /// watchtower's verdict on a compaction is its first fresh reading, see <see cref="FreshCeiling"/>; this is the pause before the next
+    /// action on it). SE1, 2026-11-10:
     /// the watchtower was compacted and "replaced" every 30 s for four minutes, each time "still at 62% after a compaction", on a reading
     /// taken before the compaction; once it settled it read 25%.
     /// </summary>
     public TimeSpan Settle { get; init; } = TimeSpan.FromMinutes(5);
+
+    /// <summary>
+    /// How long after a watchtower compaction a reading still equal to the size at the compaction is waited on before it is judged as it
+    /// stands. The compaction's verdict is the first fresh reading (one that differs from that size), and a reading that has not changed is
+    /// the one from before the compaction, so judging it would replace a watchtower whose compaction worked (#1413) or compact it again
+    /// for a figure the compaction has not yet replaced (#961). A compaction that truly changed nothing is judged once this has passed.
+    /// </summary>
+    public TimeSpan FreshCeiling { get; init; } = TimeSpan.FromMinutes(15);
 
     /// <summary>The card kind that says the watchtower is still past its share after a compaction and an attempt at a fresh one: raised once, not looped.</summary>
     public const string StuckKind = "watchtower-still-full";
@@ -109,11 +119,12 @@ public sealed class Compactor(NodeState state, Watchtower watchtower, Func<Comma
     private readonly HashSet<string> _compactedFull = new(StringComparer.Ordinal);
     private readonly HashSet<string> _saidFull = new(StringComparer.Ordinal);
 
-    // By watchtower row: what it was at its last compaction. Pending until the compaction has answered; the first look after it
-    // finds the watchtower still past its share (then it is replaced, as a worker is, never nudged or compacted again) or below it.
+    // By watchtower row: the reading the last compaction was asked on, and when. Pending until the first fresh reading (one differing from
+    // that size, seen whatever the watchtower is doing) or the ceiling; that reading is the verdict: still past its share (Worked false:
+    // replaced at an idle look after the settle) or under it (Worked true: a later full reading is regrowth, compacted again).
     private readonly Dictionary<string, WatchtowerMark> _marks = new(StringComparer.Ordinal);
 
-    private sealed record WatchtowerMark(DateTimeOffset? Response, int Persons, bool Pending);
+    private sealed record WatchtowerMark(DateTimeOffset? Response, int Persons, bool Pending, long Asked, DateTimeOffset At, bool? Worked = null);
 
     protected override async Task ExecuteAsync(CancellationToken stopping)
     {
@@ -174,6 +185,12 @@ public sealed class Compactor(NodeState state, Watchtower watchtower, Func<Comma
         var now = time.GetUtcNow();
         // A row id gone from the node's sessions is forgotten, as the other guards are.
         _readUnder.IntersectWith(state.Sessions().Select(r => r.Id));
+        // A watchtower's compaction is judged on its first fresh reading, whatever the watchtower is doing, not on the first idle look.
+        if (state.Sessions().FirstOrDefault(r => r.Name == watchtower.Name && r.Id == watchtower.Current()?.Id) is { } live
+            && _marks.TryGetValue(live.Id, out var pending) && pending is { Pending: true } && live.ContextTokens != pending.Asked)
+        {
+            _marks[live.Id] = pending with { Pending = false, Worked = !IsFull(live) };
+        }
         foreach (var (row, focus) in Kept().ToList())
         {
             var last = row.LastResponseAt ?? row.StartedAt;
@@ -190,13 +207,7 @@ public sealed class Compactor(NodeState state, Watchtower watchtower, Func<Comma
                 continue;
             }
             var share = isTower ? Models.WatchtowerCompactShare / 100.0 : WindowShare;
-            var full = row.ContextWindow > 0 && row.ContextTokens > share * row.ContextWindow;
-            // Read at every look of a watchtower, full or not: the first reading the node sees of it is stamped as its start (#1397).
-            if (isTower && watchtower.StartTokensOf(row) is { } start && full)
-            {
-                // The watchtower is full only when it has also grown past where it started by the margin; a worker's test is the share alone.
-                full = row.ContextTokens > start + StartMargin * row.ContextWindow;
-            }
+            var full = IsFull(row);
             if (isTower && !_stuck.Contains(key) && state.CardsOf(StuckKind, Verbs.WatchtowerTarget).Any(c => c.State == CardState.Open))
             {
                 // A node restarted since the card was raised: what it keeps says the watchtower was found still full, so it is left alone as before.
@@ -243,10 +254,21 @@ public sealed class Compactor(NodeState state, Watchtower watchtower, Func<Comma
             if (isTower)
             {
                 _marks.TryGetValue(row.Id, out var mark);
-                if (mark is { Pending: true } && mark.Response != row.LastResponseAt)
+                if (mark is { Pending: true })
                 {
-                    // The compaction has answered: this is the first look at what it left.
-                    _marks[row.Id] = mark with { Pending = false };
+                    if (now < mark.At + FreshCeiling)
+                    {
+                        // No fresh reading yet: the one it has is from before the compaction, so it is neither replaced nor compacted
+                        // again for its size or idleness (#961), until the reading changes or the ceiling passes.
+                        continue;
+                    }
+                    // Past the ceiling the unchanged reading is judged as it stands.
+                    _marks[row.Id] = mark = mark with { Pending = false, Worked = !full };
+                }
+                if (mark is { Worked: false })
+                {
+                    // The first fresh reading was still past the share: the compaction did not work. Still full at this idle look: replaced.
+                    _marks[row.Id] = mark = mark with { Worked = null };
                     if (full)
                     {
                         await ReplaceAsync(row, key, cancellationToken);
@@ -260,7 +282,7 @@ public sealed class Compactor(NodeState state, Watchtower watchtower, Func<Comma
                     if (mark is null)
                     {
                         // First sight (after a node restart too): the count runs from here, not from the transcript's whole history.
-                        _marks[row.Id] = mark = new WatchtowerMark(row.LastResponseAt, persons, Pending: false);
+                        _marks[row.Id] = mark = new WatchtowerMark(row.LastResponseAt, persons, Pending: false, row.ContextTokens, now);
                     }
                     var since = persons >= mark.Persons ? persons - mark.Persons : persons;
                     if (since >= limit)
@@ -283,7 +305,21 @@ public sealed class Compactor(NodeState state, Watchtower watchtower, Func<Comma
         }
     }
 
-    // A watchtower still past its share after a compaction (read once it settled): a fresh one in its place, from the node's state, as a full
+    // Past its share by the node's test: a worker's is the share alone; a watchtower must also have grown past where it started by the margin.
+    // Read at every look of a watchtower, full or not: the first reading the node sees of it is stamped as its start (#1397).
+    private bool IsFull(SessionRow row)
+    {
+        var isTower = row.Name == watchtower.Name;
+        var share = isTower ? Models.WatchtowerCompactShare / 100.0 : WindowShare;
+        var full = row.ContextWindow > 0 && row.ContextTokens > share * row.ContextWindow;
+        if (isTower && watchtower.StartTokensOf(row) is { } start && full)
+        {
+            full = row.ContextTokens > start + StartMargin * row.ContextWindow;
+        }
+        return full;
+    }
+
+    // A watchtower whose first fresh reading after a compaction is still past its share (no settle needed to see it): a fresh one in its place, from the node's state, as a full
     // worker is sent round (pilot #578). Once only: still full after that, it is said on one card and left until it reads under its share.
     private async Task ReplaceAsync(SessionRow row, string key, CancellationToken cancellationToken)
     {
@@ -352,7 +388,7 @@ public sealed class Compactor(NodeState state, Watchtower watchtower, Func<Comma
             _settleUntil[row.Name == watchtower.Name ? row.Name : row.Id] = at + Settle;
             if (row.Name == watchtower.Name)
             {
-                _marks[row.Id] = new WatchtowerMark(row.LastResponseAt, PersonMessages?.Invoke(row) ?? 0, Pending: true);
+                _marks[row.Id] = new WatchtowerMark(row.LastResponseAt, PersonMessages?.Invoke(row) ?? 0, Pending: true, row.ContextTokens, at);
             }
             // The compaction took seconds: stamp the row as the state holds it now, not the copy read before it ran.
             var stamped = (state.Sessions().FirstOrDefault(r => r.Id == row.Id) ?? row) with { LastCompactedAt = at, CompactedBecause = why };
