@@ -246,7 +246,7 @@ public sealed class AdmissionGate(NodeState state, Func<RoleModels> models, stri
 
     private static AdmissionDecision Noted(AdmissionDecision decision, string? note) => note is null ? decision : decision switch
     {
-        AdmissionDecision.Wait wait => wait with { Why = $"{wait.Why}; {note}" },
+        AdmissionDecision.Wait wait => wait with { Why = $"{wait.Why}; {note}" }, // Behind passes on unchanged
         AdmissionDecision.Admit admit => admit with { Note = note },
         _ => decision,
     };

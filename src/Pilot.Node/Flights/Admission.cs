@@ -120,8 +120,8 @@ public abstract record AdmissionDecision
     /// <param name="Note">What is worth saying of the start though it goes (<c>peers not counted: DE1 (unreachable)</c>); null when nothing.</param>
     public sealed record Admit(string? Note = null) : AdmissionDecision;
 
-    /// <summary>It waits, for <paramref name="Why"/>, and asks again later.</summary>
-    public sealed record Wait(string Why) : AdmissionDecision;
+    /// <summary>It waits, for <paramref name="Why"/>, and asks again later. <paramref name="Behind"/> names who the wait is behind (the flight that holds the repo or goes first on it, <c>TIA2 on SE1</c> for a peer's; the flights or labels of the Opus sessions counted); null where no one is (memory, a review slot).</summary>
+    public sealed record Wait(string Why, string? Behind = null) : AdmissionDecision;
 
     /// <summary>It may start though its repo is held, as that breaks a wait-for cycle; <paramref name="Card"/> says so for the controller.</summary>
     public sealed record AdmitToBreakCycle(string Card) : AdmissionDecision;
@@ -158,7 +158,7 @@ public static class Admission
         if (input.OneFlightPerRepo && flight is not null && flight.HoldsRepo && flight.Phase != AdmissionPhase.Landed
             && FirstHolder(input, flight) is { } first && first.Key != flight.Key)
         {
-            return new AdmissionDecision.Wait($"waiting for the repo {flight.Repo}: {Name(first, flight)} goes first ({HoldsBecause(first)}); one flight per repo");
+            return new AdmissionDecision.Wait($"waiting for the repo {flight.Repo}: {Name(first, flight)} goes first ({HoldsBecause(first)}); one flight per repo", Name(first, flight));
         }
         if (input.OneFlightPerRepo && flight is not null && !flight.HoldsRepo && flight.Phase != AdmissionPhase.Landed)
         {
@@ -188,7 +188,8 @@ public static class Admission
         if (IsOpus(request.Model) && input.OpusCap > 0
             && input.Sessions.Where(s => !s.Meta && IsOpus(s.Model)).DistinctBy(s => s.Key).ToArray() is { } opus && opus.Length >= input.OpusCap)
         {
-            return new AdmissionDecision.Wait($"waiting for an Opus slot: {opus.Length} of {input.OpusCap} flying: {string.Join(", ", opus.Select(s => (s.Node.Equals(request.Node, StringComparison.OrdinalIgnoreCase) || request.Node is null ? s.Label : $"{s.Label} on {s.Node}") + (s.Note is null ? "" : $" ({s.Note})")))}");
+            return new AdmissionDecision.Wait($"waiting for an Opus slot: {opus.Length} of {input.OpusCap} flying: {string.Join(", ", opus.Select(s => (s.Node.Equals(request.Node, StringComparison.OrdinalIgnoreCase) || request.Node is null ? s.Label : $"{s.Label} on {s.Node}") + (s.Note is null ? "" : $" ({s.Note})")))}",
+                string.Join(", ", opus.Select(s => OpusBehind(s, request))));
         }
         return card is null ? new AdmissionDecision.Admit() : new AdmissionDecision.AdmitToBreakCycle(card);
     }
@@ -225,16 +226,16 @@ public static class Admission
                 var breaker = wanting.OrderBy(f => f, Ranking(dependents)).FirstOrDefault();
                 if (breaker is null)
                 {
-                    return new AdmissionDecision.Wait($"waiting for the repo {flight.Repo}: {Name(holders[0], flight)} holds it");
+                    return new AdmissionDecision.Wait($"waiting for the repo {flight.Repo}: {Name(holders[0], flight)} holds it", Name(holders[0], flight));
                 }
                 if (breaker.Key == flight.Key)
                 {
                     return new AdmissionDecision.AdmitToBreakCycle(CardText(cycle, byKey, flight));
                 }
-                return new AdmissionDecision.Wait($"waiting for the repo {flight.Repo}: {Name(holders[0], flight)} holds it, and {Name(breaker, flight)} goes first to break a cycle");
+                return new AdmissionDecision.Wait($"waiting for the repo {flight.Repo}: {Name(holders[0], flight)} holds it, and {Name(breaker, flight)} goes first to break a cycle", Name(breaker, flight));
             }
             var holder = holders[0];
-            return new AdmissionDecision.Wait($"waiting for the repo {flight.Repo}: {Name(holder, flight)} holds it ({HoldsBecause(holder)})");
+            return new AdmissionDecision.Wait($"waiting for the repo {flight.Repo}: {Name(holder, flight)} holds it ({HoldsBecause(holder)})", Name(holder, flight));
         }
         // Nobody holds it: the ones others depend on go first, so a flight a held flight waits for is never behind it.
         var first = live.Where(f => SameRepo(f, flight) && WantsRepo(f) && !f.Priority && !f.HoldsRepo)
@@ -245,7 +246,7 @@ public static class Admission
         {
             var count = dependents.GetValueOrDefault(first.Key);
             return new AdmissionDecision.Wait($"waiting for its turn on {flight.Repo}: {Name(first, flight)} goes first"
-                + (count > 0 ? $" ({count} {(count == 1 ? "flight waits" : "flights wait")} for it)" : ""));
+                + (count > 0 ? $" ({count} {(count == 1 ? "flight waits" : "flights wait")} for it)" : ""), Name(first, flight));
         }
         return null;
     }
@@ -263,6 +264,14 @@ public static class Admission
     private static bool SameRepo(FleetFlight a, FleetFlight b) => a.Repo.Equals(b.Repo, StringComparison.OrdinalIgnoreCase);
 
     private static bool WantsRepo(FleetFlight flight) => flight.Phase == AdmissionPhase.Ready && !flight.HoldsRepo;
+
+    // The flight a counted session belongs to (its identity is role:CODE), else its label; a peer's carries its node.
+    private static string OpusBehind(FleetSession session, AdmissionRequest request)
+    {
+        var colon = session.Identity.IndexOf(':');
+        var who = colon >= 0 && colon < session.Identity.Length - 1 ? session.Identity[(colon + 1)..] : session.Label;
+        return session.Node.Equals(request.Node, StringComparison.OrdinalIgnoreCase) || request.Node is null ? who : $"{who} on {session.Node}";
+    }
 
     private static string Name(FleetFlight flight, FleetFlight asker) =>
         flight.Node.Equals(asker.Node, StringComparison.OrdinalIgnoreCase) ? flight.Code : $"{flight.Code} on {flight.Node}";

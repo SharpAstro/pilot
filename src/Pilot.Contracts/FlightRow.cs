@@ -247,6 +247,15 @@ public sealed record FlightRow
     public DateTimeOffset? AdmittedAt { get; init; }
 
     /// <summary>
+    /// PIL1190: when the flight's own admission wait (<see cref="Queued"/>) began; kept while it goes on, though its text changes between
+    /// sweeps, and cleared when it ends. Null when it waits for nothing. Nullable, so a store written before it reads as no wait.
+    /// </summary>
+    public DateTimeOffset? QueuedSince { get; init; }
+
+    /// <summary>PIL1190: who the flight's own wait is behind (<c>TIA1</c>, <c>TIA1 on SE1</c>, the flights of the Opus sessions counted); null when the wait names no one or there is none.</summary>
+    public string? QueuedBehind { get; init; }
+
+    /// <summary>
     /// Where GitHub disagrees with what the node set or read (<c>pilot: passed was removed on GitHub</c>, <c>the head moved to
     /// beef1111 since the review read cafe0000</c>), as of the last look; null when they agree. Clients show it; the node
     /// puts nothing right by itself, since the person who changed it may have meant to.
@@ -802,6 +811,26 @@ public static class FlightPhases
         var own = legs.Where(l => l.Flight == flight.Code).ToList();
         return own.Any(l => l.State == LegState.Flying) ? null
             : flight.Queued ?? own.Where(l => l.State == LegState.Planned && l.Queued is not null).OrderBy(l => l.Order).Select(l => l.Queued).FirstOrDefault();
+    }
+
+    /// <summary>
+    /// PIL1190: what <c>pilot status</c> says of a queued flight: for one with no legs whose own <see cref="FlightRow.Queued"/> is set,
+    /// <c>planning queued behind TIA1 since 09:01</c> (<c>planning queued since 09:01: why</c> where it names no one); any other keeps
+    /// <c>queued: why</c>. Times are shown in <paramref name="zone"/>. Null when <see cref="QueuedWhy"/> is.
+    /// </summary>
+    public static string? QueuedText(FlightRow flight, IEnumerable<LegRow> legs, TimeZoneInfo zone)
+    {
+        var all = legs.ToList();
+        if (QueuedWhy(flight, all) is not { } why)
+        {
+            return null;
+        }
+        if (flight.Queued is not null && !all.Any(l => l.Flight == flight.Code))
+        {
+            var since = flight.QueuedSince is { } at ? " since " + TimeZoneInfo.ConvertTime(at, zone).ToString("HH:mm", System.Globalization.CultureInfo.InvariantCulture) : "";
+            return flight.QueuedBehind is { } behind ? $"planning queued behind {behind}{since}" : $"planning queued{since}: {why}";
+        }
+        return $"queued: {why}";
     }
 }
 

@@ -322,10 +322,12 @@ public sealed partial class LegCommander
     private bool AdmissionWaits(AdmissionRole role, string? model, FlightRow flight, LegRow? leg, IReadOnlySet<string>? replacing = null)
     {
         string? why = null;
+        string? behind = null;
         switch (Slots.Ask(role, model, flight, replacing))
         {
             case AdmissionDecision.Wait wait:
                 why = wait.Why;
+                behind = wait.Behind;
                 break;
             case AdmissionDecision.AdmitToBreakCycle breaking:
                 Slots.SayCycle(Verbs.FlightTarget(flight.Code), breaking.Card);
@@ -350,12 +352,14 @@ public sealed partial class LegCommander
             var at = time.GetUtcNow();
             state.UpdateFlight(flight.Code, f =>
             {
-                if (f.Queued == why)
+                if (f.Queued == why && f.QueuedBehind == behind)
                 {
                     return f;
                 }
                 var ended = why is null && f.Queued is not null;
-                return f with { Queued = why, AdmittedAt = ended ? at : f.AdmittedAt };
+                // QueuedSince is the wait's start: kept while Queued was already set (its text and who it is behind may change between sweeps).
+                var since = why is null ? null : f.Queued is not null ? f.QueuedSince ?? at : at;
+                return f with { Queued = why, QueuedSince = since, QueuedBehind = why is null ? null : behind, AdmittedAt = ended ? at : f.AdmittedAt };
             });
         }
         return why is not null;
