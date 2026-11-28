@@ -148,9 +148,10 @@ public sealed class ReviewModelTests : ReviewTestsBase
         var after = F(flight.Code);
         after.Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Passed);
         after.ReviewRounds.ShouldHaveSingleItem().Findings.ShouldContain("rename `x`");
-        var ready = Open().Single(c => c.Kind == LegCommander.PrReady);
-        ready.Detail.ShouldNotBeNull().ShouldContain("passed with 2 notes");
-        ready.Detail.ShouldContain("rename `x` to `count`");
+        // A holding flight is given no PR-ready card (#1400); the review-notes line carries the notes.
+        _state.Cards(openOnly: false).ShouldNotContain(c => c.Kind == LegCommander.PrReady);
+        var line = _state.Cards(openOnly: false).Single(c => c.Kind == LegCommander.ReviewNotesKind);
+        line.Detail.ShouldNotBeNull().ShouldContain("rename `x` to `count`");
         // The node plans the review-notes leg that carries the notes; no round goes back on the findings leg.
         var notes = _state.Legs(flight.Code).Single(l => l.Name == LegCommander.ReviewNotesLeg);
         notes.DoneWhen.ShouldContain("a comment is stale");

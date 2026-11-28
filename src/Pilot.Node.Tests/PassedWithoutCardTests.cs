@@ -83,9 +83,9 @@ public sealed class PassedWithoutCardTests : ReviewTestsBase
         await Checks().LookAsync(Ct);
 
         F(flight.Code).Holding.ShouldNotBeNull();
-        // PIL1294: the restored holding card waits on a review-notes leg, so the same look closes it for a Handled line (no For you card
-        // with a Merge the node refuses); the node merges from a restored card once the leg lands (HoldingPatternTests).
-        Open().ShouldNotContain(c => c.Kind == LegCommander.PrReady);
+        // #1400: a holding flight with unmade notes is given no PR-ready card and no restored line, so there is nothing to close; the hold's
+        // wait on the review-notes leg is a Handled line (never a For you card with a Merge the node refuses), and the release raises the card.
+        _state.Cards(openOnly: false).ShouldNotContain(c => c.Kind == LegCommander.PrReady || c.Kind == LegCommander.PrReadyRestoredKind);
         _state.Cards(openOnly: false).Where(c => c.Kind == LegCommander.LegWaitKind).ShouldHaveSingleItem().Detail.ShouldNotBeNull().ShouldContain("leg makes the review's fixes");
         _github.Merged.ShouldBeEmpty();
     }

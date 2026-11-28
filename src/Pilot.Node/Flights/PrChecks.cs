@@ -983,7 +983,12 @@ public sealed class PrChecks(NodeState state, IGitHub gitHub, TimeProvider time,
             return open.Choices.FirstOrDefault(c => c.Verb == Verbs.Merge) is { Args: [{ } cardHead, ..] } ? cardHead : null;
         }
         var latest = state.Cards(openOnly: false).Where(c => c.Kind == LegCommander.PrReady && c.Subject == subject).OrderByDescending(c => c.ClosedAt ?? c.At).FirstOrDefault();
-        return latest?.Outcome?.StartsWith(LegCommander.LegWaitOutcome, StringComparison.Ordinal) == true ? flight.Review?.ReviewedHead : null;
+        // A holding flight is given no PR-ready card (#1400): with none raised since the hold began, the reviewed head is what it merges.
+        if (flight.Holding is { } hold && (latest is null || latest.At < hold.Since))
+        {
+            return flight.Review?.ReviewedHead;
+        }
+        return LegCommander.IsNodeWaitOutcome(latest?.Outcome) ? flight.Review?.ReviewedHead : null;
     }
 
     /// <summary>

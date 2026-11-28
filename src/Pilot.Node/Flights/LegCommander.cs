@@ -314,7 +314,7 @@ public sealed partial class LegCommander(
                     made = AnswerCiBudget(command);
                     break;
                 case Verbs.Clear:
-                    ClearHolding(command);
+                    await ClearHoldingAsync(command, cancellationToken);
                     break;
                 case Verbs.Hold:
                     throw new FlightException($"the node plans a review-notes leg itself for a review that passed with notes, so there is no hold to take on {FlightOf(command.Target).Code}: make the fixes in a leg, or give the owner's word with flight clear");

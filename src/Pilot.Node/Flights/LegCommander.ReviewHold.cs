@@ -15,7 +15,7 @@ public sealed partial class LegCommander
     /// The watchtower's word, or the person's, that a flight in a holding pattern is cleared to land: the hold ends, the notes card
     /// closes and a Handled card says so. The node then merges it at its next look as for any passed review.
     /// </summary>
-    private void ClearHolding(CommandRequest command)
+    private async Task ClearHoldingAsync(CommandRequest command, CancellationToken ct)
     {
         var flight = FlightOf(command.Target);
         if (!IsWatchtower(command.Who) && !IsPerson(flight, command.Who) && command.PersonsWord is null)
@@ -29,6 +29,7 @@ public sealed partial class LegCommander
         var why = string.Join(' ', command.Args ?? []).Trim();
         RefuseWithoutOwnersWord(flight, command, why, "clear it to land");
         ReleaseHolding(flight, command.PersonsWord is not null ? "the person" : command.Who, why);
+        await RaiseReleasedMergeCardAsync(FlightOf(command.Target), ct);
     }
 
     /// <summary>The not-blocking notes of the flight's last passed review that have no end yet (pilot #1226).</summary>
@@ -68,7 +69,12 @@ public sealed partial class LegCommander
     {
         if (FlightOf(Verbs.FlightTarget(code)).Holding is { } hold)
         {
-            Record(code, f => f with { Holding = hold with { Reason = reason ?? LegHoldingReason(leg), By = leg } });
+            var held = Record(code, f => f with { Holding = hold with { Reason = reason ?? LegHoldingReason(leg), By = leg } });
+            // A holding flight has no PR-ready card to close for the wait (#1400): a Handled line says the PR merges once the leg lands.
+            if (held is { PullRequest: not null } && state.OpenLegs(code).Count > 0)
+            {
+                RaiseLegWaitLine(held);
+            }
         }
     }
 
@@ -76,7 +82,7 @@ public sealed partial class LegCommander
     /// A finished leg the hold waits on (whatever its name) that left the reviewed head ends the hold when its report leaves no note
     /// unmade (pilot #1338): the flight goes ready at once. True when the hold was released.
     /// </summary>
-    private bool EndHoldOfFinishedLeg(string code, string leg)
+    private async Task<bool> EndHoldOfFinishedLegAsync(string code, string leg, CancellationToken cancellationToken)
     {
         if (state.Flights().FirstOrDefault(f => f.Code == code) is not { State: not FlightState.Landed, Holding: { By: { } by } } flight
             || by == "node" || !string.Equals(by, leg, StringComparison.Ordinal) || UnmadeNotesOf(flight, leg) is { Count: > 0 })
@@ -91,32 +97,101 @@ public sealed partial class LegCommander
             var ends = open.Select(p => new ReviewPointAnswer(p.Id, "addressed", $"the {leg} leg's report")).ToArray();
             Record(code, f => f with { ReviewRounds = [.. rounds.Where(r => r.Round != last.Round), last with { Answers = [.. last.Answers ?? [], .. ends] }] });
         }
-        ReleaseNotesMade(flight, $"the {leg} leg ended with every note made");
+        await ReleaseNotesMadeAsync(flight, $"the {leg} leg ended with every note made", cancellationToken);
         return true;
     }
 
     /// <summary>The leg the hold waits on ended without moving the reviewed head: it ends the hold when its report leaves no note unmade (#1338), else the hold is the watchtower's own.</summary>
-    private void SettleHoldOfFinishedLeg(string code, string leg)
+    private async Task SettleHoldOfFinishedLegAsync(string code, string leg, CancellationToken cancellationToken)
     {
-        if (!EndHoldOfFinishedLeg(code, leg))
+        if (!await EndHoldOfFinishedLegAsync(code, leg, cancellationToken))
         {
             HoldForWatchtower(code, leg);
         }
     }
 
+    /// <summary>
+    /// A flight holding for review notes that have no end gets no PR-ready card (pilot #1400): it had nothing for a person to press (the
+    /// merge is refused until each note has an end) and rang the repeat detector twice a round. The release of the hold raises the one card.
+    /// </summary>
+    private bool HoldsForNotes(FlightRow flight) => flight.Holding is not null && UnmadeNotesOf(flight) is { Count: > 0 };
+
+    /// <summary>The PR-ready card's words: one place for the raise at a verdict and the raise at a hold's release.</summary>
+    private void RaiseMergeCard(FlightRow flight, int number, string head, string? url, string review, string reviewed)
+    {
+        // Always "ready to merge": a flight with unmade notes (HoldsForNotes) gets no card, so the raise only comes with every note ended.
+        var legs = state.Legs(flight.Code);
+        state.RaiseCard(MergeCardBin(flight.Repo), PrReady, Verbs.FlightTarget(flight.Code),
+            $"{flight.Code}'s PR #{number} is ready to merge",
+            $"{flight.Title ?? flight.Item.Noun}: {legs.Length} {(legs.Length == 1 ? "leg" : "legs")} done, head {CommitRefs.Short(head)}. {reviewed}: {review}.",
+            [new CardChoice { Label = MergeLabel, Verb = Verbs.Merge, Target = Verbs.FlightTarget(flight.Code), Args = [head] }], link: url,
+            summary: $"{flight.Code} is reviewed and its PR #{number} is ready. Merge lands it; dismissing leaves the PR open.",
+            // The title names the PR only: a new head is a new card for a person to see, whatever was dismissed for the one before (#853).
+            cause: $"ready:{number}:{head}");
+    }
+
     /// <summary>Releases a hold whose notes all have an end: Holding null, a Handled line, and the PR-ready card says ready, not holding.</summary>
-    private void ReleaseNotesMade(FlightRow flight, string detail)
+    private async Task ReleaseNotesMadeAsync(FlightRow flight, string detail, CancellationToken cancellationToken)
     {
         var code = flight.Code;
         var subject = Verbs.FlightTarget(code);
         Record(code, f => f with { Holding = null });
         state.RaiseCard(CardBin.Handled, HoldingClearedKind, subject, $"{code}'s hold was released", detail);
-        // The PR-ready card says it is ready, not holding; the notes card says the flight merges with them.
+        // A card still open from before the hold (an older release raised one) is updated in place to say ready; the notes card says the flight merges with them.
         if (state.Cards(openOnly: true).FirstOrDefault(c => c.Kind == PrReady && c.Subject == subject) is { } ready && flight.PullRequest is { } number)
         {
             state.UpdateCard(ready.Id, $"{code}'s PR #{number} is ready to merge", ready.Detail?.Replace(HeldDetailTail, ""), ready.Choices, ready.Link, PrReady,
                 $"{code} is reviewed and its PR #{number} is ready. Merge lands it; dismissing leaves the PR open.", MergeCardBin(flight.Repo));
+            return;
         }
+        await RaiseReleasedMergeCardAsync(FlightOf(subject), cancellationToken);
+    }
+
+    /// <summary>
+    /// A flight holding for notes was given no PR-ready card (#1400): the release raises the one, at the reviewed head, from the stored row,
+    /// under the guards of the restore sweep (<see cref="PrReadyWanted"/>) and after the follow-up issue is filed (as at a verdict). Nothing
+    /// is raised when the restore sweep's guards say the card is not wanted (a person's dismissal of this head, a leg still open, a merge armed).
+    /// </summary>
+    private async Task RaiseReleasedMergeCardAsync(FlightRow released, CancellationToken cancellationToken)
+    {
+        if (released is not { PullRequest: not null, Review: { State: ReviewState.Passed, ReviewedHead: { Length: > 0 } head } review } || PrReadyWanted(released, head, out _) is false)
+        {
+            return;
+        }
+        var report = released.ReviewRounds is { Length: > 0 } rounds && !string.IsNullOrWhiteSpace(rounds[^1].Findings) ? rounds[^1].Findings : review.Report ?? "passed";
+        try
+        {
+            await RaisePrReadyAsync(released, report, review.Depth is { } depth ? ReviewPlan.Phrase(depth, review.DepthWhy) : "Reviewed", cancellationToken);
+        }
+        catch (Exception e) when (e is not OperationCanceledException)
+        {
+            // The hold is already released: a GitHub error must not fail the finish or the clear; the restore sweep raises the card.
+            await Error.WriteLineAsync($"review: {released.Code}'s ready card after the hold's release was not raised, the next look restores it: {e.Message}");
+        }
+    }
+
+    /// <summary>
+    /// The guards a PR-ready card is raised under, for the restore sweep and the release of a hold alike: the flight flies with its PR open,
+    /// the review passed at <paramref name="head"/>, no merge is armed, every leg is done, and no merge card of this head is open or was closed
+    /// as a person's dismissal or an answered merge (one the node closed for a leg wait or a hold is not). <paramref name="waited"/> is those
+    /// node-closed cards.
+    /// </summary>
+    private bool PrReadyWanted(FlightRow flight, string head, out List<CardRow> waited)
+    {
+        waited = [];
+        var code = flight.Code;
+        var subject = Verbs.FlightTarget(code);
+        if (flight is not { State: FlightState.Flying, PullRequest: not null, Review: { State: ReviewState.Passed, ReviewedHead: { } reviewed }, MergeWhenGreen: null }
+            || !string.Equals(reviewed, head, StringComparison.OrdinalIgnoreCase)
+            || state.Legs(code) is not { Length: > 0 } flown || flown.Any(l => l.State != LegState.Done))
+        {
+            return false;
+        }
+        // Any merge card of this head, open or closed, is a person's dismissal or an answered merge, not undone; but not one closed for a leg wait (PIL1294).
+        waited = [.. state.Cards(openOnly: false).Where(c => c.Subject == subject && c.Kind is PrReady && IsNodeWaitOutcome(c.Outcome))];
+        var kept = waited;
+        return !state.Cards(openOnly: false).Except(kept).Any(c => c.Subject == subject && c.Kind is PrReady or MergeFailed
+            && (c.ClosedAt is null || c.Choices.Any(ch => ch.Verb == Verbs.Merge && ch.Args.FirstOrDefault() is { } h && string.Equals(h, head, StringComparison.OrdinalIgnoreCase))));
     }
 
     /// <summary>A hold whose leg ended with nothing pushed goes back to the watchtower's own reason.</summary>
@@ -198,7 +273,7 @@ public sealed partial class LegCommander
                 await PlanOrRingForNotesAsync(flight, unmade, "no review-notes leg is making them", cancellationToken);
                 return false;
             }
-            ReleaseNotesMade(flight, "every note has an end, so the node released the hold");
+            await ReleaseNotesMadeAsync(flight, "every note has an end, so the node released the hold", cancellationToken);
             return true;
         }
         finally

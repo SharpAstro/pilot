@@ -605,7 +605,7 @@ public sealed partial class LegCommander
         var behind = await ReviewBehindPlaneAsync(flight, cancellationToken);
         if (!behind)
         {
-            SettleHoldOfFinishedLeg(flight.Code, leg.Name);
+            await SettleHoldOfFinishedLegAsync(flight.Code, leg.Name, cancellationToken);
         }
         // On the owner's hold (#771) the fixed branch is neither pushed nor reviewed: the leg is recorded done and nothing follows.
         if (behind && state.Legs(flight.Code).All(l => l.State == LegState.Done) && OnHoldRefusal(flight) is null)

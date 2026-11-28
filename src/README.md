@@ -746,8 +746,9 @@ whole width collapses (`CollapseBelow`), and nothing multiplies by the DPI or me
 tianwen's own checks do.
 
 Holding pattern (#1338): a review that passes with Not blocking notes holds the flight. A finished leg the hold waits on (review-notes
-or another name) that leaves the reviewed head, with a report that leaves no note unmade, ends the hold at once: the PR-ready card
-loses its held tail and the node merges. A leg that moved the head ends the hold through a push and a review runs on the new head.
+or another name) that leaves the reviewed head, with a report that leaves no note unmade, ends the hold at once: the release raises
+the PR-ready card, titled ready to merge, and the node merges from it (#1400: a holding flight with unmade notes has no PR-ready card, not
+at the pass, not between review-notes rounds, not at the cap; the hold's wait on its review-notes leg is a Handled line). A leg that moved the head ends the hold through a push and a review runs on the new head.
 A hold with no leg on the way always has an open card: the cap's card, else a notes-unmade Ring card. The release by a leg's report needs
 that report to answer every note (an `## Earlier points` row per point id, as a review round's answers); a report that answers some leaves
 the hold, and the notes-unmade card asks about the rest.
@@ -755,8 +756,9 @@ the hold, and the notes-unmade card asks about the rest.
 The restore sweep (#1338): a flight with every leg done, a passed review at its PR head and no merge card gets its PR-ready card at every
 look. A restore that fails (gh could not reach api.github.com, any exception) is logged, marks the PR due so the next look reads it
 afresh, and is tried again at the next look. Past `PrChecks.HoldingBound` of failing, one Ring card (`pr-ready-restore-failed`) names the
-error; it closes when the restore works or the flight leaves that state (a queued PR included). For a holding flight the card offers only
-Keep trying, as its merge would be refused.
+error; it closes when the restore works or the flight leaves that state (a queued PR included). A holding flight with unmade notes is left
+to the settle (#1400): the sweep raises it no card and no restored line, and only hands its notes to the next review-notes leg or the cap or
+notes-unmade card. The holding-timeout card still rings past `HoldingBound` and merges the reviewed head.
 
 ## Designs
 

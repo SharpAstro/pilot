@@ -73,7 +73,8 @@ public sealed class HoldingPatternTests : ReviewTestsBase
         var flight = await Reviewed("1", Notes);
 
         F(flight.Code).Holding.ShouldNotBeNull();
-        Open().Single(c => c.Kind == LegCommander.PrReady).Title.ShouldContain("holding");
+        // A holding flight has no PR-ready card (#1400): the node merges from the one the release raises.
+        _state.Cards(openOnly: false).ShouldNotContain(c => c.Kind == LegCommander.PrReady);
         await Checks().LookAsync(Ct);
         _github.Merged.ShouldBeEmpty();
         var refused = await Run(Verbs.Merge, Verbs.FlightTarget(flight.Code), "controller", _github.Pr!.Head[..8]);
@@ -545,7 +546,10 @@ public sealed class HoldingPatternTests : ReviewTestsBase
         NodeAdvances();
         var flight = await Reviewed("41", Notes);
         // The review-notes leg stays planned and never starts, so past the bound the hold reaches the head lookup (as in the never-started test).
-        var ready = Open().Where(c => c.Kind == LegCommander.PrReady).ShouldHaveSingleItem();
+        // A holding flight is raised no card (#1400); this one is a card raised for the hold's head, as the release or a hand would.
+        _state.Cards(openOnly: false).ShouldNotContain(c => c.Kind == LegCommander.PrReady);
+        var ready = _state.RaiseCard(CardBin.ForYou,LegCommander.PrReady, Verbs.FlightTarget(flight.Code), "ready", "ready",
+            [new CardChoice { Label = "Merge", Verb = Verbs.Merge, Target = Verbs.FlightTarget(flight.Code), Args = [F(flight.Code).Review!.ReviewedHead!] }]);
         // A person's own dismissal (not the node's leg-wait close) leaves HoldingHead nothing to merge: the hold stays quiet.
         _state.CloseCard(ready.Id, "read it, leaving it", "me");
         var clock = new ManualTime(F(flight.Code).Holding!.Since);
