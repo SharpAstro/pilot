@@ -9,7 +9,8 @@ namespace Pilot.Node.Tests;
 /// Every push the node makes of a flight's branch records the head pushed and the time taken just before it (#1407), so a merge-queue
 /// removal older than the PR's current head can be told from a drop of that head.
 /// </summary>
-// Slow: a real origin with a pre-receive hook (the GH006 refusal) and a real lease push, which the in-memory git cannot answer.
+// Slow: these run on a real origin and a real lease push. The GH006 refusal is also driven on the in-memory git through
+// RepoModel.PreReceive (QueuedPushTests); here it stays real so the hook script and the retry are git's own.
 [Trait("Category", "Slow")]
 public sealed class PushedHeadTests() : ReviewTestsBase(realGit: true)
 {
@@ -37,6 +38,22 @@ public sealed class PushedHeadTests() : ReviewTestsBase(realGit: true)
         var row = F(flight.Code);
         row.PushedHead.ShouldBe(head);
         row.PushedAt.ShouldNotBeNull().ShouldBeInRange(before, after);
+    }
+
+    [Fact]
+    public async Task APushOfAHeadAlreadyRecordedMovesThePushedTimeForward()
+    {
+        var (flight, _) = await Passed("1");
+        Touch(flight.Worktree, "one\n");
+        await _legs.PushAsync(F(flight.Code), Ct);
+        var first = F(flight.Code);
+
+        _clock.Advance(TimeSpan.FromMinutes(5));
+        await _legs.PushAsync(F(flight.Code), Ct);
+
+        var row = F(flight.Code);
+        row.PushedHead.ShouldBe(first.PushedHead);
+        row.PushedAt.ShouldNotBeNull().ShouldBeGreaterThan(first.PushedAt.ShouldNotBeNull());
     }
 
     [Fact]
