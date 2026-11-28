@@ -188,19 +188,61 @@ public sealed class StraySessionTests
         _state.Cards().Where(c => c.Kind == LegWatch.DuplicateWorkerEnded).ShouldHaveSingleItem();
     }
 
+    private static LegRow DoneLeg() => new() { Flight = "TIA1", Name = "parser", Order = 1, Goal = "g", DoneWhen = "d", State = LegState.Done, WorkerJob = "work1111", StartedAt = Start, FinishedAt = Start };
+
     [Fact]
-    public async Task ADoneLegsWorkerStillRingsWithStopIt()
+    public async Task ALiveWorkerOfADoneLegPastTheGraceIsEndedByTheNodeWithAHandledCardAndNoRing()
     {
-        _state.PutLeg(new LegRow { Flight = "TIA1", Name = "parser", Order = 1, Goal = "g", DoneWhen = "d", State = LegState.Done, WorkerJob = "work1111", StartedAt = Start, FinishedAt = Start });
+        _state.PutLeg(DoneLeg());
+        _state.PutSession(Row("work1111", "de1-tia1-parser", SessionRole.Worker, "TIA1", "parser"));
+        var ended = new List<CommandRequest>();
+        var watch = new LegWatch(_state, (c, _) => { ended.Add(c); return Task.FromResult(_state.Complete(c, null)); }, _time) { Ledger = _ledger };
+        _time.Advance(TimeSpan.FromHours(1));
+
+        await watch.LookAsync(Ct);
+        await watch.LookAsync(Ct);
+
+        var end = ended.ShouldHaveSingleItem();
+        end.Verb.ShouldBe(Verbs.EndSession);
+        end.Target.ShouldBe("session/work1111");
+        end.Args!.Single().ShouldStartWith(SessionEndReasons.LegDone);
+        _state.Cards().Where(c => c.Kind == LegWatch.StraySession || c.Bin == CardBin.Ring).ShouldBeEmpty();
+        _state.Cards().Where(c => c.Kind == LegWatch.DoneWorkerEnded).ShouldHaveSingleItem().Bin.ShouldBe(CardBin.Handled);
+    }
+
+    [Fact]
+    public async Task AWorkerOfADoneLegInsideTheStrayGraceIsLeftAlone()
+    {
+        _state.PutLeg(DoneLeg() with { FinishedAt = _time.GetUtcNow() });
         _state.PutSession(Row("work1111", "de1-tia1-parser", SessionRole.Worker, "TIA1", "parser"));
         var ended = 0;
         var watch = new LegWatch(_state, (c, _) => { ended++; return Task.FromResult(_state.Complete(c, null)); }, _time) { Ledger = _ledger };
-        _time.Advance(TimeSpan.FromHours(1));
+        _time.Advance(TimeSpan.FromMinutes(1));
 
         await watch.LookAsync(Ct);
 
         ended.ShouldBe(0);
-        _state.Cards(openOnly: true).Count(c => c.Kind == LegWatch.StraySession).ShouldBe(1);
+        _state.Cards().ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task AStopOfADoneLegsWorkerThatDoesNotTakeRingsStopUnconfirmedAndIsNotRetriedBeforeTheStopGrace()
+    {
+        _state.PutLeg(DoneLeg());
+        _state.PutSession(Row("work1111", "de1-tia1-parser", SessionRole.Worker, "TIA1", "parser"));
+        var tries = 0;
+        var watch = new LegWatch(_state, (c, _) => { tries++; return Task.FromResult(_state.Complete(c, "claude stop failed")); }, _time) { Ledger = _ledger };
+        _time.Advance(TimeSpan.FromHours(1));
+
+        await watch.LookAsync(Ct);
+        await watch.LookAsync(Ct);
+        tries.ShouldBe(1);
+        _state.Cards(openOnly: true).Where(c => c.Kind == SessionMessenger.StopUnconfirmedKind).ShouldHaveSingleItem().Subject.ShouldBe("session/work1111");
+        _state.Cards().Where(c => c.Kind is LegWatch.DoneWorkerEnded or LegWatch.StraySession).ShouldBeEmpty();
+
+        _time.Advance(TimeSpan.FromMinutes(6));
+        await watch.LookAsync(Ct);
+        tries.ShouldBe(2);
     }
 
     private LegWatch NewWatch() => new(_state, (c, _) => Task.FromResult(_state.Complete(c, null)), _time) { Ledger = _ledger };
@@ -259,7 +301,9 @@ public sealed class StraySessionTests
 
     private void FinishLegAndPutWorker()
     {
-        _state.PutLeg(_state.Legs("TIA1").First(l => l.Name == "parser") with { State = LegState.Done, FinishedAt = Start });
+        // A redone leg whose current worker is not live: its old session is the leg's only one, so a person chooses (Stop it).
+        // A done leg's worker is ended by the node instead (ALiveWorkerOfADoneLeg...).
+        _state.PutLeg(_state.Legs("TIA1").First(l => l.Name == "parser") with { WorkerJob = "gone0000" });
         _state.PutSession(Row("work1111", "de1-tia1-parser", SessionRole.Worker, "TIA1", "parser"));
         _time.Advance(TimeSpan.FromHours(1));
     }
@@ -267,7 +311,7 @@ public sealed class StraySessionTests
     private static string StrayOutcome(NodeState state) => state.Cards().Single(c => c.Kind == LegWatch.StraySession).Outcome ?? "";
 
     [Fact]
-    public async Task ADoneLegsWorkerRingsAndTheNextLookAfterItEndsClosesTheCard()
+    public async Task ARedoneLegsOnlyWorkerRingsAndTheNextLookAfterItEndsClosesTheCard()
     {
         FinishLegAndPutWorker();
         var watch = NewWatch();
@@ -320,9 +364,9 @@ public sealed class StraySessionTests
         var cards = _state.Cards(openOnly: true).Where(c => c.Kind == LegWatch.StraySession).ToList();
         var worker = cards.Single(c => c.Subject == "session/work1111").Summary.ShouldNotBeNull();
         var stranger = cards.Single(c => c.Subject == "session/zzz99999").Summary.ShouldNotBeNull();
-        worker.ShouldContain("is done");
+        worker.ShouldContain("was redone");
         worker.ShouldNotBe(stranger);
-        stranger.ShouldNotContain("is done");
+        stranger.ShouldNotContain("was redone");
     }
 
     [Fact]

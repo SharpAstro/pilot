@@ -199,10 +199,13 @@ public sealed class LegSelfFinishTests : LegCommanderTestsBase
         var head = Git(flight.Worktree, "rev-parse", "HEAD");
         await FailParserAsync();
 
+        _workers.Stopped.Clear();
         var result = await Verify("du1-watchtower", "pushed work checks out");
 
         result.Ok.ShouldBeTrue(result.Error);
         L("parser").State.ShouldBe(LegState.Done);
+        // A leg finished as verified has its worker stopped (#1392).
+        _workers.Stopped.ShouldContain("job00001");
         _state.Cards(openOnly: true).ShouldNotContain(c => c.Kind == "leg-failed");
         var handled = _state.Cards().Single(c => c.Kind == LegCommander.SelfFinishedKind);
         handled.Bin.ShouldBe(CardBin.Handled);
