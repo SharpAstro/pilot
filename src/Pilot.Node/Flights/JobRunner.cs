@@ -612,6 +612,9 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
     /// <summary>How many jobs have retell baselines kept: what a test reads to see they are pruned.</summary>
     internal int TellBaselines => _contextAtTell.Count + _busyTurnEnd.Count;
 
+    /// <summary>Sets a job's context baseline as a tell does: what a test uses to see a settled row's baselines are dropped once, not every sweep.</summary>
+    internal void KeepTellBaseline(string id, long tokens) => _contextAtTell[id] = tokens;
+
     // A job of a flight that has landed gets no For-you or Ring card: the landing closed its cards and nothing is left to act on (pilot #1270).
     private bool OfLandedFlight(JobRow row) =>
         row.Flight is { } code && state.Flights().Any(f => f.Code == code && f.State == FlightState.Landed);
@@ -3400,6 +3403,7 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
         private readonly Dictionary<string, SessionRow> _byAnyId = new(StringComparer.Ordinal);
         private readonly Dictionary<(string, SessionRole), DateTimeOffset> _liveStart = [];
         private Dictionary<(string?, string?), SessionRow[]>? _byLeg;
+        private Dictionary<(string, SessionRole), SessionRow[]>? _byNameRole;
 
         public SessionIndex(SessionRow[] all)
         {
@@ -3441,11 +3445,17 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
         /// <summary>Whether a live background row of the row's name and role started after it: a superset of the rows ReplacedBy can pick.</summary>
         public bool HasLiveReplacement(SessionRow row) => _liveStart.TryGetValue((row.Name, row.Role), out var at) && at > row.StartedAt;
 
+        /// <summary>
+        /// The rows ReplacedBy picks a non-watchtower replacement among: for a worker the rows of its flight and leg, as before; for any other
+        /// owner the rows of its name and role, the only ones ReplacedByNewest can take (it is asked with no watchtower here), in the order of the
+        /// whole list, so its newest-first pick with ties to the first finds the same row. Not every session per told row.
+        /// </summary>
         public SessionRow[] CandidatesOf(SessionRow owner)
         {
             if (owner.Role != SessionRole.Worker)
             {
-                return _all;
+                _byNameRole ??= _all.GroupBy(s => (s.Name, s.Role)).ToDictionary(g => g.Key, g => g.ToArray());
+                return _byNameRole.GetValueOrDefault((owner.Name, owner.Role)) ?? [];
             }
             _byLeg ??= _all.GroupBy(s => (s.Flight, s.Leg)).ToDictionary(g => g.Key, g => g.ToArray());
             return _byLeg.GetValueOrDefault((owner.Flight, owner.Leg)) ?? [];

@@ -814,28 +814,33 @@ public static partial class NodeApp
     private static void AddSessions(WebApplicationBuilder builder, NodeOptions options, LogWriter logWriter)
     {
         var relayFolder = RelayFolder(options);
-        builder.Services.AddSingleton(services => new SessionTracker(
-            services.GetRequiredService<NodeState>(),
-            services.GetRequiredService<IClaudeAgents>(),
-            services.GetRequiredService<SessionTrackerOptions>(),
-            () => services.GetRequiredService<EventHub>().ClientCount > 0,
-            services.GetRequiredService<TimeProvider>(),
-            services.GetRequiredService<ILogger<SessionTracker>>())
+        builder.Services.AddSingleton(services =>
         {
-            Hooks = services.GetRequiredService<HookBook>(),
-            Reports = services.GetRequiredService<ReportBook>(),
-            Attachments = services.GetRequiredService<Attachments>(),
-            Starts = services.GetRequiredService<StartOptionsBook>(),
-            Launched = services.GetRequiredService<SessionLedger>(),
-            Ledger = services.GetRequiredService<SpendLedger>(),
-            Error = logWriter,
-            IsWatchtowerId = id => services.GetRequiredService<Watchtower>().KnowsId(id),
-            IsStreamSession = id => services.GetRequiredService<Watchtower>().OwnsSession(id),
-            JobRecord = new ClaudeJobState(Path.Combine(services.GetRequiredService<SessionTrackerOptions>().Profile.Root, "jobs")).Read,
-            JobGone = new ClaudeJobState(Path.Combine(services.GetRequiredService<SessionTrackerOptions>().Profile.Root, "jobs")).IsGone,
-            // A session that ends on its own takes its queued jobs off the queue (#327).
-            DropJobs = (owners, why) => services.GetRequiredService<JobRunner>().DropQueuedOf(owners, why),
-            IsBeingReplaced = id => services.GetRequiredService<LegCommander>().IsBeingReplaced(id),
+            // One reader of Claude Code's job folder, for both its record and whether the folder is gone.
+            var jobState = new ClaudeJobState(Path.Combine(services.GetRequiredService<SessionTrackerOptions>().Profile.Root, "jobs"));
+            return new SessionTracker(
+                services.GetRequiredService<NodeState>(),
+                services.GetRequiredService<IClaudeAgents>(),
+                services.GetRequiredService<SessionTrackerOptions>(),
+                () => services.GetRequiredService<EventHub>().ClientCount > 0,
+                services.GetRequiredService<TimeProvider>(),
+                services.GetRequiredService<ILogger<SessionTracker>>())
+            {
+                Hooks = services.GetRequiredService<HookBook>(),
+                Reports = services.GetRequiredService<ReportBook>(),
+                Attachments = services.GetRequiredService<Attachments>(),
+                Starts = services.GetRequiredService<StartOptionsBook>(),
+                Launched = services.GetRequiredService<SessionLedger>(),
+                Ledger = services.GetRequiredService<SpendLedger>(),
+                Error = logWriter,
+                IsWatchtowerId = id => services.GetRequiredService<Watchtower>().KnowsId(id),
+                IsStreamSession = id => services.GetRequiredService<Watchtower>().OwnsSession(id),
+                JobRecord = jobState.Read,
+                JobGone = jobState.IsGone,
+                // A session that ends on its own takes its queued jobs off the queue (#327).
+                DropJobs = (owners, why) => services.GetRequiredService<JobRunner>().DropQueuedOf(owners, why),
+                IsBeingReplaced = id => services.GetRequiredService<LegCommander>().IsBeingReplaced(id),
+            });
         });
         builder.Services.AddHostedService(services => services.GetRequiredService<SessionTracker>());
         // The relay's throwaway session runs in a folder of the node's own, as v1's runs in its state folder.

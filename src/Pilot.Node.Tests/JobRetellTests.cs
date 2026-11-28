@@ -920,6 +920,59 @@ public sealed class JobRetellTests : IDisposable
     [Theory]
     [InlineData("owner-ended")]
     [InlineData("gone")]
+    public async Task ARowToldOwnerEndedOrGoneDropsItsBaselinesOnceAndNotOnEverySweep(string way)
+    {
+        await TellNowAsync();
+        _clock.Advance(After);
+        (await Sweep()).ShouldBeTrue();
+        _jobs.TellBaselines.ShouldBeGreaterThan(0);
+
+        _state.PutJob(_state.Jobs().Single() with { ToldWay = way });
+        (await Sweep()).ShouldBeFalse();
+        _jobs.TellBaselines.ShouldBe(0, "the first sweep that finds the row settled forgets its baselines");
+
+        // Once only: a baseline put back after that is not dropped again, since the sweep does not forget the row on every tick.
+        _jobs.KeepTellBaseline("j1", 1);
+        (await Sweep()).ShouldBeFalse();
+        _jobs.TellBaselines.ShouldBe(1);
+        _said.ShouldHaveSingleItem().ShouldStartWith("Repeat:");
+    }
+
+    [Fact]
+    public async Task ANonWorkerOwnersLiveReplacementOfTheSameNameAndRoleIsStillRetoldTo()
+    {
+        _role = SessionRole.Planner;
+        Session(SessionState.Idle, _clock.GetUtcNow().AddHours(-1));
+        // A planner's failure is retold (#1147); the replacement is looked for among the rows of its name and role, not every session.
+        await TellNowAsync();
+        _state.PutJob(_state.Jobs().Single() with { State = JobState.Failed, Error = "boom" });
+        _endedForGood = true;
+        NewestOfTheName("w0000002");
+        _clock.Advance(After);
+
+        (await Sweep()).ShouldBeTrue();
+        _said.ShouldHaveSingleItem().ShouldStartWith("Repeat:");
+    }
+
+    [Fact]
+    public async Task ASameNamedLiveRowOfAnotherRoleIsNotTakenAsTheReplacement()
+    {
+        _role = SessionRole.Planner;
+        Session(SessionState.Idle, _clock.GetUtcNow().AddHours(-1));
+        await TellNowAsync();
+        _state.PutJob(_state.Jobs().Single() with { State = JobState.Failed, Error = "boom" });
+        _endedForGood = true;
+        NewestOfTheName("w0000002");
+        _state.PutSession(_state.Sessions().Single(s => s.Id == "w0000002") with { Role = SessionRole.Designer });
+        _clock.Advance(After);
+
+        (await Sweep()).ShouldBeFalse();
+        _said.ShouldBeEmpty();
+    }
+
+    [Theory]
+    [InlineData("owner-ended")]
+    [InlineData("gone")]
     public async Task RowsToldOwnerEndedOrGoneAreNotVisited(string way)
     {
         _state.PutJob(Seed("j9", _clock.GetUtcNow().AddMinutes(-10)) with { ToldWay = way });
