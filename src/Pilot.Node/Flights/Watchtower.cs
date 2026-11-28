@@ -363,15 +363,26 @@ public sealed partial class Watchtower(
     /// Whether the node chose this end (#1397): a replacement (<see cref="ReplacedByPrefix"/>) or a stop with the node on an upgrade
     /// (<see cref="SessionEndReasons.NodeStopped"/>). Such an end says nothing about how long a watchtower lives on its own.
     /// </summary>
-    public static bool IsNodeMadeEnd(string? endedBecause) =>
-        endedBecause is not null && (endedBecause.StartsWith(ReplacedByPrefix, StringComparison.Ordinal)
-            || endedBecause.StartsWith(SessionEndReasons.NodeStopped, StringComparison.Ordinal));
+    public static bool IsNodeMadeEnd(string? endedBecause)
+    {
+        if (endedBecause is null)
+        {
+            return false;
+        }
+        // SessionMessenger stores an end the watchtower asked for as "<by>: <why>", so the replacement wording sits behind that prefix.
+        var asked = SessionEndReasons.Watchtower + ": ";
+        var why = endedBecause.StartsWith(asked, StringComparison.Ordinal) ? endedBecause[asked.Length..] : endedBecause;
+        return why.StartsWith(ReplacedByPrefix, StringComparison.Ordinal)
+            || endedBecause.StartsWith(SessionEndReasons.NodeStopped, StringComparison.Ordinal);
+    }
 
     /// <summary>The context the row's current watchtower generation started at (#1397), read through <see cref="Generations"/> so the first reading is stamped and kept; null when none is read yet.</summary>
     public long? StartTokensOf(SessionRow row)
     {
         var all = Generations();
-        var latest = all.ToList().FindLastIndex(g => g.Job == row.Id || g.IsCompaction && g.Job.StartsWith(row.Id + CompactionMark, StringComparison.Ordinal));
+        // Always the fresh start, never a compaction's own: a compaction generation is stamped only after a later reply, so judged on it the
+        // look right after a compaction had no start, and a compaction that hardly shrank would lift its own bar (#1397).
+        var latest = all.ToList().FindLastIndex(g => g.Job == row.Id && !g.IsCompaction);
         return latest >= 0 ? all[latest].StartTokens : null;
     }
 
@@ -450,11 +461,10 @@ public sealed partial class Watchtower(
             }
             foreach (var row in state.Sessions().Where(IsWatchtower))
             {
-                // The row's latest generation (its own, or the last compaction of a stream watchtower) takes the first reading that has one as
-                // its start. A compaction's generation is made while the row still reads the size before it, so it waits for a reply after it.
-                var latest = _generations.FindLastIndex(g => g.Job == row.Id || g.IsCompaction && g.Job.StartsWith(row.Id + CompactionMark, StringComparison.Ordinal));
-                if (latest >= 0 && _generations[latest] is { StartTokens: null } g
-                    && row.ContextTokens > 0 && (!g.IsCompaction || row.LastResponseAt > g.StartedAt))
+                // The row's own (fresh) generation takes the first reading that has one as its start. A compaction's generation is never
+                // stamped: judged on it, the look right after a compaction had no start, and one that hardly shrank the context would lift its own bar.
+                var latest = _generations.FindLastIndex(g => g.Job == row.Id);
+                if (latest >= 0 && _generations[latest] is { StartTokens: null } g && row.ContextTokens > 0)
                 {
                     _generations[latest] = g with { StartTokens = row.ContextTokens };
                     changed = true;

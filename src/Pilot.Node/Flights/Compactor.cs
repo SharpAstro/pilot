@@ -172,6 +172,8 @@ public sealed class Compactor(NodeState state, Watchtower watchtower, Func<Comma
     public async Task LookAsync(CancellationToken cancellationToken)
     {
         var now = time.GetUtcNow();
+        // A row id gone from the node's sessions is forgotten, as the other guards are.
+        _readUnder.IntersectWith(state.Sessions().Select(r => r.Id));
         foreach (var (row, focus) in Kept().ToList())
         {
             var last = row.LastResponseAt ?? row.StartedAt;

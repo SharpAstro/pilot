@@ -266,7 +266,7 @@ public sealed class WatchtowerEndsByDesignTests : IDisposable
     }
 
     [Theory]
-    [InlineData("replaced by a fresh watchtower: still at 65% of its window")]
+    [InlineData("stopped by the watchtower: replaced by a fresh watchtower: still at 65% of its window")]
     [InlineData("stopped with the node")]
     public async Task EndsTheNodeMadeCountTowardNoLifetimeAndRingNothing(string by)
     {
@@ -281,7 +281,7 @@ public sealed class WatchtowerEndsByDesignTests : IDisposable
     [Fact]
     public async Task OneReplacedAndOneStoppedWithTheNodeGiveNoLifetime()
     {
-        await EndedFor("replaced by a fresh watchtower: still at 65% of its window", "stopped with the node");
+        await EndedFor(SessionEndReasons.Watchtower + ": replaced by a fresh watchtower: still at 65% of its window", "stopped with the node");
 
         var health = _tower.Health().ShouldNotBeNull();
         health.Churning.ShouldBeFalse();
@@ -298,6 +298,7 @@ public sealed class WatchtowerEndsByDesignTests : IDisposable
         var health = _tower.Health().ShouldNotBeNull();
         health.Churning.ShouldBeTrue();
         health.TypicalLifetimeAfterReply.ShouldBe(TimeSpan.FromSeconds(60));
+        Open().ShouldContain(c => c.Kind == CardKinds.WatchtowerChurning);
     }
 
     [Fact]
