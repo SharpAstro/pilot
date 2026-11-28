@@ -3255,7 +3255,20 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
         }
         if (!threw)
         {
-            LogTell(job, target, targetRow, ok ? (replacedTo is null ? way ?? "relayed" : $"{way ?? "relayed"} (replaced-to {replacedTo})") : SessionMessenger.IsFolderGone(error) ? $"folder gone: {LegCommander.OneLine(error ?? "")}" : $"refused: {LegCommander.OneLine(error ?? "no reason given")}");
+            string outcome;
+            if (ok)
+            {
+                outcome = replacedTo is null ? way ?? "relayed" : $"{way ?? "relayed"} (replaced-to {replacedTo})";
+            }
+            else if (SessionMessenger.IsFolderGone(error))
+            {
+                outcome = $"folder gone: {LegCommander.OneLine(error ?? "")}";
+            }
+            else
+            {
+                outcome = $"refused: {LegCommander.OneLine(error ?? "no reason given")}";
+            }
+            LogTell(job, target, targetRow, outcome);
         }
         if (ok)
         {
