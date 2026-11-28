@@ -761,7 +761,7 @@ public sealed class PrChecks(NodeState state, IGitHub gitHub, TimeProvider time,
                     tries.Add(time.GetUtcNow());
                     if (tries.Count < PassingTriesBeforeRing)
                     {
-                        _mergeTries[armedKey] = new MergeTries(tries, time.GetUtcNow() + PassingBackoff[tries.Count - 1]);
+                        _mergeTries[armedKey] = new MergeTries(tries, NextTry(refusal, result, tries.Count));
                         continue;
                     }
                     _mergeTries.Remove(armedKey);
@@ -1501,12 +1501,14 @@ public sealed class PrChecks(NodeState state, IGitHub gitHub, TimeProvider time,
             asked.Add(time.GetUtcNow());
         }
         var retry = refusal is { Class: MergeRefusalClass.Passing } && asked.Count < PassingTriesBeforeRing;
+        // Worked out once: the words of the decision and the stored time of the next try cannot differ by the clock between two calls.
+        var nextTry = retry ? NextTry(refusal!, result, asked.Count) : default;
         // One row per attempt, its choice saying what happened; a merge already running is no new attempt.
         if (!result.Ok || result.Way != MergeWays.InProgress)
         {
             var (choice, reason) = !result.Ok
                 ? ("Wait", $"{rule}; the merge was refused: {LegCommander.OneLine(result.Error ?? "no reason given")}"
-                    + (retry ? $"; it passes by itself, so the node asks again in {PassingBackoff[asked.Count - 1].TotalMinutes:0} min (try {asked.Count} of {PassingTriesBeforeRing})" : ""))
+                    + (retry ? $"; {RetryWords(refusal!, result, asked.Count, nextTry)} (try {asked.Count} of {PassingTriesBeforeRing})" : ""))
                 : result.Way switch
                 {
                     MergeWays.Armed => ("Arm the merge", $"{rule}: armed to merge when they pass"),
@@ -1520,7 +1522,7 @@ public sealed class PrChecks(NodeState state, IGitHub gitHub, TimeProvider time,
         if (retry)
         {
             // Passes by itself: the node asks again on its backoff, no card until the third try fails.
-            _mergeTries[key] = new MergeTries(asked, time.GetUtcNow() + PassingBackoff[asked.Count - 1]);
+            _mergeTries[key] = new MergeTries(asked, nextTry);
             _autoMerged.Remove(key);
             return;
         }
@@ -1551,6 +1553,33 @@ public sealed class PrChecks(NodeState state, IGitHub gitHub, TimeProvider time,
         }
         _mergeTries[key] = new MergeTries(asked, time.GetUtcNow());
         RaiseMergeRefused(flight, merge, result, refusal!, asked, key, "by the node");
+    }
+
+    /// <summary>
+    /// When a passing refusal is asked again: <see cref="PassingBackoff"/> after the <paramref name="tries"/>th failure, except GitHub's rate
+    /// limit, which is asked again once it resets (<see cref="GhBudget.UnknownReset"/> from now when GitHub gave no reset, or one
+    /// already past, which the limit evidently outlived).
+    /// </summary>
+    private DateTimeOffset NextTry(MergeRefusal refusal, CommandResult result, int tries)
+    {
+        var now = time.GetUtcNow();
+        if (refusal.Action != MergeAction.WaitForRateLimit)
+        {
+            return now + PassingBackoff[tries - 1];
+        }
+        return result.RateLimitResetAt is { } reset && reset > now ? reset : now + GhBudget.UnknownReset;
+    }
+
+    /// <summary>What a decision says of the next try of a passing refusal: when the node asks again, and for a rate limit, that it is GitHub's and when it resets.</summary>
+    private string RetryWords(MergeRefusal refusal, CommandResult result, int tries, DateTimeOffset next)
+    {
+        if (refusal.Action != MergeAction.WaitForRateLimit)
+        {
+            return $"it passes by itself, so the node asks again in {PassingBackoff[tries - 1].TotalMinutes:0} min";
+        }
+        return result.RateLimitResetAt is { } reset && reset > time.GetUtcNow()
+            ? $"GitHub's rate limit stopped it and resets at {reset.ToLocalTime():HH:mm}, so the node asks again then"
+            : $"GitHub's rate limit stopped it and gave no reset, so the node asks again at {next.ToLocalTime():HH:mm}";
     }
 
     /// <summary>
@@ -1594,6 +1623,7 @@ public sealed class PrChecks(NodeState state, IGitHub gitHub, TimeProvider time,
             MergeAction.MarkReadyOnGitHub => "The PR is a draft: mark it ready for review on GitHub; the node asks again once you say you did.",
             MergeAction.ResolveConflict => "The PR conflicts with its base and the node's update of the branch did not clear it, so this is no failure of GitHub's: resolve the conflict in the plane (merge the base in), push, and review it again. Merging again does not help while the conflict stands.",
             MergeAction.PrClosed => "Nothing to merge: the PR is closed. Open a new PR from the plane if the work is still wanted.",
+            MergeAction.WaitForRateLimit => "GitHub's rate limit stopped every try, each asked again after its reset. Look at when the limit resets (GitHub's words are below) and merge again after it.",
             _ when passing => "Look at GitHub, and merge again once it answers.",
             _ => "Read what GitHub or the node said below; nothing the node can press fixes it.",
         };

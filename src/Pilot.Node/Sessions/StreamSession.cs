@@ -209,7 +209,13 @@ public sealed class StreamSession : IAsyncDisposable
     private string _sessionId;
     private string? _model;
     private bool _working;
-    private string _partialText = "";
+    // The current turn's words as they stream: appended to, and made a string only when read (PartialTextNow), which is kept until
+    // more come. `+=` copied the whole reply at every delta, so a long reply's last hundreds of deltas each made a string of tens of
+    // KB, on the large object heap past 42,500 characters (pilot #1443).
+    private System.Text.StringBuilder _partial = new();
+    private string? _partialText = "";
+
+    private string PartialTextNow => _partialText ??= _partial.ToString();
     private string? _doing;
 
     // The shell calls asked for and not yet answered, by tool_use id: a refused one is told by its result, which names only the id.
@@ -276,7 +282,7 @@ public sealed class StreamSession : IAsyncDisposable
     public bool Working => Read(() => _working);
 
     /// <summary>The words of the current turn so far, or of the last one once it has ended; empty before the first.</summary>
-    public string PartialText => Read(() => _partialText);
+    public string PartialText => Read(() => PartialTextNow);
 
     /// <summary>What it is doing in plain words ("running pilot status"); null when it is not in a tool.</summary>
     public string? Doing => Read(() => _doing);
@@ -544,6 +550,8 @@ public sealed class StreamSession : IAsyncDisposable
     private void BeginTurn(DateTimeOffset now, TimeSpan waited, List<StreamSessionChange> changes)
     {
         _working = true;
+        // A long reply's room is let go with it.
+        _partial = _partial.Capacity > 256 * 1024 ? new System.Text.StringBuilder() : _partial.Clear();
         _partialText = "";
         _doing = null;
         _turnStarted = now;
@@ -673,7 +681,8 @@ public sealed class StreamSession : IAsyncDisposable
                                 BeginTurn(now, TimeSpan.Zero, changes);
                             }
                             _firstWord ??= now - _turnStarted;
-                            _partialText += words;
+                            _partial.Append(words);
+                            _partialText = null;
                             if (_doing is not null)
                             {
                                 _doing = null;
@@ -821,7 +830,7 @@ public sealed class StreamSession : IAsyncDisposable
             ? TimeSpan.FromMilliseconds(d)
             : null;
         var isError = result.TryGetProperty("is_error", out var err) && err.ValueKind == JsonValueKind.True;
-        var timing = new TurnTiming(_turnStarted, _firstWord, now - _turnStarted, _turnWaited, reported, isError, BrainClient.IsAnswer(_partialText) && BrainClient.ForPerson(_partialText).Length == 0);
+        var timing = new TurnTiming(_turnStarted, _firstWord, now - _turnStarted, _turnWaited, reported, isError, BrainClient.IsAnswer(PartialTextNow) && BrainClient.ForPerson(PartialTextNow).Length == 0);
         _timings.Enqueue(timing);
         while (_timings.Count > TimingsKept)
         {

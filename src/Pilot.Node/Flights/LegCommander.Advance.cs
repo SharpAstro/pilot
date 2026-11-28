@@ -20,6 +20,9 @@ public sealed partial class LegCommander
     // The step each flight's advance was refused once: one miss rings nothing and the next sweep tries again; a second miss of the same step rings.
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> _missedOnce = new(StringComparer.Ordinal);
 
+    // When each flight's next step may be asked again after GitHub's rate limit refused it (the limit's reset, or UnknownReset past then when unknown).
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, DateTimeOffset> _stepHeldUntil = new(StringComparer.Ordinal);
+
     /// <summary>True when this refusal of <paramref name="key"/> is the flight's first (it is noted and nothing rings); false on the second in a row, which rings.</summary>
     private bool FirstMiss(string code, string key)
     {
@@ -183,6 +186,15 @@ public sealed partial class LegCommander
         {
             return;
         }
+        // A step GitHub's rate limit refused waits for the reset by itself: no card, asked again by a later sweep (PIL1390).
+        if (_stepHeldUntil.TryGetValue(current.Code, out var heldUntil))
+        {
+            if (time.GetUtcNow() < heldUntil)
+            {
+                return;
+            }
+            _stepHeldUntil.TryRemove(current.Code, out _);
+        }
         // An open that conflicted was put to a worker (ResolveConflictAsync) and is not tried again at the same plane head and base head: it
         // would only conflict again. Once the worker has merged the base and pushed, or the base moves, the sweep opens the PR itself.
         if (step.Verb == Verbs.OpenPr && _conflictOpenTried.TryGetValue(current.Code, out var tried) && tried == await ConflictHeadsAsync(current, cancellationToken))
@@ -200,6 +212,7 @@ public sealed partial class LegCommander
         {
             _rung.TryRemove(current.Code, out _);
             _missedOnce.TryRemove(current.Code, out _);
+            _stepHeldUntil.TryRemove(current.Code, out _);
             // It went on here, so a move that failed once is no longer what it waits on (while the node is in maintenance it is held, and says so).
             if (!Models.Maintenance && current.MoveFailure is not null)
             {
@@ -221,6 +234,12 @@ public sealed partial class LegCommander
         // once the plane or the base has moved.
         if (step.Verb == Verbs.OpenPr && result.Error is { } error && IsConflict(error))
         {
+            return;
+        }
+        if (result.Way == RefusalWays.RateLimited)
+        {
+            var at = time.GetUtcNow();
+            _stepHeldUntil[current.Code] = result.RateLimitResetAt is { } reset && reset > at ? reset : at + GhBudget.UnknownReset;
             return;
         }
         if (FirstMiss(current.Code, $"{step.Verb} {step.Target}"))

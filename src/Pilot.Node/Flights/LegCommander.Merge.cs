@@ -197,7 +197,8 @@ public sealed partial class LegCommander
             case LandKind.RetryLater:
                 // GitHub did not answer: the merge waits on the flight and the node asks again at its next look, with no card.
                 return await ArmAsync(flight, pr with { Head = outcome.Head }, method, null, $"GitHub did not answer the merge ({OneLine(outcome.Said ?? "no answer")}); the node asks again", command.Who == "node", cancellationToken);
-            case LandKind.Refused when laid && outcome.Answer is not (MergeAnswerKind.Behind or MergeAnswerKind.Conflicts or MergeAnswerKind.HeadMoved):
+            // A rate limit is no queue refusal of the laid head: it falls to the default, so the merge waits out the reset with no card (PIL1390).
+            case LandKind.Refused when laid && outcome.Answer is not (MergeAnswerKind.Behind or MergeAnswerKind.Conflicts or MergeAnswerKind.HeadMoved or MergeAnswerKind.RateLimited):
                 // Just laid: its checks have not run on the new head, so the queue refuses it. A Merge card at the laid head stays and the
                 // merge waits for the checks there, as for any head whose checks run.
                 RaiseReadyAtLaid(flight, outcome.Head, outcome.Said ?? "");
@@ -756,6 +757,11 @@ public sealed partial class LegCommander
                 {
                     await github.DisarmAutoMergeAsync(flight.RepoPath, number, cancellationToken);
                 }
+                catch (RateLimitedException)
+                {
+                    // A rate limit is held until its reset by the caller, not worded as a refusal (PIL1390).
+                    throw;
+                }
                 catch (FlightException ex)
                 {
                     throw new FlightException($"{verb} is refused: #{number} may be armed with GitHub's auto-merge, which would merge it without the new leg, and it could not be turned off ({ex.Message}): switch it off on the PR page, then try again");
@@ -770,6 +776,11 @@ public sealed partial class LegCommander
                 try
                 {
                     await github.DequeueAsync(flight.RepoPath, number, cancellationToken);
+                }
+                catch (RateLimitedException)
+                {
+                    // A rate limit is held until its reset by the caller, not worded as a refusal (PIL1390).
+                    throw;
                 }
                 catch (FlightException ex)
                 {

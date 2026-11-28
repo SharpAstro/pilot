@@ -82,15 +82,15 @@ public sealed partial class NodeState
     /// <param name="error">Why it was not done, or null when it was.</param>
     /// <param name="way">Which way it went (<see cref="CommandResult.Way"/>).</param>
     /// <param name="sessionId">The target's new session id (<see cref="CommandResult.SessionId"/>).</param>
-    public CommandResult Complete(CommandRequest command, string? error, string? way = null, string? sessionId = null, string? made = null, SettingRow? setting = null, string? waiting = null, IdeaTidyProposal? tidy = null, MilestoneProposal? milestones = null, ReadinessResult? readiness = null, MilestoneSuggestions? suggestions = null, IdeaRow? idea = null, BreakUpProposal? breakUp = null, MergeRefusal? refusal = null, MaintenanceReport? maintenance = null)
+    public CommandResult Complete(CommandRequest command, string? error, string? way = null, string? sessionId = null, string? made = null, SettingRow? setting = null, string? waiting = null, IdeaTidyProposal? tidy = null, MilestoneProposal? milestones = null, ReadinessResult? readiness = null, MilestoneSuggestions? suggestions = null, IdeaRow? idea = null, BreakUpProposal? breakUp = null, MergeRefusal? refusal = null, MaintenanceReport? maintenance = null, DateTimeOffset? rateLimitResetAt = null)
     {
         lock (_gate)
         {
-            return CompleteLocked(command, error, way, sessionId, made, setting, waiting, tidy, milestones, readiness, suggestions, idea, breakUp, refusal, maintenance);
+            return CompleteLocked(command, error, way, sessionId, made, setting, waiting, tidy, milestones, readiness, suggestions, idea, breakUp, refusal, maintenance, rateLimitResetAt);
         }
     }
 
-    private CommandResult CompleteLocked(CommandRequest command, string? error, string? way, string? sessionId, string? made = null, SettingRow? setting = null, string? waiting = null, IdeaTidyProposal? tidy = null, MilestoneProposal? milestones = null, ReadinessResult? readiness = null, MilestoneSuggestions? suggestions = null, IdeaRow? idea = null, BreakUpProposal? breakUp = null, MergeRefusal? refusal = null, MaintenanceReport? maintenance = null)
+    private CommandResult CompleteLocked(CommandRequest command, string? error, string? way, string? sessionId, string? made = null, SettingRow? setting = null, string? waiting = null, IdeaTidyProposal? tidy = null, MilestoneProposal? milestones = null, ReadinessResult? readiness = null, MilestoneSuggestions? suggestions = null, IdeaRow? idea = null, BreakUpProposal? breakUp = null, MergeRefusal? refusal = null, MaintenanceReport? maintenance = null, DateTimeOffset? rateLimitResetAt = null)
     {
         var result = new CommandResult
         {
@@ -112,6 +112,7 @@ public sealed partial class NodeState
             Idea = error is null ? idea : null,
             BreakUp = error is null ? breakUp : null,
             Refusal = error is null ? null : refusal,
+            RateLimitResetAt = error is null ? null : rateLimitResetAt,
             Autopilot = command.Autopilot,
             Why = command.Why is { } why && why.Trim().Length > 0 ? why.Trim() : null,
             Waiting = error is null ? waiting : null,

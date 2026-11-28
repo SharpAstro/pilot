@@ -325,6 +325,12 @@ public sealed class SessionLedger(string? file = null, TimeProvider? time = null
         json.WriteStartArray();
         foreach (var e in entries)
         {
+            // Out to the file as it goes: unflushed, the writer held the whole ledger in one buffer it doubled until it fitted, 8 MB
+            // on the large object heap at every save of DE1's 2,000 entries (pilot #1443).
+            if (json.BytesPending > 32 * 1024)
+            {
+                json.Flush();
+            }
             json.WriteStartObject();
             json.WriteString("job", e.JobId);
             json.WriteStartArray("sessionIds");
