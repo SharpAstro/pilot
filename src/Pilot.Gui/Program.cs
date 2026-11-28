@@ -309,27 +309,42 @@ string WhatRendered()
     }
     return what;
 }
-var loop = new SdlEventLoop(window, renderer) { BackgroundColor = new RGBAColor32(0x12, 0x12, 0x18, 0xff) };
+var loop = new SdlEventLoop(window, renderer)
+{
+    BackgroundColor = new RGBAColor32(0x12, 0x12, 0x18, 0xff),
+    // A collection that is nearly due is taken after a presented frame, where the frame has its interval to spare, and not at an
+    // allocation inside the next paint (BetweenFramesCollector, as tianwen's GUI does).
+    BetweenFrames = new BetweenFramesCollector(),
+};
+// Every change asks for its frame here. The loop rests between redraw checks while nothing is owed (IdleCheckInterval, set in
+// the check below), so a raise from another thread (a node event, a read come back, a press answered) also wakes it; on the
+// loop's own thread the wake is one spare pass. Before, the check was asked every display refresh whatever was due: sixty
+// passes a second of an idle window, each locking the font atlas's three queues to ask whether it was dirty (pilot #1443).
+void Redraw()
+{
+    loop.RequestRedraw();
+    loop.Wake();
+}
 // The list pages' column widths a drag on a title's divider set: read from the GUI's own settings file, written back a
 // moment after the pointer is still (and when the window closes), and a drag asks for a frame.
 using var guiSettings = GuiSettingsFile.Open();
-chrome.KeepColumnWidths(guiSettings, loop.RequestRedraw);
+chrome.KeepColumnWidths(guiSettings, Redraw);
 // The For you bar's open or collapsed choice is the window's: kept in its settings file, and a change repaints.
 guiSettings.Attach(chrome.Notifications);
 // The toasts count down on the wall clock: the pages are built only when something changed, so their time can stand still.
 chrome.Clock = () => DateTimeOffset.UtcNow;
-chrome.Notifications.OpenChanged += _ => loop.RequestRedraw();
+chrome.Notifications.OpenChanged += _ => Redraw();
 // The Flights page asks for frames of its own: the map's layer menu while it fades, and the links' "Copied" notice.
-chrome.Flights.Changed = loop.RequestRedraw;
+chrome.Flights.Changed = Redraw;
 // The Desktop cat section reads buddy-settings.json through the shared watcher, so a change on the cat's own card shows with no page restart.
-using var catSettings = new BuddySettingsSource { Changed = loop.RequestRedraw };
+using var catSettings = new BuddySettingsSource { Changed = Redraw };
 chrome.Settings.Buddy = catSettings;
 // The Running row asks the cat's gate without claiming it, and Start launches the pilot-buddy beside this window.
 chrome.Settings.CatDesk = new GuiCatDesk();
 // The caret blinks through the loop: it owns the phase on the window's shared settings and wakes at each change while a
 // field has the keyboard (SharpAstro/.github#13), so no widget and no redraw check here knows of it.
 loop.Ui = view.Ui;
-var router = new InputRouter(view.Ui, tracker, loop.RequestRedraw)
+var router = new InputRouter(view.Ui, tracker, Redraw)
 {
     Widgets = () => chrome.Widgets,
     // A key nothing painted took goes to the page shown, as a tab's own HandleInput does in tianwen.
@@ -352,7 +367,7 @@ view.Ui.Focus.FocusChanged += (_, next) =>
     {
         StartTextInput(window.Handle);
     }
-    loop.RequestRedraw();
+    Redraw();
 };
 
 // Live: the node's stream feeds the rows, and the say bar talks through the same node.
@@ -401,7 +416,7 @@ void OpenAway(string location, Action? failed = null) => tracker.Run(async () =>
     if (!await Task.Run(() => DashboardCommands.Open(location)))
     {
         failed?.Invoke();
-        loop.RequestRedraw();
+        Redraw();
     }
 }, $"open {location}");
 // A press of a button that asks the node: the work runs through the tracker (drained at shutdown, a fault logged), and its answer, the
@@ -464,14 +479,14 @@ if (feed is not null && client is not null && clients is not null)
         var envelope = await clients.For(view.Transcript.Node, command: false)!.GetTranscriptAsync(rowId, after, ct, agent);
         return envelope is { Success: true, Response: { } page } ? page : throw new InvalidOperationException(envelope.Error);
     };
-    view.Transcript.Changed = loop.RequestRedraw;
+    view.Transcript.Changed = Redraw;
     // The attachments the pages show: each copy fetched from the node its flight or session is on (reading needs no grant
     // on this machine, and a remote node's takes the one saved for it), decoded once, drawn as a texture.
     var attachmentPictures = new AttachmentPictures(async (copy, ct) =>
     {
         var (status, _, bytes) = await clients.For(copy.Node, command: false)!.GetAttachmentAsync(copy.Id, ct);
         return status == System.Net.HttpStatusCode.OK ? bytes : null;
-    }, loop.RequestRedraw);
+    }, Redraw);
     chrome.Gallery.Lookup = attachmentPictures.Lookup;
     chrome.Gallery.Failed = attachmentPictures.Failed;
     chrome.Gallery.Draw = attachmentPictures.PaintOn(renderer);
@@ -484,7 +499,7 @@ if (feed is not null && client is not null && clients is not null)
     chrome.About.Opening = () => tracker.Run(async () =>
     {
         nodeInfo = await client.GetNodeAsync(cts.Token);
-        loop.RequestRedraw();
+        Redraw();
     }, "the ? card's node");
     // The update light: this machine's node runs a newer pilot than this window, which it installed beside it. A window on
     // another node (--node) is told nothing: that node's install is not this machine's. Nor is a window run from anywhere but
@@ -530,7 +545,7 @@ if (feed is not null && client is not null && clients is not null)
         chrome.Flights.Wizard.Open(repo);
     };
     view.CopyText = text => SetClipboardText(text);
-    view.Changed = loop.RequestRedraw;
+    view.Changed = Redraw;
     // The Sessions page's archive buttons: a verb on the node, its answer under the say bar.
     view.OnAction = action => Tracked(async () =>
     {
@@ -548,13 +563,13 @@ if (feed is not null && client is not null && clients is not null)
             if (verb == Verbs.Dismiss)
             {
                 chrome.Cards.NoteNotSent(card);
-                loop.RequestRedraw();
+                Redraw();
             }
             return;
         }
         // Said on the button at once, cleared when the node has answered, whatever it said.
         chrome.Cards.NoteWorking(card, action);
-        loop.RequestRedraw();
+        Redraw();
         try
         {
             await SendCardCommandAsync(verb, card, args);
@@ -562,7 +577,7 @@ if (feed is not null && client is not null && clients is not null)
         finally
         {
             chrome.Cards.NoteWorking(card, null);
-            loop.RequestRedraw();
+            Redraw();
         }
     }
     async Task SendCardCommandAsync(string verb, CardRow card, string[] args)
@@ -582,7 +597,7 @@ if (feed is not null && client is not null && clients is not null)
                 joined = DashboardCommands.JoinedOf(result);
             });
         Note($"pilot-gui: {verb} {card.Id} ({card.Title}): {refused ?? (joined is null ? "done" : $"joined: {joined}")}");
-        loop.RequestRedraw();
+        Redraw();
     }
     // Every task a click starts goes through the tracker, never `_ =`: it is drained at shutdown and a fault it did not
     // expect is logged (ProcessCompletions, each frame) rather than lost with an unobserved task.
@@ -625,7 +640,7 @@ if (feed is not null && client is not null && clients is not null)
     chrome.Ideas.CopyText = text => SetClipboardText(text);
     chrome.Fleet.CopyText = text => SetClipboardText(text);
     chrome.PullRequests.CopyText = text => SetClipboardText(text);
-    chrome.Cards.Changed = loop.RequestRedraw;
+    chrome.Cards.Changed = Redraw;
     chrome.Cards.OnGoTo = link => { if (link == InAppLinks.Fleet) { chrome.Show(PilotPage.Fleet); } };
     // The Chat page reads the node's chat feed while it is open; what is typed in its box and a choice button go through the
     // node's tell, a refusal said in the chat itself.
@@ -761,7 +776,7 @@ if (feed is not null && client is not null && clients is not null)
     chrome.Ideas.OnAnswer = chrome.Cards.OnAnswer;
     chrome.Ideas.OnOpen = url => OpenAway(url);
     chrome.Ideas.Track = (run, what) => tracker.Run(run, what);
-    chrome.Ideas.Changed = loop.RequestRedraw;
+    chrome.Ideas.Changed = Redraw;
     // An idea's images: Ctrl+V of a screenshot and a dropped image file go to this window's node, the box keeps the marker.
     chrome.Ideas.GetClipboardImage = ClipboardImage.Read;
     chrome.Ideas.Upload = async (bytes, ext, ct) =>
@@ -776,7 +791,7 @@ if (feed is not null && client is not null && clients is not null)
             chrome.Ideas.DropFile(path);
         }
     };
-    chrome.Chat.Changed = loop.RequestRedraw;
+    chrome.Chat.Changed = Redraw;
     chrome.Chat.OpenLink = url => OpenAway(url);
     chrome.Chat.CopyText = text => SetClipboardText(text);
 
@@ -789,7 +804,7 @@ if (feed is not null && client is not null && clients is not null)
         try
         {
             chrome.Flights.Lan = await LanWatch.StartAsync(cts.Token);
-            loop.RequestRedraw();
+            Redraw();
         }
         catch (Exception ex) when (ex is System.Net.Sockets.SocketException or InvalidOperationException)
         {
@@ -812,14 +827,14 @@ if (feed is not null && client is not null && clients is not null)
         return said;
     };
     wizard.CreateIssue = (path, title, body) => RepoActions.CreateIssueAsync(client, path, title, body, GuiSay.Who, cts.Token);
-    wizard.Changed = loop.RequestRedraw;
+    wizard.Changed = Redraw;
     // The Repos page's Sync runs on this window's node; its New flight opens the wizard at that repo's issues.
     chrome.Repos.SyncRepos = async ct =>
     {
         return await RepoActions.SyncAsync(client, GuiSay.Who, ct);
     };
     chrome.Repos.Tracker = tracker;
-    chrome.Repos.Changed = loop.RequestRedraw;
+    chrome.Repos.Changed = Redraw;
     chrome.Repos.CopyText = text => SetClipboardText(text);
     // The Pull requests page's Refresh asks this window's node to read GitHub now; the row comes back on the event stream.
     chrome.PullRequests.OnRefresh = async ct =>
@@ -830,7 +845,7 @@ if (feed is not null && client is not null && clients is not null)
             throw new InvalidOperationException(result?.Error ?? "the node did not answer");
         }
     };
-    chrome.PullRequests.Changed = loop.RequestRedraw;
+    chrome.PullRequests.Changed = Redraw;
     // A row's Review is `pilot review pr` on this window's node; Merge and Go around are the flight's card's own buttons (chrome wires them).
     chrome.PullRequests.OnReview = async (pr, ct) =>
     {
@@ -878,7 +893,7 @@ if (feed is not null && client is not null && clients is not null)
     // The Summary cards on Home and on a flight's page: Refresh sends the Summarise verb to the node the summary is of, and the card shows
     // it running until the node answers. The row it then shows is the node's own, from the stream, never this answer's.
     chrome.Summaries.Track = (run, what) => tracker.Run(run, what);
-    chrome.Summaries.Changed = loop.RequestRedraw;
+    chrome.Summaries.Changed = Redraw;
     chrome.Summaries.CanSteer = CanSteer;
     chrome.Summaries.Send = async ask =>
     {
@@ -905,15 +920,15 @@ if (feed is not null && client is not null && clients is not null)
         }
     };
     // The Spend page and a flight's spend: read from the node's spend routes, again once 30 s old (see SpendReads).
-    spendReads = new SpendReads(client, loop.RequestRedraw);
+    spendReads = new SpendReads(client, Redraw);
     chrome.Spend.OnWindow = window => spendReads.Ask(window, screen.Source, force: true);
     chrome.Flights.OnSpend = code => spendReads.AskFlight(code, force: true);
     // The Designs page: the list and an open design read through the node's designs and design-show commands, a version's files from the paths it gives.
-    designReads = new DesignReads(client, "gui", loop.RequestRedraw);
+    designReads = new DesignReads(client, "gui", Redraw);
     chrome.Designs.OnOpen = id => designReads.AskDesign(id, null, force: true);
     chrome.Designs.OnVersion = (id, number) => designReads.AskDesign(id, number, force: true);
     // The chat with the designer beside the prototype: the open design's chat feed followed while the page is open, what is typed (and a pasted picture) sent as design-say.
-    designReads.Follow(chrome.Designs, (run, what) => tracker.Run(run, what), loop.RequestRedraw);
+    designReads.Follow(chrome.Designs, (run, what) => tracker.Run(run, what), Redraw);
     chrome.Designs.Chat.GetClipboardImage = ClipboardImage.Read;
     chrome.Designs.Chat.CopyText = text => SetClipboardText(text);
     chrome.Designs.Chat.OpenLink = url => OpenAway(url);
@@ -929,15 +944,15 @@ if (feed is not null && client is not null && clients is not null)
         {
             chrome.Designs.StartFailed(error ?? "the node refused");
         }
-        loop.RequestRedraw();
+        Redraw();
     });
-    decisionReads = new DecisionReads(client, loop.RequestRedraw);
+    decisionReads = new DecisionReads(client, Redraw);
     // The Background tasks page: a job's log followed while it is selected, Cancel a verb on the node.
     chrome.Jobs.CanCommand = true;
     chrome.Jobs.LoadLog = async (node, id, ct) => (await (clients.For(node, command: false) ?? throw new InvalidOperationException($"no connection to {node?.Name ?? "this node"}")).GetJobLogAsync(id, ct)) is { Success: true, Response: { } log }
         ? log
         : throw new InvalidOperationException($"the node did not send {id}'s log");
-    chrome.Jobs.Changed = loop.RequestRedraw;
+    chrome.Jobs.Changed = Redraw;
     // Cancel is the selected job's, whose log is followed: its node's. The answer is the node's refusal, or null when it took it.
     Task<string?> JobVerb(JobRow job, string verb, string word, string[] args) => Tracked(async () =>
     {
@@ -970,7 +985,7 @@ if (feed is not null && client is not null && clients is not null)
         chrome.Fleet.Said = $"asking {machine} ({where}) for a grant: allow it on that machine";
         view.SayStatus = chrome.Fleet.Said;
         chrome.Flights.Lan?.Asking(where, DateTimeOffset.UtcNow);
-        loop.RequestRedraw();
+        Redraw();
         var (granted, said) = await DashboardCommands.TryRunAsync($"connect {where}", NodeArgs(), GuiSay.Who, cts.Token);
         // The token just saved is read now, so the rows steer at once rather than at the next 5 s look.
         clients.Refresh();
@@ -978,7 +993,7 @@ if (feed is not null && client is not null && clients is not null)
         chrome.Fleet.Said = said.ReplaceLineEndings(" ").Trim();
         view.SayStatus = chrome.Fleet.Said;
         Note($"pilot-gui: connect {where}: {chrome.Fleet.Said}");
-        loop.RequestRedraw();
+        Redraw();
         return granted ? null : chrome.Fleet.Said;
     }, $"connect {where}");
     chrome.Fleet.OnConnect = line => Connect(line.Where, line.Machine);
@@ -999,7 +1014,7 @@ if (feed is not null && client is not null && clients is not null)
         chrome.Fleet.Said = $"forgot {key}";
         view.SayStatus = chrome.Fleet.Said;
         Note($"pilot-gui: forgot {key}");
-        loop.RequestRedraw();
+        Redraw();
         return (string?)null;
     }), $"forget {key}");
     chrome.Fleet.OnForget = line => ForgetAsync(line.HeldName ?? line.Where, line.Where);
@@ -1010,7 +1025,7 @@ if (feed is not null && client is not null && clients is not null)
         chrome.Fleet.Said = said.ReplaceLineEndings(" ").Trim();
         view.SayStatus = chrome.Fleet.Said;
         Note($"pilot-gui: maintenance {(on ? "on" : "off")} on {line.Where}: {chrome.Fleet.Said}");
-        loop.RequestRedraw();
+        Redraw();
         return refused;
     }, $"maintenance {(on ? "on" : "off")} on {line.Where}");
     // Take another node's range for a role: this window's own node only, as the Settings page is gated.
@@ -1022,7 +1037,7 @@ if (feed is not null && client is not null && clients is not null)
             chrome.Fleet.Said = said.ReplaceLineEndings(" ").Trim();
             view.SayStatus = chrome.Fleet.Said;
             Note($"pilot-gui: took {node.Machine}'s {role}-range {range}{(fleetRange ? " for the fleet" : "")}: {chrome.Fleet.Said}");
-            loop.RequestRedraw();
+            Redraw();
             return refused;
         }, $"take {role}-range from {node.Where}");
     }
@@ -1036,10 +1051,10 @@ if (feed is not null && client is not null && clients is not null)
             var (refused, said) = await AutopilotCommands.TrySetAsync(client, on, GuiSay.Who, cts.Token);
             view.SayStatus = said;
             Note($"pilot-gui: {said}");
-            loop.RequestRedraw();
+            Redraw();
             return refused;
         }, $"autopilot {(on ? "on" : "off")}");
-        chrome.Autopilot.Changed = loop.RequestRedraw;
+        chrome.Autopilot.Changed = Redraw;
     }
     // The Settings page: this machine's node only, as its route is (a node on the LAN keeps its settings to itself).
     if (remoteEndpoint is null)
@@ -1059,7 +1074,7 @@ if (feed is not null && client is not null && clients is not null)
             : throw new InvalidOperationException("the node did not send its grants");
         chrome.Settings.LoadHeld = () => Pilot.Commands.NodeTargets.Held().Entries;
         chrome.Settings.Forget = key => _ = ForgetAsync(key);
-        chrome.Settings.Changed = loop.RequestRedraw;
+        chrome.Settings.Changed = Redraw;
     }
     feed.Start();
 
@@ -1208,7 +1223,7 @@ if (feed is not null)
                     continue;
                 }
                 Volatile.Write(ref built, made);
-                loop.RequestRedraw();
+                Redraw();
             }
             catch (OperationCanceledException) when (building.IsCancellationRequested)
             {
@@ -1248,7 +1263,7 @@ void RenderFrame()
     // The background work clicks started: a fault it did not expect is logged here, once, instead of vanishing.
     if (tracker.ProcessCompletions(logger))
     {
-        loop.RequestRedraw();
+        Redraw();
     }
     if (feed is not null)
     {
@@ -1342,7 +1357,7 @@ void RenderFrame()
         {
             Say($"pilot-gui: {said}");
         }
-        loop.RequestRedraw();
+        Redraw();
     }
     // The hover text the router says is due, last, over everything.
     chrome.Tooltips.Render(router.Tooltip, new RectF32(0, 0, width, height));
@@ -1355,8 +1370,25 @@ void RenderFrame()
         Say($"pilot-gui: selected {screen.Lines[view.Selected].ToDumpLine()}");
     }
 }
+// The longest the redraw check goes unasked while nothing is owed and nothing wakes the loop, as tianwen's GUI has it.
+var idleWhileNothingOwed = TimeSpan.FromMilliseconds(250);
+// When the pointer last moved: a tooltip falls due its delay after the pointer comes to rest, with no event to say so.
+var lastPointerMove = 0L;
 loop.CheckNeedsRedraw = () =>
 {
+    // Asked again after idleWhileNothingOwed while nothing below is owed, and at the next refresh while something is (a glyph
+    // still being rasterised, a toast fading, a tooltip due). What changes on another thread wakes the loop itself (Redraw), so
+    // this bounds only what is polled here: a second launch's hand-off and a font atlas filling, each seen within a quarter
+    // second. A resting pointer is looked at again when its tooltip would fall due, so a tooltip is not late by the rest.
+    var idle = idleWhileNothingOwed;
+    var sinceMove = System.Diagnostics.Stopwatch.GetElapsedTime(lastPointerMove);
+    if (lastPointerMove != 0 && sinceMove < router.TooltipDelay)
+    {
+        // A hair past the delay: the router reads its own clock, and a check a tick early would wait a whole idle interval.
+        var due = router.TooltipDelay - sinceMove + TimeSpan.FromMilliseconds(10);
+        idle = due < idle ? due : idle;
+    }
+    loop.IdleCheckInterval = idle;
     while (gate?.TryDequeue(out var handed) == true)
     {
         window.Activate();
@@ -1375,7 +1407,12 @@ loop.CheckNeedsRedraw = () =>
         return true;
     }
 
-    return renderer.FontAtlasDirty || router.TooltipNeedsFrame || chrome.Notifications.Animating;
+    var owed = renderer.FontAtlasDirty || router.TooltipNeedsFrame || chrome.Notifications.Animating;
+    if (owed)
+    {
+        loop.IdleCheckInterval = TimeSpan.Zero;
+    }
+    return owed;
 };
 #if PILOT_DEBUG_INSPECTOR
 // The live UI inspector (every Debug build: sibling source or the .Debug twin packages): an agent finds this window, reads its regions
@@ -1446,6 +1483,7 @@ loop.OnPointerInput = evt =>
     if (evt is InputEvent.MouseMove move)
     {
         chrome.Pointer = (move.X, move.Y);
+        lastPointerMove = System.Diagnostics.Stopwatch.GetTimestamp();
     }
     var handled = chrome.HandleInput(evt) || router.Handle(evt);
     if (evt is InputEvent.MouseMove moved)
@@ -1467,6 +1505,11 @@ Note(snapshot is null
 Note(snapshot is null
     ? "pilot-gui: Up/Down or a click select a session; type in the bar at the foot and Enter says it; close the window to quit."
     : "pilot-gui: Up/Down select a row; close the window to quit.");
+// --page opens the window on that page: how a frame or idle measurement of one page starts, the same way every time (pilot #1443).
+if (options.PageGiven)
+{
+    chrome.Show(options.Page);
+}
 if (options.ExitAfter is { } after)
 {
     Note($"pilot-gui: closing by itself after {after.TotalSeconds:0.##}s (--exit-after)");
