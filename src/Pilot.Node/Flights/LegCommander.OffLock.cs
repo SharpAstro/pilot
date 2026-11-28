@@ -245,6 +245,8 @@ public sealed partial class LegCommander
             StaleCause = null,
             StaleSince = null,
             GitHubHead = null,
+            PushedHead = null,
+            PushedAt = null,
             GitHubDraft = null,
             GitHubLabel = null,
             GitHubDisagrees = null,
