@@ -356,6 +356,17 @@ public sealed partial class Watchtower(
         return rows.Where(r => !_replaced.Contains(r.Id) && (!vanished || Live(r))).OrderByDescending(Live).ThenByDescending(r => r.StartedAt).FirstOrDefault();
     }
 
+    /// <summary>How the node words an end it chose itself: a replacement (a compaction or a brief-changed restart, the duplicate sweep).</summary>
+    private const string ReplacedByPrefix = "replaced by";
+
+    /// <summary>
+    /// Whether the node chose this end (#1397): a replacement (<see cref="ReplacedByPrefix"/>) or a stop with the node on an upgrade
+    /// (<see cref="SessionEndReasons.NodeStopped"/>). Such an end says nothing about how long a watchtower lives on its own.
+    /// </summary>
+    public static bool IsNodeMadeEnd(string? endedBecause) =>
+        endedBecause is not null && (endedBecause.StartsWith(ReplacedByPrefix, StringComparison.Ordinal)
+            || endedBecause.StartsWith(SessionEndReasons.NodeStopped, StringComparison.Ordinal));
+
     /// <summary>Where the watchtower sessions there have been are kept, in the node's data folder: a line each (<see cref="Generation"/>).</summary>
     public string SessionsFile => Path.Combine(options.DataFolder, "watchtower-sessions");
 
@@ -499,7 +510,8 @@ public sealed partial class Watchtower(
     /// <summary>
     /// How the watchtower is doing, from <see cref="Generations"/> and its row; null when the node keeps none. Churn is fresh starts
     /// per hour and ends with no finished turn: one Claude Code ended after its turn did so by design (PIL815) and is no churn, so it
-    /// counts toward no lifetime either.
+    /// counts toward no lifetime either. So does an end the node made itself (<see cref="IsNodeMadeEnd"/>: a replacement or a stop with the
+    /// node, #1397); a replacement is still a start, so the starts per hour keep counting it.
     /// </summary>
     public WatchtowerHealth? Health()
     {
@@ -514,7 +526,7 @@ public sealed partial class Watchtower(
         var lastHour = all.Count(g => !g.IsCompaction && now - g.StartedAt <= TimeSpan.FromHours(1));
         var last24 = all.Count(g => !g.IsCompaction && now - g.StartedAt <= TimeSpan.FromHours(24));
         var lifetimes = all
-            .Where(g => g.EndedAt is { } end && now - end <= TimeSpan.FromHours(1) && g.LastReplyAt is not null && g.AfterFinishedTurn != true)
+            .Where(g => g.EndedAt is { } end && now - end <= TimeSpan.FromHours(1) && g.LastReplyAt is not null && g.AfterFinishedTurn != true && !IsNodeMadeEnd(g.EndedBecause))
             .Select(g => g.EndedAt!.Value - g.LastReplyAt!.Value)
             .Order()
             .ToList();
@@ -1091,7 +1103,7 @@ public sealed partial class Watchtower(
             _replaced.Add(replacing.Id);
             if (replacing.State != SessionState.Working)
             {
-                await EndOneAsync(replacing, $"replaced by a fresh watchtower: {why}", time.GetUtcNow(), cancellationToken);
+                await EndOneAsync(replacing, $"{ReplacedByPrefix} a fresh watchtower: {why}", time.GetUtcNow(), cancellationToken);
             }
         }
 
@@ -1106,7 +1118,7 @@ public sealed partial class Watchtower(
             .ToList())
         {
             _replaced.Add(other.Id);
-            if (other.State != SessionState.Working && await EndOneAsync(other, $"replaced by a fresh watchtower: {why}", time.GetUtcNow(), cancellationToken))
+            if (other.State != SessionState.Working && await EndOneAsync(other, $"{ReplacedByPrefix} a fresh watchtower: {why}", time.GetUtcNow(), cancellationToken))
             {
                 endedBefore.Add(other);
             }
@@ -1330,7 +1342,7 @@ public sealed partial class Watchtower(
             {
                 continue;
             }
-            var why = replaced ? $"replaced by {keep ?? "a fresh watchtower"}" : $"a second watchtower beside {keep ?? "the current one"}";
+            var why = replaced ? $"{ReplacedByPrefix} {keep ?? "a fresh watchtower"}" : $"a second watchtower beside {keep ?? "the current one"}";
             if (await EndOneAsync(other, why, now, cancellationToken))
             {
                 ended.Add(other);
