@@ -61,6 +61,10 @@ public sealed class BuddyFramePolicyTests
         public void MoveBy(int dx, int dy) => Moves.Add((dx, dy));
 
         public void Dropped() => Drops++;
+
+        public List<bool> TextInputs { get; } = [];
+
+        public void TextInput(bool on) => TextInputs.Add(on);
     }
 
     private sealed class NullNode : IBuddyNode
@@ -270,6 +274,28 @@ public sealed class BuddyFramePolicyTests
         rig.Desk.PointerMoved(5, 5);
         rig.Model.Mood.ShouldBe(BuddyMood.Asleep);
         rig.Policy.NeedsFrame().ShouldBeFalse();
+    }
+
+    [Fact]
+    public void OpeningTheChatStartsTheWindowsTextInputAndClosingItStopsIt()
+    {
+        // Without SDL's text input started, no typed character reached the chat box (the owner, 2026-11-28: "ask the buddy does not accept key input").
+        var rig = new Rig();
+        rig.Click(1, rig.CatBody);
+        rig.Desk.Card.ShouldBe(DeskCard.Chat);
+        rig.Window.TextInputs.ShouldBe([true]);
+
+        rig.Desk.Escape();
+        rig.Window.TextInputs.ShouldBe([true, false]);
+    }
+
+    [Fact]
+    public void ASwitchBetweenTheOtherCardsAsksNothingOfTheTextInput()
+    {
+        var rig = new Rig();
+        rig.Desk.ShowSettings();
+        rig.Desk.Escape();
+        rig.Window.TextInputs.ShouldBeEmpty("only the chat opening or closing touches the text input");
     }
 
     [Fact]
