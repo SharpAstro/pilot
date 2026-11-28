@@ -1590,7 +1590,12 @@ a leg is done), a planner (`flight plan`), a reviewer (the PR's, a rebase's, a g
 node keeps, and a compaction's resume (`compact`, sent by the compactor). While the 5-hour window is at or over the
 `start-limit` (90 % unless set), the start waits and one Handled card says what waits and until when
 (`TIA1 waits to start its reviewer: the 5-hour window is 95 % spent (the limit is 90 %); it goes on after 14:00`), once
-per window however often the sweep looks. The node's sweep (every minute; the watchtower's and compactor's looks too)
+per window however often the sweep looks. The gate also holds when the window, at the rate of its last 15 minutes, is
+heading past the limit before its reset (`the 5-hour window is 92 % spent and heading for 100 % before 23:20 at 1.0 % a
+minute (the limit is 98 %); it goes on when the pace drops, or after 23:20`), so a fast burn early in a window holds
+starts too, and the hold lifts by itself at the next ask once the pace falls (#1416). The rate needs two readings of the
+same window at least 5 minutes apart, kept in memory only, so a node just started holds only on the current figure until
+it has 5 minutes of readings. The node's sweep (every minute; the watchtower's and compactor's looks too)
 takes the start once the window has reset, with no one asking again. A flight of a repo in `priority-repos` uses
 `priority-start-limit` (98 % unless set) for all of these, a session of no flight (the watchtower) the plain limit. The
 limits are read at each start, so a saved setting counts at once, with no restart.

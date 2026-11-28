@@ -63,6 +63,116 @@ public sealed class StartGateTests : IDisposable
 
     private CardRow[] Cards(string kind) => [.. _state.Cards().Where(c => c.Kind == kind)];
 
+    // A reading of the 5-hour window at the clock's now, with its reset at a fixed time (a window keeps its reset as the clock moves).
+    private void Reading(double fiveHour, DateTimeOffset resets) =>
+        _state.PutUsage(new UsageRow
+        {
+            ReadAt = _time.GetUtcNow(),
+            FiveHour = new UsageWindow { UsedPercent = fiveHour, ResetsAt = resets },
+        });
+
+    // 80 % then, ten minutes later, `then` %, with the window resetting 60 minutes after the second reading.
+    private DateTimeOffset Climb(double then)
+    {
+        var resets = _time.GetUtcNow() + TimeSpan.FromMinutes(70);
+        Reading(80, resets);
+        _time.Advance(TimeSpan.FromMinutes(10));
+        Reading(then, resets);
+        return resets;
+    }
+
+    [Fact]
+    public void AWindowUnderTheLimitButClimbingPastItBeforeItsResetHoldsAStartAndSaysSo()
+    {
+        var resets = Climb(86);
+
+        var held = _gate.Check(90).ShouldNotBeNull();
+        held.Resets.ShouldBe(resets);
+        held.Say.ShouldStartWith("the 5-hour window is 86 % spent and heading for 100 % before ");
+        held.Say.ShouldContain("at 0.6 % a minute (the limit is 90 %)");
+        held.Say.ShouldContain("it goes on when the pace drops, or after ");
+    }
+
+    [Fact]
+    public void ALowRateLetsAStartGo()
+    {
+        Climb(80.5);
+
+        _gate.Check(90).ShouldBeNull();
+    }
+
+    [Fact]
+    public void ReadingsLessThanFiveMinutesApartProjectNothing()
+    {
+        var resets = _time.GetUtcNow() + TimeSpan.FromMinutes(70);
+        Reading(80, resets);
+        _time.Advance(TimeSpan.FromMinutes(4));
+        Reading(88, resets);
+
+        _gate.Check(90).ShouldBeNull();
+    }
+
+    [Fact]
+    public void StaleFiguresProjectNothing()
+    {
+        Climb(86);
+        _time.Advance(StartGate.FreshFor + TimeSpan.FromMinutes(1));
+
+        _gate.Check(90).ShouldBeNull();
+    }
+
+    [Fact]
+    public void AMovedResetIsANewWindowAndTheOldReadingsDoNotCount()
+    {
+        Reading(80, _time.GetUtcNow() + TimeSpan.FromMinutes(70));
+        _time.Advance(TimeSpan.FromMinutes(10));
+        Reading(86, _time.GetUtcNow() + TimeSpan.FromHours(5));
+
+        _gate.Check(90).ShouldBeNull();
+    }
+
+    [Fact]
+    public void APriorityLimitIsJudgedTheSameWayASteepClimbHoldsAndAGentleOneDoesNot()
+    {
+        // 80 to 86 in ten minutes with an hour left reaches 98; 80 to 82 does not.
+        Climb(86);
+        _gate.Check(98).ShouldNotBeNull();
+
+        var gentle = new StartGateTests();
+        gentle.Climb(82);
+        gentle.Check(98).ShouldBeNull();
+        gentle.Dispose();
+    }
+
+    [Fact]
+    public void AFlatRewriteAfterAClimbBringsTheRateDownAndTheStartGoes()
+    {
+        var resets = Climb(86);
+        _gate.Check(90).ShouldNotBeNull();
+
+        // The same figure written again, not journalled, is still a reading: the rate over the span falls with it.
+        for (var i = 0; i < 3; i++)
+        {
+            _time.Advance(TimeSpan.FromMinutes(4));
+            Reading(86, resets);
+        }
+
+        _gate.Check(90).ShouldBeNull();
+    }
+
+    [Fact]
+    public void AHoldOnTheProjectionRaisesItsCardWithTheHeadingTextOncePerWindow()
+    {
+        var resets = Climb(86);
+
+        _gate.HoldBecause("k", 90, 99, "kind", "flight/TIA9", "TIA9 waits to start its reviewer").ShouldNotBeNull();
+        _gate.HoldBecause("k", 90, 99, "kind", "flight/TIA9", "TIA9 waits to start its reviewer").ShouldNotBeNull();
+
+        var card = Cards("kind").ShouldHaveSingleItem();
+        card.Title.ShouldStartWith("TIA9 waits to start its reviewer: the 5-hour window is 86 % spent and heading for");
+        resets.ShouldBeGreaterThan(_time.GetUtcNow());
+    }
+
     [Fact]
     public void ASpentWindowHoldsAStartAndSaysUntilWhenButNoFiguresOrStaleOnesHoldNothing()
     {

@@ -62,14 +62,49 @@ public sealed class StartGate(NodeState state, TimeProvider time)
     public StartHeld? CheckLimit() =>
         Outage is { LimitUntil: { } until, LimitSay: { } say } ? new StartHeld(say, until) : null;
 
-    /// <summary>Why the 5-hour window holds a start at <paramref name="limit"/> percent, and until when; null when it does not.</summary>
+    /// <summary>
+    /// How far back the burn rate looks: the oldest reading of the same window in this span to the newest. Long enough to smooth the status line's
+    /// whole-percent steps, short enough that a pace that has dropped stops holding starts within a quarter of an hour.
+    /// </summary>
+    public static readonly TimeSpan RateLooksBack = TimeSpan.FromMinutes(15);
+
+    /// <summary>
+    /// The least the two readings of a rate may be apart: a percent step over a minute or two is no pace, so a node just started (it keeps
+    /// readings in memory only) holds on the current figure alone until it has this much.
+    /// </summary>
+    public static readonly TimeSpan RateNeedsSpan = TimeSpan.FromMinutes(5);
+
+    /// <summary>Why the 5-hour window holds a start at <paramref name="limit"/> percent, now or at its recent pace before its reset, and until when; null when it does not.</summary>
     public StartHeld? Check(double limit)
     {
         var now = time.GetUtcNow();
-        return state.Usage() is { FiveHour: { } window } usage && now - usage.ReadAt < FreshFor
-               && window.UsedPercent >= limit && window.ResetsAt is { } resets && resets > now
-            ? new StartHeld(
+        if (state.Usage() is not { FiveHour: { } window } usage || now - usage.ReadAt >= FreshFor || window.ResetsAt is not { } resets || resets <= now)
+        {
+            return null;
+        }
+        if (window.UsedPercent >= limit)
+        {
+            return new StartHeld(
                 string.Create(CultureInfo.InvariantCulture, $"the 5-hour window is {window.UsedPercent:0} % spent (the limit is {limit:0} %); it goes on after {resets.ToLocalTime():HH:mm}"),
+                resets);
+        }
+        var readings = state.FiveHourReadings();
+        if (readings.Count == 0)
+        {
+            return null;
+        }
+        var newest = readings[^1];
+        var oldest = readings.Where(r => newest.At - r.At <= RateLooksBack && (r.ResetsAt - resets).Duration() <= TurnOutage.WindowTolerance)
+            .Cast<FiveHourReading?>().FirstOrDefault();
+        if (oldest is not { } from || newest.At - from.At < RateNeedsSpan)
+        {
+            return null;
+        }
+        var rate = Math.Max(0, (newest.UsedPercent - from.UsedPercent) / (newest.At - from.At).TotalMinutes);
+        var projected = window.UsedPercent + rate * Math.Max(0, (resets - now).TotalMinutes);
+        return projected >= limit
+            ? new StartHeld(
+                string.Create(CultureInfo.InvariantCulture, $"the 5-hour window is {window.UsedPercent:0} % spent and heading for {Math.Min(projected, 100):0} % before {resets.ToLocalTime():HH:mm} at {rate:0.0} % a minute (the limit is {limit:0} %); it goes on when the pace drops, or after {resets.ToLocalTime():HH:mm}"),
                 resets)
             : null;
     }
