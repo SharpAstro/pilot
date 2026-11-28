@@ -450,15 +450,16 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
                 continue;
             }
             // A session stopped on a usage or spend limit cannot act: no retell and no ring until its reset. Read from the stored row, so it
-            // holds right after a node restart, before an outage is judged again (#1416).
+            // holds right after a node restart, before an outage is judged again (#1416). No evidence-end argument: TurnOutage.Look moves
+            // the login-change cut to the same instant whenever evidence ends a limit, so the login cut already drops every row the
+            // evidence cut would (LegWatch keeps passing it to FromRows, and AccountLimitTests pins the parameter itself).
             var loginChanged = Outage?.LoginChangedAt;
             var account = state.Usage()?.Account?.Email;
-            var evidenceEnded = Outage?.LimitEvidenceEndedAt;
-            if (AccountLimit.ResetOf(target, now, loginChanged, account, evidenceEnded) is not null)
+            if (AccountLimit.ResetOf(target, now, loginChanged, account) is not null)
             {
                 continue;
             }
-            var limitReset = AccountLimit.StoppedUntil(target, loginChanged, account, evidenceEnded);
+            var limitReset = AccountLimit.StoppedUntil(target, loginChanged, account);
             if (row.RetoldAt is { } retoldAt && limitReset is { } spentInto && spentInto > retoldAt)
             {
                 // A retell spent into the limit is void: the ladder starts again, so the row is retold once RetellAfter after the reset.

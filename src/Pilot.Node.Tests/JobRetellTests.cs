@@ -190,8 +190,10 @@ public sealed class JobRetellTests : IDisposable
         _outage.LimitEvidenceEndedAt.ShouldNotBeNull();
         _outage.IsOpen.ShouldBeFalse();
 
-        // Told after the outage closed, so no redo is due (the tell is outside its window) and only the ladder can say it: with the
-        // evidence cut gone the row's own limit would hold the retell and nothing would be said.
+        // The end moved the login-change cut with it (Look calls PutLoginChanged on an evidence end), and the retell path reads only that
+        // cut: told after the outage closed, so no redo is due and only the ladder can say it. With the login-change argument gone from
+        // the retell hold, the row's own limit would hold the retell and nothing would be said.
+        _outage.LoginChangedAt.ShouldBe(_outage.LimitEvidenceEndedAt);
         await TellNowAsync();
         _clock.Advance(After);
         (await Sweep()).ShouldBeTrue();
