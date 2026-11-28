@@ -1715,6 +1715,7 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
         {
             string? why = WindDown.Why(state, Ledger, row);
             string? currentWorker = null;
+            var doneLeg = false;
             // A role's current session (the watchtower now, a flying leg's current worker, a live flight's planner or reviewer, an
             // open PR's reviewer or fixer) is never rung with Stop here, whatever a landed flight or the ledger's end reason says
             // of an earlier session of that role.
@@ -1731,6 +1732,7 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
                 && (leg is { State: LegState.Done, FinishedAt: { } finished } && now - finished > StrayGrace || (leg.WorkerJob is not null && leg.WorkerJob != row.Id)))
             {
                 why = leg.State == LegState.Done ? $"its leg {flight}/{legName} is done" : $"its leg {flight}/{legName} was redone and has another worker";
+                doneLeg = leg.State == LegState.Done;
                 if (leg.State != LegState.Done && sessions.Any(r => r.Id == leg.WorkerJob && r.State is SessionState.Working or SessionState.Waiting or SessionState.Idle))
                 {
                     // Only when the leg's current worker is a live row: otherwise this is the leg's only session and a person chooses (Stop it).
@@ -1753,6 +1755,16 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
                 continue;
             }
             var subject = Verbs.SessionTarget(row.Id);
+            if (why is not null && doneLeg)
+            {
+                // A live worker of a done leg past StrayGrace (#1392): the node ends it itself, as it ends a duplicate, and tells afterwards.
+                if (!_duplicateTried.TryGetValue(row.Id, out var triedDone) || now - triedDone >= StopGrace)
+                {
+                    _duplicateTried[row.Id] = now;
+                    await EndWorkerAsync(row, why, SessionEndReasons.LegDone, DoneWorkerEnded, "a done leg's worker", "the worker of a done leg", null, cancellationToken);
+                }
+                continue;
+            }
             if (why is not null && currentWorker is not null)
             {
                 // A duplicate of a redone leg's worker (PIL1206): the node ends it itself and tells the person afterwards.
@@ -1785,10 +1797,16 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
     /// Ends a live worker of a redone leg (its WorkerJob is another row) through the node's own end-session path, says so in a
     /// Handled card once the stop is confirmed, and raises the stop-unconfirmed ring when it does not take. The leg's current worker never gets here.
     /// </summary>
-    private async Task EndDuplicateWorkerAsync(SessionRow row, string why, string currentWorker, CancellationToken cancellationToken)
+    private Task EndDuplicateWorkerAsync(SessionRow row, string why, string currentWorker, CancellationToken cancellationToken)
+        => EndWorkerAsync(row, why, SessionEndReasons.DuplicateWorker, DuplicateWorkerEnded, "a duplicate worker", "a duplicate worker of a redone leg", currentWorker, cancellationToken);
+
+    /// <summary>The kind of the Handled card that says afterwards the node ended the live worker of a done leg (#1392).</summary>
+    public const string DoneWorkerEnded = "done-worker-ended";
+
+    private async Task EndWorkerAsync(SessionRow row, string why, string endReason, string cardKind, string titleWords, string whatItIs, string? currentWorker, CancellationToken cancellationToken)
     {
         var subject = Verbs.SessionTarget(row.Id);
-        var reason = $"{SessionEndReasons.DuplicateWorker}: {why}; the current worker is {currentWorker}";
+        var reason = currentWorker is null ? $"{endReason}: {why}" : $"{endReason}: {why}; the current worker is {currentWorker}";
         CommandResult result;
         try
         {
@@ -1803,13 +1821,20 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
         if (!result.Ok && !ended)
         {
             // The messenger raises this card itself when its stop fails; it is one card per session, so a second raise is the same card.
-            Sessions.SessionMessenger.RaiseStopUnconfirmed(state, row, $"{row.Name} ({row.Id}) is a duplicate worker of a redone leg and could not be stopped: {result.Error}. Not confirmed: the session may still run.",
+            Sessions.SessionMessenger.RaiseStopUnconfirmed(state, row, $"{row.Name} ({row.Id}) is {whatItIs} and could not be stopped: {result.Error}. Not confirmed: the session may still run.",
                 "end-session by the node", reason);
             return;
         }
         if (_duplicatesEnded.Add(row.Id))
         {
-            state.RaiseCard(CardBin.Handled, DuplicateWorkerEnded, subject, $"{row.Name} was ended: a duplicate worker",
+            if (currentWorker is null)
+            {
+                state.RaiseCard(CardBin.Handled, cardKind, subject, $"{row.Name} was ended: {titleWords}",
+                    $"{why}. The node ended {row.Id}, so it no longer sits idle in the plane.",
+                    summary: $"The node ended {row.Name} ({row.Id}), the worker of a leg that is done. Nothing to do.");
+                return;
+            }
+            state.RaiseCard(CardBin.Handled, cardKind, subject, $"{row.Name} was ended: {titleWords}",
                 $"{why}. The node ended {row.Id}; the leg's current worker is {currentWorker}, which is untouched.",
                 summary: $"The node ended {row.Name} ({row.Id}), a second worker of a redone leg. The current worker, {currentWorker}, goes on. Nothing to do.");
         }

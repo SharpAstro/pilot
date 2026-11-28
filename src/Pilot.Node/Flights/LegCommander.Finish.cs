@@ -43,10 +43,8 @@ public sealed partial class LegCommander
                 state.CloseCardsAbout(Verbs.LegTarget(flight.Code, leg.Name), $"{flight.Code}/{leg.Name} accepted as it stands", GoAroundCapKind);
                 return;
             }
-            if (leg.State == LegState.Flying && leg.WorkerJob is { } flyingJob)
-            {
-                await StopQuietly(flyingJob, cancellationToken);
-            }
+            // Accepted on a failed leg too: its worker may still be live (a go-around staged, a worker that failed and lingers).
+            await StopLegSessionsAsync(leg, cancellationToken);
             // Its reason is the session's own: its --why, else the words after the outcome (the node refuses an override with neither).
             var reason = command.Why?.Trim() is { Length: > 0 } why ? why : report;
             var accepted = $"{(leg.State == LegState.Flying ? "accepted as it stands" : "failed, marked done anyway")} by {command.Who}{(reason.Length > 0 ? $": {reason}" : "")}";
@@ -57,6 +55,8 @@ public sealed partial class LegCommander
         if (outcome == "verified")
         {
             await VerifyFinishAsync(flight, leg, report, command.Who, cancellationToken);
+            // The leg is done now: a worker still live in its plane is ended, not left to trip the stop gate (#1392).
+            await StopLegSessionsAsync(leg, cancellationToken);
             return;
         }
         if (outcome == RetiredOutcome)
@@ -337,6 +337,19 @@ public sealed partial class LegCommander
                 DropQueuedJobsOf(job, "its worker ended");
                 await StopQuietly(job, cancellationToken);
             }
+        }
+    }
+
+    /// <summary>
+    /// Ends the leg's live worker and ticker at once (a leg recorded done by the node's word, not the worker's own finish, so no grace
+    /// is owed), dropping their queued jobs. A session already gone stays quiet (<see cref="StopQuietly"/>).
+    /// </summary>
+    private async Task StopLegSessionsAsync(LegRow leg, CancellationToken cancellationToken)
+    {
+        foreach (var job in new[] { leg.WorkerJob, leg.TickerJob }.Where(j => j is not null).Select(j => j!).Distinct(StringComparer.Ordinal))
+        {
+            DropQueuedJobsOf(job, "its leg is done");
+            await StopQuietly(job, cancellationToken);
         }
     }
 

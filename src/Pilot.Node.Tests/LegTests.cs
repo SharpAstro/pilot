@@ -2776,7 +2776,10 @@ public sealed class LegCommanderTests2 : LegCommanderTestsBase
         (await Run(Verbs.FinishLeg, "flight/TIA1/parser", "du1-tia1-parser", "accepted")).Error.ShouldBe("marking TIA1/parser done anyway is the controller's, not du1-tia1-parser's");
         (await Run(Verbs.FinishLeg, "flight/TIA1/parser", "du1-watchtower", "accepted")).Error.ShouldBe("marking TIA1/parser done anyway is the controller's, not du1-watchtower's");
         (await Run(Verbs.FinishLeg, "flight/TIA1/render", "controller", "accepted")).Error.ShouldBe("TIA1/render is planned: only a failed leg is marked done anyway");
+        _workers.Stopped.Clear();
         (await Run(Verbs.FinishLeg, "flight/TIA1/parser", "controller", "accepted", "the ephemeris is the issue")).Ok.ShouldBeTrue();
+        // Accepted stops the leg's worker too (#1392): a failed leg's worker may still be live.
+        _workers.Stopped.ShouldBe(["job00001"]);
         var parser = _state.Legs("TIA1").Single(l => l.Name == "parser");
         (parser.State, parser.Report).ShouldBe((LegState.Done, "failed, marked done anyway by controller: the ephemeris is the issue\nno ephemeris here"));
         _state.Cards(openOnly: true).ShouldBeEmpty();
