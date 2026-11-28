@@ -329,6 +329,35 @@ public sealed class CompactorTests : IDisposable
     }
 
     [Fact]
+    public async Task AnUnchangedReadingPastTheIdleThresholdIsNotCompactedAgainForIdlenessUntilItChangesOrTheCeilingPasses()
+    {
+        // #961 (b), the idleness half: over Above and idle long enough, so `cooling` is true at every look after the settle, yet the reading is
+        // still the one the compaction was asked on, so only the Pending guard keeps it from a second compaction. Under the share, so not full.
+        _compactor.Models = new RoleModels(new NodeSettings { WatchtowerCompactIdle = 2, WatchtowerCompactAbove = 100 });
+        Seed("t0000001");
+        Row("t0000001", "du1-watchtower", context: 300_000);
+        _time.Advance(TimeSpan.FromMinutes(3));
+        await _compactor.LookAsync(Ct);
+        _said.Count(c => c.Verb == Verbs.Compact).ShouldBe(1);
+
+        // One response arrives after the compaction (so the row is no longer the compacted one) and the reading stays 300k.
+        _time.Advance(TimeSpan.FromSeconds(30));
+        Row("t0000001", "du1-watchtower", context: 300_000, lastResponse: _time.GetUtcNow());
+        _time.Advance(_compactor.Settle + TimeSpan.FromMinutes(1));
+        await _compactor.LookAsync(Ct);
+        _time.Advance(TimeSpan.FromMinutes(8));
+        await _compactor.LookAsync(Ct);
+        _said.Count(c => c.Verb == Verbs.Compact).ShouldBe(1);
+        _workers.Started.ShouldBeEmpty();
+
+        // Past the ceiling the unchanged reading is judged as it stands: not full, so no replacement, and idle past the threshold, so compacted again.
+        _time.Advance(TimeSpan.FromMinutes(2));
+        await _compactor.LookAsync(Ct);
+        _said.Count(c => c.Verb == Verbs.Compact).ShouldBe(2);
+        _workers.Started.ShouldBeEmpty();
+    }
+
+    [Fact]
     public async Task AFirstFreshReadingStillPastTheShareIsReplacedAtTheNextIdleLookAfterTheSettle()
     {
         Seed("t0000001");
