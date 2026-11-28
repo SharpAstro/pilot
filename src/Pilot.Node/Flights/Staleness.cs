@@ -139,14 +139,20 @@ public static class Staleness
             // The flight open too long, and not moving: one that moved within half the bound (a leg started minutes ago) is at work, not
             // stale, however long it has been open. Its row read "stale · no progress for 12 m" for flights released from a hold and
             // flying again (SE1, 2026-11-09): a mark that says it moved in the same breath as it says it is stuck.
-            var openFor = now - flight.CreatedAt;
+            // The clock starts at the later of its creation and its admission (PIL1422, like CiBudgets' red clock): AdmittedAt is the latest
+            // admission, so a later wait (an Opus-cap wait mid-flight) overwrites it, which errs toward fewer stale readings.
+            var since = flight.AdmittedAt is { } admitted && admitted > flight.CreatedAt ? admitted : flight.CreatedAt;
+            var openFor = now - since;
             var (waits, action) = Waits(flight, mine, flightCards, jobs, pullRequests);
-            if (idle >= TimeSpan.FromHours(bounds.FlightHours) / 2)
+            // A flight waiting its turn for admission is in line, not stuck: no flight item (a stuck holder has its own).
+            if (!WaitsItsTurn(flight, mine) && idle >= TimeSpan.FromHours(bounds.FlightHours) / 2)
             {
                 Add(new StaleItem
                 {
                     Kind = StaleKind.Flight, Subject = flight.Code, Flight = flight.Code, Age = openFor, AgeText = Say(openFor), WaitsOn = waits, Action = action,
-                    Timeline = Timeline(), Cause = $"open {Say(openFor)}, waiting on {waits}", Bound = Hours(bounds.FlightHours), Idle = idle,
+                    Timeline = Timeline(), Cause = since > flight.CreatedAt
+                        ? $"open {Say(openFor)} since its turn came, created {Say(now - flight.CreatedAt)} ago, waiting on {waits}"
+                        : $"open {Say(openFor)}, waiting on {waits}", Bound = Hours(bounds.FlightHours), Idle = idle,
                 }, TimeSpan.FromHours(bounds.FlightHours));
             }
 
@@ -285,6 +291,10 @@ public static class Staleness
     private const string ClosedByNode = "node";
     private const string ClosedByGitHub = "github";
 
+    /// <summary>Whether the flight waits its turn for admission (its repo held by another flight, or the Opus cap): in line, not stuck.</summary>
+    public static bool WaitsItsTurn(FlightRow flight, IReadOnlyList<LegRow> legs) =>
+        FlightPhases.Of(flight, legs.Where(l => l.Flight == flight.Code)) == FlightPhase.Queued;
+
     private sealed record Event(DateTimeOffset At, string Text);
 
     /// <summary>A flight that has not landed, folded into another or moved to another node: the only kind staleness and last moves read.</summary>
@@ -324,6 +334,10 @@ public static class Staleness
             var e = new Event(at, text);
             events.Add(e);
             moves.Add(e);
+        }
+        if (flight.AdmittedAt is { } admitted && admitted > flight.CreatedAt)
+        {
+            Move(admitted, "got its turn (admission wait ended)");
         }
         foreach (var leg in legs)
         {
@@ -403,6 +417,11 @@ public static class Staleness
         if (cards.FirstOrDefault(c => c is { Bin: CardBin.Ring, State: CardState.Open }) is { } ringing)
         {
             return ($"a ringing card ({ringing.Id}: {ringing.Title})", $"answer card {ringing.Id}");
+        }
+        if (WaitsItsTurn(flight, legs) && FlightPhases.QueuedWhy(flight, legs) is { } why)
+        {
+            return (why.StartsWith("waiting for ", StringComparison.Ordinal) ? why["waiting for ".Length..] : why,
+                $"it starts once admitted (pilot status {flight.Code}); a stuck holder has its own stale line");
         }
         if (legs.FirstOrDefault(l => l.State == LegState.Flying) is { } flying)
         {

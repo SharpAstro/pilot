@@ -12,6 +12,7 @@ public sealed record Wake(string Key, string Text, IReadOnlyList<string>? Cards 
 /// <see cref="Wake"/> said to the watchtower in the node's voice by its own path, never a card that reaches the person. A wake is
 /// said once: <see cref="Pending"/> holds it until the say went through (<see cref="Sent"/>). With the switch off nothing is read or kept.
 /// A flight's stall reads the same last move the stale lines do (<see cref="Staleness.LastMove"/>), moved on by its jobs, so there is one clock.
+/// A flight waiting its turn for admission (<see cref="Staleness.WaitsItsTurn"/>) is skipped as <see cref="Staleness.Read"/> skips it.
 /// </summary>
 public sealed class AutopilotWakes(NodeState state, RepeatDetector repeats, TimeProvider time)
 {
@@ -159,7 +160,8 @@ public sealed class AutopilotWakes(NodeState state, RepeatDetector repeats, Time
         var pullRequests = state.PullRequests();
         foreach (var flight in state.Flights().Where(f => Staleness.InAir(f) && f.OnHold is null))
         {
-            if (Staleness.LastMove(flight, legs, cards, pullRequests) is not { } move)
+            // One clock with the stale lines: a flight waiting its turn for admission is in line, not stalled.
+            if (Staleness.WaitsItsTurn(flight, legs) || Staleness.LastMove(flight, legs, cards, pullRequests) is not { } move)
             {
                 continue;
             }
