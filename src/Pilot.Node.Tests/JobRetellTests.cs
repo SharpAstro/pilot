@@ -71,13 +71,14 @@ public sealed class JobRetellTests : IDisposable
 
     private string? _apiError;
     private DateTimeOffset? _apiResets;
+    private string? _account;
 
     private void Session(SessionState sessionState, DateTimeOffset? lastResponse) =>
         _state.PutSession(new SessionRow
         {
             Id = "w0000001", SessionId = "w0000001-0000-4000-8000-000000000000", Name = _name, Kind = SessionKind.Background, Cwd = _root,
             Role = _role ?? (_adHoc ? SessionRole.AdHoc : SessionRole.Worker), Flight = _adHoc || _role is not null ? null : "RTL1", Leg = _adHoc || _role is not null ? null : "one", ContextTokens = _context, ContextWindow = 200_000, SpendWeighted = 0, State = sessionState,
-            LastResponseAt = lastResponse, StartedAt = _clock.GetUtcNow().AddHours(-2), ApiError = _apiError, ApiErrorResetsAt = _apiResets,
+            LastResponseAt = lastResponse, StartedAt = _clock.GetUtcNow().AddHours(-2), ApiError = _apiError, ApiErrorResetsAt = _apiResets, Account = _account,
         });
 
     private async Task<JobRow> TellNowAsync(bool whileWorking = false)
@@ -163,6 +164,20 @@ public sealed class JobRetellTests : IDisposable
         StopOnLimit("usage_limit_reached", TimeSpan.FromHours(5));
         // A login change or a lift after the row began: its limit no longer counts, the retell goes RetellAfter after the tell.
         _state.PutLoginChanged(_clock.GetUtcNow());
+
+        _clock.Advance(After);
+        (await Sweep()).ShouldBeTrue();
+        _said.ShouldHaveSingleItem().ShouldStartWith("Repeat:");
+    }
+
+    [Fact]
+    public async Task ALimitOfAnotherAccountDoesNotHoldTheRetell()
+    {
+        // The owner's row ran under another login than the one the node reads now: its limit is not this account's.
+        _state.PutUsage(new UsageRow { Account = new AccountRow { Email = "b@example.org" }, ReadAt = _clock.GetUtcNow() });
+        _account = "a@example.org";
+        await TellNowAsync();
+        StopOnLimit("usage_limit_reached", TimeSpan.FromHours(5));
 
         _clock.Advance(After);
         (await Sweep()).ShouldBeTrue();

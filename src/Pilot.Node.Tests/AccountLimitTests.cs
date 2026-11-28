@@ -93,6 +93,18 @@ public sealed class AccountLimitTests
     }
 
     [Fact]
+    public void ResetOfCutsARowOfAnotherAccountOrBegunBeforeAnEvidenceEndOrALoginChange()
+    {
+        var until = Start.AddHours(2);
+        var row = LimitRow("a@example.org", until);
+        AccountLimit.ResetOf(row, Start, currentAccount: "A@example.org").ShouldBe(until);
+        AccountLimit.ResetOf(row, Start, currentAccount: "b@example.org").ShouldBeNull();
+        AccountLimit.ResetOf(row, Start, evidenceEndedAt: Start.AddMinutes(1)).ShouldBeNull();
+        AccountLimit.ResetOf(row, Start, evidenceEndedAt: Start).ShouldBe(until);
+        AccountLimit.ResetOf(row, Start, loginChangedAt: Start.AddMinutes(1)).ShouldBeNull();
+    }
+
+    [Fact]
     public void ARowRecordedUnderAnotherAccountOpensNoLimitWithNoLoginChangeTimeKnown()
     {
         var until = Start.AddHours(2);

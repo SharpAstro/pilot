@@ -35,7 +35,6 @@ public static partial class AccountLimit
     /// <summary>The reset the row's usage or spend limit error named, past or not; null when its error is not one (a per-minute rate limit is the LimitWait path's own) or the row is cut.</summary>
     public static DateTimeOffset? StoppedUntil(SessionRow row, DateTimeOffset? loginChangedAt = null, string? currentAccount = null, DateTimeOffset? evidenceEndedAt = null)
     {
-        // A per-minute rate limit is the LimitWait path's own, one worker's; the account limit is a usage or spend limit.
         if (evidenceEndedAt is { } ended && row.StartedAt < ended)
         {
             // A later session answered a turn on the family that reported the limit: what began before that is stale, whoever's it was.
@@ -55,6 +54,7 @@ public static partial class AccountLimit
             // newer session reports it too; telling it apart needs a stored ApiErrorAt, which costs a contract bump for a rare case.
             return null;
         }
+        // A per-minute rate limit is the LimitWait path's own, one worker's; the account limit is a usage or spend limit.
         return row.ApiError is { } error && error.Contains("limit", StringComparison.OrdinalIgnoreCase)
         && !error.Contains("rate_limit", StringComparison.OrdinalIgnoreCase) && !error.Contains("rate limit", StringComparison.OrdinalIgnoreCase)
             ? row.ApiErrorResetsAt

@@ -177,6 +177,50 @@ public sealed class StartGateTests : IDisposable
     }
 
     [Fact]
+    public void AProjectionHoldThatReachesTheLimitInTheSameWindowRaisesTheCardAgainWithTheLimitText()
+    {
+        var resets = Climb(86);
+        _gate.HoldBecause("k", 90, 99, "kind", "flight/TIA9", "TIA9 waits to start its reviewer").ShouldNotBeNull().Projected.ShouldBeTrue();
+
+        // The same window, now at the limit: the plain hold carries the same reset, and its card must not keep reading "heading for".
+        _time.Advance(TimeSpan.FromMinutes(2));
+        Reading(91, resets);
+        _gate.HoldBecause("k", 90, 99, "kind", "flight/TIA9", "TIA9 waits to start its reviewer").ShouldNotBeNull().Projected.ShouldBeFalse();
+        _gate.HoldBecause("k", 90, 99, "kind", "flight/TIA9", "TIA9 waits to start its reviewer").ShouldNotBeNull();
+
+        var cards = Cards("kind");
+        cards.Length.ShouldBe(2);
+        cards.ShouldContain(c => c.Title.Contains("heading for"));
+        cards.ShouldContain(c => c.Title.StartsWith("TIA9 waits to start its reviewer: the 5-hour window is 91 % spent (the limit is 90 %)", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void OneWholePercentStepNearTheTopIsNoPaceAndTheStartGoes()
+    {
+        // 85 to 86 over five minutes with 100 minutes to the reset would read 0.2 % a minute and project 106 %: one rounding step, not a pace.
+        var resets = _time.GetUtcNow() + TimeSpan.FromMinutes(105);
+        Reading(85, resets);
+        _time.Advance(TimeSpan.FromMinutes(5));
+        Reading(86, resets);
+
+        _gate.Check(90).ShouldBeNull();
+    }
+
+    [Fact]
+    public void AProjectionHoldAnswersAtTheLatestUntilItsResetAndThePlainHoldAnswersUntil()
+    {
+        Climb(86);
+        var projected = _gate.Check(90).ShouldNotBeNull();
+        _gate.HeldAnswer(projected).ShouldStartWith("held, at the latest until ");
+        _gate.HeldAnswer(projected).ShouldContain("heading for");
+
+        Usage(95);
+        var plain = _gate.Check(90).ShouldNotBeNull();
+        plain.Projected.ShouldBeFalse();
+        _gate.HeldAnswer(plain).ShouldStartWith("held until ");
+    }
+
+    [Fact]
     public void ASpentWindowHoldsAStartAndSaysUntilWhenButNoFiguresOrStaleOnesHoldNothing()
     {
         _gate.Check(90).ShouldBeNull();
