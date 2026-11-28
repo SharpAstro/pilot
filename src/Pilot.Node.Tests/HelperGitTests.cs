@@ -24,6 +24,27 @@ public sealed class HelperGitTests
     }
 
     [Fact]
+    public void TheStatusIsAppendedToTheMessage()
+    {
+        var message = HelperGit.WithStatus("git commit failed", " M a.txt\n", "warn\n");
+
+        message.ShouldStartWith("git commit failed");
+        message.ShouldContain("git status --short:");
+        message.ShouldContain("M a.txt");
+        message.ShouldContain("warn");
+    }
+
+    [Theory]
+    [InlineData(new[] { "commit", "-q" }, true)]
+    [InlineData(new[] { "-c", "user.name=t", "commit", "-q" }, true)]
+    [InlineData(new[] { "-C", "x", "commit" }, true)]
+    [InlineData(new[] { "log", "-m", "commit" }, false)]
+    [InlineData(new[] { "-c", "commit", "status" }, false)]
+    [InlineData(new string[0], false)]
+    public void OnlyTheSubcommandMatches(string[] args, bool expected) =>
+        HelperGit.IsSubcommand(args, "commit").ShouldBe(expected);
+
+    [Fact]
     public void TheFolderAndTheCommandLineAreNamed()
     {
         var message = HelperGit.Describe(["commit", "-q", "-m", "mine"], @"C:\t\plane", 1, "", "boom");

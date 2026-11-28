@@ -15,13 +15,13 @@ internal static class HelperGit
         }
 
         var message = Describe(args, cwd, code, output, error);
-        if (args.Contains("commit"))
+        if (IsSubcommand(args, "commit"))
         {
             // A commit that found nothing staged prints only on stdout; show what git saw.
             try
             {
                 var (_, status, statusError) = Execute(cwd, ["status", "--short"], env, kind);
-                message += $"{Environment.NewLine}git status --short:{Environment.NewLine}{status.Trim()}{statusError.Trim()}";
+                message = WithStatus(message, status, statusError);
             }
             catch (Exception e)
             {
@@ -40,9 +40,37 @@ internal static class HelperGit
             + $"stderr: {stderr.Trim()}{Environment.NewLine}stdout: {stdout.Trim()}";
     }
 
-    private static (int Code, string Output, string Error) Execute(string cwd, string[] args, IReadOnlyDictionary<string, string>? env, string? kind = null)
+    /// <summary>The failure message with what <c>git status --short</c> showed appended: pure, so it is testable without a process.</summary>
+    internal static string WithStatus(string message, string status, string statusError) =>
+        $"{message}{Environment.NewLine}git status --short:{Environment.NewLine}{status.Trim()}{statusError.Trim()}";
+
+    /// <summary>True when <paramref name="subcommand"/> is git's subcommand: the first argument that is not an option, skipping the value of each <c>-c</c> and <c>-C</c>.</summary>
+    internal static bool IsSubcommand(IEnumerable<string> args, string subcommand)
     {
-        var start = new ProcessStartInfo("git") { WorkingDirectory = cwd, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
+        var skipNext = false;
+        foreach (var arg in args)
+        {
+            if (skipNext)
+            {
+                skipNext = false;
+            }
+            else if (arg is "-c" or "-C")
+            {
+                skipNext = true;
+            }
+            else if (!arg.StartsWith('-'))
+            {
+                return arg == subcommand;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>Runs git without throwing on a non-zero exit and returns the exit code, stdout and stderr; <paramref name="input"/> is written to stdin when given.</summary>
+    internal static (int Code, string Output, string Error) Execute(string cwd, string[] args, IReadOnlyDictionary<string, string>? env = null, string? kind = null, string? input = null)
+    {
+        var start = new ProcessStartInfo("git") { WorkingDirectory = cwd, RedirectStandardOutput = true, RedirectStandardError = true, RedirectStandardInput = input is not null, CreateNoWindow = true, UseShellExecute = false };
         if (env is not null)
         {
             foreach (var (key, value) in env)
@@ -59,8 +87,14 @@ internal static class HelperGit
         using var process = TestEnvironment.Start(start, kind)!;
         // Both pipes drain concurrently, so a full stderr cannot block stdout.
         var error = process.StandardError.ReadToEndAsync();
-        var output = process.StandardOutput.ReadToEnd();
+        var output = process.StandardOutput.ReadToEndAsync();
+        if (input is not null)
+        {
+            process.StandardInput.Write(input);
+            process.StandardInput.Close();
+        }
+
         process.WaitForExit();
-        return (process.ExitCode, output, error.GetAwaiter().GetResult());
+        return (process.ExitCode, output.GetAwaiter().GetResult(), error.GetAwaiter().GetResult());
     }
 }

@@ -387,10 +387,7 @@ public sealed class IdeaCliTests : IDisposable
     {
         var repo = Path.Combine(_root, "tianwen");
         Directory.CreateDirectory(repo);
-        using (var git = TestEnvironment.Start(new ProcessStartInfo("git") { ArgumentList = { "init", "-q", "-b", "main" }, WorkingDirectory = repo, UseShellExecute = false })!)
-        {
-            await git.WaitForExitAsync(Ct);
-        }
+        HelperGit.Run(repo, ["init", "-q", "-b", "main"]);
         await using var node = await NodeHarness.StartAsync(Ct);
 
         var noted = await Pilot(node, _root, "idea", "--repo", repo, "Planets on the GPU");
@@ -421,15 +418,9 @@ public sealed class IdeaCliTests : IDisposable
     {
         var repo = Path.Combine(_root, "tianwen");
         Directory.CreateDirectory(repo);
-        using (var git = TestEnvironment.Start(new ProcessStartInfo("git") { ArgumentList = { "init", "-q", "-b", "main" }, WorkingDirectory = repo, UseShellExecute = false })!)
-        {
-            await git.WaitForExitAsync(Ct);
-        }
+        HelperGit.Run(repo, ["init", "-q", "-b", "main"]);
         // Planning makes a flight, whose plane needs a commit to branch from.
-        using (var commit = TestEnvironment.Start(new ProcessStartInfo("git") { ArgumentList = { "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "first" }, WorkingDirectory = repo, UseShellExecute = false })!)
-        {
-            await commit.WaitForExitAsync(Ct);
-        }
+        HelperGit.Run(repo, ["-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "first"]);
         await using var node = await NodeHarness.StartAsync(Ct);
         node.GitHub.AddMilestone(repo, "v1", new DateTimeOffset(2026, 11, 1, 0, 0, 0, TimeSpan.Zero), "The GPU work", 4);
         node.Milestoner.Answer = new MilestoneAnswer("v1", null, null, "it is about the GPU");
