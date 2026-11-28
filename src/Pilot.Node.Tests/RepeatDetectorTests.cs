@@ -33,10 +33,12 @@ public sealed class RepeatDetectorTests
     [InlineData("session-waiting", "session/s1")]
     public void TwoCardsOfARoutineKindOnOneSubjectRaiseNoTask(string kind, string subject)
     {
-        _state.RaiseCard(CardBin.Ring, kind, subject, "first");
+        var first = _state.RaiseCard(CardBin.Ring, kind, subject, "first");
+        _state.CloseCard(first.Id, "pressed", "owner");
         _time.Advance(TimeSpan.FromHours(2));
         _state.RaiseCard(CardBin.Ring, kind, subject, "second");
 
+        _state.Cards().Count(c => c.Kind == kind).ShouldBe(2);
         _detector.Look().ShouldBeEmpty();
         _state.Cards().ShouldNotContain(c => c.Kind == CardKinds.RepeatTask);
     }
@@ -44,10 +46,12 @@ public sealed class RepeatDetectorTests
     [Fact]
     public void ThePrReadyLifecycleOfOneFlightRaisesNoTask()
     {
-        _state.RaiseCard(CardBin.Ring, LegCommander.PrReady, "flight/PIL1", "PIL1: checks running");
+        var first = _state.RaiseCard(CardBin.Ring, LegCommander.PrReady, "flight/PIL1", "PIL1: checks running");
+        _state.CloseCard(first.Id, "pressed", "owner");
         _time.Advance(TimeSpan.FromMinutes(20));
         _state.RaiseCard(CardBin.Ring, LegCommander.PrReady, "flight/PIL1", "PIL1: queued, ready to merge");
 
+        _state.Cards().Count(c => c.Kind == LegCommander.PrReady).ShouldBe(2);
         _detector.Look().ShouldBeEmpty();
     }
 
