@@ -55,7 +55,8 @@ public static partial class NodeApp
         // What GET /node reads the heap with: the live figures, unless a test host registers a fixed reading after this (a live
         // working set moves between any two calls, so two `pilot status` outputs of one node would never be equal).
         builder.Services.AddSingleton<Func<NodeHeapRow>>(_ => () => NodeHeap.Read());
-        builder.Services.AddHostedService(services => new GhCallLog(services.GetRequiredService<NodeTraffic>().GhCalls, line => services.GetRequiredService<RollingLog>().Write(line), services.GetRequiredService<TimeProvider>()));
+        builder.Services.AddHostedService(services => new GhCallLog(services.GetRequiredService<NodeTraffic>().GhCalls, line => services.GetRequiredService<RollingLog>().Write(line), services.GetRequiredService<TimeProvider>(),
+            async ct => await GhCli.ReadBudgetAsync(ct) ? NodeTraffic.Shared.GhBudget.Line() : null));
         builder.Services.AddHostedService(services => new TrafficLog(services.GetRequiredService<NodeTraffic>(), services.GetRequiredService<RollingLog>(), services.GetRequiredService<TimeProvider>()));
     }
 

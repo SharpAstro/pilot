@@ -342,6 +342,11 @@ public sealed partial class GhCli
             start.ArgumentList.Add(arg);
         }
         start.Environment["GH_PROMPT_DISABLED"] = "1";
+        // While GitHub refuses, a call that spends points is answered as refused here, with no gh started (#1403).
+        if (NodeTraffic.Shared.GhBudget.Holds(args) is { } held)
+        {
+            return (1, [], held);
+        }
         var (process, counted) = await NodeTraffic.Shared.StartAsync("gh", start, cancellationToken: cancellationToken, caller: $"GhCli.{caller}");
         using var _ = process;
         using var __ = counted;
@@ -357,6 +362,8 @@ public sealed partial class GhCli
         }
         await read;
         await process.WaitForExitAsync(budget.Token);
-        return (process.ExitCode, output.ToArray(), await error);
+        var said = await error;
+        NodeTraffic.Shared.GhBudget.Saw(args, process.ExitCode, said);
+        return (process.ExitCode, output.ToArray(), said);
     }
 }
