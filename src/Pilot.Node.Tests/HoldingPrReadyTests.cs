@@ -143,12 +143,29 @@ public sealed class HoldingPrReadyTests : ReviewTestsBase
     public async Task AMergeFailedCardOnAHoldingFlightStaysOpenThroughALook()
     {
         var flight = await NotesLegEndedUnmade("8");
-        var card = _state.RaiseCard(CardBin.ForYou, LegCommander.MergeFailed, Verbs.FlightTarget(flight.Code), "the merge failed");
+        // A Merge choice on the card, so the only thing that tells it from a PR-ready card is its Kind (the condition under test).
+        var head = F(flight.Code).Review!.ReviewedHead!;
+        var merge = new CardChoice { Label = "Merge", Verb = Verbs.Merge, Target = Verbs.FlightTarget(flight.Code), Args = [head] };
+        var card = _state.RaiseCard(CardBin.ForYou, LegCommander.MergeFailed, Verbs.FlightTarget(flight.Code), "the merge failed", choices: [merge]);
 
         await Checks().LookAsync(Ct);
 
         F(flight.Code).Holding.ShouldNotBeNull();
         _state.Cards(openOnly: true).ShouldContain(c => c.Id == card.Id);
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task APrReadyCardWithAMergeChoiceOnAHoldingFlightIsClosedByALook()
+    {
+        var flight = await NotesLegEndedUnmade("9");
+        var head = F(flight.Code).Review!.ReviewedHead!;
+        var merge = new CardChoice { Label = "Merge", Verb = Verbs.Merge, Target = Verbs.FlightTarget(flight.Code), Args = [head] };
+        var card = _state.RaiseCard(CardBin.ForYou, LegCommander.PrReady, Verbs.FlightTarget(flight.Code), "ready", choices: [merge]);
+
+        await Checks().LookAsync(Ct);
+
+        _state.Cards(openOnly: true).ShouldNotContain(c => c.Id == card.Id);
     }
 
     [Fact]
