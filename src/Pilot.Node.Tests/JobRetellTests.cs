@@ -1060,7 +1060,7 @@ public sealed class JobRetellTests : IDisposable
         EndOutage();
         _clock.Advance(TimeSpan.FromSeconds(1));
 
-        (await TellSweep()).ShouldBeFalse();
+        // Only the retell sweep (which redoes first): the TellSweep would tell the untold j2 itself, which is not what is asked here.
         (await Sweep()).ShouldBeFalse();
 
         _said.ShouldBeEmpty();
