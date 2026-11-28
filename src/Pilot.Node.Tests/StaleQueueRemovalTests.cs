@@ -139,6 +139,6 @@ public sealed class StaleQueueRemovalTests() : ReviewTestsBase(realGit: true)
         await Checks().LookAsync(Ct);
 
         _state.Cards(openOnly: true).ShouldContain(c => c.Kind == LegCommander.PrReady && c.Subject == Verbs.FlightTarget(flight.Code)
-            && c.Choices.Any(ch => ch.Args.SequenceEqual(new[] { b })));
+            && c.Choices.Any(ch => ch.Verb == Verbs.Merge && ch.Args.FirstOrDefault() == b));
     }
 }
