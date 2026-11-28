@@ -1573,6 +1573,26 @@ public sealed class LegWatchTests
         card.Title.ShouldNotContain("nothing committed");
     }
 
+    [Fact]
+    public async Task ALegWithNoStartHeadSaysOnlyItsStepsAndReadsNoPlane()
+    {
+        var reads = 0;
+        _watch.PlaneCommits = (_, _, _) => { reads++; return Task.FromResult<int?>(3); };
+        _state.PutLeg(_state.Legs().Single() with
+        {
+            StartHead = null,
+            Checklist = [.. Enumerable.Range(0, 6).Select(i => new CheckItem { Text = $"step {i}", Done = i < 2 })],
+        });
+        Worker(SessionState.Failed);
+        await _watch.LookAsync(Ct);
+
+        var card = Open().Single(c => c.Kind == LegWatch.Failed);
+        card.Title.ShouldContain("2 of 6 steps ticked");
+        (card.Title + card.Detail).ShouldNotContain("commit");
+        (card.Title + card.Detail).ShouldNotContain("unknown");
+        reads.ShouldBe(0);
+    }
+
     // PIL1382 review notes: a read is for a card about to be raised.
     [Fact]
     public async Task ThePlaneIsReadOncePerCardNotOnEveryLookOfAWorkerWhoseCardIsAlreadyOpen()

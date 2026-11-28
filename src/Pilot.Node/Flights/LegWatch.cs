@@ -2101,19 +2101,20 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
     /// <summary>
     /// What the plane shows of a leg, read once per look for the cards that follow: the commits since the leg started and the ticked steps,
     /// so a card never says a worker did nothing while the plane holds its commits (c19376). An unread count is said as unknown, never as none.
+    /// A leg with no <see cref="LegRow.StartHead"/> (an adopted flight's, or one started before the field) has no count to read, so its
+    /// cards say only the steps, as they did before.
     /// </summary>
     private async Task<string> PlaneStateAsync(LegRow leg, CancellationToken cancellationToken)
     {
+        if (leg.StartHead is not { Length: > 0 } head)
+            return Steps(leg);
         int? commits = null;
-        if (leg.StartHead is { Length: > 0 } head)
+        try
         {
-            try
-            {
-                commits = await PlaneCommits(leg.Flight, head, cancellationToken);
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-            }
+            commits = await PlaneCommits(leg.Flight, head, cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
         }
         return PlaneStateText(commits, Steps(leg));
     }
