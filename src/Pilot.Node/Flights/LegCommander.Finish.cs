@@ -478,7 +478,7 @@ public sealed partial class LegCommander
                     return $"{(UnknownSwitch.In(run.Tail) is { } wrongHere ? wrongHere.Text + "\n\n" : "")}{flight.Code}/{leg.Name}'s check `{check}` failed ({run.ExitCode}); nothing was pushed. Last of its output:\n{run.Tail}";
                 }
                 await EnsureNotArmedAsync(flight, cancellationToken);
-                var push = await git.RunAsync(leased is null ? ["push", "-u", "origin", flight.Branch] : ["push", "-u", $"--force-with-lease={flight.Branch}:{leased}", "origin", flight.Branch], flight.Worktree, cancellationToken);
+                var push = await PushRecordedAsync(flight, leased is null ? ["push", "-u", "origin", flight.Branch] : ["push", "-u", $"--force-with-lease={flight.Branch}:{leased}", "origin", flight.Branch], cancellationToken);
                 return push.Ok ? null : $"git could not push {flight.Branch}: {push.Why}";
             });
         }

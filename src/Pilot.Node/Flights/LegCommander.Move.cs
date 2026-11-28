@@ -430,7 +430,7 @@ public sealed partial class LegCommander
                 return ex.Message;
             }
             // No -f and no lease: a push git would have to force is refused, as the remote holding more is.
-            var push = await git.RunAsync(["push", "-u", "origin", branch], plane, cancellationToken);
+            var push = await PushRecordedAsync(flight, ["push", "-u", "origin", branch], cancellationToken);
             if (!push.Ok)
             {
                 return $"the push was refused ({push.Why}). Look at {branch} on origin, then move it again.";

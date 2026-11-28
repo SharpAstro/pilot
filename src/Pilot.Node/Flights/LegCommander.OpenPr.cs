@@ -215,6 +215,27 @@ public sealed partial class LegCommander
     }
 
     /// <summary>
+    /// Runs a git push of the flight's branch from its plane and, when it succeeded, records on the flight the head pushed and the time
+    /// taken just before the push (#1407). The head and the time are read first, so a removal from the merge queue made before the push
+    /// is not later than the record; a refused push leaves the earlier record as it was, and so does a push of the head already recorded (the time is when the head first went up).
+    /// </summary>
+    private async Task<GitRun> PushRecordedAsync(FlightRow flight, string[] args, CancellationToken cancellationToken)
+    {
+        var head = await git.RunAsync(["rev-parse", "HEAD"], flight.Worktree, cancellationToken);
+        var at = time.GetUtcNow();
+        var push = await git.RunAsync(args, flight.Worktree, cancellationToken);
+        if (push.Ok && head.Ok && head.Output.Trim() is { Length: > 0 } pushed)
+        {
+            // A push of the head already on record changes nothing on origin, so the time the head first went up stays: moving it
+            // forward would read a real drop of that head, made between the two pushes, as an earlier head's removal.
+            state.UpdateFlight(flight.Code, f => string.Equals(f.PushedHead, pushed, StringComparison.OrdinalIgnoreCase) && f.PushedAt is not null
+                ? f
+                : f with { PushedHead = pushed, PushedAt = at });
+        }
+        return push;
+    }
+
+    /// <summary>
     /// Pushes the flight's branch plain (<c>git push -u origin &lt;branch&gt;</c>), never with --force or --force-with-lease: the PIL294 work
     /// was lost to a force push on 2026-10-27. A head that still lacks its base, or whose pushed history is not an ancestor of it, is
     /// refused, and git itself refuses a push that is no fast-forward.
@@ -246,7 +267,7 @@ public sealed partial class LegCommander
         {
             throw new FlightException($"{flight.Branch} is not pushed: origin/{flight.Branch} holds commits its head lacks, and the node never overwrites a pushed branch");
         }
-        var push = await git.RunAsync(["push", "-u", "origin", flight.Branch], flight.Worktree, cancellationToken);
+        var push = await PushRecordedAsync(flight, ["push", "-u", "origin", flight.Branch], cancellationToken);
         // Git's whole text is read: GitHub's GH006 line is not always the first of its stderr.
         if (!push.Ok && PushRefusals.IsProtectedBranch($"{push.Error}\n{push.Output}"))
         {

@@ -214,11 +214,13 @@ public sealed partial class LegCommander
     /// taken out of the queue, or the PR closed), as <see cref="PrChecks"/> sees it. Only an entry no merge command of this node
     /// drives; the repo's later entries move up.
     /// </summary>
-    public void EndLeftQueue(string code, string why)
+    public void EndLeftQueue(string code, string why, string? sparedHead = null)
     {
         lock (_turns)
         {
-            if (!_active.Contains(code) && state.Merges().FirstOrDefault(m => m.Flight == code) is { State: MergeEntryState.Merging })
+            // sparedHead: an entry merging that head is left alone (a removal older than that head is not its end, #1407).
+            if (!_active.Contains(code) && state.Merges().FirstOrDefault(m => m.Flight == code) is { State: MergeEntryState.Merging } entry
+                && !string.Equals(entry.Head, sparedHead, StringComparison.OrdinalIgnoreCase))
             {
                 DropMerge(code, why);
             }

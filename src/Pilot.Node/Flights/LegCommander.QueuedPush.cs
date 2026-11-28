@@ -154,7 +154,7 @@ public sealed partial class LegCommander
         {
             await EnsureNotQueuedAsync(flight, pr.Number, cancellationToken);
         }
-        return await git.RunAsync(["push", "-u", "origin", flight.Branch], flight.Worktree, cancellationToken);
+        return await PushRecordedAsync(flight, ["push", "-u", "origin", flight.Branch], cancellationToken);
     }
 
     // Whether the flight moved only by a push's own turning of its review, which is no other command's write.

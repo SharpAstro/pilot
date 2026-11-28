@@ -95,8 +95,16 @@ public sealed partial class LegCommander
     /// <summary>How many rebase probes have run (for tests that show a queue is never probed).</summary>
     public int RebaseProbes => Volatile.Read(ref _probes);
 
-    // When the node laid a head, by "code head": a removal of that head older than this is the old head's drop, not GitHub's verdict on the laid commit.
-    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, DateTimeOffset> _laidAt = new(StringComparer.Ordinal);
+    /// <summary>
+    /// Whether a merge-queue removal at <paramref name="removedAt"/> is an earlier head's, not a verdict on <paramref name="head"/> (#1407):
+    /// true when the flight's row records that the node pushed exactly this head and the removal is at or before that push. The record is
+    /// the stored fact (it survives a restart) because GitHub cannot say it: a merge_conflict removal names no head
+    /// (<c>beforeCommit</c> is null), and the PR timeline dates a commit by its commit date, not by when it was pushed. There is no skew
+    /// allowance: a lay queues its head at once, and a real drop of that head after the push must still be met.
+    /// </summary>
+    public bool RemovalPredatesHead(string code, string head, DateTimeOffset removedAt) =>
+        state.Flights().FirstOrDefault(f => f.Code == code) is { PushedHead: { Length: > 0 } pushed, PushedAt: { } at }
+        && string.Equals(pushed, head, StringComparison.OrdinalIgnoreCase) && removedAt <= at;
 
     // Heads GitHub's queue dropped for a conflict, by "code head": none of them is queued again until the head moves. Kept in memory
     // only (with _dropRung): after a node restart a dropped head is met again and rung once more, which is intended.
@@ -120,9 +128,9 @@ public sealed partial class LegCommander
     /// </summary>
     public async Task<bool> HandleConflictDropAsync(string code, string head, DateTimeOffset removedAt, CancellationToken cancellationToken)
     {
-        if (_laidAt.TryGetValue($"{code} {head}", out var laidAt) && removedAt <= laidAt)
+        if (RemovalPredatesHead(code, head, removedAt))
         {
-            // The removal is the old head's: the node laid this one itself and it is not a GitHub drop.
+            // The removal is the old head's: the node pushed this one after it (a lay records its push too) and it is not a GitHub drop.
             return true;
         }
         _droppedHeads[$"{code} {head}"] = true;

@@ -16,7 +16,7 @@ public sealed partial class LegCommander
     private async Task LeasePushAsync(FlightRow flight, string old, CancellationToken cancellationToken)
     {
         var (plane, branch) = (flight.Worktree, flight.Branch);
-        var push = await git.RunAsync(["push", $"--force-with-lease={branch}:{old}", "origin", branch], plane, cancellationToken);
+        var push = await PushRecordedAsync(flight, ["push", $"--force-with-lease={branch}:{old}", "origin", branch], cancellationToken);
         if (!push.Ok)
         {
             await git.RunAsync(["reset", "--hard", "--quiet", old], plane, CancellationToken.None);
@@ -93,7 +93,6 @@ public sealed partial class LegCommander
                 [new CardChoice { Label = "Try merging again", Verb = Verbs.Merge, Target = Verbs.FlightTarget(flight.Code), Args = [head, method] }]);
             throw new FlightException($"{flight.Code} does not rebase onto {flight.Base} and could not be laid on it: {ex.Message}");
         }
-        _laidAt[$"{flight.Code} {shaped}"] = DateTimeOffset.UtcNow;
         var how = laidFiles is null ? $"rebased onto {flight.Base}" : $"laid on {flight.Base} as one commit";
         if (!carried)
         {
