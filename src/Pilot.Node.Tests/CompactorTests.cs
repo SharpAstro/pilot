@@ -334,7 +334,8 @@ public sealed class CompactorTests : IDisposable
         // #1397: brief plus Claude Code's own prompt starts a watchtower at 128k of 200k, over the 60% share it is judged against.
         Row("t0000001", "du1-watchtower", context: 128_000);
         _state.PutSession(_state.Sessions().Single() with { ContextWindow = 200_000 });
-        for (var look = 0; look < 120; look++)
+        // (Looks for 40 minutes: past that an idle watchtower with this much context is compacted for its cold cache, a different trigger.)
+        for (var look = 0; look < 80; look++)
         {
             _time.Advance(TimeSpan.FromSeconds(30));
             await _compactor.LookAsync(Ct);

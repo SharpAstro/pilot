@@ -189,9 +189,10 @@ public sealed class Compactor(NodeState state, Watchtower watchtower, Func<Comma
             }
             var share = isTower ? Models.WatchtowerCompactShare / 100.0 : WindowShare;
             var full = row.ContextWindow > 0 && row.ContextTokens > share * row.ContextWindow;
-            if (full && isTower && watchtower.StartTokensOf(row) is { } start)
+            // Read at every look of a watchtower, full or not: the first reading the node sees of it is stamped as its start (#1397).
+            if (isTower && watchtower.StartTokensOf(row) is { } start && full)
             {
-                // The watchtower is full only when it has also grown past where it started by the margin (#1397); a worker's test is the share alone.
+                // The watchtower is full only when it has also grown past where it started by the margin; a worker's test is the share alone.
                 full = row.ContextTokens > start + StartMargin * row.ContextWindow;
             }
             if (_stuck.Contains(key))
