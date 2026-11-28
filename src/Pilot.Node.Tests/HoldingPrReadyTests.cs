@@ -147,7 +147,7 @@ public sealed class HoldingPrReadyTests : ReviewTestsBase
         var head = F(flight.Code).Review!.ReviewedHead!;
         var merge = new CardChoice { Label = "Merge", Verb = Verbs.Merge, Target = Verbs.FlightTarget(flight.Code), Args = [head] };
         var card = _state.RaiseCard(CardBin.ForYou, kind, Verbs.FlightTarget(flight.Code), "a merge card", choices: [merge]);
-        _legs.ShowMergeState(card, new MergeState(MergeKinds.Ready, 1, 1), head);
+        _legs.ShowMergeState(card, GhAnswers.MergeState(MergeKinds.Ready, 1, 1), head);
         return (flight, card);
     }
 
