@@ -1727,6 +1727,8 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
                 }
                 continue;
             }
+            // Precedence is deliberate: `&&` binds tighter than `||`, so StrayGrace applies only to a Done leg's worker; a session that is
+            // not the leg's current worker (a redone leg's old worker, a ticker) is a duplicate at once, inside StrayGrace too.
             if (why is null && row is { Role: SessionRole.Worker, Flight: { } flight, Leg: { } legName }
                 && state.Legs(flight).FirstOrDefault(l => l.Name == legName) is { } leg
                 && (leg is { State: LegState.Done, FinishedAt: { } finished } && now - finished > StrayGrace || (leg.WorkerJob is not null && leg.WorkerJob != row.Id)))
