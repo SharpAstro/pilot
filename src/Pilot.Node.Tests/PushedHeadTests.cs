@@ -45,8 +45,7 @@ public sealed class PushedHeadTests() : ReviewTestsBase(realGit: true)
     public async Task APushOfAHeadAlreadyRecordedKeepsTheTimeItFirstWentUp()
     {
         var (flight, _) = await Passed("1");
-        Touch(flight.Worktree, "one
-");
+        Touch(flight.Worktree, "one\n");
         await _legs.PushAsync(F(flight.Code), Ct);
         var first = F(flight.Code);
 
@@ -62,14 +61,12 @@ public sealed class PushedHeadTests() : ReviewTestsBase(realGit: true)
     public async Task APushOfADifferentHeadMovesThePushedTimeToIt()
     {
         var (flight, _) = await Passed("1");
-        Touch(flight.Worktree, "one
-");
+        Touch(flight.Worktree, "one\n");
         await _legs.PushAsync(F(flight.Code), Ct);
         var first = F(flight.Code);
 
         _clock.Advance(TimeSpan.FromMinutes(5));
-        Touch(flight.Worktree, "two
-");
+        Touch(flight.Worktree, "two\n");
         var c = Git(flight.Worktree, "rev-parse", "HEAD");
         await _legs.PushAsync(F(flight.Code), Ct);
 
@@ -82,8 +79,7 @@ public sealed class PushedHeadTests() : ReviewTestsBase(realGit: true)
     public async Task ARemovalBetweenTwoPushesOfTheSameHeadIsNotTakenForAnEarlierHeads()
     {
         var (flight, _) = await Passed("1");
-        Touch(flight.Worktree, "one
-");
+        Touch(flight.Worktree, "one\n");
         var b = Git(flight.Worktree, "rev-parse", "HEAD");
         await _legs.PushAsync(F(flight.Code), Ct);
         var t0 = F(flight.Code).PushedAt.ShouldNotBeNull();
