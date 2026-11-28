@@ -161,7 +161,14 @@ public sealed class PlanQueueStallTests
         Flight();
         Planner(SessionState.Ended, Start);
         _watch.StartedPlanner = _ => ("0a0a0a0a", Start);
-        await NothingAtLooks();
+        // Within the first-turn grace a start the listing does not show yet is the planner, not a stall (past it, the ladder restarts it).
+        await _watch.LookAsync(Ct);
+        _time.Advance(TimeSpan.FromSeconds(7));
+        await _watch.LookAsync(Ct);
+        _time.Advance(_watch.FirstTurnGrace - TimeSpan.FromSeconds(30));
+        await _watch.LookAsync(Ct);
+        AnyPlanStall().ShouldBeEmpty();
+        _ran.Where(c => c.Verb == Verbs.PlanFlight).ShouldBeEmpty();
     }
 
     [Fact]
