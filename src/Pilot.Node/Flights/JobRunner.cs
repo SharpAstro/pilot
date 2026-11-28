@@ -2941,6 +2941,8 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
             SlotFreed?.Invoke(job.Id);
         }
         // A stale NuGet HTTP cache (#1064): the slot is free, so the feed lookup holds nothing; the rerun's end is what the owner hears.
+        // PIL1382: a held early notice is for a job that is running on; this one ended, so it is dropped whichever way it is told.
+        await SupersedeEarlyNoticeAsync(ended.Id);
         if (!await RerunStaleAsync(ended, last))
         {
             await TellAsync(ended, CancellationToken.None, last);
@@ -2975,7 +2977,48 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
         }
         if (toTell is not null)
         {
-            _ = TellFirstFailureAsync(toTell, failure);
+            _earlySays[toTell.Id] = TellFirstFailureAsync(toTell, failure);
+        }
+    }
+
+    /// <summary>
+    /// PIL1382: how long an early failure notice to an owner the say would resume waits before it is said. A job that ends inside
+    /// it is told by its end tell alone, so an idle owner is woken once, not by two messages a second apart.
+    /// </summary>
+    internal static readonly TimeSpan EarlyNoticeHold = TimeSpan.FromSeconds(15);
+
+    // Per job: the holds of early notices not yet started (cancelled by the job's end), and the early says (awaited by the end tell).
+    private readonly ConcurrentDictionary<string, CancellationTokenSource> _earlyHolds = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, Task> _earlySays = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// The end tell supersedes an early notice still held (dropped, FailureTold stays so it is never said later), and waits for one
+    /// already saying to return rather than racing it at the session's gate.
+    /// </summary>
+    private async Task SupersedeEarlyNoticeAsync(string jobId)
+    {
+        if (_earlyHolds.TryRemove(jobId, out var hold))
+        {
+            try
+            {
+                hold.Cancel();
+            }
+            catch (ObjectDisposedException)
+            {
+                // The notice left its hold (and disposed it) between our removal and this cancel: it is past the hold, and the
+                // waiting below for its say is what keeps it from racing the end tell.
+            }
+        }
+        if (_earlySays.TryRemove(jobId, out var said))
+        {
+            try
+            {
+                await said.WaitAsync(_stopping);
+            }
+            catch (Exception)
+            {
+                // The early notice's own failure is no reason to hold back the end tell.
+            }
         }
     }
 
@@ -3008,6 +3051,25 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
             }
             var what = failure.IsBuildError ? $"a build error ({failure.Name})" : $"a failed test ({failure.Name})";
             var text = $"{handed}Your job {job.Id} (`{job.Command}`, in {job.Cwd}) has {what} so far, and runs on. You will be told how it ends; the output so far is in {job.LogPath}.";
+            if ((sessions.FirstOrDefault(s => s.Id == target) ?? ownerRow) is { } sayRow && Sessions.SessionMessenger.Choose(sayRow) == SayWays.Resumed)
+            {
+                // An owner the say would resume: hold the notice, so a job that ends inside the window is told by its end tell alone.
+                using var hold = CancellationTokenSource.CreateLinkedTokenSource(_stopping);
+                _earlyHolds[job.Id] = hold;
+                try
+                {
+                    await Task.Delay(EarlyNoticeHold, time, hold.Token);
+                }
+                catch (OperationCanceledException)
+                {
+                    return;
+                }
+                // Taken out of the holds by the end tell first means the end tell owns the delivery.
+                if (!_earlyHolds.TryRemove(job.Id, out _))
+                {
+                    return;
+                }
+            }
             await Say!(new CommandRequest { Verb = Verbs.Say, Target = Verbs.SessionTarget(target), Args = [text], Who = LegWatch.Who }, _stopping);
         }
         catch (Exception)
@@ -3072,6 +3134,8 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
         {
             return;
         }
+        // PIL1382: an early notice still held is dropped, one already saying is waited for: this tell is the one message.
+        await SupersedeEarlyNoticeAsync(job.Id);
         var took = (job.EndedAt ?? time.GetUtcNow()) - job.StartedAt;
         var how = job.State switch
         {
@@ -3079,6 +3143,20 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
             JobState.Cancelled => job.Error ?? "was cancelled",
             _ => $"failed: {job.Error}",
         };
+        // The first build error or failed test is named here too: the early notice that this tell supersedes said it, and the
+        // last 12 lines of a real run (a test summary, many errors) need not hold it.
+        var firstRow = state.Jobs().FirstOrDefault(j => j.Id == job.Id) ?? job;
+        // A job that succeeded and still printed an error line (a check that does it on purpose) says it as a line it printed, not as
+        // a failure it had.
+        var printed = job.State == JobState.Succeeded;
+        if (firstRow.FirstBuildError is { Length: > 0 } firstError)
+        {
+            how += printed ? $" (it printed an error line, the first: {firstError}; the exit code was 0)" : $" (first build error: {firstError})";
+        }
+        if (firstRow.FirstTestFailed is { Length: > 0 } firstTest)
+        {
+            how += printed ? $" (it printed a failed-test line, the first: {firstTest}; the exit code was 0)" : $" (first failed test: {firstTest})";
+        }
         var lines = last is { Length: > 0 } ? "\nIts last lines:\n" + string.Join('\n', last.TakeLast(12)) : "";
         var rerun = _rerunNotes.TryGetValue(job.Id, out var note) ? $" ({note})" : "";
         var text = $"Your job {job.Id} (`{job.Command}`, in {job.Cwd}) {how}{rerun}, after {Took(took)}.{lines}\nThe whole output is in {job.LogPath}. Carry on from here.";

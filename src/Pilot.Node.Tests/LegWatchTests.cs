@@ -897,6 +897,28 @@ public sealed class LegWatchTests
     }
 
     [Fact]
+    public async Task AWorkerRowThatEndedItsTurnThenFailedGoesTheIdlePathAndRingsNoFailedCard()
+    {
+        // What SessionRowBuilder makes of a failed job whose Stop hook fired after its resume: Ended after its turn.
+        _state.PutSession(new SessionRow
+        {
+            Id = "a1b2c3d4", SessionId = "a1b2c3d4-0000-4000-8000-000000000000", Name = "du1-tia1-parser", Kind = SessionKind.Background,
+            Cwd = "/work/tia1", Role = SessionRole.Worker, Flight = "TIA1", Leg = "parser", ContextTokens = 0, ContextWindow = 200_000,
+            State = SessionState.Ended, SpendWeighted = 0, LastResponseAt = Start, StartedAt = Start,
+            EndedBecause = SessionRowBuilder.TurnFinishedEnd + " (failed after its turn ended, stop held: files not committed)",
+        });
+
+        await _watch.LookAsync(Ct);
+
+        Open().ShouldNotContain(c => c.Kind == LegWatch.Failed);
+
+        // A real failure still rings.
+        Worker(SessionState.Failed);
+        await _watch.LookAsync(Ct);
+        Open().ShouldContain(c => c.Kind == LegWatch.Failed);
+    }
+
+    [Fact]
     public async Task AReviewerThatStopsWithoutItsVerdictIsToldThenReviewedAfreshAndOnlyThenRings()
     {
         _state.PutLeg(_state.Legs().Single() with { State = LegState.Done });
@@ -1501,6 +1523,113 @@ public sealed class LegWatchTests
         var idle = Open().Single(c => c.Kind == LegWatch.Idle);
         idle.Choices.Select(c => c.Label).ShouldBe(["Nudge the worker", Verbs.RestartWorker]);
         SummaryMatchesChoices(idle);
+    }
+
+    // ---- the plane's state on a worker's card (PIL1382) ----
+
+    private async Task<CardRow> FailedCardAsync(int? commits, int ticked)
+    {
+        _watch.PlaneCommits = (_, _, _) => Task.FromResult(commits);
+        _state.PutLeg(_state.Legs().Single() with
+        {
+            StartHead = "abc123",
+            Checklist = [.. Enumerable.Range(0, 6).Select(i => new CheckItem { Text = $"step {i}", Done = i < ticked })],
+        });
+        Worker(SessionState.Failed);
+        await _watch.LookAsync(Ct);
+        return Open().Single(c => c.Kind == LegWatch.Failed);
+    }
+
+    [Fact]
+    public async Task TheFailedCardSaysNothingWasCommittedWhenThePlaneHoldsNoNewCommit()
+    {
+        var card = await FailedCardAsync(0, 0);
+        card.Title.ShouldContain("nothing committed since the leg started, 0 of 6 steps ticked");
+        card.Detail.ShouldNotBeNull().ShouldContain("nothing committed since the leg started, 0 of 6 steps ticked");
+    }
+
+    [Fact]
+    public async Task TheFailedCardNamesTheCommitsAndTheOpenStepsAndNeverSaysNoWork()
+    {
+        var card = await FailedCardAsync(3, 0);
+        card.Title.ShouldContain("3 commits since the leg started, 0 of 6 steps ticked");
+        card.Detail.ShouldNotBeNull().ShouldContain("3 commits since the leg started, 0 of 6 steps ticked");
+        (card.Title + card.Detail).ShouldNotContain("no work");
+    }
+
+    [Fact]
+    public async Task TheFailedCardNamesTheCommitsAndEverySteppedTickWhenAllAreTicked()
+    {
+        var card = await FailedCardAsync(4, 6);
+        card.Title.ShouldContain("4 commits since the leg started, 6 of 6 steps ticked");
+        card.Detail.ShouldNotBeNull().ShouldContain("4 commits since the leg started, 6 of 6 steps ticked");
+    }
+
+    [Fact]
+    public async Task AnUnreadCommitCountIsSaidAsUnknownNeverAsNone()
+    {
+        var card = await FailedCardAsync(null, 1);
+        card.Title.ShouldContain("unknown");
+        card.Title.ShouldNotContain("nothing committed");
+    }
+
+    [Fact]
+    public async Task ALegWithNoStartHeadSaysOnlyItsStepsAndReadsNoPlane()
+    {
+        var reads = 0;
+        _watch.PlaneCommits = (_, _, _) => { reads++; return Task.FromResult<int?>(3); };
+        _state.PutLeg(_state.Legs().Single() with
+        {
+            StartHead = null,
+            Checklist = [.. Enumerable.Range(0, 6).Select(i => new CheckItem { Text = $"step {i}", Done = i < 2 })],
+        });
+        Worker(SessionState.Failed);
+        await _watch.LookAsync(Ct);
+
+        var card = Open().Single(c => c.Kind == LegWatch.Failed);
+        card.Title.ShouldContain("2 of 6 steps ticked");
+        (card.Title + card.Detail).ShouldNotContain("commit");
+        (card.Title + card.Detail).ShouldNotContain("unknown");
+        reads.ShouldBe(0);
+    }
+
+    // PIL1382 review notes: a read is for a card about to be raised.
+    [Fact]
+    public async Task ThePlaneIsReadOncePerCardNotOnEveryLookOfAWorkerWhoseCardIsAlreadyOpen()
+    {
+        var reads = 0;
+        _watch.PlaneCommits = (_, _, _) => { reads++; return Task.FromResult<int?>(2); };
+        _state.PutLeg(_state.Legs().Single() with { StartHead = "abc123" });
+        Worker(SessionState.Failed);
+        await _watch.LookAsync(Ct);
+        Open().Single(c => c.Kind == LegWatch.Failed);
+        reads.ShouldBe(1);
+
+        await _watch.LookAsync(Ct);
+        await _watch.LookAsync(Ct);
+        reads.ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task ThePlaneIsNotReadForALegOfALandedFlightWhichRaisesNoCard()
+    {
+        var reads = 0;
+        _watch.PlaneCommits = (_, _, _) => { reads++; return Task.FromResult<int?>(2); };
+        _state.PutLeg(_state.Legs().Single() with { StartHead = "abc123" });
+        Flight(FlightState.Landed);
+        Worker(SessionState.Failed);
+        await _watch.LookAsync(Ct);
+
+        reads.ShouldBe(0);
+        Open().Where(c => c.Kind == LegWatch.Failed).ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void TheRingJudgesRewordingPromptTellsTheBrainToKeepTheCountsAndNeverSayNoWork()
+    {
+        var prompt = RingJudge.WordingRequest("t", "3 commits since the leg started, 0 of 6 steps ticked", "nudge");
+        prompt.ShouldContain("Keep the commit and step counts of the card exactly as given");
+        prompt.ShouldContain("Never say a worker did no work");
     }
 
     // ---- the first-turn ladder for workers, validators and reviewers (PIL530) ----

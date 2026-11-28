@@ -72,6 +72,24 @@ public sealed partial class LegCommander
     internal Task<string?> PlaneHeadOfAsync(string code, CancellationToken cancellationToken) =>
         state.Flights().FirstOrDefault(f => f.Code == code) is { } flight ? PlaneHeadAsync(flight, cancellationToken) : Task.FromResult<string?>(null);
 
+    /// <summary>The commits in the plane since <paramref name="since"/> (<c>rev-list --count</c>), for the leg watch's cards; null when the flight is gone or git cannot say.</summary>
+    internal async Task<int?> PlaneCommitsAsync(string code, string since, CancellationToken cancellationToken)
+    {
+        if (state.Flights().FirstOrDefault(f => f.Code == code) is not { } flight)
+        {
+            return null;
+        }
+        try
+        {
+            var count = await git.RunAsync(["rev-list", "--count", $"{since}..HEAD"], flight.Worktree, cancellationToken);
+            return count.Ok && int.TryParse(count.Output.Trim(), out var n) ? n : null;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return null;
+        }
+    }
+
     /// <summary>
     /// Starts the ticking pass of a flying leg for the leg watch, under the lock so a leg that moved meanwhile (finished, sent round,
     /// ticked, or already given a ticker) starts nothing, nor one on a flight put on the owner's hold since the watch looked (#771).
