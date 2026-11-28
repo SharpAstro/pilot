@@ -679,6 +679,14 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
         }
     }
 
+    private const string FolderGoneTail = " is gone, and a session is resumed in its own folder";
+
+    /// <summary>The refusal for a session whose folder is gone: the one source of its wording, which <see cref="IsFolderGone"/> recognises (#1395).</summary>
+    public static string FolderGone(string? name, string? cwd) => $"{name}'s folder {cwd}{FolderGoneTail}";
+
+    /// <summary>True when <paramref name="error"/> is the folder-gone refusal built by <see cref="FolderGone"/>, possibly with a prefix or suffix added on its way out.</summary>
+    public static bool IsFolderGone(string? error) => error is not null && error.Contains("'s folder ", StringComparison.Ordinal) && error.Contains(FolderGoneTail, StringComparison.Ordinal);
+
     /// <summary>
     /// Resumes <paramref name="row"/>'s session. Null when its old process is still running after the stop:
     /// a resume then would start a second session beside it (#1206), so the caller relays to the live one instead.
@@ -687,7 +695,7 @@ public sealed class SessionMessenger(NodeState state, SessionTracker tracker, IS
     {
         if (!Directory.Exists(row.Cwd))
         {
-            throw new SessionDeliveryException($"{row.Name}'s folder {row.Cwd} is gone, and a session is resumed in its own folder");
+            throw new SessionDeliveryException(FolderGone(row.Name, row.Cwd));
         }
 
         using (tracker.BeginResume(row))

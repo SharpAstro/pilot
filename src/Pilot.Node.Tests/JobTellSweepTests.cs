@@ -16,6 +16,7 @@ public sealed class JobTellSweepTests : IDisposable
     private readonly ConcurrentQueue<CommandRequest> _said = new();
     private readonly JobRunner _jobs;
     private bool _refuse;
+    private string _refusal = "refused";
     private int _throwTimes;
 
     public JobTellSweepTests()
@@ -31,7 +32,7 @@ public sealed class JobTellSweepTests : IDisposable
                     _throwTimes--;
                     throw new InvalidOperationException("the say blew up");
                 }
-                return Task.FromResult(_refuse ? _state.Complete(command, "refused") : _state.Complete(command, null));
+                return Task.FromResult(_refuse ? _state.Complete(command, _refusal) : _state.Complete(command, null));
             },
         };
     }
@@ -108,6 +109,48 @@ public sealed class JobTellSweepTests : IDisposable
         var card = _state.Cards(openOnly: true).ShouldHaveSingleItem();
         (card.Kind, card.Subject).ShouldBe((JobRunner.UntoldKind, Verbs.JobTarget("j1")));
         _state.Jobs().Single(j => j.Id == "j1").Told.ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task ALiveOwnerWhoseFolderIsGoneIsMarkedToldGoneAndRingsNothing()
+    {
+        // #1395: nobody can be resumed in a folder that is gone, so the refusal is final, as for an owner with no row.
+        _refuse = true;
+        _refusal = SessionMessenger.FolderGone("w0000001", @"C:\gone\plane");
+        Live("w0000001");
+        Seed("j1");
+        await _jobs.StartAsync(CancellationToken.None);
+
+        await Until("j1", j => j.Told);
+        await Task.Delay(600, Ct);
+
+        _said.Count.ShouldBe(1);
+        _state.Jobs().Single(j => j.Id == "j1").ToldWay.ShouldBe("gone");
+        _state.Cards(openOnly: true).ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task AFolderGoneRefusalClosesAnEarlierCouldNotBeToldCard()
+    {
+        _refuse = true;
+        Live("w0000001");
+        Seed("j1");
+        _state.RaiseCard(CardBin.Ring, JobRunner.UntoldKind, Verbs.JobTarget("j1"), "Job j1 ended and its owner could not be told");
+        _refusal = SessionMessenger.FolderGone("w0000001", @"C:\gone\plane");
+        await _jobs.StartAsync(CancellationToken.None);
+
+        await Until("j1", j => j.Told);
+        await Task.Delay(300, Ct);
+
+        _state.Cards(openOnly: true).ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void OnlyTheFolderGoneWordingIsRecognised()
+    {
+        SessionMessenger.IsFolderGone(SessionMessenger.FolderGone("w1", "/x")).ShouldBeTrue();
+        SessionMessenger.IsFolderGone("refused").ShouldBeFalse();
+        SessionMessenger.IsFolderGone(null).ShouldBeFalse();
     }
 
     [Fact]
