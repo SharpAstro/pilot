@@ -197,6 +197,10 @@ public static partial class NodeApp
                 }
                 if (await gate.DecideAsync(hook.RootElement, context.RequestAborted) is { } decision)
                 {
+                    if (ClaudeAgentsJson.Text(hook.RootElement, "session_id") is { Length: > 0 } heldSession)
+                    {
+                        hooks.MarkStopHeld(heldSession);
+                    }
                     logger.LogInformation("stop held for {Session} in {Cwd}: files not committed", ClaudeAgentsJson.Text(hook.RootElement, "session_id"), ClaudeAgentsJson.Text(hook.RootElement, "cwd"));
                     return Results.Text(decision, "application/json");
                 }

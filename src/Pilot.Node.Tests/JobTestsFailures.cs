@@ -1,4 +1,5 @@
 using Pilot.Contracts;
+using Pilot.Node.Flights;
 using Shouldly;
 using Xunit;
 
@@ -14,6 +15,8 @@ public sealed class JobTestsFailures : JobTestsBase
     [Trait("Category", "Slow")]
     public async Task AJobWithAFailedTestSaysSoWhileItRunsAndItsOwnerIsToldTheFirstOnceBeforeTheEnd()
     {
+        // A Working owner is told at once; an idle one (the say would resume it) is held, see the PIL1382 tests below.
+        _state.PutSession(_state.Sessions().Single(s => s.Id == "a1b2c3d4") with { State = SessionState.Working });
         var id = Run($"echo '[xUnit.net 00:19:36.27]     {Test} [FAIL]'; echo '  Failed {Test} [11 s]'; sleep 3; echo slept; exit 1").Made.ShouldNotBeNull();
 
         // A cold shell can take a while to start under load; the failure lines come before the job's own wait.
@@ -134,6 +137,127 @@ public sealed class JobTestsFailures : JobTestsBase
         check.Passed.ShouldBeFalse();
         fake.Starts.Count.ShouldBe(3);
         _state.Jobs().Count(j => j.Kind == JobKind.Run).ShouldBe(2);
+    }
+
+    private const string BuildLine = "/w/App.cs(3,5): error CS1656: Cannot assign to 'x' because it is a method group [/w/App.csproj]";
+
+    // PIL1382: a runner on a clock the test moves (timers virtual), a recording Say, and a job that has read a build error and runs on.
+    private (JobRunner Jobs, Clock Clock, FakeJobLauncher Launcher, string Id) RunsOnWithABuildError(int linesAfter = 0, string? line = null)
+    {
+        UseFake();
+        var (jobs, clock, _, _) = Idle();
+        clock.VirtualTimers = true;
+        jobs.Say = (command, _) =>
+        {
+            _said.Enqueue(command);
+            return Task.FromResult(_state.Complete(command, null));
+        };
+        Fake!.On(_ => true, FakeScript.Holds([line ?? BuildLine, .. Enumerable.Range(1, linesAfter).Select(n => $"Restore step {n} done")]));
+        return (jobs, clock, Fake, Hand(jobs, "dotnet build"));
+    }
+
+    private async Task EndsAndIsTold(Clock clock, FakeJobLauncher launcher, string id, int exit = 1)
+    {
+        launcher.Exit(id, exit);
+        var ended = _state.Jobs().Single(j => j.Id == id);
+        await AdvanceUntil(clock, When(() => _state.Jobs().Single(j => j.Id == id) is { EndedAt: not null, Told: true }, "the job never ended told"), TimeSpan.FromSeconds(1));
+        ended = _state.Jobs().Single(j => j.Id == id);
+        ended.State.ShouldBe(exit == 0 ? JobState.Succeeded : JobState.Failed);
+    }
+
+    [Fact]
+    public async Task AnIdleOwnerWhoseJobEndsInsideTheHoldIsTheEndTellAloneAndNoRunsOnNotice()
+    {
+        var (_, clock, launcher, id) = RunsOnWithABuildError();
+        await Until(id, j => j.BuildErrors == 1);
+
+        await EndsAndIsTold(clock, launcher, id);
+        // Past the hold: a dropped notice is never said later.
+        clock.Advance(JobRunner.EarlyNoticeHold * 2);
+
+        var said = _said.Select(s => s.Args[0]).ToList().ShouldHaveSingleItem();
+        said.ShouldContain("CS1656");
+        said.ShouldContain($"Your job {id}");
+        said.ShouldNotContain("runs on");
+        _state.Jobs().Single(j => j.Id == id).FailureTold.ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task TheEndTellNamesTheFirstBuildErrorWhenItFellOutOfTheLastLines()
+    {
+        var (_, clock, launcher, id) = RunsOnWithABuildError(linesAfter: 15);
+        await Until(id, j => j.BuildErrors == 1);
+
+        await EndsAndIsTold(clock, launcher, id);
+
+        var said = _said.Select(s => s.Args[0]).ToList().ShouldHaveSingleItem();
+        said.ShouldContain("first build error: ");
+        said.ShouldContain("CS1656");
+        said.ShouldNotContain("runs on");
+    }
+
+    // PIL1382 review note: a check that prints an error line on purpose and exits 0 did not fail.
+    [Fact]
+    public async Task ASucceededJobThatPrintedAnErrorLineSaysItPrintedOneAndExitedZero()
+    {
+        var (_, clock, launcher, id) = RunsOnWithABuildError();
+        await Until(id, j => j.BuildErrors == 1);
+
+        await EndsAndIsTold(clock, launcher, id, exit: 0);
+
+        var said = _said.Select(s => s.Args[0]).ToList().ShouldHaveSingleItem();
+        said.ShouldContain("succeeded (it printed an error line, the first: ");
+        said.ShouldContain("the exit code was 0");
+        said.ShouldNotContain("first build error");
+    }
+
+    // PIL1382 review note: the failed-test twin of the error-line wording above.
+    [Fact]
+    public async Task ASucceededJobThatPrintedAFailedTestLineSaysItPrintedOneAndExitedZero()
+    {
+        var (_, clock, launcher, id) = RunsOnWithABuildError(line: "  Failed Some.Class.Method [1 s]");
+        await Until(id, j => j.TestsFailed == 1);
+
+        await EndsAndIsTold(clock, launcher, id, exit: 0);
+
+        var said = _said.Select(s => s.Args[0]).ToList().ShouldHaveSingleItem();
+        said.ShouldContain("it printed a failed-test line, the first: ");
+        said.ShouldContain("the exit code was 0");
+        said.ShouldNotContain("first failed test");
+    }
+
+    [Fact]
+    public async Task AWorkingOwnerIsToldTheEarlyNoticeAtOnceThenTheEnd()
+    {
+        var idle = _state.Sessions().Single(s => s.Id == "a1b2c3d4");
+        _state.PutSession(idle with { State = SessionState.Working });
+        var (_, clock, launcher, id) = RunsOnWithABuildError();
+
+        await When(() => _said.Count == 1, "no early notice came at once");
+        _said.Single().Args[0].ShouldContain("runs on");
+        _said.Single().Args[0].ShouldContain("CS1656");
+
+        await EndsAndIsTold(clock, launcher, id);
+
+        _said.Count.ShouldBe(2);
+        _said.Last().Args[0].ShouldContain("failed: exit 1");
+    }
+
+    [Fact]
+    public async Task AnIdleOwnerWhoseJobRunsOnPastTheHoldIsToldTheEarlyNoticeThenTheEnd()
+    {
+        var (_, clock, launcher, id) = RunsOnWithABuildError();
+        await Until(id, j => j.BuildErrors == 1);
+        _said.ShouldBeEmpty();
+
+        // The hold's timer may not be made yet when the first step lands: each step is taken again until the notice is said.
+        await AdvanceUntil(clock, When(() => _said.Count == 1, "the held notice never came"), JobRunner.EarlyNoticeHold + TimeSpan.FromSeconds(1));
+        _said.Single().Args[0].ShouldContain("runs on");
+
+        await EndsAndIsTold(clock, launcher, id);
+
+        _said.Count.ShouldBe(2);
+        _said.Last().Args[0].ShouldContain("failed: exit 1");
     }
 
     private async Task<CommandRequest> Said(int count)
