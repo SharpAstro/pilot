@@ -176,6 +176,22 @@ public partial class FrameWatchTests
     }
 
     [Fact]
+    public void A_busy_node_s_events_draw_no_frame_of_an_open_chat_while_the_panel_stays_as_it_was()
+    {
+        // The chat draws nothing from the pages but the header, the rail and the cards panel: its conversation asks for its own
+        // frames. Every node event used to redraw it in full, through the version and every session row (129 to 738 ms a frame
+        // on DE1, 2026-11-28, pilot #1443).
+        var watch = new FrameWatch(new Capture());
+        var fleet = new FleetScreen([], T0);
+        long Chat(long version, FleetPages pages) => FrameWatch.Fingerprint(pages, fleet, T0, PilotPage.Chat, version);
+        var card = new CardRow { Id = "c1", Bin = CardBin.ForYou, Kind = "landed", Subject = "flight:PIL1", Title = "PIL1 landed", At = T0, State = CardState.Open };
+
+        watch.WorthAFrame(0, Chat(1, Busy(T0 - TimeSpan.FromSeconds(5)))).ShouldBeTrue();
+        watch.WorthAFrame(0, Chat(2, Busy(T0 - TimeSpan.FromSeconds(1)))).ShouldBeFalse("a worker's last response moved the version and a session row; the chat shows neither");
+        watch.WorthAFrame(0, Chat(3, Busy(T0, card))).ShouldBeTrue("a card was raised, and the panel beside the chat shows it");
+    }
+
+    [Fact]
     public void Home_s_last_pages_fingerprinted_later_move_only_when_a_clock_word_turns_over()
     {
         // The once-a-second look at Home fingerprints the last pages at the moment, without building them again.
