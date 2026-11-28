@@ -16,27 +16,7 @@ public static partial class AccountLimit
         (DateTimeOffset Until, string Why, string? Family)? best = null;
         foreach (var row in sessions)
         {
-            // A per-minute rate limit is the LimitWait path's own, one worker's; the account limit is a usage or spend limit.
-            if (evidenceEndedAt is { } ended && row.StartedAt < ended)
-            {
-                // A later session answered a turn on the family that reported the limit: what began before that is stale, whoever's it was.
-                continue;
-            }
-            if (row.Account is { } rowAccount && currentAccount is { } current
-                && !string.Equals(rowAccount, current, StringComparison.OrdinalIgnoreCase))
-            {
-                // The row says whose login it ran under: another login's limit is not this one's.
-                continue;
-            }
-            if (loginChangedAt is { } changed && row.StartedAt < changed)
-            {
-                // The cut applies to every row: a login change, a lift and an evidence end all move it, and a row under the
-                // current account that began before it is stale too (so a lift or an end survives a restart). Known edge: a row has no
-                // error time, so a long-lived session that began before the cut and reports a real new limit afterwards is ignored until a
-                // newer session reports it too; telling it apart needs a stored ApiErrorAt, which costs a contract bump for a rare case.
-                continue;
-            }
-            if (ResetOf(row, now) is { } resets && (best is null || resets > best.Value.Until))
+            if (ResetOf(row, now, loginChangedAt, currentAccount, evidenceEndedAt) is { } resets && (best is null || resets > best.Value.Until))
             {
                 best = (resets, $"{row.Name} stopped on {row.ApiError}", Verbs.ModelFamily(row.Model));
             }
@@ -46,16 +26,40 @@ public static partial class AccountLimit
 
     /// <summary>
     /// The reset of the usage or spend limit a session row stopped on, when it is after <paramref name="now"/>; null for a row with no such
-    /// error, a per-minute rate limit, or a reset already past. Rows are stored, so this reads the same right after a node restart.
+    /// error, a per-minute rate limit, a reset already past, or a row cut by a login change, a lift, another account or ended evidence
+    /// (the same cuts as <see cref="FromRows"/>). Rows are stored, so this reads the same right after a node restart.
     /// </summary>
-    public static DateTimeOffset? ResetOf(SessionRow row, DateTimeOffset now) => StoppedUntil(row) is { } resets && resets > now ? resets : null;
+    public static DateTimeOffset? ResetOf(SessionRow row, DateTimeOffset now, DateTimeOffset? loginChangedAt = null, string? currentAccount = null, DateTimeOffset? evidenceEndedAt = null) =>
+        StoppedUntil(row, loginChangedAt, currentAccount, evidenceEndedAt) is { } resets && resets > now ? resets : null;
 
-    /// <summary>The reset the row's usage or spend limit error named, past or not; null when its error is not one (a per-minute rate limit is the LimitWait path's own).</summary>
-    public static DateTimeOffset? StoppedUntil(SessionRow row) =>
-        row.ApiError is { } error && error.Contains("limit", StringComparison.OrdinalIgnoreCase)
+    /// <summary>The reset the row's usage or spend limit error named, past or not; null when its error is not one (a per-minute rate limit is the LimitWait path's own) or the row is cut.</summary>
+    public static DateTimeOffset? StoppedUntil(SessionRow row, DateTimeOffset? loginChangedAt = null, string? currentAccount = null, DateTimeOffset? evidenceEndedAt = null)
+    {
+        // A per-minute rate limit is the LimitWait path's own, one worker's; the account limit is a usage or spend limit.
+        if (evidenceEndedAt is { } ended && row.StartedAt < ended)
+        {
+            // A later session answered a turn on the family that reported the limit: what began before that is stale, whoever's it was.
+            return null;
+        }
+        if (row.Account is { } rowAccount && currentAccount is { } current
+            && !string.Equals(rowAccount, current, StringComparison.OrdinalIgnoreCase))
+        {
+            // The row says whose login it ran under: another login's limit is not this one's.
+            return null;
+        }
+        if (loginChangedAt is { } changed && row.StartedAt < changed)
+        {
+            // The cut applies to every row: a login change, a lift and an evidence end all move it, and a row under the
+            // current account that began before it is stale too (so a lift or an end survives a restart). Known edge: a row has no
+            // error time, so a long-lived session that began before the cut and reports a real new limit afterwards is ignored until a
+            // newer session reports it too; telling it apart needs a stored ApiErrorAt, which costs a contract bump for a rare case.
+            return null;
+        }
+        return row.ApiError is { } error && error.Contains("limit", StringComparison.OrdinalIgnoreCase)
         && !error.Contains("rate_limit", StringComparison.OrdinalIgnoreCase) && !error.Contains("rate limit", StringComparison.OrdinalIgnoreCase)
             ? row.ApiErrorResetsAt
             : null;
+    }
 
     /// <summary>The next local time after <paramref name="now"/> that a limit line says it resets at, in the zone it names; null when the text does not parse.</summary>
     public static DateTimeOffset? ParseText(string? text, DateTimeOffset now)

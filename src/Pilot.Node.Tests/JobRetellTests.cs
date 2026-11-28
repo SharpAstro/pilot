@@ -133,7 +133,7 @@ public sealed class JobRetellTests : IDisposable
     [Fact]
     public async Task ARetellSpentIntoALimitIsVoidAndRetoldOnceAfterTheResetWithNoCard()
     {
-        var row = await TellNowAsync();
+        await TellNowAsync();
         _clock.Advance(After);
         (await Sweep()).ShouldBeTrue();
         _said.Clear();
@@ -154,7 +154,19 @@ public sealed class JobRetellTests : IDisposable
         _said.ShouldHaveSingleItem().ShouldStartWith("Repeat:");
         _state.Jobs().Single().RetoldAt.ShouldNotBeNull();
         _state.Cards().ShouldBeEmpty();
-        row.Id.ShouldBe("j1");
+    }
+
+    [Fact]
+    public async Task ALimitLiftedAfterTheRowBeganDoesNotHoldTheRetellOrMoveTheClock()
+    {
+        await TellNowAsync();
+        StopOnLimit("usage_limit_reached", TimeSpan.FromHours(5));
+        // A login change or a lift after the row began: its limit no longer counts, the retell goes RetellAfter after the tell.
+        _state.PutLoginChanged(_clock.GetUtcNow());
+
+        _clock.Advance(After);
+        (await Sweep()).ShouldBeTrue();
+        _said.ShouldHaveSingleItem().ShouldStartWith("Repeat:");
     }
 
     [Fact]

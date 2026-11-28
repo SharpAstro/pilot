@@ -450,11 +450,14 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
             }
             // A session stopped on a usage or spend limit cannot act: no retell and no ring until its reset. Read from the stored row, so it
             // holds right after a node restart, before an outage is judged again (#1416).
-            if (AccountLimit.ResetOf(target, now) is not null)
+            var loginChanged = Outage?.LoginChangedAt;
+            var account = state.Usage()?.Account?.Email;
+            var evidenceEnded = Outage?.LimitEvidenceEndedAt;
+            if (AccountLimit.ResetOf(target, now, loginChanged, account, evidenceEnded) is not null)
             {
                 continue;
             }
-            var limitReset = AccountLimit.StoppedUntil(target);
+            var limitReset = AccountLimit.StoppedUntil(target, loginChanged, account, evidenceEnded);
             if (row.RetoldAt is { } retoldAt && limitReset is { } spentInto && spentInto > retoldAt)
             {
                 // A retell spent into the limit is void: the ladder starts again, so the row is retold once RetellAfter after the reset.
