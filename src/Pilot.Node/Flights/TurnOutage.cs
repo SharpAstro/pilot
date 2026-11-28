@@ -388,6 +388,20 @@ public sealed class TurnOutage(NodeState state)
         }
     }
 
+    /// <summary>
+    /// Judges the account limit from the session rows (a row's stored usage or spend limit error, see <see cref="AccountLimit.FromRows"/>)
+    /// and opens it. One source for the leg watch and the job runner: the runner calls it at the start of each tick, so the first tick
+    /// after a node restart, before the watch's first look, already knows a limit the rows show (#1415).
+    /// </summary>
+    public void JudgeLimit(IEnumerable<SessionRow> sessions, DateTimeOffset now)
+    {
+        var loginChanged = LoginChangedAt;
+        if (AccountLimit.FromRows(sessions, now, loginChanged, state.Usage()?.Account?.Email, LimitEvidenceEndedAt) is { } limit)
+        {
+            OpenJudgedLimit(limit.Until, limit.Why, now, loginChanged, limit.Family);
+        }
+    }
+
     public void OpenLimit(DateTimeOffset until, string why, DateTimeOffset at, string? family = null)
     {
         lock (_gate)

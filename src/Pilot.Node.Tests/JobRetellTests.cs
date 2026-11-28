@@ -137,28 +137,100 @@ public sealed class JobRetellTests : IDisposable
     }
 
     [Fact]
-    public async Task ARetellSpentIntoALimitIsVoidAndRetoldOnceAfterTheResetWithNoCard()
+    public async Task ARetellTheLimitAnsweredIsRetoldOnceAfterTheResetNotRung()
     {
         await TellNowAsync();
         _clock.Advance(After);
         (await Sweep()).ShouldBeTrue();
         _said.Clear();
-        _state.Jobs().Single().RetoldAt.ShouldNotBeNull();
+        var firstRetell = _state.Jobs().Single().RetoldAt;
+        firstRetell.ShouldNotBeNull();
 
         StopOnLimit("usage_limit_reached", TimeSpan.FromMinutes(30));
-        _clock.Advance(TimeSpan.FromMinutes(30) + After);
-        // The limit has reset, the retell fell before it: no card, the ladder starts again.
-        await Sweep();
-        _state.Cards().ShouldBeEmpty();
-        var voided = _state.Jobs().Single();
-        voided.RetoldAt.ShouldBeNull();
-        voided.RetellRung.ShouldBeNull();
+        _clock.Advance(TimeSpan.FromMinutes(30) + After - TimeSpan.FromSeconds(1));
+        (await Sweep()).ShouldBeFalse();
         _said.ShouldBeEmpty();
+        _state.Cards().ShouldBeEmpty();
 
-        _clock.Advance(TimeSpan.FromMinutes(1));
-        await Sweep();
+        _clock.Advance(TimeSpan.FromSeconds(1));
+        (await Sweep()).ShouldBeTrue();
         _said.ShouldHaveSingleItem().ShouldStartWith("Repeat:");
-        _state.Jobs().Single().RetoldAt.ShouldNotBeNull();
+        var row = _state.Jobs().Single();
+        row.RetoldAt.ShouldBe(_clock.GetUtcNow());
+        row.RetellRung.ShouldBeNull();
+        _state.Cards().ShouldBeEmpty();
+
+        // A retell past the reset rings as before.
+        _clock.Advance(After);
+        await Sweep();
+        Cards(JobRunner.UnansweredKind).ShouldHaveSingleItem();
+    }
+
+    [Fact]
+    public async Task AFreshRunnerAndOutageOverRowsShowingALimitSayNothingAndHoldTheLimit()
+    {
+        await TellNowAsync();
+        StopOnLimit("usage_limit_reached", TimeSpan.FromHours(1));
+        _clock.Advance(After * 2);
+
+        // A node restart: nothing in memory, only the stored rows.
+        var outage = new TurnOutage(_state);
+        var said = new List<string>();
+        var runner = new JobRunner(_state, new NodeOptions(Path.Combine(_root, "n2.sock"), Path.Combine(_root, "data2")), _clock)
+        {
+            RetellAfter = After,
+            Outage = outage,
+            Say = (command, _) =>
+            {
+                said.Add(command.Args[0]);
+                return Task.FromResult(_state.Complete(command, null, way: SayWays.Relayed));
+            },
+        };
+        try
+        {
+            outage.LimitUntil.ShouldBeNull();
+            (await runner.RetellSilentAsync(TestContext.Current.CancellationToken)).ShouldBeFalse();
+            said.ShouldBeEmpty();
+            Cards(JobRunner.UnansweredKind).ShouldBeEmpty();
+            outage.LimitUntil.ShouldNotBeNull();
+        }
+        finally
+        {
+            await runner.StopAsync(CancellationToken.None);
+        }
+    }
+
+    [Fact]
+    public async Task ARowToldBeforeAnOutageAndSilentThroughItIsRetoldRetellAfterTheWindowEnds()
+    {
+        await TellNowAsync();
+        _clock.Advance(TimeSpan.FromMinutes(1));
+        _outage.AccountChanged(_clock.GetUtcNow());
+        _clock.Advance(TimeSpan.FromMinutes(10));
+        EndOutage();
+
+        // Silent for far longer than RetellAfter since the tell, but the window only just ended.
+        (await Sweep()).ShouldBeFalse();
+        _said.ShouldBeEmpty();
+        _clock.Advance(After - TimeSpan.FromSeconds(1));
+        (await Sweep()).ShouldBeFalse();
+        _said.ShouldBeEmpty();
+        _clock.Advance(TimeSpan.FromSeconds(1));
+        (await Sweep()).ShouldBeTrue();
+        _said.ShouldHaveSingleItem().ShouldStartWith("Repeat:");
+    }
+
+    [Fact]
+    public async Task ASessionThatActedAfterTheTellAndWasThenLimitedIsNotRetoldAfterTheReset()
+    {
+        var told = await TellNowAsync();
+        _apiError = "usage_limit_reached";
+        _apiResets = _clock.GetUtcNow() + TimeSpan.FromHours(1);
+        Session(SessionState.Idle, told.ToldAt!.Value.AddMinutes(1));
+
+        _clock.Advance(TimeSpan.FromHours(1) + After * 2);
+        (await Sweep()).ShouldBeFalse();
+        _said.ShouldBeEmpty();
         _state.Cards().ShouldBeEmpty();
     }
 

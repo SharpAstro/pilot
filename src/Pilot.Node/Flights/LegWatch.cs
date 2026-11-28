@@ -205,11 +205,7 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
         var now = time.GetUtcNow();
         var sessions = state.Sessions();
         _ladderLooked.Clear();
-        var loginChanged = Outage.LoginChangedAt;
-        if (AccountLimit.FromRows(sessions, now, loginChanged, state.Usage()?.Account?.Email, Outage.LimitEvidenceEndedAt) is { } limit)
-        {
-            Outage.OpenJudgedLimit(limit.Until, limit.Why, now, loginChanged, limit.Family);
-        }
+        Outage.JudgeLimit(sessions, now);
         Outage.Look(sessions, now, state.Usage());
         if (Outage.LastWindow is { } ended && ended != _seenWindow)
         {

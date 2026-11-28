@@ -357,6 +357,7 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
                 Pump();
                 try
                 {
+                    Outage?.JudgeLimit(state.Sessions(), time.GetUtcNow());
                     await TellUntoldAsync(null, stopping);
                     await RetellSilentAsync(stopping);
                 }
@@ -413,6 +414,7 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
         }
         // A tell that fell in an outage that has ended is redone first, and its retell starts from the redo; while an outage is open a session
         // cannot act on any tell, so a silent owner is neither told again nor rung for.
+        Outage?.JudgeLimit(state.Sessions(), time.GetUtcNow());
         var retold = await RedoToldInOutageAsync(cancellationToken);
         if (Outage is { IsOpen: true })
         {
@@ -504,13 +506,6 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
                 continue;
             }
             var limitReset = AccountLimit.StoppedUntil(target, loginChanged, account);
-            if (row.RetoldAt is { } retoldAt && limitReset is { } spentInto && spentInto > retoldAt)
-            {
-                // A retell spent into the limit is void: the ladder starts again, so the row is retold once RetellAfter after the reset.
-                ForgetTell(row.Id);
-                state.PutJob(row with { RetoldAt = null, RetoldWay = null });
-                continue;
-            }
             var waits = WhatWaits(row, ownerRow);
             if (waits is null && row.RetoldAt is null && !FailedOfLeggedOwner(row, ownerRow))
             {
@@ -534,11 +529,6 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
                 }
                 silentSince = _busyTurnEnd[row.Id];
             }
-            if (limitReset is { } resetAt && resetAt > silentSince)
-            {
-                // The silence clock starts at the reset: before it the session could not act.
-                silentSince = resetAt;
-            }
             if (target.LastResponseAt is { } last && last > silentSince)
             {
                 continue;
@@ -555,11 +545,24 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
             {
                 continue;
             }
-            if (now - silentSince < RetellAfter)
+            // The clock starts again at the latest of the tell, the limit's reset and the end of the last outage window: before it the session
+            // could not act, so the acts above are judged from the tell, and only the time to wait moves (#1415).
+            var clockFrom = silentSince;
+            if (limitReset is { } resetAt && resetAt > clockFrom)
+            {
+                clockFrom = resetAt;
+            }
+            if (Outage?.LastWindow is { } window && window.Until > clockFrom)
+            {
+                clockFrom = window.Until;
+            }
+            if (now - clockFrom < RetellAfter)
             {
                 continue;
             }
-            if (row.RetoldAt is not null)
+            // A retell the limit answered (the target's limit resets after it) did not land: it is retold once more rather than rung.
+            var retellLanded = row.RetoldAt is { } retoldStamp && !(limitReset is { } spentInto && spentInto > retoldStamp);
+            if (retellLanded)
             {
                 state.PutJob(row with { RetellRung = true });
                 // Rung or settled, the row is not looked at again: its baselines go with it (#1147: they were kept for the node's life).
