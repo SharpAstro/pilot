@@ -36,15 +36,26 @@ public static partial class AccountLimit
                 // newer session reports it too; telling it apart needs a stored ApiErrorAt, which costs a contract bump for a rare case.
                 continue;
             }
-            if (row.ApiError is { } error && error.Contains("limit", StringComparison.OrdinalIgnoreCase)
-                && !error.Contains("rate_limit", StringComparison.OrdinalIgnoreCase) && !error.Contains("rate limit", StringComparison.OrdinalIgnoreCase)
-                && row.ApiErrorResetsAt is { } resets && resets > now && (best is null || resets > best.Value.Until))
+            if (ResetOf(row, now) is { } resets && (best is null || resets > best.Value.Until))
             {
-                best = (resets, $"{row.Name} stopped on {error}", Verbs.ModelFamily(row.Model));
+                best = (resets, $"{row.Name} stopped on {row.ApiError}", Verbs.ModelFamily(row.Model));
             }
         }
         return best;
     }
+
+    /// <summary>
+    /// The reset of the usage or spend limit a session row stopped on, when it is after <paramref name="now"/>; null for a row with no such
+    /// error, a per-minute rate limit, or a reset already past. Rows are stored, so this reads the same right after a node restart.
+    /// </summary>
+    public static DateTimeOffset? ResetOf(SessionRow row, DateTimeOffset now) => StoppedUntil(row) is { } resets && resets > now ? resets : null;
+
+    /// <summary>The reset the row's usage or spend limit error named, past or not; null when its error is not one (a per-minute rate limit is the LimitWait path's own).</summary>
+    public static DateTimeOffset? StoppedUntil(SessionRow row) =>
+        row.ApiError is { } error && error.Contains("limit", StringComparison.OrdinalIgnoreCase)
+        && !error.Contains("rate_limit", StringComparison.OrdinalIgnoreCase) && !error.Contains("rate limit", StringComparison.OrdinalIgnoreCase)
+            ? row.ApiErrorResetsAt
+            : null;
 
     /// <summary>The next local time after <paramref name="now"/> that a limit line says it resets at, in the zone it names; null when the text does not parse.</summary>
     public static DateTimeOffset? ParseText(string? text, DateTimeOffset now)

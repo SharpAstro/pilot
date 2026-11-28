@@ -82,6 +82,17 @@ public sealed class AccountLimitTests
     };
 
     [Fact]
+    public void ResetOfReadsOneRowsUsageLimitAndNothingElse()
+    {
+        var until = Start.AddHours(2);
+        AccountLimit.ResetOf(LimitRow(null, until), Start).ShouldBe(until);
+        AccountLimit.ResetOf(LimitRow(null, until), until).ShouldBeNull();
+        AccountLimit.ResetOf(LimitRow(null, until) with { ApiError = "rate_limit_error" }, Start).ShouldBeNull();
+        AccountLimit.ResetOf(LimitRow(null, until) with { ApiError = "overloaded_error" }, Start).ShouldBeNull();
+        AccountLimit.ResetOf(LimitRow(null, until) with { ApiError = null }, Start).ShouldBeNull();
+    }
+
+    [Fact]
     public void ARowRecordedUnderAnotherAccountOpensNoLimitWithNoLoginChangeTimeKnown()
     {
         var until = Start.AddHours(2);

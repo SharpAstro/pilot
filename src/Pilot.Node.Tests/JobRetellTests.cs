@@ -69,12 +69,15 @@ public sealed class JobRetellTests : IDisposable
     private int _context;
     private DateTimeOffset? _commandAt;
 
+    private string? _apiError;
+    private DateTimeOffset? _apiResets;
+
     private void Session(SessionState sessionState, DateTimeOffset? lastResponse) =>
         _state.PutSession(new SessionRow
         {
             Id = "w0000001", SessionId = "w0000001-0000-4000-8000-000000000000", Name = _name, Kind = SessionKind.Background, Cwd = _root,
             Role = _role ?? (_adHoc ? SessionRole.AdHoc : SessionRole.Worker), Flight = _adHoc || _role is not null ? null : "RTL1", Leg = _adHoc || _role is not null ? null : "one", ContextTokens = _context, ContextWindow = 200_000, SpendWeighted = 0, State = sessionState,
-            LastResponseAt = lastResponse, StartedAt = _clock.GetUtcNow().AddHours(-2),
+            LastResponseAt = lastResponse, StartedAt = _clock.GetUtcNow().AddHours(-2), ApiError = _apiError, ApiErrorResetsAt = _apiResets,
         });
 
     private async Task<JobRow> TellNowAsync(bool whileWorking = false)
@@ -96,6 +99,74 @@ public sealed class JobRetellTests : IDisposable
     }
 
     private Task<bool> Sweep() => _jobs.RetellSilentAsync(TestContext.Current.CancellationToken);
+
+    private void StopOnLimit(string error, TimeSpan resetsIn)
+    {
+        _apiError = error;
+        _apiResets = _clock.GetUtcNow() + resetsIn;
+        Session(SessionState.Idle, _clock.GetUtcNow().AddHours(-1));
+    }
+
+    [Fact]
+    public async Task AnOwnerStoppedOnAUsageLimitIsNotRetoldOrRungForBeforeTheResetAndIsRetoldRetellAfterTheReset()
+    {
+        await TellNowAsync();
+        StopOnLimit("usage_limit_reached", TimeSpan.FromHours(1));
+
+        // No outage is open, as right after a restart.
+        _outage.IsOpen.ShouldBeFalse();
+        _clock.Advance(TimeSpan.FromMinutes(59));
+        (await Sweep()).ShouldBeFalse();
+        _said.ShouldBeEmpty();
+        _state.Cards().ShouldBeEmpty();
+
+        _clock.Advance(TimeSpan.FromMinutes(1) + After - TimeSpan.FromSeconds(1));
+        (await Sweep()).ShouldBeFalse();
+        _said.ShouldBeEmpty();
+
+        _clock.Advance(TimeSpan.FromSeconds(1));
+        (await Sweep()).ShouldBeTrue();
+        _said.ShouldHaveSingleItem().ShouldStartWith("Repeat:");
+        _state.Cards().ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task ARetellSpentIntoALimitIsVoidAndRetoldOnceAfterTheResetWithNoCard()
+    {
+        var row = await TellNowAsync();
+        _clock.Advance(After);
+        (await Sweep()).ShouldBeTrue();
+        _said.Clear();
+        _state.Jobs().Single().RetoldAt.ShouldNotBeNull();
+
+        StopOnLimit("usage_limit_reached", TimeSpan.FromMinutes(30));
+        _clock.Advance(TimeSpan.FromMinutes(30) + After);
+        // The limit has reset, the retell fell before it: no card, the ladder starts again.
+        await Sweep();
+        _state.Cards().ShouldBeEmpty();
+        var voided = _state.Jobs().Single();
+        voided.RetoldAt.ShouldBeNull();
+        voided.RetellRung.ShouldBeNull();
+        _said.ShouldBeEmpty();
+
+        _clock.Advance(TimeSpan.FromMinutes(1));
+        await Sweep();
+        _said.ShouldHaveSingleItem().ShouldStartWith("Repeat:");
+        _state.Jobs().Single().RetoldAt.ShouldNotBeNull();
+        _state.Cards().ShouldBeEmpty();
+        row.Id.ShouldBe("j1");
+    }
+
+    [Fact]
+    public async Task APerMinuteRateLimitErrorHoldsNothing()
+    {
+        await TellNowAsync();
+        StopOnLimit("rate_limit_error", TimeSpan.FromHours(1));
+
+        _clock.Advance(After);
+        (await Sweep()).ShouldBeTrue();
+        _said.ShouldHaveSingleItem().ShouldStartWith("Repeat:");
+    }
 
     [Fact]
     public async Task IdleAndSilentIsRetoldOnceThenRings()
