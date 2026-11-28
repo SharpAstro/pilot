@@ -35,16 +35,7 @@ public sealed class HeadWordsTests : IDisposable
 
     private string G(params string[] args)
     {
-        var start = new ProcessStartInfo("git") { WorkingDirectory = _dir, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
-        foreach (var arg in new[] { "-c", "user.email=t@example.com", "-c", "user.name=t" }.Concat(args))
-        {
-            start.ArgumentList.Add(arg);
-        }
-        using var process = TestEnvironment.Start(start)!;
-        var output = process.StandardOutput.ReadToEnd();
-        var error = process.StandardError.ReadToEnd();
-        process.WaitForExit();
-        return process.ExitCode == 0 ? output.Trim() : throw new InvalidOperationException($"git {string.Join(' ', args)}: {error}{output}");
+        return HelperGit.Run(_dir, ["-c", "user.email=t@example.com", "-c", "user.name=t", .. args]);
     }
 
     private void Write(string file, string text) => File.WriteAllText(Path.Combine(_dir, file), text);

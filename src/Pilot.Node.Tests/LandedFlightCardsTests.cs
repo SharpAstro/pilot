@@ -40,22 +40,7 @@ public sealed class LandedFlightCardsTests : IDisposable
         }
     }
 
-    private static void Git(string cwd, params string[] args)
-    {
-        var info = new System.Diagnostics.ProcessStartInfo("git") { WorkingDirectory = cwd, RedirectStandardOutput = true, RedirectStandardError = true };
-        foreach (var arg in args)
-        {
-            info.ArgumentList.Add(arg);
-        }
-        using var process = TestEnvironment.Start(info)!;
-        process.StandardOutput.ReadToEnd();
-        process.StandardError.ReadToEnd();
-        process.WaitForExit();
-        if (process.ExitCode != 0)
-        {
-            throw new InvalidOperationException($"git {string.Join(' ', args)} failed");
-        }
-    }
+    private static void Git(string cwd, params string[] args) => HelperGit.Run(cwd, args);
 
     private void PutSession(string id, string? flight, string cwd) => _state.PutSession(new SessionRow
     {

@@ -91,16 +91,7 @@ public abstract class OverlapTestsBase : IDisposable
         {
             return answered;
         }
-        var start = new ProcessStartInfo("git") { WorkingDirectory = cwd, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
-        foreach (var arg in args)
-        {
-            start.ArgumentList.Add(arg);
-        }
-        using var process = TestEnvironment.Start(start)!;
-        var output = process.StandardOutput.ReadToEnd();
-        var error = process.StandardError.ReadToEnd();
-        process.WaitForExit();
-        return process.ExitCode == 0 ? output.Trim() : throw new InvalidOperationException($"git {string.Join(' ', args)}: {error}");
+        return HelperGit.Run(cwd, args);
     }
 
     private protected Task<CommandResult> Leg(string verb, string target, params string[] args) =>
