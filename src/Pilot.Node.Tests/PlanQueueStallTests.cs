@@ -19,7 +19,6 @@ public sealed class PlanQueueStallTests
     private readonly LegWatch _watch;
     private readonly List<CommandRequest> _ran = [];
     private string? _refuse;
-    private (string Job, DateTimeOffset At)? _started;
 
     public PlanQueueStallTests()
     {
@@ -27,7 +26,7 @@ public sealed class PlanQueueStallTests
         _watch = new LegWatch(_state, Run, _time)
         {
             Pilot = "pilot --node-socket \"/tmp/n.sock\"",
-            StartedPlanner = _ => _started,
+            StartedPlanner = _ => null,
             StopPlanner = (_, _) => Task.CompletedTask,
             RestartPlanner = (_, _) => Task.CompletedTask,
         };
