@@ -114,6 +114,12 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
     /// </summary>
     public Func<string, CancellationToken, Task<string?>> PlaneHead { get; set; } = (_, _) => Task.FromResult<string?>(null);
 
+    /// <summary>
+    /// The number of commits in a flight's plane since a commit (flight code, the leg's StartHead), read off the lock; the node sets it.
+    /// Null when it cannot be read: a card then says the count is unknown, never none.
+    /// </summary>
+    public Func<string, string, CancellationToken, Task<int?>> PlaneCommits { get; set; } = (_, _, _) => Task.FromResult<int?>(null);
+
     /// <summary>Starts a leg's ticking pass (flight code, leg name; PIL804): the node sets it. Throws when the start is refused.</summary>
     public Func<string, string, CancellationToken, Task> StartTicker { get; set; } = (_, _, _) => Task.CompletedTask;
 
@@ -270,11 +276,12 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
             state.CloseCardsAbout(subject, "it showed up", Missing);
             if (worker.Budget is { } budget && worker.SpendWeighted > budget)
             {
+                await NotePlaneAsync(leg, cancellationToken);
                 var more = budget + budget / 2;
                 var inv = System.Globalization.CultureInfo.InvariantCulture;
                 // Needs someone: only the controller may spend past a budget the leg was given.
                 state.RaiseCard(CardBin.Ring, OverBudget, subject, string.Create(inv, $"{Name(leg)}'s worker has spent {worker.SpendWeighted:N0} of its {budget:N0} budget"),
-                    string.Join(' ', new[] { $"{Steps(leg)}; it keeps working until you choose, and nothing is stopped by itself. Raising the budget lets it spend up to {more:N0}.", Models.NextWorkerNote(leg) }.Where(s => s is not null)),
+                    string.Join(' ', new[] { $"{PlaneState(leg)}; it keeps working until you choose, and nothing is stopped by itself. Raising the budget lets it spend up to {more:N0}.", Models.NextWorkerNote(leg) }.Where(s => s is not null)),
                     [
                         new CardChoice { Label = "Raise the budget", Verb = Verbs.ExtendBudget, Target = subject, Args = [more.ToString(System.Globalization.CultureInfo.InvariantCulture)] },
                         new CardChoice { Label = Verbs.RestartWorker, Verb = Verbs.GoAround, Target = subject, Args = [string.Create(inv, $"the last worker spent {worker.SpendWeighted:N0} of a {budget:N0} budget")] },
@@ -282,6 +289,7 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
                     summary: $"The worker of {leg.Flight}/{leg.Name} is past its budget but keeps working. Give it more room, or let it go and start another.");
             }
 
+            // The plane's state (one git run) is read only where a card is about to be raised, not on every look of an idle worker.
             switch (worker.State)
             {
                 case SessionState.Working:
@@ -310,20 +318,22 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
                         break;
                     }
                     // A real question keeps its own words; a permission prompt is said by the call it asks leave for, when that is known.
+                    await NotePlaneAsync(leg, cancellationToken, Waiting);
                     if (WantedCall(leg, worker) is { } wants)
                     {
                         Ring(leg, Waiting, $"{Name(leg)}'s worker wants to {wants}",
-                            $"it wants to {wants}; it cannot go on until the prompt is answered in its own session ({Steps(leg)})", worker,
+                            $"it wants to {wants}; it cannot go on until the prompt is answered in its own session ({PlaneState(leg)})", worker,
                             lead: $"The worker of {Name(leg)} wants to {wants}.");
                         break;
                     }
                     var asks = worker.WaitingFor is { Length: > 0 } what ? what : "a question or a permission";
                     Ring(leg, Waiting, $"{Name(leg)}'s worker waits on you for {Clip(asks)}",
-                        $"{asks}; the worker cannot go on until it is answered in its own session ({Steps(leg)})", worker);
+                        $"{asks}; the worker cannot go on until it is answered in its own session ({PlaneState(leg)})", worker);
                     break;
                 case SessionState.Failed:
-                    Ring(leg, Failed, worker.ApiError is { } why ? $"{Name(leg)}'s worker failed: the API said {why}" : $"{Name(leg)}'s worker failed with {Steps(leg)}",
-                        $"its session is in a failed state and the leg is not finished ({Steps(leg)}), which the node cannot cure by itself", worker);
+                    await NotePlaneAsync(leg, cancellationToken, Failed);
+                    Ring(leg, Failed, worker.ApiError is { } why ? $"{Name(leg)}'s worker failed: the API said {why}" : $"{Name(leg)}'s worker failed with {PlaneState(leg)}",
+                        $"its session is in a failed state and the leg is not finished ({PlaneState(leg)}), which the node cannot cure by itself", worker);
                     break;
                 case SessionState.Idle or SessionState.Ended when worker.ApiError is { } error:
                     // Stopped by the API with work of its own open: the work's end tells it, and the stop is judged after (PIL1229).
@@ -589,7 +599,8 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
         var job = leg.WorkerJob!;
         if (worker.ApiErrorResetsAt is not { } resets)
         {
-            Ring(leg, Stopped, $"{Name(leg)}'s worker was stopped by the API: {error}", $"the API gave no time the stop clears, so the node cannot resume it by itself ({Steps(leg)})", worker);
+            await NotePlaneAsync(leg, cancellationToken, Stopped);
+            Ring(leg, Stopped, $"{Name(leg)}'s worker was stopped by the API: {error}", $"the API gave no time the stop clears, so the node cannot resume it by itself ({PlaneState(leg)})", worker);
             return;
         }
         if (now < resets + ResetMargin)
@@ -706,12 +717,13 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
             // the go-around's reason (TIA1241's domain-instruments, SE1 2026-10-25: rung as nudged to no avail while it
             // answered each nudge, under the last worker's stall).
             // Each nudge counted as answered when a turn ended after it and before the next: the last one by the response now.
+            await NotePlaneAsync(leg, cancellationToken, Idle);
             var answered = _answered.GetValueOrDefault(job) + (_nudgedAt.TryGetValue(job, out var nudgedAt) && worker.LastResponseAt > nudgedAt ? 1 : 0);
             var report = leg.Report is { Length: > 0 } r && !r.StartsWith("go-around:", StringComparison.Ordinal) ? $"; leg's report: {r.Split('\n')[0]}" : "";
             Ring(leg, Idle, $"{leg.Flight} is stuck: its worker stopped working",
                 answered > 0
-                    ? $"no turn for {Ago(now, since)}, {Steps(leg)}; {LastEnd(worker)}{RoomLead(worker)}nudged {nudges} {(nudges == 1 ? "time" : "times")} and it answered {(answered >= nudges ? "each" : $"{answered} of them")}, then went idle again: its transcript says what it waits on{report}"
-                    : $"no turn for {Ago(now, since)}, {Steps(leg)}; {LastEnd(worker)}{RoomLead(worker)}nudged {nudges} {(nudges == 1 ? "time" : "times")} with no answer, and the node nudges no more{report}",
+                    ? $"no turn for {Ago(now, since)}, {PlaneState(leg)}; {LastEnd(worker)}{RoomLead(worker)}nudged {nudges} {(nudges == 1 ? "time" : "times")} and it answered {(answered >= nudges ? "each" : $"{answered} of them")}, then went idle again: its transcript says what it waits on{report}"
+                    : $"no turn for {Ago(now, since)}, {PlaneState(leg)}; {LastEnd(worker)}{RoomLead(worker)}nudged {nudges} {(nudges == 1 ? "time" : "times")} with no answer, and the node nudges no more{report}",
                 worker);
             return;
         }
@@ -723,14 +735,15 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
             _answered[job] = _answered.GetValueOrDefault(job) + 1;
         }
         _nudgedAt[job] = now;
+        await NotePlaneAsync(leg, cancellationToken);
         var result = await SayAsync(worker, Nudge(leg), cancellationToken);
         if (result.Ok)
         {
-            state.RaiseCard(CardBin.Handled, "worker-nudged", Subject(leg), $"{leg.Flight}'s worker went idle and was nudged", $"nudge {nudges + 1} of {MaxNudges}; the leg is unfinished ({Steps(leg)})");
+            state.RaiseCard(CardBin.Handled, "worker-nudged", Subject(leg), $"{leg.Flight}'s worker went idle and was nudged", $"nudge {nudges + 1} of {MaxNudges}; the leg is unfinished ({PlaneState(leg)})");
         }
         else
         {
-            Ring(leg, Idle, $"{leg.Flight} is stuck: its worker stopped and cannot be nudged", $"no turn for {Ago(now, since)}, {Steps(leg)}; {LastEnd(worker)}{RoomLead(worker)}the node tried to nudge it: {result.Error ?? "no reason given"}", worker);
+            Ring(leg, Idle, $"{leg.Flight} is stuck: its worker stopped and cannot be nudged", $"no turn for {Ago(now, since)}, {PlaneState(leg)}; {LastEnd(worker)}{RoomLead(worker)}the node tried to nudge it: {result.Error ?? "no reason given"}", worker);
         }
     }
 
@@ -1095,8 +1108,9 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
         if (_replacedFull.TryGetValue(subject, out var older) && older != job)
         {
             // The fresh worker filled and stalled too: another one would do the same, so a person decides.
+            await NotePlaneAsync(leg, cancellationToken, Idle);
             Ring(leg, Idle, $"{leg.Flight} is stuck: its worker's memory is full again",
-                $"context full: the last worker's context was full and the node sent the leg round; this one is at {share} of its window and idle {Ago(now, since)} with {Steps(leg)}, so the node nudges and replaces no more",
+                $"context full: the last worker's context was full and the node sent the leg round; this one is at {share} of its window and idle {Ago(now, since)} with {PlaneState(leg)}, so the node nudges and replaces no more",
                 worker);
             return;
         }
@@ -1715,6 +1729,7 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
         {
             string? why = WindDown.Why(state, Ledger, row);
             string? currentWorker = null;
+            var doneLeg = false;
             // A role's current session (the watchtower now, a flying leg's current worker, a live flight's planner or reviewer, an
             // open PR's reviewer or fixer) is never rung with Stop here, whatever a landed flight or the ledger's end reason says
             // of an earlier session of that role.
@@ -1726,11 +1741,14 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
                 }
                 continue;
             }
+            // Precedence is deliberate: `&&` binds tighter than `||`, so StrayGrace applies only to a Done leg's worker; a session that is
+            // not the leg's current worker (a redone leg's old worker, a ticker) is a duplicate at once, inside StrayGrace too.
             if (why is null && row is { Role: SessionRole.Worker, Flight: { } flight, Leg: { } legName }
                 && state.Legs(flight).FirstOrDefault(l => l.Name == legName) is { } leg
                 && (leg is { State: LegState.Done, FinishedAt: { } finished } && now - finished > StrayGrace || (leg.WorkerJob is not null && leg.WorkerJob != row.Id)))
             {
                 why = leg.State == LegState.Done ? $"its leg {flight}/{legName} is done" : $"its leg {flight}/{legName} was redone and has another worker";
+                doneLeg = leg.State == LegState.Done;
                 if (leg.State != LegState.Done && sessions.Any(r => r.Id == leg.WorkerJob && r.State is SessionState.Working or SessionState.Waiting or SessionState.Idle))
                 {
                     // Only when the leg's current worker is a live row: otherwise this is the leg's only session and a person chooses (Stop it).
@@ -1753,6 +1771,16 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
                 continue;
             }
             var subject = Verbs.SessionTarget(row.Id);
+            if (why is not null && doneLeg)
+            {
+                // A live worker of a done leg past StrayGrace (#1392): the node ends it itself, as it ends a duplicate, and tells afterwards.
+                if (!_duplicateTried.TryGetValue(row.Id, out var triedDone) || now - triedDone >= StopGrace)
+                {
+                    _duplicateTried[row.Id] = now;
+                    await EndWorkerAsync(row, why, SessionEndReasons.LegDone, "a done leg's worker", "the worker of a done leg", null, cancellationToken);
+                }
+                continue;
+            }
             if (why is not null && currentWorker is not null)
             {
                 // A duplicate of a redone leg's worker (PIL1206): the node ends it itself and tells the person afterwards.
@@ -1785,10 +1813,16 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
     /// Ends a live worker of a redone leg (its WorkerJob is another row) through the node's own end-session path, says so in a
     /// Handled card once the stop is confirmed, and raises the stop-unconfirmed ring when it does not take. The leg's current worker never gets here.
     /// </summary>
-    private async Task EndDuplicateWorkerAsync(SessionRow row, string why, string currentWorker, CancellationToken cancellationToken)
+    private Task EndDuplicateWorkerAsync(SessionRow row, string why, string currentWorker, CancellationToken cancellationToken)
+        => EndWorkerAsync(row, why, SessionEndReasons.DuplicateWorker, "a duplicate worker", "a duplicate worker of a redone leg", currentWorker, cancellationToken);
+
+    /// <summary>The kind of the Handled card that says afterwards the node ended the live worker of a done leg (#1392).</summary>
+    public const string DoneWorkerEnded = "done-worker-ended";
+
+    private async Task EndWorkerAsync(SessionRow row, string why, string endReason, string titleWords, string whatItIs, string? currentWorker, CancellationToken cancellationToken)
     {
         var subject = Verbs.SessionTarget(row.Id);
-        var reason = $"{SessionEndReasons.DuplicateWorker}: {why}; the current worker is {currentWorker}";
+        var reason = currentWorker is null ? $"{endReason}: {why}" : $"{endReason}: {why}; the current worker is {currentWorker}";
         CommandResult result;
         try
         {
@@ -1803,13 +1837,20 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
         if (!result.Ok && !ended)
         {
             // The messenger raises this card itself when its stop fails; it is one card per session, so a second raise is the same card.
-            Sessions.SessionMessenger.RaiseStopUnconfirmed(state, row, $"{row.Name} ({row.Id}) is a duplicate worker of a redone leg and could not be stopped: {result.Error}. Not confirmed: the session may still run.",
+            Sessions.SessionMessenger.RaiseStopUnconfirmed(state, row, $"{row.Name} ({row.Id}) is {whatItIs} and could not be stopped: {result.Error}. Not confirmed: the session may still run.",
                 "end-session by the node", reason);
             return;
         }
         if (_duplicatesEnded.Add(row.Id))
         {
-            state.RaiseCard(CardBin.Handled, DuplicateWorkerEnded, subject, $"{row.Name} was ended: a duplicate worker",
+            if (currentWorker is null)
+            {
+                state.RaiseCard(CardBin.Handled, DoneWorkerEnded, subject, $"{row.Name} was ended: {titleWords}",
+                    $"{why}. The node ended {row.Id}, so it no longer sits idle in the plane.",
+                    summary: $"The node ended {row.Name} ({row.Id}), the worker of a leg that is done. Nothing to do.");
+                return;
+            }
+            state.RaiseCard(CardBin.Handled, DuplicateWorkerEnded, subject, $"{row.Name} was ended: {titleWords}",
                 $"{why}. The node ended {row.Id}; the leg's current worker is {currentWorker}, which is untouched.",
                 summary: $"The node ended {row.Name} ({row.Id}), a second worker of a redone leg. The current worker, {currentWorker}, goes on. Nothing to do.");
         }
@@ -2081,6 +2122,55 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
         var text = nudge ? Nudge(leg) : "Carry on with your leg from where you left off.";
         return [new CardChoice { Label = nudge ? NudgeLabel : CarryOnLabel, Verb = Verbs.Say, Target = Verbs.SessionTarget(worker.Id), Args = [text] }, goAround];
     }
+
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> _planeStates = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// What the plane shows of a leg, read once per look for the cards that follow: the commits since the leg started and the ticked steps,
+    /// so a card never says a worker did nothing while the plane holds its commits (c19376). An unread count is said as unknown, never as none.
+    /// A leg with no <see cref="LegRow.StartHead"/> (an adopted flight's, or one started before the field) has no count to read, so its
+    /// cards say only the steps, as they did before.
+    /// </summary>
+    private async Task<string> PlaneStateAsync(LegRow leg, CancellationToken cancellationToken)
+    {
+        if (leg.StartHead is not { Length: > 0 } head)
+            return Steps(leg);
+        int? commits = null;
+        try
+        {
+            commits = await PlaneCommits(leg.Flight, head, cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+        }
+        return PlaneStateText(commits, Steps(leg));
+    }
+
+    /// <summary>The one sentence of a plane's state: <c>3 commits since the leg started, 0 of 6 steps ticked</c>.</summary>
+    internal static string PlaneStateText(int? commits, string steps) => commits switch
+    {
+        null => $"the commits since the leg started are unknown, {steps}",
+        0 => $"nothing committed since the leg started, {steps}",
+        1 => $"1 commit since the leg started, {steps}",
+        var n => $"{n} commits since the leg started, {steps}",
+    };
+
+    /// <summary>Reads the plane's state for the cards that follow in this look; a leg's entry is replaced each time, so none is stale.</summary>
+    private async Task NotePlaneAsync(LegRow leg, CancellationToken cancellationToken, string? ringKind = null)
+    {
+        // A read is for a card about to be raised: none for a leg of a landed flight (Ring raises nothing there), and none while a
+        // card of the kind the look is about to ring is still open (Ring raises that card again as the same one).
+        if (ringKind is not null
+            && (state.Flights().Any(f => f.State == FlightState.Landed && f.Code == leg.Flight)
+                || state.CardsOf(ringKind, Subject(leg)).Any(c => c.State == CardState.Open)))
+        {
+            _planeStates.TryRemove(Subject(leg), out _);
+            return;
+        }
+        _planeStates[Subject(leg)] = await PlaneStateAsync(leg, cancellationToken);
+    }
+
+    private string PlaneState(LegRow leg) => _planeStates.TryGetValue(Subject(leg), out var text) ? text : Steps(leg);
 
     /// <summary>What a leg's checklist stands at, as a title says it: <c>3 of 6 steps ticked</c>.</summary>
     private static string Steps(LegRow leg) =>

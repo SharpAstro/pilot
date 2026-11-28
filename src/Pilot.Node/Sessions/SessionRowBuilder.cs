@@ -102,8 +102,17 @@ public static class SessionRowBuilder
                     break;
             }
         }
+        // A resumed worker whose turn ended (its Stop hook fired after its last start, held or let through) and whose process then
+        // exited with Claude Code's job record reading failed ended its turn; it did not crash (SE1 2026-11-27, a9d21c70). A real
+        // crash has no Stop since the resume, or an API error.
+        var turnEndedThenFailed = agent.Pid is null && agent.Kind == "background" && state == SessionState.Failed && transcripts.Stop?.Error is null
+            && hook is { Event: "Stop", State: SessionState.Idle, ApiError: null } stop && stop.At >= (agent.StartedAt ?? DateTimeOffset.MinValue);
+        if (turnEndedThenFailed)
+        {
+            state = SessionState.Ended;
+        }
         var waiting = state == SessionState.Waiting;
-        var endedBecause = state is SessionState.Ended or SessionState.Failed ? EndedBecause(agent, state, hook, job) : null;
+        var endedBecause = state is SessionState.Ended or SessionState.Failed ? EndedBecause(agent, state, hook, job, turnEndedThenFailed) : null;
         var pending = waiting ? transcripts.PendingTool : null;
         // A question is no call it asks leave to run: what it waits on (WaitingFor) is the question already.
         // The PermissionRequest hook names the very call that asks; the transcript's last call with no result is the next best.
@@ -155,8 +164,12 @@ public static class SessionRowBuilder
     /// Why a row the listing and hooks say ended did: its SessionEnd hook's word, else (for a background job whose record reads a
     /// finished turn) that Claude Code ended it after the turn, which it does by design (PIL815), else the listing's state with no process.
     /// </summary>
-    private static string? EndedBecause(ClaudeAgentRow agent, SessionState state, HookState? hook, ClaudeJobRecord? job)
+    private static string? EndedBecause(ClaudeAgentRow agent, SessionState state, HookState? hook, ClaudeJobRecord? job, bool failedAfterTurn = false)
     {
+        if (failedAfterTurn)
+        {
+            return $"{TurnFinishedEnd} (failed after its turn ended{(hook?.StopHeld == true ? ", stop held: files not committed" : "")})";
+        }
         if (hook is { State: SessionState.Ended } ended && agent.Pid is null)
         {
             return ended.EndReason is { Length: > 0 } reason ? $"session ended ({reason})" : "session ended";
