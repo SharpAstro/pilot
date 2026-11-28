@@ -501,8 +501,9 @@ public sealed class WatchtowerStreamTests : IDisposable
     {
         // #1397: the compaction's generation is stamped only after a later reply, so the look right after one had no start and the bare share
         // replaced the watchtower. The start is always the fresh generation's, read before the compaction.
-        await UpAndIdleAsync();
+        await _tower.LookAsync(Ct);
         var first = _launcher.Process(0);
+        first.Emit(Init(_launcher.SessionOf(0)));
         first.Emit(Assistant(100, 40_000));
         first.Emit(Result);
         await Until(() => Row() is { State: SessionState.Idle, ContextTokens: 40_100 }, "it to be idle with its context");
