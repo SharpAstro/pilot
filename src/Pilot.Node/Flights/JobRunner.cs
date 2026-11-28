@@ -416,7 +416,7 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
         // cannot act on any tell, so a silent owner is neither told again nor rung for.
         Outage?.JudgeLimit(state.Sessions(), time.GetUtcNow());
         var retold = await RedoToldInOutageAsync(cancellationToken);
-        if (Outage is { IsOpen: true })
+        if (Outage is { IsOpen: true } && !(Outage.LimitUntil is { } resetAt && resetAt <= time.GetUtcNow()))
         {
             return retold;
         }
