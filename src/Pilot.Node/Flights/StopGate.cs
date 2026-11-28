@@ -8,7 +8,7 @@ namespace Pilot.Node.Flights;
 /// <summary>
 /// The node's answer to a Stop hook: a session ending its turn in a flight's plane with files not committed there is
 /// told to commit them, or delete them if they are scratch, and carries on, once per turn; a second stop is let through and rings, so a
-/// session that will not commit cannot loop. The ring offers 'Tell it to commit', and 'Tell it to delete them' too when every file is untracked. Nothing is left behind starts here, before a leg finishes or a flight lands.
+/// session that will not commit cannot loop. The files are charged to the flying leg's own worker: another session of the plane (a Done leg's) stopping while the flying leg has a live worker or a queued or running job is let through with no nudge and no ring (#1392). The ring offers 'Tell it to commit', and 'Tell it to delete them' too when every file is untracked. Nothing is left behind starts here, before a leg finishes or a flight lands.
 /// </summary>
 /// <remarks>
 /// Only a plane the node flies counts: Claude Code makes its own worktrees under <c>.claude/worktrees</c> too, and a
@@ -33,6 +33,13 @@ public sealed class StopGate(NodeState state, Planes planes)
             // A subagent's stop is its parent's business, as in HookBook.
             || ClaudeAgentsJson.Text(hook, "agent_id") is { Length: > 0 }
             || PlaneAt(state, cwd) is not { } flight)
+        {
+            return null;
+        }
+
+        // The files are charged to the flying leg's worker. A session that is not it (a Done leg's worker, a redone leg's old one)
+        // stopping while that leg's work is live is not told to commit it, and rings nothing: the work is in progress (#1392).
+        if (IsBystander(flight, sessionId))
         {
             return null;
         }
@@ -68,6 +75,30 @@ public sealed class StopGate(NodeState state, Planes planes)
             return null;
         }
         return Decision(reason);
+    }
+
+    /// <summary>
+    /// Whether <paramref name="sessionId"/> is a known session that is not the flying leg's current worker or ticker, while that leg has a
+    /// live worker or ticker session or a queued or running job: the dirty files are that live work's, not this session's. A session the
+    /// node has no row for, or a plane with no flying leg or no live work, is not one (today's behaviour).
+    /// </summary>
+    private bool IsBystander(FlightRow flight, string sessionId)
+    {
+        var leg = state.Legs(flight.Code).FirstOrDefault(l => l.State == LegState.Flying);
+        var row = state.Sessions().FirstOrDefault(s => s.SessionId == sessionId || s.Id == sessionId
+            || (s.EarlierSessionIds?.Contains(sessionId, StringComparer.Ordinal) ?? false));
+        if (leg is null || row is null)
+        {
+            return false;
+        }
+        var current = new[] { leg.WorkerJob, leg.TickerJob }.Where(j => !string.IsNullOrEmpty(j)).ToArray();
+        if (current.Contains(row.Id, StringComparer.Ordinal))
+        {
+            return false;
+        }
+        var liveWorker = state.Sessions().Any(s => s.State is SessionState.Working or SessionState.Waiting or SessionState.Idle
+            && s.Id != row.Id && current.Contains(s.Id, StringComparer.Ordinal));
+        return liveWorker || state.Jobs().Any(j => j.Flight == flight.Code && j.Leg == leg.Name && j.State is JobState.Queued or JobState.Running);
     }
 
     /// <summary>
