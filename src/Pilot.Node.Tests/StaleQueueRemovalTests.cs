@@ -54,8 +54,9 @@ public sealed class StaleQueueRemovalTests() : ReviewTestsBase(realGit: true)
     {
         var (flight, _, b, _) = await RemovedThenPushed("MERGE_CONFLICT");
         var checks = Checks();
-
+        Console.Error.WriteLine($"DIAG0 exists={Directory.Exists(flight.Worktree)} state={F(flight.Code).State}");
         await checks.LookAsync(Ct);
+        Console.Error.WriteLine($"DIAG1 exists={Directory.Exists(flight.Worktree)} state={F(flight.Code).State} cards={string.Join(',', _state.Cards().Select(c => c.Kind + ':' + c.Title))}");
         await checks.LookAsync(Ct);
         await checks.LookAsync(Ct);
 
