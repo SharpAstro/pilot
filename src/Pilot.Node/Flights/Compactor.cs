@@ -54,6 +54,13 @@ public sealed class Compactor(NodeState state, Watchtower watchtower, Func<Comma
     /// <summary>The share of its window past which an idle session is compacted at once, however long it has been idle.</summary>
     public double WindowShare { get; init; } = 0.7;
 
+    /// <summary>
+    /// How far past its starting size a watchtower must have grown, as a share of its window, to count as full (#1397). A watchtower starts at
+    /// its brief plus Claude Code's own prompt, and after a compaction it is back near that: SE1 watchtowers read 128k to 130k of 200k right
+    /// after a start or a compaction, over the bare 60% share, so judged on the share alone they were compacted and replaced for ever.
+    /// </summary>
+    public double StartMargin { get; init; } = 0.10;
+
     /// <summary>How long after a refused compaction the next one is tried.</summary>
     public TimeSpan RetryAfter { get; init; } = TimeSpan.FromMinutes(10);
 
@@ -165,6 +172,8 @@ public sealed class Compactor(NodeState state, Watchtower watchtower, Func<Comma
     public async Task LookAsync(CancellationToken cancellationToken)
     {
         var now = time.GetUtcNow();
+        // A row id gone from the node's sessions is forgotten, as the other guards are.
+        _readUnder.IntersectWith(state.Sessions().Select(r => r.Id));
         foreach (var (row, focus) in Kept().ToList())
         {
             var last = row.LastResponseAt ?? row.StartedAt;
@@ -182,6 +191,17 @@ public sealed class Compactor(NodeState state, Watchtower watchtower, Func<Comma
             }
             var share = isTower ? Models.WatchtowerCompactShare / 100.0 : WindowShare;
             var full = row.ContextWindow > 0 && row.ContextTokens > share * row.ContextWindow;
+            // Read at every look of a watchtower, full or not: the first reading the node sees of it is stamped as its start (#1397).
+            if (isTower && watchtower.StartTokensOf(row) is { } start && full)
+            {
+                // The watchtower is full only when it has also grown past where it started by the margin; a worker's test is the share alone.
+                full = row.ContextTokens > start + StartMargin * row.ContextWindow;
+            }
+            if (isTower && !_stuck.Contains(key) && state.CardsOf(StuckKind, Verbs.WatchtowerTarget).Any(c => c.State == CardState.Open))
+            {
+                // A node restarted since the card was raised: what it keeps says the watchtower was found still full, so it is left alone as before.
+                _stuck.Add(key);
+            }
             if (_stuck.Contains(key))
             {
                 if (full)
@@ -196,6 +216,10 @@ public sealed class Compactor(NodeState state, Watchtower watchtower, Func<Comma
             {
                 // Under its share: an earlier replacement did its work, and a later episode may be replaced again.
                 _replaced.Remove(key);
+                if (isTower)
+                {
+                    _readUnder.Add(row.Id);
+                }
             }
             if (!isTower && _compactedFull.Contains(key))
             {
@@ -264,8 +288,16 @@ public sealed class Compactor(NodeState state, Watchtower watchtower, Func<Comma
     private async Task ReplaceAsync(SessionRow row, string key, CancellationToken cancellationToken)
     {
         var share = string.Create(CultureInfo.InvariantCulture, $"{100.0 * row.ContextTokens / row.ContextWindow:0}%");
-        var why = $"still at {share} of its window after a compaction";
+        // The reason as said in the log and on the card; the stored Why carries the prefix too, which StartedByWhy reads after a restart.
+        var reason = $"still at {share} of its window after a compaction";
+        var why = $"{ReplaceWhyPrefix}{reason}";
         _settleUntil[key] = time.GetUtcNow() + Settle;
+        if (!_replaced.ContainsKey(key) && !_readUnder.Contains(row.Id) && watchtower.StartedByWhy(row, ReplaceWhyPrefix))
+        {
+            // After a node restart the in-memory record is gone: the generation's Why, kept in watchtower-sessions, says this watchtower is
+            // already the replacement of a compaction, so it is not replaced again (#1397).
+            _replaced[key] = FreshStarted;
+        }
         if (_replaced.TryGetValue(key, out var came))
         {
             // Asked for a fresh one once already and still full: said once, and left until it reads under its share. The title and the
@@ -275,7 +307,7 @@ public sealed class Compactor(NodeState state, Watchtower watchtower, Func<Comma
             state.RaiseCard(CardBin.ForYou, StuckKind, Verbs.WatchtowerTarget, $"{row.Name} is still full after {afterWhat}",
                 $"The node compacted {row.Name} and asked for a fresh one ({came}), and it still reads {share} of its window. It is left as it is, not compacted or replaced again, until it reads under its share. Restart it to start a fresh one now.",
                 [new CardChoice { Label = "Restart the watchtower", Verb = Verbs.RestartWatchtower, Target = Verbs.WatchtowerTarget, Args = [$"still at {share} of its window after {afterWhat} ({came})"] }]);
-            await Error.WriteLineAsync($"compactor: {row.Name} ({row.Id}) {why} ({came}); left alone until it reads under its share");
+            await Error.WriteLineAsync($"compactor: {row.Name} ({row.Id}) {reason} ({came}); left alone until it reads under its share");
             return;
         }
         var (error, way) = await (Restart ?? watchtower.RestartWithWayAsync)(why, cancellationToken);
@@ -283,9 +315,15 @@ public sealed class Compactor(NodeState state, Watchtower watchtower, Func<Comma
         var joined = error is null && way == Watchtower.JoinedWay;
         var title = error is not null ? $"Could not replace {row.Name}" : joined ? $"Did not replace {row.Name}: a watchtower start was in progress" : $"Replaced {row.Name}";
         _replaced[key] = error is not null ? $"the restart failed: {error}" : joined ? "the restart joined a start already in progress" : FreshStarted;
-        state.RaiseCard(CardBin.Handled, Kind, Verbs.WatchtowerTarget, title, $"{why}{(error is null ? "" : $": {error}")}");
-        await Error.WriteLineAsync($"compactor: {title} ({row.Id}): {why}{(error is null ? "" : $": {error}")}");
+        state.RaiseCard(CardBin.Handled, Kind, Verbs.WatchtowerTarget, title, $"{reason}{(error is null ? "" : $": {error}")}");
+        await Error.WriteLineAsync($"compactor: {title} ({row.Id}): {reason}{(error is null ? "" : $": {error}")}");
     }
+
+    /// <summary>What the Why of a watchtower the compactor replaced starts with, so a restarted node can tell such a generation from its kept record.</summary>
+    public const string ReplaceWhyPrefix = "compactor: ";
+
+    // Watchtower rows seen under their share: a later episode of one may be replaced again, so the kept Why no longer counts against it.
+    private readonly HashSet<string> _readUnder = new(StringComparer.Ordinal);
 
     // What a replacement that started a fresh watchtower came to: the one outcome after which the card may say "a replacement".
     private const string FreshStarted = "a fresh one started";

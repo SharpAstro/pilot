@@ -246,6 +246,61 @@ public sealed class WatchtowerEndsByDesignTests : IDisposable
         _tower.Generations().Where(g => g.EndedAt is not null).ShouldAllBe(g => g.AfterFinishedTurn == false);
     }
 
+    /// <summary>Watchtowers each ended a minute after its last reply for the given reasons, no finished turn.</summary>
+    private async Task EndedFor(params string?[] reasons)
+    {
+        for (var n = 1; n <= reasons.Length; n++)
+        {
+            _state.RaiseCard(CardBin.Ring, "leg-failed", $"flight/TIA{n}/parser", $"TIA{n}/parser failed");
+            await _tower.LookAsync(Ct);
+            var id = $"job{n:D5}";
+            _time.Advance(TimeSpan.FromSeconds(30));
+            Row(id, SessionState.Idle, context: 180_000);
+            _time.Advance(TimeSpan.FromSeconds(60));
+            _state.PutSession(_state.Sessions().Single(r => r.Id == id) with
+            {
+                State = SessionState.Ended, LastResponseAt = _time.GetUtcNow() - TimeSpan.FromSeconds(60), EndedBecause = reasons[n - 1],
+            });
+        }
+        await _tower.LookAsync(Ct);
+    }
+
+    [Theory]
+    [InlineData("stopped by the watchtower: replaced by a fresh watchtower: still at 65% of its window")]
+    [InlineData("stopped with the node")]
+    public async Task EndsTheNodeMadeCountTowardNoLifetimeAndRingNothing(string by)
+    {
+        await EndedFor(by, by);
+
+        var health = _tower.Health().ShouldNotBeNull();
+        health.Churning.ShouldBeFalse();
+        health.TypicalLifetimeAfterReply.ShouldBeNull();
+        Open().ShouldNotContain(c => c.Kind == CardKinds.WatchtowerChurning);
+    }
+
+    [Fact]
+    public async Task OneReplacedAndOneStoppedWithTheNodeGiveNoLifetime()
+    {
+        await EndedFor(SessionEndReasons.Watchtower + ": replaced by a fresh watchtower: still at 65% of its window", "stopped with the node");
+
+        var health = _tower.Health().ShouldNotBeNull();
+        health.Churning.ShouldBeFalse();
+        health.TypicalLifetimeAfterReply.ShouldBeNull();
+    }
+
+    [Theory]
+    [InlineData("its process went")]
+    [InlineData(null)]
+    public async Task EndsThatCrashedOrHaveNoReasonStillCountAndRing(string? reason)
+    {
+        await EndedFor(reason, reason);
+
+        var health = _tower.Health().ShouldNotBeNull();
+        health.Churning.ShouldBeTrue();
+        health.TypicalLifetimeAfterReply.ShouldBe(TimeSpan.FromSeconds(60));
+        Open().ShouldContain(c => c.Kind == CardKinds.WatchtowerChurning);
+    }
+
     [Fact]
     public async Task TheFinishedTurnNoteOfAnEndSurvivesAReload()
     {
