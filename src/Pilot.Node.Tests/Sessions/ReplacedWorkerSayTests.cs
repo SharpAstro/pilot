@@ -104,6 +104,21 @@ public sealed class ReplacedWorkerSayTests : IDisposable
         _state.Sessions().Count(r => r.Leg == Leg && r.State is SessionState.Working or SessionState.Waiting or SessionState.Idle).ShouldBe(0);
     }
 
+    /// <summary>#1395: the real resume path words a gone folder so that <see cref="SessionMessenger.IsFolderGone"/> recognises it, with no faked Say.</summary>
+    [Fact]
+    public async Task ASayToAnEndedSessionWhoseFolderIsGoneIsRefusedInWordsIsFolderGoneRecognises()
+    {
+        var gone = Path.Combine(_profile.Folder, "no-such-plane");
+        var row = Worker(AgentRows.SessionA, SessionState.Ended, DateTimeOffset.UtcNow.AddMinutes(-30)) with { Cwd = gone, Flight = null, Leg = null };
+        _state.PutSession(row);
+
+        var result = await _messenger.SayAsync(Say(row.Id), Ct);
+
+        result.Ok.ShouldBeFalse();
+        SessionMessenger.IsFolderGone(result.Error).ShouldBeTrue(result.Error);
+        _delivery.Resumes.ShouldBeEmpty();
+    }
+
     [Theory]
     [InlineData("id")]
     [InlineData("session")]
