@@ -77,13 +77,14 @@ public sealed class PrimeFreshSweepTests : LegCommanderTestsBase
         (await Run("node")).Error.ShouldBeNull();
         var first = Reads;
         first.ShouldBeGreaterThan(before);
-        (await Run("node")).Error.ShouldBeNull();
+        // The repeats are refused (the leg is flying): what counts is the read the start makes before it is refused.
+        await Run("node");
         Reads.ShouldBe(first, "the node's own start a minute later takes the read as fresh");
 
-        (await Run("controller")).Error.ShouldBeNull();
+        await Run("controller");
         var afterPerson = Reads;
         afterPerson.ShouldBeGreaterThan(first, "a person's command reads afresh");
-        (await Run("controller")).Error.ShouldBeNull();
+        await Run("controller");
         Reads.ShouldBeGreaterThan(afterPerson);
     }
 
