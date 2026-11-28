@@ -138,17 +138,24 @@ public sealed class HoldingPrReadyTests : ReviewTestsBase
         PrReadyCards(failed.Code).ShouldBeEmpty();
     }
 
-    [Fact]
-    [Trait("Category", "Slow")]
-    public async Task AMergeFailedCardOnAHoldingFlightStaysOpenThroughALook()
+    // Straight at ShowMergeState, before a look has planned the next notes leg: with a leg open the leg-wait path closes any merge card,
+    // which would hide the Kind condition these two tests stand for.
+    private async Task<(FlightRow Flight, CardRow Card)> HoldingFlightWithMergeCard(string issue, string kind)
     {
-        var flight = await NotesLegEndedUnmade("8");
-        // A Merge choice on the card, so the only thing that tells it from a PR-ready card is its Kind (the condition under test).
+        var flight = await NotesLegEndedUnmade(issue);
+        _state.OpenLegs(flight.Code).ShouldBeEmpty();
         var head = F(flight.Code).Review!.ReviewedHead!;
         var merge = new CardChoice { Label = "Merge", Verb = Verbs.Merge, Target = Verbs.FlightTarget(flight.Code), Args = [head] };
-        var card = _state.RaiseCard(CardBin.ForYou, LegCommander.MergeFailed, Verbs.FlightTarget(flight.Code), "the merge failed", choices: [merge]);
+        var card = _state.RaiseCard(CardBin.ForYou, kind, Verbs.FlightTarget(flight.Code), "a merge card", choices: [merge]);
+        _legs.ShowMergeState(card, new MergeState(MergeKinds.Ready, 1, 1), head);
+        return (flight, card);
+    }
 
-        await Checks().LookAsync(Ct);
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AMergeFailedCardWithAMergeChoiceOnAHoldingFlightStaysOpen()
+    {
+        var (flight, card) = await HoldingFlightWithMergeCard("8", LegCommander.MergeFailed);
 
         F(flight.Code).Holding.ShouldNotBeNull();
         _state.Cards(openOnly: true).ShouldContain(c => c.Id == card.Id);
@@ -156,16 +163,12 @@ public sealed class HoldingPrReadyTests : ReviewTestsBase
 
     [Fact]
     [Trait("Category", "Slow")]
-    public async Task APrReadyCardWithAMergeChoiceOnAHoldingFlightIsClosedByALook()
+    public async Task APrReadyCardWithAMergeChoiceOnAHoldingFlightIsClosedAsTheNodesOwn()
     {
-        var flight = await NotesLegEndedUnmade("9");
-        var head = F(flight.Code).Review!.ReviewedHead!;
-        var merge = new CardChoice { Label = "Merge", Verb = Verbs.Merge, Target = Verbs.FlightTarget(flight.Code), Args = [head] };
-        var card = _state.RaiseCard(CardBin.ForYou, LegCommander.PrReady, Verbs.FlightTarget(flight.Code), "ready", choices: [merge]);
-
-        await Checks().LookAsync(Ct);
+        var (_, card) = await HoldingFlightWithMergeCard("9", LegCommander.PrReady);
 
         _state.Cards(openOnly: true).ShouldNotContain(c => c.Id == card.Id);
+        _state.Cards(openOnly: false).Single(c => c.Id == card.Id).Outcome.ShouldStartWith(LegCommander.HoldingCloseOutcome);
     }
 
     [Fact]
