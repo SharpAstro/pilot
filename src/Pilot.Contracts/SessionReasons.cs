@@ -42,6 +42,8 @@ public static class SessionEndReasons
     public const string Planned = "stopped once planned";
     /// <summary>A worker of a leg that was redone (PIL1206): the leg has another current worker, so the node ended this duplicate itself. Starts the why of an end-session.</summary>
     public const string DuplicateWorker = "duplicate worker of a redone leg";
+    /// <summary>The worker of a leg recorded done, still live past the stray grace (#1392): the node ends it itself. Starts the why of an end-session.</summary>
+    public const string LegDone = "worker of a done leg";
     /// <summary>An investigator (PIL1285) that reported its one outcome: the node records it and ends the run. Starts the why of an end-session.</summary>
     public const string Investigated = "stopped once investigated";
     /// <summary>An investigator (PIL1285) that gave no outcome within its time: the node ends it and rings what it held.</summary>
