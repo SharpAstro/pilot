@@ -164,6 +164,7 @@ public sealed partial class Investigator(NodeState state, IWorkerLauncher worker
     private readonly List<Task> _running = [];
     private bool _seeded;
     private bool _recovered;
+    private readonly HashSet<string> _stopped = new(StringComparer.Ordinal);
 
     /// <summary>The live runs.</summary>
     public IReadOnlyList<InvestigationRun> Runs
@@ -172,6 +173,7 @@ public sealed partial class Investigator(NodeState state, IWorkerLauncher worker
         {
             lock (_lock)
             {
+                Seed();
                 return [.. _runs.Values];
             }
         }
@@ -219,6 +221,89 @@ public sealed partial class Investigator(NodeState state, IWorkerLauncher worker
             {
                 _seen.Add(line[SeenLead.Length..].Trim());
             }
+        }
+        Recover();
+    }
+
+    private const string StartedOn = " started on ";
+
+    // One helper writes the start line's title and one reads the key back, so the two cannot drift.
+    private static string StartTitle(string key, InvestigationTrigger trigger) => $"An investigator of {key}{StartedOn}{trigger}";
+
+    private static string? KeyOfStartTitle(string title)
+    {
+        const string lead = "An investigator of ";
+        var at = title.IndexOf(StartedOn, StringComparison.Ordinal);
+        return title.StartsWith(lead, StringComparison.Ordinal) && at > lead.Length ? title[lead.Length..at] : null;
+    }
+
+    // A run live when the node restarted is taken up again from what is stored: its start line (key, target, triggers, time), its live
+    // session row (job) and the cards held for it. Called with the lock held, at the first access and at every look: a session that was
+    // still starting when the node went down shows up later. A live session whose outcome was already in is ended once; a session no start
+    // line names is left alone, since the node ends only what it started.
+    private void Recover()
+    {
+        var sessions = state.Sessions();
+        if (!sessions.Any(s => s.Role == SessionRole.Investigator && SessionPick.IsLive(s)))
+        {
+            return;
+        }
+        var cards = state.Cards();
+        var newest = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        for (var i = 0; i < cards.Length; i++)
+        {
+            if (cards[i].Kind == StartKind && KeyOfStartTitle(cards[i].Title) is { } key)
+            {
+                newest[key] = i;
+            }
+        }
+        foreach (var (key, at) in newest)
+        {
+            var start = cards[at];
+            var name = NameOf(key);
+            if (_runs.ContainsKey(key) || SessionPick.ByName(sessions.Where(s => s.Role == SessionRole.Investigator), name) is not { } row || !SessionPick.IsLive(row) || _stopped.Contains(row.Id))
+            {
+                continue;
+            }
+            var decided = false;
+            var triggers = new List<InvestigationTrigger>();
+            var title = start.Title[(start.Title.IndexOf(StartedOn, StringComparison.Ordinal) + StartedOn.Length)..];
+            if (Enum.TryParse<InvestigationTrigger>(title, out var first))
+            {
+                triggers.Add(first);
+            }
+            for (var i = at + 1; i < cards.Length; i++)
+            {
+                var c = cards[i];
+                if (c.Subject != start.Subject)
+                {
+                    continue;
+                }
+                if (c.Kind == HandledKind)
+                {
+                    decided = true;
+                }
+                else if (c.Kind == JoinKind && c.Title.StartsWith("A ", StringComparison.Ordinal) && c.Title.Split(' ') is [_, var word, "trigger", ..] && Enum.TryParse<InvestigationTrigger>(word, out var joined))
+                {
+                    triggers.Add(joined);
+                }
+            }
+            if (decided)
+            {
+                _stopped.Add(row.Id);
+                Log?.Invoke($"investigator: {name} ({row.Id}) is live with its outcome already in, ending it");
+                _running.RemoveAll(t => t.IsCompleted);
+                _running.Add(StopAsync(row.Id, $"{SessionEndReasons.Investigated}: its outcome was in before the node restarted"));
+                continue;
+            }
+            var run = new InvestigationRun { Key = key, Target = start.Subject, Name = name, StartedAt = start.At, Job = row.Id };
+            run.Triggers.AddRange(triggers);
+            foreach (var card in state.Cards(openOnly: true).Where(c => c.Bin == CardBin.ForYou && IsHeld(c.Detail) && string.Equals(SubjectOf(c.Subject, c.Id).Key, key, StringComparison.OrdinalIgnoreCase)))
+            {
+                run.Held.Add(card.Id);
+            }
+            _runs[key] = run;
+            Log?.Invoke($"investigator: {name} ({row.Id}) adopted after a restart");
         }
     }
 
@@ -304,7 +389,7 @@ public sealed partial class Investigator(NodeState state, IWorkerLauncher worker
             }
             _runs[key] = run;
             _starts.Add(run.StartedAt);
-            state.RaiseCard(CardBin.Handled, StartKind, target, $"An investigator of {key} started on {trigger}", SeenDetail($"{run.Name} on {string.Join(", ", run.Triggers)}.", seen));
+            state.RaiseCard(CardBin.Handled, StartKind, target, StartTitle(key, trigger), SeenDetail($"{run.Name} on {string.Join(", ", run.Triggers)}.", seen));
         }
         // Started outside the lock: a launcher that fails at once rings the held cards, which goes through the node's state.
         var start = StartAsync(run);
@@ -408,6 +493,7 @@ public sealed partial class Investigator(NodeState state, IWorkerLauncher worker
         InvestigationRun? run;
         lock (_lock)
         {
+            Seed();
             run = _runs.Values.FirstOrDefault(r => string.Equals(r.Name, who, StringComparison.Ordinal))
                 ?? (_runs.TryGetValue(KeyOf(subject), out var bySubject) ? bySubject : null);
         }
@@ -452,6 +538,11 @@ public sealed partial class Investigator(NodeState state, IWorkerLauncher worker
     public void Look()
     {
         var now = time.GetUtcNow();
+        lock (_lock)
+        {
+            Seed();
+            Recover();
+        }
         if (!On())
         {
             foreach (var run in Runs)
@@ -464,6 +555,16 @@ public sealed partial class Investigator(NodeState state, IWorkerLauncher worker
         foreach (var run in Runs.Where(r => now - r.StartedAt >= RunFor))
         {
             Release(run, $"the investigator gave no outcome in {Waited.Coarse(RunFor)}", SessionEndReasons.InvestigatorTimedOut);
+        }
+
+        // A run whose session died while the node was down (or crashed) is released like a timeout, without a stop: the ledger closes the row.
+        var sessions = state.Sessions();
+        foreach (var run in Runs.Where(r => r.Job is not null))
+        {
+            if (SessionPick.ByName(sessions.Where(s => s.Role == SessionRole.Investigator), run.Name) is { } row && !SessionPick.IsLive(row))
+            {
+                Release(run, "its session ended without an outcome", SessionEndReasons.InvestigatorTimedOut, stop: false);
+            }
         }
 
         RingStranded(now, null);
@@ -527,14 +628,14 @@ public sealed partial class Investigator(NodeState state, IWorkerLauncher worker
         }
     }
 
-    private void Release(InvestigationRun run, string why, string reason)
+    private void Release(InvestigationRun run, string why, string reason, bool stop = true)
     {
         foreach (var id in run.Held)
         {
             RingCard(id, $"Rung without an investigation: {why}.");
         }
         state.RaiseCard(CardBin.Handled, HandledKind, run.Target, $"The investigator of {run.Key} ended with no outcome", $"{why} ({run.Name}); what it held rang as it would have.");
-        End(run, $"{reason}: {why}");
+        End(run, stop ? $"{reason}: {why}" : null);
     }
 
     private void End(InvestigationRun run, string? reason)
@@ -558,6 +659,10 @@ public sealed partial class Investigator(NodeState state, IWorkerLauncher worker
 
     private async Task StopAsync(string job, string reason)
     {
+        lock (_lock)
+        {
+            _stopped.Add(job);
+        }
         try
         {
             await workers.StopAsync(job, reason, "node", CancellationToken.None).ConfigureAwait(false);

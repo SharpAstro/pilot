@@ -535,4 +535,165 @@ public sealed class InvestigatorTests
 
         Card(card.Id).Bin.ShouldBe(CardBin.ForYou);
     }
+
+    // A session row for a run the node started, as the listing shows it.
+    private SessionRow Row(string name, SessionState state = SessionState.Working, string id = "1a000000") => new()
+    {
+        Id = id, SessionId = id + "-0000-4000-8000-000000000000", Name = name, Kind = SessionKind.Background, Cwd = "C:/x", Role = SessionRole.Investigator,
+        ContextTokens = 1, ContextWindow = 200_000, State = state, SpendWeighted = 0, StartedAt = Start,
+    };
+
+    // A run live when the node went down: started, its session row live; returns the held card's id.
+    private async Task<string> RunLiveAtRestart(string subject = "flight/PIL1/node")
+    {
+        var card = RingBound(subject);
+        await _investigator.SettledAsync();
+        _state.PutSession(Row(Run().Name));
+        return card.Id;
+    }
+
+    [Fact]
+    public async Task ARunLiveAtARestartIsAdoptedWithItsKeyTargetJobAndHeldCard()
+    {
+        var cardId = await RunLiveAtRestart();
+        var (next, workers) = Restarted();
+
+        var run = next.Runs.ShouldHaveSingleItem();
+        run.Key.ShouldBe("PIL1");
+        run.Target.ShouldBe("flight/PIL1");
+        run.Name.ShouldBe("de1-investigate-pil1");
+        run.Job.ShouldBe("1a000000");
+        run.StartedAt.ShouldBe(Start);
+        run.Triggers.ShouldBe([InvestigationTrigger.Ring]);
+        run.Held.ShouldBe([cardId]);
+
+        next.Look();
+        Card(cardId).Bin.ShouldBe(CardBin.ForYou);
+        workers.Stopped.ShouldBeEmpty();
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task AnAdoptedRunsInvestigatedOutcomeIsAcceptedByNameAndBySubject(bool byName)
+    {
+        var cardId = await RunLiveAtRestart();
+        var (next, workers) = Restarted();
+
+        var refused = next.Outcome(byName ? "de1-investigate-pil1" : "someone", "flight/PIL1", Investigator.ActionOutcome, "looked at job j962 and nothing needs the owner");
+
+        refused.ShouldBeNull();
+        _state.Cards().ShouldContain(c => c.Kind == Investigator.HandledKind && c.Subject == "flight/PIL1");
+        _state.Decisions().ShouldContain(d => d.ByKind == Investigator.By);
+        Card(cardId).Detail.ShouldNotBeNull().ShouldContain(Investigator.QuietPrefix);
+        var stop = workers.StopReasons.ShouldHaveSingleItem();
+        stop.Job.ShouldBe("1a000000");
+        stop.By.ShouldBe("node");
+        stop.Reason.ShouldStartWith(SessionEndReasons.Investigated);
+    }
+
+    [Fact]
+    public async Task ACardKeyedRunAndTheDigestRunAreAdoptedToo()
+    {
+        var card = _state.RaiseCard(CardBin.Ring, "pr-red", "node", "something", "detail j1");
+        await _investigator.SettledAsync();
+        var cardRun = Run();
+        cardRun.Key.ShouldBe(card.Id);
+        _state.PutSession(Row(cardRun.Name, id: "1a000001"));
+        _investigator.Begin(InvestigationTrigger.Digest, "digest", Verbs.NodeTarget, ["d"]);
+        await _investigator.SettledAsync();
+        _state.PutSession(Row(_investigator.NameOf("digest"), id: "1a000002"));
+
+        var (next, _) = Restarted();
+
+        next.Runs.Count.ShouldBe(2);
+        next.Runs.Single(r => r.Key == "digest").Target.ShouldBe("node");
+        next.Runs.Single(r => r.Key == card.Id).Job.ShouldBe("1a000001");
+    }
+
+    [Fact]
+    public async Task AnAdoptedRunPastRunForIsReleasedAtTheFirstLook()
+    {
+        var cardId = await RunLiveAtRestart();
+        var (next, workers) = Restarted();
+        _time.Advance(next.RunFor + TimeSpan.FromMinutes(1));
+
+        next.Look();
+
+        next.Runs.ShouldBeEmpty();
+        Card(cardId).Bin.ShouldBe(CardBin.Ring);
+        workers.StopReasons.ShouldHaveSingleItem().Reason.ShouldStartWith(SessionEndReasons.InvestigatorTimedOut);
+    }
+
+    [Fact]
+    public async Task ALiveSessionWhoseOutcomeWasInBeforeTheRestartIsStoppedOnceAndNotAdopted()
+    {
+        await RunLiveAtRestart();
+        _investigator.Outcome("de1-investigate-pil1", "flight/PIL1", Investigator.ActionOutcome, "acted on job j962").ShouldBeNull();
+        var (next, workers) = Restarted();
+
+        next.Look();
+        next.Look();
+
+        next.Runs.ShouldBeEmpty();
+        workers.StopReasons.ShouldHaveSingleItem().Reason.ShouldStartWith(SessionEndReasons.Investigated);
+    }
+
+    [Fact]
+    public async Task ARunWhoseSessionEndedIsReleasedWithoutAStop()
+    {
+        var cardId = await RunLiveAtRestart();
+        var (next, workers) = Restarted();
+        next.Runs.ShouldHaveSingleItem();
+        _state.PutSession(Row("de1-investigate-pil1", SessionState.Ended));
+
+        next.Look();
+
+        next.Runs.ShouldBeEmpty();
+        Card(cardId).Bin.ShouldBe(CardBin.Ring);
+        Card(cardId).Detail.ShouldNotBeNull().ShouldContain("its session ended without an outcome");
+        workers.StopReasons.ShouldBeEmpty();
+        _state.Cards().ShouldContain(c => c.Kind == Investigator.HandledKind);
+    }
+
+    [Fact]
+    public async Task AStartLineWithNoLiveSessionIsNotAdoptedAndItsHeldCardRings()
+    {
+        var cardId = RingBound().Id;
+        await _investigator.SettledAsync();
+        var (next, _) = Restarted();
+
+        next.Runs.ShouldBeEmpty();
+        next.Look();
+
+        Card(cardId).Bin.ShouldBe(CardBin.Ring);
+    }
+
+    [Fact]
+    public async Task ASessionNamedLikeAnInvestigatorWithNoStartLineIsLeftAlone()
+    {
+        _state.PutSession(Row("de1-investigate-pil9"));
+        var (next, workers) = Restarted();
+
+        next.Look();
+
+        next.Runs.ShouldBeEmpty();
+        workers.Stopped.ShouldBeEmpty();
+        await next.SettledAsync();
+    }
+
+    [Fact]
+    public async Task ASessionThatShowedUpAfterTheFirstLookIsAdoptedAtALaterLook()
+    {
+        var cardId = RingBound().Id;
+        await _investigator.SettledAsync();
+        var (next, _) = Restarted();
+        next.Look();
+        Card(cardId).Bin.ShouldBe(CardBin.Ring);
+
+        _state.PutSession(Row("de1-investigate-pil1"));
+        next.Look();
+
+        next.Runs.ShouldHaveSingleItem().Job.ShouldBe("1a000000");
+    }
 }
