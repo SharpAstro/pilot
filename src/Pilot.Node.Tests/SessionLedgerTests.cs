@@ -254,4 +254,145 @@ public sealed class SessionLedgerTests : IDisposable
         text.ShouldContain("start: leg launch  end: stopped on land  ended: 2026-10-31 11:15Z  wall: 1h15m");
         text.ShouldContain("start: -  end: -  ended: -");
     }
+
+    // #1365: Find is indexed; it must answer as the linear scan did.
+
+    private static SessionLedgerEntry? Linear(SessionLedgerEntry[] entries, string[] ids)
+    {
+        foreach (var id in ids)
+        {
+            var job = id.Length > 8 ? id[..8] : id;
+            if (entries.LastOrDefault(e => string.Equals(e.JobId, job, StringComparison.OrdinalIgnoreCase)
+                || e.SessionIds.Contains(id, StringComparer.OrdinalIgnoreCase)) is { } found)
+            {
+                return found;
+            }
+        }
+        return null;
+    }
+
+    private void FindsAsTheScanDid(params string[][] probes)
+    {
+        var all = _ledger.All();
+        foreach (var ids in probes)
+        {
+            _ledger.Find(ids).ShouldBe(Linear(all, ids), string.Join(",", ids));
+        }
+    }
+
+    [Fact]
+    public void FindAnswersAsTheLinearScanDidAfterEveryKindOfWrite()
+    {
+        var idA = AgentRows.SessionA;
+        var idB = AgentRows.SessionB;
+        string[][] probes =
+        [
+            [idA], [idA[..8]], [idA.ToUpperInvariant()], [idB], [idB[..8]], [SessionC], [SessionC[..8].ToUpperInvariant()], ["zz", idB, idA], [idA, idB], ["nothing"], [],
+        ];
+        FindsAsTheScanDid(probes);
+
+        Launch(idA, "a", SessionStartReasons.LegLaunch);
+        Launch(idB, "b", SessionStartReasons.LegLaunch);
+        FindsAsTheScanDid(probes);
+        _ledger.Find([idA.ToUpperInvariant()])!.Name.ShouldBe("a");
+
+        // Observe follows a later session id on the entry; the last entry holding an id wins.
+        var row = new SessionRow
+        {
+            Id = idA[..8], SessionId = SessionC, Name = "a", Kind = SessionKind.Background, Cwd = "/r", Role = SessionRole.Worker,
+            ContextTokens = 0, ContextWindow = 1, State = SessionState.Idle, SpendWeighted = 5, StartedAt = Start,
+        };
+        _ledger.Observe(row, null);
+        FindsAsTheScanDid(probes);
+        _ledger.Find([SessionC])!.JobId.ShouldBe(idA[..8]);
+
+        _ledger.Stopped([idB], "stopped", "test");
+        FindsAsTheScanDid(probes);
+        _ledger.Find([idB])!.EndReason.ShouldBe("stopped");
+
+        _ledger.Compacted([SessionC], Start, "why");
+        FindsAsTheScanDid(probes);
+        _ledger.Find([idA])!.CompactedBecause.ShouldBe("why");
+
+        _ledger.Resumed([idA], "say");
+        FindsAsTheScanDid(probes);
+        _ledger.Find([idA])!.Resumes.ShouldBe(["say"]);
+
+        // Adopt takes in a row the ledger does not know, and is a no-op for one it does.
+        var adopted = row with { Id = "adopted1", SessionId = "adopted1-0000-4000-8000-000000000000", EarlierSessionIds = ["old-session"] };
+        _ledger.Adopt(adopted);
+        _ledger.Adopt(adopted);
+        FindsAsTheScanDid([.. probes, ["adopted1"], [adopted.SessionId], ["old-session"], ["ADOPTED1"]]);
+        _ledger.Find(["old-session"])!.JobId.ShouldBe("adopted1");
+
+        // Started again under the same job id replaces the entry.
+        Launch(idA, "a2", SessionStartReasons.LegLaunch);
+        FindsAsTheScanDid(probes);
+        _ledger.Find([idA])!.Name.ShouldBe("a2");
+    }
+
+    private const string Probe = "abcdef12-0000-4000-8000-0000000000aa";
+
+    // A ledger file written by hand, so two entries can hold the same id (through the API Observe and Adopt look ids up first and never leave one).
+    private SessionLedger LedgerOf(params (string Job, string[] Ids)[] entries)
+    {
+        var folder = Path.Combine(_folder, "dup-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(folder);
+        var json = "[" + string.Join(",", entries.Select(e =>
+            "{\"job\":\"" + e.Job + "\",\"sessionIds\":[" + string.Join(",", e.Ids.Select(i => "\"" + i + "\"")) + "],\"name\":\"" + e.Job + "\"}")) + "]";
+        File.WriteAllText(SessionLedger.FileIn(folder), json);
+        return new SessionLedger(SessionLedger.FileIn(folder), _time);
+    }
+
+    private static void FindsAsTheScanDid(SessionLedger ledger, string expectedJob, params string[][] probes)
+    {
+        var all = ledger.All();
+        foreach (var ids in probes)
+        {
+            var found = ledger.Find(ids);
+            found.ShouldBe(Linear(all, ids), string.Join(",", ids));
+            found!.JobId.ShouldBe(expectedJob, string.Join(",", ids));
+        }
+    }
+
+    [Fact]
+    public void WhenTwoEntriesHoldTheSameSessionIdTheLastOneWins()
+    {
+        var ledger = LedgerOf(("11111111", [Probe]), ("22222222", [Probe]));
+
+        FindsAsTheScanDid(ledger, "22222222", [Probe], [Probe.ToUpperInvariant()], ["zz", Probe]);
+    }
+
+    [Fact]
+    public void AJobIdMatchAndALaterSessionIdMatchGoToTheLaterEntry()
+    {
+        var ledger = LedgerOf(("abcdef12", []), ("33333333", [Probe]));
+
+        FindsAsTheScanDid(ledger, "33333333", [Probe], [Probe.ToUpperInvariant()]);
+        ledger.Find(["ABCDEF12"])!.JobId.ShouldBe("abcdef12");
+    }
+
+    [Fact]
+    public void ASessionIdMatchAndALaterJobIdMatchGoToTheLaterEntry()
+    {
+        var ledger = LedgerOf(("33333333", [Probe]), ("abcdef12", []));
+
+        FindsAsTheScanDid(ledger, "abcdef12", [Probe], [Probe.ToUpperInvariant()]);
+    }
+
+    [Fact]
+    public void FindAnswersAsTheLinearScanDidAfterTheCapacityTrim()
+    {
+        var ledger = new SessionLedger(null, _time);
+        for (var i = 0; i < 2005; i++)
+        {
+            ledger.Started($"job{i:D5}", "n" + i, SessionRoles.Resolve("n" + i, background: true), SessionStartReasons.LegLaunch, null);
+        }
+
+        ledger.All().Length.ShouldBe(2000);
+        ledger.Find(["job00000"]).ShouldBeNull();
+        ledger.Find(["job00004"]).ShouldBeNull();
+        ledger.Find(["JOB00005"])!.Name.ShouldBe("n5");
+        ledger.Find(["job02004-extra-long-session-id"])!.Name.ShouldBe("n2004");
+    }
 }
