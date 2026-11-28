@@ -217,6 +217,45 @@ public sealed class RateLimitedMergeTests : ReviewTestsBase
         cards.ShouldAllBe(c => c.Detail != null && c.Detail.Contains("rate limit"));
     }
 
+    // A merge laid on its base (a rebase that conflicts, as BranchShapeTests.ARebaseThatConflictsIsLaidAsOneCommit) whose answer is the rate
+    // limit: no queue refusal of the laid head, so no 'ready to merge' card is raised at it; the refusal is the passing rate limit.
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AMergeJustLaidAndMetByTheRateLimitRaisesNoReadyCardAndIsRefusedAsTheLimit()
+    {
+        RealGit(); // the lay is built by rebase, merge-tree and commit-tree: git's own
+        _github.MergeQueueMethod = "REBASE";
+        _github.Queues = true;
+        var (flight, _) = await Passed("91");
+        File.WriteAllText(Path.Combine(Repo, "f.txt"), "x\n");
+        Git(Repo, "add", "f.txt");
+        Git(Repo, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-a", "-m", "f");
+        File.WriteAllText(Path.Combine(Repo, "f.txt"), "side\n");
+        Git(Repo, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-a", "-m", "side");
+        Git(Repo, "push", "-q", "origin", "main");
+        var plane = flight.Worktree;
+        Git(plane, "fetch", "-q", "origin");
+        File.WriteAllText(Path.Combine(plane, "f.txt"), "mine1\n");
+        Git(plane, "add", ".");
+        Git(plane, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-a", "-m", "mine 1");
+        Git(plane, "-c", "user.email=t@example.com", "-c", "user.name=t", "merge", "-q", "-s", "ours", "-m", "keep ours", "origin/main");
+        File.WriteAllText(Path.Combine(plane, "f.txt"), "mine2\n");
+        Git(plane, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-a", "-m", "mine 2");
+        Git(plane, "push", "-q", "origin", flight.Branch);
+        var old = Git(plane, "rev-parse", "HEAD");
+        _state.UpdateFlight(flight.Code, f => f.Review is { } r ? f with { Review = r with { ReviewedHead = old } } : f);
+        _github.MergeScript.Enqueue(Limit);
+
+        var merge = await Run(Verbs.Merge, Verbs.FlightTarget(flight.Code), "node", _github.Pr!.Head);
+
+        Git(plane, "rev-parse", "HEAD").ShouldNotBe(old);
+        merge.Ok.ShouldBeFalse();
+        merge.Way.ShouldBe(RefusalWays.RateLimited);
+        merge.Refusal.ShouldBe(MergeRefusals.RateLimited);
+        _state.Cards(openOnly: true).ShouldNotContain(c => c.Kind == LegCommander.PrReady && c.Detail != null && c.Detail.Contains("laid on"));
+        F(flight.Code).MergeWhenGreen.ShouldBeNull();
+    }
+
     /// <summary>The GhCli's reader: gh's rate-limit text on the PR read or the merge becomes a <see cref="RateLimitedException"/> with its reset.</summary>
     public sealed class GhCliReads
     {

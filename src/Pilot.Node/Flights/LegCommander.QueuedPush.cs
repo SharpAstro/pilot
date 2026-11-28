@@ -14,13 +14,6 @@ public sealed partial class LegCommander
     // GitHub and git for the push (they hold the flight as they saw it) are not told the flight moved by the push's own write.
     private readonly ConcurrentDictionary<string, (FlightRow Before, FlightRow After)> _queueTurned = new(StringComparer.Ordinal);
 
-    // When GitHub's rate limit that refused a flight's last merge resets (null when gh could not say), by flight code: the merge verb's
-    // result carries the refusal's class only, so PrChecks reads the reset here (in-node, no wire change). Set by RunAsync, replaced at each refusal.
-    private readonly ConcurrentDictionary<string, DateTimeOffset?> _rateLimitResets = new(StringComparer.Ordinal);
-
-    /// <summary>When the rate limit that refused <paramref name="code"/>'s last merge resets; null when unknown or the last refusal was no rate limit.</summary>
-    public DateTimeOffset? RateLimitReset(string code) => _rateLimitResets.TryGetValue(code, out var reset) ? reset : null;
-
     /// <summary>
     /// When the flight's PR <paramref name="number"/> is queued, takes it out of GitHub's merge queue (a dequeue GitHub refuses refuses the
     /// push, saying so, and nothing is pushed), turns a passed review back so the merge waits on a fresh one of the new head, and raises

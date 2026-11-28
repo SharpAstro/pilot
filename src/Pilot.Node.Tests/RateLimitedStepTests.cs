@@ -95,8 +95,9 @@ public sealed class RateLimitedStepTests : ReviewTestsBase
     {
         var (flight, number) = await Passed("61");
         _github.AutoMergeArmed.Enqueue((number, _github.Pr!.Head, "squash"));
+        var reset = _clock.GetUtcNow() + TimeSpan.FromMinutes(30);
         _github.DisarmFailure = rateLimit
-            ? new RateLimitedException($"gh could not turn off auto-merge: {Limit}", _clock.GetUtcNow() + TimeSpan.FromMinutes(30))
+            ? new RateLimitedException($"gh could not turn off auto-merge: {Limit}", reset)
             : new FlightException("gh could not turn off auto-merge: boom");
 
         var result = await _legs.RunAsync(new CommandRequest
@@ -110,11 +111,14 @@ public sealed class RateLimitedStepTests : ReviewTestsBase
         {
             result.Way.ShouldBe(RefusalWays.RateLimited);
             result.Error.ShouldNotBeNull().ShouldContain("rate limit");
+            // The reset rides on this command's own result, never on a slot another refusal of the flight could replace.
+            result.RateLimitResetAt.ShouldBe(reset);
         }
         else
         {
             result.Way.ShouldNotBe(RefusalWays.RateLimited);
             result.Error.ShouldNotBeNull().ShouldContain("is refused");
+            result.RateLimitResetAt.ShouldBeNull();
         }
     }
 
@@ -133,7 +137,7 @@ public sealed class RateLimitedStepTests : ReviewTestsBase
 }
 
 /// <summary>PIL1390: the node's review post waits out a rate limit on its PR read and the sweep posts it after the reset.</summary>
-public sealed class PrReviewRateLimitTests : PrReviewTestsBase
+public sealed class RateLimitedStepTestsOfTheReviewPost : PrReviewTestsBase
 {
     private const string Limit = "GraphQL: API rate limit already exceeded for user ID 1.";
 

@@ -177,6 +177,14 @@ public sealed record CommandResult
     [JsonIgnore]
     public MergeRefusal? Refusal { get; init; }
 
+    /// <summary>
+    /// When GitHub's rate limit that refused the command resets (<see cref="RefusalWays.RateLimited"/>), as gh gave it; null when it gave none
+    /// or the refusal was no rate limit. Carried by the result itself, so a caller waits for its own refusal's reset, never another command's
+    /// (PIL1390). Node-internal: never on the wire.
+    /// </summary>
+    [JsonIgnore]
+    public DateTimeOffset? RateLimitResetAt { get; init; }
+
     /// <summary>The message the sender acted on (<see cref="CommandRequest.Why"/>), when it gave one.</summary>
     public string? Why { get; init; }
 
