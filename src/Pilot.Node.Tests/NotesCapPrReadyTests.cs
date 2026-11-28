@@ -89,9 +89,11 @@ public sealed class NotesCapPrReadyTests : ReviewTestsBase
         _state.Cards(openOnly: false).ShouldNotContain(c => c.Kind == CardKinds.RepeatTask);
         PrReadyCards(flight.Code).Single().Title.ShouldContain("ready to merge");
 
-        // The control: an empty answer proves nothing unless the detector would have found a second PR-ready card of this flight.
+        // The control: an empty answer proves nothing unless the detector would have found a repeat of PR-ready cards on this flight
+        // (the node's own card may sit in the Handled bin, which the detector skips, so the control raises two For-you ones).
         var subject = Verbs.FlightTarget(flight.Code);
-        _state.RaiseCard(CardBin.ForYou, LegCommander.PrReady, subject, "a second PR-ready card", "Control.", cause: "control");
+        _state.RaiseCard(CardBin.ForYou, LegCommander.PrReady, subject, "a PR-ready card", "Control 1.", cause: "control-1");
+        _state.RaiseCard(CardBin.ForYou, LegCommander.PrReady, subject, "a second PR-ready card", "Control 2.", cause: "control-2");
         detector.Look().ShouldNotBeEmpty();
     }
 

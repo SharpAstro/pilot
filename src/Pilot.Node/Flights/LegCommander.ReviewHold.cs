@@ -165,6 +165,30 @@ public sealed partial class LegCommander
         await RaisePrReadyAsync(released, report, review.Depth is { } depth ? ReviewPlan.Phrase(depth, review.DepthWhy) : "Reviewed", cancellationToken);
     }
 
+    /// <summary>
+    /// The guards a PR-ready card is raised under, for the restore sweep and the release of a hold alike: the flight flies with its PR open,
+    /// the review passed at <paramref name="head"/>, no merge is armed, every leg is done, and no merge card of this head is open or was closed
+    /// as a person's dismissal or an answered merge (one the node closed for a leg wait or a hold is not). <paramref name="waited"/> is those
+    /// node-closed cards.
+    /// </summary>
+    private bool PrReadyWanted(FlightRow flight, string head, out List<CardRow> waited)
+    {
+        waited = [];
+        var code = flight.Code;
+        var subject = Verbs.FlightTarget(code);
+        if (flight is not { State: FlightState.Flying, PullRequest: not null, Review: { State: ReviewState.Passed, ReviewedHead: { } reviewed }, MergeWhenGreen: null }
+            || !string.Equals(reviewed, head, StringComparison.OrdinalIgnoreCase)
+            || state.Legs(code) is not { Length: > 0 } flown || flown.Any(l => l.State != LegState.Done))
+        {
+            return false;
+        }
+        // Any merge card of this head, open or closed, is a person's dismissal or an answered merge, not undone; but not one closed for a leg wait (PIL1294).
+        waited = [.. state.Cards(openOnly: false).Where(c => c.Subject == subject && c.Kind is PrReady && IsNodeWaitOutcome(c.Outcome))];
+        var kept = waited;
+        return !state.Cards(openOnly: false).Except(kept).Any(c => c.Subject == subject && c.Kind is PrReady or MergeFailed
+            && (c.ClosedAt is null || c.Choices.Any(ch => ch.Verb == Verbs.Merge && ch.Args.FirstOrDefault() is { } h && string.Equals(h, head, StringComparison.OrdinalIgnoreCase))));
+    }
+
     /// <summary>A hold whose leg ended with nothing pushed goes back to the watchtower's own reason.</summary>
     private void HoldForWatchtower(string code, string? leg)
     {
