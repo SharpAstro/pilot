@@ -288,34 +288,11 @@ public sealed class MaintenanceGitTests : IDisposable
     private static (int Exit, string Output, string Error) RunGitWithRepoConfig(string folder, params string[] args) => RunGitWithInput(folder, null, args, repoConfigOnly: true);
 
     private static (int Exit, string Output, string Error) RunGitWithInput(string folder, string? input, string[] args, bool repoConfigOnly = false)
-    {
-        var start = new ProcessStartInfo("git") { WorkingDirectory = folder, RedirectStandardOutput = true, RedirectStandardError = true, RedirectStandardInput = input is not null, UseShellExecute = false, CreateNoWindow = true };
-        if (repoConfigOnly)
-        {
-            start.Environment["GIT_CONFIG_COUNT"] = "0";
-        }
-        foreach (var a in new[] { "-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false" }.Concat(args))
-        {
-            start.ArgumentList.Add(a);
-        }
-        using var process = Process.Start(start)!;
-        var output = process.StandardOutput.ReadToEndAsync();
-        var error = process.StandardError.ReadToEndAsync();
-        if (input is not null)
-        {
-            process.StandardInput.Write(input);
-            process.StandardInput.Close();
-        }
-        process.WaitForExit();
-        return (process.ExitCode, output.Result, error.Result);
-    }
+        => HelperGit.Execute(folder, [.. IdentityArgs, .. args], repoConfigOnly ? new Dictionary<string, string> { ["GIT_CONFIG_COUNT"] = "0" } : null, input: input);
 
-    private static string Git(string folder, params string[] args)
-    {
-        var (exit, output, error) = RunGit(folder, args);
-        exit.ShouldBe(0, $"git {string.Join(' ', args)}: {error}");
-        return output;
-    }
+    private static readonly string[] IdentityArgs = ["-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false"];
+
+    private static string Git(string folder, params string[] args) => HelperGit.Run(folder, [.. IdentityArgs, .. args]);
 
     private static bool Has(string repo, string sha) => RunGit(repo, "cat-file", "-e", sha).Exit == 0;
 
