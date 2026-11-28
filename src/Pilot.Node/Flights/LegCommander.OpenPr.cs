@@ -217,7 +217,7 @@ public sealed partial class LegCommander
     /// <summary>
     /// Runs a git push of the flight's branch from its plane and, when it succeeded, records on the flight the head pushed and the time
     /// taken just before the push (#1407). The head and the time are read first, so a removal from the merge queue made before the push
-    /// is not later than the record; a refused push leaves the earlier record as it was.
+    /// is not later than the record; a refused push leaves the earlier record as it was, and so does a push of the head already recorded (the time is when the head first went up).
     /// </summary>
     private async Task<GitRun> PushRecordedAsync(FlightRow flight, string[] args, CancellationToken cancellationToken)
     {
@@ -226,7 +226,11 @@ public sealed partial class LegCommander
         var push = await git.RunAsync(args, flight.Worktree, cancellationToken);
         if (push.Ok && head.Ok && head.Output.Trim() is { Length: > 0 } pushed)
         {
-            state.UpdateFlight(flight.Code, f => f with { PushedHead = pushed, PushedAt = at });
+            // A push of the head already on record changes nothing on origin, so the time the head first went up stays: moving it
+            // forward would read a real drop of that head, made between the two pushes, as an earlier head's removal.
+            state.UpdateFlight(flight.Code, f => string.Equals(f.PushedHead, pushed, StringComparison.OrdinalIgnoreCase) && f.PushedAt is not null
+                ? f
+                : f with { PushedHead = pushed, PushedAt = at });
         }
         return push;
     }

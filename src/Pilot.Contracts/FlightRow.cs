@@ -200,7 +200,7 @@ public sealed record FlightRow
     /// </summary>
     public string? PushedHead { get; init; }
 
-    /// <summary>The time taken just before the push that <see cref="PushedHead"/> records (#1407); null as that is.</summary>
+    /// <summary>The time taken just before the push that first put <see cref="PushedHead"/> up (#1407); a later push of the same head leaves it. Null as that is.</summary>
     public DateTimeOffset? PushedAt { get; init; }
 
     /// <summary>

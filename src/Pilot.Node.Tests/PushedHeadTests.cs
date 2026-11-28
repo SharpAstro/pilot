@@ -9,8 +9,9 @@ namespace Pilot.Node.Tests;
 /// Every push the node makes of a flight's branch records the head pushed and the time taken just before it (#1407), so a merge-queue
 /// removal older than the PR's current head can be told from a drop of that head.
 /// </summary>
-// Slow: these run on a real origin and a real lease push. The GH006 refusal is also driven on the in-memory git through
-// RepoModel.PreReceive (QueuedPushTests); here it stays real so the hook script and the retry are git's own.
+// Slow: the cases commit and push through the real git CLI helpers (Git, Touch), a second clone of origin and a lease push, which the
+// in-memory git is not asked to do here. The GH006 refusal itself is answered in memory too (QueuedPushTests, RepoModel.PreReceive);
+// this case is real only because it shares those helpers, and what it adds is the push record after the retry.
 [Trait("Category", "Slow")]
 public sealed class PushedHeadTests() : ReviewTestsBase(realGit: true)
 {
@@ -41,10 +42,11 @@ public sealed class PushedHeadTests() : ReviewTestsBase(realGit: true)
     }
 
     [Fact]
-    public async Task APushOfAHeadAlreadyRecordedMovesThePushedTimeForward()
+    public async Task APushOfAHeadAlreadyRecordedKeepsTheTimeItFirstWentUp()
     {
         var (flight, _) = await Passed("1");
-        Touch(flight.Worktree, "one\n");
+        Touch(flight.Worktree, "one
+");
         await _legs.PushAsync(F(flight.Code), Ct);
         var first = F(flight.Code);
 
@@ -53,7 +55,46 @@ public sealed class PushedHeadTests() : ReviewTestsBase(realGit: true)
 
         var row = F(flight.Code);
         row.PushedHead.ShouldBe(first.PushedHead);
+        row.PushedAt.ShouldBe(first.PushedAt);
+    }
+
+    [Fact]
+    public async Task APushOfADifferentHeadMovesThePushedTimeToIt()
+    {
+        var (flight, _) = await Passed("1");
+        Touch(flight.Worktree, "one
+");
+        await _legs.PushAsync(F(flight.Code), Ct);
+        var first = F(flight.Code);
+
+        _clock.Advance(TimeSpan.FromMinutes(5));
+        Touch(flight.Worktree, "two
+");
+        var c = Git(flight.Worktree, "rev-parse", "HEAD");
+        await _legs.PushAsync(F(flight.Code), Ct);
+
+        var row = F(flight.Code);
+        row.PushedHead.ShouldBe(c);
         row.PushedAt.ShouldNotBeNull().ShouldBeGreaterThan(first.PushedAt.ShouldNotBeNull());
+    }
+
+    [Fact]
+    public async Task ARemovalBetweenTwoPushesOfTheSameHeadIsNotTakenForAnEarlierHeads()
+    {
+        var (flight, _) = await Passed("1");
+        Touch(flight.Worktree, "one
+");
+        var b = Git(flight.Worktree, "rev-parse", "HEAD");
+        await _legs.PushAsync(F(flight.Code), Ct);
+        var t0 = F(flight.Code).PushedAt.ShouldNotBeNull();
+
+        _clock.Advance(TimeSpan.FromMinutes(1));
+        var t1 = _clock.GetUtcNow();
+        _clock.Advance(TimeSpan.FromMinutes(1));
+        await _legs.PushAsync(F(flight.Code), Ct);
+
+        t1.ShouldBeGreaterThan(t0);
+        _legs.RemovalPredatesHead(flight.Code, b, t1).ShouldBeFalse();
     }
 
     [Fact]

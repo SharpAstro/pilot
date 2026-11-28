@@ -10,7 +10,7 @@ namespace Pilot.Node.Tests;
 /// done about it at the new head, it does not hold the PR-ready restore, and Merge queues the new head. A removal after that push is
 /// handled as ever. The push record is on the flight's row, so the rule holds across a node restart.
 /// </summary>
-// Slow: real git over the seed's bare origin, as the push and the conflict handling need (see RebaseLayFlightTests).
+// Slow: real git over the seed's bare origin, as the push and the conflict handling need (RebaseLayFlightTests' reason too: the in-memory git has no real push or hook to say a head was pushed and when, and the cases drive the seed's origin).
 [Trait("Category", "Slow")]
 public sealed class StaleQueueRemovalTests() : ReviewTestsBase(realGit: true)
 {
@@ -138,8 +138,9 @@ public sealed class StaleQueueRemovalTests() : ReviewTestsBase(realGit: true)
 
         await Checks().LookAsync(Ct);
 
-        // The card is raised at B, and the node, the checks being green-bound, may then close it itself ("waits for the checks, then queues it"):
-        // open or closed, a PR-ready card for B exists, with a restored line, which a held-over old removal would have prevented.
+        // The setup keeps the checks pending (MergeKinds.Pending), so the node does not arm the merge and the card stays open; the asserts
+        // still take it open or closed, since arming would close it, and what matters is that a PR-ready card for B was raised with a
+        // restored line, which a held-over old removal would have prevented.
         _state.Cards(openOnly: false).ShouldContain(c => c.Kind == LegCommander.PrReady && c.Subject == Verbs.FlightTarget(flight.Code)
             && c.Choices.Any(ch => ch.Verb == Verbs.Merge && ch.Args.FirstOrDefault() == b));
         _state.Cards(openOnly: false).ShouldContain(c => c.Kind == LegCommander.PrReadyRestoredKind && c.Subject == Verbs.FlightTarget(flight.Code));
