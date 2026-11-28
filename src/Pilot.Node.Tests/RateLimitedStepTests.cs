@@ -16,18 +16,17 @@ public sealed class RateLimitedStepTests : ReviewTestsBase
 
     private CardRow[] StepCards() => [.. _state.Cards().Where(c => c.Kind == LegCommander.NextStepKind && c.Bin == CardBin.Ring)];
 
-    // A flight with its PR open and no reviewer yet (the 5-hour window was spent), the window now free: the next step is its reviewer.
-    private async Task<FlightRow> WaitingForItsReviewer(string issue)
+    // A flight whose last leg is done with the node advancing: its next step is opening the PR, whose read of the PR GitHub answers as the test says.
+    private async Task<FlightRow> FlownToItsPr(string issue, Func<Exception> failure)
     {
         var flight = await NewFlight(issue, "parser");
+        NodeAdvances();
+        _thrown = PrReadFails(failure);
         await Fly(flight, "parser");
-        _legs.Models = new RoleModels(null);
-        Window(95, TimeSpan.FromHours(1));
-        (await Run(Verbs.OpenPr, Verbs.FlightTarget(flight.Code), "controller")).Error.ShouldBeNull();
-        F(flight.Code).Review.ShouldBeNull();
-        Window(4, TimeSpan.FromHours(6));
         return flight;
     }
+
+    private Func<int> _thrown = () => 0;
 
     private Func<int> PrReadFails(Func<Exception> failure)
     {
@@ -48,26 +47,24 @@ public sealed class RateLimitedStepTests : ReviewTestsBase
     [Trait("Category", "Slow")]
     public async Task ANextStepMetByTheRateLimitRingsNothingWaitsForTheResetAndRunsOnceItHasPassed()
     {
-        var flight = await WaitingForItsReviewer("60");
-        var thrown = PrReadFails(() => new RateLimitedException($"gh could not read the PR: {Limit}", _clock.GetUtcNow() + TimeSpan.FromMinutes(30)));
-
-        await _legs.AdvanceAllAsync(Ct);
-        var first = thrown();
-        first.ShouldBeGreaterThan(0);
+        var flight = await FlownToItsPr("60", () => new RateLimitedException($"gh could not read the PR: {Limit}", _clock.GetUtcNow() + TimeSpan.FromMinutes(30)));
+        _thrown().ShouldBeGreaterThan(0);
         StepCards().ShouldBeEmpty();
+        F(flight.Code).PullRequest.ShouldBeNull();
 
-        // Swept again before the reset: not asked, and a second miss would have rung.
+        // Swept again before the reset: the step is not asked, and a second miss would have rung.
+        var asked = _thrown();
         await _legs.AdvanceAllAsync(Ct);
         await _legs.AdvanceAllAsync(Ct);
-        thrown().ShouldBe(first);
+        _thrown().ShouldBe(asked);
         StepCards().ShouldBeEmpty();
-        F(flight.Code).Review.ShouldBeNull();
+        F(flight.Code).PullRequest.ShouldBeNull();
 
         // Past the reset it runs by itself.
         _github.OnCall = null;
         _clock.Advance(TimeSpan.FromMinutes(31));
         await _legs.AdvanceAllAsync(Ct);
-        F(flight.Code).Review.ShouldNotBeNull().State.ShouldBe(ReviewState.Reviewing);
+        F(flight.Code).PullRequest.ShouldNotBeNull();
         StepCards().ShouldBeEmpty();
     }
 
@@ -75,18 +72,17 @@ public sealed class RateLimitedStepTests : ReviewTestsBase
     [Trait("Category", "Slow")]
     public async Task ARateLimitGitHubGivesNoResetForHoldsTheStepForTheUnknownReset()
     {
-        await WaitingForItsReviewer("61");
-        var thrown = PrReadFails(() => new RateLimitedException($"gh could not read the PR: {Limit}", null));
+        var flight = await FlownToItsPr("61", () => new RateLimitedException($"gh could not read the PR: {Limit}", null));
 
-        await _legs.AdvanceAllAsync(Ct);
-        var first = thrown();
+        var asked = _thrown();
         _clock.Advance(PullRequestWatch.UnknownReset - TimeSpan.FromMinutes(1));
         await _legs.AdvanceAllAsync(Ct);
-        thrown().ShouldBe(first);
+        _thrown().ShouldBe(asked);
 
+        _github.OnCall = null;
         _clock.Advance(TimeSpan.FromMinutes(2));
         await _legs.AdvanceAllAsync(Ct);
-        thrown().ShouldBeGreaterThan(first);
+        F(flight.Code).PullRequest.ShouldNotBeNull();
         StepCards().ShouldBeEmpty();
     }
 
@@ -94,11 +90,9 @@ public sealed class RateLimitedStepTests : ReviewTestsBase
     [Trait("Category", "Slow")]
     public async Task ANextStepRefusedForAnotherReasonStillRingsAtItsSecondMiss()
     {
-        await WaitingForItsReviewer("62");
-        PrReadFails(() => new FlightException("gh could not read the PR: HTTP 500"));
-
-        await _legs.AdvanceAllAsync(Ct);
+        await FlownToItsPr("62", () => new FlightException("gh could not read the PR: HTTP 500"));
         StepCards().ShouldBeEmpty();
+
         await _legs.AdvanceAllAsync(Ct);
 
         var card = StepCards().ShouldHaveSingleItem();

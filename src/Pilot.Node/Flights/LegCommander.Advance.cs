@@ -239,7 +239,7 @@ public sealed partial class LegCommander
         if (result.Way == RefusalWays.RateLimited)
         {
             var at = time.GetUtcNow();
-            _stepHeldUntil[current.Code] = RateLimitReset(current.Code) is { } reset && reset > at ? reset : at + PullRequestWatch.UnknownReset;
+            _stepHeldUntil[current.Code] = RateLimitReset(current.Code) is { } reset && reset > at ? reset : at + GhBudget.UnknownReset;
             return;
         }
         if (FirstMiss(current.Code, $"{step.Verb} {step.Target}"))
