@@ -58,7 +58,7 @@ internal sealed partial class PageData
         var readiness = new IssueReadiness(false, ["No tests named."], Now - (@checked ?? TimeSpan.FromSeconds(30)));
         return new IdeasScreen([Idea(381, title, state), Idea(382, "Rail count", IdeaState.Noted)],
             [new CardRow { Id = "c1", Bin = CardBin.Ring, Kind = CardKinds.IdeaRepo, Subject = "idea/pilot/I382", Title = ask, At = Now, State = CardState.Open,
-                Choices = [new CardChoice { Label = "pilot", Verb = "idea-move" }] }],
+                Choices = [new CardChoice { Label = "pilot", Verb = "idea-move", Target = "idea/pilot/I382" }] }],
             ["pilot", "tianwen"], "live from the node", at)
         {
             Milestones = [new MilestoneRow { Repo = "pilot", Number = 11, Title = "Ideas", OpenIssues = open }, new MilestoneRow { Repo = "pilot", Number = 12, Title = "Next", OpenIssues = 1 }],
