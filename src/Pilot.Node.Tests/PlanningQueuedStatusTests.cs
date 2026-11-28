@@ -18,7 +18,7 @@ public class PlanningQueuedStatusTests
 
     private static SnapshotEvent Snapshot(FlightRow flight, params LegRow[] legs) => new()
     {
-        Seq = 1, At = DateTimeOffset.UnixEpoch, Stream = "s", Notes = [], Cards = [], Flights = [flight], Legs = legs,
+        Seq = 1, At = DateTimeOffset.UnixEpoch, Stream = "s", Notes = [], Cards = [], Sessions = [], Flights = [flight], Legs = legs,
     };
 
     private static string[] Texts(SnapshotEvent snapshot) =>
