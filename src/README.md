@@ -1750,7 +1750,8 @@ as `--why` (over MCP: `reason` and `why`).
 
 Autopilot v2 has two tiers (PIL1285). **Sonnet keeps watch**: the watchtower, woken by a new card, a flight with no progress for
 `autopilot-stall-minutes` (60 unless set), a peer node going offline or coming back, and a repeated failure; the repeat detector turns
-the second card of one kind or the second failure cause on a flight into one "find the cause" task instead of a third press. Each wake is
+the second card of one fault kind (never a routine kind: the digest, the usage-week card, a PR's pr-ready lifecycle cards and a
+session's waits recur by design) or the second failure cause on a flight into one "find the cause" task instead of a third press. Each wake is
 said once: a stall said is kept with the watchtower's tells (`watchtower-told`) while its flight is in the air, so a node restart does
 not say it again, and a move of the flight starts a new one; a restarted node only notes each peer's first sight, so no peer wake
 is said again either. **Opus
