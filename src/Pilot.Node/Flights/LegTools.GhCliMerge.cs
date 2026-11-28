@@ -47,8 +47,13 @@ public sealed partial class GhCli
         }
     }
 
-    private static void Require(MergeAnswer answer, string what)
+    // A rate limit is the one answer that says when to ask again: it comes back as a RateLimitedException with its reset.
+    private async Task RequireAsync(MergeAnswer answer, string what, CancellationToken cancellationToken)
     {
+        if (answer.Kind == MergeAnswerKind.RateLimited)
+        {
+            throw await FailedAsync($"gh could not {what}: {answer.Message}", answer.Message, cancellationToken);
+        }
         if (answer.Kind != MergeAnswerKind.Done)
         {
             throw new MergeRefusedException(answer.Kind, answer.Message, $"gh could not {what}: {answer.Message}");
@@ -66,7 +71,7 @@ public sealed partial class GhCli
         }
         var answer = await AnswerAsync(
             ["pr", "merge", number.ToString(System.Globalization.CultureInfo.InvariantCulture), $"--{method}", "--match-head-commit", head], repoPath, cancellationToken);
-        Require(answer, $"merge #{number}");
+        await RequireAsync(answer, $"merge #{number}", cancellationToken);
         return false;
     }
 
@@ -233,10 +238,11 @@ public sealed partial class GhCli
     public async Task ArmAutoMergeAsync(string repoPath, int number, string head, string method, CancellationToken cancellationToken)
     {
         var numberText = number.ToString(System.Globalization.CultureInfo.InvariantCulture);
-        var (exit, output, error) = await RunAsync(["pr", "view", numberText, "--json", "id,mergeStateStatus"], repoPath, cancellationToken);
+        var (exit, output, error) = await GhAsync(["pr", "view", numberText, "--json", "id,mergeStateStatus"], repoPath, cancellationToken);
         if (exit != 0)
         {
-            throw new FlightException($"gh could not read #{number} to arm auto-merge: {(error.Trim().Length > 0 ? error : output).Trim()}");
+            var said = (error.Trim().Length > 0 ? error : output).Trim();
+            throw await FailedAsync($"gh could not read #{number} to arm auto-merge: {said}", said, cancellationToken);
         }
         var (id, status) = ParseArmable(output);
         if (id is null)
@@ -249,7 +255,7 @@ public sealed partial class GhCli
         }
         var armed = await AnswerAsync(
             ["api", "graphql", "-f", $"query={EnableAutoMergeMutation}", "-f", $"id={id}", "-f", $"method={method.ToUpperInvariant()}", "-f", $"head={head}"], repoPath, cancellationToken);
-        Require(armed, $"arm auto-merge on #{number}");
+        await RequireAsync(armed, $"arm auto-merge on #{number}", cancellationToken);
     }
 
     private const string EnableAutoMergeMutation =
@@ -393,7 +399,7 @@ public sealed partial class GhCli
     // Joins the queue, refused by GitHub unless the PR's head is still the one reviewed (expectedHeadOid, as
     // --match-head-commit is for gh pr merge).
     private async Task EnqueueAsync(string repoPath, int number, string id, string head, CancellationToken cancellationToken) =>
-        Require(await AnswerAsync(["api", "graphql", "-f", $"id={id}", "-f", $"head={head}", "-f", $"query={EnqueueMutation}"], repoPath, cancellationToken), $"queue #{number} to merge");
+        await RequireAsync(await AnswerAsync(["api", "graphql", "-f", $"id={id}", "-f", $"head={head}", "-f", $"query={EnqueueMutation}"], repoPath, cancellationToken), $"queue #{number} to merge", cancellationToken);
 
     private const string DequeueMutation = "mutation($id:ID!){dequeuePullRequest(input:{id:$id}){mergeQueueEntry{id}}}";
 
@@ -405,7 +411,7 @@ public sealed partial class GhCli
             return;
         }
         // Not queued (or merged, or closed) already is the state wanted: the table's leave-the-queue row, read for this call only.
-        Require(await AnswerAsync(["api", "graphql", "-f", $"id={id}", "-f", $"query={DequeueMutation}"], repoPath, cancellationToken, leavingQueue: true), $"take #{number} out of the merge queue");
+        await RequireAsync(await AnswerAsync(["api", "graphql", "-f", $"id={id}", "-f", $"query={DequeueMutation}"], repoPath, cancellationToken, leavingQueue: true), $"take #{number} out of the merge queue", cancellationToken);
     }
 
     public async Task SetDraftAsync(string repoPath, int number, bool draft, CancellationToken cancellationToken)

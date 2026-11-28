@@ -26,6 +26,12 @@ public static class MergeRefusals
     /// <summary>A person's, with nothing to press: a fact to read. What nothing classified falls to.</summary>
     public static readonly MergeRefusal Unclassified = new(MergeRefusalClass.Persons);
 
+    /// <summary>
+    /// Passing, with GitHub's rate limit named: the node waits until the limit resets (<see cref="GhBudget.UnknownReset"/> from now
+    /// when GitHub gives none), asks again, and rings only after <see cref="PrChecks.PassingTriesBeforeRing"/> tries.
+    /// </summary>
+    public static readonly MergeRefusal RateLimited = new(MergeRefusalClass.Passing, MergeAction.WaitForRateLimit);
+
     /// <summary>Passing, with the conflict named: the node updates the branch and asks again; a conflict that stays is said when the tries run out.</summary>
     public static readonly MergeRefusal Conflicting = new(MergeRefusalClass.Passing, MergeAction.ResolveConflict);
 
@@ -55,6 +61,7 @@ public static class MergeRefusals
     {
         // GitHub 5xx or a timeout: asked again.
         MergeAnswerKind.Transient => Passing,
+        MergeAnswerKind.RateLimited => RateLimited,
         // Behind or conflicting (named, so a conflict that stays is said): the node brings the branch up to date (and the watchtower resolves a real conflict in the plane).
         MergeAnswerKind.Behind => Passing,
         MergeAnswerKind.Conflicts => Conflicting,

@@ -26,6 +26,9 @@ public sealed class MergeAnswerTests
     [InlineData(1, "", "HTTP 503: Service Unavailable", MergeAnswerKind.Transient)]
     [InlineData(1, "", "HTTP 504: Gateway Timeout", MergeAnswerKind.Transient)]
     [InlineData(-1, "", "gh timed out", MergeAnswerKind.Transient)]
+    [InlineData(1, "", "GraphQL: API rate limit already exceeded for user ID 1.", MergeAnswerKind.RateLimited)]
+    [InlineData(1, "", "You have exceeded a secondary rate limit. Please wait a few minutes", MergeAnswerKind.RateLimited)]
+    [InlineData(1, "", "HTTP 403: API rate limit exceeded (https://api.github.com/graphql)", MergeAnswerKind.RateLimited)]
     [InlineData(1, "", "GraphQL: Pull request has merge conflicts", MergeAnswerKind.Conflicts)]
     [InlineData(1, "", "gh: Required status check build is expected", MergeAnswerKind.Refused)]
     [InlineData(1, "", "", MergeAnswerKind.Refused)]
@@ -40,6 +43,13 @@ public sealed class MergeAnswerTests
     {
         MergeAnswers.Classify(1, "", said, leavingQueue: true).Kind.ShouldBe(MergeAnswerKind.Done);
         MergeAnswers.Classify(1, "", said).Kind.ShouldNotBe(MergeAnswerKind.Done);
+    }
+
+    [Fact]
+    public void ARateLimitAnswerIsPassingAndNamesItself()
+    {
+        MergeRefusals.Of(MergeAnswerKind.RateLimited).Class.ShouldBe(Pilot.Contracts.MergeRefusalClass.Passing);
+        MergeRefusals.Of(MergeAnswerKind.RateLimited).Action.ShouldBe(Pilot.Contracts.MergeAction.WaitForRateLimit);
     }
 
     [Fact]

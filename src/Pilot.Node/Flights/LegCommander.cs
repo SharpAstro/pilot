@@ -187,6 +187,8 @@ public sealed partial class LegCommander(
         MergeRefusal? refusal = null;
         string? made = null;
         string? way = null;
+        // The reset of the GitHub rate limit that refused this command, carried on its own result (PIL1390).
+        DateTimeOffset? rateLimitResetAt = null;
         // A start the gate held says so in the answer (PIL1123): the sites that ask the gate write here, for the verbs that start a session.
         var heldBox = new System.Runtime.CompilerServices.StrongBox<string?>();
         _heldAnswer.Value = heldBox;
@@ -352,6 +354,13 @@ public sealed partial class LegCommander(
             error = ex.Message;
             // The class a merge refusal was given where it was made; the merge verb's result carries it for PrChecks.
             refusal = command.Verb is Verbs.Merge or Verbs.RerunChecks ? MergeRefusals.Of(ex) : null;
+            if (ex is RateLimitedException limited)
+            {
+                // Said in the way for the node's own callers (the next step holds until the reset, PIL1390), and the reset rides on this
+                // command's own result, so a merge or step of the same flight refused meanwhile cannot replace it (PrChecks, Advance).
+                way = RefusalWays.RateLimited;
+                rateLimitResetAt = limited.ResetAt;
+            }
         }
         catch (Exception) when (DropLegEndMarkOnThrow())
         {
@@ -532,7 +541,7 @@ public sealed partial class LegCommander(
         {
             ShowMerge(command.Target, made, way);
         }
-        return state.Complete(command, error, way, made: made, refusal: refusal);
+        return state.Complete(command, error, way, made: made, refusal: refusal, rateLimitResetAt: rateLimitResetAt);
     }
 
     /// <summary>Whether a reason <see cref="BringUpToDateAsync"/> gave is a merge that conflicted: the only one put to a worker to resolve.</summary>

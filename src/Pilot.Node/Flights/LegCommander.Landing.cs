@@ -20,7 +20,7 @@ public enum LandKind
 }
 
 /// <summary>One landing's outcome. <see cref="Said"/> is GitHub's full text for a refusal or a retry; <see cref="Method"/> the method used.</summary>
-public sealed record LandOutcome(LandKind Kind, string Head, string Method, string? Said = null, MergeAnswerKind? Answer = null)
+public sealed record LandOutcome(LandKind Kind, string Head, string Method, string? Said = null, MergeAnswerKind? Answer = null, DateTimeOffset? ResetAt = null)
 {
     /// <summary>Merged, queued or armed: nothing is left to answer.</summary>
     public bool Done => Kind is LandKind.Merged or LandKind.Queued or LandKind.Armed;
@@ -45,6 +45,11 @@ public sealed partial class LegCommander
         {
             refusal = ex;
         }
+        catch (RateLimitedException ex)
+        {
+            // Kept as a rate limit with its reset, so the merge verb's refusal is the passing one the node waits out (PIL1390).
+            return new LandOutcome(LandKind.Refused, head, method, ex.Message, MergeAnswerKind.RateLimited, ex.ResetAt);
+        }
         catch (FlightException ex)
         {
             return new LandOutcome(LandKind.Refused, head, method, ex.Message);
@@ -67,6 +72,10 @@ public sealed partial class LegCommander
                 {
                     refusal = again;
                     break;
+                }
+                catch (RateLimitedException ex)
+                {
+                    return new LandOutcome(LandKind.Refused, head, other, ex.Message, MergeAnswerKind.RateLimited, ex.ResetAt);
                 }
                 catch (FlightException ex)
                 {
@@ -105,6 +114,7 @@ public sealed partial class LegCommander
         var refusal = outcome.Answer is { } answer ? MergeRefusals.Of(answer) : MergeRefusals.Unclassified;
         return outcome.Answer switch
         {
+            MergeAnswerKind.RateLimited => new RateLimitedException(outcome.Said ?? "GitHub's rate limit stopped the merge", outcome.ResetAt),
             MergeAnswerKind.Behind => new MergeBlockedException(refusal, $"{BehindText(number)}: {outcome.Said}"),
             MergeAnswerKind.Conflicts => new MergeBlockedException(refusal, $"#{number} conflicts with its base: {outcome.Said}"),
             _ => new MergeBlockedException(refusal, outcome.Said ?? "GitHub refused the merge"),
