@@ -24,6 +24,24 @@ public partial class FrameWatchTests
     private static readonly DateTimeOffset T0 = new(2026, 10, 28, 12, 0, 0, TimeSpan.Zero);
 
     [Fact]
+    public void The_frame_line_says_what_asked_for_frames_and_counts_afresh_after_it()
+    {
+        // What keeps a page drawing is read from gui.log: the caret blink drew ten of twelve frames of an idle Ideas page, and
+        // nothing pilot asked for said so (pilot #1443).
+        var log = new Capture();
+        var watch = new FrameWatch(log, lineEvery: TimeSpan.Zero);
+        watch.Asked(FrameCause.Build);
+        watch.Asked(FrameCause.Build);
+        watch.Asked(FrameCause.Glyphs);
+
+        watch.Frame(TimeSpan.FromMilliseconds(12), PilotPage.Ideas, () => "x");
+        watch.Frame(TimeSpan.FromMilliseconds(12), PilotPage.Ideas, () => "x");
+
+        log.Lines[0].Message.ShouldContain("asked by build 2, glyphs 1");
+        log.Lines[1].Message.ShouldContain("asked by nothing");
+    }
+
+    [Fact]
     public void Unchanged_build_asks_no_frame()
     {
         var watch = new FrameWatch(new Capture());

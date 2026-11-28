@@ -9,7 +9,7 @@ namespace Pilot.Gui;
 /// reports any frame that took longer than <see cref="SlowFrame"/>, the one slow-frame reporter.
 /// <see cref="WorthAFrame"/> is for the one page-builder task; <see cref="Frame"/> keeps no state but a count, so the render thread may call it.
 /// </summary>
-internal sealed class FrameWatch(ILogger logger, TimeSpan? slowFrame = null)
+internal sealed class FrameWatch(ILogger logger, TimeSpan? slowFrame = null, TimeSpan? lineEvery = null)
 {
     private (int Ask, long Shown)? _drawn;
 
@@ -377,7 +377,7 @@ internal sealed class FrameWatch(ILogger logger, TimeSpan? slowFrame = null)
     // The frame line's window (pilot #1443), as tianwen's GUI writes one every five seconds: what the frames took, what the render
     // thread allocated, the collections, the page builds and the process's processor time, so a change to the frame schedule is read
     // from gui.log and not guessed. Render thread only, but for the builds, which the builder counts (Interlocked).
-    private static readonly TimeSpan LineEvery = TimeSpan.FromSeconds(5);
+    private readonly TimeSpan _lineEvery = lineEvery ?? TimeSpan.FromSeconds(5);
     private readonly List<double> _paints = new(512);
     private long _lineFrom = System.Diagnostics.Stopwatch.GetTimestamp();
     private long _lineAllocated = GC.GetAllocatedBytesForCurrentThread();
@@ -388,9 +388,15 @@ internal sealed class FrameWatch(ILogger logger, TimeSpan? slowFrame = null)
     private long _lineBuilds;
     private long _lineBuildTicks;
 
+    // What asked for frames since the last line, by cause (FrameCause): asks, not frames, since several asks before a frame are one.
+    private readonly long[] _asks = new long[Enum.GetValues<FrameCause>().Length];
+
+    /// <summary>Counts one ask for a frame, for the frame line: which of the window's causes keeps a page drawing.</summary>
+    public void Asked(FrameCause cause) => Interlocked.Increment(ref _asks[(int)cause]);
+
     /// <summary>
     /// Counts one frame of the render thread, logs it when it took longer than <see cref="SlowFrame"/> (with the page and what it
-    /// drew; <paramref name="summary"/> is asked for only then), and once <see cref="LineEvery"/> has passed since the last line,
+    /// drew; <paramref name="summary"/> is asked for only then), and once five seconds (<c>lineEvery</c>) has passed since the last line,
     /// writes the frame line for the frames since. True when it logged the frame as slow.
     /// </summary>
     public bool Frame(TimeSpan took, object page, Func<string> summary)
@@ -402,7 +408,7 @@ internal sealed class FrameWatch(ILogger logger, TimeSpan? slowFrame = null)
         {
             logger.LogWarning("Slow frame: {Milliseconds} ms on {Page}: {Summary}", (int)took.TotalMilliseconds, page, summary());
         }
-        if (System.Diagnostics.Stopwatch.GetElapsedTime(_lineFrom) >= LineEvery)
+        if (System.Diagnostics.Stopwatch.GetElapsedTime(_lineFrom) >= _lineEvery)
         {
             WriteLine(page);
         }
@@ -419,11 +425,11 @@ internal sealed class FrameWatch(ILogger logger, TimeSpan? slowFrame = null)
         var cpu = Environment.CpuUsage.TotalTime;
         var (builds, buildTicks) = (Interlocked.Read(ref _builds), Interlocked.Read(ref _buildTicks));
         logger.LogInformation(
-            "Frames in {Seconds:0.#} s on {Page}: {Frames}, paint median {Median:0.#} ms, 90th {P90:0.#} ms, most {Most:0.#} ms, {KbAFrame:0} KB a frame on the render thread; {Builds} page builds, {BuildMs:0} ms; gen0 {Gen0}, gen2 {Gen2}, paused {PausedMs:0} ms; the process {Cores:0.###} cores",
+            "Frames in {Seconds:0.#} s on {Page}: {Frames}, paint median {Median:0.#} ms, 90th {P90:0.#} ms, most {Most:0.#} ms, {KbAFrame:0} KB a frame on the render thread; {Builds} page builds, {BuildMs:0} ms; gen0 {Gen0}, gen2 {Gen2}, paused {PausedMs:0} ms; the process {Cores:0.###} cores; asked by {Asks}",
             seconds, page, _paints.Count, At(0.5), At(0.9), _paints[^1], (allocated - _lineAllocated) / 1024.0 / _paints.Count,
             builds - _lineBuilds, TimeSpan.FromTicks(buildTicks - _lineBuildTicks).TotalMilliseconds,
             GC.CollectionCount(0) - _lineGen0, GC.CollectionCount(2) - _lineGen2, (GC.GetTotalPauseDuration() - _linePaused).TotalMilliseconds,
-            (cpu - _lineCpu).TotalSeconds / seconds);
+            (cpu - _lineCpu).TotalSeconds / seconds, AsksSinceLine());
         _paints.Clear();
         _lineFrom = System.Diagnostics.Stopwatch.GetTimestamp();
         _lineAllocated = allocated;
@@ -433,4 +439,40 @@ internal sealed class FrameWatch(ILogger logger, TimeSpan? slowFrame = null)
         _lineCpu = cpu;
         (_lineBuilds, _lineBuildTicks) = (builds, buildTicks);
     }
+
+    // The asks since the last line, as "build 5, change 3, glyphs 12", the causes that asked; and a fresh count.
+    private string AsksSinceLine()
+    {
+        var said = new List<string>();
+        foreach (var cause in Enum.GetValues<FrameCause>())
+        {
+            if (Interlocked.Exchange(ref _asks[(int)cause], 0) is var n and > 0)
+            {
+                said.Add($"{cause.ToString().ToLowerInvariant()} {n}");
+            }
+        }
+        return said.Count == 0 ? "nothing" : string.Join(", ", said);
+    }
+}
+
+/// <summary>What asked pilot-gui's window for a frame, as the frame line counts it.</summary>
+internal enum FrameCause
+{
+    /// <summary>A page build that showed something new.</summary>
+    Build,
+
+    /// <summary>A change asked for one (a view's Changed, a read come back, a press): <c>Redraw</c>.</summary>
+    Change,
+
+    /// <summary>The font atlas still rasterising glyphs.</summary>
+    Glyphs,
+
+    /// <summary>A tooltip falling due.</summary>
+    Tooltip,
+
+    /// <summary>A toast fading.</summary>
+    Fade,
+
+    /// <summary>Another launch handing this window a link.</summary>
+    Handoff,
 }
