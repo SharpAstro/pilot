@@ -28,6 +28,10 @@ public sealed class ClaudeJobState(string jobsFolder)
 {
     public string JobsFolder { get; } = jobsFolder;
 
+    /// <summary>Whether Claude Code's folder for <paramref name="job"/> is gone: it removed it, and no record will be written there again.</summary>
+    public bool IsGone(string job) =>
+        job.Length > 0 && job.AsSpan().IndexOfAny('/', '\\') < 0 && !job.Contains("..", StringComparison.Ordinal) && !Directory.Exists(Path.Combine(JobsFolder, job));
+
     /// <summary>The record of job <paramref name="job"/>; null when it has none or it cannot be read.</summary>
     public ClaudeJobRecord? Read(string job)
     {

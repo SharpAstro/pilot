@@ -832,6 +832,7 @@ public static partial class NodeApp
             IsWatchtowerId = id => services.GetRequiredService<Watchtower>().KnowsId(id),
             IsStreamSession = id => services.GetRequiredService<Watchtower>().OwnsSession(id),
             JobRecord = new ClaudeJobState(Path.Combine(services.GetRequiredService<SessionTrackerOptions>().Profile.Root, "jobs")).Read,
+            JobGone = new ClaudeJobState(Path.Combine(services.GetRequiredService<SessionTrackerOptions>().Profile.Root, "jobs")).IsGone,
             // A session that ends on its own takes its queued jobs off the queue (#327).
             DropJobs = (owners, why) => services.GetRequiredService<JobRunner>().DropQueuedOf(owners, why),
             IsBeingReplaced = id => services.GetRequiredService<LegCommander>().IsBeingReplaced(id),

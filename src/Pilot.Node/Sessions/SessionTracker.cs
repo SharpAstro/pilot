@@ -909,6 +909,7 @@ public sealed class SessionTracker : BackgroundService
             // Listed live again: the end was a blip, not one.
             _justEnded.Remove(row.Id);
             _confirmedEnded.TryRemove(row.Id, out _);
+            _endedAnswers.TryRemove(row.Id, out _);
         }
         if (row.State is SessionState.Ended or SessionState.Failed)
         {
@@ -938,10 +939,38 @@ public sealed class SessionTracker : BackgroundService
     /// Whether the row is ended after its turn finished (a --bg session Claude Code ended by design once its turn was over, PIL815),
     /// not by a crash: its own job's end is what resumes it (#893). A crash (Failed, or no finished turn) is not one.
     /// </summary>
-    public bool EndedAfterFinishedTurn(string id) =>
-        _state.Sessions().FirstOrDefault(s => s.Id == id) is { State: SessionState.Ended } row
-        && (row.EndedBecause?.StartsWith(SessionRowBuilder.TurnFinishedEnd, StringComparison.Ordinal) == true
-            || JobRecord(row.Id) is { TurnFinished: true });
+    public bool EndedAfterFinishedTurn(string id)
+    {
+        if (_state.Session(id) is not { State: SessionState.Ended } row)
+        {
+            // Not ended (or not known): what was kept of an earlier end is stale by its next one.
+            _endedAnswers.TryRemove(id, out _);
+            return false;
+        }
+        if (row.EndedBecause?.StartsWith(SessionRowBuilder.TurnFinishedEnd, StringComparison.Ordinal) == true)
+        {
+            return true;
+        }
+        // An ended row's job record does not change again, so it is read once while the row stays ended: a finished turn or a failure, and
+        // a record whose folder Claude Code removed. An unreadable or half-written file is read again (4,378 told jobs read it every tick, and
+        // a gone folder threw a DirectoryNotFoundException each time, #1365).
+        if (_endedAnswers.TryGetValue(id, out var known))
+        {
+            return known;
+        }
+        var record = JobRecord(row.Id);
+        var answer = record is { TurnFinished: true };
+        if (record is { TurnFinished: true } or { Failed: true } || record is null && JobGone(row.Id))
+        {
+            _endedAnswers[id] = answer;
+        }
+        return answer;
+    }
+
+    /// <summary>Whether Claude Code's folder for a job is gone (it removed it), so its record will never be there; false reads the record again.</summary>
+    public Func<string, bool> JobGone { get; init; } = _ => false;
+
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, bool> _endedAnswers = new System.Collections.Concurrent.ConcurrentDictionary<string, bool>(StringComparer.Ordinal);
 
     private bool OwnsOpenJob(SessionRow row)
     {
@@ -1002,6 +1031,7 @@ public sealed class SessionTracker : BackgroundService
         _listedNames.Remove(id);
         _listed.Remove(id);
         _jobRecords.Remove(id);
+        _endedAnswers.TryRemove(id, out _);
         _transcripts.Remove(sessionId);
         foreach (var copy in _rowOf.Where(c => c.Value == id).Select(c => c.Key).ToList())
         {
