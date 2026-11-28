@@ -313,6 +313,8 @@ public sealed partial class Watchtower : IStreamRoute
         lock (_generationsLock)
         {
             _generations ??= LoadGenerations();
+            // The compaction generation gets no StartTokens of its own (#1397): the compactor judges growth against the row's fresh generation,
+            // so a look right after a compaction has a start, and one that hardly shrank the context cannot lift its own bar.
             var n = ++e.Compactions;
             _generations.Add(new Generation($"{e.RowId}{CompactionMark}{n}", e.Session!.SessionId, time.GetUtcNow(), Compacted, Stream: true));
             _generations = [.. _generations.OrderBy(g => g.StartedAt)];
