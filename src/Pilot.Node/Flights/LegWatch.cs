@@ -1761,7 +1761,7 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
                 if (!_duplicateTried.TryGetValue(row.Id, out var triedDone) || now - triedDone >= StopGrace)
                 {
                     _duplicateTried[row.Id] = now;
-                    await EndWorkerAsync(row, why, SessionEndReasons.LegDone, DoneWorkerEnded, "a done leg's worker", "the worker of a done leg", null, cancellationToken);
+                    await EndWorkerAsync(row, why, SessionEndReasons.LegDone, "a done leg's worker", "the worker of a done leg", null, cancellationToken);
                 }
                 continue;
             }
@@ -1798,12 +1798,12 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
     /// Handled card once the stop is confirmed, and raises the stop-unconfirmed ring when it does not take. The leg's current worker never gets here.
     /// </summary>
     private Task EndDuplicateWorkerAsync(SessionRow row, string why, string currentWorker, CancellationToken cancellationToken)
-        => EndWorkerAsync(row, why, SessionEndReasons.DuplicateWorker, DuplicateWorkerEnded, "a duplicate worker", "a duplicate worker of a redone leg", currentWorker, cancellationToken);
+        => EndWorkerAsync(row, why, SessionEndReasons.DuplicateWorker, "a duplicate worker", "a duplicate worker of a redone leg", currentWorker, cancellationToken);
 
     /// <summary>The kind of the Handled card that says afterwards the node ended the live worker of a done leg (#1392).</summary>
     public const string DoneWorkerEnded = "done-worker-ended";
 
-    private async Task EndWorkerAsync(SessionRow row, string why, string endReason, string cardKind, string titleWords, string whatItIs, string? currentWorker, CancellationToken cancellationToken)
+    private async Task EndWorkerAsync(SessionRow row, string why, string endReason, string titleWords, string whatItIs, string? currentWorker, CancellationToken cancellationToken)
     {
         var subject = Verbs.SessionTarget(row.Id);
         var reason = currentWorker is null ? $"{endReason}: {why}" : $"{endReason}: {why}; the current worker is {currentWorker}";
@@ -1829,12 +1829,12 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
         {
             if (currentWorker is null)
             {
-                state.RaiseCard(CardBin.Handled, cardKind, subject, $"{row.Name} was ended: {titleWords}",
+                state.RaiseCard(CardBin.Handled, DoneWorkerEnded, subject, $"{row.Name} was ended: {titleWords}",
                     $"{why}. The node ended {row.Id}, so it no longer sits idle in the plane.",
                     summary: $"The node ended {row.Name} ({row.Id}), the worker of a leg that is done. Nothing to do.");
                 return;
             }
-            state.RaiseCard(CardBin.Handled, cardKind, subject, $"{row.Name} was ended: {titleWords}",
+            state.RaiseCard(CardBin.Handled, DuplicateWorkerEnded, subject, $"{row.Name} was ended: {titleWords}",
                 $"{why}. The node ended {row.Id}; the leg's current worker is {currentWorker}, which is untouched.",
                 summary: $"The node ended {row.Name} ({row.Id}), a second worker of a redone leg. The current worker, {currentWorker}, goes on. Nothing to do.");
         }
