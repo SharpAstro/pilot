@@ -62,6 +62,18 @@ public sealed partial class TranscriptBook(ClaudeProfile profile)
         }
     }
 
+    /// <summary>A person's message in a transcript: its entry's index, the key a send is matched by (<see cref="Reader.Same"/>) and when it was written.</summary>
+    public sealed record PersonLine(int Index, string Key, DateTimeOffset? At);
+
+    /// <summary>The person's messages in the session's transcript, among its first <paramref name="count"/> entries; null when there is no such transcript.</summary>
+    public PersonLine[]? PersonLines(string sessionId, int count)
+    {
+        lock (_lock)
+        {
+            return ReaderFor(sessionId, null) is { } reader ? [.. reader.PersonLines.TakeWhile(l => l.Index < count)] : null;
+        }
+    }
+
     /// <summary>
     /// <paramref name="take"/> entries of the session's transcript from <paramref name="from"/> (none for 0: its length alone),
     /// with how many it has, the question it waits on and what is queued for it; null when there is no such transcript.
@@ -145,6 +157,13 @@ public sealed partial class TranscriptBook(ClaudeProfile profile)
 
         public List<TranscriptEntry> Entries { get; } = [];
 
+        /// <summary>
+        /// The person's messages among <see cref="Entries"/> (user entries from no other session), each with its index and the key the
+        /// chat matches a send by (<see cref="Same"/>), made once as the entry is read: the chat matched every one at every poll by
+        /// copying every entry of every watchtower's transcript and keying each again (pilot #1443).
+        /// </summary>
+        public List<PersonLine> PersonLines { get; } = [];
+
         /// <summary>The latest line that fed the session's turn, read before the entries drop the meta lines.</summary>
         public TurnPrompt? LastPrompt { get; private set; }
 
@@ -167,6 +186,7 @@ public sealed partial class TranscriptBook(ClaudeProfile profile)
                     _partial = [];
                     _partialLength = 0;
                     Entries.Clear();
+                    PersonLines.Clear();
                     Queued.Clear();
                     Pending = null;
                     _askedIn = null;
@@ -273,7 +293,12 @@ public sealed partial class TranscriptBook(ClaudeProfile profile)
                     {
                         entry = entry with { Text = BrainClient.ForPerson(entry.Text) };
                     }
-                    Entries.Add(entry with { Index = Entries.Count, Id = $"{lineKey}:{ordinal++}", At = at, Text = Clip(entry.Text), Full = entry.Full is { } full ? Clip(full) : null });
+                    var added = entry with { Index = Entries.Count, Id = $"{lineKey}:{ordinal++}", At = at, Text = Clip(entry.Text), Full = entry.Full is { } full ? Clip(full) : null };
+                    if (added is { Kind: TranscriptKind.User, From: null })
+                    {
+                        PersonLines.Add(new PersonLine(added.Index, Same(added.Text), added.At));
+                    }
+                    Entries.Add(added);
                 }
             }
             catch (JsonException)
