@@ -86,27 +86,34 @@ public sealed class IdeasFrameCostTests
             return watch.Elapsed.TotalMilliseconds;
         }
 
-        // The chrome alone: the same window on a page that is cheap to draw, so what is left of an Ideas frame is the page's.
-        chrome.Show(PilotPage.Fleet);
-        var chromeFirst = Frame(() => chrome.Render(sessions, null, cards, null, null, null, null, bounds, null, ideas));
-        var chromeRepeat = Frame(() => chrome.Render(sessions, null, cards, null, null, null, null, bounds, null, ideas));
-
+        // Each frame is split from inside: the page's own tree build and its layout (arrange and draw) are timed by IdeasView around its
+        // RenderLayout, and the chrome is what is left of the frame, so the three add up to it. The first frame is on a fresh chrome and a
+        // fresh screen: nothing cached. A repeat frame is the same screen again (a hover, a scroll).
         chrome.Show(PilotPage.Ideas);
-        var first = Frame(() => chrome.Render(sessions, null, cards, null, null, null, null, bounds, null, ideas));
-        var repeat = Frame(() => chrome.Render(sessions, null, cards, null, null, null, null, bounds, null, ideas));
-        var repeat2 = Frame(() => chrome.Render(sessions, null, cards, null, null, null, null, bounds, null, ideas));
+        (double Total, double Tree, double Layout, double Chrome) Split(IdeasScreen screen)
+        {
+            var total = Frame(() => chrome.Render(sessions, null, cards, null, null, null, null, bounds, null, screen));
+            var built = chrome.Ideas.LastTreeBuild.TotalMilliseconds;
+            var laid = chrome.Ideas.LastLayout.TotalMilliseconds;
+            return (total, built, laid, total - built - laid);
+        }
+        var first = Split(ideas with { AsOf = ideas.AsOf.AddSeconds(1) });
+        var same = ideas with { AsOf = ideas.AsOf.AddSeconds(2) };
+        Split(same);
+        var repeats = new[] { Split(same), Split(same), Split(same) };
+        var best = repeats.MinBy(r => r.Total);
 
+        // Arrange alone, on the page's tree at the page's size: the layout above is arrange and draw together, so draw is what is left of it.
         var page = chrome.PageBounds.ShouldNotBeNull();
         var ctx = new PixelMeasureContext<RgbaImage>(renderer, SessionsCapture.FontPath, dpi);
-        var treeFirst = Frame(() => chrome.Ideas.Tree(ideas));
-        Layout.Node tree = null!;
-        var treeRepeat = Frame(() => tree = chrome.Ideas.Tree(ideas));
-        var arrange = Frame(() => Layout.Engine.Arrange(tree, new Rect<float>(page.X, page.Y, page.Width, page.Height), ctx));
-        var draw = Math.Max(0d, repeat2 - treeRepeat - arrange - chromeRepeat);
+        var tree = chrome.Ideas.Tree(same);
+        var arrange = Enumerable.Range(0, 3).Min(_ => Frame(() => Layout.Engine.Arrange(tree, new Rect<float>(page.X, page.Y, page.Width, page.Height), ctx)));
+        var draw = best.Layout - arrange;
 
         var inv = CultureInfo.InvariantCulture;
-        var line = $"ideas frame | {mode} | {width} wide | DPI {dpi.ToString(inv)}\tfirst frame {first:F1} ms (chrome {chromeFirst:F1})\trepeat frame {repeat:F1} / {repeat2:F1} ms"
-            + $"\ttree build {treeFirst:F1} / {treeRepeat:F1} ms\tchrome {chromeRepeat:F1} ms\tarrange {arrange:F1} ms\tdraw (rest) {draw:F1} ms";
+        var line = $"ideas frame | {mode} | {width} wide | DPI {dpi.ToString(inv)}\tfirst frame {first.Total:F1} ms (tree {first.Tree:F1} + layout {first.Layout:F1} + chrome {first.Chrome:F1})"
+            + $"\trepeat frame {best.Total:F1} ms (tree {best.Tree:F1} + layout {best.Layout:F1} + chrome {best.Chrome:F1})\tof layout: arrange {arrange:F1} ms, draw {draw:F1} ms";
+        var repeatMax = repeats.Max(r => r.Total);
         var file = Environment.GetEnvironmentVariable("PILOT_FRAME_TIMES") is { Length: > 0 } given ? given
             : Environment.GetEnvironmentVariable("PILOT_JOB_ARTIFACTS") is { Length: > 0 } dir ? Path.Combine(dir, "frame-times.txt")
             : null;
@@ -119,7 +126,7 @@ public sealed class IdeasFrameCostTests
         }
         TestContext.Current.TestOutputHelper?.WriteLine(line);
         // Generous, as PageFrameTimeTests: a loaded CI machine must not fail it; the cut is pinned by the counted test below.
-        Math.Max(repeat, repeat2).ShouldBeLessThan(1000d, line);
+        repeatMax.ShouldBeLessThan(1000d, line);
     }
 
     /// <summary>The cut, counted and not timed (#1406): frames of the same IdeasScreen reuse the board; a new screen builds it again.</summary>
@@ -140,10 +147,14 @@ public sealed class IdeasFrameCostTests
 
         chrome.Render(sessions, null, null, null, null, null, null, bounds, null, ideas with { AsOf = ideas.AsOf.AddSeconds(1) });
         chrome.Ideas.BoardBuilds.ShouldBe(2);
-        // The filters work on the kept board without building it again.
-        chrome.Ideas.OnlyNeedsDesign = true;
+        // The filters work on the kept board without building it again: toggled on the same screen, the count stays.
         var screen = ideas with { AsOf = ideas.AsOf.AddSeconds(2) };
         chrome.Render(sessions, null, null, null, null, null, null, bounds, null, screen);
+        chrome.Ideas.BoardBuilds.ShouldBe(3);
+        chrome.Ideas.OnlyNeedsDesign = true;
+        chrome.Render(sessions, null, null, null, null, null, null, bounds, null, screen);
+        chrome.Ideas.OnlyNeedsDesign = false;
+        chrome.Ideas.OnlyHasDesign = true;
         chrome.Render(sessions, null, null, null, null, null, null, bounds, null, screen);
         chrome.Ideas.BoardBuilds.ShouldBe(3);
     }

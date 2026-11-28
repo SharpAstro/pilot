@@ -269,6 +269,12 @@ public partial class FrameWatchTests
     {
         // A fresh read of the same feed: equal by value, new arrays and lists, a higher version.
         OnIdeas(Sample(TimeSpan.FromDays(3)), PageData.Now, version: 1).ShouldBe(OnIdeas(Sample(TimeSpan.FromDays(3)), PageData.Now, version: 2));
+        // And with a session's state moved as well: the version moves with it, the Ideas page draws nothing from a session.
+        var one = Busy(T0) with { Ideas = Sample(TimeSpan.FromDays(3)) };
+        var other = Busy(T0 + TimeSpan.FromSeconds(5)) with { Ideas = Sample(TimeSpan.FromDays(3)) };
+        other.Sessions.Lines.ShouldNotBe(one.Sessions.Lines);
+        FrameWatch.Fingerprint(one, new FleetScreen([], T0), PageData.Now, PilotPage.Ideas, 1)
+            .ShouldBe(FrameWatch.Fingerprint(other, new FleetScreen([], T0), PageData.Now, PilotPage.Ideas, 2));
         // The other pages still take the version.
         long Sessions(long version) => FrameWatch.Fingerprint(Busy(T0), new FleetScreen([], T0), T0, PilotPage.Sessions, version);
         Sessions(1).ShouldNotBe(Sessions(2));
@@ -288,6 +294,12 @@ public partial class FrameWatchTests
         Of(PageData.FingerprintIdeas(PageData.Now, days, open: 3)).ShouldNotBe(baseline, "a milestone");
         Of(PageData.FingerprintIdeas(PageData.Now, days, flightIdea: "I382")).ShouldNotBe(baseline, "a flight's FromIdea");
         Of(PageData.FingerprintIdeas(PageData.Now, days, flight: FlightState.Landed)).ShouldNotBe(baseline, "a flight's state");
+        var sample = PageData.FingerprintIdeas(PageData.Now, days);
+        sample.Ideas.ShouldNotBeEmpty();
+        sample.Issues.ShouldNotBeEmpty();
+        var later = TimeSpan.FromMinutes(7);
+        Of(sample with { Ideas = [.. sample.Ideas.Select(i => i with { UpdatedAt = i.UpdatedAt + later })] }).ShouldNotBe(baseline, "an idea's UpdatedAt (the Age sort, a stale suggestion)");
+        Of(sample with { Issues = [.. sample.Issues.Select(i => i with { UpdatedAt = i.UpdatedAt + later })] }).ShouldNotBe(baseline, "an issue's UpdatedAt (the Age sort, a stale suggestion)");
         Of(PageData.FingerprintIdeas(PageData.Now + TimeSpan.FromHours(5), days)).ShouldBe(baseline, "the source's as of is the frame's own");
     }
 

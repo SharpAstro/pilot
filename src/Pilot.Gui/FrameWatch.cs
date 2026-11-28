@@ -211,6 +211,7 @@ internal sealed class FrameWatch(ILogger logger, TimeSpan? slowFrame = null)
             hash.Add(idea.Design, StringComparer.Ordinal);
             hash.Add(idea.DesignVersion);
             hash.Add(idea.Priority);
+            hash.Add(idea.UpdatedAt);
             foreach (var design in idea.Designs)
             {
                 hash.Add(design.Id, StringComparer.Ordinal);
@@ -267,6 +268,7 @@ internal sealed class FrameWatch(ILogger logger, TimeSpan? slowFrame = null)
             hash.Add(issue.Flight, StringComparer.Ordinal);
             hash.Add(issue.Pinned);
             hash.Add(issue.Priority);
+            hash.Add(issue.UpdatedAt);
             if (issue.Readiness is { } readiness)
             {
                 hash.Add(readiness.Ready);
