@@ -819,32 +819,4 @@ public sealed partial class GhCli : IGitHub
             throw new FlightException($"git {string.Join(' ', args)} failed in {cwd}: {run.Why}");
         }
     }
-
-    private static async Task<(int Exit, string Output, string Error)> RunAsync(IReadOnlyList<string> args, string cwd, CancellationToken cancellationToken, TimeSpan? timeout = null, [System.Runtime.CompilerServices.CallerMemberName] string? caller = null)
-    {
-        var start = new ProcessStartInfo("gh")
-        {
-            WorkingDirectory = cwd,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            StandardOutputEncoding = Encoding.UTF8,
-            StandardErrorEncoding = Encoding.UTF8,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-        foreach (var arg in args)
-        {
-            start.ArgumentList.Add(arg);
-        }
-        start.Environment["GH_PROMPT_DISABLED"] = "1";
-        var (process, counted) = await NodeTraffic.Shared.StartAsync("gh", start, cancellationToken: cancellationToken, caller: $"GhCli.{caller}");
-        using var _ = process;
-        using var __ = counted;
-        using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        budget.CancelAfter(timeout ?? Timeout);
-        var output = process.StandardOutput.ReadToEndAsync(budget.Token);
-        var error = process.StandardError.ReadToEndAsync(budget.Token);
-        await process.WaitForExitAsync(budget.Token);
-        return (process.ExitCode, await output, await error);
-    }
 }

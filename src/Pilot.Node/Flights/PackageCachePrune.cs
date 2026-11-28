@@ -492,7 +492,14 @@ public sealed class PackageCachePrune : IMaintenanceStep
     /// </summary>
     public static Func<string, CancellationToken, Task<RepoPins>> PinsFromGit(MaintenanceProcess.Runner run) => async (repo, cancellationToken) =>
     {
-        var listing = await run("gh", ["pr", "list", "--state", "open", "--limit", "100", "--json", "number,headRefName"], repo, cancellationToken);
+        string[] list = ["pr", "list", "--state", "open", "--limit", "100", "--json", "number,headRefName"];
+        // While GitHub refuses, this read waits with every other gh caller (#1403); a refusal it meets holds them too.
+        if (NodeTraffic.Shared.GhBudget.Holds(list) is { } held)
+        {
+            return new RepoPins(new HashSet<(string, string)>(), new HashSet<string>(), false, $"gh could not list the PRs: {held}");
+        }
+        var listing = await run("gh", list, repo, cancellationToken);
+        NodeTraffic.Shared.GhBudget.Saw(list, listing.ExitCode, listing.Error);
         if (listing.ExitCode != 0)
         {
             return new RepoPins(new HashSet<(string, string)>(), new HashSet<string>(), false, $"gh could not list the PRs: {listing.Error.Trim()}");

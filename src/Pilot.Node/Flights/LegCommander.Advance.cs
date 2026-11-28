@@ -101,7 +101,7 @@ public sealed partial class LegCommander
             }
             if (state.Flights().FirstOrDefault(f => f.Code == code) is { } asking)
             {
-                await PrimeAsync(asking, cancellationToken);
+                await PrimeAsync(asking, cancellationToken, PrimeFresh);
             }
             if (Gate.Check(Models.StartLimitFor(state.Flights().FirstOrDefault(f => f.Code == code)?.Repo ?? "")) is null)
             {
@@ -167,7 +167,7 @@ public sealed partial class LegCommander
         }
         if (step.Verb is Verbs.StartLeg or Verbs.StartReview or Verbs.OpenPr or Verbs.Merge)
         {
-            await PrimeAsync(current, cancellationToken);
+            await PrimeAsync(current, cancellationToken, PrimeFresh);
             // The prime reads the issue's labels, and a hold on GitHub it found is the owner's hold now (#771): nothing to gate or ring about.
             if (state.Flights().FirstOrDefault(f => f.Code == current.Code) is { OnHold: not null })
             {
