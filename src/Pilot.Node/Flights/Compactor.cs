@@ -288,7 +288,9 @@ public sealed class Compactor(NodeState state, Watchtower watchtower, Func<Comma
     private async Task ReplaceAsync(SessionRow row, string key, CancellationToken cancellationToken)
     {
         var share = string.Create(CultureInfo.InvariantCulture, $"{100.0 * row.ContextTokens / row.ContextWindow:0}%");
-        var why = $"{ReplaceWhyPrefix}still at {share} of its window after a compaction";
+        // The reason as said in the log and on the card; the stored Why carries the prefix too, which StartedByWhy reads after a restart.
+        var reason = $"still at {share} of its window after a compaction";
+        var why = $"{ReplaceWhyPrefix}{reason}";
         _settleUntil[key] = time.GetUtcNow() + Settle;
         if (!_replaced.ContainsKey(key) && !_readUnder.Contains(row.Id) && watchtower.StartedByWhy(row, ReplaceWhyPrefix))
         {
@@ -305,7 +307,7 @@ public sealed class Compactor(NodeState state, Watchtower watchtower, Func<Comma
             state.RaiseCard(CardBin.ForYou, StuckKind, Verbs.WatchtowerTarget, $"{row.Name} is still full after {afterWhat}",
                 $"The node compacted {row.Name} and asked for a fresh one ({came}), and it still reads {share} of its window. It is left as it is, not compacted or replaced again, until it reads under its share. Restart it to start a fresh one now.",
                 [new CardChoice { Label = "Restart the watchtower", Verb = Verbs.RestartWatchtower, Target = Verbs.WatchtowerTarget, Args = [$"still at {share} of its window after {afterWhat} ({came})"] }]);
-            await Error.WriteLineAsync($"compactor: {row.Name} ({row.Id}) {why} ({came}); left alone until it reads under its share");
+            await Error.WriteLineAsync($"compactor: {row.Name} ({row.Id}) {reason} ({came}); left alone until it reads under its share");
             return;
         }
         var (error, way) = await (Restart ?? watchtower.RestartWithWayAsync)(why, cancellationToken);
@@ -313,8 +315,8 @@ public sealed class Compactor(NodeState state, Watchtower watchtower, Func<Comma
         var joined = error is null && way == Watchtower.JoinedWay;
         var title = error is not null ? $"Could not replace {row.Name}" : joined ? $"Did not replace {row.Name}: a watchtower start was in progress" : $"Replaced {row.Name}";
         _replaced[key] = error is not null ? $"the restart failed: {error}" : joined ? "the restart joined a start already in progress" : FreshStarted;
-        state.RaiseCard(CardBin.Handled, Kind, Verbs.WatchtowerTarget, title, $"{why}{(error is null ? "" : $": {error}")}");
-        await Error.WriteLineAsync($"compactor: {title} ({row.Id}): {why}{(error is null ? "" : $": {error}")}");
+        state.RaiseCard(CardBin.Handled, Kind, Verbs.WatchtowerTarget, title, $"{reason}{(error is null ? "" : $": {error}")}");
+        await Error.WriteLineAsync($"compactor: {title} ({row.Id}): {reason}{(error is null ? "" : $": {error}")}");
     }
 
     /// <summary>What the Why of a watchtower the compactor replaced starts with, so a restarted node can tell such a generation from its kept record.</summary>

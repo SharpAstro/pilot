@@ -257,6 +257,8 @@ public sealed class CompactorTests : IDisposable
     [Fact]
     public async Task AWatchtowerStillPastTheShareAfterCompactingIsReplacedNotCompactedAgain()
     {
+        var log = new StringWriter();
+        _compactor.Error = log;
         Seed("t0000001");
         Row("t0000001", "du1-watchtower", context: 800_000);
         await _compactor.LookAsync(Ct);
@@ -269,6 +271,9 @@ public sealed class CompactorTests : IDisposable
         _said.Count(c => c.Verb == Verbs.Compact).ShouldBe(1);
         _workers.Started.ShouldHaveSingleItem().Name.ShouldBe("du1-watchtower");
         Handled().ShouldContain(t => t.StartsWith("Replaced du1-watchtower", StringComparison.Ordinal));
+        // The stored Why carries the compactor's prefix; the log line says "compactor:" once, not again inside the reason (#1397 review).
+        log.ToString().ShouldContain("compactor: Replaced du1-watchtower (t0000001): still at 75% of its window after a compaction");
+        log.ToString().ShouldNotContain("compactor: still at");
     }
 
     [Fact]
