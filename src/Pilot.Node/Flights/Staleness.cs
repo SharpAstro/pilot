@@ -141,8 +141,8 @@ public static class Staleness
             // flying again (SE1, 2026-11-09): a mark that says it moved in the same breath as it says it is stuck.
             // The clock starts at the later of its creation and its admission (PIL1422, like CiBudgets' red clock): AdmittedAt is the latest
             // admission, so a later wait (an Opus-cap wait mid-flight) overwrites it, which errs toward fewer stale readings.
-            var since = flight.AdmittedAt is { } admitted && admitted > flight.CreatedAt ? admitted : flight.CreatedAt;
-            var openFor = now - since;
+            var clockStart = flight.AdmittedAt is { } admitted && admitted > flight.CreatedAt ? admitted : flight.CreatedAt;
+            var openFor = now - clockStart;
             var (waits, action) = Waits(flight, mine, flightCards, jobs, pullRequests);
             // A flight waiting its turn for admission is in line, not stuck: no flight item (a stuck holder has its own).
             if (!WaitsItsTurn(flight, mine) && idle >= TimeSpan.FromHours(bounds.FlightHours) / 2)
@@ -150,7 +150,7 @@ public static class Staleness
                 Add(new StaleItem
                 {
                     Kind = StaleKind.Flight, Subject = flight.Code, Flight = flight.Code, Age = openFor, AgeText = Say(openFor), WaitsOn = waits, Action = action,
-                    Timeline = Timeline(), Cause = since > flight.CreatedAt
+                    Timeline = Timeline(), Cause = clockStart > flight.CreatedAt
                         ? $"open {Say(openFor)} since its turn came, created {Say(now - flight.CreatedAt)} ago, waiting on {waits}"
                         : $"open {Say(openFor)}, waiting on {waits}", Bound = Hours(bounds.FlightHours), Idle = idle,
                 }, TimeSpan.FromHours(bounds.FlightHours));
