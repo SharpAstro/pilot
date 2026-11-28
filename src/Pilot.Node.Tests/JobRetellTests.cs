@@ -22,6 +22,7 @@ public sealed class JobRetellTests : IDisposable
     private readonly JobRunner _jobs;
     private readonly TurnOutage _outage;
     private readonly List<string> _said = [];
+    private readonly StringWriter _log = new();
     private bool _endedForGood;
     private int _forGoodCalls;
     private int _afterTurnCalls;
@@ -33,6 +34,7 @@ public sealed class JobRetellTests : IDisposable
         _jobs = new JobRunner(_state, new NodeOptions(Path.Combine(_root, "n.sock"), Path.Combine(_root, "data")), _clock)
         {
             RetellAfter = After,
+            Log = _log,
             Outage = _outage,
             Say = (command, _) =>
             {
@@ -122,7 +124,7 @@ public sealed class JobRetellTests : IDisposable
         _clock.Advance(TimeSpan.FromMinutes(59));
         (await Sweep()).ShouldBeFalse();
         _said.ShouldBeEmpty();
-        _state.Cards().ShouldBeEmpty();
+        Cards(JobRunner.UnansweredKind).ShouldBeEmpty();
 
         _clock.Advance(TimeSpan.FromMinutes(1) + After - TimeSpan.FromSeconds(1));
         (await Sweep()).ShouldBeFalse();
@@ -131,32 +133,128 @@ public sealed class JobRetellTests : IDisposable
         _clock.Advance(TimeSpan.FromSeconds(1));
         (await Sweep()).ShouldBeTrue();
         _said.ShouldHaveSingleItem().ShouldStartWith("Repeat:");
-        _state.Cards().ShouldBeEmpty();
+        Cards(JobRunner.UnansweredKind).ShouldBeEmpty();
     }
 
     [Fact]
-    public async Task ARetellSpentIntoALimitIsVoidAndRetoldOnceAfterTheResetWithNoCard()
+    public async Task ARetellTheLimitAnsweredIsRetoldOnceAfterTheResetNotRung()
     {
         await TellNowAsync();
         _clock.Advance(After);
         (await Sweep()).ShouldBeTrue();
         _said.Clear();
-        _state.Jobs().Single().RetoldAt.ShouldNotBeNull();
+        var firstRetell = _state.Jobs().Single().RetoldAt;
+        firstRetell.ShouldNotBeNull();
 
         StopOnLimit("usage_limit_reached", TimeSpan.FromMinutes(30));
-        _clock.Advance(TimeSpan.FromMinutes(30) + After);
-        // The limit has reset, the retell fell before it: no card, the ladder starts again.
-        await Sweep();
-        _state.Cards().ShouldBeEmpty();
-        var voided = _state.Jobs().Single();
-        voided.RetoldAt.ShouldBeNull();
-        voided.RetellRung.ShouldBeNull();
+        _clock.Advance(TimeSpan.FromMinutes(30) + After - TimeSpan.FromSeconds(1));
+        (await Sweep()).ShouldBeFalse();
         _said.ShouldBeEmpty();
+        _state.Cards().ShouldBeEmpty();
 
-        _clock.Advance(TimeSpan.FromMinutes(1));
-        await Sweep();
+        _clock.Advance(TimeSpan.FromSeconds(1));
+        (await Sweep()).ShouldBeTrue();
         _said.ShouldHaveSingleItem().ShouldStartWith("Repeat:");
-        _state.Jobs().Single().RetoldAt.ShouldNotBeNull();
+        var row = _state.Jobs().Single();
+        row.RetoldAt.ShouldBe(_clock.GetUtcNow());
+        row.RetellRung.ShouldBeNull();
+        _state.Cards().ShouldBeEmpty();
+
+        // A retell past the reset rings as before.
+        _clock.Advance(After);
+        await Sweep();
+        Cards(JobRunner.UnansweredKind).ShouldHaveSingleItem();
+    }
+
+    [Fact]
+    public async Task AFreshRunnerAndOutageOverRowsShowingALimitSayNothingAndHoldTheLimit()
+    {
+        await TellNowAsync();
+        StopOnLimit("usage_limit_reached", TimeSpan.FromHours(1));
+        _clock.Advance(After * 2);
+
+        // A node restart: nothing in memory, only the stored rows.
+        var outage = new TurnOutage(_state);
+        var said = new List<string>();
+        var runner = new JobRunner(_state, new NodeOptions(Path.Combine(_root, "n2.sock"), Path.Combine(_root, "data2")), _clock)
+        {
+            RetellAfter = After,
+            Outage = outage,
+            Say = (command, _) =>
+            {
+                said.Add(command.Args[0]);
+                return Task.FromResult(_state.Complete(command, null, way: SayWays.Relayed));
+            },
+        };
+        try
+        {
+            outage.LimitUntil.ShouldBeNull();
+            (await runner.RetellSilentAsync(TestContext.Current.CancellationToken)).ShouldBeFalse();
+            said.ShouldBeEmpty();
+            Cards(JobRunner.UnansweredKind).ShouldBeEmpty();
+            // The limit held is the one on the very session the retell goes to (the job's owner), not some other row's.
+            var owner = _state.Sessions().Single(s => s.Id == _state.Jobs().Single().Owner);
+            owner.ApiError.ShouldBe("usage_limit_reached");
+            outage.LimitUntil.ShouldBe(owner.ApiErrorResetsAt);
+        }
+        finally
+        {
+            await runner.StopAsync(CancellationToken.None);
+        }
+    }
+
+    [Fact]
+    public async Task ASweepSettlesAToldRowNothingWaitsOnWhenALaterJobOfTheSameOwnerCommandAndCwdSupersedesIt()
+    {
+        // The leg is done, so nothing waits on the job and the first tell would stand; the supersede check still runs first and settles it.
+        SetLeg(LegState.Done);
+        var told = await TellNowAsync();
+        _state.PutJob(told with
+        {
+            Id = "j2", Told = false, ToldAt = null, ToldWay = null, RetoldAt = null, RetellRung = null,
+            QueuedAt = _clock.GetUtcNow().AddSeconds(30), StartedAt = _clock.GetUtcNow().AddSeconds(30), EndedAt = _clock.GetUtcNow().AddSeconds(40),
+        });
+        _clock.Advance(After * 2);
+
+        (await Sweep()).ShouldBeFalse();
+        _said.ShouldBeEmpty();
+        _state.Cards().ShouldBeEmpty();
+        _state.Jobs().Single(j => j.Id == "j1").RetellRung.ShouldBe(true);
+    }
+
+    [Fact]
+    public async Task ARowToldBeforeAnOutageAndSilentThroughItIsRetoldRetellAfterTheWindowEnds()
+    {
+        await TellNowAsync();
+        _clock.Advance(TimeSpan.FromMinutes(1));
+        _outage.AccountChanged(_clock.GetUtcNow());
+        _clock.Advance(TimeSpan.FromMinutes(10));
+        EndOutage();
+        // Some other session's turn ended the outage; the owner itself stays silent.
+        Session(SessionState.Idle, _clock.GetUtcNow().AddHours(-1));
+
+        // Silent for far longer than RetellAfter since the tell, but the window only just ended.
+        (await Sweep()).ShouldBeFalse();
+        _said.ShouldBeEmpty();
+        _clock.Advance(After - TimeSpan.FromSeconds(1));
+        (await Sweep()).ShouldBeFalse();
+        _said.ShouldBeEmpty();
+        _clock.Advance(TimeSpan.FromSeconds(1));
+        (await Sweep()).ShouldBeTrue();
+        _said.ShouldHaveSingleItem().ShouldStartWith("Repeat:");
+    }
+
+    [Fact]
+    public async Task ASessionThatActedAfterTheTellAndWasThenLimitedIsNotRetoldAfterTheReset()
+    {
+        var told = await TellNowAsync();
+        _apiError = "usage_limit_reached";
+        _apiResets = _clock.GetUtcNow() + TimeSpan.FromHours(1);
+        Session(SessionState.Idle, told.ToldAt!.Value.AddMinutes(1));
+
+        _clock.Advance(TimeSpan.FromHours(1) + After * 2);
+        (await Sweep()).ShouldBeFalse();
+        _said.ShouldBeEmpty();
         _state.Cards().ShouldBeEmpty();
     }
 
@@ -659,7 +757,7 @@ public sealed class JobRetellTests : IDisposable
         var now = _clock.GetUtcNow();
         var row = new JobRow
         {
-            Id = id, Command = "echo hi", Cwd = _root, Owner = "w0000001", State = JobState.Succeeded, ExitCode = 0,
+            Id = id, Command = "echo " + id, Cwd = _root, Owner = "w0000001", State = JobState.Succeeded, ExitCode = 0,
             LogPath = Path.Combine(_root, id + ".log"), Timeout = TimeSpan.FromMinutes(1), StartedAt = now.AddMinutes(-2), EndedAt = now.AddMinutes(-1),
             Told = toldAt is not null, ToldAt = toldAt, ToldWay = toldAt is null ? null : SayWays.Relayed,
         };
@@ -986,5 +1084,83 @@ public sealed class JobRetellTests : IDisposable
         _afterTurnCalls.ShouldBe(0);
         _forGoodCalls.ShouldBe(0);
         _said.ShouldBeEmpty();
+    }
+
+    // #1415 cause 1: a later job of the same command and cwd, handed over after the tell, settles the told one.
+
+    private JobRow Later(string id, TimeSpan after, string command = "echo hi", string? cwd = null, string owner = "w0000001")
+    {
+        var at = _state.Jobs().Single(j => j.Id == "j1").ToldAt!.Value + after;
+        var row = new JobRow
+        {
+            Id = id, Command = command, Cwd = cwd ?? _root, Owner = owner, State = JobState.Succeeded, ExitCode = 0,
+            LogPath = Path.Combine(_root, id + ".log"), Timeout = TimeSpan.FromMinutes(1), StartedAt = at, EndedAt = at.AddSeconds(5),
+        };
+        _state.PutJob(row);
+        return row;
+    }
+
+    [Fact]
+    public async Task AToldJobSupersededInTheBusyTurnItReachedIsSettledWithNoRetellAndNoCard()
+    {
+        await TellNowAsync(whileWorking: true);
+        _state.Jobs().Single().ToldWhileWorking.ShouldBe(true);
+        _clock.Advance(TimeSpan.FromSeconds(31));
+        Later("j2", TimeSpan.FromSeconds(31));
+        // The busy turn ends, then the worker sits idle and silent for two spans.
+        Session(SessionState.Idle, _clock.GetUtcNow());
+        _clock.Advance(After * 2);
+
+        (await Sweep()).ShouldBeFalse();
+
+        _said.ShouldBeEmpty();
+        Cards(JobRunner.UnansweredKind).ShouldBeEmpty();
+        _state.Jobs().Single(j => j.Id == "j1").RetellRung.ShouldBe(true);
+        _jobs.TellBaselines.ShouldBe(0);
+        _log.ToString().Split((char)10).Count(l => l.Contains("settled: superseded by j2")).ShouldBe(1);
+        (await Sweep()).ShouldBeFalse();
+        _log.ToString().Split((char)10).Count(l => l.Contains("superseded")).ShouldBe(1);
+    }
+
+    [Theory]
+    [InlineData("command")]
+    [InlineData("cwd")]
+    [InlineData("before")]
+    [InlineData("owner")]
+    public async Task AJobThatIsNotASupersedeIsRetoldAsBefore(string kind)
+    {
+        await TellNowAsync();
+        _ = kind switch
+        {
+            "command" => Later("j2", TimeSpan.FromSeconds(30), command: "echo other"),
+            "cwd" => Later("j2", TimeSpan.FromSeconds(30), cwd: Path.Combine(_root, "elsewhere")),
+            "before" => Later("j2", TimeSpan.FromMinutes(-5)),
+            _ => Later("j2", TimeSpan.FromSeconds(30), owner: "w9999999"),
+        };
+        _clock.Advance(After);
+
+        (await Sweep()).ShouldBeTrue();
+
+        _said.ShouldHaveSingleItem().ShouldStartWith("Repeat:");
+        _state.Jobs().Single(j => j.Id == "j1").RetellRung.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task ASupersededRowToldInsideAnOutageWindowIsNotRedoneWhenItEnds()
+    {
+        await TellNowAsync();
+        _outage.AccountChanged(_clock.GetUtcNow());
+        _clock.Advance(TimeSpan.FromMinutes(1));
+        Later("j2", TimeSpan.FromSeconds(30));
+        _clock.Advance(TimeSpan.FromMinutes(1));
+        EndOutage();
+        _clock.Advance(TimeSpan.FromSeconds(1));
+
+        // Only the retell sweep (which redoes first): the TellSweep would tell the untold j2 itself, which is not what is asked here.
+        (await Sweep()).ShouldBeFalse();
+
+        _said.ShouldBeEmpty();
+        _state.Jobs().Single(j => j.Id == "j1").RetellRung.ShouldBe(true);
+        _log.ToString().ShouldContain("settled: superseded by j2");
     }
 }

@@ -140,7 +140,7 @@ public sealed record JobRow
     /// <summary>How the second tell went (as <see cref="ToldWay"/>); null until retold. Optional (#756).</summary>
     public string? RetoldWay { get; init; }
 
-    /// <summary>Whether the card for a tell that went unanswered twice was raised; null until it is. Optional (#756).</summary>
+    /// <summary>Whether the card for a tell that went unanswered twice was raised; null until it is. Also set, with no card, on a row the retell sweep settled because nothing waits on it or a later job of the same command and cwd superseded it (#1415). Optional (#756).</summary>
     public bool? RetellRung { get; init; }
 
     /// <summary>How many failed tests the node has read in the job's output so far (each test once). Zero on a row from before this.</summary>
