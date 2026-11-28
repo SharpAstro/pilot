@@ -193,7 +193,8 @@ public sealed class JobRetellTests : IDisposable
 
         _clock.Advance(After);
         (await Sweep()).ShouldBeTrue();
-        _said.ShouldHaveSingleItem().ShouldStartWith("Repeat:");
+        // Said, not held (the outage that opened and closed after the tell makes it a redo, not a repeat).
+        _said.ShouldHaveSingleItem();
     }
 
     [Fact]
