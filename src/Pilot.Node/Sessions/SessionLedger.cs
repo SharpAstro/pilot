@@ -70,6 +70,11 @@ public sealed class SessionLedger(string? file = null, TimeProvider? time = null
     private readonly TimeProvider _time = time ?? TimeProvider.System;
     private List<SessionLedgerEntry>? _entries;
 
+    // Positions of the last entry by job id and by each session id (both case-insensitive), so Find is a lookup per id, not a scan of every
+    // entry per id (#1365). Dropped by every write and rebuilt by the next Find; a write already rewrites the whole file, so this costs no more.
+    private Dictionary<string, int>? _byJob;
+    private Dictionary<string, int>? _bySession;
+
     public TextWriter Error { get; set; } = TextWriter.Null;
 
     /// <summary>
@@ -87,6 +92,7 @@ public sealed class SessionLedger(string? file = null, TimeProvider? time = null
         {
             var entries = Load();
             entries.RemoveAll(e => e.JobId == jobId);
+            Dirty();
             entries.Add(new SessionLedgerEntry
             {
                 JobId = jobId, SessionIds = [jobId], Name = name, Role = role.Role, Flight = role.Flight, Leg = role.Leg, Pr = pr,
@@ -95,6 +101,7 @@ public sealed class SessionLedger(string? file = null, TimeProvider? time = null
             if (entries.Count > Capacity)
             {
                 entries.RemoveRange(0, entries.Count - Capacity);
+                Dirty();
             }
             Save(entries);
         }
@@ -113,6 +120,7 @@ public sealed class SessionLedger(string? file = null, TimeProvider? time = null
             {
                 return;
             }
+            Dirty();
             entries.Add(new SessionLedgerEntry
             {
                 JobId = row.Id,
@@ -123,6 +131,7 @@ public sealed class SessionLedger(string? file = null, TimeProvider? time = null
             if (entries.Count > Capacity)
             {
                 entries.RemoveRange(0, entries.Count - Capacity);
+                Dirty();
             }
             Save(entries);
         }
@@ -259,21 +268,47 @@ public sealed class SessionLedger(string? file = null, TimeProvider? time = null
 
     private static long Wall(SessionLedgerEntry entry, DateTimeOffset end) => Math.Max(0, (long)(end - entry.StartedAt).TotalSeconds);
 
-    private static SessionLedgerEntry? FindLocked(List<SessionLedgerEntry> entries, IEnumerable<string> ids)
+    private SessionLedgerEntry? FindLocked(List<SessionLedgerEntry> entries, IEnumerable<string> ids)
     {
+        if (_byJob is null || _bySession is null)
+        {
+            var byJob = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            var bySession = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            for (var i = 0; i < entries.Count; i++)
+            {
+                // Later entries overwrite earlier ones: the last match wins, as the linear scan's LastOrDefault did.
+                byJob[entries[i].JobId] = i;
+                foreach (var sessionId in entries[i].SessionIds)
+                {
+                    bySession[sessionId] = i;
+                }
+            }
+            _byJob = byJob;
+            _bySession = bySession;
+        }
         foreach (var id in ids)
         {
             var job = id.Length > 8 ? id[..8] : id;
-            if (entries.LastOrDefault(e => string.Equals(e.JobId, job, StringComparison.OrdinalIgnoreCase)
-                || e.SessionIds.Contains(id, StringComparer.OrdinalIgnoreCase)) is { } found)
+            var at = Math.Max(_byJob.TryGetValue(job, out var j) ? j : -1, _bySession.TryGetValue(id, out var s) ? s : -1);
+            if (at >= 0)
             {
-                return found;
+                return entries[at];
             }
         }
         return null;
     }
 
-    private static void Replace(List<SessionLedgerEntry> entries, SessionLedgerEntry old, SessionLedgerEntry next) => entries[entries.IndexOf(old)] = next;
+    private void Replace(List<SessionLedgerEntry> entries, SessionLedgerEntry old, SessionLedgerEntry next)
+    {
+        entries[entries.IndexOf(old)] = next;
+        Dirty();
+    }
+
+    private void Dirty()
+    {
+        _byJob = null;
+        _bySession = null;
+    }
 
     private List<SessionLedgerEntry> Load()
     {
