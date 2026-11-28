@@ -12,7 +12,8 @@ namespace Pilot.Gui.Tests;
 /// What one frame of the Ideas page costs at DE1's size (#1406): about 4,700 sessions in the SessionsScreen the chrome is given, 77 flights, 60 ideas with
 /// Markdown bodies, 300 open issues across 5 repos and 15 milestones, and 20 open cards in the panel. Each case renders the page through PilotChrome in
 /// List and Tree view at 1400x900 DPI 1 and 500x900 DPI 1.5, and writes one line (to PILOT_FRAME_TIMES, else frame-times.txt in PILOT_JOB_ARTIFACTS) that
-/// splits a first frame and a repeat frame of the same pages into the Ideas tree build, the chrome around it, arrange and draw.
+/// splits a first frame and a repeat frame of the same pages into the Ideas tree build, the chrome around it and the page's layout; the repeat frame's
+/// layout is split again into arrange and draw (the first frame's layout is arrange and draw together, as arrange alone cannot be timed cold twice).
 /// </summary>
 public sealed class IdeasFrameCostTests
 {
@@ -24,10 +25,11 @@ public sealed class IdeasFrameCostTests
         var ideas = Enumerable.Range(0, 60).Select(i => new IdeaRow
         {
             Id = IdeaIds.Id(900 + i), Repo = Repos[i % Repos.Length], Title = $"Idea {i}: an idea with a title of some length that wraps on a narrow window",
-            Body = $"Show **ideas** in a pane, number {i}.\n\n- a list with `code`\n- a box with a [link](https://example.com/{i})\n- a long word https://github.com/SharpAstro/pilot/issues/{900 + i}/comments\n\nA second paragraph that says a good deal more about idea {i}, so the body is laid out over several lines.",
+            Body = BodyOf(i),
             State = i % 10 == 9 ? IdeaState.Planned : IdeaState.Noted, UpdatedAt = now.AddMinutes(i), Age = "3h", Origin = "ada",
             Url = $"https://github.com/SharpAstro/{Repos[i % Repos.Length]}/issues/{900 + i}", NeedsDesign = i % 3 == 0,
-        }).ToArray();
+            Designs = DesignsOf(i),
+        }).Select(idea => idea with { Images = IdeaImages.In(idea.Body), Design = idea.Designs.FirstOrDefault()?.Id, DesignVersion = idea.Designs.FirstOrDefault()?.Version }).ToArray();
         var milestones = Enumerable.Range(0, 15).Select(i => new MilestoneRow { Repo = Repos[i % Repos.Length], Number = 20 + i, Title = $"Milestone {i}", OpenIssues = 20, ClosedIssues = 5, DueOn = now.AddDays(i) }).ToArray();
         var issues = Enumerable.Range(0, 300).Select(i => new IssueRow
         {
@@ -43,6 +45,57 @@ public sealed class IdeasFrameCostTests
             Worktree = $"C:/repos/pilot/.claude/worktrees/pil{380 + i}", Base = "origin/main", State = (FlightState)(i % 3), CreatedAt = now.AddHours(-i - 1),
         }).ToArray();
         return new IdeasScreen(ideas, [], [.. Repos], "live from the node", now) { Milestones = milestones, Issues = issues, Flights = flights };
+    }
+
+    // A DE1 idea's body: most are a short paragraph and a list; every fourth is long (a list of 20, a code block, a table and a wide link,
+    // over 40 lines); every tenth carries one or two pasted images, written as the markers a paste leaves (the node's copies, by id).
+    private static string BodyOf(int i)
+    {
+        var inv = CultureInfo.InvariantCulture;
+        var body = new System.Text.StringBuilder();
+        body.Append(inv, $"Show **ideas** in a pane, number {i}.\n\n- a list with `code`\n- a box with a [link](https://example.com/{i})\n- a long word https://github.com/SharpAstro/pilot/issues/{900 + i}/comments\n\n");
+        body.Append(inv, $"A second paragraph that says a good deal more about idea {i}, so the body is laid out over several lines.\n");
+        if (i % 4 == 0)
+        {
+            body.Append("\n## What it needs\n\n");
+            for (var n = 1; n <= 20; n++)
+            {
+                body.Append(inv, $"{n}. step {n} of idea {i}: read the `IdeasView` row and say what it costs, then *cut* it\n");
+            }
+            body.Append("\n```csharp\n");
+            for (var n = 0; n < 8; n++)
+            {
+                body.Append(inv, $"var row{n} = board.Items.Where(item => item.Section == \"open\" && item.Rank > {n}).ToList();\n");
+            }
+            body.Append("```\n\n| Phase | First | Repeat |\n|---|---|---|\n| tree | 12 ms | 4 ms |\n| layout | 80 ms | 40 ms |\n\n");
+            body.Append(inv, $"See [the long discussion](https://github.com/SharpAstro/pilot/issues/{900 + i}#issuecomment-1234567890123456789012345678901234567890) and https://github.com/SharpAstro/DIR.Lib/blob/main/src/DIR.Lib/Layout/Engine/ArrangeWrappedTextAcrossManyLines.cs#L100-L200\n");
+        }
+        if (i % 10 == 3)
+        {
+            body.Append('\n').Append(IdeaImages.Marker("screenshot", $"{i:x4}a1b2c3d4e5f6", "png")).Append('\n');
+            if (i % 20 == 3)
+            {
+                body.Append(IdeaImages.Marker("before", $"{i:x4}f6e5d4c3b2a1", "png")).Append('\n');
+            }
+        }
+        return body.ToString();
+    }
+
+    // Most DE1 ideas have a design linked (every fifth has none); every seventh has two.
+    private static IdeaDesignLink[] DesignsOf(int i) => i % 5 == 4 ? []
+        : i % 7 == 0 ? [new($"DSN-{i}", $"Design for idea {i}", 3), new($"DSN-{i + 100}", $"A second take on idea {i}", null)]
+        : [new($"DSN-{i}", $"Design for idea {i}", 1 + i % 4)];
+
+    // A decoded screenshot, as the GUI's AttachmentPictures hands the gallery once a copy is fetched: the CPU render paints it scaled into each thumb.
+    internal static AttachmentPicture Screenshot()
+    {
+        const int Width = 1280, Height = 800;
+        var rgba = new byte[Width * Height * 4];
+        for (var at = 0; at < rgba.Length; at += 4)
+        {
+            (rgba[at], rgba[at + 1], rgba[at + 2], rgba[at + 3]) = ((byte)(at / 4 % Width * 255 / Width), 90, 160, 255);
+        }
+        return new AttachmentPicture(Width, Height, rgba);
     }
 
     internal static SessionsScreen Sessions()
@@ -71,12 +124,24 @@ public sealed class IdeasFrameCostTests
         var ideas = DeSized();
         var sessions = Sessions();
         var cards = Cards();
+        // A warm-up frame of the same page on a throwaway chrome: the first case in a process otherwise carries the JIT and the static
+        // start-up in its first frame, and the first frames of the cases could not be compared.
+        using (var warm = new RgbaImageRenderer((uint)width, (uint)height))
+        {
+            var cold = new PilotChrome<RgbaImage>(warm, new SessionsView<RgbaImage>(warm)) { FontPath = SessionsCapture.FontPath, DpiScale = dpi };
+            cold.Ideas.ViewMode = mode;
+            cold.Show(PilotPage.Ideas);
+            cold.Render(sessions, null, cards, null, null, null, null, new RectF32(0, 0, width, height), null, ideas);
+        }
         using var renderer = new RgbaImageRenderer((uint)width, (uint)height);
         var chrome = new PilotChrome<RgbaImage>(renderer, new SessionsView<RgbaImage>(renderer)) { FontPath = SessionsCapture.FontPath, DpiScale = dpi };
         chrome.Play.ShowEverything();
         chrome.Cards.CanTell = true;
         chrome.Notifications.State = BarStates.Docked;
         chrome.Ideas.ViewMode = mode;
+        var picture = Screenshot();
+        chrome.Gallery.Lookup = _ => picture;
+        chrome.Gallery.Draw = AttachmentPictures.PaintOn(renderer.Surface);
         var bounds = new RectF32(0, 0, width, height);
         var watch = System.Diagnostics.Stopwatch.StartNew();
         double Frame(Action render)
@@ -88,7 +153,7 @@ public sealed class IdeasFrameCostTests
 
         // Each frame is split from inside: the page's own tree build and its layout (arrange and draw) are timed by IdeasView around its
         // RenderLayout, and the chrome is what is left of the frame, so the three add up to it. The first frame is on a fresh chrome and a
-        // fresh screen: nothing cached. A repeat frame is the same screen again (a hover, a scroll).
+        // fresh screen: nothing of this chrome's cached, though the process is warm (above). A repeat frame is the same screen again (a hover, a scroll).
         chrome.Show(PilotPage.Ideas);
         (double Total, double Tree, double Layout, double Chrome) Split(IdeasScreen screen)
         {
