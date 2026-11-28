@@ -197,19 +197,12 @@ public sealed class PushBlockedTests : IDisposable
 
     private static string Git(string cwd, params string[] args)
     {
-        var start = new ProcessStartInfo("git") { WorkingDirectory = cwd, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
-        start.Environment["GIT_COMMITTER_NAME"] = "t";
-        start.Environment["GIT_COMMITTER_EMAIL"] = "t@example.com";
-        start.Environment["GIT_AUTHOR_NAME"] = "t";
-        start.Environment["GIT_AUTHOR_EMAIL"] = "t@example.com";
-        foreach (var arg in args)
+        return HelperGit.Run(cwd, args, new Dictionary<string, string>
         {
-            start.ArgumentList.Add(arg);
-        }
-        using var process = TestEnvironment.Start(start)!;
-        var output = process.StandardOutput.ReadToEnd();
-        var error = process.StandardError.ReadToEnd();
-        process.WaitForExit();
-        return process.ExitCode == 0 ? output.Trim() : throw new InvalidOperationException($"git {string.Join(' ', args)}: {error}");
+            ["GIT_COMMITTER_NAME"] = "t",
+            ["GIT_COMMITTER_EMAIL"] = "t@example.com",
+            ["GIT_AUTHOR_NAME"] = "t",
+            ["GIT_AUTHOR_EMAIL"] = "t@example.com",
+        });
     }
 }

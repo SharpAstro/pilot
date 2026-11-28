@@ -64,6 +64,25 @@ internal sealed class NodeFeed : IAsyncDisposable
     private readonly Kept<FlightsScreen> _keptFlights = new();
     private readonly Kept<ReposScreen> _keptRepos = new();
     private readonly Kept<IdeasScreen> _keptIdeas = new();
+    private readonly Kept<IReadOnlyList<SessionLine>> _keptMarkedSessions = new();
+    private readonly Kept<IReadOnlyList<JobLine>> _keptMarkedJobs = new();
+
+    /// <summary>
+    /// The sessions page's lines marked with <paramref name="mark"/>, for a window of several nodes, kept while the page and the
+    /// mark stand: every look marked every line again, thousands of copies (pilot #1443). In <see cref="SessionLine.Order"/>.
+    /// </summary>
+    public IReadOnlyList<SessionLine> MarkedSessions(NodeMark? mark, DateTimeOffset now)
+    {
+        var screen = Screen(now);
+        return _keptMarkedSessions.Get(null, [screen, mark], () => [.. screen.Lines.Select(l => l with { Node = mark })]);
+    }
+
+    /// <summary>The jobs page's lines marked with <paramref name="mark"/>, kept as <see cref="MarkedSessions"/> are. In <see cref="JobLine.Order"/>.</summary>
+    public IReadOnlyList<JobLine> MarkedJobs(NodeMark? mark, DateTimeOffset now)
+    {
+        var page = JobsPage(now);
+        return _keptMarkedJobs.Get(null, [page, mark], () => [.. page.Lines.Select(l => l with { Node = mark })]);
+    }
 
     /// <summary>This window's version, without the commit: what the node's is held against.</summary>
     public static string ClientVersion { get; } = Plain(

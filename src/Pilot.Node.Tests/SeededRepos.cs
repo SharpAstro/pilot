@@ -88,16 +88,7 @@ internal sealed class SeededRepos : IDisposable
 
     private static string RunReal(string cwd, string[] args)
     {
-        var start = new ProcessStartInfo("git") { WorkingDirectory = cwd, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
-        foreach (var arg in args)
-        {
-            start.ArgumentList.Add(arg);
-        }
-        using var process = TestEnvironment.Start(start)!;
-        var output = process.StandardOutput.ReadToEnd();
-        var error = process.StandardError.ReadToEnd();
-        process.WaitForExit();
-        return process.ExitCode == 0 ? output.Trim() : throw new InvalidOperationException($"git {string.Join(' ', args)}: {error}");
+        return HelperGit.Run(cwd, args);
     }
 
     /// <summary>Lets go of the model, removes the test's folder, and fails the test when the node asked the model something it cannot answer.</summary>
