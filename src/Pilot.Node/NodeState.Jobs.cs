@@ -5,12 +5,18 @@ namespace Pilot.Node;
 
 public sealed partial class NodeState
 {
-    /// <summary>The jobs, newest first.</summary>
+    // The jobs newest first, sorted once and kept until a job is added or changes (ApplyToState drops it). Jobs() sorted every job at
+    // every call, and JobRunner calls it at every tick and for each job it looks at: on DE1 (9,288 jobs, 2026-11-28) each sort put a
+    // key array of 150 KB on the large object heap, 42 MB in 30 s (pilot #1443, #1365's second point). The array is shared: no caller
+    // changes it, and a change of the jobs makes a new one.
+    private JobRow[]? _jobsNewestFirst;
+
+    /// <summary>The jobs, newest first. The array is shared and must not be changed.</summary>
     public JobRow[] Jobs()
     {
         lock (_gate)
         {
-            return [.. _jobs.Values.OrderByDescending(j => j.StartedAt)];
+            return _jobsNewestFirst ??= [.. _jobs.Values.OrderByDescending(j => j.StartedAt)];
         }
     }
 

@@ -160,6 +160,15 @@ public sealed partial class NodeState
 
     private void ApplyToState(NodeEvent delta)
     {
+        // The kept newest-first lists (Jobs(), Sessions()) go with any change of what they list.
+        if (delta is SessionAddedEvent or SessionChangedEvent or SessionRemovedEvent)
+        {
+            _sessionsNewestFirst = null;
+        }
+        else if (delta is JobAddedEvent or JobChangedEvent)
+        {
+            _jobsNewestFirst = null;
+        }
         switch (delta)
         {
             case SessionAddedEvent added:
@@ -277,6 +286,8 @@ public sealed partial class NodeState
 
     private void Restore(SnapshotEvent snapshot)
     {
+        _sessionsNewestFirst = null;
+        _jobsNewestFirst = null;
         foreach (var row in snapshot.Sessions)
         {
             _sessions[row.Id] = row;

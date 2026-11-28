@@ -110,33 +110,45 @@ internal sealed class TranscriptTail(string path)
             }
 
             var changed = false;
-            var buffer = new byte[1 << 20];
-            while (true)
+            // Rented, and 64 KB to begin with: a fresh 1 MiB array at every refresh with anything new was one on the large object
+            // heap per session per poll (47 of them in DE1's heap at once, 2026-11-28, pilot #1443). Doubled only for a line longer
+            // than it, the smaller one going back to the pool.
+            var buffer = System.Buffers.ArrayPool<byte>.Shared.Rent(64 * 1024);
+            try
             {
-                file.Position = _offset;
-                var filled = 0;
-                int read;
-                while (filled < buffer.Length && (read = file.Read(buffer, filled, buffer.Length - filled)) > 0)
+                while (true)
                 {
-                    filled += read;
-                }
+                    file.Position = _offset;
+                    var filled = 0;
+                    int read;
+                    while (filled < buffer.Length && (read = file.Read(buffer, filled, buffer.Length - filled)) > 0)
+                    {
+                        filled += read;
+                    }
 
-                var consumed = Consume(buffer.AsMemory(0, filled));
-                if (consumed > 0)
-                {
-                    _offset += consumed;
-                    changed = true;
+                    var consumed = Consume(buffer.AsMemory(0, filled));
+                    if (consumed > 0)
+                    {
+                        _offset += consumed;
+                        changed = true;
+                    }
+                    if (consumed == 0 && filled == buffer.Length)
+                    {
+                        // One line longer than the buffer: grow until it fits.
+                        var grown = System.Buffers.ArrayPool<byte>.Shared.Rent(buffer.Length * 2);
+                        System.Buffers.ArrayPool<byte>.Shared.Return(buffer);
+                        buffer = grown;
+                        continue;
+                    }
+                    if (filled < buffer.Length)
+                    {
+                        return changed;
+                    }
                 }
-                if (consumed == 0 && filled == buffer.Length)
-                {
-                    // One line longer than the buffer: grow until it fits.
-                    Array.Resize(ref buffer, buffer.Length * 2);
-                    continue;
-                }
-                if (filled < buffer.Length)
-                {
-                    return changed;
-                }
+            }
+            finally
+            {
+                System.Buffers.ArrayPool<byte>.Shared.Return(buffer);
             }
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)

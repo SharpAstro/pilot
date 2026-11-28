@@ -29,6 +29,27 @@ public sealed class FilterTermsTests : IDisposable
     private static bool Hit(FilterTerms.Project p, string filter) => FilterTerms.Expression(filter).All(t => FilterTerms.Matches(t, p));
 
     [Fact]
+    public void ASourceIsLexedOnceWhileItStandsAndAgainOnceItChanges()
+    {
+        // A file's parse is kept by its length and write time (pilot #1443): a plan check read and lexed every test source again.
+        var first = Load("""
+            namespace N;
+            public class KeptTests { [Fact] public void A() { } }
+            """);
+        first.MethodNames.ShouldBe(["A"]);
+        FilterTerms.Load([Path.Combine(_root, "T")], _root)!.MethodNames.ShouldBe(["A"]);
+
+        var file = Path.Combine(_root, "T", "A.cs");
+        File.WriteAllText(file, """
+            namespace N;
+            public class KeptTests { [Fact] public void A() { } [Fact] public void B() { } }
+            """);
+        File.SetLastWriteTimeUtc(file, File.GetLastWriteTimeUtc(file).AddSeconds(2));
+
+        FilterTerms.Load([Path.Combine(_root, "T")], _root)!.MethodNames.ShouldBe(["A", "B"], ignoreOrder: true);
+    }
+
+    [Fact]
     public void ExpressionSplitsOnOrAndAndKeepsNameTerms()
     {
         var terms = FilterTerms.Expression("(FullyQualifiedName~A|FullyQualifiedName=B.C)&Name~D").Select(t => t.Text).ToList();
