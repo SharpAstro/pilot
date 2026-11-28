@@ -125,6 +125,46 @@ public sealed class PlanQueueStallTests
     }
 
     [Fact]
+    public async Task AListedIdlePlannerWhoseStartTheNodeStampedLaterIsStillToldThenRung()
+    {
+        Flight();
+        Planner(SessionState.Idle, Start);
+        _watch.StartedPlanner = _ => ("e5f6a7b8", Start + TimeSpan.FromSeconds(2));
+        _time.Advance(TimeSpan.FromMinutes(4));
+        await _watch.LookAsync(Ct);
+        Handled().ShouldHaveSingleItem().Title.ShouldBe("PIL9's planner was told to hand in its legs");
+
+        _time.Advance(TimeSpan.FromMinutes(4));
+        await _watch.LookAsync(Ct);
+        Open().Where(c => c.Bin == CardBin.Ring).ShouldHaveSingleItem();
+    }
+
+    [Fact]
+    public async Task AListedWorkingPlannerThatTookATurnIsNeverRestartedOrStopped()
+    {
+        Flight();
+        Planner(SessionState.Working, Start);
+        var restarted = 0;
+        var stopped = 0;
+        _watch.RestartPlanner = (_, _) => { restarted++; return Task.CompletedTask; };
+        _watch.StopPlanner = (_, _) => { stopped++; return Task.CompletedTask; };
+        _watch.StartedPlanner = _ => ("e5f6a7b8", Start + TimeSpan.FromSeconds(2));
+        _time.Advance(TimeSpan.FromMinutes(4));
+        await _watch.LookAsync(Ct);
+        (restarted, stopped).ShouldBe((0, 0));
+        AnyPlanStall().ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task AnOlderEndedRowAndANotYetListedStartOfAnotherJobRaiseNothing()
+    {
+        Flight();
+        Planner(SessionState.Ended, Start);
+        _watch.StartedPlanner = _ => ("0a0a0a0a", Start);
+        await NothingAtLooks();
+    }
+
+    [Fact]
     public async Task AnOpenPlanStalledRingIsClosedOnTheNextLookOnceThePlannerIsWorking()
     {
         Flight();
