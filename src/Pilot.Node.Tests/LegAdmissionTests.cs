@@ -109,14 +109,50 @@ public sealed class LegAdmissionTests : LegCommanderTestsBase
 
         _workers.Started.ShouldBeEmpty();
         _state.Flights().Single().Queued.ShouldNotBeNull().ShouldStartWith("waiting for an Opus slot");
+        var queued = _state.Flights().Single();
+        queued.QueuedBehind.ShouldBe("du1-other-worker");
+        var since = queued.QueuedSince.ShouldNotBeNull();
         NoRings();
+
+        // A sweep that still waits keeps the start of the wait.
+        await _legs.AdvanceAllAsync(Ct);
+        _state.Flights().Single().QueuedSince.ShouldBe(since);
 
         OtherOpus("du1-other-worker", SessionState.Ended);
         await _legs.AdvanceAllAsync(Ct);
 
         _workers.Started.ShouldHaveSingleItem().Name.ShouldBe("du1-tia1-plan");
         _state.Flights().Single().Queued.ShouldBeNull();
+        _state.Flights().Single().QueuedSince.ShouldBeNull();
+        _state.Flights().Single().QueuedBehind.ShouldBeNull();
         _state.Flights().Single().AdmittedAt.ShouldNotBeNull();
+    }
+
+    [Fact]
+    public async Task APlannerQueuedBehindTheHolderOfItsRepoKeepsWhoAndSinceUntilAdmitted()
+    {
+        Settings(cap: 0, oneFlightPerRepo: true);
+        await Flight(1, "one");
+        await Flight(2, "two");
+        (await Leg(Verbs.StartLeg, Verbs.LegTarget("TIA1", "one"))).Ok.ShouldBeTrue();
+
+        (await Leg(Verbs.PlanFlight, "flight/TIA2")).Ok.ShouldBeTrue();
+
+        var queued = _state.Flights().Single(f => f.Code == "TIA2");
+        queued.Queued.ShouldNotBeNull().ShouldContain("TIA1 holds it");
+        queued.QueuedBehind.ShouldBe("TIA1");
+        var since = queued.QueuedSince.ShouldNotBeNull();
+        await _legs.AdvanceAllAsync(Ct);
+        _state.Flights().Single(f => f.Code == "TIA2").QueuedSince.ShouldBe(since);
+
+        _state.PutLeg(Leg1("TIA1", "one") with { State = LegState.Done, FinishedAt = DateTimeOffset.UtcNow });
+        await _legs.AdvanceAllAsync(Ct);
+
+        var admitted = _state.Flights().Single(f => f.Code == "TIA2");
+        admitted.Queued.ShouldBeNull();
+        admitted.QueuedSince.ShouldBeNull();
+        admitted.QueuedBehind.ShouldBeNull();
+        admitted.AdmittedAt.ShouldNotBeNull();
     }
 
     [Fact]

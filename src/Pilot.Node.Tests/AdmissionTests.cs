@@ -29,7 +29,22 @@ public sealed class AdmissionTests
     {
         var input = Cap(3, Opus("PIL418/x"), Opus("TIA1871/y"), Opus("review of #424"));
         Admission.Decide(input, new AdmissionRequest(AdmissionRole.Worker, "opus")).ShouldBe(
-            new AdmissionDecision.Wait("waiting for an Opus slot: 3 of 3 flying: PIL418/x, TIA1871/y, review of #424"));
+            new AdmissionDecision.Wait("waiting for an Opus slot: 3 of 3 flying: PIL418/x, TIA1871/y, review of #424", "PIL418/x, TIA1871/y, review of #424"));
+    }
+
+    [Fact]
+    public void AWaitSaysWhoItIsBehind()
+    {
+        // A repo hold: the holder; a turn on the repo: the one going first; a peer's flight carries its node.
+        var held = Repo(Flight("TIA1", "tianwen", AdmissionPhase.Flying), Flight("TIA2", "tianwen", AdmissionPhase.Ready));
+        Admission.Decide(held, Start("TIA2")).ShouldBeOfType<AdmissionDecision.Wait>().Behind.ShouldBe("TIA1");
+        var peers = Repo(Flight("TIA1", "tianwen", AdmissionPhase.Flying, node: "SE1"), Flight("TIA2", "tianwen", AdmissionPhase.Ready));
+        Admission.Decide(peers, Start("TIA2")).ShouldBeOfType<AdmissionDecision.Wait>().Behind.ShouldBe("TIA1 on SE1");
+        var turn = Repo(Flight("TIA2", "tianwen", AdmissionPhase.Ready, age: 0), Flight("TIA4", "tianwen", AdmissionPhase.Ready, age: 5));
+        Admission.Decide(turn, Start("TIA4")).ShouldBeOfType<AdmissionDecision.Wait>().Behind.ShouldBe("TIA2");
+        // The Opus cap: the flights of the sessions counted, else their labels.
+        var cap = Cap(2, new FleetSession("DE1", "du1-tia1-plan", "opus") { Identity = "planner:TIA1" }, Opus("du1-other-worker", "SE1"));
+        Admission.Decide(cap, new AdmissionRequest(AdmissionRole.Worker, "opus", "DE1")).ShouldBeOfType<AdmissionDecision.Wait>().Behind.ShouldBe("TIA1, du1-other-worker on SE1");
     }
 
     [Fact]

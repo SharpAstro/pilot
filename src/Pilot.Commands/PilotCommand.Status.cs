@@ -176,7 +176,7 @@ public static partial class PilotCommand
             {
                 FlightState.Held => $"held, waiting for {FlightWaiting.For(flight)}",
                 FlightState.Landed => flight.MovedTo?.Text ?? "landed",
-                _ => FlightPhases.Of(flight, snapshot.Legs) == FlightPhase.Queued && FlightPhases.QueuedWhy(flight, snapshot.Legs) is { } why ? $"queued: {why}" : FlightWaiting.HoldingText(flight) is { } holding ? $"flying, {holding}" : "flying",
+                _ => FlightPhases.Of(flight, snapshot.Legs) == FlightPhase.Queued && FlightPhases.QueuedText(flight, snapshot.Legs, zone ?? TimeZoneInfo.Local) is { } queuedText ? queuedText : FlightWaiting.HoldingText(flight) is { } holding ? $"flying, {holding}" : "flying",
             };
             var level = flight.HasPriorityField && flight.IssuePriority is { } set ? $", priority {IssuePriorities.Name(set).ToLowerInvariant()}" : "";
             text.AppendLine($"{flight.Code}  {flight.Title ?? flight.Item.Noun}  ({flight.Repo} {flight.Item.Display}, {state}{level})");

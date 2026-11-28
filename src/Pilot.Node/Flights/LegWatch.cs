@@ -1377,6 +1377,9 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
     // Each flight's planner stalls the node has acted on, as _reviewStalls: an idle planner told once, a gone one replaced once, then rung.
     private readonly Dictionary<string, (int Tries, DateTimeOffset At)> _planStalls = new(StringComparer.Ordinal);
 
+    /// <summary>What the node did about a planner-less flight's stall so far (told the idle planner, started a fresh one, was refused), for the Ring's detail.</summary>
+    private readonly Dictionary<string, List<string>> _planActs = new(StringComparer.Ordinal);
+
     // Each flight's planners that never took a first turn: one is started once more, the second rings.
     private readonly Dictionary<string, int> _noFirstTurn = new(StringComparer.Ordinal);
 
@@ -1542,9 +1545,11 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
             }
             // A planner that never took a turn: telling it to finish is pointless, so this comes before the idle ladder.
             var started = StartedPlanner(flight.Code);
-            DateTimeOffset? neverSince = planner is not null && NoTurnYet(planner)
-                ? planner.StartedAt
-                : planner is null && started is { } known ? known.At : null;
+            // A start is pending only while no listed planner row carries the started job's id (by identity, not by comparing clocks; PIL1190).
+            var pending = started is { } fresh && !sessions.Any(r => r.Role == SessionRole.Planner && r.Flight == flight.Code && r.Id == fresh.Job);
+            DateTimeOffset? neverSince = pending
+                ? started!.Value.At
+                : planner is not null && NoTurnYet(planner) ? planner.StartedAt : null;
             var plannerJob = planner?.Id ?? started?.Job ?? "unknown";
             if (neverSince is { } begun && _noFirstTurn.GetValueOrDefault(subject) < 2 && RedoNow(subject, plannerJob, begun, now))
             {
@@ -1611,9 +1616,15 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
                 state.CloseCardsAbout(subject, "its planner waits on its own job", PlanStalled);
                 continue;
             }
-            string? why = planner switch
+            // The no-planner clock starts when the flight could first plan: not while its plan waited in admission.
+            var clock = flight.CreatedAt;
+            if (flight.AdmittedAt is { } admitted && admitted > clock)
             {
-                null when now - flight.CreatedAt > PlanGrace => $"it has had no legs and no planner for {Ago(now, flight.CreatedAt)}",
+                clock = admitted;
+            }
+            string? why = pending ? null : planner switch
+            {
+                null when now - clock > PlanGrace => $"it has had no legs and no planner for {Ago(now, clock)}",
                 null => null,
                 { State: SessionState.Working or SessionState.Waiting } => null,
                 { State: SessionState.Failed } => "its planner failed before planning any legs",
@@ -1639,6 +1650,7 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
                 var told = await SayAsync(planner!.Id, $"You stopped before {flight.Code} has any legs. Finish the plan now: plan each leg and hand them in with the planned command your brief names; if the flight looks like part of another, say so with the overlap command.", cancellationToken);
                 if (told.Ok)
                 {
+                    PlanActed(subject, "told the idle planner to finish");
                     state.RaiseCard(CardBin.Handled, PlanStalled, subject, $"{flight.Code}'s planner was told to hand in its legs", why);
                     continue;
                 }
@@ -1651,11 +1663,14 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
                 var restarted = await run(new CommandRequest { Verb = Verbs.PlanFlight, Target = subject, Who = Who }, cancellationToken);
                 if (restarted.Ok)
                 {
+                    PlanActed(subject, planner is null ? "started a planner" : "started a fresh planner");
                     state.RaiseCard(CardBin.Handled, PlanStalled, subject, $"{flight.Code}'s planner started afresh", why);
                     continue;
                 }
+                PlanActed(subject, $"asked for a fresh planner and was refused: {restarted.Error ?? "no reason given"}");
             }
-            state.RaiseCard(CardBin.Ring, PlanStalled, subject, $"{flight.Code} has no legs and its planning stalled: {why}", "the node told or replaced the planner once and it still has not handed in legs",
+            var did = _planActs.TryGetValue(subject, out var acts) && acts.Count > 0 ? string.Join("; ", acts) : "no planner was told or replaced";
+            state.RaiseCard(CardBin.Ring, PlanStalled, subject, $"{flight.Code} has no legs and its planning stalled: {why}", $"the node {did}, and the flight still has no legs",
                 idle
                     ? [new CardChoice { Label = $"Tell {flight.Code}'s planner to finish", Verb = Verbs.Say, Target = Verbs.SessionTarget(planner!.Id), Args = [$"Finish {flight.Code}'s plan now: plan its legs and hand them in."] }]
                     : [new CardChoice { Label = $"Plan {flight.Code} again", Verb = Verbs.PlanFlight, Target = subject }]);
@@ -1664,12 +1679,22 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
         foreach (var subject in _planStalls.Keys.Where(k => !unplanned.Contains(k)).ToArray())
         {
             _planStalls.Remove(subject);
+            _planActs.Remove(subject);
             state.CloseCardsAbout(subject, "it has legs now", PlanStalled);
         }
         foreach (var subject in _noFirstTurn.Keys.Where(k => !unplanned.Contains(k)).ToArray())
         {
             _noFirstTurn.Remove(subject);
         }
+    }
+
+    private void PlanActed(string subject, string what)
+    {
+        if (!_planActs.TryGetValue(subject, out var acts))
+        {
+            _planActs[subject] = acts = [];
+        }
+        acts.Add(what);
     }
 
     /// <summary>What an idle worker is told: its leg is not finished, and the two ways to finish it.</summary>

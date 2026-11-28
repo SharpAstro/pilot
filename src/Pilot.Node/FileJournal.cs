@@ -98,6 +98,8 @@ public sealed class FileJournal : INodeJournal, IDisposable
     /// record that a fix round touched none of the files its findings name, so the loop is judged on the other facts; nothing breaks, so there is no reason to refuse the store.
     /// Not bumped for <c>admittedAt</c> on a flight (PIL1321): it is nullable, and an older node that drops it when it compacts the snapshot only loses the
     /// stop of the CI red clock after a queue wait, so the clock counts as it did before; nothing breaks, so there is no reason to refuse the store.
+    /// Not bumped for <c>queuedSince</c> and <c>queuedBehind</c> on a flight (PIL1190): both are nullable, and an older node that drops them when it compacts the snapshot only loses
+    /// the "planning queued behind X since T" line of <c>pilot status</c>, which falls back to the queued reason; nothing breaks, so there is no reason to refuse the store.
     /// </remarks>
     public const int StoreContract = 15;
 
