@@ -1545,8 +1545,8 @@ public sealed class LegWatch(NodeState state, Func<CommandRequest, CancellationT
             }
             // A planner that never took a turn: telling it to finish is pointless, so this comes before the idle ladder.
             var started = StartedPlanner(flight.Code);
-            // A start newer than the newest listed planner row is the planner, not yet listed (PIL1190).
-            var pending = started is { } fresh && (planner is null || fresh.At > planner.StartedAt);
+            // A start is pending only while no listed planner row carries the started job's id (by identity, not by comparing clocks; PIL1190).
+            var pending = started is { } fresh && !sessions.Any(r => r.Role == SessionRole.Planner && r.Flight == flight.Code && r.Id == fresh.Job);
             DateTimeOffset? neverSince = pending
                 ? started!.Value.At
                 : planner is not null && NoTurnYet(planner) ? planner.StartedAt : null;

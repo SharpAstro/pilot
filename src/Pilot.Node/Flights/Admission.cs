@@ -189,7 +189,7 @@ public static class Admission
             && input.Sessions.Where(s => !s.Meta && IsOpus(s.Model)).DistinctBy(s => s.Key).ToArray() is { } opus && opus.Length >= input.OpusCap)
         {
             return new AdmissionDecision.Wait($"waiting for an Opus slot: {opus.Length} of {input.OpusCap} flying: {string.Join(", ", opus.Select(s => (s.Node.Equals(request.Node, StringComparison.OrdinalIgnoreCase) || request.Node is null ? s.Label : $"{s.Label} on {s.Node}") + (s.Note is null ? "" : $" ({s.Note})")))}",
-                string.Join(", ", opus.Select(s => OpusBehind(s, request))));
+                string.Join(", ", opus.Select(s => OpusBehind(s, request)).Distinct()));
         }
         return card is null ? new AdmissionDecision.Admit() : new AdmissionDecision.AdmitToBreakCycle(card);
     }
