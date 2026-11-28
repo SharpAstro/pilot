@@ -130,6 +130,10 @@ public sealed class IdeasFrameCostTests
         {
             var cold = new PilotChrome<RgbaImage>(warm, new SessionsView<RgbaImage>(warm)) { FontPath = SessionsCapture.FontPath, DpiScale = dpi };
             cold.Ideas.ViewMode = mode;
+            // The gallery is wired as the measured chrome's is, so the picture paint path is jitted here and not in the first measured frame.
+            var warmPicture = Screenshot();
+            cold.Gallery.Lookup = _ => warmPicture;
+            cold.Gallery.Draw = AttachmentPictures.PaintOn(warm.Surface);
             cold.Show(PilotPage.Ideas);
             cold.Render(sessions, null, cards, null, null, null, null, new RectF32(0, 0, width, height), null, ideas);
         }
