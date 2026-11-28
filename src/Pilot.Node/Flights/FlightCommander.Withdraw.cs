@@ -216,7 +216,14 @@ public sealed partial class FlightCommander
     {
         var live = state.Sessions().Where(s => s.State is not (SessionState.Ended or SessionState.Failed) && string.Equals(s.Flight, flight.Code, StringComparison.Ordinal)).Select(s => s.Id).ToList();
         var sessions = live.Concat(Ledger?.All().Where(e => e.EndReason is null && string.Equals(e.Flight, flight.Code, StringComparison.Ordinal)).Select(e => e.JobId) ?? []).Distinct().ToList();
-        var jobs = state.Legs(flight.Code).Select(l => l.WorkerJob).Append(flight.Review?.ReviewerJob).OfType<string>().Concat(sessions).Distinct().ToList();
+        // A row resumed under a new session (by a say or an earlier nudge) runs as that session's job, not as its row id's (#1420).
+        var resumed = state.Sessions().Where(s => s.State is not (SessionState.Ended or SessionState.Failed) && string.Equals(s.Flight, flight.Code, StringComparison.Ordinal))
+            .Select(CurrentJobOf).Where(j => j.Length > 0);
+        var jobs = state.Legs(flight.Code).Select(l => l.WorkerJob).Append(flight.Review?.ReviewerJob).OfType<string>().Concat(sessions).Concat(resumed).Distinct().ToList();
         return (sessions, jobs);
     }
+
+    /// <summary>The job a row's session runs as now: the first eight characters of its SessionId, as ClaudeProfile names jobs; its row id when the session id starts with it.</summary>
+    private static string CurrentJobOf(SessionRow row) =>
+        row.SessionId.StartsWith(row.Id, StringComparison.Ordinal) || row.SessionId.Length < 8 ? row.Id : row.SessionId[..8];
 }
