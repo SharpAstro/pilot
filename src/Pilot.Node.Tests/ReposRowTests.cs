@@ -41,20 +41,8 @@ public sealed class ReposRowTests : IDisposable
     private static RepoStatus Status(string name, string? branch = "main", DateTimeOffset? updated = null) =>
         new() { Name = name, Path = "/r/" + name, Branch = branch, UpdatedAt = updated ?? Noon };
 
-    private static string Git(string cwd, params string[] args)
-    {
-        var start = new ProcessStartInfo("git") { WorkingDirectory = cwd, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
-        foreach (var arg in new[] { "-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false" }.Concat(args))
-        {
-            start.ArgumentList.Add(arg);
-        }
-        using var process = TestEnvironment.Start(start)!;
-        var output = process.StandardOutput.ReadToEnd();
-        process.StandardError.ReadToEnd();
-        process.WaitForExit();
-        process.ExitCode.ShouldBe(0, $"git {string.Join(' ', args)}");
-        return output;
-    }
+    private static string Git(string cwd, params string[] args) =>
+        HelperGit.Run(cwd, ["-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false", .. args]);
 
     private sealed class Collect : INodeEventSink
     {

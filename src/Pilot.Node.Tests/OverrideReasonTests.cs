@@ -23,19 +23,7 @@ public sealed class OverrideReasonTests
     private static async Task<CommandResult> Send(NodeHarness node, CommandRequest command) =>
         (await node.Client.SendAsync(command, Ct)).Response.ShouldNotBeNull();
 
-    private static void Git(string cwd, params string[] args)
-    {
-        var start = new ProcessStartInfo("git") { WorkingDirectory = cwd, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
-        foreach (var arg in args)
-        {
-            start.ArgumentList.Add(arg);
-        }
-        using var process = TestEnvironment.Start(start)!;
-        process.StandardOutput.ReadToEnd();
-        var error = process.StandardError.ReadToEnd();
-        process.WaitForExit();
-        process.ExitCode.ShouldBe(0, $"git {string.Join(' ', args)}: {error}");
-    }
+    private static void Git(string cwd, params string[] args) => HelperGit.Run(cwd, args);
 
     // A failed leg in a plane that is a real (empty) repository, as finishing a leg looks at its plane.
     private static void FailedLeg(NodeHarness node)
