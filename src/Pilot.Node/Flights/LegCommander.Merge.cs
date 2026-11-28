@@ -756,6 +756,11 @@ public sealed partial class LegCommander
                 {
                     await github.DisarmAutoMergeAsync(flight.RepoPath, number, cancellationToken);
                 }
+                catch (RateLimitedException)
+                {
+                    // A rate limit is held until its reset by the caller, not worded as a refusal (PIL1390).
+                    throw;
+                }
                 catch (FlightException ex)
                 {
                     throw new FlightException($"{verb} is refused: #{number} may be armed with GitHub's auto-merge, which would merge it without the new leg, and it could not be turned off ({ex.Message}): switch it off on the PR page, then try again");
@@ -770,6 +775,11 @@ public sealed partial class LegCommander
                 try
                 {
                     await github.DequeueAsync(flight.RepoPath, number, cancellationToken);
+                }
+                catch (RateLimitedException)
+                {
+                    // A rate limit is held until its reset by the caller, not worded as a refusal (PIL1390).
+                    throw;
                 }
                 catch (FlightException ex)
                 {

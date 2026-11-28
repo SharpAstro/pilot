@@ -27,7 +27,7 @@ public static class MergeRefusals
     public static readonly MergeRefusal Unclassified = new(MergeRefusalClass.Persons);
 
     /// <summary>
-    /// Passing, with GitHub's rate limit named: the node waits until the limit resets (<see cref="PullRequestWatch.UnknownReset"/> from now
+    /// Passing, with GitHub's rate limit named: the node waits until the limit resets (<see cref="GhBudget.UnknownReset"/> from now
     /// when GitHub gives none), asks again, and rings only after <see cref="PrChecks.PassingTriesBeforeRing"/> tries.
     /// </summary>
     public static readonly MergeRefusal RateLimited = new(MergeRefusalClass.Passing, MergeAction.WaitForRateLimit);

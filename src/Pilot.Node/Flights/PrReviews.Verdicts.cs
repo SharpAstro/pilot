@@ -209,7 +209,7 @@ public sealed partial class PrReviews
         catch (RateLimitedException ex)
         {
             var now = time.GetUtcNow();
-            return (false, null, ex.ResetAt is { } reset && reset > now ? reset : now + PullRequestWatch.UnknownReset);
+            return (false, null, ex.ResetAt is { } reset && reset > now ? reset : now + GhBudget.UnknownReset);
         }
         catch (FlightException ex)
         {

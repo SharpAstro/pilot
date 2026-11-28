@@ -7,7 +7,7 @@ namespace Pilot.Node.Tests;
 
 /// <summary>
 /// PIL1390: a GitHub rate limit on the PR read of a flight's next step is not a refusal that rings after one try. The step waits until
-/// the reset (<see cref="PullRequestWatch.UnknownReset"/> when gh gives none) and a later sweep runs it. A failure that is no rate limit
+/// the reset (<see cref="GhBudget.UnknownReset"/> when gh gives none) and a later sweep runs it. A failure that is no rate limit
 /// still rings at its second miss.
 /// </summary>
 public sealed class RateLimitedStepTests : ReviewTestsBase
@@ -75,7 +75,7 @@ public sealed class RateLimitedStepTests : ReviewTestsBase
         var flight = await FlownToItsPr("61", () => new RateLimitedException($"gh could not read the PR: {Limit}", null));
 
         var asked = _thrown();
-        _clock.Advance(PullRequestWatch.UnknownReset - TimeSpan.FromMinutes(1));
+        _clock.Advance(GhBudget.UnknownReset - TimeSpan.FromMinutes(1));
         await _legs.AdvanceAllAsync(Ct);
         _thrown().ShouldBe(asked);
 
@@ -84,6 +84,38 @@ public sealed class RateLimitedStepTests : ReviewTestsBase
         await _legs.AdvanceAllAsync(Ct);
         F(flight.Code).PullRequest.ShouldNotBeNull();
         StepCards().ShouldBeEmpty();
+    }
+
+    // The step that takes the merge back (a new leg on a flight with a PR) meets the limit on turning GitHub's auto-merge off: it stays a rate limit.
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    [Trait("Category", "Slow")]
+    public async Task ATakeBackMetByTheRateLimitIsRefusedAsOneAndAnyOtherFailureIsWordedAsARefusal(bool rateLimit)
+    {
+        var (flight, number) = await Passed("61");
+        _github.AutoMergeArmed.Enqueue((number, _github.Pr!.Head, "squash"));
+        _github.DisarmFailure = rateLimit
+            ? new RateLimitedException($"gh could not turn off auto-merge: {Limit}", _clock.GetUtcNow() + TimeSpan.FromMinutes(30))
+            : new FlightException("gh could not turn off auto-merge: boom");
+
+        var result = await _legs.RunAsync(new CommandRequest
+        {
+            Verb = Verbs.PlanLeg, Target = Verbs.FlightTarget(flight.Code), Who = "tests",
+            Args = ["name=review-notes", "goal=Do the work", "done-when=Its check passes"],
+        }, Ct);
+
+        result.Ok.ShouldBeFalse();
+        if (rateLimit)
+        {
+            result.Way.ShouldBe(RefusalWays.RateLimited);
+            result.Error.ShouldNotBeNull().ShouldContain("rate limit");
+        }
+        else
+        {
+            result.Way.ShouldNotBe(RefusalWays.RateLimited);
+            result.Error.ShouldNotBeNull().ShouldContain("is refused");
+        }
     }
 
     [Fact]
@@ -101,7 +133,7 @@ public sealed class RateLimitedStepTests : ReviewTestsBase
 }
 
 /// <summary>PIL1390: the node's review post waits out a rate limit on its PR read and the sweep posts it after the reset.</summary>
-public sealed class RateLimitedReviewPostTests : PrReviewTestsBase
+public sealed class PrReviewRateLimitTests : PrReviewTestsBase
 {
     private const string Limit = "GraphQL: API rate limit already exceeded for user ID 1.";
 

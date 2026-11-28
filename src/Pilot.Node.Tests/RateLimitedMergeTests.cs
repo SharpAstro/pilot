@@ -7,7 +7,7 @@ namespace Pilot.Node.Tests;
 
 /// <summary>
 /// PIL1390: a GitHub rate limit on the merge path (the PR read, the merge's own answer) is not a person's refusal after one try. The
-/// node's merge, and an armed one, wait until the limit resets (<see cref="PullRequestWatch.UnknownReset"/> when GitHub gives none), ask
+/// node's merge, and an armed one, wait until the limit resets (<see cref="GhBudget.UnknownReset"/> when GitHub gives none), ask
 /// again, and ring only at the <see cref="PrChecks.PassingTriesBeforeRing"/>th failure.
 /// </summary>
 public sealed class RateLimitedMergeTests : ReviewTestsBase
@@ -22,6 +22,22 @@ public sealed class RateLimitedMergeTests : ReviewTestsBase
     {
         Refused().ShouldBeEmpty();
         _state.Cards().Any(c => c.Kind is LegCommander.MergeFailed or PrChecks.MergeDropped).ShouldBeFalse();
+    }
+
+    // Every ask of the merge answer (gh pr merge) is rate limited, through the landing the node's merge uses.
+    private Func<int> MergeAnswerRateLimited(TimeProvider clock, TimeSpan? resetIn)
+    {
+        var thrown = 0;
+        _github.OnCall = call =>
+        {
+            if (call == nameof(IGitHub.MergeAsync))
+            {
+                thrown++;
+                throw new RateLimitedException($"gh could not merge #1: {Limit}", resetIn is { } span ? clock.GetUtcNow() + span : null);
+            }
+            return Task.CompletedTask;
+        };
+        return () => thrown;
     }
 
     // Every ask of the merge's PR read is rate limited; <paramref name="resetIn"/> is how long after the ask the limit resets, null when gh gives none.
@@ -96,7 +112,66 @@ public sealed class RateLimitedMergeTests : ReviewTestsBase
         NoRefusalRaised();
         _state.Decisions().Last(d => d.Subject == Verbs.FlightTarget(flight.Code) && d.Kind == DecisionKinds.Merge).Reason.ShouldContain("GitHub's rate limit");
 
-        clock.Advance(PullRequestWatch.UnknownReset - TimeSpan.FromMinutes(1));
+        clock.Advance(GhBudget.UnknownReset - TimeSpan.FromMinutes(1));
+        await checks.LookAsync(Ct);
+        thrown().ShouldBe(1);
+
+        clock.Advance(TimeSpan.FromMinutes(2));
+        await checks.LookAsync(Ct);
+        thrown().ShouldBe(2);
+        NoRefusalRaised();
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task ARateLimitOnTheMergeAnswerWaitsUntilTheResetAndRingsAfterTheLastTry()
+    {
+        NodeAdvances();
+        _github.Checks = ChoiceStatus.Passing;
+        var (_, _) = await Passed("93");
+        var clock = new ShiftedClock();
+        var thrown = MergeAnswerRateLimited(clock, TimeSpan.FromMinutes(30));
+        var checks = Checks(clock);
+
+        await checks.LookAsync(Ct);
+        thrown().ShouldBe(1);
+        NoRefusalRaised();
+
+        clock.Advance(PrChecks.PassingBackoff[1] + TimeSpan.FromMinutes(1));
+        await checks.LookAsync(Ct);
+        thrown().ShouldBe(1);
+        NoRefusalRaised();
+
+        clock.Advance(TimeSpan.FromMinutes(30));
+        await checks.LookAsync(Ct);
+        thrown().ShouldBe(2);
+        NoRefusalRaised();
+
+        clock.Advance(TimeSpan.FromMinutes(31));
+        await checks.LookAsync(Ct);
+        thrown().ShouldBe(PrChecks.PassingTriesBeforeRing);
+
+        var card = Refused().ShouldHaveSingleItem();
+        card.Bin.ShouldBe(CardBin.Ring);
+        card.Detail.ShouldNotBeNull().ShouldContain("rate limit");
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task ARateLimitOnTheMergeAnswerWithNoResetWaitsTheUnknownReset()
+    {
+        NodeAdvances();
+        _github.Checks = ChoiceStatus.Passing;
+        var (_, _) = await Passed("94");
+        var clock = new ShiftedClock();
+        var thrown = MergeAnswerRateLimited(clock, null);
+        var checks = Checks(clock);
+
+        await checks.LookAsync(Ct);
+        thrown().ShouldBe(1);
+        NoRefusalRaised();
+
+        clock.Advance(GhBudget.UnknownReset - TimeSpan.FromMinutes(1));
         await checks.LookAsync(Ct);
         thrown().ShouldBe(1);
 

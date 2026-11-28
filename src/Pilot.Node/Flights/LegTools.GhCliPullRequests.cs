@@ -111,7 +111,8 @@ public sealed partial class GhCli
     /// <summary>
     /// The one reader of a failed gh call: GitHub's rate limit (primary or secondary) is a <see cref="RateLimitedException"/> carrying when
     /// it resets, anything else a plain <see cref="FlightException"/>; <paramref name="message"/> is kept whole either way, since callers
-    /// and cards quote its words.
+    /// and cards quote its words. Note: the PR reads go through GhAsync, so a gh timeout is a plain FlightException here ("gh timed out", class
+    /// Persons on the merge path), where it used to surface as an OperationCanceledException.
     /// </summary>
     private async Task<FlightException> FailedAsync(string message, string said, CancellationToken cancellationToken) =>
         said.Contains("rate limit", StringComparison.OrdinalIgnoreCase)
@@ -119,7 +120,7 @@ public sealed partial class GhCli
             : new FlightException(message);
 
     // A secondary limit is a short pause that has nothing to do with the hourly points, so its reset is unknown (the watch then waits
-    // PullRequestWatch.UnknownReset); only the primary limit comes back at the hourly reset.
+    // GhBudget.UnknownReset); only the primary limit comes back at the hourly reset.
     private async Task<DateTimeOffset?> ResetOfAsync(string said, CancellationToken cancellationToken) =>
         said.Contains("secondary", StringComparison.OrdinalIgnoreCase) ? null : await GraphQlResetAsync(cancellationToken);
 
