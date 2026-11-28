@@ -68,6 +68,20 @@ internal sealed record JobLine
             .ThenByDescending(l => l.Row.EndedAt ?? l.Row.StartedAt)
             .ToList();
 
+    /// <summary>
+    /// <see cref="Order"/>'s comparison, key by key: lists already in that order merge into it (<see cref="Ordered.Merge"/>)
+    /// without sorting them again.
+    /// </summary>
+    internal static readonly IComparer<JobLine> Ordering = Comparer<JobLine>.Create((a, b) =>
+    {
+        static int Bucket(JobRow j) => j.State switch { JobState.Running => 0, JobState.Queued => 1, _ => 2 };
+        static DateTimeOffset Queued(JobRow j) => j.State == JobState.Queued ? j.QueuedAt ?? j.StartedAt : DateTimeOffset.MinValue;
+        var c = Bucket(a.Row).CompareTo(Bucket(b.Row));
+        if (c == 0) c = Queued(a.Row).CompareTo(Queued(b.Row));
+        if (c == 0) c = (b.Row.EndedAt ?? b.Row.StartedAt).CompareTo(a.Row.EndedAt ?? a.Row.StartedAt);
+        return c;
+    });
+
     public static JobLine From(JobRow job, DateTimeOffset now) => new()
     {
         Row = job,

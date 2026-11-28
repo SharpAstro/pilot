@@ -133,6 +133,21 @@ internal sealed partial record SessionLine
             .ThenBy(l => l.Node?.Name ?? "", StringComparer.Ordinal)
             .ToList();
 
+    /// <summary>
+    /// <see cref="Order"/>'s comparison, key by key: lists already in that order merge into it (<see cref="Ordered.Merge"/>)
+    /// without sorting them again.
+    /// </summary>
+    internal static readonly IComparer<SessionLine> Ordering = Comparer<SessionLine>.Create((a, b) =>
+    {
+        var c = StateOrder(a.Row.State).CompareTo(StateOrder(b.Row.State));
+        if (c == 0) c = ((int)a.Row.Role).CompareTo((int)b.Row.Role);
+        if (c == 0) c = StringComparer.Ordinal.Compare(a.Row.Flight ?? "", b.Row.Flight ?? "");
+        if (c == 0) c = StringComparer.Ordinal.Compare(a.Row.Leg ?? "", b.Row.Leg ?? "");
+        if (c == 0) c = StringComparer.Ordinal.Compare(a.Row.Name, b.Row.Name);
+        if (c == 0) c = StringComparer.Ordinal.Compare(a.Node?.Name ?? "", b.Node?.Name ?? "");
+        return c;
+    });
+
     public static SessionLine From(SessionRow row, DateTimeOffset now)
     {
         var contextFraction = row.ContextWindow > 0 ? (float)row.ContextTokens / row.ContextWindow : 0f;
