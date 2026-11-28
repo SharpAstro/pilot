@@ -133,7 +133,11 @@ public sealed partial class TranscriptBook(ClaudeProfile profile)
     internal sealed class Reader(string path)
     {
         private long _offset;
-        private readonly List<byte> _partial = [];
+        // The bytes of a line the last read cut short, waiting for its end; a line that a read holds whole is parsed where it lies.
+        // A line used to be gathered byte by byte into a list, which doubled as it grew (a long tool result or a pasted picture
+        // made it 32 and 64 MiB on the large object heap), was copied out whole and kept its size for the reader's life (pilot #1443).
+        private byte[] _partial = [];
+        private int _partialLength;
         private string? _askedIn;
         private bool _nodeSpoke;
         private bool _fedBefore;
@@ -160,7 +164,8 @@ public sealed partial class TranscriptBook(ClaudeProfile profile)
                     // Rewritten from the start (compacted): read it all again.
                     _offset = 0;
                     _lines = 0;
-                    _partial.Clear();
+                    _partial = [];
+                    _partialLength = 0;
                     Entries.Clear();
                     Queued.Clear();
                     Pending = null;
@@ -170,23 +175,39 @@ public sealed partial class TranscriptBook(ClaudeProfile profile)
                     _fedBefore = false;
                 }
                 file.Seek(_offset, SeekOrigin.Begin);
-                var buffer = new byte[64 * 1024];
-                int read;
-                while ((read = file.Read(buffer, 0, buffer.Length)) > 0)
+                var buffer = System.Buffers.ArrayPool<byte>.Shared.Rent(64 * 1024);
+                try
                 {
-                    _offset += read;
-                    for (var i = 0; i < read; i++)
+                    int read;
+                    while ((read = file.Read(buffer, 0, buffer.Length)) > 0)
                     {
-                        if (buffer[i] == (byte)'\n')
+                        _offset += read;
+                        var start = 0;
+                        while (Array.IndexOf(buffer, (byte)'\n', start, read - start) is var end and >= 0)
                         {
-                            Line(Encoding.UTF8.GetString([.. _partial]));
-                            _partial.Clear();
+                            if (_partialLength == 0)
+                            {
+                                Line(buffer.AsMemory(start, end - start));
+                            }
+                            else
+                            {
+                                Keep(buffer.AsSpan(start, end - start));
+                                Line(_partial.AsMemory(0, _partialLength));
+                                _partialLength = 0;
+                                // A long line's room is let go once it is read: kept, one 30 MB line held 64 MiB for the reader's life.
+                                if (_partial.Length > 1024 * 1024)
+                                {
+                                    _partial = [];
+                                }
+                            }
+                            start = end + 1;
                         }
-                        else
-                        {
-                            _partial.Add(buffer[i]);
-                        }
+                        Keep(buffer.AsSpan(start, read - start));
                     }
+                }
+                finally
+                {
+                    System.Buffers.ArrayPool<byte>.Shared.Return(buffer);
                 }
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -194,11 +215,30 @@ public sealed partial class TranscriptBook(ClaudeProfile profile)
             }
         }
 
-        private void Line(string line)
+        // Adds bytes to the line the reads have cut short, growing its room by half again as needed.
+        private void Keep(ReadOnlySpan<byte> bytes)
+        {
+            if (bytes.IsEmpty)
+            {
+                return;
+            }
+            if (_partialLength + bytes.Length > _partial.Length)
+            {
+                var grown = new byte[Math.Max(_partialLength + bytes.Length, Math.Max(4096, _partial.Length + _partial.Length / 2))];
+                _partial.AsSpan(0, _partialLength).CopyTo(grown);
+                _partial = grown;
+            }
+            bytes.CopyTo(_partial.AsSpan(_partialLength));
+            _partialLength += bytes.Length;
+        }
+
+        // One line of the transcript, its UTF-8 bytes as they lie in the read buffer or the cut-short line's room: parsed from the
+        // bytes themselves, with no string of the whole line made first.
+        private void Line(ReadOnlyMemory<byte> line)
         {
             // The line's number in the file, from 1: the key of a line that has neither uuid nor message id.
             var lineNo = ++_lines;
-            if (line.Length == 0)
+            if (line.IsEmpty)
             {
                 return;
             }
