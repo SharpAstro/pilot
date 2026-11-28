@@ -1181,7 +1181,7 @@ if (feed is not null)
                 var shownPage = (PilotPage)Volatile.Read(ref pagesWanted);
                 if (!asked && !moved && FrameWatch.Whole(shownPage) && Volatile.Read(ref latest) is { } last && last.Item1.Cards.Merged.Count == 0
                     && frameWatch.Drawn(ask, FrameWatch.Fingerprint(last.Item1, last.Item2, now, shownPage, version,
-                        FrameWatch.Header(chrome.Home.Maintenance, chrome.Autopilot.On, feed.NewerInstalled, chrome.Nodes, FrameWatch.Light(chrome.About, Volatile.Read(ref lightShown))), told: chrome.Ideas.ToldAt()))
+                        FrameWatch.Header(chrome.Home.Maintenance, chrome.Autopilot.On, feed.NewerInstalled, chrome.Nodes, FrameWatch.Light(chrome.About, Volatile.Read(ref lightShown))), told: chrome.Ideas.ToldAt())))
                 {
                     continue;
                 }
