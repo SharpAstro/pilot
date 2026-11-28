@@ -1275,8 +1275,11 @@ public static class RefusalWays
     /// <summary>A push that met the flight's PR merged meanwhile: the flight is marked merged under its work, and the commits go to a follow-up PR (PIL836).</summary>
     public const string HandedOn = "handed-on";
 
+    /// <summary>GitHub's rate limit stopped the command: it passes by itself, so a caller waits for the reset and asks again, ringing no one (PIL1390).</summary>
+    public const string RateLimited = "rate-limited";
+
     /// <summary>Whether <paramref name="way"/> is one of these.</summary>
-    public static bool Is(string? way) => way is Busy or ProtectedBranch or HandedOn;
+    public static bool Is(string? way) => way is Busy or ProtectedBranch or HandedOn or RateLimited;
 }
 
 /// <summary>The ways an <c>edit-idea</c> went (<see cref="CommandResult.Way"/>).</summary>

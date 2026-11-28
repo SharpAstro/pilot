@@ -98,8 +98,13 @@ public sealed partial class PrReviews
         await GiveFlightVerdictAsync(reviewed, pr, cancellationToken);
         // The node posts first and asks after. The Post card used to be raised before the node's own post, which takes some 30 s,
         // and was pressed meanwhile: the press was refused as a second post and reopened the card (DIR.Lib#168, SE1, 2026-10-28).
-        var (posted, notPosted) = await PostIfOpenAsync(pr, subject, cancellationToken);
-        if (!posted)
+        var (posted, notPosted, retryAt) = await PostIfOpenAsync(pr, subject, cancellationToken);
+        if (retryAt is { } waitUntil)
+        {
+            // A rate limit on the PR read passes by itself: no card, the sweep posts it once the limit resets.
+            state.PutPrReview((Of(pr) ?? reviewed) with { PostRetryAt = waitUntil });
+        }
+        else if (!posted)
         {
             // For-you, not a ring, and only for a review the node did not post: a PR no longer open, a post GitHub refused, or one
             // that went out and never said back, which may be on the PR and PostAsync refuses again, so it gets no Post.
@@ -181,29 +186,74 @@ public sealed partial class PrReviews
     /// An approve posts itself too, by design, as a changes or a comment does. The Handled posted card closes with the review in
     /// <see cref="EndAsync"/> (<c>CloseCardsAbout</c>), on purpose: it is a record, still shown under <c>--all</c> and in the digest.
     /// </summary>
-    private async Task<(bool Posted, string? NotPosted)> PostIfOpenAsync(PrRef pr, string subject, CancellationToken cancellationToken)
+    private async Task<(bool Posted, string? NotPosted, DateTimeOffset? RetryAt)> PostIfOpenAsync(PrRef pr, string subject, CancellationToken cancellationToken)
     {
         if (!PostsItself)
         {
-            return (false, null);
+            return (false, null, null);
         }
         try
         {
             var read = await github.PullRequestOfAsync(pr.Repo, pr.Number, cancellationToken);
             if (!string.Equals(read.State, "OPEN", StringComparison.OrdinalIgnoreCase))
             {
-                return (false, null);
+                return (false, null, null);
             }
             await PostAsync(pr, new CommandRequest { Verb = Verbs.PostReview, Target = subject, Who = "node" }, cancellationToken);
             if (Of(pr) is { PostedUrl: { } url, Verdict: { } verdict })
             {
                 state.RaiseCard(CardBin.Handled, PostedKind, subject, $"{pr}: pilot's review posted, {verdict}", url, link: url);
             }
-            return (true, null);
+            return (true, null, null);
+        }
+        catch (RateLimitedException ex)
+        {
+            var now = time.GetUtcNow();
+            return (false, null, ex.ResetAt is { } reset && reset > now ? reset : now + PullRequestWatch.UnknownReset);
         }
         catch (FlightException ex)
         {
-            return (false, ex.Message);
+            return (false, ex.Message, null);
+        }
+    }
+
+    /// <summary>
+    /// Posts the reviews whose post waited for GitHub's rate limit, once its reset has passed. Posted, the review is over as any posted
+    /// one; met by the limit again it waits for the new reset; refused otherwise, or a PR no longer open, it gets the card a post that
+    /// did not go gets. Takes the sweep's lock.
+    /// </summary>
+    private async Task PostAfterRateLimitAsync(CancellationToken cancellationToken)
+    {
+        var now = time.GetUtcNow();
+        foreach (var review in state.PrReviews().Where(r => r is { State: PrReviewState.Reviewed, PostRetryAt: not null, PostedId: null, PostingAt: null }).ToArray())
+        {
+            if (review.PostRetryAt > now)
+            {
+                continue;
+            }
+            var pr = PrRef.Parse($"{review.Repo}#{review.Number}")!;
+            var subject = Verbs.PrTarget(pr.Repo, pr.Number);
+            var (posted, notPosted, retryAt) = await PostIfOpenAsync(pr, subject, cancellationToken);
+            var current = Of(pr) ?? review;
+            if (retryAt is { } again)
+            {
+                state.PutPrReview(current with { PostRetryAt = again });
+                continue;
+            }
+            state.PutPrReview(current with { PostRetryAt = null });
+            if (posted)
+            {
+                continue;
+            }
+            var sentUnanswered = Of(pr) is { PostedId: null, PostingAt: not null };
+            var card = state.RaiseCard(CardBin.ForYou, ReadyKind, subject,
+                $"{pr}: review ready, {review.Verdict}{(review.Title is { Length: > 0 } title ? $" ({title})" : "")}",
+                (notPosted is { } why ? $"Not posted by the node: {why}
+" : "") + $"The draft: {review.Draft}
+{review.Report}",
+                sentUnanswered ? [] : [new CardChoice { Label = PostLabel, Verb = Verbs.PostReview, Target = subject }],
+                link: review.Url);
+            state.PutPrReview((Of(pr) ?? current) with { Card = card.Id });
         }
     }
 

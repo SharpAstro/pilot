@@ -352,10 +352,19 @@ public sealed partial class LegCommander(
             error = ex.Message;
             // The class a merge refusal was given where it was made; the merge verb's result carries it for PrChecks.
             refusal = command.Verb is Verbs.Merge or Verbs.RerunChecks ? MergeRefusals.Of(ex) : null;
+            if (ex is RateLimitedException)
+            {
+                // Said in the way for the node's own callers (the next step holds until the reset, PIL1390).
+                way = RefusalWays.RateLimited;
+            }
             if (command.Verb is Verbs.Merge)
             {
                 // The reset of a GitHub rate limit, for the node's merge to wait until (PrChecks); any other refusal clears it.
                 _rateLimitResets[CodeOf(command.Target)] = (ex as RateLimitedException)?.ResetAt;
+            }
+            else if (ex is RateLimitedException limited)
+            {
+                _rateLimitResets[CodeOf(command.Target)] = limited.ResetAt;
             }
         }
         catch (Exception) when (DropLegEndMarkOnThrow())
