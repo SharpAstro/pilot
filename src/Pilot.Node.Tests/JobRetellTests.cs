@@ -907,7 +907,7 @@ public sealed class JobRetellTests : IDisposable
         // The owner is resumed (its row changes), then ends again: judged afresh, and it is not ended for good this time.
         _endedForGood = false;
         Session(SessionState.Idle, _clock.GetUtcNow().AddHours(-1) + TimeSpan.FromSeconds(1));
-        (await Sweep()).ShouldBeFalse();
+        (await Sweep()).ShouldBeTrue("judged afresh: not ended for good, silent for the retell interval, so told once more");
         _forGoodCalls.ShouldBeGreaterThan(calls);
 
         calls = _forGoodCalls;
