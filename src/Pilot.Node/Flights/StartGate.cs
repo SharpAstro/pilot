@@ -27,8 +27,10 @@ public sealed class StartGate(NodeState state, TimeProvider time)
     /// <summary>How old the figures may be and still count: a status line that wrote nothing for longer says nothing.</summary>
     public static readonly TimeSpan FreshFor = TimeSpan.FromMinutes(30);
 
-    // By what waits: the reset it last said so for, so a sweep or a look says it once per window, not every time.
-    private readonly ConcurrentDictionary<string, DateTimeOffset> _said = new(StringComparer.Ordinal);
+    // By what waits: the reset it last said so for, and whether that hold was a projection, so a sweep or a look says it once per window and
+    // kind of hold, not every time. A projection hold and the plain one carry the same reset, so the kind is what lets a card reading
+    // "heading for" be followed by one saying the window is at the limit.
+    private readonly ConcurrentDictionary<string, (DateTimeOffset Resets, bool Projected)> _said = new(StringComparer.Ordinal);
     private DateTimeOffset? _weekRung;
 
     /// <summary>Whether sessions take turns at all (PIL791): while an outage is open every start waits but one probe per <see cref="TurnOutage.ProbeEvery"/>. Null holds nothing on it.</summary>
@@ -56,21 +58,63 @@ public sealed class StartGate(NodeState state, TimeProvider time)
     /// </summary>
     public HoldRow? CurrentHold() =>
         Outage is { LimitUntil: { } until, LimitSay: { } say } ? new HoldRow { Kind = TurnOutage.LimitHoldKind, Until = until, Why = say }
-        : Check(StatusLimit) is { } five ? new HoldRow { Kind = GateHoldKind, Until = five.Resets, Why = five.Say } : null;
+        : Check(StatusLimit) is { } five ? new HoldRow { Kind = GateHoldKind, Until = five.Resets, Why = five.Say, Projected = five.Projected ? true : null } : null;
 
     /// <summary>Why a known account limit (<see cref="TurnOutage.OpenLimit"/>) holds every start until its reset, keyed on that reset so it is said once; null when none is open.</summary>
     public StartHeld? CheckLimit() =>
         Outage is { LimitUntil: { } until, LimitSay: { } say } ? new StartHeld(say, until) : null;
 
-    /// <summary>Why the 5-hour window holds a start at <paramref name="limit"/> percent, and until when; null when it does not.</summary>
+    /// <summary>
+    /// How far back the burn rate looks: the oldest reading of the same window in this span to the newest. Long enough to smooth the status line's
+    /// whole-percent steps, short enough that a pace that has dropped stops holding starts within a quarter of an hour.
+    /// </summary>
+    public static readonly TimeSpan RateLooksBack = TimeSpan.FromMinutes(15);
+
+    /// <summary>
+    /// The least the two readings of a rate may be apart: a percent step over a minute or two is no pace, so a node just started (it keeps
+    /// readings in memory only) holds on the current figure alone until it has this much.
+    /// </summary>
+    public static readonly TimeSpan RateNeedsSpan = TimeSpan.FromMinutes(5);
+
+    /// <summary>
+    /// The least the window may have risen between the two readings of a rate, in points: the status line reads whole percents, so one step
+    /// of a point is a rounding, not a pace, and near the top of a window it alone would project past the limit.
+    /// </summary>
+    public const double RateNeedsRise = 2;
+
+    /// <summary>Why the 5-hour window holds a start at <paramref name="limit"/> percent, now or at its recent pace before its reset, and until when; null when it does not.</summary>
     public StartHeld? Check(double limit)
     {
         var now = time.GetUtcNow();
-        return state.Usage() is { FiveHour: { } window } usage && now - usage.ReadAt < FreshFor
-               && window.UsedPercent >= limit && window.ResetsAt is { } resets && resets > now
-            ? new StartHeld(
+        if (state.Usage() is not { FiveHour: { } window } usage || now - usage.ReadAt >= FreshFor || window.ResetsAt is not { } resets || resets <= now)
+        {
+            return null;
+        }
+        if (window.UsedPercent >= limit)
+        {
+            return new StartHeld(
                 string.Create(CultureInfo.InvariantCulture, $"the 5-hour window is {window.UsedPercent:0} % spent (the limit is {limit:0} %); it goes on after {resets.ToLocalTime():HH:mm}"),
-                resets)
+                resets);
+        }
+        var readings = state.FiveHourReadings();
+        if (readings.Count == 0)
+        {
+            return null;
+        }
+        var newest = readings[^1];
+        var oldest = readings.Where(r => newest.At - r.At <= RateLooksBack && (r.ResetsAt - resets).Duration() <= TurnOutage.WindowTolerance)
+            .Cast<FiveHourReading?>().FirstOrDefault();
+        if (oldest is not { } from || newest.At - from.At < RateNeedsSpan || newest.UsedPercent - from.UsedPercent < RateNeedsRise)
+        {
+            return null;
+        }
+        var rate = Math.Max(0, (newest.UsedPercent - from.UsedPercent) / (newest.At - from.At).TotalMinutes);
+        var projected = window.UsedPercent + rate * Math.Max(0, (resets - now).TotalMinutes);
+        return projected >= limit
+            ? new StartHeld(
+                string.Create(CultureInfo.InvariantCulture, $"the 5-hour window is {window.UsedPercent:0} % spent and heading for {Math.Min(projected, 100):0} % before {resets.ToLocalTime():HH:mm} at {rate:0.0} % a minute (the limit is {limit:0} %); it goes on when the pace drops, or after {resets.ToLocalTime():HH:mm}"),
+                resets,
+                Projected: true)
             : null;
     }
 
@@ -125,9 +169,9 @@ public sealed class StartGate(NodeState state, TimeProvider time)
             _said.TryRemove(key, out _);
             return null;
         }
-        if (!_said.TryGetValue(key, out var said) || said != held.Resets)
+        if (!_said.TryGetValue(key, out var said) || said != (held.Resets, held.Projected))
         {
-            _said[key] = held.Resets;
+            _said[key] = (held.Resets, held.Projected);
             state.RaiseCard(CardBin.Handled, kind, subject, $"{what}: {held.Say}");
         }
         return held;
@@ -135,13 +179,14 @@ public sealed class StartGate(NodeState state, TimeProvider time)
 
     /// <summary>
     /// What a verb answers when the gate held its start: <c>held until 14:05: the why</c>, the reset as local HH:mm, or ddd HH:mm when it
-    /// is not today. One text for every verb.
+    /// is not today. A projection hold lifts as soon as the pace drops, so it says <c>held, at the latest until 14:05: the why</c>. One text
+    /// for every verb.
     /// </summary>
     public string HeldAnswer(StartHeld held)
     {
         var at = held.Resets.ToLocalTime();
         var when = at.Date == time.GetLocalNow().Date ? at.ToString("HH:mm", CultureInfo.InvariantCulture) : at.ToString("ddd HH:mm", CultureInfo.InvariantCulture);
-        return $"held until {when}: {held.Say}";
+        return held.Projected ? $"held, at the latest until {when}: {held.Say}" : $"held until {when}: {held.Say}";
     }
 
     /// <summary>
@@ -246,5 +291,8 @@ public sealed class StartGate(NodeState state, TimeProvider time)
     internal const int MaxHoldChoices = 3;
 }
 
-/// <summary>A start held by the 5-hour window, the 7-day pace or an outage of turns: why, in words, and when it resets (an outage's start).</summary>
-public sealed record StartHeld(string Say, DateTimeOffset Resets);
+/// <summary>
+/// A start held by the 5-hour window, the 7-day pace or an outage of turns: why, in words, and when it resets (an outage's start).
+/// <paramref name="Projected"/> marks a hold on the 5-hour window's recent pace rather than its figure, which lifts once the pace drops.
+/// </summary>
+public sealed record StartHeld(string Say, DateTimeOffset Resets, bool Projected = false);

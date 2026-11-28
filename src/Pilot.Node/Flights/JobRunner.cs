@@ -449,6 +449,24 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
             {
                 continue;
             }
+            // A session stopped on a usage or spend limit cannot act: no retell and no ring until its reset. Read from the stored row, so it
+            // holds right after a node restart, before an outage is judged again (#1416). No evidence-end argument: TurnOutage.Look moves
+            // the login-change cut to the same instant whenever evidence ends a limit, so the login cut already drops every row the
+            // evidence cut would (LegWatch keeps passing it to FromRows, and AccountLimitTests pins the parameter itself).
+            var loginChanged = Outage?.LoginChangedAt;
+            var account = state.Usage()?.Account?.Email;
+            if (AccountLimit.ResetOf(target, now, loginChanged, account) is not null)
+            {
+                continue;
+            }
+            var limitReset = AccountLimit.StoppedUntil(target, loginChanged, account);
+            if (row.RetoldAt is { } retoldAt && limitReset is { } spentInto && spentInto > retoldAt)
+            {
+                // A retell spent into the limit is void: the ladder starts again, so the row is retold once RetellAfter after the reset.
+                ForgetTell(row.Id);
+                state.PutJob(row with { RetoldAt = null, RetoldWay = null });
+                continue;
+            }
             var waits = WhatWaits(row, ownerRow);
             if (waits is null && row.RetoldAt is null && !FailedOfLeggedOwner(row, ownerRow))
             {
@@ -471,6 +489,11 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
                     _contextAtTell[row.Id] = target.ContextTokens;
                 }
                 silentSince = _busyTurnEnd[row.Id];
+            }
+            if (limitReset is { } resetAt && resetAt > silentSince)
+            {
+                // The silence clock starts at the reset: before it the session could not act.
+                silentSince = resetAt;
             }
             if (target.LastResponseAt is { } last && last > silentSince)
             {

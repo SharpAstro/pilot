@@ -1026,7 +1026,7 @@ nothing. Only the node `--node` names is used, else this machine's. The picking 
 A full test suite, a build or a training run is a job, not a worker's turn: `pilot run -- dotnet test` hands it to
 the node, which runs it in the folder it was handed from, and the worker ends its turn instead of sitting in a poll
 loop. When it ends (by itself, on its timeout, 2 h by default and 8 h at most, or cancelled) the node wakes the session
-that handed it over with how it ended, its last lines and the path of its whole log. Jobs from every flight share the
+that handed it over with how it ended, its last lines and the path of its whole log. A session stopped on a usage or spend limit is not retold or rung for until its reset, also right after a node restart (it is read from the session's stored row), and the retell waits `RetellAfter` from the reset; a retell spent into the limit is void and goes once after it. Jobs from every flight share the
 machine: `pilot-node --max-jobs <n>` run at once (1 by default). The head of the queue with nothing running starts
 whatever the free memory (so the queue never deadlocks on it); a second or later job starts only when the machine has
 free what its kind of command needs: the node samples a job's process tree every 2 s, a run's value is the median of
@@ -1590,7 +1590,14 @@ a leg is done), a planner (`flight plan`), a reviewer (the PR's, a rebase's, a g
 node keeps, and a compaction's resume (`compact`, sent by the compactor). While the 5-hour window is at or over the
 `start-limit` (90 % unless set), the start waits and one Handled card says what waits and until when
 (`TIA1 waits to start its reviewer: the 5-hour window is 95 % spent (the limit is 90 %); it goes on after 14:00`), once
-per window however often the sweep looks. The node's sweep (every minute; the watchtower's and compactor's looks too)
+per window however often the sweep looks. The gate also holds when the window, at the rate of its last 15 minutes, is
+heading past the limit before its reset (`the 5-hour window is 92 % spent and heading for 100 % before 23:20 at 1.0 % a
+minute (the limit is 98 %); it goes on when the pace drops, or after 23:20`), so a fast burn early in a window holds
+starts too, and the hold lifts by itself at the next ask once the pace falls (#1416). The rate needs two readings of the
+same window at least 5 minutes apart that rose by at least 2 points (the figure moves in whole percents, so one step is
+no pace), kept in memory only, so a node just started holds only on the current figure until it has 5 minutes of
+readings. A verb held on the pace answers `held, at the latest until 23:20:` rather than `held until`, and so do the hold line of `pilot status` and the design chat status, and the card is
+raised again when a hold on the pace becomes a hold at the limit in the same window. The node's sweep (every minute; the watchtower's and compactor's looks too)
 takes the start once the window has reset, with no one asking again. A flight of a repo in `priority-repos` uses
 `priority-start-limit` (98 % unless set) for all of these, a session of no flight (the watchtower) the plain limit. The
 limits are read at each start, so a saved setting counts at once, with no restart.

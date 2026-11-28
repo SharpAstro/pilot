@@ -29,6 +29,44 @@ public sealed partial class NodeState
         }
     }
 
+    private readonly List<FiveHourReading> _fiveHourReadings = [];
+    private string? _readingsAccount;
+
+    /// <summary>How long the 5-hour window's readings are kept in memory, for the start gate's burn rate.</summary>
+    public static readonly TimeSpan ReadingsKept = TimeSpan.FromMinutes(30);
+
+    // Under the lock. Memory only (not journalled, on no stored or wire type): a restarted node has no readings until it reads again.
+    private void RecordFiveHour(UsageRow usage)
+    {
+        if (usage.Account?.Email is { } email)
+        {
+            if (_readingsAccount is not null && !string.Equals(_readingsAccount, email, StringComparison.OrdinalIgnoreCase))
+            {
+                _fiveHourReadings.Clear();
+            }
+            _readingsAccount = email;
+        }
+        if (usage.FiveHour is not { ResetsAt: { } resets } window)
+        {
+            return;
+        }
+        if (_fiveHourReadings.Count > 0 && usage.ReadAt <= _fiveHourReadings[^1].At)
+        {
+            return;
+        }
+        _fiveHourReadings.Add(new FiveHourReading(usage.ReadAt, window.UsedPercent, resets));
+        _fiveHourReadings.RemoveAll(r => r.At < usage.ReadAt - ReadingsKept);
+    }
+
+    /// <summary>The 5-hour window's recent readings, oldest first, in one read under the lock; memory only.</summary>
+    public IReadOnlyList<FiveHourReading> FiveHourReadings()
+    {
+        lock (_gate)
+        {
+            return [.. _fiveHourReadings];
+        }
+    }
+
     /// <summary>The account's usage as last read; null before any.</summary>
     public UsageRow? Usage()
     {
@@ -48,6 +86,7 @@ public sealed partial class NodeState
         lock (_gate)
         {
             var usage = authoritative ? UsageRow.Replace(_usage, read) : UsageRow.Newest(_usage, read);
+            RecordFiveHour(usage);
             if (_usage is { } held && held.Account == usage.Account && held.FiveHour == usage.FiveHour && held.SevenDay == usage.SevenDay && held.Source == usage.Source
                 && held.LoginChangedAt == usage.LoginChangedAt && usage.ReadAt - held.ReadAt < TimeSpan.FromMinutes(10))
             {
@@ -391,3 +430,6 @@ public sealed partial class NodeState
         }
     }
 }
+
+/// <summary>One reading of the 5-hour window: when it was read, how much was spent and when it resets.</summary>
+public readonly record struct FiveHourReading(DateTimeOffset At, double UsedPercent, DateTimeOffset ResetsAt);

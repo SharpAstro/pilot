@@ -69,12 +69,16 @@ public sealed class JobRetellTests : IDisposable
     private int _context;
     private DateTimeOffset? _commandAt;
 
+    private string? _apiError;
+    private DateTimeOffset? _apiResets;
+    private string? _account;
+
     private void Session(SessionState sessionState, DateTimeOffset? lastResponse) =>
         _state.PutSession(new SessionRow
         {
             Id = "w0000001", SessionId = "w0000001-0000-4000-8000-000000000000", Name = _name, Kind = SessionKind.Background, Cwd = _root,
             Role = _role ?? (_adHoc ? SessionRole.AdHoc : SessionRole.Worker), Flight = _adHoc || _role is not null ? null : "RTL1", Leg = _adHoc || _role is not null ? null : "one", ContextTokens = _context, ContextWindow = 200_000, SpendWeighted = 0, State = sessionState,
-            LastResponseAt = lastResponse, StartedAt = _clock.GetUtcNow().AddHours(-2),
+            LastResponseAt = lastResponse, StartedAt = _clock.GetUtcNow().AddHours(-2), ApiError = _apiError, ApiErrorResetsAt = _apiResets, Account = _account,
         });
 
     private async Task<JobRow> TellNowAsync(bool whileWorking = false)
@@ -96,6 +100,130 @@ public sealed class JobRetellTests : IDisposable
     }
 
     private Task<bool> Sweep() => _jobs.RetellSilentAsync(TestContext.Current.CancellationToken);
+
+    private void StopOnLimit(string error, TimeSpan resetsIn)
+    {
+        _apiError = error;
+        _apiResets = _clock.GetUtcNow() + resetsIn;
+        Session(SessionState.Idle, _clock.GetUtcNow().AddHours(-1));
+    }
+
+    [Fact]
+    public async Task AnOwnerStoppedOnAUsageLimitIsNotRetoldOrRungForBeforeTheResetAndIsRetoldRetellAfterTheReset()
+    {
+        await TellNowAsync();
+        StopOnLimit("usage_limit_reached", TimeSpan.FromHours(1));
+
+        // No outage is open, as right after a restart.
+        _outage.IsOpen.ShouldBeFalse();
+        _clock.Advance(TimeSpan.FromMinutes(59));
+        (await Sweep()).ShouldBeFalse();
+        _said.ShouldBeEmpty();
+        _state.Cards().ShouldBeEmpty();
+
+        _clock.Advance(TimeSpan.FromMinutes(1) + After - TimeSpan.FromSeconds(1));
+        (await Sweep()).ShouldBeFalse();
+        _said.ShouldBeEmpty();
+
+        _clock.Advance(TimeSpan.FromSeconds(1));
+        (await Sweep()).ShouldBeTrue();
+        _said.ShouldHaveSingleItem().ShouldStartWith("Repeat:");
+        _state.Cards().ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task ARetellSpentIntoALimitIsVoidAndRetoldOnceAfterTheResetWithNoCard()
+    {
+        await TellNowAsync();
+        _clock.Advance(After);
+        (await Sweep()).ShouldBeTrue();
+        _said.Clear();
+        _state.Jobs().Single().RetoldAt.ShouldNotBeNull();
+
+        StopOnLimit("usage_limit_reached", TimeSpan.FromMinutes(30));
+        _clock.Advance(TimeSpan.FromMinutes(30) + After);
+        // The limit has reset, the retell fell before it: no card, the ladder starts again.
+        await Sweep();
+        _state.Cards().ShouldBeEmpty();
+        var voided = _state.Jobs().Single();
+        voided.RetoldAt.ShouldBeNull();
+        voided.RetellRung.ShouldBeNull();
+        _said.ShouldBeEmpty();
+
+        _clock.Advance(TimeSpan.FromMinutes(1));
+        await Sweep();
+        _said.ShouldHaveSingleItem().ShouldStartWith("Repeat:");
+        _state.Jobs().Single().RetoldAt.ShouldNotBeNull();
+        _state.Cards().ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task ALimitLiftedAfterTheRowBeganDoesNotHoldTheRetellOrMoveTheClock()
+    {
+        await TellNowAsync();
+        StopOnLimit("usage_limit_reached", TimeSpan.FromHours(5));
+        // A login change or a lift after the row began: its limit no longer counts, the retell goes RetellAfter after the tell.
+        _state.PutLoginChanged(_clock.GetUtcNow());
+
+        _clock.Advance(After);
+        (await Sweep()).ShouldBeTrue();
+        _said.ShouldHaveSingleItem().ShouldStartWith("Repeat:");
+    }
+
+    [Fact]
+    public async Task ALimitEndedByEvidenceDoesNotHoldTheRetellOfARowThatBeganBeforeTheEnd()
+    {
+        StopOnLimit("usage_limit_reached", TimeSpan.FromHours(5));
+        var seen = _clock.GetUtcNow();
+        _outage.OpenLimit(_apiResets!.Value, "usage limit", seen, Verbs.ModelFamily("claude-opus-5-5"));
+        _clock.Advance(TimeSpan.FromMinutes(1));
+
+        // Another session of the same family answered a turn requested after the limit was seen: the limit ends by evidence, and the owner's
+        // stored row, which still carries the error and began before the end, no longer counts.
+        _state.PutSession(new SessionRow
+        {
+            Id = "p0000001", SessionId = "p0000001-0000-4000-8000-000000000000", Name = "de1-retell-proof", Kind = SessionKind.Background, Cwd = _root,
+            Role = SessionRole.AdHoc, ContextTokens = 0, ContextWindow = 200_000, SpendWeighted = 0, State = SessionState.Idle,
+            StartedAt = seen.AddSeconds(5), LastRequestAt = seen.AddSeconds(10), LastResponseAt = seen.AddSeconds(20), Model = "claude-opus-5-5",
+        });
+        _outage.Look(_state.Sessions(), _clock.GetUtcNow());
+        _outage.LimitEvidenceEndedAt.ShouldNotBeNull();
+        _outage.IsOpen.ShouldBeFalse();
+
+        // The end moved the login-change cut with it (Look calls PutLoginChanged on an evidence end), and the retell path reads only that
+        // cut: told after the outage closed, so no redo is due and only the ladder can say it. With the login-change argument gone from
+        // the retell hold, the row's own limit would hold the retell and nothing would be said.
+        _outage.LoginChangedAt.ShouldBe(_outage.LimitEvidenceEndedAt);
+        await TellNowAsync();
+        _clock.Advance(After);
+        (await Sweep()).ShouldBeTrue();
+        _said.ShouldHaveSingleItem().ShouldStartWith("Repeat:");
+    }
+
+    [Fact]
+    public async Task ALimitOfAnotherAccountDoesNotHoldTheRetell()
+    {
+        // The owner's row ran under another login than the one the node reads now: its limit is not this account's.
+        _state.PutUsage(new UsageRow { Account = new AccountRow { Email = "b@example.org" }, ReadAt = _clock.GetUtcNow() });
+        _account = "a@example.org";
+        await TellNowAsync();
+        StopOnLimit("usage_limit_reached", TimeSpan.FromHours(5));
+
+        _clock.Advance(After);
+        (await Sweep()).ShouldBeTrue();
+        _said.ShouldHaveSingleItem().ShouldStartWith("Repeat:");
+    }
+
+    [Fact]
+    public async Task APerMinuteRateLimitErrorHoldsNothing()
+    {
+        await TellNowAsync();
+        StopOnLimit("rate_limit_error", TimeSpan.FromHours(1));
+
+        _clock.Advance(After);
+        (await Sweep()).ShouldBeTrue();
+        _said.ShouldHaveSingleItem().ShouldStartWith("Repeat:");
+    }
 
     [Fact]
     public async Task IdleAndSilentIsRetoldOnceThenRings()
