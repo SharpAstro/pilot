@@ -653,6 +653,16 @@ public sealed class StreamSession : IAsyncDisposable
                             changes.Add(new StreamSessionChange(StreamChangeKind.Init));
                         }
                         break;
+                    case "system" when Str(root, "subtype") == "compact_boundary":
+                        // #1413: a /compact ends with this line; its post_tokens is the size left, so the row published at the
+                        // end of the turn reads the compacted context, not the one before it. Absent, the reading stays.
+                        if (root.TryGetProperty("compact_metadata", out var compact) && compact.ValueKind == JsonValueKind.Object
+                            && compact.TryGetProperty("post_tokens", out var post) && post.ValueKind == JsonValueKind.Number
+                            && post.TryGetInt64(out var postTokens) && postTokens > 0)
+                        {
+                            _contextTokens = postTokens;
+                        }
+                        break;
                     case "stream_event":
                         if (root.TryGetProperty("event", out var ev) && Str(ev, "type") == "content_block_delta"
                             && ev.TryGetProperty("delta", out var delta) && Str(delta, "type") == "text_delta" && Str(delta, "text") is { Length: > 0 } words)
