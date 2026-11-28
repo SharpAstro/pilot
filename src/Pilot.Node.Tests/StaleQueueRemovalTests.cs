@@ -138,8 +138,10 @@ public sealed class StaleQueueRemovalTests() : ReviewTestsBase(realGit: true)
 
         await Checks().LookAsync(Ct);
 
-        var seen = string.Join("; ", _state.Cards(openOnly: false).Select(c => $"{c.Kind}|{c.Subject}|closed={c.ClosedAt is not null}|{c.Outcome}|{string.Join(",", c.Choices.Select(ch => ch.Verb + ":" + string.Join("/", ch.Args)))}"));
-        _state.Cards(openOnly: true).ShouldContain(c => c.Kind == LegCommander.PrReady && c.Subject == Verbs.FlightTarget(flight.Code)
-            && c.Choices.Any(ch => ch.Verb == Verbs.Merge && ch.Args.FirstOrDefault() == b), $"b={b}; cards: {seen}");
+        // The card is raised at B, and the node, the checks being green-bound, may then close it itself ("waits for the checks, then queues it"):
+        // open or closed, a PR-ready card for B exists, with a restored line, which a held-over old removal would have prevented.
+        _state.Cards(openOnly: false).ShouldContain(c => c.Kind == LegCommander.PrReady && c.Subject == Verbs.FlightTarget(flight.Code)
+            && c.Choices.Any(ch => ch.Verb == Verbs.Merge && ch.Args.FirstOrDefault() == b));
+        _state.Cards(openOnly: false).ShouldContain(c => c.Kind == LegCommander.PrReadyRestoredKind && c.Subject == Verbs.FlightTarget(flight.Code));
     }
 }
