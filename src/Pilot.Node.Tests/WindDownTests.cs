@@ -199,6 +199,47 @@ public sealed class WindDownTests : IDisposable
         _state.Cards().Count(c => c.Kind == LegWatch.StraySession).ShouldBe(2);
     }
 
+    [Fact]
+    public async Task MergingTellsNobodyForAGoneReviewerStillStopsItAndLeavesNoStrayCard()
+    {
+        var flight = await ReviewedFlightAsync();
+        _state.PutSession(Row("rev11111", "du1-pil542-review", SessionRole.Reviewer, flight.Code, SessionState.Idle) with { Gone = true });
+        var head = Git(flight.Worktree, "rev-parse", "HEAD");
+
+        await _flights.LandAfterMergeAsync(flight.Code, head, Ct);
+
+        _told.ShouldBeEmpty();
+        _workers.Stopped.ShouldBe(["rev11111"]);
+        _ledger.Find(["rev11111"])!.EndReason.ShouldBe(SessionEndReasons.Merged);
+        var watch = new LegWatch(_state, Run, _time) { Ledger = _ledger };
+        _time.Advance(TimeSpan.FromMinutes(20));
+        await watch.LookAsync(Ct);
+        // A Gone row is skipped by the sweep, so the card to rule out is any card about it, such as a landing's own stop-unconfirmed one.
+        _state.Cards().ShouldNotContain(c => c.Subject == Verbs.SessionTarget("rev11111"));
+    }
+
+    [Fact]
+    public async Task LandingStopsTheJobOfASessionTheSayResumedUnderANewId()
+    {
+        var flight = await ReviewedFlightAsync();
+        _flights.Say = (id, text, _) =>
+        {
+            _told.Add((id, text));
+            _state.PutSession(Row(id, "du1-pil542-review", SessionRole.Reviewer, flight.Code, SessionState.Working) with
+            {
+                SessionId = "new22222-0000-4000-8000-000000000000",
+                EarlierSessionIds = ["rev11111-0000-4000-8000-000000000000"],
+            });
+            return Task.FromResult(true);
+        };
+
+        var landed = await _flights.RunAsync(new CommandRequest { Verb = Verbs.Land, Target = Verbs.FlightTarget(flight.Code), Who = "controller" }, Ct);
+
+        landed.Ok.ShouldBeTrue(landed.Error);
+        _workers.Stopped.ShouldContain("new22222");
+        _workers.Stopped.ShouldContain("rev11111");
+    }
+
     private Task<CommandResult> Run(CommandRequest command, CancellationToken cancellationToken)
     {
         _said.Add(command);

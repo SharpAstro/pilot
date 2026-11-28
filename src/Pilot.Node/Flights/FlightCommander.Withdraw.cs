@@ -210,13 +210,20 @@ public sealed partial class FlightCommander
 
     /// <summary>
     /// Every live session of <paramref name="flight"/> and the jobs that go with it: its legs' workers, its reviewer and its sessions, found by the
-    /// state's rows and by the ledger's flight, as a landing finds them. A session's job is its row id.
+    /// state's rows and by the ledger's flight, as a landing finds them. A session's job is its row id, plus its current session's job when a say or nudge resumed it.
     /// </summary>
     private (List<string> Sessions, List<string> Jobs) SessionsAndJobsOf(FlightRow flight)
     {
-        var live = state.Sessions().Where(s => s.State is not (SessionState.Ended or SessionState.Failed) && string.Equals(s.Flight, flight.Code, StringComparison.Ordinal)).Select(s => s.Id).ToList();
+        var liveRows = state.Sessions().Where(s => s.State is not (SessionState.Ended or SessionState.Failed) && string.Equals(s.Flight, flight.Code, StringComparison.Ordinal)).ToList();
+        var live = liveRows.Select(s => s.Id);
         var sessions = live.Concat(Ledger?.All().Where(e => e.EndReason is null && string.Equals(e.Flight, flight.Code, StringComparison.Ordinal)).Select(e => e.JobId) ?? []).Distinct().ToList();
-        var jobs = state.Legs(flight.Code).Select(l => l.WorkerJob).Append(flight.Review?.ReviewerJob).OfType<string>().Concat(sessions).Distinct().ToList();
+        // A row resumed under a new session (by a say or an earlier nudge) runs as that session's job, not as its row id's (#1420).
+        var resumed = liveRows.Select(CurrentJobOf).Where(j => j.Length > 0);
+        var jobs = state.Legs(flight.Code).Select(l => l.WorkerJob).Append(flight.Review?.ReviewerJob).OfType<string>().Concat(sessions).Concat(resumed).Distinct().ToList();
         return (sessions, jobs);
     }
+
+    /// <summary>The job a row's session runs as now: the first eight characters of its SessionId, as ClaudeProfile names jobs; its row id when the session id starts with it.</summary>
+    private static string CurrentJobOf(SessionRow row) =>
+        row.SessionId.StartsWith(row.Id, StringComparison.Ordinal) || row.SessionId.Length < 8 ? row.Id : row.SessionId[..8];
 }

@@ -179,10 +179,13 @@ public sealed partial class FlightCommander
         var consumers = state.Flights().Where(f => f.State != FlightState.Landed && f.Connections.Contains(flight.Code, StringComparer.Ordinal)).ToList();
         // Every live session of the flight's too, not only the legs' current workers and the current reviewer: its planner,
         // an earlier reviewer, a validator or a renamed copy sat idle in TIA368's plane after it landed, holding the folder
-        // and still able to push. A session's job is its row id.
+        // and still able to push. A session's job is its row id, or its session id's first eight characters once a say resumed it.
         // Found by the ledger's flight too, not only by name: a session the node launched for the flight whose row is renamed or gone.
         var live = state.Sessions().Where(s => s.State is not (SessionState.Ended or SessionState.Failed) && string.Equals(s.Flight, flight.Code, StringComparison.Ordinal)).Select(s => s.Id).ToList();
-        var (_, jobs) = SessionsAndJobsOf(flight);
+        // Only a session with a process is told: a Gone row would be resumed to hear it (TIA2507: the say resumed a reviewer dead for
+        // six hours). It is still stopped below, so its ledger entry gets the reason and its job is removed.
+        var goneIds = state.Sessions().Where(s => s.Gone && string.Equals(s.Flight, flight.Code, StringComparison.Ordinal)).Select(s => s.Id).ToHashSet(StringComparer.Ordinal);
+        var tellIds = live.Where(id => !goneIds.Contains(id)).ToList();
         var endReason = mergedHead is not null ? SessionEndReasons.Merged : SessionEndReasons.Landed;
         var endBy = mergedHead is not null ? "merge" : "land";
         var endedStrays = new List<MachineStray>();
@@ -199,7 +202,7 @@ public sealed partial class FlightCommander
                 if (Say is not null)
                 {
                     var text = $"{flight.Code} has {(mergedHead is not null ? "merged" : "landed")}. Finish now: report what you have (any finding on code already in main goes in your last message), and stop. The node stops you in a moment.";
-                    foreach (var id in live)
+                    foreach (var id in tellIds)
                     {
                         try
                         {
@@ -215,16 +218,41 @@ public sealed partial class FlightCommander
                 {
                     await Task.Delay(FinishGrace, time, cancellationToken);
                 }
+                // Read after the say and its grace: a say resumes a row under a new session, whose job is the one to stop (#1420).
+                var (_, jobs) = SessionsAndJobsOf(flight);
+                var rows = state.Sessions().Where(s => string.Equals(s.Flight, flight.Code, StringComparison.Ordinal)).ToList();
+                var stopped = new HashSet<string>(StringComparer.Ordinal);
+                var failures = new Dictionary<string, string>(StringComparer.Ordinal);
                 foreach (var job in jobs)
                 {
                     try
                     {
                         await workers.StopAsync(job, endReason, endBy, cancellationToken);
+                        stopped.Add(job);
                     }
                     catch (Exception ex) when (ex is FlightException or IOException or InvalidOperationException or System.ComponentModel.Win32Exception)
                     {
                         // Gone already, or not stopped: told apart after the landing by its row (PIL1270:R1.9).
-                        failedStops[job] = ex.Message;
+                        failures[job] = ex.Message;
+                    }
+                }
+                foreach (var (job, message) in failures)
+                {
+                    // A failed stop counts under the row's id, for the row's current job only: a superseded job's does not, and a Gone row has no process.
+                    var row = rows.FirstOrDefault(r => string.Equals(r.Id, job, StringComparison.Ordinal) || string.Equals(CurrentJobOf(r), job, StringComparison.Ordinal));
+                    if (row is null)
+                    {
+                        failedStops[job] = message;
+                        continue;
+                    }
+                    if (row.Gone)
+                    {
+                        continue;
+                    }
+                    var current = CurrentJobOf(row);
+                    if (string.Equals(job, current, StringComparison.Ordinal) || !stopped.Contains(current) && !failures.ContainsKey(current))
+                    {
+                        failedStops[row.Id] = message;
                     }
                 }
                 // Nothing of its own is left queued or running: its jobs, and those of its sessions.
