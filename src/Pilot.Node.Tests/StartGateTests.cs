@@ -134,14 +134,17 @@ public sealed class StartGateTests : IDisposable
     [Fact]
     public void APriorityLimitIsJudgedTheSameWayASteepClimbHoldsAndAGentleOneDoesNot()
     {
-        // 80 to 86 in ten minutes with an hour left reaches 98; 80 to 82 does not.
+        // 80 to 86 in ten minutes with an hour left reaches 98.
         Climb(86);
         _gate.Check(98).ShouldNotBeNull();
+    }
 
-        var gentle = new StartGateTests();
-        gentle.Climb(82);
-        gentle.Check(98).ShouldBeNull();
-        gentle.Dispose();
+    [Fact]
+    public void AGentleClimbDoesNotHoldAtThePriorityLimit()
+    {
+        // 80 to 82 in ten minutes with an hour left reaches 94, under 98.
+        Climb(82);
+        _gate.Check(98).ShouldBeNull();
     }
 
     [Fact]
