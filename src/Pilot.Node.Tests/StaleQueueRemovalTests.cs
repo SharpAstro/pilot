@@ -39,6 +39,9 @@ public sealed class StaleQueueRemovalTests() : ReviewTestsBase(realGit: true)
         return (F(flight.Code), a, b, removedAt);
     }
 
+    private void Plane(FlightRow flight, string when) =>
+        Directory.Exists(flight.Worktree).ShouldBeTrue($"plane gone {when}; state {F(flight.Code).State}; cards {string.Join(',', _state.Cards().Select(c => c.Kind + ':' + c.Title))}");
+
     private void NothingDoneAt(FlightRow flight, string head, string planeHead)
     {
         _legs.DroppedForConflict(flight.Code, head).ShouldBeFalse();
@@ -54,9 +57,9 @@ public sealed class StaleQueueRemovalTests() : ReviewTestsBase(realGit: true)
     {
         var (flight, _, b, _) = await RemovedThenPushed("MERGE_CONFLICT");
         var checks = Checks();
-        System.Console.Error.WriteLine($"DIAG0 exists={Directory.Exists(flight.Worktree)} state={F(flight.Code).State}");
+        Plane(flight, "before");
         await checks.LookAsync(Ct);
-        System.Console.Error.WriteLine($"DIAG1 exists={Directory.Exists(flight.Worktree)} state={F(flight.Code).State} cards={string.Join(',', _state.Cards().Select(c => c.Kind + ':' + c.Title))}");
+        Plane(flight, "after look 1");
         await checks.LookAsync(Ct);
         await checks.LookAsync(Ct);
 
@@ -107,8 +110,9 @@ public sealed class StaleQueueRemovalTests() : ReviewTestsBase(realGit: true)
     {
         var (flight, _, b, _) = await RemovedThenPushed("FAILED_CHECKS");
         var checks = Checks();
-
+        Plane(flight, "before");
         await checks.LookAsync(Ct);
+        Plane(flight, "after look 1");
         await checks.LookAsync(Ct);
 
         NothingDoneAt(flight, b, b);
