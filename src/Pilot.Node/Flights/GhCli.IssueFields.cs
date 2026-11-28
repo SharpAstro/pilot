@@ -82,6 +82,15 @@ public sealed partial class GhCli
     /// </summary>
     internal async Task<Dictionary<int, IssuePriority>> OpenPrioritiesAsync(string repoPath, CancellationToken cancellationToken)
     {
+        var now = NodeTraffic.Shared.Time.GetUtcNow();
+        return await Priorities.GetAsync(repoPath, now, () => ReadOpenPrioritiesAsync(repoPath, cancellationToken));
+    }
+
+    // The repo watch's two reads a pass share one (#1403); see PriorityReadCache.
+    private static readonly PriorityReadCache Priorities = new(TimeSpan.FromSeconds(90));
+
+    private async Task<(Dictionary<int, IssuePriority> Levels, bool Whole)> ReadOpenPrioritiesAsync(string repoPath, CancellationToken cancellationToken)
+    {
         var found = new Dictionary<int, IssuePriority>();
         string? after = null;
         for (var page = 0; page < 10; page++)
@@ -94,7 +103,7 @@ public sealed partial class GhCli
             var (exit, output, _) = await RunAsync([.. args], repoPath, cancellationToken);
             if (exit != 0)
             {
-                return found;
+                return (found, false);
             }
             try
             {
@@ -102,7 +111,7 @@ public sealed partial class GhCli
                 if (!doc.RootElement.TryGetProperty("data", out var data) || !data.TryGetProperty("repository", out var repo) || repo.ValueKind != JsonValueKind.Object
                     || !repo.TryGetProperty("issues", out var issues) || issues.ValueKind != JsonValueKind.Object)
                 {
-                    return found;
+                    return (found, false);
                 }
                 foreach (var issue in issues.GetProperty("nodes").EnumerateArray().Where(n => n.ValueKind == JsonValueKind.Object))
                 {
@@ -123,16 +132,16 @@ public sealed partial class GhCli
                 var info = issues.GetProperty("pageInfo");
                 if (!info.TryGetProperty("hasNextPage", out var more) || more.ValueKind != JsonValueKind.True || TextOf(info, "endCursor") is not { } cursor)
                 {
-                    return found;
+                    return (found, true);
                 }
                 after = cursor;
             }
             catch (Exception ex) when (ex is JsonException or KeyNotFoundException or InvalidOperationException)
             {
-                return found;
+                return (found, false);
             }
         }
-        return found;
+        return (found, true);
     }
 
     /// <summary><paramref name="issues"/> with the Priority each open one has on GitHub.</summary>
@@ -154,6 +163,18 @@ public sealed partial class GhCli
     }
 
     public async Task SetIssuePriorityAsync(string repoPath, int number, IssuePriority? level, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await SetIssuePriorityCoreAsync(repoPath, number, level, cancellationToken);
+        }
+        finally
+        {
+            Priorities.Drop(repoPath);
+        }
+    }
+
+    private async Task SetIssuePriorityCoreAsync(string repoPath, int number, IssuePriority? level, CancellationToken cancellationToken)
     {
         var shape = await ReadPriorityShapeAsync(repoPath, number, cancellationToken);
         if (shape is not { FieldId: { } fieldId } || shape.IssueId.Length == 0)

@@ -178,7 +178,9 @@ public sealed partial class LegCommander(
         if (command.Verb is Verbs.StartLeg or Verbs.ValidateLeg or Verbs.PlanFlight or Verbs.StartReview or Verbs.OpenPr or Verbs.Merge
             && state.Flights().FirstOrDefault(f => string.Equals(f.Code, CodeOf(command.Target), StringComparison.OrdinalIgnoreCase)) is { } starting)
         {
-            await PrimeAsync(starting, cancellationToken);
+            // The node's own starts (a start a slot may refuse again, every minute) take the sweep's freshness; a person's, and any PR opened or merge (the
+            // outward step that matters most), read afresh (#1403).
+            await PrimeAsync(starting, cancellationToken, command.Who == LegWatch.Who && command.Verb is not (Verbs.Merge or Verbs.OpenPr) ? PrimeFresh : null);
         }
         await _one.WaitAsync(cancellationToken);
         string? error = null;

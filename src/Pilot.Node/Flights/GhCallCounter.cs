@@ -91,12 +91,34 @@ public sealed class GhCallCounter(TimeProvider time)
         return cells.GetOrAdd((kind, caller), static _ => new Cell());
     }
 
+    private static readonly AsyncLocal<string?> Outer = new();
+
+    /// <summary>
+    /// Names the part of the node a run of gh calls is made for (#1403: a loop of <c>GhCli.ReadPriorityShapeAsync</c> could not be traced
+    /// to who asked). Every call counted inside the returned scope is counted as <c>&lt;outer&gt;&gt;&lt;caller&gt;</c>; an inner scope
+    /// replaces an outer one while it lasts. Flows across awaits.
+    /// </summary>
+    public static IDisposable Scope(string outer)
+    {
+        var before = Outer.Value;
+        Outer.Value = outer;
+        return new Restore(before);
+    }
+
+    private sealed class Restore(string? before) : IDisposable
+    {
+        public void Dispose() => Outer.Value = before;
+    }
+
+    /// <summary>The caller a call is counted under: <paramref name="caller"/>, behind the scope's outer name when there is one.</summary>
+    public static string CallerOf(string? caller) => Outer.Value is { } outer ? $"{outer}>{caller ?? "unknown"}" : caller ?? "unknown";
+
     /// <summary>Counts one gh call whose arguments are <paramref name="args"/>, made by <paramref name="caller"/>.</summary>
     public void Record(IReadOnlyList<string> args, string? caller) => Record(KindOf(args), caller);
 
     public void Record(string kind, string? caller)
     {
-        var cell = CellOf(kind, caller ?? "unknown");
+        var cell = CellOf(kind, CallerOf(caller));
         Interlocked.Increment(ref cell.Calls);
         if (kind == "api rest")
         {
@@ -115,7 +137,7 @@ public sealed class GhCallCounter(TimeProvider time)
     /// </summary>
     public void RecordCost(string kind, string caller, int cost, DateTimeOffset countedAt)
     {
-        var cell = CellOf(kind, caller, countedAt);
+        var cell = CellOf(kind, CallerOf(caller), countedAt);
         Interlocked.Add(ref cell.Known, cost);
         if (Interlocked.Decrement(ref cell.Estimated) < 0)
         {
@@ -173,7 +195,8 @@ public sealed class GhCallCounter(TimeProvider time)
 }
 
 /// <summary>Writes the gh call counter's line to node.log (<paramref name="write"/>) once per 15-minute window, a second past its edge.</summary>
-public sealed class GhCallLog(GhCallCounter counter, Action<string> write, TimeProvider time) : BackgroundService
+/// <remarks>Beside it, what GitHub itself says is left (#1403), read by <paramref name="readBudget"/> (<c>gh api rate_limit</c>, no point) when given.</remarks>
+public sealed class GhCallLog(GhCallCounter counter, Action<string> write, TimeProvider time, Func<CancellationToken, Task<string?>>? readBudget = null) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stopping)
     {
@@ -189,6 +212,21 @@ public sealed class GhCallLog(GhCallCounter counter, Action<string> write, TimeP
                 return;
             }
             counter.Roll(write);
+            if (readBudget is not null)
+            {
+                try
+                {
+                    if (await readBudget(stopping) is { } said)
+                    {
+                        write(said);
+                    }
+                }
+                catch (Exception) when (!stopping.IsCancellationRequested)
+                {
+                    // GitHub's word is a check on the count, never a reason to stop counting (a gh that timed out included: a fault here
+                    // would stop the host).
+                }
+            }
         }
     }
 }

@@ -139,6 +139,15 @@ public interface IBuddyWindow
 
     /// <summary>The drag ended: the window snaps to the chosen corner of the monitor it was dropped on and remembers it.</summary>
     void Dropped();
+
+    /// <summary>
+    /// The chat card opened (<paramref name="on"/>) or closed: the window takes the keyboard and starts SDL's text input, without which no typed
+    /// character reaches <see cref="BuddyDesk.TextTyped"/> (the chat box took no keys), or stops it. Called from any thread (a card opened over the
+    /// pipe comes from its pool thread): the window applies it on its own thread.
+    /// </summary>
+    void TextInput(bool on)
+    {
+    }
 }
 
 /// <summary>
@@ -353,9 +362,15 @@ public sealed class BuddyDesk(
         {
             return;
         }
+        // The window's text input follows the chat only: asked when the chat opens or closes, not on a switch between the other cards.
+        var chatChanged = (card == DeskCard.Chat) != (Card == DeskCard.Chat);
         Card = card;
         HoveredHit = null;
         _inputFocus = card == DeskCard.Chat;
+        if (chatChanged)
+        {
+            window.TextInput(card == DeskCard.Chat);
+        }
         model.Engaged(card != DeskCard.None);
         chat.CardOpen = card == DeskCard.Chat;
         model.Hover(false);
