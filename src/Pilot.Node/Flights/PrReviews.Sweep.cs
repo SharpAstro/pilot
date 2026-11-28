@@ -127,6 +127,7 @@ public sealed partial class PrReviews
             {
                 await FollowUpMergedWithoutFixerAsync(merged, cancellationToken);
             }
+            await PostAfterRateLimitAsync(cancellationToken);
             await FlagClosedIssuePullRequestsAsync(cancellationToken);
             await SettleDesignCardsAsync(cancellationToken);
             await CloseCardsOfOvertakenReviewsAsync(cancellationToken);

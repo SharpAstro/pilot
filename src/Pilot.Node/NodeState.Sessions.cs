@@ -10,9 +10,21 @@ public sealed partial class NodeState
     {
         lock (_gate)
         {
-            return [.. _sessions.Values.OrderByDescending(s => s.StartedAt).ThenBy(s => s.Id, StringComparer.Ordinal)];
+            // Sorted once and kept until a session is added, changes or goes, as Jobs() is (pilot #1443, #1365's second point).
+            return _sessionsNewestFirst ??= [.. _sessions.Values.OrderByDescending(s => s.StartedAt).ThenBy(s => s.Id, StringComparer.Ordinal)];
         }
     }
+
+    /// <summary>The session row with <paramref name="id"/>, or null: a lookup, with no copy or sort of every row.</summary>
+    public SessionRow? Session(string id)
+    {
+        lock (_gate)
+        {
+            return _sessions.TryGetValue(id, out var row) ? row : null;
+        }
+    }
+
+    private SessionRow[]? _sessionsNewestFirst;
 
     private volatile string? _currentWatchtower;
 

@@ -108,6 +108,7 @@ public static partial class NodeApp
         builder.Services.AddSingleton<ReportBook>();
         builder.Services.AddSingleton(services => new HookBook { Reports = services.GetRequiredService<ReportBook>() });
         builder.Services.AddSingleton(services => new TranscriptBook(services.GetRequiredService<SessionTrackerOptions>().Profile));
+        builder.Services.AddSingleton(services => new ClaudeJobState(Path.Combine(services.GetRequiredService<SessionTrackerOptions>().Profile.Root, "jobs")));
     }
 
     /// <summary>Git, the planes (worktrees) and what removes them, the stop gate and the attachments.</summary>
@@ -331,9 +332,8 @@ public static partial class NodeApp
         builder.Services.AddSingleton(services => new ClaudeWorkerLauncher(services.GetRequiredService<ClaudeTrust>(), services.GetRequiredService<StartOptionsBook>(),
             services.GetRequiredService<SessionLedger>(), options, services.GetRequiredService<SendTimings>(), ClaudeWorkerLauncher.BriefFolderIn(options.DataFolder),
             services.GetRequiredService<ClaudeJobRemoval>(), services.GetRequiredService<McpHttp>(), () => services.GetRequiredService<RoleModels>().McpTransport));
-        builder.Services.AddSingleton(services => new LoggingWorkerLauncher(
-            services.GetRequiredService<ClaudeWorkerLauncher>(), logWriter,
-            new ClaudeJobState(Path.Combine(services.GetRequiredService<SessionTrackerOptions>().Profile.Root, "jobs")), services.GetRequiredService<TimeProvider>()));
+        builder.Services.AddSingleton(services => new LoggingWorkerLauncher(services.GetRequiredService<ClaudeWorkerLauncher>(), logWriter,
+            services.GetRequiredService<ClaudeJobState>(), services.GetRequiredService<TimeProvider>()));
         builder.Services.AddSingleton<IWorkerLauncher>(services => services.GetRequiredService<LoggingWorkerLauncher>());
         builder.Services.AddHostedService(services => new StartWatch(services.GetRequiredService<IWorkerLauncher>()));
         builder.Services.AddSingleton<ICheckRunner, JobCheckRunner>();
@@ -521,7 +521,7 @@ public static partial class NodeApp
                 Gate = services.GetRequiredService<StartGate>(),
                 UiConnected = () => services.GetRequiredService<PageViews>().Any,
                 Error = logWriter,
-                JobRecord = new ClaudeJobState(Path.Combine(services.GetRequiredService<SessionTrackerOptions>().Profile.Root, "jobs")).Read,
+                JobRecord = services.GetRequiredService<ClaudeJobState>().Read,
                 Transcripts = services.GetRequiredService<TranscriptBook>(),
                 // The watchtower is one long-lived claude -p stream-json process the node owns (PIL855).
                 Streams = new ClaudeStreamProcessLauncher(),
@@ -831,7 +831,9 @@ public static partial class NodeApp
             Error = logWriter,
             IsWatchtowerId = id => services.GetRequiredService<Watchtower>().KnowsId(id),
             IsStreamSession = id => services.GetRequiredService<Watchtower>().OwnsSession(id),
-            JobRecord = new ClaudeJobState(Path.Combine(services.GetRequiredService<SessionTrackerOptions>().Profile.Root, "jobs")).Read,
+            // One reader of Claude Code's job folder (the node's singleton), for both a job's record and whether its folder is gone.
+            JobRecord = services.GetRequiredService<ClaudeJobState>().Read,
+            JobGone = services.GetRequiredService<ClaudeJobState>().IsGone,
             // A session that ends on its own takes its queued jobs off the queue (#327).
             DropJobs = (owners, why) => services.GetRequiredService<JobRunner>().DropQueuedOf(owners, why),
             IsBeingReplaced = id => services.GetRequiredService<LegCommander>().IsBeingReplaced(id),

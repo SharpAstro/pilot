@@ -68,6 +68,9 @@ public sealed record PrReviewRow
     /// <summary>When the post went to GitHub; set before the call, so a post that never came back is not made again.</summary>
     public DateTimeOffset? PostingAt { get; init; }
 
+    /// <summary>When the node posts the review itself after GitHub's rate limit stopped its PR read (the limit's reset); null when no post waits for one.</summary>
+    public DateTimeOffset? PostRetryAt { get; init; }
+
     /// <summary>The review GitHub made of it, by its id: posted, and never again.</summary>
     public long? PostedId { get; init; }
 

@@ -63,7 +63,8 @@ public sealed partial class NodeState
             {
                 // As the rows, not as bytes: the event stream serialises it while it sends, a fragment at a time, so a
                 // snapshot of tens of MB is never one array on the LOH nor one write into Kestrel's pinned blocks (#794).
-                sink.TryWriteSnapshot(SnapshotLocked());
+                // A client's snapshot holds what a client can show (ClientSnapshotLocked), not the node's whole history.
+                sink.TryWriteSnapshot(ClientSnapshotLocked());
             }
             _sinks.Add(sink);
         }
@@ -160,6 +161,15 @@ public sealed partial class NodeState
 
     private void ApplyToState(NodeEvent delta)
     {
+        // The kept newest-first lists (Jobs(), Sessions()) go with any change of what they list.
+        if (delta is SessionAddedEvent or SessionChangedEvent or SessionRemovedEvent)
+        {
+            _sessionsNewestFirst = null;
+        }
+        else if (delta is JobAddedEvent or JobChangedEvent)
+        {
+            _jobsNewestFirst = null;
+        }
         switch (delta)
         {
             case SessionAddedEvent added:
@@ -277,6 +287,8 @@ public sealed partial class NodeState
 
     private void Restore(SnapshotEvent snapshot)
     {
+        _sessionsNewestFirst = null;
+        _jobsNewestFirst = null;
         foreach (var row in snapshot.Sessions)
         {
             _sessions[row.Id] = row;
@@ -351,6 +363,28 @@ public sealed partial class NodeState
         Issues = _issues,
         Summaries = [.. _summaries.Values],
     };
+
+    /// <summary>
+    /// How far back a client's snapshot reaches for closed cards and ended jobs: the longest a window keeps its notifications
+    /// (NotificationsHost.KeepChoices, 7 days). Open cards and queued or running jobs are always in it.
+    /// </summary>
+    public static readonly TimeSpan ClientHistory = TimeSpan.FromDays(7);
+
+    // The snapshot a client starts from: the node's state, with the closed cards and ended jobs of the last ClientHistory only. Every
+    // card and job there ever was went to every client at every connect: on DE1 (2026-11-28) 19,737 cards and 9,288 jobs, 36 of the
+    // snapshot's 43 MB, which a window held in memory and a peer read whole every five seconds for its fleet view. The open
+    // ones and the recent ones are what a window shows; older history stays in the store and the journal, and pilot cards --all
+    // reads it from the node (pilot #1443). The journal's own snapshot is SnapshotLocked, whole.
+    private SnapshotEvent ClientSnapshotLocked()
+    {
+        var since = _time.GetUtcNow() - ClientHistory;
+        var whole = SnapshotLocked();
+        return whole with
+        {
+            Cards = [.. (whole.Cards ?? []).Where(c => c.State == CardState.Open || (c.ClosedAt ?? c.At) >= since)],
+            Jobs = [.. (whole.Jobs ?? []).Where(j => j.State is JobState.Queued or JobState.Running || (j.EndedAt ?? j.StartedAt) >= since)],
+        };
+    }
 
     /// <summary>Where the spend ledger's tokens per flight come from; unset, no flight carries a figure.</summary>
     public Func<IReadOnlyDictionary<string, long>>? TokensByFlight { get; set; }

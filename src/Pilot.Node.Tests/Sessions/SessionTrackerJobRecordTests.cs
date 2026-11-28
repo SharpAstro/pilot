@@ -130,4 +130,62 @@ public sealed class SessionTrackerJobRecordTests : IDisposable
         _reads.Count.ShouldBe(2);
         _state.Sessions().Single().EndedBecause.ShouldBe(ByDesign);
     }
+
+    // #1365: what EndedAfterFinishedTurn kept of an end goes when the tracker sees the row live again or lets go of it, with no call made while it is live.
+
+    private async Task<string> EndedWithAnUnfinishedRecordThenKeptAsFinished()
+    {
+        _record = new ClaudeJobRecord("working", null);
+        _agents.Json = EndedJob();
+        await _tracker.PollAsync(Ct);
+        var id = _state.Sessions().Single().Id;
+
+        // The record now says done: the sweep's question reads it once and keeps the answer.
+        _record = new ClaudeJobRecord("done", null);
+        var before = _reads.Count;
+        _tracker.EndedAfterFinishedTurn(id).ShouldBeTrue();
+        _tracker.EndedAfterFinishedTurn(id).ShouldBeTrue();
+        (_reads.Count - before).ShouldBe(1);
+        return id;
+    }
+
+    [Fact]
+    public async Task ARowListedLiveAgainAndEndedOnceMoreIsReadAgainByTheNextQuestion()
+    {
+        var id = await EndedWithAnUnfinishedRecordThenKeptAsFinished();
+
+        // Live again, and no EndedAfterFinishedTurn call while it is: only the poll's Put can drop the kept answer.
+        _agents.Json = AgentRows.List(AgentRows.Background(AgentRows.SessionB, "du1-watchtower", "working", pid: 4343, status: "busy"));
+        await _tracker.PollAsync(Ct);
+        _record = new ClaudeJobRecord("working", null);
+        _agents.Json = EndedJob();
+        await _tracker.PollAsync(Ct);
+
+        _record = new ClaudeJobRecord("failed", "boom");
+        var before = _reads.Count;
+        _tracker.EndedAfterFinishedTurn(id).ShouldBeFalse();
+        (_reads.Count - before).ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task ARowTheTrackerForgetsAndListsAgainIsReadAgainByTheNextQuestion()
+    {
+        var id = await EndedWithAnUnfinishedRecordThenKeptAsFinished();
+
+        _agents.Json = "[]";
+        await _tracker.PollAsync(Ct);
+        _time.Advance(TimeSpan.FromHours(25));
+        await _tracker.PollAsync(Ct);
+        _state.Sessions().ShouldBeEmpty();
+
+        File.SetLastWriteTimeUtc(_profile.TranscriptPath(AgentRows.SessionB), _time.GetUtcNow().UtcDateTime);
+        _record = new ClaudeJobRecord("working", null);
+        _agents.Json = EndedJob();
+        await _tracker.PollAsync(Ct);
+
+        _record = new ClaudeJobRecord("failed", "boom");
+        var before = _reads.Count;
+        _tracker.EndedAfterFinishedTurn(id).ShouldBeFalse();
+        (_reads.Count - before).ShouldBe(1);
+    }
 }

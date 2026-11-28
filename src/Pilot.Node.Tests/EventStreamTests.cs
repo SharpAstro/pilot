@@ -102,6 +102,29 @@ public sealed class EventStreamTests
     }
 
     [Fact]
+    public async Task ASnapshotLongerThanManyReadSegmentsArrivesWhole()
+    {
+        // The stream reads a message into 64 KB pooled segments and parses them as one sequence (pilot #1443): a snapshot of
+        // thousands of rows spans dozens of them, and a row cut across two segments must come out whole.
+        await using var node = await NodeHarness.StartAsync(Ct);
+        for (var i = 0; i < 3000; i++)
+        {
+            node.State.PutSession(Row($"{i:x8}", SessionState.Idle) with { Name = $"session {i:x8} " + new string('x', 200) });
+        }
+
+        await using var events = await node.Client.OpenEventsAsync(since: null, stream: null, Ct);
+        var snapshot = (await ReadAsync(events)).ShouldBeOfType<SnapshotEvent>();
+
+        snapshot.Sessions.Length.ShouldBe(3000);
+        snapshot.Sessions.Single(s => s.Id == $"{2999:x8}").Name.ShouldBe($"session {2999:x8} " + new string('x', 200));
+        // The next event, a small one, still reads after a long one.
+        await node.Client.SendAsync(Note("after the snapshot"), Ct);
+        var mirror = new NodeMirror();
+        mirror.Apply(snapshot);
+        (await ReadUntilAsync(events, mirror, node.State.Seq)).ShouldNotBeEmpty();
+    }
+
+    [Fact]
     public async Task AReconnectFromAnotherStreamGetsASnapshot()
     {
         await using var node = await NodeHarness.StartAsync(Ct);

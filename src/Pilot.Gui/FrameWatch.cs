@@ -119,7 +119,6 @@ internal sealed class FrameWatch(ILogger logger, TimeSpan? slowFrame = null)
                 }
                 break;
             case PilotPage.Sessions:
-            case PilotPage.Chat:
                 foreach (var line in pages.Sessions.Lines)
                 {
                     Add(line.ToDumpLine());
@@ -178,8 +177,13 @@ internal sealed class FrameWatch(ILogger logger, TimeSpan? slowFrame = null)
         return hash.ToHashCode();
     }
 
-    /// <summary>Whether the fingerprint of <paramref name="page"/> holds everything it draws by value, so the feeds' version is no part of it.</summary>
-    internal static bool Whole(PilotPage page) => page is PilotPage.Home or PilotPage.Ideas;
+    /// <summary>
+    /// Whether the fingerprint of <paramref name="page"/> holds everything it draws by value, so the feeds' version is no part of it.
+    /// Chat's is whole too: the chat draws nothing from the pages but the header, the rail and the panel, and its conversation asks
+    /// for its own frames. It used to count every session row and the version, so every node event drew it in full (129 to 738 ms a
+    /// frame on DE1, 2026-11-28, pilot #1443).
+    /// </summary>
+    internal static bool Whole(PilotPage page) => page is PilotPage.Home or PilotPage.Ideas or PilotPage.Chat;
 
     // What the Ideas page draws from the pages, by value. No record holding an array or a list is added whole: its generated hash
     // takes the array by reference, new on every read of the feed. The source's "as of" is the frame's own and stays out. The only
@@ -370,16 +374,63 @@ internal sealed class FrameWatch(ILogger logger, TimeSpan? slowFrame = null)
     /// <summary>Forgets what was drawn, so the next build is worth a frame (a build that failed is tried again).</summary>
     public void Forget() => _drawn = null;
 
-    /// <summary>Logs a frame that took longer than <see cref="SlowFrame"/>, with the page and what it drew (<paramref name="summary"/> is asked for only then); true when it logged.</summary>
+    // The frame line's window (pilot #1443), as tianwen's GUI writes one every five seconds: what the frames took, what the render
+    // thread allocated, the collections, the page builds and the process's processor time, so a change to the frame schedule is read
+    // from gui.log and not guessed. Render thread only, but for the builds, which the builder counts (Interlocked).
+    private static readonly TimeSpan LineEvery = TimeSpan.FromSeconds(5);
+    private readonly List<double> _paints = new(512);
+    private long _lineFrom = System.Diagnostics.Stopwatch.GetTimestamp();
+    private long _lineAllocated = GC.GetAllocatedBytesForCurrentThread();
+    private int _lineGen0 = GC.CollectionCount(0);
+    private int _lineGen2 = GC.CollectionCount(2);
+    private TimeSpan _linePaused = GC.GetTotalPauseDuration();
+    private TimeSpan _lineCpu = Environment.CpuUsage.TotalTime;
+    private long _lineBuilds;
+    private long _lineBuildTicks;
+
+    /// <summary>
+    /// Counts one frame of the render thread, logs it when it took longer than <see cref="SlowFrame"/> (with the page and what it
+    /// drew; <paramref name="summary"/> is asked for only then), and once <see cref="LineEvery"/> has passed since the last line,
+    /// writes the frame line for the frames since. True when it logged the frame as slow.
+    /// </summary>
     public bool Frame(TimeSpan took, object page, Func<string> summary)
     {
         Interlocked.Increment(ref _frames);
-        if (took <= SlowFrame)
+        _paints.Add(took.TotalMilliseconds);
+        var slow = took > SlowFrame;
+        if (slow)
         {
-            return false;
+            logger.LogWarning("Slow frame: {Milliseconds} ms on {Page}: {Summary}", (int)took.TotalMilliseconds, page, summary());
         }
+        if (System.Diagnostics.Stopwatch.GetElapsedTime(_lineFrom) >= LineEvery)
+        {
+            WriteLine(page);
+        }
+        return slow;
+    }
 
-        logger.LogWarning("Slow frame: {Milliseconds} ms on {Page}: {Summary}", (int)took.TotalMilliseconds, page, summary());
-        return true;
+    // The window's line, then a fresh window. Written at a frame, so a window nothing was drawn in writes no line: an idle window logs nothing.
+    private void WriteLine(object page)
+    {
+        var seconds = System.Diagnostics.Stopwatch.GetElapsedTime(_lineFrom).TotalSeconds;
+        _paints.Sort();
+        double At(double share) => _paints[Math.Min(_paints.Count - 1, (int)(share * _paints.Count))];
+        var allocated = GC.GetAllocatedBytesForCurrentThread();
+        var cpu = Environment.CpuUsage.TotalTime;
+        var (builds, buildTicks) = (Interlocked.Read(ref _builds), Interlocked.Read(ref _buildTicks));
+        logger.LogInformation(
+            "Frames in {Seconds:0.#} s on {Page}: {Frames}, paint median {Median:0.#} ms, 90th {P90:0.#} ms, most {Most:0.#} ms, {KbAFrame:0} KB a frame on the render thread; {Builds} page builds, {BuildMs:0} ms; gen0 {Gen0}, gen2 {Gen2}, paused {PausedMs:0} ms; the process {Cores:0.###} cores",
+            seconds, page, _paints.Count, At(0.5), At(0.9), _paints[^1], (allocated - _lineAllocated) / 1024.0 / _paints.Count,
+            builds - _lineBuilds, TimeSpan.FromTicks(buildTicks - _lineBuildTicks).TotalMilliseconds,
+            GC.CollectionCount(0) - _lineGen0, GC.CollectionCount(2) - _lineGen2, (GC.GetTotalPauseDuration() - _linePaused).TotalMilliseconds,
+            (cpu - _lineCpu).TotalSeconds / seconds);
+        _paints.Clear();
+        _lineFrom = System.Diagnostics.Stopwatch.GetTimestamp();
+        _lineAllocated = allocated;
+        _lineGen0 = GC.CollectionCount(0);
+        _lineGen2 = GC.CollectionCount(2);
+        _linePaused = GC.GetTotalPauseDuration();
+        _lineCpu = cpu;
+        (_lineBuilds, _lineBuildTicks) = (builds, buildTicks);
     }
 }
