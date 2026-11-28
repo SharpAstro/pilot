@@ -339,7 +339,7 @@ public sealed class SessionLedgerTests : IDisposable
         var folder = Path.Combine(_folder, "dup-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(folder);
         var json = "[" + string.Join(",", entries.Select(e =>
-            $"{{\"job\":\"{e.Job}\",\"sessionIds\":[{string.Join(",", e.Ids.Select(i => $"\"{i}\""))}],\"name\":\"{e.Job}\"}}")) + "]";
+            "{\"job\":\"" + e.Job + "\",\"sessionIds\":[" + string.Join(",", e.Ids.Select(i => "\"" + i + "\"")) + "],\"name\":\"" + e.Job + "\"}")) + "]";
         File.WriteAllText(SessionLedger.FileIn(folder), json);
         return new SessionLedger(SessionLedger.FileIn(folder), _time);
     }
