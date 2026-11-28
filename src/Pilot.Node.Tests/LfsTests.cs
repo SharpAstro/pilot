@@ -30,19 +30,10 @@ public sealed class LfsTests : IDisposable
 
     private static (int Code, string Out) Run(string cwd, params string[] args)
     {
-        var start = new ProcessStartInfo("git") { WorkingDirectory = cwd, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, CreateNoWindow = true };
-        foreach (var a in args)
-        {
-            start.ArgumentList.Add(a);
-        }
-        start.Environment["GIT_TERMINAL_PROMPT"] = "0";
         try
         {
-            using var p = TestEnvironment.Start(start)!;
-            var o = p.StandardOutput.ReadToEndAsync();
-            var e = p.StandardError.ReadToEndAsync();
-            p.WaitForExit();
-            return (p.ExitCode, o.Result + e.Result);
+            var (code, output, error) = HelperGit.Execute(cwd, args, NoPrompt);
+            return (code, output + error);
         }
         catch (System.ComponentModel.Win32Exception)
         {
@@ -50,12 +41,9 @@ public sealed class LfsTests : IDisposable
         }
     }
 
-    private static string Git(string cwd, params string[] args)
-    {
-        var (code, output) = Run(cwd, args);
-        code.ShouldBe(0, $"git {string.Join(' ', args)}: {output}");
-        return output.Trim();
-    }
+    private static readonly Dictionary<string, string> NoPrompt = new() { ["GIT_TERMINAL_PROMPT"] = "0" };
+
+    private static string Git(string cwd, params string[] args) => HelperGit.Run(cwd, args, NoPrompt);
 
     /// <summary>The bare remote and main clone built once for the class (real git and git-lfs are slow to start), copied per test.</summary>
     private static readonly Lazy<string> Template = new(BuildTemplate);
