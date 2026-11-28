@@ -214,7 +214,8 @@ public sealed class WindDownTests : IDisposable
         var watch = new LegWatch(_state, Run, _time) { Ledger = _ledger };
         _time.Advance(TimeSpan.FromMinutes(20));
         await watch.LookAsync(Ct);
-        _state.Cards().Count(c => c.Kind == LegWatch.StraySession).ShouldBe(0);
+        // A Gone row is skipped by the sweep, so the card to rule out is any card about it, such as a landing's own stop-unconfirmed one.
+        _state.Cards().ShouldNotContain(c => c.Subject == Verbs.SessionTarget("rev11111"));
     }
 
     [Fact]

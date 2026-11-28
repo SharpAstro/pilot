@@ -19,13 +19,13 @@ public sealed class LandedStopUnconfirmedTests : IDisposable
 
     private static readonly DateTimeOffset Began = new(2026, 11, 20, 8, 0, 0, TimeSpan.Zero);
 
-    private sealed class Stops(bool fail) : IWorkerLauncher
+    private sealed class Stops(bool fail, params string[] failing) : IWorkerLauncher
     {
         public Task<string> StartAsync(WorkerStart start, CancellationToken cancellationToken) => throw new NotSupportedException();
 
         public Task StopAsync(string job, CancellationToken cancellationToken)
         {
-            if (fail)
+            if (fail || failing.Contains(job, StringComparer.Ordinal))
             {
                 return Task.FromException(new InvalidOperationException("claude stop: refused"));
             }
@@ -72,7 +72,7 @@ public sealed class LandedStopUnconfirmedTests : IDisposable
         }
     }
 
-    private async Task<(string Code, FlightCommander Flights, FlightRow Flight)> FlightAsync(bool stopFails)
+    private async Task<(string Code, FlightCommander Flights, FlightRow Flight)> FlightAsync(bool stopFails, params string[] failingJobs)
     {
         var repo = Path.Combine(_root, "pilot");
         Directory.CreateDirectory(repo);
@@ -80,16 +80,16 @@ public sealed class LandedStopUnconfirmedTests : IDisposable
         File.WriteAllText(Path.Combine(repo, "README.md"), "hello\n");
         Git(repo, "add", ".");
         Git(repo, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "first");
-        var flights = new FlightCommander(_state, new Planes(new GitCli()), _time, new Stops(stopFails)) { FinishGrace = TimeSpan.Zero };
+        var flights = new FlightCommander(_state, new Planes(new GitCli()), _time, new Stops(stopFails, failingJobs)) { FinishGrace = TimeSpan.Zero };
         var made = await flights.RunAsync(new CommandRequest { Verb = Verbs.CreateFlight, Target = Verbs.RepoTarget(repo), Args = ["1282", "Stops"], Who = "tests" }, Ct);
         made.Ok.ShouldBeTrue(made.Error);
         var flight = _state.Flights().Single();
         return (flight.Code, flights, flight);
     }
 
-    private void PutSession(string id, string flight, string cwd, SessionState state) => _state.PutSession(new SessionRow
+    private void PutSession(string id, string flight, string cwd, SessionState state, string? sessionId = null, bool gone = false) => _state.PutSession(new SessionRow
     {
-        Id = id, SessionId = id + "-0000-4000-8000-000000000000", Name = "de1-" + id, Kind = SessionKind.Background, Cwd = cwd, Flight = flight,
+        Id = id, SessionId = sessionId ?? id + "-0000-4000-8000-000000000000", Gone = gone, Name = "de1-" + id, Kind = SessionKind.Background, Cwd = cwd, Flight = flight,
         Role = SessionRole.Worker, ContextTokens = 0, ContextWindow = 200_000, State = state, SpendWeighted = 0, StartedAt = Began,
     });
 
@@ -169,6 +169,42 @@ public sealed class LandedStopUnconfirmedTests : IDisposable
         await LandAsync(flights, code);
 
         Card("w1").ShouldNotBeNull().Outcome.ShouldBe($"{code} landed");
+        Handled(code).ShouldNotContain("may still run");
+    }
+
+    [Fact]
+    public async Task AFailedStopOfTheCurrentJobOfAResumedRowIsCountedUnderTheRowsId()
+    {
+        var (code, flights, flight) = await FlightAsync(stopFails: false, "new22222");
+        PutSession("w1", code, flight.Worktree, SessionState.Working, "new22222-0000-4000-8000-000000000000");
+
+        await LandAsync(flights, code);
+
+        Card("w1").ShouldNotBeNull().State.ShouldBe(CardState.Open);
+        Handled(code).ShouldContain("de1-w1 (w1) may still run");
+    }
+
+    [Fact]
+    public async Task AFailedStopOfASupersededJobIsNotCountedWhenTheCurrentJobStopped()
+    {
+        var (code, flights, flight) = await FlightAsync(stopFails: false, "w1");
+        PutSession("w1", code, flight.Worktree, SessionState.Working, "new22222-0000-4000-8000-000000000000");
+
+        await LandAsync(flights, code);
+
+        Card("w1").ShouldBeNull();
+        Handled(code).ShouldNotContain("may still run");
+    }
+
+    [Fact]
+    public async Task AFailedStopOfAGoneRowIsNotCounted()
+    {
+        var (code, flights, flight) = await FlightAsync(stopFails: true);
+        PutSession("w1", code, flight.Worktree, SessionState.Idle, gone: true);
+
+        await LandAsync(flights, code);
+
+        Card("w1").ShouldBeNull();
         Handled(code).ShouldNotContain("may still run");
     }
 }

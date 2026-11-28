@@ -179,7 +179,7 @@ public sealed partial class FlightCommander
         var consumers = state.Flights().Where(f => f.State != FlightState.Landed && f.Connections.Contains(flight.Code, StringComparer.Ordinal)).ToList();
         // Every live session of the flight's too, not only the legs' current workers and the current reviewer: its planner,
         // an earlier reviewer, a validator or a renamed copy sat idle in TIA368's plane after it landed, holding the folder
-        // and still able to push. A session's job is its row id.
+        // and still able to push. A session's job is its row id, or its session id's first eight characters once a say resumed it.
         // Found by the ledger's flight too, not only by name: a session the node launched for the flight whose row is renamed or gone.
         var live = state.Sessions().Where(s => s.State is not (SessionState.Ended or SessionState.Failed) && string.Equals(s.Flight, flight.Code, StringComparison.Ordinal)).Select(s => s.Id).ToList();
         // Only a session with a process is told: a Gone row would be resumed to hear it (TIA2507: the say resumed a reviewer dead for
