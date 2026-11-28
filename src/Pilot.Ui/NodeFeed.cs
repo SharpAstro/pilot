@@ -55,6 +55,16 @@ internal sealed class NodeFeed : IAsyncDisposable
         string Status, bool Connected, NodeInfo? Node, string? NodeVersion, ReposRow? Repos, SummaryRow[] Summaries, DateTimeOffset? DownSince = null, MachineRow? Machine = null, PullRequestsRow? PullRequests = null,
         IdeaRow[]? Ideas = null, IdeaMoveRow[]? IdeaMoves = null, MilestoneRow[]? Milestones = null, IssueRow[]? Issues = null, NodeRow? Said = null, AdmissionRow? Admission = null, PrReviewRow[]? PrReviews = null);
 
+    // The pages built from the view, each kept until a list it reads changes or (for one that counts from the clock) the second
+    // turns over. The page builder asks for the same page several times a look (the Flights page four times, the sessions twice)
+    // and up to ten looks a second through a node's burst, while a list changes only with the events that touch it (pilot #1443).
+    private readonly Kept<SessionsScreen> _keptScreen = new();
+    private readonly Kept<JobsScreen> _keptJobs = new();
+    private readonly Kept<CardsScreen> _keptCards = new();
+    private readonly Kept<FlightsScreen> _keptFlights = new();
+    private readonly Kept<ReposScreen> _keptRepos = new();
+    private readonly Kept<IdeasScreen> _keptIdeas = new();
+
     /// <summary>This window's version, without the commit: what the node's is held against.</summary>
     public static string ClientVersion { get; } = Plain(
         typeof(NodeFeed).Assembly.GetCustomAttributes(typeof(System.Reflection.AssemblyInformationalVersionAttribute), false)
@@ -219,7 +229,8 @@ internal sealed class NodeFeed : IAsyncDisposable
     public JobsScreen JobsPage(DateTimeOffset now)
     {
         var view = Volatile.Read(ref _view);
-        return new JobsScreen(JobLine.Build(view.Jobs, now), view.Status + UpdateNoteOf(view), now);
+        var status = view.Status + UpdateNoteOf(view);
+        return _keptJobs.Get(now, [view.Jobs, status], () => new JobsScreen(JobLine.Build(view.Jobs, now), status, now));
     }
 
     /// <summary>The summaries the node has kept, one per scope (<see cref="SummaryRow.Scope"/>).</summary>
@@ -235,14 +246,17 @@ internal sealed class NodeFeed : IAsyncDisposable
     public CardsScreen Cards()
     {
         var view = Volatile.Read(ref _view);
-        return CardsScreen.From(view.Cards, view.Sessions);
+        return _keptCards.Get(null, [view.Cards, view.Sessions], () => CardsScreen.From(view.Cards, view.Sessions));
     }
 
     /// <summary>The flights as of <paramref name="now"/>, with how many sessions each has.</summary>
     public FlightsScreen Flights(DateTimeOffset now)
     {
         var view = Volatile.Read(ref _view);
-        return new FlightsScreen(FlightLine.Build(view.Flights, view.Sessions, now, view.Legs, view.Admission), view.Status + UpdateNoteOf(view), now) { Admission = view.Admission, Rounds = PrRoundLine.Build(view.PrReviews ?? [], view.Sessions), Archived = view.Said?.ArchivedFlights is > 0 and var archived ? [new ArchivedNode(null, archived)] : [] };
+        var status = view.Status + UpdateNoteOf(view);
+        var archivedCount = view.Said?.ArchivedFlights ?? 0;
+        return _keptFlights.Get(now, [view.Flights, view.Sessions, view.Legs, view.Admission, view.PrReviews, archivedCount, status], () =>
+            new FlightsScreen(FlightLine.Build(view.Flights, view.Sessions, now, view.Legs, view.Admission), status, now) { Admission = view.Admission, Rounds = PrRoundLine.Build(view.PrReviews ?? [], view.Sessions), Archived = archivedCount > 0 ? [new ArchivedNode(null, archivedCount)] : [] });
     }
 
     /// <summary>
@@ -253,12 +267,13 @@ internal sealed class NodeFeed : IAsyncDisposable
     {
         var view = Volatile.Read(ref _view);
         var row = view.Repos;
-        return new ReposScreen(RepoLine.Build(row?.Repos ?? [], view.Flights, view.Sessions, view.Cards, view.Legs, now), view.Status + UpdateNoteOf(view), now)
+        var status = view.Status + UpdateNoteOf(view);
+        return _keptRepos.Get(now, [row, view.Flights, view.Sessions, view.Cards, view.Legs, status], () => new ReposScreen(RepoLine.Build(row?.Repos ?? [], view.Flights, view.Sessions, view.Cards, view.Legs, now), status, now)
         {
             ReadAt = row?.ReadAt,
             Since = row?.Since,
             Unread = row is null || row.ReadAt is null,
-        };
+        });
     }
 
     /// <summary>
@@ -269,14 +284,16 @@ internal sealed class NodeFeed : IAsyncDisposable
     {
         var repos = Repos(now);
         var view = Volatile.Read(ref _view);
-        return new IdeasScreen(view.Ideas ?? [], [.. view.Cards.Where(IdeasScreen.IsAsk)],
-            [.. repos.Lines.Where(l => l.Status.Tracked).Select(l => l.Status.Name).Distinct(StringComparer.OrdinalIgnoreCase)], view.Status + UpdateNoteOf(view), now)
-        {
-            Flights = view.Flights,
-            Moves = view.IdeaMoves ?? [],
-            Milestones = view.Milestones ?? [],
-            Issues = view.Issues ?? [],
-        };
+        var status = view.Status + UpdateNoteOf(view);
+        return _keptIdeas.Get(now, [repos, view.Ideas, view.Cards, view.Flights, view.IdeaMoves, view.Milestones, view.Issues, status], () =>
+            new IdeasScreen(view.Ideas ?? [], [.. view.Cards.Where(IdeasScreen.IsAsk)],
+                [.. repos.Lines.Where(l => l.Status.Tracked).Select(l => l.Status.Name).Distinct(StringComparer.OrdinalIgnoreCase)], status, now)
+            {
+                Flights = view.Flights,
+                Moves = view.IdeaMoves ?? [],
+                Milestones = view.Milestones ?? [],
+                Issues = view.Issues ?? [],
+            });
     }
 
     /// <summary>How many ideas wait to be planned, for the rail.</summary>
@@ -288,9 +305,13 @@ internal sealed class NodeFeed : IAsyncDisposable
         var view = Volatile.Read(ref _view);
         var usage = view.Usage;
         var code = view.Node?.MachinePrefix is { Length: > 0 } prefix ? prefix : null;
-        var lines = SessionLine.Build(view.Sessions, now);
-        return new SessionsScreen(code is null ? lines : [.. lines.Select(l => l with { NodeCode = code })], view.Status + UpdateNoteOf(view), now,
-            usage is { HasFigures: true } ? usage.Line(now, TimeZoneInfo.Local) : null, usage?.Account?.Line());
+        var status = view.Status + UpdateNoteOf(view);
+        return _keptScreen.Get(now, [view.Sessions, code, usage, status], () =>
+        {
+            var lines = SessionLine.Build(view.Sessions, now);
+            return new SessionsScreen(code is null ? lines : [.. lines.Select(l => l with { NodeCode = code })], status, now,
+                usage is { HasFigures: true } ? usage.Line(now, TimeZoneInfo.Local) : null, usage?.Account?.Line());
+        });
     }
 
     private async Task RunAsync(CancellationToken cancellationToken)
@@ -456,12 +477,15 @@ internal sealed class NodeFeed : IAsyncDisposable
             Volatile.Write(ref _lastDecision, decided.Decision);
         }
         var snapshot = next is SnapshotEvent;
-        SessionRow[] sessions = [.. _mirror.Sessions.Values];
-        FlightRow[] flights = [.. _mirror.Flights.Values];
-        LegRow[] legs = [.. _mirror.Legs.Values];
-        CardRow[] cards = [.. _mirror.Cards.Values];
-        JobRow[] jobs = [.. _mirror.Jobs.Values];
-        SummaryRow[] summaries = [.. _mirror.Summaries.Values];
+        // Only what the event changed is copied out of the mirror; every other list stays the array the last view had. Every
+        // list was copied at every event: on DE1 (5,441 sessions, 8,574 jobs, every card) a busy node's stream was hundreds of
+        // megabytes a minute of copies, and no reader could tell an unchanged list from a changed one (pilot #1443).
+        SessionRow[]? sessions = snapshot || next is SessionAddedEvent or SessionChangedEvent or SessionRemovedEvent ? [.. _mirror.Sessions.Values] : null;
+        FlightRow[]? flights = snapshot || next is FlightAddedEvent or FlightChangedEvent or FlightArchivedEvent or FlightWithdrawnEvent ? [.. _mirror.Flights.Values] : null;
+        LegRow[]? legs = snapshot || next is LegAddedEvent or LegChangedEvent or LegRemovedEvent or FlightArchivedEvent or FlightWithdrawnEvent ? [.. _mirror.Legs.Values] : null;
+        CardRow[]? cards = snapshot || next is CardAddedEvent or CardChangedEvent or FlightArchivedEvent or FlightWithdrawnEvent ? [.. _mirror.Cards.Values] : null;
+        JobRow[]? jobs = snapshot || next is JobAddedEvent or JobChangedEvent ? [.. _mirror.Jobs.Values] : null;
+        SummaryRow[]? summaries = snapshot || next is SummaryChangedEvent ? [.. _mirror.Summaries.Values] : null;
         var usage = _mirror.Usage;
         var machine = _mirror.Machine;
         var admission = _mirror.Admission;
@@ -475,27 +499,27 @@ internal sealed class NodeFeed : IAsyncDisposable
         var pullRequests = _mirror.PullRequests;
         var repos = _mirror.Repos;
         var said = _mirror.Node;
-        var ideas = _mirror.Ideas.ToArray();
-        var ideaMoves = _mirror.IdeaMoves.ToArray();
-        var milestones = _mirror.Milestones.ToArray();
-        var issues = _mirror.Issues.ToArray();
-        PrReviewRow[] prReviews = [.. _mirror.PrReviews.Values];
+        var ideas = snapshot || next is IdeasChangedEvent ? _mirror.Ideas.ToArray() : null;
+        var ideaMoves = snapshot || next is IdeaMovedEvent ? _mirror.IdeaMoves.ToArray() : null;
+        var milestones = snapshot || next is MilestonesChangedEvent ? _mirror.Milestones.ToArray() : null;
+        var issues = snapshot || next is IssuesChangedEvent ? _mirror.Issues.ToArray() : null;
+        PrReviewRow[]? prReviews = snapshot || next is PrReviewAddedEvent or PrReviewChangedEvent ? [.. _mirror.PrReviews.Values] : null;
         ImmutableInterlocked.Update(ref _view, view => view with
         {
             PullRequests = pullRequests,
             Repos = repos,
             Said = said,
-            Ideas = ideas,
-            IdeaMoves = ideaMoves,
-            Milestones = milestones,
-            Issues = issues,
-            PrReviews = prReviews,
-            Sessions = sessions,
-            Flights = flights,
-            Legs = legs,
-            Cards = cards,
-            Jobs = jobs,
-            Summaries = summaries,
+            Ideas = ideas ?? view.Ideas,
+            IdeaMoves = ideaMoves ?? view.IdeaMoves,
+            Milestones = milestones ?? view.Milestones,
+            Issues = issues ?? view.Issues,
+            PrReviews = prReviews ?? view.PrReviews,
+            Sessions = sessions ?? view.Sessions,
+            Flights = flights ?? view.Flights,
+            Legs = legs ?? view.Legs,
+            Cards = cards ?? view.Cards,
+            Jobs = jobs ?? view.Jobs,
+            Summaries = summaries ?? view.Summaries,
             Usage = usage,
             Machine = machine,
             Admission = admission,
