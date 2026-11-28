@@ -422,29 +422,62 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
         // The sessions once per tick, and again after a retell (its say can resume a session). Read for every told job, each read copying and
         // sorting every session under the state lock, a tick cost (told jobs) x (sessions) and a quarter of a core (4,378 x 2,532, DE1, 2026-11-26).
         var sessions = state.Sessions();
-        foreach (var row in state.Jobs().Where(j => j is { Owner: not null, Told: true, ToldAt: not null, EndedAt: not null, RetellRung: null } && j.Kind != JobKind.Check).ToList())
+        var index = new SessionIndex(sessions);
+        var told = state.Jobs().Where(j => j is { Owner: not null, Told: true, ToldAt: not null, EndedAt: not null, RetellRung: null } && j.Kind != JobKind.Check).ToList();
+        // Rows told owner-ended or gone are settled: not visited, their baselines forgotten once. A mark goes with its job row, or once it is rung.
+        var candidates = new List<JobRow>(told.Count);
+        var open = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var j in told)
         {
-            if (row.ToldWay is "owner-ended" or "gone")
+            if (j.ToldWay is "owner-ended" or "gone")
             {
-                ForgetTell(row.Id);
+                if (_tellForgotten.TryAdd(j.Id, 0))
+                {
+                    ForgetTell(j.Id);
+                }
                 continue;
             }
-            var ownerRow = OwnerRow(row.Owner!, sessions);
+            open.Add(j.Id);
+            candidates.Add(j);
+        }
+        var toldIds = told.Select(j => j.Id).ToHashSet(StringComparer.Ordinal);
+        foreach (var id in _settledOwner.Keys.Where(id => !open.Contains(id)).ToList())
+        {
+            _settledOwner.TryRemove(id, out _);
+        }
+        foreach (var id in _tellForgotten.Keys.Where(id => !toldIds.Contains(id)).ToList())
+        {
+            _tellForgotten.TryRemove(id, out _);
+        }
+        foreach (var row in candidates)
+        {
+            if (_settledOwner.TryGetValue(row.Id, out var settledOn))
+            {
+                // Settled: its owner ended for good with nothing replacing it. Skipped while the owner's row is the very instance it was
+                // judged on (rows are records the state replaces on change) and no live session of its name and role started since; a later
+                // live replacement is still retold to, as before, because the row is then judged afresh below.
+                if (ReferenceEquals(index.OwnerRow(row.Owner!), settledOn) && !index.HasLiveReplacement(settledOn))
+                {
+                    continue;
+                }
+                _settledOwner.TryRemove(row.Id, out _);
+            }
+            var ownerRow = index.OwnerRow(row.Owner!);
             if (ownerRow is null)
             {
                 continue;
             }
-            var candidates = ownerRow.Role == SessionRole.Worker ? sessions.Where(s => s.Flight == ownerRow.Flight && s.Leg == ownerRow.Leg).ToArray() : sessions;
-            var replacement = Sessions.SessionMessenger.ReplacedBy(ownerRow, candidates);
+            var replacement = Sessions.SessionMessenger.ReplacedBy(ownerRow, index.CandidatesOf(ownerRow));
             if (replacement is null && OwnerEnded(ownerRow, row))
             {
                 ForgetTell(row.Id);
+                _settledOwner[row.Id] = ownerRow;
                 continue;
             }
             // The wake target once, from the rows already read: inside the lambda it ran for every row compared, each run copying every
             // session under the state lock, so a tick cost (told jobs) x (sessions)^2 and held one core and the lock flat out (DE1, 2026-11-25).
-            var wakeId = WakeTarget(row.Owner!, sessions);
-            var target = replacement ?? sessions.FirstOrDefault(s => s.Id == wakeId) ?? ownerRow;
+            var wakeId = index.WakeTarget(row.Owner!);
+            var target = replacement ?? index.ById(wakeId) ?? ownerRow;
             if (target.State != SessionState.Idle)
             {
                 continue;
@@ -554,6 +587,7 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
             state.PutJob(row with { RetoldAt = now, RetoldWay = way });
             retold = true;
             sessions = state.Sessions();
+            index = new SessionIndex(sessions);
         }
         return retold;
     }
@@ -3346,6 +3380,75 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
             {
                 waiter.TrySetCanceled();
             }
+        }
+    }
+
+    // Told job id to the owner row it was judged ended for good on (RetellSilentAsync); in memory, empty at each node start.
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, SessionRow> _settledOwner = new(StringComparer.Ordinal);
+
+    // Told job ids whose baselines were forgotten because the tell was owner-ended or gone, so that is done once, not every tick.
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> _tellForgotten = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// The session rows of one sweep, indexed once: by id, by session id and each earlier id (newest start first), live background rows
+    /// by name and role, and the rows of a worker's flight and leg. Each lookup finds the row OwnerRow and WakeTarget find over the same rows.
+    /// </summary>
+    private sealed class SessionIndex
+    {
+        private readonly SessionRow[] _all;
+        private readonly Dictionary<string, SessionRow> _byId = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, SessionRow> _byAnyId = new(StringComparer.Ordinal);
+        private readonly Dictionary<(string, SessionRole), DateTimeOffset> _liveStart = [];
+        private Dictionary<(string?, string?), SessionRow[]>? _byLeg;
+
+        public SessionIndex(SessionRow[] all)
+        {
+            _all = all;
+            foreach (var s in all)
+            {
+                _byId.TryAdd(s.Id, s);
+                Newest(s.SessionId, s);
+                foreach (var earlier in s.EarlierSessionIds ?? [])
+                {
+                    Newest(earlier, s);
+                }
+                if (s.Kind == SessionKind.Background && s.State is SessionState.Working or SessionState.Waiting or SessionState.Idle)
+                {
+                    var key = (s.Name, s.Role);
+                    if (!_liveStart.TryGetValue(key, out var at) || s.StartedAt > at)
+                    {
+                        _liveStart[key] = s.StartedAt;
+                    }
+                }
+            }
+        }
+
+        // The first of equal starts wins, as OrderByDescending(StartedAt).FirstOrDefault() does over the same order.
+        private void Newest(string id, SessionRow s)
+        {
+            if (!_byAnyId.TryGetValue(id, out var known) || s.StartedAt > known.StartedAt)
+            {
+                _byAnyId[id] = s;
+            }
+        }
+
+        public SessionRow? ById(string id) => _byId.GetValueOrDefault(id);
+
+        public SessionRow? OwnerRow(string owner) => ById(owner) ?? _byAnyId.GetValueOrDefault(owner);
+
+        public string WakeTarget(string owner) => _byId.ContainsKey(owner) ? owner : _byAnyId.GetValueOrDefault(owner)?.Id ?? owner;
+
+        /// <summary>Whether a live background row of the row's name and role started after it: a superset of the rows ReplacedBy can pick.</summary>
+        public bool HasLiveReplacement(SessionRow row) => _liveStart.TryGetValue((row.Name, row.Role), out var at) && at > row.StartedAt;
+
+        public SessionRow[] CandidatesOf(SessionRow owner)
+        {
+            if (owner.Role != SessionRole.Worker)
+            {
+                return _all;
+            }
+            _byLeg ??= _all.GroupBy(s => (s.Flight, s.Leg)).ToDictionary(g => g.Key, g => g.ToArray());
+            return _byLeg.GetValueOrDefault((owner.Flight, owner.Leg)) ?? [];
         }
     }
 
