@@ -1187,16 +1187,16 @@ if (feed is not null)
                     Volatile.Write(ref held, new HeldView(Pilot.Commands.NodeTargets.Held().Entries));
                     fleetWatch.Know(HeldView.Known(held.Entries, chrome.Flights.Lan?.Nodes ?? []));
                 }
-                // The once-a-second look at Home, with no node event and nothing asked: nothing Home draws is counted from the
+                // The once-a-second look at a whole page (Home, Ideas), with no node event and nothing asked: nothing it draws is counted from the
                 // clock when the pages are built but what its fingerprint counts itself (the summaries' "made ago", the tasks
                 // glyph's "failed just now"), so the last pages are fingerprinted at this moment and built again only when that
-                // shows a turn-over. A merge's card lingers by the clock, so while one does, Home builds. Building every page each
+                // shows a turn-over. A merge's card lingers by the clock, so while one does, the page builds. Building every page each
                 // second, some 6 MB a build on a node of 491 sessions, was two thirds of an idle Home's builds and a quarter of
                 // what it allocated (DE1, 2026-10-30).
                 var shownPage = (PilotPage)Volatile.Read(ref pagesWanted);
-                if (!asked && !moved && shownPage == PilotPage.Home && Volatile.Read(ref latest) is { } last && last.Item1.Cards.Merged.Count == 0
+                if (!asked && !moved && FrameWatch.Whole(shownPage) && Volatile.Read(ref latest) is { } last && last.Item1.Cards.Merged.Count == 0
                     && frameWatch.Drawn(ask, FrameWatch.Fingerprint(last.Item1, last.Item2, now, shownPage, version,
-                        FrameWatch.Header(chrome.Home.Maintenance, chrome.Autopilot.On, feed.NewerInstalled, chrome.Nodes, FrameWatch.Light(chrome.About, Volatile.Read(ref lightShown))))))
+                        FrameWatch.Header(chrome.Home.Maintenance, chrome.Autopilot.On, feed.NewerInstalled, chrome.Nodes, FrameWatch.Light(chrome.About, Volatile.Read(ref lightShown))), told: chrome.Ideas.ToldAt())))
                 {
                     continue;
                 }
@@ -1216,7 +1216,7 @@ if (feed is not null)
                 Volatile.Write(ref latest, made);
                 var header = FrameWatch.Header(chrome.Home.Maintenance, chrome.Autopilot.On, feed.NewerInstalled, chrome.Nodes, FrameWatch.Light(chrome.About, Volatile.Read(ref lightShown)));
                 var worth = frameWatch.WorthAFrame(ask, FrameWatch.Fingerprint(pages, fleetScreen, now, (PilotPage)Volatile.Read(ref pagesWanted), version, header,
-                    FrameWatch.LanLine(chrome.Flights.Lan, now)));
+                    FrameWatch.LanLine(chrome.Flights.Lan, now), chrome.Ideas.ToldAt()));
                 frameWatch.Built(System.Diagnostics.Stopwatch.GetElapsedTime(buildStarted));
                 if (!worth)
                 {

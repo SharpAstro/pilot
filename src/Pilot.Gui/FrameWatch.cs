@@ -70,11 +70,13 @@ internal sealed class FrameWatch(ILogger logger, TimeSpan? slowFrame = null)
     /// A fingerprint of what the window draws from the built pages on <paramref name="page"/>: the page's own text (every row's
     /// dump line, which carries its own "ago"), the cards panel and the rail, which every page has, and <paramref name="header"/>
     /// (<see cref="Header"/>). It moves exactly when some of that text does, whenever its second or minute turns over.
-    /// Home's is whole: a node event that changes nothing Home draws (a busy worker's last response, on a node of hundreds of
-    /// sessions) leaves it as it was. The other pages' are not, so <paramref name="version"/> (the feeds' combined version) is
-    /// part of theirs, and any node event redraws them. <paramref name="lan"/> is the Flights page's LAN row (<see cref="LanLine"/>).
+    /// Home's and Ideas' are whole (<see cref="Whole"/>): a node event that changes nothing the page draws (a busy worker's last
+    /// response, on a node of hundreds of sessions) leaves it as it was. The other pages' are not, so <paramref name="version"/>
+    /// (the feeds' combined version) is part of theirs, and any node event redraws them. <paramref name="lan"/> is the Flights page's
+    /// LAN row (<see cref="LanLine"/>); <paramref name="told"/> is when the readiness answers the Ideas view holds itself were checked.
     /// </summary>
-    internal static long Fingerprint(FleetPages pages, FleetScreen fleet, DateTimeOffset now, PilotPage page = PilotPage.Home, long version = 0, long header = 0, string? lan = null)
+    internal static long Fingerprint(FleetPages pages, FleetScreen fleet, DateTimeOffset now, PilotPage page = PilotPage.Home, long version = 0, long header = 0, string? lan = null,
+        IReadOnlyList<DateTimeOffset>? told = null)
     {
         var hash = new HashCode();
         void Add(string? line) => hash.Add(line, StringComparer.Ordinal);
@@ -87,10 +89,7 @@ internal sealed class FrameWatch(ILogger logger, TimeSpan? slowFrame = null)
         Add(glyph);
         Add(said);
         Panel(ref hash, pages.Cards, pages.PullRequests?.Row, pages.Ideas, now);
-        // Home's fingerprint is whole, and so is Chat's: the chat draws nothing from the pages but the header, the rail and the
-        // panel above, and its own conversation asks for its frames itself. Chat used to count every session row and the version,
-        // so every node event drew it in full (129 to 738 ms a frame on DE1, 2026-11-28, pilot #1443).
-        if (page is not (PilotPage.Home or PilotPage.Chat))
+        if (!Whole(page))
         {
             hash.Add(version);
         }
@@ -163,11 +162,11 @@ internal sealed class FrameWatch(ILogger logger, TimeSpan? slowFrame = null)
                 }
                 break;
             case PilotPage.Settings:
-            case PilotPage.Ideas:
-                // Settings' "checked Ns ago" is counted from the clock in seconds, and so is an idea's "checked 12s ago", from a
-                // readiness the Ideas view holds itself (a check it asked for), out of reach of the pages: an open Settings or
-                // Ideas page turns over each second.
+                // Settings' "checked Ns ago" is counted from the clock in seconds: an open Settings page turns over each second.
                 hash.Add(now.ToUnixTimeSeconds());
+                break;
+            case PilotPage.Ideas:
+                Ideas(ref hash, pages.Ideas, now, told);
                 break;
         }
         // The summary card's "made 3m ago": on Home, and on a flight's detail on the Flights page.
@@ -176,6 +175,137 @@ internal sealed class FrameWatch(ILogger logger, TimeSpan? slowFrame = null)
             foreach (var row in shelf.Rows.Values) Add(SessionLine.Ago(now - row.MadeAt));
         }
         return hash.ToHashCode();
+    }
+
+    /// <summary>
+    /// Whether the fingerprint of <paramref name="page"/> holds everything it draws by value, so the feeds' version is no part of it.
+    /// Chat's is whole too: the chat draws nothing from the pages but the header, the rail and the panel, and its conversation asks
+    /// for its own frames. It used to count every session row and the version, so every node event drew it in full (129 to 738 ms a
+    /// frame on DE1, 2026-11-28, pilot #1443).
+    /// </summary>
+    internal static bool Whole(PilotPage page) => page is PilotPage.Home or PilotPage.Ideas or PilotPage.Chat;
+
+    // What the Ideas page draws from the pages, by value. No record holding an array or a list is added whole: its generated hash
+    // takes the array by reference, new on every read of the feed. The source's "as of" is the frame's own and stays out. The only
+    // clock text is a readiness row's "checked 12s ago" (IdeaIds.Age), counted here at the granularity it shows.
+    private static void Ideas(ref HashCode hash, IdeasScreen? screen, DateTimeOffset now, IReadOnlyList<DateTimeOffset>? told)
+    {
+        if (told is not null)
+        {
+            foreach (var at in told) hash.Add(IdeaIds.Age(at, now), StringComparer.Ordinal);
+        }
+        if (screen is null)
+        {
+            hash.Add(-1);
+            return;
+        }
+        hash.Add(screen.Source, StringComparer.Ordinal);
+        foreach (var idea in screen.Ideas)
+        {
+            hash.Add(idea.Id, StringComparer.Ordinal);
+            hash.Add(idea.Repo, StringComparer.Ordinal);
+            hash.Add(idea.Title, StringComparer.Ordinal);
+            hash.Add(idea.Body, StringComparer.Ordinal);
+            hash.Add(idea.State);
+            hash.Add(idea.Age, StringComparer.Ordinal);
+            hash.Add(idea.Origin, StringComparer.Ordinal);
+            hash.Add(idea.Url, StringComparer.Ordinal);
+            hash.Add(idea.Pinned);
+            hash.Add(idea.NeedsDesign);
+            hash.Add(idea.Design, StringComparer.Ordinal);
+            hash.Add(idea.DesignVersion);
+            hash.Add(idea.Priority);
+            hash.Add(idea.UpdatedAt);
+            foreach (var design in idea.Designs)
+            {
+                hash.Add(design.Id, StringComparer.Ordinal);
+                hash.Add(design.Title, StringComparer.Ordinal);
+                hash.Add(design.Version);
+            }
+            foreach (var image in idea.Images)
+            {
+                hash.Add(image.Alt, StringComparer.Ordinal);
+                hash.Add(image.Url, StringComparer.Ordinal);
+                hash.Add(image.Copy, StringComparer.Ordinal);
+            }
+        }
+        foreach (var ask in screen.Asks)
+        {
+            hash.Add(ask.Id, StringComparer.Ordinal);
+            hash.Add(ask.Bin);
+            hash.Add(ask.State);
+            hash.Add(ask.Kind, StringComparer.Ordinal);
+            hash.Add(ask.Subject, StringComparer.Ordinal);
+            hash.Add(ask.Title, StringComparer.Ordinal);
+            hash.Add(ask.Summary, StringComparer.Ordinal);
+            hash.Add(ask.Detail, StringComparer.Ordinal);
+            hash.Add(ask.Link, StringComparer.Ordinal);
+            foreach (var choice in ask.Choices)
+            {
+                hash.Add(choice.Label, StringComparer.Ordinal);
+                hash.Add(choice.Verb, StringComparer.Ordinal);
+                hash.Add(choice.Status, StringComparer.Ordinal);
+                hash.Add(choice.Note, StringComparer.Ordinal);
+            }
+        }
+        foreach (var repo in screen.Repos) hash.Add(repo, StringComparer.Ordinal);
+        foreach (var milestone in screen.Milestones)
+        {
+            hash.Add(milestone.Repo, StringComparer.Ordinal);
+            hash.Add(milestone.Number);
+            hash.Add(milestone.Title, StringComparer.Ordinal);
+            hash.Add(milestone.Description, StringComparer.Ordinal);
+            hash.Add(milestone.DueOn);
+            hash.Add(milestone.OpenIssues);
+            hash.Add(milestone.ClosedIssues);
+        }
+        foreach (var issue in screen.Issues)
+        {
+            hash.Add(issue.Repo, StringComparer.Ordinal);
+            hash.Add(issue.Number);
+            hash.Add(issue.Title, StringComparer.Ordinal);
+            hash.Add(issue.Body, StringComparer.Ordinal);
+            hash.Add(issue.Milestone, StringComparer.Ordinal);
+            hash.Add(issue.Age, StringComparer.Ordinal);
+            hash.Add(issue.Author, StringComparer.Ordinal);
+            hash.Add(issue.Url, StringComparer.Ordinal);
+            hash.Add(issue.Flight, StringComparer.Ordinal);
+            hash.Add(issue.Pinned);
+            hash.Add(issue.Priority);
+            hash.Add(issue.UpdatedAt);
+            if (issue.Readiness is { } readiness)
+            {
+                hash.Add(readiness.Ready);
+                hash.Add(readiness.CheckedAt);
+                foreach (var reason in readiness.Reasons) hash.Add(reason, StringComparer.Ordinal);
+                hash.Add(IdeaIds.Age(readiness.CheckedAt, now), StringComparer.Ordinal);
+            }
+            else
+            {
+                hash.Add(-1);
+            }
+        }
+        foreach (var move in screen.Moves)
+        {
+            hash.Add(move.Repo, StringComparer.Ordinal);
+            hash.Add(move.Id, StringComparer.Ordinal);
+            hash.Add(move.NewRepo, StringComparer.Ordinal);
+            hash.Add(move.NewId, StringComparer.Ordinal);
+        }
+        foreach (var flight in screen.Flights)
+        {
+            hash.Add(flight.Code, StringComparer.Ordinal);
+            hash.Add(flight.Repo, StringComparer.Ordinal);
+            hash.Add(flight.FromIdea, StringComparer.Ordinal);
+            hash.Add(flight.Tracker);
+            hash.Add(flight.Issue);
+            hash.Add(flight.State);
+            foreach (var design in flight.Designs)
+            {
+                hash.Add(design.Id, StringComparer.Ordinal);
+                hash.Add(design.Version);
+            }
+        }
     }
 
     // The cards panel as CardsView draws it: the watchtower's line, the summary, each card's words and buttons (a PR's title
