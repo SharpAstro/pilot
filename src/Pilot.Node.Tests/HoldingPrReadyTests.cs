@@ -98,6 +98,59 @@ public sealed class HoldingPrReadyTests : ReviewTestsBase
         _github.Merged.ShouldHaveSingleItem().Head.ShouldBe(head);
     }
 
+    private async Task<FlightRow> NotesLegEndedUnmade(string issue)
+    {
+        var flight = await PassedWithNotes(issue);
+        var worker = await StartedNotesLeg(flight);
+        (await Run(Verbs.FinishLeg, Verbs.LegTarget(flight.Code, LegCommander.ReviewNotesLeg), worker, "done", "looked, nothing changed")).Error.ShouldBeNull();
+        return flight;
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task TheOwnerClearingAHoldRaisesOneReadyCardAndTheSweepSaysNothingAboutTheNodeGoingAway()
+    {
+        var flight = await NotesLegEndedUnmade("5");
+
+        (await Run(Verbs.Clear, Verbs.FlightTarget(flight.Code), "me", "the notes are not worth a round")).Error.ShouldBeNull();
+        await Checks().LookAsync(Ct);
+
+        F(flight.Code).Holding.ShouldBeNull();
+        PrReadyCards(flight.Code).ShouldHaveSingleItem().Title.ShouldContain("ready to merge");
+        _state.Cards(openOnly: false).ShouldNotContain(c => c.Kind == LegCommander.PrReadyRestoredKind);
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AClearRaisesNoReadyCardWhenAPersonDismissedOneForTheReviewedHeadOrAMergeFailedCardIsOpen()
+    {
+        var dismissed = await NotesLegEndedUnmade("6");
+        var head = F(dismissed.Code).Review!.ReviewedHead!;
+        var old = _state.RaiseCard(CardBin.ForYou, LegCommander.PrReady, Verbs.FlightTarget(dismissed.Code), "earlier",
+            choices: [new CardChoice { Label = "Merge", Verb = Verbs.Merge, Target = Verbs.FlightTarget(dismissed.Code), Args = [head] }]);
+        _state.CloseCard(old.Id, "dismissed", "me");
+        (await Run(Verbs.Clear, Verbs.FlightTarget(dismissed.Code), "me", "go")).Error.ShouldBeNull();
+        PrReadyCards(dismissed.Code).ShouldHaveSingleItem().Id.ShouldBe(old.Id);
+
+        var failed = await NotesLegEndedUnmade("7");
+        _state.RaiseCard(CardBin.ForYou, LegCommander.MergeFailed, Verbs.FlightTarget(failed.Code), "the merge failed");
+        (await Run(Verbs.Clear, Verbs.FlightTarget(failed.Code), "me", "go")).Error.ShouldBeNull();
+        PrReadyCards(failed.Code).ShouldBeEmpty();
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public async Task AMergeFailedCardOnAHoldingFlightStaysOpenThroughALook()
+    {
+        var flight = await NotesLegEndedUnmade("8");
+        var card = _state.RaiseCard(CardBin.ForYou, LegCommander.MergeFailed, Verbs.FlightTarget(flight.Code), "the merge failed");
+
+        await Checks().LookAsync(Ct);
+
+        F(flight.Code).Holding.ShouldNotBeNull();
+        _state.Cards(openOnly: true).ShouldContain(c => c.Id == card.Id);
+    }
+
     [Fact]
     [Trait("Category", "Slow")]
     public async Task AReReviewThatPassesWithAnotherNoteOnAFlightWithANotesRoundRaisesNoForYouCard()

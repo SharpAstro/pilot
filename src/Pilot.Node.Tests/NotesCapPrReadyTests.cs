@@ -83,7 +83,6 @@ public sealed class NotesCapPrReadyTests : ReviewTestsBase
         await Checks().LookAsync(Ct);
 
         F(flight.Code).Holding.ShouldBeNull();
-        PrReadyCards(flight.Code).ShouldHaveSingleItem();
         // The detector cannot prove this on its own: RepeatDetector.RoutineKinds exempts the whole pr-ready kind (#1386), so it answers empty
         // whatever the count. What it would pair if the exemption went is the cards of a kind and subject raised in the window, so that
         // count is asserted here: the one card of the whole run, counting the closed ones.

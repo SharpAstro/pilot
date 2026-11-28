@@ -726,7 +726,8 @@ public sealed partial class LegCommander
         }
     }
 
-    // The sentence RaisePrReadyAsync adds to a holding flight's PR-ready card, which a released hold takes off again.
+    // The sentence an earlier release put on a holding flight's PR-ready card. Nothing adds it now (a holding flight gets no such card, #1400);
+    // ReleaseNotesMadeAsync only strips it from a leftover card still in the store after an update.
     private const string HeldDetailTail = " The merge is held until each note is made, not work, the node's own, or deferred with a reason: a review-notes leg makes them, and only the owner's word clears the hold.";
 
     /// <summary>The Ring card kind of a holding flight the watchtower has not cleared in time, or whose watchtower is not live.</summary>

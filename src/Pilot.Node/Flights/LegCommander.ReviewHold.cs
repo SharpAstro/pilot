@@ -119,18 +119,15 @@ public sealed partial class LegCommander
     /// <summary>The PR-ready card's words: one place for the raise at a verdict and the raise at a hold's release.</summary>
     private void RaiseMergeCard(FlightRow flight, int number, string head, string? url, string review, string reviewed)
     {
-        var holding = flight.Holding is not null; var holdReason = flight.Holding?.Reason ?? HoldingReason;
+        // Always "ready to merge": a flight with unmade notes (HoldsForNotes) gets no card, so the raise only comes with every note ended.
         var legs = state.Legs(flight.Code);
         state.RaiseCard(MergeCardBin(flight.Repo), PrReady, Verbs.FlightTarget(flight.Code),
-            holding ? $"{flight.Code}'s PR #{number} is holding: {holdReason}" : $"{flight.Code}'s PR #{number} is ready to merge",
-            $"{flight.Title ?? flight.Item.Noun}: {legs.Length} {(legs.Length == 1 ? "leg" : "legs")} done, head {CommitRefs.Short(head)}. {reviewed}: {review}."
-                + (holding ? HeldDetailTail : ""),
+            $"{flight.Code}'s PR #{number} is ready to merge",
+            $"{flight.Title ?? flight.Item.Noun}: {legs.Length} {(legs.Length == 1 ? "leg" : "legs")} done, head {CommitRefs.Short(head)}. {reviewed}: {review}.",
             [new CardChoice { Label = MergeLabel, Verb = Verbs.Merge, Target = Verbs.FlightTarget(flight.Code), Args = [head] }], link: url,
-            summary: holding
-                ? $"Wait: {flight.Code} passed its review with notes, and a review-notes leg makes them (or the owner clears the hold with a reason). The merge is refused until each note has an end."
-                : $"{flight.Code} is reviewed and its PR #{number} is ready. Merge lands it; dismissing leaves the PR open.",
+            summary: $"{flight.Code} is reviewed and its PR #{number} is ready. Merge lands it; dismissing leaves the PR open.",
             // The title names the PR only: a new head is a new card for a person to see, whatever was dismissed for the one before (#853).
-            cause: $"{(holding ? "holding" : "ready")}:{number}:{head}");
+            cause: $"ready:{number}:{head}");
     }
 
     /// <summary>Releases a hold whose notes all have an end: Holding null, a Handled line, and the PR-ready card says ready, not holding.</summary>
@@ -162,7 +159,15 @@ public sealed partial class LegCommander
             return;
         }
         var report = released.ReviewRounds is { Length: > 0 } rounds && !string.IsNullOrWhiteSpace(rounds[^1].Findings) ? rounds[^1].Findings : review.Report ?? "passed";
-        await RaisePrReadyAsync(released, report, review.Depth is { } depth ? ReviewPlan.Phrase(depth, review.DepthWhy) : "Reviewed", cancellationToken);
+        try
+        {
+            await RaisePrReadyAsync(released, report, review.Depth is { } depth ? ReviewPlan.Phrase(depth, review.DepthWhy) : "Reviewed", cancellationToken);
+        }
+        catch (Exception e) when (e is not OperationCanceledException)
+        {
+            // The hold is already released: a GitHub error must not fail the finish or the clear; the restore sweep raises the card.
+            await Error.WriteLineAsync($"review: {released.Code}'s ready card after the hold's release was not raised, the next look restores it: {e.Message}");
+        }
     }
 
     /// <summary>
