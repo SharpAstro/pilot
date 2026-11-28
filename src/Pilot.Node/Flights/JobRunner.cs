@@ -414,16 +414,21 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
         }
         // A tell that fell in an outage that has ended is redone first, and its retell starts from the redo; while an outage is open a session
         // cannot act on any tell, so a silent owner is neither told again nor rung for.
-        Outage?.JudgeLimit(state.Sessions(), time.GetUtcNow());
+        // The sessions once per tick: the limit is judged from this read, and the sweep below reuses it unless a redo said something (its say
+        // can resume a session). Each read copies and sorts every session under the state lock, a tick cost (told jobs) x (sessions) and a
+        // quarter of a core (4,378 x 2,532, DE1, 2026-11-26), so a tick reads once, and again only after a redo or a retell.
+        var sessions = state.Sessions();
+        Outage?.JudgeLimit(sessions, time.GetUtcNow());
         var retold = await RedoToldInOutageAsync(cancellationToken);
         if (Outage is { IsOpen: true } && !(Outage.LimitUntil is { } resetAt && resetAt <= time.GetUtcNow()))
         {
             return retold;
         }
         var now = time.GetUtcNow();
-        // The sessions once per tick, and again after a retell (its say can resume a session). Read for every told job, each read copying and
-        // sorting every session under the state lock, a tick cost (told jobs) x (sessions) and a quarter of a core (4,378 x 2,532, DE1, 2026-11-26).
-        var sessions = state.Sessions();
+        if (retold)
+        {
+            sessions = state.Sessions();
+        }
         var index = new SessionIndex(sessions);
         var allJobs = state.Jobs();
         var told = allJobs.Where(j => j is { Owner: not null, Told: true, ToldAt: not null, EndedAt: not null, RetellRung: null } && j.Kind != JobKind.Check).ToList();

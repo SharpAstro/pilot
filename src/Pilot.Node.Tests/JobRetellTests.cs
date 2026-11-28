@@ -192,12 +192,34 @@ public sealed class JobRetellTests : IDisposable
             (await runner.RetellSilentAsync(TestContext.Current.CancellationToken)).ShouldBeFalse();
             said.ShouldBeEmpty();
             Cards(JobRunner.UnansweredKind).ShouldBeEmpty();
-            outage.LimitUntil.ShouldNotBeNull();
+            // The limit held is the one on the very session the retell goes to (the job's owner), not some other row's.
+            var owner = _state.Sessions().Single(s => s.Id == _state.Jobs().Single().Owner);
+            owner.ApiError.ShouldBe("usage_limit_reached");
+            outage.LimitUntil.ShouldBe(owner.ApiErrorResetsAt);
         }
         finally
         {
             await runner.StopAsync(CancellationToken.None);
         }
+    }
+
+    [Fact]
+    public async Task ASweepSettlesAToldRowNothingWaitsOnWhenALaterJobOfTheSameOwnerCommandAndCwdSupersedesIt()
+    {
+        // The leg is done, so nothing waits on the job and the first tell would stand; the supersede check still runs first and settles it.
+        SetLeg(LegState.Done);
+        var told = await TellNowAsync();
+        _state.PutJob(told with
+        {
+            Id = "j2", Told = false, ToldAt = null, ToldWay = null, RetoldAt = null, RetellRung = null,
+            QueuedAt = _clock.GetUtcNow().AddSeconds(30), StartedAt = _clock.GetUtcNow().AddSeconds(30), EndedAt = _clock.GetUtcNow().AddSeconds(40),
+        });
+        _clock.Advance(After * 2);
+
+        (await Sweep()).ShouldBeFalse();
+        _said.ShouldBeEmpty();
+        _state.Cards().ShouldBeEmpty();
+        _state.Jobs().Single(j => j.Id == "j1").RetellRung.ShouldBe(true);
     }
 
     [Fact]
