@@ -42,7 +42,38 @@ internal sealed partial class IdeasView<TSurface>
         BeginFrame();
         _pageHeight = bounds.Height;
         PageWidth = Scale.ToDesignX(bounds.Width);
-        RenderLayout(Tree(screen), bounds, drawFill: Gallery.DrawFill);
+        var start = System.Diagnostics.Stopwatch.GetTimestamp();
+        var tree = Tree(screen);
+        var built = System.Diagnostics.Stopwatch.GetTimestamp();
+        RenderLayout(tree, bounds, drawFill: Gallery.DrawFill);
+        LastTreeBuild = System.Diagnostics.Stopwatch.GetElapsedTime(start, built);
+        LastLayout = System.Diagnostics.Stopwatch.GetElapsedTime(built);
+    }
+
+    /// <summary>What the last <see cref="Render"/> spent building the tree, and then on laying it out and drawing it (the timing test splits a frame by them, #1406).</summary>
+    internal TimeSpan LastTreeBuild { get; private set; }
+
+    internal TimeSpan LastLayout { get; private set; }
+
+    // The ordered ideas and the board are a function of the screen alone, and the tree is built on every frame (a hover, a scroll): kept for the
+    // screen they were built from, by reference, so a frame of the same screen reads them back instead of ordering and grouping 300 issues again (#1406).
+    private IdeasScreen? _builtFrom;
+    private List<IdeaRow> _builtIdeas = [];
+    private IdeasBoard _builtBoard = IdeasBoard.Empty;
+
+    /// <summary>How many times the board was built from a screen: a frame of the screen already built does not add one.</summary>
+    internal int BoardBuilds { get; private set; }
+
+    private (List<IdeaRow> Ideas, IdeasBoard Board) BoardOf(IdeasScreen screen)
+    {
+        if (!ReferenceEquals(_builtFrom, screen))
+        {
+            _builtIdeas = [.. IdeaIds.Order(screen.Ideas)];
+            _builtBoard = IdeasBoard.Build(screen);
+            _builtFrom = screen;
+            BoardBuilds++;
+        }
+        return (_builtIdeas, _builtBoard);
     }
 
     /// <summary>The page as a tree: what <see cref="Render"/> paints, and what a test arranges.</summary>
@@ -76,8 +107,8 @@ internal sealed partial class IdeasView<TSurface>
             _choices = null;
         }
 
-        var ideas = IdeaIds.Order(screen.Ideas).ToList();
-        var board = _board = IdeasBoard.Build(screen);
+        var (ideas, board) = BoardOf(screen);
+        _board = board;
         Prune(board);
         if (_showIdea is { } wanted)
         {
