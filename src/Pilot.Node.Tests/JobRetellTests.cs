@@ -1021,11 +1021,9 @@ public sealed class JobRetellTests : IDisposable
         Cards(JobRunner.UnansweredKind).ShouldBeEmpty();
         _state.Jobs().Single(j => j.Id == "j1").RetellRung.ShouldBe(true);
         _jobs.TellBaselines.ShouldBe(0);
-        _log.ToString().Split('
-').Count(l => l.Contains("settled: superseded by j2")).ShouldBe(1);
+        _log.ToString().Split((char)10).Count(l => l.Contains("settled: superseded by j2")).ShouldBe(1);
         (await Sweep()).ShouldBeFalse();
-        _log.ToString().Split('
-').Count(l => l.Contains("superseded")).ShouldBe(1);
+        _log.ToString().Split((char)10).Count(l => l.Contains("superseded")).ShouldBe(1);
     }
 
     [Theory]
