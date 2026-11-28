@@ -23,6 +23,8 @@ public sealed class JobRetellTests : IDisposable
     private readonly TurnOutage _outage;
     private readonly List<string> _said = [];
     private bool _endedForGood;
+    private int _forGoodCalls;
+    private int _afterTurnCalls;
 
     public JobRetellTests()
     {
@@ -37,7 +39,8 @@ public sealed class JobRetellTests : IDisposable
                 _said.Add(command.Args[0]);
                 return Task.FromResult(_state.Complete(command, null, way: SayWays.Relayed));
             },
-            EndedForGood = _ => _endedForGood,
+            EndedForGood = _ => { _forGoodCalls++; return _endedForGood; },
+            EndedAfterTurn = _ => { _afterTurnCalls++; return false; },
             LastCommandAt = name => name == _name ? _commandAt : null,
         };
         _state.PutFlight(new FlightRow
@@ -847,5 +850,86 @@ public sealed class JobRetellTests : IDisposable
         _said.ShouldHaveSingleItem().ShouldContain("Your job j1");
         (await TellSweep()).ShouldBeFalse();
         _said.Count.ShouldBe(1);
+    }
+
+    // #1365: a row settled as owner-ended is not judged again while nothing about its owner changed.
+
+    private void NewestOfTheName(string id) =>
+        _state.PutSession(_state.Sessions().Single(s => s.Id == "w0000001") with
+        {
+            Id = id, SessionId = id + "-0000-4000-8000-000000000000", StartedAt = _clock.GetUtcNow().AddHours(-1), State = SessionState.Idle,
+            LastResponseAt = _clock.GetUtcNow().AddHours(-1),
+        });
+
+    [Fact]
+    public async Task ASecondSweepWithNothingChangedDoesNotJudgeARowTheFirstSettled()
+    {
+        await TellNowAsync();
+        _endedForGood = true;
+        _clock.Advance(After * 3);
+        (await Sweep()).ShouldBeFalse();
+        _afterTurnCalls.ShouldBeGreaterThan(0);
+        _forGoodCalls.ShouldBeGreaterThan(0);
+        var (afterTurn, forGood) = (_afterTurnCalls, _forGoodCalls);
+
+        (await Sweep()).ShouldBeFalse();
+        (await Sweep()).ShouldBeFalse();
+
+        _afterTurnCalls.ShouldBe(afterTurn);
+        _forGoodCalls.ShouldBe(forGood);
+        _said.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task ASettledRowIsStillRetoldToALiveReplacementOfTheOwnersNameAndRoleThatStartsLater()
+    {
+        await TellNowAsync();
+        _endedForGood = true;
+        _clock.Advance(After);
+        (await Sweep()).ShouldBeFalse();
+
+        NewestOfTheName("w0000002");
+        _clock.Advance(After);
+
+        (await Sweep()).ShouldBeTrue();
+        _said.ShouldHaveSingleItem().ShouldStartWith("Repeat:");
+    }
+
+    [Fact]
+    public async Task ASettledRowIsJudgedAgainWhenItsOwnerRowChanges()
+    {
+        await TellNowAsync();
+        _endedForGood = true;
+        _clock.Advance(After);
+        (await Sweep()).ShouldBeFalse();
+        var calls = _forGoodCalls;
+
+        // The owner is resumed (its row changes), then ends again: judged afresh, and it is not ended for good this time.
+        _endedForGood = false;
+        Session(SessionState.Idle, _clock.GetUtcNow().AddHours(-1) + TimeSpan.FromSeconds(1));
+        (await Sweep()).ShouldBeFalse();
+        _forGoodCalls.ShouldBeGreaterThan(calls);
+
+        calls = _forGoodCalls;
+        _endedForGood = true;
+        Session(SessionState.Idle, _clock.GetUtcNow().AddHours(-1) + TimeSpan.FromSeconds(2));
+        (await Sweep()).ShouldBeFalse();
+        _forGoodCalls.ShouldBeGreaterThan(calls);
+    }
+
+    [Theory]
+    [InlineData("owner-ended")]
+    [InlineData("gone")]
+    public async Task RowsToldOwnerEndedOrGoneAreNotVisited(string way)
+    {
+        _state.PutJob(Seed("j9", _clock.GetUtcNow().AddMinutes(-10)) with { ToldWay = way });
+        _clock.Advance(After * 3);
+
+        (await Sweep()).ShouldBeFalse();
+        (await Sweep()).ShouldBeFalse();
+
+        _afterTurnCalls.ShouldBe(0);
+        _forGoodCalls.ShouldBe(0);
+        _said.ShouldBeEmpty();
     }
 }
