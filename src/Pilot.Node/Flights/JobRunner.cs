@@ -548,9 +548,9 @@ public sealed partial class JobRunner(NodeState state, NodeOptions options, Time
             // The clock starts again at the latest of the tell, the limit's reset and the end of the last outage window: before it the session
             // could not act, so the acts above are judged from the tell, and only the time to wait moves (#1415).
             var clockFrom = silentSince;
-            if (limitReset is { } resetAt && resetAt > clockFrom)
+            if (limitReset is { } limitResetAt && limitResetAt > clockFrom)
             {
-                clockFrom = resetAt;
+                clockFrom = limitResetAt;
             }
             if (Outage?.LastWindow is { } window && window.Until > clockFrom)
             {
