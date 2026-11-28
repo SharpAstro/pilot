@@ -264,7 +264,7 @@ public sealed class QueuedPushTests : LegCommanderTestsBase
         // Queued again and then let go by GitHub: that removal is GitHub's, and is carded.
         _github.Queue = GhAnswers.MergeQueue("queued", head: _github.Queue.Head, position: 1);
         await checks.LookAsync(Ct);
-        _github.Queue = GhAnswers.MergeQueue("dropped", head: _github.Queue.Head, removedAt: DateTimeOffset.UtcNow, removedReason: "FAILED_CHECKS");
+        _github.Queue = GhAnswers.MergeQueue("dropped", head: _github.Queue.Head, removedAt: DateTimeOffset.UtcNow.AddSeconds(2), removedReason: "FAILED_CHECKS");
         await checks.LookAsync(Ct);
         _state.Cards(openOnly: true).ShouldContain(c => c.Kind == PrChecks.QueueDropped);
     }
