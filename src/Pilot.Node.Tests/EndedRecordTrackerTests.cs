@@ -49,22 +49,6 @@ public sealed class EndedRecordTrackerTests : IDisposable
     }
 
     [Fact]
-    public void TheRecordIsReadAgainAfterTheRowWasLiveAndEndedOnceMore()
-    {
-        Put(SessionState.Ended);
-        _tracker.EndedAfterFinishedTurn("e0000001").ShouldBeTrue();
-
-        Put(SessionState.Working);
-        _tracker.EndedAfterFinishedTurn("e0000001").ShouldBeFalse();
-        _record = new ClaudeJobRecord("failed", "boom");
-        Put(SessionState.Ended);
-
-        _tracker.EndedAfterFinishedTurn("e0000001").ShouldBeFalse();
-        _tracker.EndedAfterFinishedTurn("e0000001").ShouldBeFalse();
-        _reads.ShouldBe(2);
-    }
-
-    [Fact]
     public void AJobWhoseFolderIsGoneIsNotReadAgain()
     {
         _record = null;

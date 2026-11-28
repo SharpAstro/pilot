@@ -331,6 +331,55 @@ public sealed class SessionLedgerTests : IDisposable
         _ledger.Find([idA])!.Name.ShouldBe("a2");
     }
 
+    private const string Probe = "abcdef12-0000-4000-8000-0000000000aa";
+
+    // A ledger file written by hand, so two entries can hold the same id (through the API Observe and Adopt look ids up first and never leave one).
+    private SessionLedger LedgerOf(params (string Job, string[] Ids)[] entries)
+    {
+        var folder = Path.Combine(_folder, "dup-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(folder);
+        var json = "[" + string.Join(",", entries.Select(e =>
+            $"{{\"job\":\"{e.Job}\",\"sessionIds\":[{string.Join(",", e.Ids.Select(i => $"\"{i}\""))}],\"name\":\"{e.Job}\"}}")) + "]";
+        File.WriteAllText(SessionLedger.FileIn(folder), json);
+        return new SessionLedger(SessionLedger.FileIn(folder), _time);
+    }
+
+    private static void FindsAsTheScanDid(SessionLedger ledger, string expectedJob, params string[][] probes)
+    {
+        var all = ledger.All();
+        foreach (var ids in probes)
+        {
+            var found = ledger.Find(ids);
+            found.ShouldBe(Linear(all, ids), string.Join(",", ids));
+            found!.JobId.ShouldBe(expectedJob, string.Join(",", ids));
+        }
+    }
+
+    [Fact]
+    public void WhenTwoEntriesHoldTheSameSessionIdTheLastOneWins()
+    {
+        var ledger = LedgerOf(("11111111", [Probe]), ("22222222", [Probe]));
+
+        FindsAsTheScanDid(ledger, "22222222", [Probe], [Probe.ToUpperInvariant()], ["zz", Probe]);
+    }
+
+    [Fact]
+    public void AJobIdMatchAndALaterSessionIdMatchGoToTheLaterEntry()
+    {
+        var ledger = LedgerOf(("abcdef12", []), ("33333333", [Probe]));
+
+        FindsAsTheScanDid(ledger, "33333333", [Probe], [Probe.ToUpperInvariant()]);
+        ledger.Find(["ABCDEF12"])!.JobId.ShouldBe("abcdef12");
+    }
+
+    [Fact]
+    public void ASessionIdMatchAndALaterJobIdMatchGoToTheLaterEntry()
+    {
+        var ledger = LedgerOf(("33333333", [Probe]), ("abcdef12", []));
+
+        FindsAsTheScanDid(ledger, "abcdef12", [Probe], [Probe.ToUpperInvariant()]);
+    }
+
     [Fact]
     public void FindAnswersAsTheLinearScanDidAfterTheCapacityTrim()
     {

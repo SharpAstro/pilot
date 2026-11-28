@@ -953,7 +953,8 @@ public sealed class SessionTracker : BackgroundService
         }
         // An ended row's job record does not change again, so it is read once while the row stays ended: a finished turn or a failure, and
         // a record whose folder Claude Code removed. An unreadable or half-written file is read again (4,378 told jobs read it every tick, and
-        // a gone folder threw a DirectoryNotFoundException each time, #1365).
+        // a gone folder threw a DirectoryNotFoundException each time, #1365). Not unconditional: a record in another state (still running or idle
+        // on an ended row) and a null record whose folder is still there are read again on every call.
         if (_endedAnswers.TryGetValue(id, out var known))
         {
             return known;
