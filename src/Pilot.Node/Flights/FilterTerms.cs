@@ -270,9 +270,9 @@ public static partial class FilterTerms
             {
                 foreach (var file in Sources(folder))
                 {
-                    var text = File.ReadAllText(file);
-                    project.Files.Add((file, text));
-                    Declare(text, file, project.Types);
+                    var parsed = Parsed(file);
+                    project.Files.Add((file, parsed.Text));
+                    project.Types.AddRange(parsed.Types);
                 }
             }
         }
@@ -302,6 +302,36 @@ public static partial class FilterTerms
             }
         }
         return project;
+    }
+
+    // A source file's text and the types it declares, read and lexed once while the file stands (its length and write time): every
+    // plan check read and lexed every test source of the projects it names again, and FilterTerms.Lex was 45 of the 408 MB the node
+    // put on the large object heap in 30 s (DE1, 2026-11-28, pilot #1443). A type is only read once declared, so one is shared.
+    // Each plane is a folder of its own, so the files of planes long gone would stay: past MaxParsed files the cache starts again.
+    private sealed record ParsedFile(long Length, DateTime WrittenUtc, string Text, TypeInfo[] Types);
+
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, ParsedFile> s_parsed = new(StringComparer.Ordinal);
+
+    private const int MaxParsed = 4000;
+
+    private static ParsedFile Parsed(string file)
+    {
+        var info = new FileInfo(file);
+        var (length, written) = (info.Length, info.LastWriteTimeUtc);
+        if (s_parsed.TryGetValue(file, out var kept) && kept.Length == length && kept.WrittenUtc == written)
+        {
+            return kept;
+        }
+        var text = File.ReadAllText(file);
+        var types = new List<TypeInfo>();
+        Declare(text, file, types);
+        var parsed = new ParsedFile(length, written, text, [.. types]);
+        if (s_parsed.Count >= MaxParsed)
+        {
+            s_parsed.Clear();
+        }
+        s_parsed[file] = parsed;
+        return parsed;
     }
 
     internal static List<string> Inherited(TypeInfo type, ILookup<string, TypeInfo> byName, HashSet<TypeInfo> seen)

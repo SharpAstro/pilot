@@ -304,27 +304,80 @@ public sealed class NodeClient : IDisposable
 public sealed class NodeEventStream : IAsyncDisposable
 {
     private readonly ClientWebSocket _socket;
-    private readonly ArrayBufferWriter<byte> _message = new ArrayBufferWriter<byte>(4096);
+
+    // A message is read into pooled segments and parsed as one sequence, never grown into one array: a snapshot of tens of MB
+    // grew a single buffer by doubling to 64 MiB (four arrays on the large object heap for every snapshot read), and the stream
+    // kept the biggest for its life. A fleet peer read one every five seconds (pilot #1443).
+    private const int SegmentSize = 64 * 1024;
 
     internal NodeEventStream(ClientWebSocket socket) => _socket = socket;
 
     /// <summary>The next event, or null once the node has closed the stream (a client that fell behind is closed and resyncs).</summary>
     public async ValueTask<NodeEvent?> ReadAsync(CancellationToken cancellationToken)
     {
-        _message.Clear();
-        while (true)
+        var segments = new List<byte[]>();
+        var last = 0;
+        try
         {
-            var result = await _socket.ReceiveAsync(_message.GetMemory(4096), cancellationToken).ConfigureAwait(false);
-            if (result.MessageType is WebSocketMessageType.Close)
+            while (true)
             {
-                return null;
-            }
+                if (segments.Count == 0 || last == SegmentSize)
+                {
+                    segments.Add(ArrayPool<byte>.Shared.Rent(SegmentSize));
+                    last = 0;
+                }
+                var result = await _socket.ReceiveAsync(segments[^1].AsMemory(last, SegmentSize - last), cancellationToken).ConfigureAwait(false);
+                if (result.MessageType is WebSocketMessageType.Close)
+                {
+                    return null;
+                }
 
-            _message.Advance(result.Count);
-            if (result.EndOfMessage)
-            {
-                return JsonSerializer.Deserialize(_message.WrittenSpan, PilotJsonContext.Default.NodeEvent);
+                last += result.Count;
+                if (result.EndOfMessage)
+                {
+                    return Parse(segments, last);
+                }
             }
+        }
+        finally
+        {
+            foreach (var segment in segments)
+            {
+                ArrayPool<byte>.Shared.Return(segment);
+            }
+        }
+    }
+
+    // The segments as one sequence: all full but the last, which holds lastLength bytes.
+    private static NodeEvent? Parse(List<byte[]> segments, int lastLength)
+    {
+        if (segments.Count == 1)
+        {
+            return JsonSerializer.Deserialize(segments[0].AsSpan(0, lastLength), PilotJsonContext.Default.NodeEvent);
+        }
+        var first = new Segment(segments[0].AsMemory(0, SegmentSize), 0);
+        var tail = first;
+        for (var i = 1; i < segments.Count; i++)
+        {
+            tail = tail.Append(segments[i].AsMemory(0, i == segments.Count - 1 ? lastLength : SegmentSize));
+        }
+        var reader = new Utf8JsonReader(new ReadOnlySequence<byte>(first, 0, tail, tail.Memory.Length));
+        return JsonSerializer.Deserialize(ref reader, PilotJsonContext.Default.NodeEvent);
+    }
+
+    private sealed class Segment : ReadOnlySequenceSegment<byte>
+    {
+        public Segment(ReadOnlyMemory<byte> memory, long runningIndex)
+        {
+            Memory = memory;
+            RunningIndex = runningIndex;
+        }
+
+        public Segment Append(ReadOnlyMemory<byte> memory)
+        {
+            var next = new Segment(memory, RunningIndex + Memory.Length);
+            Next = next;
+            return next;
         }
     }
 

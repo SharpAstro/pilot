@@ -972,4 +972,7 @@ public sealed class LeftOutCommitsException(string message, IReadOnlyList<string
 public sealed class RateLimitedException(string message, DateTimeOffset? resetAt) : FlightException(message)
 {
     public DateTimeOffset? ResetAt { get; } = resetAt;
+
+    /// <summary>A rate limit on the merge path passes by itself: the node waits for the reset and asks again (<see cref="MergeRefusals.RateLimited"/>).</summary>
+    public override MergeRefusal? Refusal => MergeRefusals.RateLimited;
 }

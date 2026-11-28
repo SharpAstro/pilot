@@ -19,6 +19,8 @@ public enum MergeAnswerKind
     HeadMoved,
     /// <summary>GitHub 5xx or a timeout: worth asking again.</summary>
     Transient,
+    /// <summary>GitHub's rate limit (primary or secondary): asked again once it resets, never at once and never a person's refusal.</summary>
+    RateLimited,
     /// <summary>Anything else; the full message is kept.</summary>
     Refused,
 }
@@ -111,6 +113,7 @@ public static class MergeAnswers
         (MergeAnswerKind.HeadMoved, said => Has(said, "Head branch was modified") || Has(said, "Head sha didn't match")),
         (MergeAnswerKind.Behind, said => Has(said, "Base branch was modified") || Has(said, "branch is behind")),
         (MergeAnswerKind.Conflicts, said => Has(said, "merge conflict") || Has(said, "has conflicts") || Has(said, "not mergeable")),
+        (MergeAnswerKind.RateLimited, said => Has(said, "rate limit")),
         (MergeAnswerKind.Transient, said => Http5xx.IsMatch(said) || Has(said, "timed out") || Has(said, "timeout") || Has(said, "time-out")),
     ];
 

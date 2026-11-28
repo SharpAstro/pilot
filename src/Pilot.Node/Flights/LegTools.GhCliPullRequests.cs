@@ -68,9 +68,7 @@ public sealed partial class GhCli
             {
                 var said = (error.Trim().Length > 0 ? error : output).Trim();
                 var message = $"gh could not search the PRs of {repos.Length} repos: {said}";
-                throw said.Contains("rate limit", StringComparison.OrdinalIgnoreCase)
-                    ? new RateLimitedException(message, await ResetOfAsync(said, cancellationToken))
-                    : new FlightException(message);
+                throw await FailedAsync(message, said, cancellationToken);
             }
             PullRequestSearch.Page read;
             try
@@ -110,8 +108,19 @@ public sealed partial class GhCli
         return new PullRequestSearch.Read([.. prs], cost, remaining, resetAt, [.. gone]);
     }
 
+    /// <summary>
+    /// The one reader of a failed gh call: GitHub's rate limit (primary or secondary) is a <see cref="RateLimitedException"/> carrying when
+    /// it resets, anything else a plain <see cref="FlightException"/>; <paramref name="message"/> is kept whole either way, since callers
+    /// and cards quote its words. Note: the PR reads go through GhAsync, so a gh timeout is a plain FlightException here ("gh timed out", class
+    /// Persons on the merge path), where it used to surface as an OperationCanceledException.
+    /// </summary>
+    private async Task<FlightException> FailedAsync(string message, string said, CancellationToken cancellationToken) =>
+        said.Contains("rate limit", StringComparison.OrdinalIgnoreCase)
+            ? new RateLimitedException(message, await ResetOfAsync(said, cancellationToken))
+            : new FlightException(message);
+
     // A secondary limit is a short pause that has nothing to do with the hourly points, so its reset is unknown (the watch then waits
-    // PullRequestWatch.UnknownReset); only the primary limit comes back at the hourly reset.
+    // GhBudget.UnknownReset); only the primary limit comes back at the hourly reset.
     private async Task<DateTimeOffset?> ResetOfAsync(string said, CancellationToken cancellationToken) =>
         said.Contains("secondary", StringComparison.OrdinalIgnoreCase) ? null : await GraphQlResetAsync(cancellationToken);
 
@@ -120,7 +129,7 @@ public sealed partial class GhCli
     {
         try
         {
-            var (exit, output, _) = await RunAsync(["api", "rate_limit", "--jq", ".resources.graphql.reset"], AppContext.BaseDirectory, cancellationToken);
+            var (exit, output, _) = await GhAsync(["api", "rate_limit", "--jq", ".resources.graphql.reset"], AppContext.BaseDirectory, cancellationToken);
             return exit == 0 && long.TryParse(output.Trim(), out var epoch) ? DateTimeOffset.FromUnixTimeSeconds(epoch) : null;
         }
         catch (Exception ex) when (ex is FlightException or IOException or System.ComponentModel.Win32Exception)
@@ -239,12 +248,13 @@ public sealed partial class GhCli
 
     public async Task<PullRequest> PullRequestOfAsync(string repo, int number, CancellationToken cancellationToken)
     {
-        var (exit, output, error) = await RunAsync(
+        var (exit, output, error) = await GhAsync(
             ["pr", "view", number.ToString(System.Globalization.CultureInfo.InvariantCulture), "-R", repo, "--json", PullRequestByNumberFields],
             Path.GetTempPath(), cancellationToken);
         if (exit != 0)
         {
-            throw new FlightException($"gh could not read {repo}#{number}: {(error.Trim().Length > 0 ? error : output).Trim()}");
+            var said = (error.Trim().Length > 0 ? error : output).Trim();
+            throw await FailedAsync($"gh could not read {repo}#{number}: {said}", said, cancellationToken);
         }
         return ParsePullRequestByNumber(output);
     }

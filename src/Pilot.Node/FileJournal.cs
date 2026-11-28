@@ -90,6 +90,8 @@ public sealed class FileJournal : INodeJournal, IDisposable
     /// 13: a session row with the role <c>investigator</c> (PIL1285). An older node cannot read the role, and would fail on the snapshot.
     /// 14: <c>repoFollowUps</c> on a flight (PIL1340). An older node would drop it when it compacts the snapshot, and a second <c>pilot follow-up</c> of the same repo and title would
     /// open the issue again.
+    /// 15: <c>postRetryAt</c> on a review (PIL1390). An older node would drop it when it compacts the snapshot, and the review whose post waited for GitHub's rate limit
+    /// would sit reviewed with no card and no retry, never posted.
     /// Not bumped for <c>why</c> on a card choice (PIL1353): it is nullable, and an older node that drops it when it compacts the snapshot only loses the
     /// <c>--why</c> a refused command's Run button carries; the command still runs, so there is no reason to refuse the store.
     /// Not bumped for <c>fixUntouched</c> on a review round (PIL1371): it is nullable, and an older node that drops it when it compacts the snapshot only loses the
@@ -99,7 +101,7 @@ public sealed class FileJournal : INodeJournal, IDisposable
     /// Not bumped for pushedHead and pushedAt on a flight (#1407): both are nullable, and an older node that drops them when it compacts the snapshot only loses the
     /// evidence that a merge-queue removal predates the PR's head, so it judges a removal as it did before; nothing breaks, so there is no reason to refuse the store.
     /// </remarks>
-    public const int StoreContract = 14;
+    public const int StoreContract = 15;
 
     private static readonly byte[] NewLine = "\n"u8.ToArray();
 

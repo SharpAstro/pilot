@@ -54,6 +54,12 @@ public enum MergeAction
 
     /// <summary>The plane holds commits the PR does not: open the PR again so they are pushed and reviewed.</summary>
     OpenPrAgain,
+
+    /// <summary>
+    /// With a <see cref="MergeRefusalClass.Passing"/> refusal: GitHub's rate limit stopped the read or the merge. The node waits until the
+    /// limit resets and asks again; it rings only when the tries run out.
+    /// </summary>
+    WaitForRateLimit,
 }
 
 /// <summary>A merge refusal's class, and for <see cref="MergeRefusalClass.Persons"/> the one action to take.</summary>
